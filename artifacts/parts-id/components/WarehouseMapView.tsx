@@ -761,8 +761,6 @@ export function WarehouseMapView({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zonesLoading, zonesError, zones.length]);
-  const svgRenderW = containerW;
-  const svgRenderH = containerW > 0 ? containerW / SVG_ASPECT : 0;
 
   // Shared values for gesture computations (UI thread safe)
   const containerWV = useSharedValue(0);
@@ -822,6 +820,16 @@ export function WarehouseMapView({
     () => getCachedData()?.contentViewBox ?? null,
   );
   const contentVBRef = useRef<ContentViewBox | null>(contentVB);
+  // Ref mirror of svgAspect so async callbacks (e.g. snapToNearestZoomStop,
+  // onLayout) always read the latest value without closing over stale state.
+  const svgAspectRef = useRef(SVG_ASPECT);
+
+  // Derive the effective floor-plan aspect ratio from the parsed viewBox.
+  // Falls back to the compile-time constant so cold-start (before the SVG is
+  // fetched and parsed) behaves identically to the pre-fix behaviour.
+  const svgRenderW = containerW;
+  const svgAspect = contentVB ? contentVB.w / contentVB.h : SVG_ASPECT;
+  const svgRenderH = containerW > 0 ? containerW / svgAspect : 0;
 
   // True when we need to apply a fit-to-content viewport as soon as both the
   // container dimensions and the content viewBox are known.  Starts true so
@@ -877,9 +885,11 @@ export function WarehouseMapView({
         const pending = pendingRestore.current;
         if (pending !== null) {
           pendingRestore.current = null;
-          const { maxX, maxY } = panBounds(width, height, pending.s);
+          const { maxX, maxY } = panBounds(width, height, pending.s, width / svgAspectRef.current);
           const clampedTX = Math.max(-maxX, Math.min(maxX, pending.tx));
           const clampedTY = Math.max(-maxY, Math.min(maxY, pending.ty));
+          scale.value = pending.s;
+          savedScale.value = pending.s;
           translateX.value = clampedTX;
           translateY.value = clampedTY;
           savedTX.value = clampedTX;
@@ -924,7 +934,7 @@ export function WarehouseMapView({
       const centredTX = refTX * sizeRatio;
       const centredTY = refTY * sizeRatio;
 
-      const { maxX, maxY } = panBounds(width, height, currentScale);
+      const { maxX, maxY } = panBounds(width, height, currentScale, width / svgAspectRef.current);
       const newTX = clamp(centredTX, -maxX, maxX);
       const newTY = clamp(centredTY, -maxY, maxY);
       translateX.value = withSpring(newTX, { damping: 26, stiffness: 220 });
@@ -1246,9 +1256,61 @@ export function WarehouseMapView({
   }, []);
 
   // ── Viewport restore on mount ──────────────────────────────────────────────
-  // pendingFit starts true (see useRef above), so applyFitIfReady will open
-  // the map fitted to the screen as soon as both container dimensions and the
-  // content viewBox are known.  No AsyncStorage read is performed here.
+  // Read the persisted viewport (scale/tx/ty) once on mount.  When a saved
+  // value exists:
+  //   • pendingFit is cleared so applyFitIfReady skips the fit-to-screen path.
+  //   • pendingRestore is populated so onLayout can clamp and apply the values
+  //     once real container dimensions are known.
+  // When layout beats the async read (hasLaidOut.current is already true), the
+  // effect applies the restore directly instead of waiting for the next layout.
+  // When no saved value exists, pendingFit stays true and applyFitIfReadyRef is
+  // called in case layout already fired before this effect ran.
+  useEffect(() => {
+    AsyncStorage.getItem(VIEWPORT_KEY).then((raw) => {
+      if (!raw) {
+        // No stored viewport — trigger fit in case onLayout already fired.
+        if (hasLaidOut.current) applyFitIfReadyRef.current();
+        return;
+      }
+      try {
+        const parsed = JSON.parse(raw) as { s: number; tx: number; ty: number };
+        const { s, tx, ty } = parsed;
+        if (
+          typeof s !== "number" || !isFinite(s) || s <= 0 ||
+          typeof tx !== "number" || !isFinite(tx) ||
+          typeof ty !== "number" || !isFinite(ty)
+        ) {
+          if (hasLaidOut.current) applyFitIfReadyRef.current();
+          return;
+        }
+        pendingFit.current = false;
+        if (hasLaidOut.current) {
+          // Layout already fired — apply the restore directly now.
+          const w = containerWRef.current;
+          const h = containerHRef.current;
+          const { maxX, maxY } = panBounds(w, h, s, w / svgAspectRef.current);
+          const clampedTX = Math.max(-maxX, Math.min(maxX, tx));
+          const clampedTY = Math.max(-maxY, Math.min(maxY, ty));
+          scale.value = s;
+          savedScale.value = s;
+          translateX.value = clampedTX;
+          translateY.value = clampedTY;
+          savedTX.value = clampedTX;
+          savedTY.value = clampedTY;
+        } else {
+          // Layout hasn't fired yet — stash for onLayout to consume.
+          pendingRestore.current = { s, tx, ty };
+        }
+      } catch {
+        // Malformed JSON — fall through to fit path.
+        if (hasLaidOut.current) applyFitIfReadyRef.current();
+      }
+    }).catch(() => {
+      // Storage read failed — fall through to fit path.
+      if (hasLaidOut.current) applyFitIfReadyRef.current();
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Adaptive-tiling floor-plan renderer ──────────────────────────────────
   // At zoom N the floor plan is split into N×N tiles.  Each tile renders at
@@ -1278,8 +1340,18 @@ export function WarehouseMapView({
   // without requiring runOnJS on every gesture frame.
   const numTilesV = useSharedValue(1);
   const svgRenderWV = useSharedValue(svgRenderW);
+  const svgAspectV = useSharedValue(svgAspect);
+  const svgVBWV = useSharedValue(contentVB ? contentVB.w : SVG_VIEWBOX_W);
+  const svgVBHV = useSharedValue(contentVB ? contentVB.h : SVG_VIEWBOX_H);
   useEffect(() => { numTilesV.value = numTiles; }, [numTiles, numTilesV]);
   useEffect(() => { svgRenderWV.value = svgRenderW; }, [svgRenderW, svgRenderWV]);
+  useEffect(() => {
+    svgAspectRef.current = svgAspect;
+    svgAspectV.value = svgAspect;
+    svgVBWV.value = contentVB ? contentVB.w : SVG_VIEWBOX_W;
+    svgVBHV.value = contentVB ? contentVB.h : SVG_VIEWBOX_H;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contentVB, svgAspect, svgAspectV, svgVBWV, svgVBHV]);
 
   // Tile range visible in the current viewport.  Updated when any tile
   // boundary is crossed during pan or zoom (not on every animation frame).
@@ -1292,7 +1364,7 @@ export function WarehouseMapView({
       const N = numTilesV.value;
       const W = svgRenderWV.value;
       if (N <= 1 || W <= 0) return { N, c0: 0, c1: 0, r0: 0, r1: 0 };
-      const H = W / SVG_ASPECT;
+      const H = W / svgAspectV.value;
       const Z = scale.value;
       const tx = translateX.value;
       const ty = translateY.value;
@@ -1653,7 +1725,7 @@ export function WarehouseMapView({
       const nextN = tileGridSize(nextStop);
       const W = svgRenderWV.value;
       if (W <= 0) return;
-      const H = W / SVG_ASPECT;
+      const H = W / svgAspectV.value;
       const Z = scale.value;
       const tx = translateX.value;
       const ty = translateY.value;
@@ -1714,7 +1786,7 @@ export function WarehouseMapView({
 
     const targetScale = ZOOM_STOPS[stopIdx].scale;
     pinFocusModeV.value = 0;
-    const { maxX, maxY } = panBounds(containerWRef.current, containerHRef.current, targetScale);
+    const { maxX, maxY } = panBounds(containerWRef.current, containerHRef.current, targetScale, containerWRef.current / svgAspectRef.current);
     const newTX = Math.max(-maxX, Math.min(maxX, translateX.value));
     const newTY = Math.max(-maxY, Math.min(maxY, translateY.value));
     springActive.value = true;
@@ -1763,9 +1835,9 @@ export function WarehouseMapView({
       let focalY: number;
       if (pinFocusModeV.value) {
         const svgRW = containerWV.value;
-        const svgRH = containerWV.value / SVG_ASPECT;
-        const px = (pinFocusCxV.value / SVG_VIEWBOX_W) * svgRW - svgRW / 2;
-        const py = (pinFocusCyV.value / SVG_VIEWBOX_H) * svgRH - svgRH / 2;
+        const svgRH = containerWV.value / svgAspectV.value;
+        const px = (pinFocusCxV.value / svgVBWV.value) * svgRW - svgRW / 2;
+        const py = (pinFocusCyV.value / svgVBHV.value) * svgRH - svgRH / 2;
         focalX = px * savedScale.value + savedTX.value;
         focalY = py * savedScale.value + savedTY.value;
       } else {
@@ -1780,7 +1852,7 @@ export function WarehouseMapView({
       const newTY = focalY * (1 - ratio) + savedTY.value * ratio;
 
       const scaledW = containerWV.value * newScale;
-      const scaledH = (containerWV.value / SVG_ASPECT) * newScale;
+      const scaledH = (containerWV.value / svgAspectV.value) * newScale;
       const maxX = Math.max(0, (scaledW - containerWV.value) / 2);
       const maxY = Math.max(0, (scaledH - containerHV.value) / 2);
       translateX.value = clamp(newTX, -maxX, maxX);
@@ -1815,7 +1887,7 @@ export function WarehouseMapView({
     })
     .onUpdate((e) => {
       const scaledW = containerWV.value * scale.value;
-      const scaledH = (containerWV.value / SVG_ASPECT) * scale.value;
+      const scaledH = (containerWV.value / svgAspectV.value) * scale.value;
       const maxX = Math.max(0, (scaledW - containerWV.value) / 2);
       const maxY = Math.max(0, (scaledH - containerHV.value) / 2);
       translateX.value = clamp(savedTX.value + e.translationX, -maxX, maxX);
@@ -1848,7 +1920,7 @@ export function WarehouseMapView({
     pinFocusModeV.value = 0;
     const oldScale = savedScale.value;
     const newScale = clampScale(targetScale);
-    const { maxX, maxY } = panBounds(containerW, containerH, newScale);
+    const { maxX, maxY } = panBounds(containerW, containerH, newScale, svgRenderH);
     // Scale the existing translation by the zoom ratio so the visible center
     // stays anchored. At zoom=1 the map center is at tx=0; as the user pans,
     // tx/ty drift. Multiplying by newScale/oldScale keeps the same map point

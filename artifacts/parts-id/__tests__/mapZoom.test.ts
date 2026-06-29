@@ -89,38 +89,38 @@ describe("clampScale — zoom gesture bounds", () => {
 describe("panBounds — translation limits change with scale", () => {
   it("both maxX and maxY are 0 at MIN_SCALE (scaled map fits inside the container — no panning needed)", () => {
     // At MIN_SCALE=0.8: scaledW = 390×0.8 = 312 < 390; scaledH ≈ 265.9×0.8 = 213 < 761.
-    const { maxX, maxY } = panBounds(CW, CH, MIN_SCALE);
+    const { maxX, maxY } = panBounds(CW, CH, MIN_SCALE, SVG_RENDER_H);
     expect(maxX).toBe(0);
     expect(maxY).toBe(0);
   });
 
   it("maxX matches (containerW × (scale − 1)) / 2 at scale=2", () => {
-    const { maxX } = panBounds(CW, CH, 2);
+    const { maxX } = panBounds(CW, CH, 2, SVG_RENDER_H);
     expect(maxX).toBeCloseTo((CW * (2 - 1)) / 2, 3); // 195
   });
 
   it("maxX matches (containerW × (scale − 1)) / 2 at scale=5", () => {
-    const { maxX } = panBounds(CW, CH, 5);
+    const { maxX } = panBounds(CW, CH, 5, SVG_RENDER_H);
     expect(maxX).toBeCloseTo((CW * (5 - 1)) / 2, 3); // 780
   });
 
   it("maxY is 0 while the scaled SVG height still fits inside the container (portrait letterbox)", () => {
     // svgRenderH ≈ 265.9 pt; container height 761 pt.
     // Threshold scale = 761 / 265.9 ≈ 2.86 — at scale=2 the map is still letterboxed.
-    const { maxY } = panBounds(CW, CH, 2);
+    const { maxY } = panBounds(CW, CH, 2, SVG_RENDER_H);
     expect(maxY).toBe(0);
   });
 
   it("maxY becomes positive once the scaled SVG height exceeds the container height", () => {
     // At scale=3: svgRenderH × 3 ≈ 797.7 > 761 → maxY ≈ 18.
-    const { maxY } = panBounds(CW, CH, 3);
+    const { maxY } = panBounds(CW, CH, 3, SVG_RENDER_H);
     expect(maxY).toBeGreaterThan(0);
     expect(maxY).toBeCloseTo((SVG_RENDER_H * 3 - CH) / 2, 1);
   });
 
   it("pan bounds grow monotonically when zooming in", () => {
     const scales = [1, 2, 3, 5, 10, 20];
-    const bounds = scales.map((s) => panBounds(CW, CH, s));
+    const bounds = scales.map((s) => panBounds(CW, CH, s, SVG_RENDER_H));
     for (let i = 1; i < bounds.length; i++) {
       expect(bounds[i].maxX).toBeGreaterThanOrEqual(bounds[i - 1].maxX);
       expect(bounds[i].maxY).toBeGreaterThanOrEqual(bounds[i - 1].maxY);
@@ -129,7 +129,7 @@ describe("panBounds — translation limits change with scale", () => {
 
   it("regression: maxX and maxY were once allowed to go negative (no Math.max(0,…) guard), causing the map to slide off-screen", () => {
     for (const s of [MIN_SCALE, 0.9, 1]) {
-      const { maxX, maxY } = panBounds(CW, CH, s);
+      const { maxX, maxY } = panBounds(CW, CH, s, SVG_RENDER_H);
       expect(maxX).toBeGreaterThanOrEqual(0);
       expect(maxY).toBeGreaterThanOrEqual(0);
     }
@@ -137,7 +137,7 @@ describe("panBounds — translation limits change with scale", () => {
 
   it("pan bounds are symmetric: maxX equals half the overflow on each side", () => {
     const scale = 4;
-    const { maxX } = panBounds(CW, CH, scale);
+    const { maxX } = panBounds(CW, CH, scale, SVG_RENDER_H);
     const expectedOverflow = CW * scale - CW;
     expect(maxX).toBeCloseTo(expectedOverflow / 2, 3);
   });
