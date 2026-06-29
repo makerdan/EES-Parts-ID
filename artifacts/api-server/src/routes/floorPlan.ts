@@ -49,9 +49,39 @@ function tileCachePath(svgHash: string, z: number, x: number, y: number): string
 }
 
 /**
+ * Normalise an SVG string so its outermost viewBox has origin (0, 0).
+ *
+ * When an uploaded SVG has a non-zero viewBox origin (e.g. "500 1000 7329 4997"),
+ * sharp rasterises the content starting at that offset in SVG coordinate space,
+ * which would misalign the PNG tiles with the zone overlay (always at origin 0,0).
+ * Rewriting the viewBox to "0 0 W H" puts both layers in the same frame.
+ *
+ * Returns the original buffer unchanged when the viewBox is already at (0,0) or
+ * absent (avoid unnecessary UTF-8 round-trips for SVGs that are already correct).
+ */
+function normalizeViewBoxOrigin(svgBuffer: Buffer): Buffer {
+  const svgStr = svgBuffer.toString("utf8");
+  const match = svgStr.match(/viewBox="([^"]+)"/);
+  if (!match) return svgBuffer;
+  const parts = match[1].trim().split(/[\s,]+/).map(Number);
+  if (parts.length !== 4 || parts.some((n) => !isFinite(n))) return svgBuffer;
+  const [ox, oy, w, h] = parts;
+  if (ox === 0 && oy === 0) return svgBuffer; // already correct — skip allocation
+  return Buffer.from(
+    svgStr.replace(/viewBox="[^"]*"/, `viewBox="0 0 ${w} ${h}"`),
+    "utf8",
+  );
+}
+
+/**
  * Rasterize and return the PNG bytes for tile (z, x, y) of the given SVG.
  * Results are cached to disk keyed by svgHash so repeated requests hit disk
  * rather than re-rasterising.
+ *
+ * The SVG's viewBox origin is normalised to (0, 0) before rasterisation so the
+ * tile pixel coordinates match the zone overlay's coordinate frame (both use the
+ * same 0-based origin).  Tiles that are already cached are served directly from
+ * disk without re-parsing.
  */
 async function generateTile(
   svgBuffer: Buffer,
@@ -76,7 +106,11 @@ async function generateTile(
 
   await fs.mkdir(TILE_CACHE_DIR, { recursive: true });
 
-  const pngBuffer = await sharp(svgBuffer)
+  // Normalise the SVG viewBox origin to (0, 0) so tile pixel coordinates align
+  // with the zone overlay coordinate frame on the client.
+  const normalizedSvg = normalizeViewBoxOrigin(svgBuffer);
+
+  const pngBuffer = await sharp(normalizedSvg)
     .resize(totalW, totalH, { fit: "fill" })
     .extract({ left: x * tileW, top: y * tileH, width: tileW, height: tileH })
     .png({ compressionLevel: 6 })
