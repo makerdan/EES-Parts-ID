@@ -108,3 +108,61 @@ it("extractPdfPages resolves when pdftoppm is unavailable and falls through to t
     expect(pages[0]!.isRendered).toBe(false);
   });
 });
+
+// ── Case 3: sharp unavailable — text still extracted, isRendered false ────────
+
+it("extractPdfPages returns pages with text and isRendered:false when sharp throws on import", async () => {
+  await jest.isolateModulesAsync(async () => {
+    jest.mock("sharp", () => {
+      throw new Error("sharp: native module not available");
+    });
+
+    jest.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
+      GlobalWorkerOptions: { workerSrc: "" },
+      getDocument: jest.fn(() => ({
+        promise: Promise.resolve({
+          numPages: 2,
+          getPage: jest.fn(() =>
+            Promise.resolve({
+              getTextContent: jest.fn(() =>
+                Promise.resolve({
+                  items: [
+                    { str: "Part XYZ-999", transform: [1, 0, 0, 1, 72, 600] },
+                  ],
+                }),
+              ),
+              getOperatorList: jest.fn(() =>
+                Promise.resolve({ fnArray: [], argsArray: [] }),
+              ),
+              getStructTree: jest.fn(() => Promise.resolve(null)),
+              objs: { get: jest.fn() },
+              cleanup: jest.fn(),
+            }),
+          ),
+        }),
+      })),
+      OPS: { paintImageXObject: 82, paintInlineImageXObject: 83 },
+    }));
+
+    execFileMock.mockImplementation((...args: unknown[]) => {
+      const cb = args[args.length - 1] as (err: Error) => void;
+      cb(new Error("pdftoppm: command not found"));
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const { extractPdfPages } = await import("../src/utils/pdfProcessor");
+    const minimalPdf = Buffer.from("%PDF-1.4\n%%EOF");
+
+    const pages = await extractPdfPages(minimalPdf);
+
+    expect(Array.isArray(pages)).toBe(true);
+    expect(pages.length).toBe(2);
+
+    for (const page of pages) {
+      expect(page.isRendered).toBe(false);
+      expect(page.images).toEqual([]);
+      expect(typeof page.text).toBe("string");
+      expect(page.text.length).toBeGreaterThan(0);
+    }
+  });
+});
