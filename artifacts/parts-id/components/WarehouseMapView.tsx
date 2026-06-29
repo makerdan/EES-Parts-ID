@@ -1,7 +1,7 @@
 /**
  * WarehouseMapView — native pan/zoom warehouse floor plan with SVG zone overlays.
  *
- * SVG viewBox: 0 0 3592.55 2457.41
+ * SVG viewBox: 0 0 7329.6001 4997.2798
  * Zone overlays rendered as SVG <Rect> elements in viewBox coordinate space
  * so coordinate mapping is handled by the SVG viewport transform.
  *
@@ -1353,6 +1353,22 @@ export function WarehouseMapView({
   const svgHashRef = useRef(svgHash);
   useEffect(() => { svgHashRef.current = svgHash; }, [svgHash]);
 
+  // Normalized SVG string for native SvgXml rendering.
+  // If the uploaded SVG has a non-zero viewBox origin (viewBox="X Y W H" where
+  // X or Y ≠ 0), the SvgXml renderer would show a different coordinate origin
+  // than the zone overlay, causing zone rectangles to appear offset from the
+  // floor-plan drawing.  We rewrite the outer <svg> viewBox to "0 0 W H" so
+  // both layers share the same (0, 0) origin — matching how the ZoneEditor
+  // normalises coordinates when it strips the outer <svg> wrapper.
+  const normalizedSvgXml = useMemo(() => {
+    if (!svgXml || !contentVB) return svgXml;
+    if (contentVB.x === 0 && contentVB.y === 0) return svgXml;
+    return svgXml.replace(
+      /viewBox="[^"]*"/,
+      `viewBox="0 0 ${contentVB.w} ${contentVB.h}"`,
+    );
+  }, [svgXml, contentVB]);
+
   // ── Server floor-plan ETag wiring ────────────────────────────────────────
   // Poll /floor-plan/meta every 60 s while mounted.  When the server returns a
   // different hash than the one first seen after mount (i.e. an admin uploaded a
@@ -1976,7 +1992,7 @@ export function WarehouseMapView({
                     SvgXml multiplies dimensions by PixelRatio internally so
                     logical dimensions already produce full DPR quality. */}
                 {svgXml ? (
-                  <SvgXml xml={svgXml} width={svgRenderW} height={svgRenderH} />
+                  <SvgXml xml={normalizedSvgXml} width={svgRenderW} height={svgRenderH} />
                 ) : svgUri ? (
                   // Cold-start fallback — svgXml not yet available; use SvgUri
                   // which can render from the URI while the XML fetch completes.
@@ -2125,7 +2141,9 @@ export function WarehouseMapView({
               so alignment with the floor plan is always exact. */}
           <Svg
             style={StyleSheet.absoluteFill}
-            viewBox={`0 0 ${SVG_VIEWBOX_W} ${SVG_VIEWBOX_H}`}
+            viewBox={contentVB
+              ? `0 0 ${contentVB.w} ${contentVB.h}`
+              : `0 0 ${SVG_VIEWBOX_W} ${SVG_VIEWBOX_H}`}
             width={svgRenderW}
             height={svgRenderH}
           >
