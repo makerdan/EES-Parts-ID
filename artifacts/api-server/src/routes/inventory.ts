@@ -27,7 +27,7 @@ import {
   buildChipFilterRegexes,
 } from "../utils/searchHelpers";
 import { TAXONOMY, findNodeBySlug, collectKeywords, getAllTaxonomyKeywords } from "@workspace/db";
-import { generateKeywords } from "../utils/generateKeywords";
+import { generateKeywords, mergeWithPinned } from "../utils/generateKeywords";
 import { getAiClient, getEnrichModel, getDimensionsModel, getOpenAIFallbackClient, getOpenAIModelForFeature, getProvider } from "../lib/aiProvider";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/poeModelLimits";
 import { estimateImageBytes } from "../utils/aiHelpers";
@@ -583,7 +583,7 @@ router.post("/search", async (req, res) => {
     // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
     type RawRow = {
       id: number; vendor: string; catalog: string; description: string;
-      bin_locations: string[]; ai_keywords: string[]; barcodes: string[];
+      bin_locations: string[]; ai_keywords: string[]; pinned_keywords: string[]; barcodes: string[];
       enriched_at: Date | null; image_url: string | null; thumbnail_url: string | null; image_url_2: string | null; thumbnail_url_2: string | null;
       expanded_description: string | null;
       dimensions: { length?: number | null; width?: number | null; height?: number | null; diameter?: number | null } | null;
@@ -691,7 +691,7 @@ router.post("/search", async (req, res) => {
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
-              i.bin_locations, i.ai_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.expanded_description, i.dimensions, i.created_at, i.updated_at,
+              i.bin_locations, i.ai_keywords, i.pinned_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.expanded_description, i.dimensions, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 ${inventoryFtsVector('i')},
                 websearch_to_tsquery('english', ${tsQuery})
@@ -785,6 +785,7 @@ router.post("/search", async (req, res) => {
         imageConfidence: null,
         previousDescription: null,
         catalogPdfJobId: null,
+        pinnedKeywords: Array.isArray(row.pinned_keywords) ? row.pinned_keywords as string[] : [],
         dimensions: row.dimensions ?? null,
         createdAt: row.created_at instanceof Date ? row.created_at : new Date(0),
         updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(0),
@@ -1339,7 +1340,8 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
     await batchProcessWithSSE(
       itemsToEnrich,
       async (item) => {
-        const keywords = await generateKeywords(item);
+        const aiKeywords = await generateKeywords(item);
+        const keywords = mergeWithPinned(aiKeywords, item.pinnedKeywords ?? []);
 
         await db
           .update(inventoryTable)
@@ -1458,7 +1460,7 @@ async function runBulkEnrich(force = false) {
       break;
     }
 
-    let batch: { id: number; vendor: string; catalog: string; description: string | null }[];
+    let batch: { id: number; vendor: string; catalog: string; description: string | null; pinnedKeywords: string[] }[];
 
     if (force) {
       batch = await db
@@ -1467,6 +1469,7 @@ async function runBulkEnrich(force = false) {
           vendor: inventoryTable.vendor,
           catalog: inventoryTable.catalog,
           description: inventoryTable.description,
+          pinnedKeywords: inventoryTable.pinnedKeywords,
         })
         .from(inventoryTable)
         .where(sql`${inventoryTable.id} > ${cursorId}`)
@@ -1479,6 +1482,7 @@ async function runBulkEnrich(force = false) {
           vendor: inventoryTable.vendor,
           catalog: inventoryTable.catalog,
           description: inventoryTable.description,
+          pinnedKeywords: inventoryTable.pinnedKeywords,
         })
         .from(inventoryTable)
         .where(sql`${inventoryTable.enrichedAt} IS NULL`)
@@ -1495,9 +1499,10 @@ async function runBulkEnrich(force = false) {
         const r = results[j]!;
         const item = wave[j]!;
         if (r.status === "fulfilled") {
+          const merged = mergeWithPinned(r.value, item.pinnedKeywords ?? []);
           await db
             .update(inventoryTable)
-            .set({ aiKeywords: r.value, enrichedAt: new Date(), updatedAt: new Date() })
+            .set({ aiKeywords: merged, enrichedAt: new Date(), updatedAt: new Date() })
             .where(eq(inventoryTable.id, item.id));
           bulkEnrichJob.processed++;
         } else {
@@ -2003,11 +2008,12 @@ router.patch("/:id/enrich", requireAdminAuth, async (req, res) => {
 
     if (!item) return void res.status(404).json({ error: "Item not found" });
 
-    const keywords = await generateKeywords({
+    const aiKeywords = await generateKeywords({
       vendor: item.vendor ?? "",
       catalog: item.catalog ?? "",
       description: item.description ?? null,
     });
+    const keywords = mergeWithPinned(aiKeywords, item.pinnedKeywords ?? []);
 
     const [updated] = await db
       .update(inventoryTable)
@@ -2036,7 +2042,7 @@ router.patch("/:id/keywords", requireAdminAuth, async (req, res) => {
 
     const [updated] = await db
       .update(inventoryTable)
-      .set({ aiKeywords: keywords, updatedAt: new Date() })
+      .set({ aiKeywords: keywords, pinnedKeywords: keywords, updatedAt: new Date() })
       .where(eq(inventoryTable.id, id))
       .returning();
 

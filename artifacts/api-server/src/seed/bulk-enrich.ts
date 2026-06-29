@@ -17,7 +17,7 @@
 import { db, pool } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
-import { generateKeywords, type PoeEnrichedError } from "../utils/generateKeywords";
+import { generateKeywords, mergeWithPinned, type PoeEnrichedError } from "../utils/generateKeywords";
 import { poeErrorMessage } from "@workspace/integrations-poe-server";
 
 const BATCH_SIZE   = parseInt(process.env["ENRICH_BATCH_SIZE"]   ?? "10",  10);
@@ -49,6 +49,7 @@ async function enrichWithRetry(item: {
   vendor: string;
   catalog: string;
   description: string | null;
+  pinnedKeywords: string[];
 }): Promise<string[]> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -100,6 +101,7 @@ async function bulkEnrich() {
         vendor: inventoryTable.vendor,
         catalog: inventoryTable.catalog,
         description: inventoryTable.description,
+        pinnedKeywords: inventoryTable.pinnedKeywords,
       })
       .from(inventoryTable)
       .where(sql`${inventoryTable.enrichedAt} IS NULL`)
@@ -116,9 +118,10 @@ async function bulkEnrich() {
         const r = results[j]!;
         const item = wave[j]!;
         if (r.status === "fulfilled") {
+          const merged = mergeWithPinned(r.value, item.pinnedKeywords ?? []);
           await db
             .update(inventoryTable)
-            .set({ aiKeywords: r.value, enrichedAt: new Date(), updatedAt: new Date() })
+            .set({ aiKeywords: merged, enrichedAt: new Date(), updatedAt: new Date() })
             .where(eq(inventoryTable.id, item.id));
           processed++;
         } else {
