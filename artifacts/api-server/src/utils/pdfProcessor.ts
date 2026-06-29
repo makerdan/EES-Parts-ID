@@ -266,8 +266,9 @@ async function tryPdftoppmRendering(pdfBuffer: Buffer): Promise<PageData[] | nul
  */
 async function extractRichText(pdfBuffer: Buffer, numPages: number): Promise<string[]> {
   try {
+    stubMissingDomGlobals();
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    pdfjs.GlobalWorkerOptions.workerSrc = "";
+    if (pdfjs.GlobalWorkerOptions) pdfjs.GlobalWorkerOptions.workerSrc = "";
     const doc = await pdfjs.getDocument({
       data: new Uint8Array(pdfBuffer),
       useWorkerFetch: false,
@@ -316,9 +317,30 @@ async function extractRichText(pdfBuffer: Buffer, numPages: number): Promise<str
 
 // ── pdfjs-dist fallback (text + embedded images) ─────────────────────────────
 
+/**
+ * Stub minimal browser globals that pdfjs-dist/legacy reads at module-init time
+ * (inside its canvas.js __init). Without these stubs, importing pdfjs in a
+ * plain Node.js environment throws `ReferenceError: DOMMatrix is not defined`
+ * even when no canvas rendering is ever requested.  The stubs are no-ops — they
+ * are never called during pure text extraction.
+ */
+function stubMissingDomGlobals(): void {
+  const g = globalThis as Record<string, unknown>;
+  if (typeof g["DOMMatrix"] === "undefined") {
+    g["DOMMatrix"] = class DOMMatrix { constructor() { /* no-op */ } };
+  }
+  if (typeof g["ImageData"] === "undefined") {
+    g["ImageData"] = class ImageData { constructor() { /* no-op */ } };
+  }
+  if (typeof g["Path2D"] === "undefined") {
+    g["Path2D"] = class Path2D { constructor() { /* no-op */ } };
+  }
+}
+
 async function pdfJsFallback(pdfBuffer: Buffer): Promise<PageData[]> {
+  stubMissingDomGlobals();
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  pdfjs.GlobalWorkerOptions.workerSrc = "";
+  if (pdfjs.GlobalWorkerOptions) pdfjs.GlobalWorkerOptions.workerSrc = "";
 
   const doc = await pdfjs.getDocument({
     data: new Uint8Array(pdfBuffer),
