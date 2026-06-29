@@ -68,6 +68,36 @@ export interface PoeEnrichedError extends Error {
  * @param item   - The inventory item to generate keywords for.
  * @param model  - Ignored (kept for backwards-compat); the chain picks the bot.
  */
+/**
+ * Merges AI-generated keywords with a set of admin-pinned keywords.
+ *
+ * Pinned keywords are manually set via the PATCH /inventory/:id/keywords
+ * endpoint and must survive every future re-enrichment run.  This helper
+ * deduplicates the combined list (case-preserving, insertion-order stable)
+ * and always places pinned keywords first so they are not pushed out by the
+ * AI-generated slice when callers apply a maximum-length cap later.
+ *
+ * @param aiKeywords     - Keywords returned by the AI model (may contain junk).
+ * @param pinnedKeywords - Keywords the admin explicitly saved; never filtered.
+ */
+export function mergeWithPinned(
+  aiKeywords: string[],
+  pinnedKeywords: string[],
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const kw of [...pinnedKeywords, ...aiKeywords]) {
+    const normalised = kw.trim();
+    if (normalised.length === 0) continue;
+    const key = normalised.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(normalised);
+    }
+  }
+  return result;
+}
+
 export async function generateKeywords(
   item: EnrichItem,
   model: string = getEnrichModel(),

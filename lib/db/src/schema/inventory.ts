@@ -49,6 +49,16 @@ export const inventoryTable = pgTable(
       .array()
       .notNull()
       .default(sql`ARRAY[]::text[]`),
+    /**
+     * Keywords that an admin explicitly set via PATCH /inventory/:id/keywords.
+     * These are NEVER overwritten by enrichment jobs — they are always merged
+     * back into ai_keywords after any AI-generated keyword run.
+     * An empty array means no keywords have been pinned for this item.
+     */
+    pinnedKeywords: text("pinned_keywords")
+      .array()
+      .notNull()
+      .default(sql`ARRAY[]::text[]`),
     // NOT NULL DEFAULT '{}' is intentional — same contract as binLocations.
     // An empty array means "no barcodes assigned" (not unknown); simplifies
     // array-containment queries and avoids null checks throughout the API.

@@ -37,15 +37,36 @@ async function addCutlerHammerKeywords() {
     return;
   }
 
-  // Run the update
+  // Run the update: add "Cutler-Hammer" to ai_keywords AND pin it in
+  // pinned_keywords so that future re-enrichment jobs cannot remove it.
+  // array_append is used for ai_keywords (idempotent via the WHERE guard);
+  // for pinned_keywords we use array_append only when the keyword isn't
+  // already present, preserving any previously pinned terms.
   const result = await db.execute(sql`
     UPDATE inventory
-    SET ai_keywords = array_append(ai_keywords, 'Cutler-Hammer')
+    SET
+      ai_keywords     = array_append(ai_keywords, 'Cutler-Hammer'),
+      pinned_keywords = CASE
+        WHEN NOT ('Cutler-Hammer' = ANY(pinned_keywords))
+          THEN array_append(pinned_keywords, 'Cutler-Hammer')
+        ELSE pinned_keywords
+      END
     WHERE catalog LIKE 'BAB%'
       AND NOT ('Cutler-Hammer' = ANY(ai_keywords))
   `);
 
-  console.log(`Updated ${result.rowCount} rows.`);
+  // Also pin on rows that already have the keyword in ai_keywords but not yet
+  // in pinned_keywords (catches rows that existed before pinned_keywords was added).
+  const pinResult = await db.execute(sql`
+    UPDATE inventory
+    SET pinned_keywords = array_append(pinned_keywords, 'Cutler-Hammer')
+    WHERE catalog LIKE 'BAB%'
+      AND 'Cutler-Hammer' = ANY(ai_keywords)
+      AND NOT ('Cutler-Hammer' = ANY(pinned_keywords))
+  `);
+
+  console.log(`Updated ${result.rowCount} rows (added keyword).`);
+  console.log(`Pinned on ${(result.rowCount ?? 0) + (pinResult.rowCount ?? 0)} rows total.`);
 
   // Verify
   const afterRes = await pool.query<{ missing: string }>(`
@@ -60,7 +81,20 @@ async function addCutlerHammerKeywords() {
     process.exit(1);
   }
 
-  console.log('Verification passed — all BAB rows now contain "Cutler-Hammer".');
+  // Verify pinned_keywords too
+  const pinnedRes = await pool.query<{ not_pinned: string }>(`
+    SELECT COUNT(*) AS not_pinned
+    FROM inventory
+    WHERE catalog LIKE 'BAB%'
+      AND NOT ('Cutler-Hammer' = ANY(pinned_keywords))
+  `);
+  const notPinned = parseInt(pinnedRes.rows[0]?.not_pinned ?? "0", 10);
+  if (notPinned > 0) {
+    console.error(`ERROR: ${notPinned} BAB rows still missing "Cutler-Hammer" from pinned_keywords.`);
+    process.exit(1);
+  }
+
+  console.log('Verification passed — all BAB rows now contain "Cutler-Hammer" in both ai_keywords and pinned_keywords.');
 
   // Refresh planner stats so FTS index stays efficient
   console.log("Running ANALYZE inventory...");
