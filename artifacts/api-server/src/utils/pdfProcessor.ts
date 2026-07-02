@@ -397,7 +397,9 @@ async function pdfJsFallback(pdfBuffer: Buffer): Promise<PageData[]> {
       }
 
       text = buildPageContext(items, figures);
-    } catch { /* non-fatal */ }
+    } catch (err) {
+      logger.warn({ err, pageNum }, "pdfJsFallback: getTextContent failed for page — text will be empty");
+    }
 
     if (sharpFn) {
       try {

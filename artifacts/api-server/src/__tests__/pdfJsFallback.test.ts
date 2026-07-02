@@ -169,6 +169,55 @@ describe("pdfJsFallback — error propagation via extractPdfPages", () => {
       await expect(mod.extractPdfPages(Buffer.alloc(0))).resolves.toBeDefined();
     });
 
+    it("calls logger.warn with the page number and error when getTextContent fails", async () => {
+      let mod!: PdfProcessorModule;
+      let warnSpy!: jest.Mock;
+
+      jest.isolateModules(() => {
+        jest.doMock("pdfjs-dist/legacy/build/pdf.mjs", () => {
+          const makePage = (pageNum: number) => ({
+            getStructTree: () => Promise.resolve({}),
+            getTextContent: () => {
+              if (pageNum === 2) {
+                return Promise.reject(new Error("getTextContent failure on page 2"));
+              }
+              return Promise.resolve({ items: [] });
+            },
+            getOperatorList: () =>
+              Promise.resolve({ fnArray: [], argsArray: [] }),
+            objs: { get: () => { /* unused */ } },
+            cleanup: () => { /* no-op */ },
+          });
+
+          return {
+            GlobalWorkerOptions: { workerSrc: "" },
+            OPS: { paintImageXObject: 85, paintInlineImageXObject: 92 },
+            getDocument: () => ({
+              promise: Promise.resolve({
+                numPages: 3,
+                getPage: (n: number) => Promise.resolve(makePage(n)),
+              }),
+            }),
+          };
+        });
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        mod = require("../utils/pdfProcessor") as PdfProcessorModule;
+        // Capture the warn spy from within the isolated module registry so we
+        // get the same jest.fn() instance that pdfProcessor.ts will call.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        warnSpy = (require("../lib/logger") as { logger: { warn: jest.Mock } }).logger.warn;
+      });
+
+      warnSpy.mockClear();
+
+      await mod.extractPdfPages(Buffer.alloc(0));
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ pageNum: 2 }),
+        expect.stringContaining("getTextContent failed"),
+      );
+    });
+
     it("returns all 3 pages with page 2 having empty text and pages 1 and 3 retaining their text", async () => {
       let mod!: PdfProcessorModule;
 
