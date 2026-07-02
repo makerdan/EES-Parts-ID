@@ -356,6 +356,18 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     setErrorMsg(null);
     setFieldSaveErrors({});
 
+    const listKeyPrefix = getListInventoryQueryKey()[0];
+
+    // onMutate: snapshot current cache state BEFORE any ops are built so the
+    // snapshot reflects true pre-mutation data, even for TanStack mutations that
+    // apply synchronous optimistic updates in their own onMutate callbacks.
+    const inventorySnapshot = queryClient.getQueriesData<InventoryListResponse>(
+      { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+    );
+    const searchSnapshot = queryClient.getQueriesData<SearchInventoryResponse>(
+      { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+    );
+
     type SaveOp = {
       field: "description" | "bins" | "keywords" | "dimensions" | "photo" | "photo2";
       promise: Promise<unknown>;
@@ -553,11 +565,17 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     });
 
     if (anyFailed) {
+      // onError: restore cache snapshots to roll back any partial patches that
+      // individual mutations may have applied before one of them failed.
+      for (const [key, data] of inventorySnapshot) {
+        queryClient.setQueryData(key, data);
+      }
+      for (const [key, data] of searchSnapshot) {
+        queryClient.setQueryData(key, data);
+      }
       setFieldSaveErrors(newFieldErrors);
       setSaveStatus("error");
     } else {
-      const listKeyPrefix = getListInventoryQueryKey()[0];
-
       if (capturedImageUrl !== undefined || capturedImageUrl2 !== undefined) {
         const patchedImageUrl = capturedImageUrl;
         const patchedImageUrl2 = capturedImageUrl2;
@@ -602,8 +620,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
         );
       }
 
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       // Evict stale search result cache entries for this item from AsyncStorage
       // so the next query returns fresh data rather than serving old field values.
       try {
@@ -620,6 +636,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
       closeTimerRef.current = setTimeout(() => { closeTimerRef.current = null; onClose(); }, 500);
     }
+
+    // onSettled: always invalidate both affected query keys as a safety net,
+    // regardless of success or failure, so the server's state of truth is
+    // restored after any cache patches applied during this mutation.
+    await invalidateListCache({ queryClient });
+    await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
   };
 
   if (!item) return null;
