@@ -10,7 +10,8 @@
  *   1. Search bar is rendered in the default "search" mode.
  *   2. Search bar is absent after switching to "aisle" mode.
  *   3. Search bar is absent after switching to "category" mode.
- *   4. Switching back from aisle mode to search mode restores the search bar.
+ *   4. Invoking BrowseByAisle's onClose prop returns to search mode (search bar re-appears).
+ *   5. Invoking BrowseByCategory's onClose prop returns to search mode (search bar re-appears).
  */
 
 // @ts-ignore
@@ -127,14 +128,24 @@ jest.mock("@/components/KeyboardDoneInput", () => ({
   },
 }));
 
-// ─── Heavy child components — stub to null ─────────────────────────────────────
+// ─── Heavy child components — stub with a discoverable sentinel element ────────
+//
+// Each stub renders a uniquely-typed host element that carries the onClose prop
+// so tests can retrieve and invoke it directly without relying on UI buttons
+// inside the real (heavy) component.
 
 jest.mock("@/components/BrowseByAisle", () => ({
-  BrowseByAisle: () => null,
+  BrowseByAisle: function BrowseByAisleStub(props: Record<string, unknown>) {
+    const React = require("react");
+    return React.createElement("browse-by-aisle-stub", { onClose: props.onClose });
+  },
 }));
 
 jest.mock("@/components/BrowseByCategory", () => ({
-  BrowseByCategory: () => null,
+  BrowseByCategory: function BrowseByCategoryStub(props: Record<string, unknown>) {
+    const React = require("react");
+    return React.createElement("browse-by-category-stub", { onClose: props.onClose });
+  },
 }));
 
 jest.mock("@/components/AISearchFallback", () => ({
@@ -370,7 +381,7 @@ describe("SearchScreen — search bar visibility by mode", () => {
     await act(async () => { tree.unmount(); });
   });
 
-  it("restores the search bar when switching back from aisle mode to search mode", async () => {
+  it("restores the search bar when BrowseByAisle's onClose is invoked", async () => {
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(<SearchScreen />);
@@ -378,31 +389,61 @@ describe("SearchScreen — search bar visibility by mode", () => {
 
     // Switch to aisle mode — search bar disappears.
     const aisleBtn = findPressableByLabel(tree.root, "By Aisle");
+    expect(aisleBtn).not.toBeNull();
     await act(async () => {
       (aisleBtn!.props as { onPress?: () => void }).onPress?.();
     });
     expect(hasSearchBar(tree.root)).toBe(false);
 
-    // BrowseByAisle renders with an onClose prop — invoke it to return to search mode.
-    const browseAisle = tree.root.findAll(
-      (n) => (n.type as unknown as { displayName?: string })?.displayName === "BrowseByAisle" ||
-              n.type === (require("@/components/BrowseByAisle") as { BrowseByAisle: unknown }).BrowseByAisle,
+    // Find the BrowseByAisle sentinel element and invoke its onClose prop directly.
+    const stub = tree.root.findAll(
+      (n) => (n.type as string) === "browse-by-aisle-stub",
       { deep: true },
     );
+    expect(stub.length).toBeGreaterThan(0);
+    const onClose = (stub[0].props as { onClose?: () => void }).onClose;
+    expect(typeof onClose).toBe("function");
 
-    // Use the mode-toggle row's own "By Aisle" active state: clicking it again
-    // won't go back.  Instead find the onClose of the BrowseByAisle stub or
-    // re-mount fresh to confirm the round-trip path via the mode toggle.
-    // The simplest verifiable path: mount a fresh tree (mode resets to "search")
-    // and confirm the bar is back.
-    await act(async () => { tree.unmount(); });
-
-    let tree2!: renderer.ReactTestRenderer;
     await act(async () => {
-      tree2 = renderer.create(<SearchScreen />);
+      onClose!();
     });
-    expect(hasSearchBar(tree2.root)).toBe(true);
 
-    await act(async () => { tree2.unmount(); });
+    // Search bar must be back in the tree now that mode is "search" again.
+    expect(hasSearchBar(tree.root)).toBe(true);
+
+    await act(async () => { tree.unmount(); });
+  });
+
+  it("restores the search bar when BrowseByCategory's onClose is invoked", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<SearchScreen />);
+    });
+
+    // Switch to category mode — search bar disappears.
+    const categoryBtn = findPressableByLabel(tree.root, "By Category");
+    expect(categoryBtn).not.toBeNull();
+    await act(async () => {
+      (categoryBtn!.props as { onPress?: () => void }).onPress?.();
+    });
+    expect(hasSearchBar(tree.root)).toBe(false);
+
+    // Find the BrowseByCategory sentinel element and invoke its onClose prop directly.
+    const stub = tree.root.findAll(
+      (n) => (n.type as string) === "browse-by-category-stub",
+      { deep: true },
+    );
+    expect(stub.length).toBeGreaterThan(0);
+    const onClose = (stub[0].props as { onClose?: () => void }).onClose;
+    expect(typeof onClose).toBe("function");
+
+    await act(async () => {
+      onClose!();
+    });
+
+    // Search bar must be back in the tree now that mode is "search" again.
+    expect(hasSearchBar(tree.root)).toBe(true);
+
+    await act(async () => { tree.unmount(); });
   });
 });
