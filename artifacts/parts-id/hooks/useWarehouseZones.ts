@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 
 import { API_BASE } from "@/utils/apiBase";
-import { fetchWithAuth } from "@/utils/appAuth";
+import { fetchWithAuth, subscribeToTokenAvailable, unsubscribeFromTokenAvailable } from "@/utils/appAuth";
 import { retryAsync } from "@/utils/retryAsync";
 
 const ZONES_CACHE_KEY = "parts_id_warehouse_zones_v1";
@@ -110,6 +110,20 @@ export function useWarehouseZones() {
       }
     });
     return () => sub.remove();
+  }, [backgroundFetch]);
+
+  // Re-fetch once auth settles if the initial fetch fired before a token was
+  // available (cold-start race: token refresh in flight on first tab visit).
+  // Only triggers when a token transitions null → non-null and we still have
+  // no data, so it does not fire on routine background token refreshes.
+  useEffect(() => {
+    const handleTokenAvailable = () => {
+      if (!hasDataRef.current) {
+        backgroundFetch();
+      }
+    };
+    subscribeToTokenAvailable(handleTokenAvailable);
+    return () => unsubscribeFromTokenAvailable(handleTokenAvailable);
   }, [backgroundFetch]);
 
   const refetch = useCallback(() => {

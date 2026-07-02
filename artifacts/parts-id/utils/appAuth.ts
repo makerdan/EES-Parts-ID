@@ -7,18 +7,46 @@
  *
  * fetchWithAuth wraps the global fetch so every non-generated-client call site
  * gets automatic 401 → logout handling without duplicating that logic.
+ *
+ * Token-available subscriptions:
+ *   subscribeToTokenAvailable / unsubscribeFromTokenAvailable let hooks
+ *   (e.g. useWarehouseZones) retry a failed fetch once auth settles on cold
+ *   start. Subscribers are notified only when a token transitions from absent
+ *   to present, so they don't fire on every routine token refresh.
  */
 
 let _appToken: string | null = null;
 let _adminToken: string | null = null;
 let _onUnauthorized: (() => void) | null = null;
 
+const _tokenAvailableListeners = new Set<() => void>();
+
+/** Subscribe to the moment a token first becomes available (null → non-null). */
+export function subscribeToTokenAvailable(fn: () => void): void {
+  _tokenAvailableListeners.add(fn);
+}
+
+/** Remove a previously-registered token-available listener. */
+export function unsubscribeFromTokenAvailable(fn: () => void): void {
+  _tokenAvailableListeners.delete(fn);
+}
+
+function _notifyTokenAvailable(): void {
+  for (const fn of _tokenAvailableListeners) {
+    try { fn(); } catch { /* listeners must not crash the setter */ }
+  }
+}
+
 export function setAppToken(token: string | null): void {
+  const wasAbsent = _appToken === null && _adminToken === null;
   _appToken = token;
+  if (wasAbsent && token !== null) _notifyTokenAvailable();
 }
 
 export function setAdminToken(token: string | null): void {
+  const wasAbsent = _appToken === null && _adminToken === null;
   _adminToken = token;
+  if (wasAbsent && token !== null) _notifyTokenAvailable();
 }
 
 /**
