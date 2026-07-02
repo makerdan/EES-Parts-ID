@@ -1885,8 +1885,39 @@ router.post("/enrich-measurements", requireAdminAuth, (_req, res) => {
 });
 
 // ── GET /inventory/enrich-measurements/status ─────────────────────────────────
-router.get("/enrich-measurements/status", requireAdminAuth, (_req, res) => {
-  res.json(measureEnrichJob);
+// If the server has restarted since the last job ran, in-memory state is blank
+// (startedAt === null).  In that case fall back to the most-recently persisted
+// DB row so admins still see the correct outcome (including fatal errors).
+router.get("/enrich-measurements/status", requireAdminAuth, async (_req, res) => {
+  try {
+    if (measureEnrichJob.startedAt !== null) {
+      return void res.json(measureEnrichJob);
+    }
+
+    const [lastRow] = await db
+      .select()
+      .from(measureEnrichJobTable)
+      .orderBy(desc(measureEnrichJobTable.id))
+      .limit(1);
+
+    if (!lastRow) {
+      return void res.json(measureEnrichJob);
+    }
+
+    return void res.json({
+      running: false,
+      startedAt: lastRow.startedAt,
+      processed: lastRow.processed,
+      updated: lastRow.updated,
+      total: null,
+      finishedAt: lastRow.finishedAt ?? null,
+      lastError: lastRow.errorMessage ?? null,
+      dbJobId: lastRow.id,
+    });
+  } catch (err) {
+    logger.warn({ err }, "[measure-enrich] Failed to read DB status; returning in-memory state");
+    return void res.json(measureEnrichJob);
+  }
 });
 
 // ── GET /inventory/barcode/{code} ────────────────────────────────────────────
