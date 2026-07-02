@@ -31,16 +31,29 @@ function buildPattern(keywords: string[]): string | null {
 router.get("/categories", async (req, res) => {
   try {
     // ── Parse optional dimension filter params ────────────────────────────────
-    function parseDim(v: unknown): number | null {
-      const n = parseFloat(v as string);
-      return v != null && v !== "" && !isNaN(n) ? n : null;
+    // Returns null when the param is absent/empty, or throws a 400-class error
+    // object when a value is present but not a finite number so NaN never
+    // propagates into ORM queries.
+    const DIM_PARAMS = ["minWidth", "maxWidth", "minHeight", "maxHeight", "minDiameter", "maxDiameter"] as const;
+    const parsedDims: Record<string, number | null> = {};
+    for (const key of DIM_PARAMS) {
+      const v = req.query[key];
+      if (v == null || v === "") {
+        parsedDims[key] = null;
+        continue;
+      }
+      const n = Number(v);
+      if (!Number.isFinite(n)) {
+        return void res.status(400).json({ error: `Invalid dimension parameter: ${key}=${String(v)} must be a finite number` });
+      }
+      parsedDims[key] = n;
     }
-    const minWidth    = parseDim(req.query["minWidth"]);
-    const maxWidth    = parseDim(req.query["maxWidth"]);
-    const minHeight   = parseDim(req.query["minHeight"]);
-    const maxHeight   = parseDim(req.query["maxHeight"]);
-    const minDiameter = parseDim(req.query["minDiameter"]);
-    const maxDiameter = parseDim(req.query["maxDiameter"]);
+    const minWidth    = parsedDims["minWidth"]!;
+    const maxWidth    = parsedDims["maxWidth"]!;
+    const minHeight   = parsedDims["minHeight"]!;
+    const maxHeight   = parsedDims["maxHeight"]!;
+    const minDiameter = parsedDims["minDiameter"]!;
+    const maxDiameter = parsedDims["maxDiameter"]!;
 
     // Build WHERE conditions using the same expression pattern as the indexed
     // columns so Postgres can use expression indexes.

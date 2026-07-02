@@ -136,16 +136,17 @@ async function finalizeParentIfComplete(parentId: number): Promise<void> {
     await db.execute(sql`
       WITH child_agg AS (
         SELECT
-          COUNT(*)                                                          AS total,
-          SUM(CASE WHEN status NOT IN ('done','failed','cancelled') THEN 1 ELSE 0 END) AS still_running,
-          SUM(CASE WHEN status = 'failed'                           THEN 1 ELSE 0 END) AS failed_count,
-          COALESCE(SUM(processed_pages), 0)                                AS sum_pages,
-          COALESCE(SUM(parts_found),     0)                                AS sum_found,
-          COALESCE(SUM(matched_parts),   0)                                AS sum_matched,
-          COALESCE(SUM(images_matched),  0)                                AS sum_images,
+          COUNT(*)                                                                         AS total,
+          SUM(CASE WHEN status NOT IN ('done','done_with_errors','failed','cancelled') THEN 1 ELSE 0 END) AS still_running,
+          SUM(CASE WHEN status = 'failed'                                              THEN 1 ELSE 0 END) AS failed_count,
+          SUM(CASE WHEN status = 'done_with_errors'                                   THEN 1 ELSE 0 END) AS partial_count,
+          COALESCE(SUM(processed_pages), 0)                                              AS sum_pages,
+          COALESCE(SUM(parts_found),     0)                                              AS sum_found,
+          COALESCE(SUM(matched_parts),   0)                                              AS sum_matched,
+          COALESCE(SUM(images_matched),  0)                                              AS sum_images,
           (SELECT error_message FROM catalog_pdf_job
-            WHERE parent_job_id = ${parentId} AND status = 'failed'
-            LIMIT 1)                                                        AS first_error
+            WHERE parent_job_id = ${parentId} AND status IN ('failed', 'done_with_errors')
+            LIMIT 1)                                                                      AS first_error
         FROM catalog_pdf_job
         WHERE parent_job_id = ${parentId}
       ),
@@ -154,8 +155,10 @@ async function finalizeParentIfComplete(parentId: number): Promise<void> {
       )
       UPDATE catalog_pdf_job
       SET
-        status           = CASE WHEN ca.failed_count > 0 THEN 'failed' ELSE 'done' END,
-        error_message    = CASE WHEN ca.failed_count > 0 THEN ca.first_error ELSE NULL END,
+        status           = CASE WHEN ca.failed_count > 0 THEN 'failed'
+                                WHEN ca.partial_count > 0 THEN 'done_with_errors'
+                                ELSE 'done' END,
+        error_message    = CASE WHEN ca.failed_count > 0 OR ca.partial_count > 0 THEN ca.first_error ELSE NULL END,
         processed_pages  = ca.sum_pages,
         parts_found      = ca.sum_found,
         matched_parts    = ca.sum_matched,
@@ -165,7 +168,7 @@ async function finalizeParentIfComplete(parentId: number): Promise<void> {
       WHERE catalog_pdf_job.id = ${parentId}
         AND ca.still_running   = 0
         AND ca.total           = pi.chunk_count
-        AND catalog_pdf_job.status NOT IN ('done', 'failed')
+        AND catalog_pdf_job.status NOT IN ('done', 'done_with_errors', 'failed')
     `);
   } catch (err) {
     console.error(`[catalog-pdf] finalizeParentIfComplete failed for parent=${parentId}:`, err);
@@ -192,6 +195,7 @@ async function processPdfPages(
   let matchedParts = 0;
   let imagesMatched = 0;
   let wasCancelled = false;
+  let hadImageUploadFailure = false;
   const unmatchedPartsList: Array<{ catalogNumber: string; description: string }> = [];
 
   // Load existing counters for resume path
@@ -304,12 +308,28 @@ async function processPdfPages(
         const buf1 = await cropOrSelectImage(page, entry.imageRegion, entry.imageIndex);
         if (buf1) {
           try { imageUrl = await uploadCatalogImage(buf1, "image/png"); }
-          catch (err) { console.warn("[catalog-pdf] Image 1 upload failed:", err); }
+          catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            hadImageUploadFailure = true;
+            console.warn("[catalog-pdf] Image 1 upload failed:", err);
+            await db
+              .update(catalogPdfJobTable)
+              .set({ errorMessage: `image_upload_failed: ${msg}` })
+              .where(eq(catalogPdfJobTable.id, jobId));
+          }
         }
         const buf2 = await cropOrSelectImage(page, entry.imageRegion2, entry.imageIndex2);
         if (buf2) {
           try { imageUrl2 = await uploadCatalogImage(buf2, "image/png"); }
-          catch (err) { console.warn("[catalog-pdf] Image 2 upload failed:", err); }
+          catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            hadImageUploadFailure = true;
+            console.warn("[catalog-pdf] Image 2 upload failed:", err);
+            await db
+              .update(catalogPdfJobTable)
+              .set({ errorMessage: `image_upload_failed: ${msg}` })
+              .where(eq(catalogPdfJobTable.id, jobId));
+          }
         }
       }
 
@@ -362,10 +382,11 @@ async function processPdfPages(
     return;
   }
 
+  const finalStatus = hadImageUploadFailure ? "done_with_errors" : "done";
   await db
     .update(catalogPdfJobTable)
     .set({
-      status: "done",
+      status: finalStatus,
       processedPages,
       partsFound,
       matchedParts,
@@ -376,7 +397,7 @@ async function processPdfPages(
     .where(eq(catalogPdfJobTable.id, jobId));
 
   console.log(
-    `[catalog-pdf] job=${jobId} done — pages=${processedPages} found=${partsFound} matched=${matchedParts} images=${imagesMatched} unmatched=${unmatchedPartsList.length} (offset=${pageOffset})`,
+    `[catalog-pdf] job=${jobId} ${finalStatus} — pages=${processedPages} found=${partsFound} matched=${matchedParts} images=${imagesMatched} unmatched=${unmatchedPartsList.length} (offset=${pageOffset})`,
   );
 
   if (parentJobId !== null) {
@@ -831,7 +852,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
   });
 
   // Evict the log entry once the job is terminal and the client has the data.
-  if (row.status === "done" || row.status === "failed" || row.status === "cancelled") {
+  if (row.status === "done" || row.status === "done_with_errors" || row.status === "failed" || row.status === "cancelled") {
     aiRawLogStore.delete(Number(jobId));
   }
 });
@@ -856,7 +877,7 @@ router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
       })
       .from(catalogPdfJobTable)
       .where(and(
-        inArray(catalogPdfJobTable.status, ["failed", "cancelled"]),
+        inArray(catalogPdfJobTable.status, ["failed", "done_with_errors", "cancelled"]),
         eq(catalogPdfJobTable.dismissed, false),
         isNull(catalogPdfJobTable.parentJobId),
       ))

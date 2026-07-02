@@ -9,6 +9,7 @@ import {
   synonymMapTable,
   misspellingMapTable,
   electricalSlangMapTable,
+  measureEnrichJobTable,
 } from "@workspace/db";
 import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
 import Fuse from "fuse.js";
@@ -1744,6 +1745,7 @@ interface MeasureEnrichJob {
   total: number | null;
   finishedAt: Date | null;
   lastError: string | null;
+  dbJobId: number | null;
 }
 
 const measureEnrichJob: MeasureEnrichJob = {
@@ -1754,6 +1756,7 @@ const measureEnrichJob: MeasureEnrichJob = {
   total: null,
   finishedAt: null,
   lastError: null,
+  dbJobId: null,
 };
 
 const MEASURE_ENRICH_BATCH = 200;
@@ -1766,6 +1769,17 @@ const MEASURE_ENRICH_DELAY_MS = 50;
  * are skipped so the job can be re-run safely without overwriting data.
  */
 async function runMeasureEnrich(): Promise<void> {
+  // Persist job start to DB so failure state survives a server restart.
+  try {
+    const [dbRow] = await db
+      .insert(measureEnrichJobTable)
+      .values({ status: "running", startedAt: new Date() })
+      .returning({ id: measureEnrichJobTable.id });
+    measureEnrichJob.dbJobId = dbRow?.id ?? null;
+  } catch (dbErr) {
+    logger.warn({ err: dbErr }, "[measure-enrich] Failed to create DB job row; state will be in-memory only");
+  }
+
   const [countRow] = await db
     .select({ total: sql<number>`count(*)::int` })
     .from(inventoryTable);
@@ -1825,6 +1839,12 @@ async function runMeasureEnrich(): Promise<void> {
   console.log(
     `[measure-enrich] Done – processed=${measureEnrichJob.processed} updated=${measureEnrichJob.updated}`,
   );
+  if (measureEnrichJob.dbJobId !== null) {
+    db.update(measureEnrichJobTable)
+      .set({ status: "done", finishedAt: new Date(), processed: measureEnrichJob.processed, updated: measureEnrichJob.updated })
+      .where(eq(measureEnrichJobTable.id, measureEnrichJob.dbJobId))
+      .catch(err => logger.warn({ err }, "[measure-enrich] Failed to update DB job row on success"));
+  }
   if (measureEnrichJob.updated > 0) {
     invalidateReferenceAnswerCache().catch(() => {});
   }
@@ -1846,12 +1866,19 @@ router.post("/enrich-measurements", requireAdminAuth, (_req, res) => {
   measureEnrichJob.total      = null;
   measureEnrichJob.finishedAt = null;
   measureEnrichJob.lastError  = null;
+  measureEnrichJob.dbJobId    = null;
 
   runMeasureEnrich().catch(err => {
     measureEnrichJob.running    = false;
     measureEnrichJob.finishedAt = new Date();
     measureEnrichJob.lastError  = String(err);
-    console.error("[measure-enrich] Fatal error:", err);
+    logger.error({ err, processed: measureEnrichJob.processed, updated: measureEnrichJob.updated }, "[measure-enrich] Fatal error");
+    if (measureEnrichJob.dbJobId !== null) {
+      db.update(measureEnrichJobTable)
+        .set({ status: "failed", finishedAt: new Date(), errorMessage: String(err), processed: measureEnrichJob.processed, updated: measureEnrichJob.updated })
+        .where(eq(measureEnrichJobTable.id, measureEnrichJob.dbJobId))
+        .catch(dbErr => logger.warn({ err: dbErr }, "[measure-enrich] Failed to persist failure to DB"));
+    }
   });
 
   res.status(202).json({ message: "Measurement enrichment started", job: measureEnrichJob });
