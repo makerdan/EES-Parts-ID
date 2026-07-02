@@ -57,9 +57,11 @@ jest.mock("../utils/storageErrorReporter", () => ({
 }));
 
 jest.mock("../utils/appAuth", () => ({
-  setAdminToken:    jest.fn(),
-  setAppToken:      jest.fn(),
-  setOnUnauthorized: jest.fn(),
+  setAdminToken:       jest.fn(),
+  setAppToken:         jest.fn(),
+  setAppTokenGetter:   jest.fn(),
+  setOnUnauthorized:   jest.fn(),
+  notifyTokenAvailable: jest.fn(),
 }));
 
 jest.mock("@/constants/colors", () => ({
@@ -161,21 +163,23 @@ type TokenHandles = {
 };
 
 /**
- * Render AppProvider in an isolated module registry with configurable
- * SecureStore token values, returning the setAuthTokenGetter spy so callers
- * can assert on it after optional async flushing.
+ * Render AppProvider in an isolated module registry with configurable token
+ * values, returning the setAuthTokenGetter spy so callers can assert on it
+ * after optional async flushing.
  *
- * Both sessionToken and adminToken default to null so tests that don't care
- * about stored tokens start clean.
+ * - adminToken  — stored in SecureStore (parts_id_admin_token); loaded on boot
+ * - clerkToken  — returned by the Clerk useAuth().getToken() mock
+ * All default to null so tests that don't care about stored tokens start clean.
  */
 function renderWithTokenGetterCapture(opts: {
-  sessionToken?: string | null;
+  sessionToken?: string | null;  // kept for compat; no longer used by AppContext
   adminToken?: string | null;
+  clerkToken?: string | null;
   apiOrigin?: string;
 } = {}): TokenHandles {
   const {
-    sessionToken = null,
     adminToken = null,
+    clerkToken = null,
     apiOrigin = "http://localhost:8080",
   } = opts;
 
@@ -186,16 +190,36 @@ function renderWithTokenGetterCapture(opts: {
     const mockSetAuthTokenGetter = jest.fn();
     setAuthTokenGetterSpy = mockSetAuthTokenGetter;
 
-    // Override SecureStore so the boot effect reads the desired token values.
+    // Override SecureStore so the boot effect reads the desired admin token.
     jest.doMock("expo-secure-store", () => ({
       getItemAsync: jest.fn((key: string) => {
-        if (key === "parts_id_session")      return Promise.resolve(sessionToken);
         if (key === "parts_id_admin_token")  return Promise.resolve(adminToken);
         return Promise.resolve(null);
       }),
       setItemAsync:    jest.fn(() => Promise.resolve()),
       deleteItemAsync: jest.fn(() => Promise.resolve()),
     }));
+
+    // Override @clerk/expo so useAuth().getToken() returns the desired Clerk token.
+    jest.doMock("@clerk/expo", () => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const React = require("react");
+      return {
+        useAuth: jest.fn(() => ({
+          isSignedIn: clerkToken !== null,
+          userId: clerkToken !== null ? "mock-user-id" : null,
+          getToken: jest.fn(() => Promise.resolve(clerkToken)),
+          isLoaded: true,
+        })),
+        useClerk: jest.fn(() => ({
+          signOut: jest.fn(() => Promise.resolve()),
+        })),
+        ClerkProvider: ({ children }: { children: React.ReactNode }) =>
+          React.createElement(React.Fragment, null, children),
+        ClerkLoaded: ({ children }: { children: React.ReactNode }) =>
+          React.createElement(React.Fragment, null, children),
+      };
+    });
 
     jest.doMock("@workspace/api-client-react", () => ({
       setBaseUrl:             jest.fn(),
@@ -250,37 +274,36 @@ describe("AppProvider — setAuthTokenGetter initialisation", () => {
     expect(typeof setAuthTokenGetterSpy.mock.calls[0][0]).toBe("function");
   });
 
-  it("getter returns null when no tokens are stored (both refs start null)", () => {
+  it("getter resolves to null when no tokens are stored", async () => {
     const { setAuthTokenGetterSpy } = renderWithTokenGetterCapture({
-      sessionToken: null,
       adminToken: null,
+      clerkToken: null,
     });
-    const getter = setAuthTokenGetterSpy.mock.calls[0][0] as () => string | null;
-    expect(getter()).toBeNull();
+    const getter = setAuthTokenGetterSpy.mock.calls[0][0] as () => Promise<string | null>;
+    expect(await getter()).toBeNull();
   });
 
-  it("getter returns appToken when only a session token is stored", async () => {
+  it("getter resolves to Clerk token when only a Clerk token is available", async () => {
     const { setAuthTokenGetterSpy } = renderWithTokenGetterCapture({
-      sessionToken: "app-tok-abc123",
       adminToken: null,
+      clerkToken: "app-tok-abc123",
     });
-    // appTokenRef.current is set directly inside the boot Promise callback;
-    // flushing async work lets that callback complete.
+    // Flush async work so the boot effect and Clerk hook settle.
     await flushAsync();
-    const getter = setAuthTokenGetterSpy.mock.calls[0][0] as () => string | null;
-    expect(getter()).toBe("app-tok-abc123");
+    const getter = setAuthTokenGetterSpy.mock.calls[0][0] as () => Promise<string | null>;
+    expect(await getter()).toBe("app-tok-abc123");
   });
 
-  it("getter returns adminToken (not appToken) when both tokens are stored", async () => {
+  it("getter resolves to adminToken (not Clerk token) when both tokens are stored", async () => {
     const { setAuthTokenGetterSpy } = renderWithTokenGetterCapture({
-      sessionToken: "app-tok-xyz",
+      clerkToken: "app-tok-xyz",
       adminToken: "admin-tok-xyz",
     });
     // adminTokenRef.current is synced via a state-update effect after
     // setAdminToken() is called; flushing lets the full boot cycle complete.
     await flushAsync();
-    const getter = setAuthTokenGetterSpy.mock.calls[0][0] as () => string | null;
-    expect(getter()).toBe("admin-tok-xyz");
+    const getter = setAuthTokenGetterSpy.mock.calls[0][0] as () => Promise<string | null>;
+    expect(await getter()).toBe("admin-tok-xyz");
   });
 
   it("calls setAuthTokenGetter(null) on unmount (cleanup path)", () => {

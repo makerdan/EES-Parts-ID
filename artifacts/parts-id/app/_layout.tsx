@@ -1,3 +1,5 @@
+import { ClerkLoaded, ClerkProvider, useAuth } from "@clerk/expo";
+import { tokenCache } from "@clerk/expo/token-cache";
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -22,11 +24,6 @@ import { AppProvider, useApp } from "@/contexts/AppContext";
 
 SplashScreen.preventAutoHideAsync();
 
-// On web: inject the Feather @font-face rule directly into expo-font's own
-// style element (id="expo-generated-fonts") before React boots.
-// expo-font's Font.isLoaded() only checks that element, and its own
-// _createWebFontTemplate omits format("truetype"), which makes browsers
-// reject the font. We bypass it entirely and inject with the correct hint.
 if (Platform.OS === "web" && typeof document !== "undefined") {
   const EXPO_STYLE_ID = "expo-generated-fonts";
   let styleEl = document.getElementById(EXPO_STYLE_ID) as HTMLStyleElement | null;
@@ -52,20 +49,41 @@ const queryClient = new QueryClient({
   },
 });
 
+const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
+const proxyUrl = process.env.EXPO_PUBLIC_CLERK_PROXY_URL || undefined;
+
 function AuthGate() {
-  const { isAuthenticated, isLoading } = useApp();
+  const { isSignedIn, isLoaded: clerkLoaded } = useAuth();
+  const { approvalStatus } = useApp();
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
-    if (isLoading) return;
-    const inTabsGroup = segments[0] === "(tabs)";
-    if (!isAuthenticated && inTabsGroup) {
-      router.replace("/login");
-    } else if (isAuthenticated && segments[0] === "login") {
-      router.replace("/(tabs)");
+    if (!clerkLoaded) return;
+
+    const seg0 = segments[0] as string | undefined;
+    const inTabs = seg0 === "(tabs)";
+    const atLogin = seg0 === "login";
+    const atSignUp = seg0 === "sign-up";
+    const atPending = seg0 === "pending";
+    const atBanned = seg0 === "banned";
+
+    if (!isSignedIn) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (!atLogin && !atSignUp) router.replace("/login" as any);
+    } else {
+      if (approvalStatus === "loading" || approvalStatus === "idle") return;
+      if (approvalStatus === "pending" && !atPending) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        router.replace("/pending" as any);
+      } else if (approvalStatus === "banned" && !atBanned) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        router.replace("/banned" as any);
+      } else if (approvalStatus === "approved" && !inTabs) {
+        router.replace("/(tabs)");
+      }
     }
-  }, [isAuthenticated, isLoading, segments, router]);
+  }, [isSignedIn, clerkLoaded, approvalStatus, segments, router]);
 
   return null;
 }
@@ -76,7 +94,6 @@ export default function RootLayout() {
     Inter_500Medium,
     Inter_600SemiBold,
     Inter_700Bold,
-    // Native only — on web the font is pre-injected above via CSS.
     ...(Platform.OS !== "web" ? { feather: require("../assets/fonts/Feather.ttf") } : {}),
   });
 
@@ -94,27 +111,34 @@ export default function RootLayout() {
   if (!fontsLoaded && !fontError) return null;
 
   return (
-    <SafeAreaProvider>
-      <ErrorBoundary>
-        <QueryClientProvider client={queryClient}>
-          <GestureHandlerRootView style={{ flex: 1 }}>
-            <AppProvider>
-              <DismissKeyboard>
-                <Stack screenOptions={{ headerShown: false }}>
-                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                  <Stack.Screen name="login" options={{ headerShown: false }} />
-                  <Stack.Screen name="catalog-review" options={{ headerShown: false }} />
-                  <Stack.Screen name="edit-item" options={{ headerShown: false }} />
-                  <Stack.Screen name="ai-log" options={{ headerShown: false }} />
-                  <Stack.Screen name="admin-inbox" options={{ headerShown: false }} />
-                  <Stack.Screen name="admin" options={{ headerShown: false }} />
-                </Stack>
-                <AuthGate />
-              </DismissKeyboard>
-            </AppProvider>
-          </GestureHandlerRootView>
-        </QueryClientProvider>
-      </ErrorBoundary>
-    </SafeAreaProvider>
+    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache} proxyUrl={proxyUrl}>
+      <ClerkLoaded>
+        <SafeAreaProvider>
+          <ErrorBoundary>
+            <QueryClientProvider client={queryClient}>
+              <GestureHandlerRootView style={{ flex: 1 }}>
+                <AppProvider>
+                  <DismissKeyboard>
+                    <Stack screenOptions={{ headerShown: false }}>
+                      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                      <Stack.Screen name="login" options={{ headerShown: false }} />
+                      <Stack.Screen name="sign-up" options={{ headerShown: false }} />
+                      <Stack.Screen name="pending" options={{ headerShown: false }} />
+                      <Stack.Screen name="banned" options={{ headerShown: false }} />
+                      <Stack.Screen name="catalog-review" options={{ headerShown: false }} />
+                      <Stack.Screen name="edit-item" options={{ headerShown: false }} />
+                      <Stack.Screen name="ai-log" options={{ headerShown: false }} />
+                      <Stack.Screen name="admin-inbox" options={{ headerShown: false }} />
+                      <Stack.Screen name="admin" options={{ headerShown: false }} />
+                    </Stack>
+                    <AuthGate />
+                  </DismissKeyboard>
+                </AppProvider>
+              </GestureHandlerRootView>
+            </QueryClientProvider>
+          </ErrorBoundary>
+        </SafeAreaProvider>
+      </ClerkLoaded>
+    </ClerkProvider>
   );
 }

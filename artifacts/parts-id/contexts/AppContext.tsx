@@ -1,3 +1,4 @@
+import { useAuth, useClerk } from "@clerk/expo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { setAuthTokenGetter, setBaseUrl, setUnauthorizedHandler } from "@workspace/api-client-react";
 import * as SecureStore from "expo-secure-store";
@@ -15,8 +16,9 @@ import colorTokens from "@/constants/colors";
 import type { ResumeProgress } from "@/types/catalogPdf";
 import { API_BASE, API_ORIGIN } from "@/utils/apiBase";
 import {
+  notifyTokenAvailable,
   setAdminToken as setAdminTokenModule,
-  setAppToken as setAppTokenModule,
+  setAppTokenGetter,
   setOnUnauthorized,
 } from "@/utils/appAuth";
 import { type LogoutHandler,LogoutRegistry } from "@/utils/logoutRegistry";
@@ -24,7 +26,6 @@ import {
   ADMIN_TOKEN_KEY,
   clearSessionStorage,
   SEARCH_CACHE_KEYS,
-  SESSION_KEY,
 } from "@/utils/sessionStorage";
 import {
   reportStorageError,
@@ -36,6 +37,7 @@ export const SETTINGS_KEY = "parts_id_settings_v1";
 export type TextSize = "small" | "normal" | "large";
 export type ThemeMode = "light" | "dark" | "system";
 export type DimensionUnit = "mm" | "cm" | "in";
+export type ApprovalStatus = "idle" | "loading" | "pending" | "approved" | "banned";
 
 export type PinnedPart = {
   binCode: string;
@@ -98,8 +100,6 @@ export async function loadSettings(): Promise<AppSettings> {
   try {
     const raw = await AsyncStorage.getItem(SETTINGS_KEY);
     if (!raw) {
-      // First launch — write defaults immediately so every downstream consumer
-      // (context, conversion helpers, unit picker) always reads a persisted value.
       await saveSettings(DEFAULT_SETTINGS);
       return DEFAULT_SETTINGS;
     }
@@ -132,14 +132,12 @@ export async function saveSettings(s: AppSettings): Promise<void> {
  * Propagates the stored theme preference to React Native's Appearance API so
  * that ALL native components — including NativeTabs / Liquid Glass tabs on iOS
  * — immediately reflect the manually chosen Light / Dark mode.
- *
- * Passing `null` resets to the system preference ("system" option).
  */
 function applyThemeMode(mode: ThemeMode) {
   try {
     Appearance.setColorScheme(mode === "system" ? null : mode);
   } catch {
-    // `setColorScheme` is a no-op on platforms that don't support it (old RN, some web runtimes).
+    // `setColorScheme` is a no-op on platforms that don't support it.
   }
 }
 
@@ -151,11 +149,6 @@ type AdminProfilePayload = {
   scanSound?: boolean;
 };
 
-/**
- * Merge a server profile payload into existing local settings, validating each
- * field before applying it. Returns the same object reference if nothing changed
- * so callers can use reference equality to skip unnecessary saves.
- */
 function mergeProfileIntoSettings(prev: AppSettings, profile: AdminProfilePayload): AppSettings {
   let next = prev;
 
@@ -244,9 +237,9 @@ export type MapFocus = {
 
 interface AppContextValue {
   isAuthenticated: boolean;
+  approvalStatus: ApprovalStatus;
   isAdmin: boolean;
   adminToken: string | null;
-  login: (password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   loginAdmin: (password: string) => Promise<{ success: boolean; error?: string }>;
   logoutAdmin: () => Promise<void>;
@@ -314,9 +307,17 @@ async function secureDelete(key: string): Promise<void> {
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // ── Clerk auth state ─────────────────────────────────────────────────────
+  const { isSignedIn, getToken, userId, isLoaded: clerkLoaded } = useAuth();
+  const { signOut } = useClerk();
+
+  // ── Local state ───────────────────────────────────────────────────────────
+  const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>("idle");
+  const isAuthenticated = approvalStatus === "approved";
+
   const [adminToken, setAdminToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const isLoading = !clerkLoaded || !settingsLoaded;
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [toastState, setToastState] = useState<{ message: string; type: ToastVariant } | null>(null);
   const [pendingMapFocus, setPendingMapFocus] = useState<MapFocus | null>(null);
@@ -326,54 +327,93 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [pendingLidarDims, setPendingLidarDims] = useState<LidarDims | null>(null);
   const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Guard: if the generated API client module failed to load (e.g. codegen has
-  // not run yet and Metro resolved a stub), setBaseUrl/setAuthTokenGetter will
-  // be undefined at runtime.  Detect this early so we can show a clear recovery
-  // UI instead of silently crashing individual query hooks.
   const [apiInitError, setApiInitError] = useState(false);
 
-  // Keep adminToken accessible to the generated API client (which calls a
-  // module-level getter on every request). Without this, admin-protected
-  // mutations like useUpdateItemBins would send no Authorization header
-  // and 401, even when the user is logged in as admin.
   const adminTokenRef = useRef<string | null>(null);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
-  // Sync admin token to module-level store so non-React hooks (manual fetch
-  // calls that use getAuthHeaders()) always send the current token.
   useEffect(() => { setAdminTokenModule(adminToken); }, [adminToken]);
 
-  // App-session token returned by POST /auth/app-login. Stored in SecureStore
-  // under SESSION_KEY and restored on boot.
-  const appTokenRef = useRef<string | null>(null);
+  // Keep a stable ref to getToken so we don't recreate the auth getter on every render.
+  const getTokenRef = useRef(getToken);
+  useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
+
+  // ── API client initialization ─────────────────────────────────────────────
   useEffect(() => {
     try {
-      // If setBaseUrl or setAuthTokenGetter are not functions the generated API
-      // client module did not load (codegen hasn't run or Metro resolved a stub).
-      // Fail fast so the user sees a clear recovery message instead of silent 404s.
       if (typeof setBaseUrl !== "function" || typeof setAuthTokenGetter !== "function") {
         setApiInitError(true);
         return;
       }
-      // Configure the base URL once on mount so all generated hooks point at
-      // the correct API origin without requiring each call site to repeat it.
-      // API_ORIGIN is the bare origin (no /api suffix) because the generated
-      // client paths already start with /api/…; including it here would double
-      // the prefix. Empty string means "use relative URLs" (web dev).
       if (API_ORIGIN) setBaseUrl(API_ORIGIN);
-      // Use admin token when present; fall back to app-session token so regular
-      // (non-admin) users' generated-client calls still pass requireAppAuth.
-      setAuthTokenGetter(() => adminTokenRef.current ?? appTokenRef.current);
+
+      // Admin token takes precedence over Clerk session token.
+      const tokenGetter = async () => {
+        const adminTok = adminTokenRef.current;
+        if (adminTok) return adminTok;
+        return getTokenRef.current();
+      };
+
+      // Wire into both the generated API client and fetchWithAuth (manual fetches).
+      setAuthTokenGetter(tokenGetter);
+      setAppTokenGetter(() => getTokenRef.current());
     } catch {
-      // API client module threw during initialisation — still show the error UI.
       setApiInitError(true);
     }
     return () => {
       try { setAuthTokenGetter(null); } catch {}
+      setAppTokenGetter(null);
     };
   }, []);
 
-  // Registry of in-memory reset handlers fired on logout (e.g. SearchScreen
-  // clears its filters/results so a new login doesn't see the prior session).
+  // ── Approval status check ─────────────────────────────────────────────────
+  // After Clerk confirms sign-in, call the API to verify the user is approved.
+  useEffect(() => {
+    if (!clerkLoaded) return;
+
+    if (!isSignedIn) {
+      setApprovalStatus("idle");
+      return;
+    }
+
+    const controller = new AbortController();
+    setApprovalStatus("loading");
+
+    (async () => {
+      try {
+        const token = await getToken();
+        if (controller.signal.aborted) return;
+        if (!token) {
+          setApprovalStatus("pending");
+          return;
+        }
+
+        const resp = await fetch(`${API_BASE}/auth/status`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+
+        if (controller.signal.aborted) return;
+
+        if (resp.ok) {
+          setApprovalStatus("approved");
+          notifyTokenAvailable();
+        } else if (resp.status === 403) {
+          const body = await resp.json() as { code?: string };
+          setApprovalStatus(body.code === "banned" ? "banned" : "pending");
+        } else {
+          // On network error or other failure, default to pending (safe).
+          setApprovalStatus("pending");
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+        setApprovalStatus("pending");
+      }
+    })();
+
+    return () => { controller.abort(); };
+  }, [isSignedIn, userId, clerkLoaded, getToken]);
+
+  // ── Registry of in-memory logout handlers ─────────────────────────────────
   const logoutRegistryRef = useRef(new LogoutRegistry());
   const registerLogoutHandler = useCallback((handler: LogoutHandler) => {
     return logoutRegistryRef.current.register(handler);
@@ -388,32 +428,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }, 4000);
   }, []);
 
-  // When any protected request returns 401, force the session to end locally
-  // and surface a re-login prompt. Covers both the generated API client
-  // (setUnauthorizedHandler) and manual fetchWithAuth call sites (setOnUnauthorized).
-  // If an admin token is active the admin session expired; clear only the admin
-  // overlay and let the app-session token continue. Otherwise the app-session
-  // token itself expired; force a full re-login.
+  // ── 401 handler ──────────────────────────────────────────────────────────
   useEffect(() => {
     const handle401 = () => {
       if (adminTokenRef.current !== null) {
         secureDelete(ADMIN_TOKEN_KEY).catch(err => {
-          // eslint-disable-next-line no-console
           console.warn("[AppContext] Failed to delete admin token from secure storage:", err);
           reportStorageError("Could not clear admin session token", err);
         });
         setAdminToken(null);
         showToast("Admin session expired. Please log in again.", "error");
       } else {
-        secureDelete(SESSION_KEY).catch(err => {
-          // eslint-disable-next-line no-console
-          console.warn("[AppContext] Failed to delete app token from secure storage:", err);
-          reportStorageError("Could not clear app session token", err);
-        });
-        appTokenRef.current = null;
-        setAppTokenModule(null);
-        setIsAuthenticated(false);
-        showToast("Session expired. Please enter the app password again.", "error");
+        // Clerk session expired — sign out and re-check
+        signOut().catch(() => {});
+        setApprovalStatus("idle");
+        showToast("Session expired. Please sign in again.", "error");
       }
     };
 
@@ -428,14 +457,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try { setUnauthorizedHandler(null); } catch {}
       setOnUnauthorized(null);
     };
-  }, [showToast]);
+  }, [showToast, signOut]);
 
-  // Wire the storage-error reporter to the toast surface so silent write
-  // failures (full disk, locked keychain, web localStorage quota) become
-  // visible to the user instead of being swallowed.
+  // ── Storage error reporter ───────────────────────────────────────────────
   useEffect(() => {
     setStorageErrorHandler((label, err) => {
-      // eslint-disable-next-line no-console
       console.warn(`[storage] ${label}:`, err);
       showToast(label, "error");
     });
@@ -448,27 +474,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // ── Boot: restore admin token and settings from storage ──────────────────
   useEffect(() => {
     Promise.all([
-      secureGet(SESSION_KEY),
       secureGet(ADMIN_TOKEN_KEY),
       loadSettings(),
-    ]).then(([session, token, s]) => {
-      // SESSION_KEY now stores the signed app-session token. The legacy value
-      // "authenticated" (stored by the old client-side check) is treated as
-      // invalid and will require a fresh server-validated login.
-      if (session && session !== "authenticated") {
-        appTokenRef.current = session;
-        setAppTokenModule(session);
-        setIsAuthenticated(true);
-      }
+    ]).then(([token, s]) => {
       if (token) setAdminToken(token);
       setSettings(s);
       applyThemeMode(s.themeMode);
-      setIsLoading(false);
+      setSettingsLoaded(true);
 
-      // Background: if already logged in as admin, pull server profile and
-      // apply all portable settings so the admin's preferences follow them across devices.
+      // Background: if already logged in as admin, pull server profile.
       if (token) {
         fetchAdminProfile(token).then(profile => {
           if (!profile) return;
@@ -480,13 +497,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             return merged;
           });
         }).catch(err => {
-          // eslint-disable-next-line no-console
           console.warn("[AppContext] Background admin profile sync failed:", err);
         });
       }
     }).catch(() => {
-      // SecureStore failure (e.g. keychain unavailable) — start in clean logged-out state
-      setIsLoading(false);
+      setSettingsLoaded(true);
     });
   }, []);
 
@@ -532,35 +547,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const textFontScale =
     settings.textSize === "small" ? 0.85 : settings.textSize === "large" ? 1.18 : 1.0;
 
-  const login = useCallback(async (password: string) => {
-    try {
-      const resp = await fetch(`${API_BASE}/auth/app-login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
-      });
-      const body = await resp.json() as { token?: string; error?: string };
-
-      if (!resp.ok) {
-        if (resp.status === 503) {
-          return { success: false, error: body.error ?? "App password not configured on the server" };
-        }
-        return { success: false, error: body.error ?? "Incorrect password" };
-      }
-
-      if (!body.token) {
-        return { success: false, error: "Server did not return a token" };
-      }
-
-      await secureSet(SESSION_KEY, body.token);
-      appTokenRef.current = body.token;
-      setAppTokenModule(body.token);
-      setIsAuthenticated(true);
-      return { success: true };
-    } catch {
-      return { success: false, error: "Could not reach the server. Check your connection." };
-    }
-  }, []);
+  // ── Auth actions ──────────────────────────────────────────────────────────
 
   const logout = useCallback(async () => {
     try {
@@ -568,13 +555,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       reportStorageError("Could not clear session storage on logout", err);
     }
-    // Fire in-memory reset handlers so screens drop the prior session's state
     logoutRegistryRef.current.fire();
-    appTokenRef.current = null;
-    setAppTokenModule(null);
-    setIsAuthenticated(false);
     setAdminToken(null);
-  }, []);
+    setApprovalStatus("idle");
+    await signOut();
+  }, [signOut]);
 
   const loginAdmin = useCallback(async (password: string) => {
     try {
@@ -599,8 +584,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await secureSet(ADMIN_TOKEN_KEY, body.token);
       setAdminToken(body.token);
 
-      // Background: pull server profile so all portable settings are
-      // immediately applied on this device without blocking the login response.
       fetchAdminProfile(body.token).then(profile => {
         if (!profile) return;
         setSettings(prev => {
@@ -611,7 +594,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return merged;
         });
       }).catch(err => {
-        // eslint-disable-next-line no-console
         console.warn("[AppContext] Post-login admin profile sync failed:", err);
       });
 
@@ -623,10 +605,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const logoutAdmin = useCallback(async () => {
     const token = adminTokenRef.current;
-    // Best-effort server-side revocation: tells the server to invalidate all
-    // outstanding tokens so other devices/sessions are also signed out.
-    // We intentionally do not await or surface errors here — local logout
-    // completes regardless of network availability.
     if (token && API_BASE) {
       fetch(`${API_BASE}/admin/logout`, {
         method: "POST",
@@ -657,9 +635,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   return (
     <AppContext.Provider value={{
       isAuthenticated,
+      approvalStatus,
       isAdmin: !!adminToken,
       adminToken,
-      login,
       logout,
       loginAdmin,
       logoutAdmin,

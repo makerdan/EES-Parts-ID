@@ -162,7 +162,23 @@ async function migrateWarehouseZoneNullSectionNum(): Promise<void> {
   }
 }
 
-Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), checkZoneSectionNumIntegrity()])
+async function migrateUsersTable(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS users (
+        clerk_user_id TEXT PRIMARY KEY,
+        email         TEXT NOT NULL DEFAULT '',
+        status        TEXT NOT NULL DEFAULT 'pending',
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+  } catch (err) {
+    logger.error({ err }, "Failed to migrate users table");
+  }
+}
+
+Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), checkZoneSectionNumIntegrity(), migrateUsersTable()])
   .then(() => initProvider())
   .then(() => probePoeBotsOnStartup())
   .then(() => startServer(app, port, MAX_RETRIES))

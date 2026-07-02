@@ -19,6 +19,13 @@ let _appToken: string | null = null;
 let _adminToken: string | null = null;
 let _onUnauthorized: (() => void) | null = null;
 
+/**
+ * Optional async getter for the Clerk session token.
+ * When set, fetchWithAuth calls it to obtain a fresh token on every request
+ * instead of reading the stale _appToken string.
+ */
+let _appTokenGetter: (() => Promise<string | null>) | null = null;
+
 const _tokenAvailableListeners = new Set<() => void>();
 
 /** Subscribe to the moment a token first becomes available (null → non-null). */
@@ -41,6 +48,25 @@ export function setAppToken(token: string | null): void {
   const wasAbsent = _appToken === null && _adminToken === null;
   _appToken = token;
   if (wasAbsent && token !== null) _notifyTokenAvailable();
+}
+
+/**
+ * Register an async getter that resolves the current Clerk session token.
+ * Called by AppContext on mount; cleared on unmount.
+ * When set, fetchWithAuth uses this instead of _appToken so tokens are
+ * always fresh (Clerk auto-refreshes expiring tokens inside getToken()).
+ */
+export function setAppTokenGetter(fn: (() => Promise<string | null>) | null): void {
+  _appTokenGetter = fn;
+}
+
+/**
+ * Trigger all token-available subscribers from outside this module.
+ * AppContext calls this when approvalStatus transitions to "approved" so
+ * hooks like useWarehouseZones can retry their initial fetch.
+ */
+export function notifyTokenAvailable(): void {
+  _notifyTokenAvailable();
 }
 
 export function setAdminToken(token: string | null): void {
@@ -75,12 +101,27 @@ export function getAuthHeaders(): Record<string, string> {
  * Authenticated fetch wrapper. Prepends the current Authorization header and
  * invokes the registered onUnauthorized handler on 401, allowing AppContext to
  * clear tokens and reset auth state centrally instead of per call site.
+ *
+ * Token resolution order:
+ *  1. Admin HMAC token (takes precedence — allows admin to act as any user)
+ *  2. Async Clerk token getter (registered by AppContext on mount) — always fresh
+ *  3. Sync _appToken fallback (legacy / test path)
  */
 export async function fetchWithAuth(
   url: string,
   init?: RequestInit,
 ): Promise<Response> {
-  const authHeaders = getAuthHeaders();
+  let token: string | null = _adminToken;
+  if (!token) {
+    if (_appTokenGetter) {
+      token = await _appTokenGetter();
+    } else {
+      token = _appToken;
+    }
+  }
+  const authHeaders: Record<string, string> = token
+    ? { Authorization: `Bearer ${token}` }
+    : {};
   const merged: RequestInit = {
     ...init,
     headers: {

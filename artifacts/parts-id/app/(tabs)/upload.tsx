@@ -545,7 +545,7 @@ export default function UploadScreen() {
   const isNarrow = screenWidth <= 320;
   const colors = useColors();
   const router = useRouter();
-  const { isAdmin, logoutAdmin, adminToken } = useApp();
+  const { isAdmin, logoutAdmin, adminToken, showToast } = useApp();
   const { status: apiStatus, restarting: apiRestarting, triggerRestart, checkStatus, bots: apiBots, probeSingleBot } = useApiStatus({
     apiBase: API_BASE,
     adminToken: isAdmin ? adminToken : null,
@@ -644,7 +644,7 @@ export default function UploadScreen() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
-  const [tab, setTab] = useState<"import" | "enrichment" | "addpart" | "query">("import");
+  const [tab, setTab] = useState<"import" | "enrichment" | "addpart" | "query" | "users">("import");
   const [addpartScrollY, setAddpartScrollY] = useState(0);
   const [measureVisible, setMeasureVisible] = useState(false);
   const [measuredDims, setMeasuredDims] = useState<PartDimensions | null>(null);
@@ -686,6 +686,13 @@ export default function UploadScreen() {
   const [queryError, setQueryError] = useState<string | null>(null);
   const [queryExportPending, setQueryExportPending] = useState<"csv" | "xlsx" | null>(null);
   const [queryHelpOpen, setQueryHelpOpen] = useState(false);
+
+  // User management tab state
+  type UserRow = { clerkUserId: string; email: string; status: "pending" | "approved" | "banned"; createdAt: string };
+  const [usersData, setUsersData] = useState<Array<UserRow>>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [userActionPending, setUserActionPending] = useState<string | null>(null);
 
   // Bin diff / replace-warning state
   const [exportPending, setExportPending] = useState(false);
@@ -1626,11 +1633,47 @@ export default function UploadScreen() {
   const inventory = inventoryQuery.data?.items ?? [];
   const inventoryTotal = inventoryQuery.data?.total ?? 0;
 
-  const TAB_LABELS: Record<"import" | "enrichment" | "addpart" | "query", string> = {
+  const TAB_LABELS: Record<"import" | "enrichment" | "addpart" | "query" | "users", string> = {
     import: "Import",
     enrichment: `Enrich (${inventoryTotal})`,
     addpart: "Add Part / Barcode",
     query: "Ask Database",
+    users: "Users",
+  };
+
+  const fetchUsers = async () => {
+    if (!adminToken) return;
+    setUsersLoading(true);
+    setUsersError(null);
+    try {
+      const resp = await fetch(`${API_BASE}/admin/users`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const body = await resp.json() as { users: Array<UserRow> };
+      setUsersData(body.users);
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : "Failed to load users");
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  const handleUserAction = async (clerkUserId: string, action: "approve" | "ban") => {
+    if (!adminToken || userActionPending) return;
+    setUserActionPending(clerkUserId);
+    try {
+      const resp = await fetch(`${API_BASE}/admin/users/${clerkUserId}/${action}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      await fetchUsers();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : `Failed to ${action} user`, "error");
+    } finally {
+      setUserActionPending(null);
+    }
   };
 
   return (
@@ -1803,11 +1846,14 @@ export default function UploadScreen() {
           ) : null}
 
           {/* Tab bar */}
-          <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
-            {(["import", "enrichment", "addpart", "query"] as const).map(t => (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tabBar, { borderBottomColor: colors.border }]} contentContainerStyle={{ flexDirection: "row" }}>
+            {(["import", "enrichment", "addpart", "query", "users"] as const).map(t => (
               <Pressable
                 key={t}
-                onPress={() => setTab(t)}
+                onPress={() => {
+                  setTab(t);
+                  if (t === "users") fetchUsers();
+                }}
                 style={[
                   styles.tabItem,
                   { borderBottomColor: tab === t ? colors.primary : "transparent" },
@@ -1818,7 +1864,7 @@ export default function UploadScreen() {
                 </Text>
               </Pressable>
             ))}
-          </View>
+          </ScrollView>
 
           {tab === "import" ? (
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
@@ -2952,7 +2998,7 @@ export default function UploadScreen() {
                 initialDimensions={measuredDims}
               />
             </ScrollView>
-          ) : (
+          ) : tab === "query" ? (
             /* ── Query tab ───────────────────────────────────────────── */
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
               <View style={[styles.queryCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -3164,6 +3210,112 @@ export default function UploadScreen() {
                     </View>
                   )
                 ) : null}
+              </View>
+            </ScrollView>
+          ) : (
+            /* ── Users tab ───────────────────────────────────────────── */
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+              <View style={[styles.queryCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <Text style={[styles.cardTitle, { color: colors.foreground }]}>👥 User Management</Text>
+                  <Pressable
+                    onPress={fetchUsers}
+                    disabled={usersLoading}
+                    style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}
+                  >
+                    <Text style={{ fontSize: 12, color: colors.primary, fontFamily: "Inter_600SemiBold" }}>
+                      {usersLoading ? "Loading…" : "Refresh"}
+                    </Text>
+                  </Pressable>
+                </View>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Approve or ban users who have signed up via the app.
+                </Text>
+
+                {usersError ? (
+                  <View style={{ backgroundColor: colors.destructive + "15", borderRadius: 8, padding: 12, marginTop: 8 }}>
+                    <Text style={{ color: colors.destructive, fontFamily: "Inter_400Regular", fontSize: 13 }}>⚠ {usersError}</Text>
+                  </View>
+                ) : null}
+
+                {usersLoading && usersData.length === 0 ? (
+                  <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 24 }} />
+                ) : usersData.length === 0 ? (
+                  <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 16, textAlign: "center" }}>
+                    No users yet. Tap Refresh to load.
+                  </Text>
+                ) : (
+                  usersData.map((user) => {
+                    const statusColor =
+                      user.status === "approved" ? "#10b981" :
+                      user.status === "banned"   ? colors.destructive :
+                      colors.mutedForeground;
+                    const isPending = userActionPending === user.clerkUserId;
+                    return (
+                      <View
+                        key={user.clerkUserId}
+                        style={{
+                          marginTop: 10,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                          padding: 12,
+                          gap: 6,
+                        }}
+                      >
+                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                          <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: colors.foreground, flexShrink: 1, marginRight: 8 }}>
+                            {user.email || "(no email)"}
+                          </Text>
+                          <View style={{ backgroundColor: statusColor + "22", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: statusColor + "44" }}>
+                            <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: statusColor, textTransform: "capitalize" }}>
+                              {user.status}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: colors.mutedForeground }}>
+                          ID: {user.clerkUserId}
+                        </Text>
+                        <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                          {user.status !== "approved" ? (
+                            <Pressable
+                              onPress={() => handleUserAction(user.clerkUserId, "approve")}
+                              disabled={!!userActionPending}
+                              style={{
+                                flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
+                                backgroundColor: "#10b98115", borderWidth: 1, borderColor: "#10b98144",
+                                opacity: userActionPending ? 0.6 : 1,
+                              }}
+                            >
+                              {isPending ? (
+                                <ActivityIndicator size="small" color="#10b981" />
+                              ) : (
+                                <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#10b981" }}>✓ Approve</Text>
+                              )}
+                            </Pressable>
+                          ) : null}
+                          {user.status !== "banned" ? (
+                            <Pressable
+                              onPress={() => handleUserAction(user.clerkUserId, "ban")}
+                              disabled={!!userActionPending}
+                              style={{
+                                flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
+                                backgroundColor: colors.destructive + "15", borderWidth: 1, borderColor: colors.destructive + "44",
+                                opacity: userActionPending ? 0.6 : 1,
+                              }}
+                            >
+                              {isPending ? (
+                                <ActivityIndicator size="small" color={colors.destructive} />
+                              ) : (
+                                <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.destructive }}>✕ Ban</Text>
+                              )}
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
               </View>
             </ScrollView>
           )}

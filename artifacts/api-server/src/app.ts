@@ -1,9 +1,16 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
+import { clerkMiddleware } from "@clerk/express";
+import { publishableKeyFromHost } from "@clerk/shared/keys";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { requireAppAuth } from "./middlewares/requireAppAuth";
+import {
+  CLERK_PROXY_PATH,
+  clerkProxyMiddleware,
+  getClerkProxyHost,
+} from "./middlewares/clerkProxyMiddleware";
 
 const app: Express = express();
 
@@ -11,6 +18,9 @@ const app: Express = express();
 // This makes req.ip resolve to the real client IP from X-Forwarded-For rather
 // than the proxy's address, without allowing clients to spoof arbitrary IPs.
 app.set("trust proxy", 1);
+
+// Clerk proxy must be mounted BEFORE body parsers — it streams raw bytes.
+app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 
 app.use(
   pinoHttp({
@@ -36,6 +46,18 @@ app.use(cors());
 // A 25 MB PDF base64-encodes to ~34 MB; set limit to 50 MB to provide headroom.
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// Clerk middleware resolves the publishable key from the incoming request host
+// so the same server can serve multiple Clerk custom domains. Falls back to
+// CLERK_PUBLISHABLE_KEY when the host doesn't map to a custom domain.
+app.use(
+  clerkMiddleware((req) => ({
+    publishableKey: publishableKeyFromHost(
+      getClerkProxyHost(req) ?? "",
+      process.env.CLERK_PUBLISHABLE_KEY,
+    ),
+  })),
+);
 
 app.use("/api", requireAppAuth);
 app.use("/api", router);
