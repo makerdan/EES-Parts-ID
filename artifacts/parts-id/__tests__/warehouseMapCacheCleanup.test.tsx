@@ -300,12 +300,19 @@ describe("cleanStaleCacheDirs call site — null → string hash transition", ()
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const appAuth = require("@/utils/appAuth");
           appAuth.fetchWithAuth
-            // GET /floor-plan/meta → { hash: "loaded-hash" }
+            // GET /floor-plan/meta from the server-hash polling effect (line
+            // 1452 in WarehouseMapView) — fires on mount before the SVG load
+            // effect's async IIFE reaches _loadFloorPlanFromServer.
             .mockResolvedValueOnce({
               ok: true,
               json: async () => ({ hash: "loaded-hash" }),
             })
-            // GET /floor-plan/svg → minimal SVG
+            // GET /floor-plan/meta from _loadFloorPlanFromServer
+            .mockResolvedValueOnce({
+              ok: true,
+              json: async () => ({ hash: "loaded-hash" }),
+            })
+            // GET /floor-plan/svg from _loadFloorPlanFromServer → minimal SVG
             .mockResolvedValueOnce({
               ok: true,
               text: async () => "<svg/>",
@@ -339,13 +346,39 @@ describe("cleanStaleCacheDirs call site — null → string hash transition", ()
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const React_ = require("react");
 
+          // With IS_REACT_ACT_ENVIRONMENT unset (false), TR.act(async cb) does
+          // NOT properly await async callbacks — it calls flushPassiveEffects()
+          // synchronously and returns a fake synchronously-resolving thenable,
+          // so the async cb runs in the background after act() exits.
+          //
+          // Strategy:
+          //  1. Mount with act() so effects are started (SVG-load async IIFE).
+          //  2. Poll with setImmediate outside act(): each yield lets microtask
+          //     continuations advance one step.  React's scheduler posts state
+          //     updates via MessageChannel (macro task, poll phase), which fires
+          //     before our check-phase setImmediate within the same iteration.
+          //     Stop once setCached is detected.
+          //  3. One more setImmediate to guarantee React's MessageChannel
+          //     re-render has fired (poll) and pendingPassiveEffectsLanes is set.
+          //  4. Final act() calls flushPassiveEffects() which directly reads
+          //     pendingPassiveEffectsLanes and runs the svgHash effect
+          //     (→ cleanStaleCacheDirs) without going through the scheduler.
           await TR.act(async () => {
             TR.create(React_.createElement(WMV, BASE_PROPS));
           });
-          // Drain the full async SVG-load microtask chain.
-          for (let i = 0; i < 12; i++) {
-            await TR.act(async () => { await Promise.resolve(); });
+
+          for (let i = 0; i < 20; i++) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise<void>(r => setImmediate(r));
+            if (mockSetCached.mock.calls.length > 0) break;
           }
+
+          // Ensure the MessageChannel re-render commit has set
+          // pendingPassiveEffectsLanes before the act() below flushes it.
+          await new Promise<void>(r => setImmediate(r));
+
+          // Flush passive effects (svgHash useEffect → cleanStaleCacheDirs).
+          await TR.act(async () => {});
 
           // After the load resolves, setSvgHash("loaded-hash") fires which
           // triggers the cleanStaleCacheDirs effect.
