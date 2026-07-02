@@ -288,3 +288,130 @@ describe("GET /api/admin/catalog-pdf/reviews — chunk race visibility", () => {
     expect(partAItem).toBeUndefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/admin/catalog-pdf/reviews/:id/revert — chunk-race context guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/admin/catalog-pdf/reviews/:id/revert — chunk-race context guard", () => {
+  it("reverts a chunk-race winner when jobId is the parent job", async () => {
+    const { parentId, child1Id } = await seedMultiChunkJob();
+    const partId = await seedEnrichedPart(`REVERT-CHILD-${parentId}`, child1Id);
+
+    // The item's catalogPdfJobId is child1Id, but the admin passes parentId —
+    // the guard must resolve child jobs and allow the revert.
+    const res = await supertest(app)
+      .post(`/api/admin/catalog-pdf/reviews/${partId}/revert`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ jobId: parentId })
+      .expect(200);
+
+    expect(res.body).toMatchObject({ ok: true });
+
+    // Confirm the row was actually cleared
+    const [updated] = await db
+      .select({
+        imageSource: inventoryTable.imageSource,
+        catalogPdfJobId: inventoryTable.catalogPdfJobId,
+        description: inventoryTable.description,
+      })
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, partId))
+      .limit(1);
+
+    expect(updated?.imageSource).toBeNull();
+    expect(updated?.catalogPdfJobId).toBeNull();
+    expect(updated?.description).toBe(`Original description REVERT-CHILD-${parentId}`);
+  });
+
+  it("reverts a single-chunk item when jobId matches catalogPdfJobId directly", async () => {
+    const [directJob] = await db
+      .insert(catalogPdfJobTable)
+      .values({
+        vendor: VENDOR,
+        filename: "revert-direct.pdf",
+        status: "done",
+        processedPages: 2,
+        matchedParts: 1,
+      })
+      .returning({ id: catalogPdfJobTable.id });
+    if (!directJob) throw new Error("Failed to seed direct job for revert test");
+    seededJobIds.push(directJob.id);
+
+    const partId = await seedEnrichedPart(`REVERT-DIRECT-${directJob.id}`, directJob.id);
+
+    await supertest(app)
+      .post(`/api/admin/catalog-pdf/reviews/${partId}/revert`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ jobId: directJob.id })
+      .expect(200);
+
+    const [updated] = await db
+      .select({ imageSource: inventoryTable.imageSource, catalogPdfJobId: inventoryTable.catalogPdfJobId })
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, partId))
+      .limit(1);
+
+    expect(updated?.imageSource).toBeNull();
+    expect(updated?.catalogPdfJobId).toBeNull();
+  });
+
+  it("rejects revert when the item does not belong to the provided jobId", async () => {
+    const { parentId: parentA, child0Id: childA } = await seedMultiChunkJob();
+    const { parentId: parentB } = await seedMultiChunkJob();
+
+    // Part belongs to parentA / childA — admin mistakenly tries to revert it
+    // from parentB's review screen.
+    const partId = await seedEnrichedPart(`REVERT-WRONG-JOB-${parentA}`, childA);
+
+    const res = await supertest(app)
+      .post(`/api/admin/catalog-pdf/reviews/${partId}/revert`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ jobId: parentB })
+      .expect(400);
+
+    expect(res.body).toMatchObject({ error: "Item does not belong to the specified job" });
+
+    // Row must be untouched
+    const [unchanged] = await db
+      .select({ imageSource: inventoryTable.imageSource, catalogPdfJobId: inventoryTable.catalogPdfJobId })
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, partId))
+      .limit(1);
+
+    expect(unchanged?.imageSource).toBe("pdf_extraction");
+    expect(unchanged?.catalogPdfJobId).toBe(childA);
+  });
+
+  it("reverts without a jobId context (backward-compatible, no guard applied)", async () => {
+    const { child0Id } = await seedMultiChunkJob();
+    const partId = await seedEnrichedPart(`REVERT-NO-JOB-${child0Id}`, child0Id);
+
+    await supertest(app)
+      .post(`/api/admin/catalog-pdf/reviews/${partId}/revert`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({})
+      .expect(200);
+
+    const [updated] = await db
+      .select({ imageSource: inventoryTable.imageSource })
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, partId))
+      .limit(1);
+
+    expect(updated?.imageSource).toBeNull();
+  });
+
+  it("returns 400 for an invalid (non-numeric) jobId", async () => {
+    const { child0Id } = await seedMultiChunkJob();
+    const partId = await seedEnrichedPart(`REVERT-BAD-JOB-${child0Id}`, child0Id);
+
+    const res = await supertest(app)
+      .post(`/api/admin/catalog-pdf/reviews/${partId}/revert`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ jobId: "not-a-number" })
+      .expect(400);
+
+    expect(res.body).toMatchObject({ error: "Invalid jobId" });
+  });
+});

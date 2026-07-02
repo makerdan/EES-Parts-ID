@@ -1153,11 +1153,24 @@ router.post("/catalog-pdf/reviews/:id/revert", requireAdminAuth, async (req, res
     return void res.status(400).json({ error: "Invalid item ID" });
   }
 
+  // Optional: the caller may pass the jobId of the review screen they are
+  // reverting from.  When present, we confirm the item belongs to that job
+  // (or one of its child jobs in a multi-chunk upload) before proceeding.
+  // This closes the loop for chunk-race winners, where catalogPdfJobId points
+  // to a child job rather than the parent, and prevents cross-session reverts
+  // when two review tabs are open simultaneously.
+  const rawJobId = (req.body as { jobId?: unknown }).jobId;
+  const jobIdContext = rawJobId !== undefined ? Number(rawJobId) : null;
+  if (jobIdContext !== null && (!Number.isFinite(jobIdContext) || jobIdContext <= 0)) {
+    return void res.status(400).json({ error: "Invalid jobId" });
+  }
+
   const [row] = await db
     .select({
       id: inventoryTable.id,
       previousDescription: inventoryTable.previousDescription,
       imageSource: inventoryTable.imageSource,
+      catalogPdfJobId: inventoryTable.catalogPdfJobId,
     })
     .from(inventoryTable)
     .where(eq(inventoryTable.id, id))
@@ -1169,6 +1182,21 @@ router.post("/catalog-pdf/reviews/:id/revert", requireAdminAuth, async (req, res
 
   if (row.imageSource !== "pdf_extraction") {
     return void res.status(400).json({ error: "Item was not updated by PDF extraction" });
+  }
+
+  // Guard: when a jobId context was provided, verify the item's catalogPdfJobId
+  // is either the job itself or one of its child jobs (chunk-race winner case).
+  if (jobIdContext !== null) {
+    const childRows = await db
+      .select({ id: catalogPdfJobTable.id })
+      .from(catalogPdfJobTable)
+      .where(eq(catalogPdfJobTable.parentJobId, jobIdContext));
+
+    const effectiveJobIds = new Set([jobIdContext, ...childRows.map((c) => c.id)]);
+
+    if (row.catalogPdfJobId === null || !effectiveJobIds.has(row.catalogPdfJobId)) {
+      return void res.status(400).json({ error: "Item does not belong to the specified job" });
+    }
   }
 
   await db
