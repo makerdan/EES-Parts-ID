@@ -174,6 +174,12 @@ jest.mock("@/utils/appAuth", () => ({
   setAuthTokenGetter: jest.fn(),
 }));
 
+// ─── @/utils/apiBase ─────────────────────────────────────────────────────────
+// Return an empty API_BASE so the server-hash polling setInterval in
+// WarehouseMapView (guarded by `if (!API_BASE) return`) is never registered.
+// Without this mock the interval leaks into Jest and forces --forceExit.
+jest.mock("@/utils/apiBase", () => ({ API_BASE: "" }));
+
 // ─── @/utils/floorPlan ────────────────────────────────────────────────────────
 jest.mock("@/utils/floorPlan", () => ({
   warmupTiles: jest.fn(() => Promise.resolve()),
@@ -315,14 +321,11 @@ describe("cleanStaleCacheDirs call site — null → string hash transition", ()
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const appAuth = require("@/utils/appAuth");
           appAuth.fetchWithAuth
-            // GET /floor-plan/meta from the server-hash polling effect (line
-            // 1452 in WarehouseMapView) — fires on mount before the SVG load
-            // effect's async IIFE reaches _loadFloorPlanFromServer.
-            .mockResolvedValueOnce({
-              ok: true,
-              json: async () => ({ hash: "loaded-hash" }),
-            })
-            // GET /floor-plan/meta from _loadFloorPlanFromServer
+            // GET /floor-plan/meta from _loadFloorPlanFromServer.
+            // (The server-hash polling setInterval is never registered because
+            // @/utils/apiBase is mocked with API_BASE:"" at the top of this
+            // file, so the polling effect's `if (!API_BASE) return` fires
+            // immediately — no fetchWithAuth call from that path.)
             .mockResolvedValueOnce({
               ok: true,
               json: async () => ({ hash: "loaded-hash" }),

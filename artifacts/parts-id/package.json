@@ -9,7 +9,7 @@
     "build": "node --max-old-space-size=4096 scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "jest --forceExit",
+    "test": "jest",
     "lint": "eslint . --ext .ts,.tsx"
   },
   "devDependencies": {
