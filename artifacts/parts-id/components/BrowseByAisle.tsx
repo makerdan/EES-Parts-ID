@@ -735,30 +735,38 @@ export function BrowseByAisle({
   }, [level, goBack]);
 
   const aisleIdx = crumbs.aisle
-    ? hierarchy.aisles.findIndex(a => a.aisleNum === crumbs.aisle!.aisleNum)
+    ? hierarchy.aisles.findIndex(a => a.aisleNum === crumbs.aisle?.aisleNum)
     : -1;
   const sectionIdx = crumbs.section
-    ? filteredSections.findIndex(s => s.sectionNum === crumbs.section!.sectionNum)
+    ? filteredSections.findIndex(s => s.sectionNum === crumbs.section?.sectionNum)
     : -1;
 
   const goToPrevAisle = useCallback(() => {
     if (aisleIdx <= 0) return;
-    setCrumbs({ aisle: hierarchy.aisles[aisleIdx - 1]!, section: null });
+    const target = hierarchy.aisles[aisleIdx - 1];
+    if (!target) return;
+    setCrumbs({ aisle: target, section: null });
   }, [aisleIdx, hierarchy.aisles]);
 
   const goToNextAisle = useCallback(() => {
     if (aisleIdx < 0 || aisleIdx >= hierarchy.aisles.length - 1) return;
-    setCrumbs({ aisle: hierarchy.aisles[aisleIdx + 1]!, section: null });
+    const target = hierarchy.aisles[aisleIdx + 1];
+    if (!target) return;
+    setCrumbs({ aisle: target, section: null });
   }, [aisleIdx, hierarchy.aisles]);
 
   const goToPrevSection = useCallback(() => {
     if (sectionIdx <= 0) return;
-    setCrumbs(prev => ({ ...prev, section: filteredSections[sectionIdx - 1]! }));
+    const target = filteredSections[sectionIdx - 1];
+    if (!target) return;
+    setCrumbs(prev => ({ ...prev, section: target }));
   }, [sectionIdx, filteredSections]);
 
   const goToNextSection = useCallback(() => {
     if (sectionIdx < 0 || sectionIdx >= filteredSections.length - 1) return;
-    setCrumbs(prev => ({ ...prev, section: filteredSections[sectionIdx + 1]! }));
+    const target = filteredSections[sectionIdx + 1];
+    if (!target) return;
+    setCrumbs(prev => ({ ...prev, section: target }));
   }, [sectionIdx, filteredSections]);
 
   const cardItemSwipe = useCardItemSwipe(
@@ -777,14 +785,14 @@ export function BrowseByAisle({
     level === "aisles"
       ? "Browse Aisles"
       : level === "sections"
-      ? crumbs.aisle!.label
-      : `${crumbs.aisle!.label} · ${crumbs.section!.label}`;
+      ? crumbs.aisle?.label ?? ""
+      : `${crumbs.aisle?.label ?? ""} · ${crumbs.section?.label ?? ""}`;
 
   const headerSubtitle =
     level === "sections"
       ? `${filteredSections.length} section${filteredSections.length !== 1 ? "s" : ""}`
       : level === "parts"
-      ? `${crumbs.section!.partCount} part${crumbs.section!.partCount !== 1 ? "s" : ""}`
+      ? `${crumbs.section?.partCount ?? 0} part${(crumbs.section?.partCount ?? 0) !== 1 ? "s" : ""}`
       : undefined;
 
   const crumbsBin = useCallback(() => {

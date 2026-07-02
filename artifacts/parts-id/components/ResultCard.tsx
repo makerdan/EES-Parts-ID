@@ -139,7 +139,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
     const next = !expanded;
     setExpanded(next);
     if (hasVariants && onVariantsToggle) {
-      onVariantsToggle(item, variants!, next);
+      onVariantsToggle(item, variants ?? [], next);
     }
     if (next && onOpen) {
       onOpen(item);
@@ -439,15 +439,15 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
             {hasVariants ? (
               <View style={cardStyles.section}>
                 <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
-                  {seriesLabel ?? "OTHER SIZES"} ({variants!.length})
+                  {seriesLabel ?? "OTHER SIZES"} ({variants?.length ?? 0})
                 </Text>
                 <View style={cardStyles.variantRow}>
-                  {variants!.slice(0, 12).map((v) => (
+                  {(variants ?? []).slice(0, 12).map((v) => (
                     <VariantChip key={v.id} item={v} colors={colors} />
                   ))}
-                  {variants!.length > 12 ? (
+                  {(variants?.length ?? 0) > 12 ? (
                     <Text style={[cardStyles.moreText, { color: colors.mutedForeground }]}>
-                      +{variants!.length - 12} more
+                      +{(variants?.length ?? 0) - 12} more
                     </Text>
                   ) : null}
                 </View>

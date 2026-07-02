@@ -1,3 +1,4 @@
+import { HealthCheckResponse } from "@workspace/api-zod";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, AppStateStatus } from "react-native";
@@ -50,23 +51,16 @@ export function useApiStatus({
         setBots({});
         return;
       }
-      const data = await res.json();
-      const s = data?.status;
-      if (s === "ok" || s === "degraded" || s === "error") {
-        setStatus(s);
-      } else {
+      const raw = await res.json();
+      const parsed = HealthCheckResponse.safeParse(raw);
+      if (!parsed.success) {
+        console.warn("[useApiStatus] Unexpected healthz shape:", parsed.error.message);
         setStatus("error");
-      }
-      if (data?.bots && typeof data.bots === "object" && !Array.isArray(data.bots)) {
-        const VALID: Record<string, true> = { ok: true, timeout: true, "404": true, error: true };
-        const validated: Record<string, BotProbeStatus> = {};
-        for (const [k, v] of Object.entries(data.bots)) {
-          if (typeof v === "string" && VALID[v]) validated[k] = v as BotProbeStatus;
-        }
-        setBots(validated);
-      } else {
         setBots({});
+        return;
       }
+      setStatus(parsed.data.status);
+      setBots(parsed.data.bots ?? {});
     } catch {
       clearTimeout(timeoutId);
       setStatus("error");
@@ -148,14 +142,10 @@ export function useApiStatus({
       );
       clearTimeout(timeoutId);
       if (!res.ok) return;
-      const data = await res.json();
-      if (data?.bots && typeof data.bots === "object" && !Array.isArray(data.bots)) {
-        const VALID: Record<string, true> = { ok: true, timeout: true, "404": true, error: true };
-        const validated: Record<string, BotProbeStatus> = {};
-        for (const [k, v] of Object.entries(data.bots)) {
-          if (typeof v === "string" && VALID[v]) validated[k] = v as BotProbeStatus;
-        }
-        setBots(validated);
+      const raw = await res.json();
+      const parsed = HealthCheckResponse.safeParse(raw);
+      if (parsed.success && parsed.data.bots) {
+        setBots(parsed.data.bots);
       }
     } catch {
       clearTimeout(timeoutId);
