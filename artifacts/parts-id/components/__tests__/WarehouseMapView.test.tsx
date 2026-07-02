@@ -1,23 +1,24 @@
 /**
- * Regression tests: WarehouseMapView viewport persistence via AsyncStorage.
+ * Regression tests: WarehouseMapView viewport behaviour.
  *
- * Four runtime paths are covered: three viewport-persistence paths (suites 1–3,
- * restored in task-1885) and one cold-cache startup fit path (suite 4, added
- * in task-1898):
+ * Four runtime paths are covered across five suites:
  *
- *   1. Saved viewport found → scale/translateX/translateY shared values are
- *      set to the restored (clamped) values after the mount useEffect reads
- *      the stored JSON and onLayout fires with real container dimensions.
+ *   1. Fresh app open (warm cache) → fit-to-screen always runs, regardless of
+ *      any previously saved viewport.  AsyncStorage.getItem is NOT called on
+ *      mount — the restore path has been intentionally removed so the map is
+ *      always centred when the user opens it.
  *
- *   2. No saved viewport (null) → pendingFit is set and applyFitIfReady is
- *      called, which invokes computeFitTarget and sets shared values to the
- *      fit-to-content result (ZOOM_STOPS[0].scale).
+ *   2. No saved viewport (null) → same as above; pendingFit is set and
+ *      applyFitIfReady fires once both contentVBRef and containerW are ready.
  *
- *   3. App backgrounded → the AppState "background" handler immediately calls
+ *   3. Startup fit — no AsyncStorage.getItem call during mount (three
+ *      targeted assertions confirming the read path is gone).
+ *
+ *   4. App backgrounded → the AppState "background" handler immediately calls
  *      AsyncStorage.setItem to flush any pending debounced viewport write so
  *      the OS does not suspend the process before the data is persisted.
  *
- *   4. Cold cache (getCachedData returns null) → after the SVG XML loads from
+ *   5. Cold cache (getCachedData returns null) → after the SVG XML loads from
  *      the bundle fallback, computeFitTarget is called and scale/tx/ty shared
  *      values are applied via applyFitIfReady.
  *
@@ -26,12 +27,13 @@
  * • useSharedValue returns a tracked plain object; every instance is pushed to
  *   `trackedValues` so tests can inspect post-mount / post-layout .value
  *   mutations without knowing which slot in the component each value occupies.
- * • AsyncStorage.getItem is a jest.fn() configured per-suite: returns a saved
- *   viewport JSON string (suite 1) or null (suites 2, 3, and 4).
+ * • AsyncStorage.getItem is a jest.fn() — tests assert it is NOT called on
+ *   mount (new semantics).  setItem is tracked to verify background-flush calls
+ *   in suite 4.
  * • panBounds is spied upon and mocked to return {maxX:10000, maxY:10000} so
  *   the small test tx/ty values pass through clamping unchanged.
  * • AppState.addEventListener in the react-native mock is re-implemented
- *   per-test to capture the registered handler so suite 3 can fire synthetic
+ *   per-test to capture the registered handler so suite 4 can fire synthetic
  *   background events.
  * • Suites 1, 2, and 4 use real timers.  Suite 3 (background-flush) switches
  *   to jest.useFakeTimers() so that persistViewport's 300 ms setTimeout is a
@@ -50,7 +52,7 @@ import TestRenderer, { act } from "react-test-renderer";
 // ─── react-native-reanimated ──────────────────────────────────────────────────
 // Shared values are tracked plain objects.  Every useSharedValue call pushes
 // its returned { value } object into `trackedValues` so tests can verify that
-// the restore / fit paths mutated the scale/translateX/translateY slots.
+// the fit path mutated the scale/translateX/translateY slots.
 
 const trackedValues: Array<{ value: unknown }> = [];
 
@@ -183,8 +185,8 @@ jest.mock("expo-asset", () => ({
 jest.mock("@expo/vector-icons", () => ({ Feather: () => null }));
 
 // ─── @react-native-async-storage/async-storage ───────────────────────────────
-// getItem is configured per-suite: saved JSON (suite 1) or null (suites 2, 3).
-// setItem is tracked to verify background-flush calls in suite 3.
+// getItem is a jest.fn() — tests assert it is NOT called on mount.
+// setItem is tracked to verify background-flush calls in suite 4.
 
 const mockAsyncStorageGetItem = jest.fn<Promise<string | null>, [string]>(
   () => Promise.resolve(null),
@@ -297,7 +299,7 @@ function pressFitButton(renderer: TestRenderer.ReactTestRenderer) {
   btn.props.onPress();
 }
 
-/** Flush microtask queues (enough to resolve Promise chains from getItem). */
+/** Flush microtask queues (enough to resolve Promise chains). */
 const flushPromises = () =>
   act(async () => {
     await Promise.resolve();
@@ -329,11 +331,6 @@ beforeEach(() => {
     .mockReturnValue({ maxX: 10_000, maxY: 10_000 });
 
   mockAsyncStorageGetItem.mockReset();
-  // Default: no saved viewport (returns null).  Individual suites override
-  // this to return a stored viewport JSON string (Suite 1) or keep null
-  // (Suites 2, 3, 4).  The default must be a resolved Promise so the
-  // viewport-restore useEffect's .then() call doesn't crash in suites that
-  // don't configure the mock explicitly.
   mockAsyncStorageGetItem.mockResolvedValue(null);
   mockAsyncStorageSetItem.mockReset();
   mockAsyncStorageSetItem.mockResolvedValue(undefined);
@@ -347,92 +344,79 @@ afterEach(() => {
 });
 
 // =============================================================================
-// Suite 1 — Saved viewport found: restore scale/tx/ty (clamped)
+// Suite 1 — Startup always fits: fresh app open always centres the floor plan
 //
-// AsyncStorage returns { s:1.5, tx:30, ty:20 }.
-// Expected post-layout state: scale=1.5, translateX=30, translateY=20.
-// Both the immediate (layout after getItem) path and the deferred
-// (getItem after layout) path produce the same final values because onLayout
-// clamps and applies pendingRestore.
+// The viewport restore path has been removed — AsyncStorage.getItem is never
+// called on mount.  pendingFit stays true so applyFitIfReady fires once both
+// contentVBRef and containerW are available, regardless of any stored viewport.
 // =============================================================================
 
-describe("saved viewport restore — shared values set to stored values", () => {
-  const SAVED_VIEWPORT = { s: 1.5, tx: 30, ty: 20 };
-
-  // Mount the component, let AsyncStorage.getItem resolve (storing pendingRestore
-  // because layout hasn't fired yet), then fire onLayout so it clamps and applies.
-  async function mountRestoreLayout(containerW: number, containerH: number) {
-    mockAsyncStorageGetItem.mockResolvedValue(
-      JSON.stringify(SAVED_VIEWPORT),
-    );
-
+describe("startup always fits — no viewport restore on mount", () => {
+  async function mountAndLayout(containerW: number, containerH: number) {
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
     });
-    // Let the getItem Promise resolve so pendingRestore is populated before
-    // onLayout consumes it.
     await flushPromises();
-    // Fire onLayout — clamps pendingRestore and applies to shared values.
     await act(async () => {
       fireOnLayout(renderer, containerW, containerH);
     });
     return renderer;
   }
 
-  it("phone (390×761): at least two shared values hold the restored scale (scale + savedScale)", async () => {
-    await mountRestoreLayout(390, 761);
-    const matches = trackedValues.filter((sv) => sv.value === SAVED_VIEWPORT.s);
+  it("phone (390×761): computeFitTarget is called on mount (fit always runs)", async () => {
+    await mountAndLayout(390, 761);
+    expect(computeFitTargetSpy).toHaveBeenCalled();
+  });
+
+  it("phone (390×761): computeFitTarget is called with the cached contentViewBox", async () => {
+    await mountAndLayout(390, 761);
+    const call = computeFitTargetSpy.mock.calls[0] as [unknown, number, number];
+    expect(call[0]).toEqual(MOCK_CONTENT_VB);
+  });
+
+  it("phone (390×761): at least two shared values hold ZOOM_STOPS[0].scale (scale + savedScale)", async () => {
+    await mountAndLayout(390, 761);
+    const fitScale = ZOOM_STOPS[0].scale;
+    const matches = trackedValues.filter((sv) => sv.value === fitScale);
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("phone (390×761): at least two shared values hold the restored tx (translateX + savedTX)", async () => {
-    await mountRestoreLayout(390, 761);
-    const matches = trackedValues.filter((sv) => sv.value === SAVED_VIEWPORT.tx);
+  it("phone (390×761): AsyncStorage.getItem is NOT called on mount (no restore path)", async () => {
+    await mountAndLayout(390, 761);
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+  });
+
+  it("phone (390×761): computeFitTarget returns scale === ZOOM_STOPS[0].scale (z0 fit)", async () => {
+    await mountAndLayout(390, 761);
+    const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
+    expect(result.scale).toBe(ZOOM_STOPS[0].scale);
+  });
+
+  it("iPad (768×960): computeFitTarget is called on mount", async () => {
+    await mountAndLayout(768, 960);
+    expect(computeFitTargetSpy).toHaveBeenCalled();
+  });
+
+  it("iPad (768×960): at least two shared values hold ZOOM_STOPS[0].scale", async () => {
+    await mountAndLayout(768, 960);
+    const fitScale = ZOOM_STOPS[0].scale;
+    const matches = trackedValues.filter((sv) => sv.value === fitScale);
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("phone (390×761): at least two shared values hold the restored ty (translateY + savedTY)", async () => {
-    await mountRestoreLayout(390, 761);
-    const matches = trackedValues.filter((sv) => sv.value === SAVED_VIEWPORT.ty);
-    expect(matches.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it("phone (390×761): AsyncStorage.getItem is called once on mount (restore path active)", async () => {
-    await mountRestoreLayout(390, 761);
-    expect(mockAsyncStorageGetItem).toHaveBeenCalledTimes(1);
-    expect(mockAsyncStorageGetItem).toHaveBeenCalledWith(VIEWPORT_KEY);
-  });
-
-  it("phone (390×761): computeFitTarget is NOT called (restore bypasses fit-to-screen)", async () => {
-    await mountRestoreLayout(390, 761);
-    expect(computeFitTargetSpy).not.toHaveBeenCalled();
-  });
-
-  it("iPad (768×960): at least two shared values hold the restored scale", async () => {
-    await mountRestoreLayout(768, 960);
-    const matches = trackedValues.filter((sv) => sv.value === SAVED_VIEWPORT.s);
-    expect(matches.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it("iPad (768×960): at least two shared values hold the restored tx", async () => {
-    await mountRestoreLayout(768, 960);
-    const matches = trackedValues.filter((sv) => sv.value === SAVED_VIEWPORT.tx);
-    expect(matches.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it("iPad (768×960): at least two shared values hold the restored ty", async () => {
-    await mountRestoreLayout(768, 960);
-    const matches = trackedValues.filter((sv) => sv.value === SAVED_VIEWPORT.ty);
-    expect(matches.length).toBeGreaterThanOrEqual(2);
+  it("iPad (768×960): AsyncStorage.getItem is NOT called on mount", async () => {
+    await mountAndLayout(768, 960);
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
   });
 });
 
 // =============================================================================
 // Suite 2 — No saved viewport: pendingFit set, applyFitIfReady called
 //
-// AsyncStorage returns null.  Expected: computeFitTarget is called and shared
-// values are set to ZOOM_STOPS[0].scale / fit tx / fit ty.
+// AsyncStorage.getItem returns null (not called at all in new semantics).
+// Expected: computeFitTarget is called and shared values are set to
+// ZOOM_STOPS[0].scale / fit tx / fit ty.
 // =============================================================================
 
 describe("no saved viewport — pendingFit set and applyFitIfReady fires", () => {
@@ -450,7 +434,7 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
     return renderer;
   }
 
-  it("phone (390×761): computeFitTarget is called when AsyncStorage returns null", async () => {
+  it("phone (390×761): computeFitTarget is called when no stored viewport exists", async () => {
     await mountFitLayout(390, 761);
     expect(computeFitTargetSpy).toHaveBeenCalled();
   });
@@ -474,13 +458,12 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("phone (390×761): AsyncStorage.getItem IS called once (restore path is active)", async () => {
+  it("phone (390×761): AsyncStorage.getItem is NOT called on mount (no restore path)", async () => {
     await mountFitLayout(390, 761);
-    expect(mockAsyncStorageGetItem).toHaveBeenCalledTimes(1);
-    expect(mockAsyncStorageGetItem).toHaveBeenCalledWith(VIEWPORT_KEY);
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
   });
 
-  it("iPad (768×960): computeFitTarget is called when AsyncStorage returns null", async () => {
+  it("iPad (768×960): computeFitTarget is called when no stored viewport exists", async () => {
     await mountFitLayout(768, 960);
     expect(computeFitTargetSpy).toHaveBeenCalled();
   });
@@ -493,7 +476,57 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
 });
 
 // =============================================================================
-// Suite 3 — AppState "background": pending _persistTimer is flushed immediately
+// Suite 3 — Startup fit: no AsyncStorage.getItem call during mount
+//
+// Three targeted assertions confirming the viewport-restore read path is gone.
+// These tests mount the component with a stored viewport JSON available in the
+// mock but verify that getItem is never called — the map always fits to screen
+// on a fresh open regardless of what is in storage.
+// =============================================================================
+
+describe("startup fit — no AsyncStorage.getItem call during mount", () => {
+  // Use a scale value clearly different from ZOOM_STOPS[0].scale (1.5) so we
+  // can verify the stored scale is ignored and the fit scale is applied instead.
+  const STORED_VIEWPORT = JSON.stringify({ s: 4.0, tx: 30, ty: 20 });
+
+  async function mountAndLayout(containerW: number, containerH: number) {
+    // Make a stored viewport available — the component must NOT read it.
+    mockAsyncStorageGetItem.mockResolvedValue(STORED_VIEWPORT);
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
+    });
+    await flushPromises();
+    await act(async () => {
+      fireOnLayout(renderer, containerW, containerH);
+    });
+    return renderer;
+  }
+
+  it("phone (390×761): AsyncStorage.getItem is not called even when a stored viewport exists", async () => {
+    await mountAndLayout(390, 761);
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+  });
+
+  it("iPad (768×960): AsyncStorage.getItem is not called even when a stored viewport exists", async () => {
+    await mountAndLayout(768, 960);
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+  });
+
+  it("phone (390×761): fit-to-screen scale is applied (stored s=4.0 is ignored; ZOOM_STOPS[0].scale is used)", async () => {
+    await mountAndLayout(390, 761);
+    const fitScale = ZOOM_STOPS[0].scale;
+    // Stored scale (4.0) must NOT appear in tracked shared values.
+    const storedScaleMatches = trackedValues.filter((sv) => sv.value === 4.0);
+    expect(storedScaleMatches.length).toBe(0);
+    // Fit scale must appear (scale + savedScale).
+    const fitScaleMatches = trackedValues.filter((sv) => sv.value === fitScale);
+    expect(fitScaleMatches.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// =============================================================================
+// Suite 4 — AppState "background": pending _persistTimer is flushed immediately
 //
 // Flow:
 //   1. Mount with null → pendingFit → applyFitIfReady (no debounced write).
@@ -605,7 +638,7 @@ describe("AppState background handler — flushes pending _persistTimer write", 
 });
 
 // =============================================================================
-// Suite 4 — cold-cache startup fit (getCachedData returns null on first install)
+// Suite 5 — cold-cache startup fit (getCachedData returns null on first install)
 // =============================================================================
 //
 // Covers the code path where the in-memory SVG cache is empty (first install or
@@ -616,7 +649,7 @@ describe("AppState background handler — flushes pending _persistTimer write", 
 //   4. Falls back to _loadFloorPlanFromBundle → Asset.loadAsync → fetch(localUri) →
 //      parseContentViewBox → setCached updates the mock cache.
 //   5. getSvgXml state is set → the svgXml parse effect fires → contentVBRef populated.
-//   6. applyFitIfReady() succeeds (pendingFit = true from the viewport-restore path,
+//   6. applyFitIfReady() succeeds (pendingFit = true because no restore runs on mount,
 //      containerW already known from the onLayout that fired before the SVG arrived).
 //   7. computeFitTarget is called and shared values are updated.
 //
@@ -699,9 +732,9 @@ describe("startup fit — cold cache (getCachedData returns null on first instal
 
   // Helper: mount the component and fire onLayout with the given dimensions.
   //
-  // The viewport-restore useEffect fires on mount and calls getItem, which
-  // returns null (no saved viewport on first install).  pendingFit stays true
-  // so the fit-to-screen path runs when onLayout fires.
+  // The startup-fit useEffect fires on mount and keeps pendingFit = true (no
+  // AsyncStorage.getItem is called).  The fit-to-screen path runs once both
+  // contentVBRef and containerW are populated.
   //
   async function mountAndLayout(containerW: number, containerH: number) {
     let renderer!: TestRenderer.ReactTestRenderer;
@@ -766,12 +799,9 @@ describe("startup fit — cold cache (getCachedData returns null on first instal
       expect(trackedValues.some((sv) => sv.value === fitTx)).toBe(true);
       expect(trackedValues.some((sv) => sv.value === fitTy)).toBe(true);
 
-      // The viewport-restore useEffect calls AsyncStorage.getItem once on mount
-      // with VIEWPORT_KEY.  On a cold-cache / first-install scenario there is no
-      // stored viewport, so getItem returns null and pendingFit stays true,
-      // allowing the fit-to-screen path above to run normally.
-      expect(mockAsyncStorageGetItem).toHaveBeenCalledTimes(1);
-      expect(mockAsyncStorageGetItem).toHaveBeenCalledWith(VIEWPORT_KEY);
+      // The startup-fit useEffect does NOT call AsyncStorage.getItem on mount.
+      // pendingFit stays true so the fit-to-screen path runs normally.
+      expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
     },
   );
 
