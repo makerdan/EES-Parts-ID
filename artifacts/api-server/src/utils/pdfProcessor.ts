@@ -265,7 +265,8 @@ async function tryPdftoppmRendering(pdfBuffer: Buffer): Promise<PageData[] | nul
  * Extract rich text context for all pages: reconstructed reading-order text,
  * structure tree alt text, and spatial captions.
  */
-async function extractRichText(pdfBuffer: Buffer, numPages: number): Promise<string[]> {
+/** @internal exported for unit testing only */
+export async function extractRichText(pdfBuffer: Buffer, numPages: number): Promise<string[]> {
   try {
     stubMissingDomGlobals();
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
