@@ -46,6 +46,72 @@ import {
 
 const router = Router();
 
+// ── Module-level dictionary cache ─────────────────────────────────────────────
+// These tables are static lookup data that never changes at runtime.  Loading
+// them once and reusing the result avoids 5 DB round-trips on every /search call.
+interface DictionaryCache {
+  correctionMap: Map<string, string>;
+  abbrevMap: Map<string, string[]>;
+  vendorMapData: Map<string, string[]>;
+  synonymMapLookup: Map<string, string[]>;
+  slangMap: Map<string, string[]>;
+  reverseVendorMap: Map<string, string>;
+}
+
+let _dictCache: DictionaryCache | null = null;
+let _dictCachePromise: Promise<DictionaryCache> | null = null;
+
+async function loadDictionaries(): Promise<DictionaryCache> {
+  if (_dictCache) return _dictCache;
+  if (_dictCachePromise) return _dictCachePromise;
+
+  _dictCachePromise = (async () => {
+    try {
+      const [misspellings, abbreviations, vendors, synonyms, slang] = await Promise.all([
+        db.select().from(misspellingMapTable),
+        db.select().from(abbreviationMapTable),
+        db.select().from(vendorMapTable),
+        db.select().from(synonymMapTable),
+        db.select().from(electricalSlangMapTable),
+      ]);
+
+      const correctionMap = new Map(misspellings.map(m => [m.misspelling, m.correction]));
+      const abbrevMap = new Map(abbreviations.map(a => [a.abbreviation, a.expansions]));
+      const vendorMapData = new Map(vendors.map(v => [v.code, v.names]));
+      const synonymMapLookup = new Map(synonyms.map(s => [s.term, s.synonyms]));
+      const slangMap = new Map(slang.map(s => [s.slangTerm, s.standardTerms]));
+
+      const reverseVendorMap = new Map<string, string>();
+      const extendedVendors = vendors.filter(v => !v.isPrimary);
+      const primaryVendors = vendors.filter(v => v.isPrimary);
+      for (const v of extendedVendors) {
+        for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
+      }
+      for (const v of primaryVendors) {
+        for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
+      }
+
+      const cache: DictionaryCache = {
+        correctionMap,
+        abbrevMap,
+        vendorMapData,
+        synonymMapLookup,
+        slangMap,
+        reverseVendorMap,
+      };
+      _dictCache = cache;
+      return cache;
+    } catch (err) {
+      logger.error({ err }, "Failed to load search dictionary tables; will retry on next request");
+      throw err;
+    } finally {
+      _dictCachePromise = null;
+    }
+  })();
+
+  return _dictCachePromise;
+}
+
 // ── GET /inventory ────────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {
   try {
@@ -288,32 +354,15 @@ router.post("/search", async (req, res) => {
       { key: "poleCount",    value: poleCount },
     ].filter(f => f.value.trim() !== "");
 
-    // Load dictionaries in parallel
-    const [misspellings, abbreviations, vendors, synonyms, slang] = await Promise.all([
-      db.select().from(misspellingMapTable),
-      db.select().from(abbreviationMapTable),
-      db.select().from(vendorMapTable),
-      db.select().from(synonymMapTable),
-      db.select().from(electricalSlangMapTable),
-    ]);
-
-    const correctionMap = new Map(misspellings.map(m => [m.misspelling, m.correction]));
-    const abbrevMap = new Map(abbreviations.map(a => [a.abbreviation, a.expansions]));
-    const vendorMapData = new Map(vendors.map(v => [v.code, v.names]));
-    const synonymMapLookup = new Map(synonyms.map(s => [s.term, s.synonyms]));
-    const slangMap = new Map(slang.map(s => [s.slangTerm, s.standardTerms]));
-
-    // Build reverse map with primary vendors last so they overwrite extended
-    // entries on name conflicts — authoritative 68 always win.
-    const reverseVendorMap = new Map<string, string>();
-    const extendedVendors = vendors.filter(v => !v.isPrimary);
-    const primaryVendors = vendors.filter(v => v.isPrimary);
-    for (const v of extendedVendors) {
-      for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
-    }
-    for (const v of primaryVendors) {
-      for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
-    }
+    // Load dictionaries from module-level cache (populated once, reused forever)
+    const {
+      correctionMap,
+      abbrevMap,
+      vendorMapData,
+      synonymMapLookup,
+      slangMap,
+      reverseVendorMap,
+    } = await loadDictionaries();
 
     // Resolve taxonomy category if categorySlug is provided
     // All three slugs in the uncategorized branch trigger inverse-match logic
