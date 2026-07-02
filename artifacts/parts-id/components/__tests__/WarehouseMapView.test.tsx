@@ -33,10 +33,11 @@
  * • AppState.addEventListener in the react-native mock is re-implemented
  *   per-test to capture the registered handler so suite 3 can fire synthetic
  *   background events.
- * • Real timers are used throughout.  persistViewport's 300 ms setTimeout does
- *   not fire before the background-flush assertion because the test does not
- *   await 300 ms of real time, and the handler cancels the timer before it
- *   fires.
+ * • Suites 1, 2, and 4 use real timers.  Suite 3 (background-flush) switches
+ *   to jest.useFakeTimers() so that persistViewport's 300 ms setTimeout is a
+ *   fake handle that never touches the real event loop; jest.runAllTimers() in
+ *   its afterEach drains any remaining fake timers before real timers are
+ *   restored, preventing dangling handles between test runs.
  */
 
 // React 19 requires IS_REACT_ACT_ENVIRONMENT = true for act() to flush
@@ -507,6 +508,11 @@ describe("AppState background handler — flushes pending _persistTimer write", 
   let capturedAppStateHandler: ((state: string) => void) | null = null;
 
   beforeEach(() => {
+    // Switch to fake timers so persistViewport's 300 ms setTimeout is a fake
+    // handle that never touches the real event loop.  This prevents Jest from
+    // reporting "Have you considered using --detectOpenHandles" after the suite.
+    jest.useFakeTimers();
+
     // Override the already-jest.fn() addEventListener in the RN mock to
     // capture the registered handler so tests can fire synthetic events.
     const rn = require("react-native");
@@ -519,6 +525,10 @@ describe("AppState background handler — flushes pending _persistTimer write", 
   });
 
   afterEach(() => {
+    // Drain any remaining fake timers, then restore real timers so subsequent
+    // suites (and the outer afterEach) are unaffected.
+    jest.runAllTimers();
+    jest.useRealTimers();
     capturedAppStateHandler = null;
   });
 
