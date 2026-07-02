@@ -6,6 +6,13 @@
  * permitted; any other statement type is rejected with a 400 error.
  *
  * Safeguards:
+ *   - Every query runs inside a transaction that is ALWAYS rolled back, even
+ *     on success.  This is the primary read-only enforcement mechanism: the
+ *     database engine guarantees no mutations survive regardless of what SQL
+ *     was submitted.
+ *   - The WRITE_KEYWORDS regex blocklist is retained as secondary
+ *     defence-in-depth (fast 400 before the query reaches the DB) but is NOT
+ *     relied upon as the primary control.
  *   - Statement timeout of QUERY_TIMEOUT_MS (default 5 000 ms) via SET LOCAL
  *   - Results capped at MAX_ROWS (default 500); response includes truncated flag
  *
@@ -184,7 +191,10 @@ router.post("/query", requireAdminAuth, async (req, res) => {
     const capped = `SELECT * FROM (${trimmedSql}) AS _admin_query_wrapper LIMIT ${MAX_ROWS + 1}`;
     const result = await client.query(capped);
 
-    await client.query("COMMIT");
+    // ALWAYS roll back — this is the primary read-only enforcement.  Even if a
+    // write statement somehow slipped through validation (e.g. via a future SQL
+    // parser edge case), the database engine guarantees no mutation survives.
+    await client.query("ROLLBACK");
 
     const columns: string[] = result.fields.map((f: { name: string }) => f.name);
     const allRows = result.rows as Record<string, unknown>[];
