@@ -12,12 +12,18 @@ import { useColors } from "@/hooks/useColors";
 
 export default function PendingScreen() {
   const colors = useColors();
-  const { logout } = useApp();
+  const { logout, recheckApprovalStatus, approvalStatus } = useApp();
   const [signingOut, setSigningOut] = React.useState(false);
+
+  const checking = approvalStatus === "loading";
 
   const handleSignOut = async () => {
     setSigningOut(true);
     await logout();
+  };
+
+  const handleCheckAgain = async () => {
+    await recheckApprovalStatus();
   };
 
   const styles = StyleSheet.create({
@@ -66,8 +72,20 @@ export default function PendingScreen() {
       textTransform: "uppercase",
       letterSpacing: 1,
     },
-    button: {
+    checkButton: {
       marginTop: 8,
+      width: "100%",
+      borderRadius: 8,
+      paddingVertical: 14,
+      alignItems: "center",
+      backgroundColor: colors.primary,
+    },
+    checkButtonText: {
+      fontSize: 14,
+      fontFamily: "Inter_600SemiBold",
+      color: colors.primaryForeground,
+    },
+    button: {
       width: "100%",
       borderRadius: 8,
       paddingVertical: 14,
@@ -95,9 +113,20 @@ export default function PendingScreen() {
           <Text style={styles.badgeText}>Pending Review</Text>
         </View>
         <Pressable
+          style={[styles.checkButton, checking && { opacity: 0.6 }]}
+          onPress={handleCheckAgain}
+          disabled={checking || signingOut}
+        >
+          {checking ? (
+            <ActivityIndicator size="small" color={colors.primaryForeground} />
+          ) : (
+            <Text style={styles.checkButtonText}>Check Again</Text>
+          )}
+        </Pressable>
+        <Pressable
           style={[styles.button, signingOut && { opacity: 0.6 }]}
           onPress={handleSignOut}
-          disabled={signingOut}
+          disabled={signingOut || checking}
         >
           {signingOut ? (
             <ActivityIndicator size="small" color={colors.mutedForeground} />
