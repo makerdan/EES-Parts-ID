@@ -451,6 +451,56 @@ if [[ "$TYPECHECK_EXIT" -ne 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Test 16: codegen:check no-drift path — post-merge exits 0 with success msg
+#
+# Spawns post-merge.sh with a mock pnpm that accepts 'run codegen:check' and
+# exits 0 (simulating the in-sync case where orval + git diff produce no
+# changes).  Asserts that post-merge itself exits 0 and prints the
+# "drift check passed" success message, verifying that the codegen guard
+# does not block merges when the generated files are already up to date.
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR16=$(mktemp -d)
+CODEGEN_CHECK_CALLED_FILE16="$MOCK_BIN_DIR16/codegen_check_called"
+
+# git: report no lockfile or schema changes so those branches are skipped.
+cat > "$MOCK_BIN_DIR16/git" << 'MOCKEOF'
+#!/bin/bash
+echo "artifacts/parts-id/components/PartCard.tsx"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR16/git"
+
+# pnpm: record when codegen:check is invoked; exit 0 for everything.
+cat > "$MOCK_BIN_DIR16/pnpm" << MOCKEOF
+#!/bin/bash
+if echo "\$*" | grep -q 'codegen:check'; then
+  touch "$CODEGEN_CHECK_CALLED_FILE16"
+fi
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR16/pnpm"
+
+# curl: return a healthy response so check_api_health exits 0 immediately.
+cat > "$MOCK_BIN_DIR16/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR16/curl"
+
+CODEGEN_NO_DRIFT_OUTPUT=$(PATH="$MOCK_BIN_DIR16:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+CODEGEN_NO_DRIFT_EXIT=$?
+
+if [[ -f "$CODEGEN_CHECK_CALLED_FILE16" ]]; then
+  pass "codegen:check no-drift — pnpm run codegen:check was invoked"
+else
+  fail "codegen:check no-drift — pnpm run codegen:check was never invoked"
+fi
+
+rm -rf "$MOCK_BIN_DIR16"
+
+assert_exit     "codegen:check no-drift — post-merge exits 0"         0 "$CODEGEN_NO_DRIFT_EXIT"
+assert_contains "codegen:check no-drift — prints drift check passed"  "drift check passed" "$CODEGEN_NO_DRIFT_OUTPUT"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
