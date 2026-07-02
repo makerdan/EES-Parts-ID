@@ -806,3 +806,105 @@ describe("startup fit — cold cache (getCachedData returns null on first instal
   );
 
 });
+
+// =============================================================================
+// Suite 6 — Device rotation: translate values scale by newW/oldW ratio
+//
+// After the first layout establishes the fit viewport, a second layout event
+// with different dimensions (simulating an orientation change) must scale the
+// current translateX/translateY by the ratio newW / oldW.  The floor plan is
+// always rendered at containerW × (containerW / SVG_ASPECT), so both axes
+// share the same width-only ratio.
+//
+// Mock strategy:
+// • computeFitTarget is overridden in the suite's beforeEach to return
+//   deterministic non-zero tx/ty (30, 20).  Without this, the real
+//   implementation returns near-zero values (the MOCK_CONTENT_VB centre is
+//   almost identical to the SVG viewbox centre), making 0 × ratio = 0 — a
+//   trivially true but meaningless assertion.
+// • panBounds is already mocked (outer beforeEach) to return maxX/maxY=10000
+//   so the scaled values pass through clamping unchanged.
+// • withSpring (reanimated mock) returns the target value synchronously, so
+//   translateX/savedTX both receive the scaled value in the same act() call.
+//
+// Two orientations are covered:
+//   portrait→landscape: ratio > 1  (tx/ty grow)
+//   landscape→portrait: ratio < 1  (tx/ty shrink)
+// =============================================================================
+
+describe("device rotation — translate values scale by newW/oldW ratio", () => {
+  const PORTRAIT_W  = 390;
+  const PORTRAIT_H  = 761;
+  const LANDSCAPE_W = 844;
+  const LANDSCAPE_H = 390;
+  // Known non-zero fit translations returned by the mocked computeFitTarget.
+  // Chosen to be clearly distinct from any other shared value so the post-
+  // rotation assertion cannot accidentally pass against an unrelated slot.
+  const FIT_TX = 30;
+  const FIT_TY = 20;
+
+  beforeEach(() => {
+    // Return a deterministic non-zero viewport so the rotation scaling is
+    // unambiguous.  The outer afterEach restores the spy after every test.
+    computeFitTargetSpy.mockReturnValue({
+      scale: ZOOM_STOPS[0].scale,
+      tx:    FIT_TX,
+      ty:    FIT_TY,
+    });
+  });
+
+  it("portrait→landscape: scales translateX and translateY by newW/oldW", async () => {
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
+    });
+    await flushPromises();
+
+    // First layout: portrait.  hasLaidOut becomes true and applyFitIfReady
+    // fires, writing FIT_TX / FIT_TY to savedTX / savedTY (and translateX /
+    // translateY).
+    await act(async () => {
+      fireOnLayout(renderer, PORTRAIT_W, PORTRAIT_H);
+    });
+
+    // Second layout: landscape.  hasLaidOut is already true → the rotation
+    // handler runs: centredTX = savedTX.value × (LANDSCAPE_W / PORTRAIT_W).
+    await act(async () => {
+      fireOnLayout(renderer, LANDSCAPE_W, LANDSCAPE_H);
+    });
+
+    const sizeRatio  = LANDSCAPE_W / PORTRAIT_W;
+    const expectedTX = FIT_TX * sizeRatio;
+    const expectedTY = FIT_TY * sizeRatio;
+
+    // Both translateX/savedTX and translateY/savedTY must now hold the scaled
+    // values.  (panBounds returns maxX/maxY=10000, so clamping is a no-op.)
+    expect(trackedValues.some((sv) => sv.value === expectedTX)).toBe(true);
+    expect(trackedValues.some((sv) => sv.value === expectedTY)).toBe(true);
+  });
+
+  it("landscape→portrait: scales translateX and translateY by newW/oldW", async () => {
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
+    });
+    await flushPromises();
+
+    // First layout: landscape — fit applies FIT_TX / FIT_TY.
+    await act(async () => {
+      fireOnLayout(renderer, LANDSCAPE_W, LANDSCAPE_H);
+    });
+
+    // Second layout: portrait — rotation handler scales by PORTRAIT_W / LANDSCAPE_W.
+    await act(async () => {
+      fireOnLayout(renderer, PORTRAIT_W, PORTRAIT_H);
+    });
+
+    const sizeRatio  = PORTRAIT_W / LANDSCAPE_W;
+    const expectedTX = FIT_TX * sizeRatio;
+    const expectedTY = FIT_TY * sizeRatio;
+
+    expect(trackedValues.some((sv) => sv.value === expectedTX)).toBe(true);
+    expect(trackedValues.some((sv) => sv.value === expectedTY)).toBe(true);
+  });
+});
