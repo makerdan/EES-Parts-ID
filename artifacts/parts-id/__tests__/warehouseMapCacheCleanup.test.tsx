@@ -220,6 +220,21 @@ const BASE_PROPS = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Use fake timers so the 3 s setEmptyDismissed setTimeout (WarehouseMapView
+// line ~759) never fires on the real event loop during these tests.  Without
+// this, the timer outlives every test and triggers an "update was not wrapped
+// in act()" warning plus a "Force exiting Jest" hang.
+//
+// setImmediate and nextTick are kept real because Path B's polling loop relies
+// on them to let microtask continuations advance step-by-step.
+beforeAll(() => {
+  jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
+});
+
+afterAll(() => {
+  jest.useRealTimers();
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
   // Restore Platform to native (ios) so the filesystem branch is exercised.
