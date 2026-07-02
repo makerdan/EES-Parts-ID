@@ -608,13 +608,14 @@ export default function CatalogReviewScreen() {
     });
   };
 
-  const handleRevert = async (item: ReviewItem) => {
+  const handleRevert = async (item: ReviewItem, groupJobId: number | null) => {
     if (revertingId) return;
     setRevertingId(item.id);
     try {
       const r = await fetch(`${API_BASE}/admin/catalog-pdf/reviews/${item.id}/revert`, {
         method: "POST",
-        headers: authHeaders,
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(groupJobId != null ? { jobId: groupJobId } : {}),
       });
       if (r.status === 401) { logoutAdmin(); return; }
       if (!r.ok) {
@@ -636,7 +637,7 @@ export default function CatalogReviewScreen() {
   // Flat list data: section headers + items
   type ListRow =
     | { kind: "header"; group: SessionGroup }
-    | { kind: "item"; item: ReviewItem };
+    | { kind: "item"; item: ReviewItem; groupJobId: number | null };
 
   const listData: Array<ListRow> = [];
   for (const group of groups) {
@@ -644,7 +645,7 @@ export default function CatalogReviewScreen() {
     if (activeItems.length === 0) continue;
     listData.push({ kind: "header", group });
     for (const item of activeItems) {
-      listData.push({ kind: "item", item });
+      listData.push({ kind: "item", item, groupJobId: group.jobId });
     }
   }
 
@@ -666,7 +667,7 @@ export default function CatalogReviewScreen() {
       );
     }
 
-    const { item } = row;
+    const { item, groupJobId } = row;
     const conf = item.imageConfidence != null ? Math.round(item.imageConfidence * 100) : null;
     const isReverting = revertingId === item.id;
 
@@ -731,7 +732,7 @@ export default function CatalogReviewScreen() {
 
         {/* Revert button */}
         <Pressable
-          onPress={() => handleRevert(item)}
+          onPress={() => handleRevert(item, groupJobId)}
           disabled={isReverting}
           style={[s.revertBtn, { borderColor: colors.destructive + "88" }]}
         >
