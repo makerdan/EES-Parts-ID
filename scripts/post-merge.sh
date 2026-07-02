@@ -83,22 +83,22 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "[post-merge] Schema unchanged — skipping db push and FTS check."
   fi
 
-  # Regenerate API client files so the Expo bundle never serves stale or missing
-  # generated modules after a merge (orval cleans the output folder on every run).
-  # We run orval directly (skipping the tsc --build that the full codegen script
-  # appends) because the typecheck already passed before the merge and tsc --build
-  # can take >20 s, which overruns the post-merge timeout budget.
-  echo "[post-merge] Regenerating API client..."
-  timeout 60 pnpm --filter @workspace/api-spec exec orval --config ./orval.config.ts || {
+  # Regenerate API client files and verify no generated-file drift.
+  # codegen:check runs orval, rebuilds the lib declarations (tsc --build), then
+  # asserts git diff --exit-code on the generated directories so a merge that
+  # carries a stale generated file is caught immediately rather than silently
+  # serving wrong types to 38 consumer files.
+  echo "[post-merge] Regenerating API client and checking for drift..."
+  timeout 120 pnpm --filter @workspace/api-spec run codegen:check || {
     CODEGEN_EXIT=$?
     if [[ "$CODEGEN_EXIT" -eq 124 ]]; then
-      echo "[post-merge] ERROR: orval timed out after 60s. Aborting."
+      echo "[post-merge] ERROR: codegen:check timed out after 120s. Aborting."
     else
-      echo "[post-merge] ERROR: orval failed (exit ${CODEGEN_EXIT}). Aborting."
+      echo "[post-merge] ERROR: codegen:check failed (exit ${CODEGEN_EXIT}) — generated files may have drifted from the OpenAPI spec. Run 'pnpm --filter @workspace/api-spec run codegen' and commit the result."
     fi
     exit 1
   }
-  echo "[post-merge] API client regenerated."
+  echo "[post-merge] API client regenerated and drift check passed."
 
   # Push latest main branch to GitHub after every successful merge.
   # Uses || true so a network error never causes post-merge to report failure.

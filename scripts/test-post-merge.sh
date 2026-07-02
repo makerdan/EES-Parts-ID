@@ -393,6 +393,64 @@ assert_exit     "db push run — exits 0 when schema changed" 0 "$SCHEMA_DB_EXIT
 assert_contains "db push run — prints running message" "Schema changed — running db push" "$SCHEMA_DB_OUTPUT"
 
 # ---------------------------------------------------------------------------
+# Test 14: @workspace/api-client-react package.json resolution fields
+#
+# Verifies that the package exports a valid entry-point AND declares a
+# "types" field so TypeScript can resolve the module regardless of
+# moduleResolution strategy.  A missing "types" field with only an
+# "exports" field is the root cause of the 104 TS2305 errors that
+# previously broke 38 files in parts-id.
+# ---------------------------------------------------------------------------
+API_CLIENT_PKG="$SCRIPT_DIR/../lib/api-client-react/package.json"
+
+if [[ -f "$API_CLIENT_PKG" ]]; then
+  EXPORTS_ENTRY=$(node -e \
+    "const p=JSON.parse(require('fs').readFileSync('$API_CLIENT_PKG','utf8')); \
+     console.log(p.exports && p.exports['.'] ? p.exports['.'] : '')" 2>/dev/null || true)
+
+  if [[ -n "$EXPORTS_ENTRY" ]]; then
+    pass "api-client-react — exports['.'] field is set (${EXPORTS_ENTRY})"
+  else
+    fail "api-client-react — exports['.'] field is missing or empty (TS2305 breakage risk)"
+  fi
+
+  TYPES_FIELD=$(node -e \
+    "const p=JSON.parse(require('fs').readFileSync('$API_CLIENT_PKG','utf8')); \
+     console.log(p.types || p.main || '')" 2>/dev/null || true)
+
+  if [[ -n "$TYPES_FIELD" ]]; then
+    pass "api-client-react — types or main field is set (${TYPES_FIELD})"
+  else
+    fail "api-client-react — neither 'types' nor 'main' field is set; TypeScript resolution may fail when moduleResolution does not follow exports"
+  fi
+
+  EXPORTS_SRC="$SCRIPT_DIR/../lib/api-client-react/${EXPORTS_ENTRY}"
+  if [[ -f "$EXPORTS_SRC" ]]; then
+    pass "api-client-react — exports['.'] target file exists"
+  else
+    fail "api-client-react — exports['.'] target '${EXPORTS_ENTRY}' does not exist on disk"
+  fi
+else
+  fail "api-client-react — lib/api-client-react/package.json not found"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 15: parts-id typecheck exits 0
+#
+# Runs tsc --noEmit inside artifacts/parts-id and asserts that there are
+# zero errors.  This is the direct regression guard for TS2305 "no exported
+# member" and TS7006 "implicit any" errors that previously prevented the
+# typecheck quality gate from passing.
+# ---------------------------------------------------------------------------
+TYPECHECK_OUTPUT=$(pnpm --filter @workspace/parts-id run typecheck 2>&1)
+TYPECHECK_EXIT=$?
+assert_exit "typecheck — parts-id tsc --noEmit exits 0" 0 "$TYPECHECK_EXIT"
+if [[ "$TYPECHECK_EXIT" -ne 0 ]]; then
+  echo "  typecheck output (first 20 lines):"
+  echo "$TYPECHECK_OUTPUT" | head -20 | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
