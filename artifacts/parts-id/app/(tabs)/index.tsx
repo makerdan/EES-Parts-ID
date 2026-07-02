@@ -1401,69 +1401,72 @@ export default function SearchScreen() {
         </View>
       ) : null}
 
-      {/* ── Persistent search bar — always visible ── */}
-      <View style={[styles.searchBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <View style={styles.searchBarInputWrapper}>
-          <KeyboardDoneInput
-            value={filters.keywords}
-            onChangeText={v => handleChange("keywords", v.toUpperCase())}
-            placeholder="Search parts — keyword, catalog #, vendor…"
-            placeholderTextColor={colors.mutedForeground}
-            style={[styles.searchBarInput, {
-              backgroundColor: colors.muted,
-              borderColor: '#555',
-              color: colors.foreground,
-              paddingRight: filters.keywords ? 36 : 12,
-            }]}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            returnKeyType="search"
-            onSubmitEditing={handleSearch}
-            blurOnSubmit={false}
-          />
-          {filters.keywords ? (
-            <Pressable
-              onPress={() => handleChange("keywords", "")}
-              style={styles.searchBarClearX}
-              hitSlop={8}
-            >
-              <Feather name="x-circle" size={16} color={colors.mutedForeground} />
-            </Pressable>
-          ) : null}
-        </View>
-        <View style={styles.searchBarButtons}>
-          <Pressable
-            onPress={handleSearch}
-            disabled={searchMutation.isPending || !canSearch}
-            style={[styles.searchBarSearchBtn, {
-              backgroundColor: (searchMutation.isPending || !canSearch) ? colors.muted : colors.primary,
-              borderWidth: 1,
-              borderColor: (searchMutation.isPending || !canSearch) ? colors.border : '#000',
-            }]}
-          >
-            <Text style={[styles.searchBarSearchBtnText, { color: '#000' }]}>
-              {searchMutation.isPending ? "…" : "🔍 Search"}
-            </Text>
-          </Pressable>
-          {(hasResults || filters.keywords || hasActiveSizeFilter) ? (
-            <Pressable
-              onPress={handleClear}
-              style={[styles.secondaryBtn, styles.searchBarClearBtn, { borderColor: colors.border }]}
-            >
-              <Text style={[styles.searchBarClearBtnText, { color: colors.mutedForeground }]}>Clear</Text>
-            </Pressable>
-          ) : null}
-        </View>
+      {/* ── Persistent search bar — hidden in aisle/category browse modes ── */}
+      {mode === "search" ? (
+        <>
+          <View style={[styles.searchBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.searchBarInputWrapper}>
+              <KeyboardDoneInput
+                value={filters.keywords}
+                onChangeText={v => handleChange("keywords", v.toUpperCase())}
+                placeholder="Search parts — keyword, catalog #, vendor…"
+                placeholderTextColor={colors.mutedForeground}
+                style={[styles.searchBarInput, {
+                  backgroundColor: colors.muted,
+                  borderColor: '#555',
+                  color: colors.foreground,
+                  paddingRight: filters.keywords ? 36 : 12,
+                }]}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                returnKeyType="search"
+                onSubmitEditing={handleSearch}
+                blurOnSubmit={false}
+              />
+              {filters.keywords ? (
+                <Pressable
+                  onPress={() => handleChange("keywords", "")}
+                  style={styles.searchBarClearX}
+                  hitSlop={8}
+                >
+                  <Feather name="x-circle" size={16} color={colors.mutedForeground} />
+                </Pressable>
+              ) : null}
+            </View>
+            <View style={styles.searchBarButtons}>
+              <Pressable
+                onPress={handleSearch}
+                disabled={searchMutation.isPending || !canSearch}
+                style={[styles.searchBarSearchBtn, {
+                  backgroundColor: (searchMutation.isPending || !canSearch) ? colors.muted : colors.primary,
+                  borderWidth: 1,
+                  borderColor: (searchMutation.isPending || !canSearch) ? colors.border : '#000',
+                }]}
+              >
+                <Text style={[styles.searchBarSearchBtnText, { color: '#000' }]}>
+                  {searchMutation.isPending ? "…" : "🔍 Search"}
+                </Text>
+              </Pressable>
+              {(hasResults || filters.keywords || hasActiveSizeFilter) ? (
+                <Pressable
+                  onPress={handleClear}
+                  style={[styles.secondaryBtn, styles.searchBarClearBtn, { borderColor: colors.border }]}
+                >
+                  <Text style={[styles.searchBarClearBtnText, { color: colors.mutedForeground }]}>Clear</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
 
-      </View>
-
-      {/* "Searched as:" chip row — shown when AI translated a plain-language query */}
-      {aiTranslation && !aiTranslationDismissed ? (
-        <SearchedAsRow
-          terms={aiTranslation.terms}
-          interpretation={aiTranslation.interpretation}
-          onDismiss={() => setAITranslationDismissed(true)}
-        />
+          {/* "Searched as:" chip row — shown when AI translated a plain-language query */}
+          {aiTranslation && !aiTranslationDismissed ? (
+            <SearchedAsRow
+              terms={aiTranslation.terms}
+              interpretation={aiTranslation.interpretation}
+              onDismiss={() => setAITranslationDismissed(true)}
+            />
+          ) : null}
+        </>
       ) : null}
 
       {/* ── Results list + floating filter overlay ── */}
