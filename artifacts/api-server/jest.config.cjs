@@ -3,6 +3,10 @@ module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
   globalSetup: "./jest.globalSetup.cjs",
+  // Force-exit after all tests complete.  Background async operations (e.g.
+  // the bulk-enrich job's invalidateReferenceAnswerCache cleanup) can keep the
+  // pg-pool open slightly past closePool(), preventing a clean exit.
+  forceExit: true,
   transform: {
     "^.+\\.tsx?$": [
       "ts-jest",
