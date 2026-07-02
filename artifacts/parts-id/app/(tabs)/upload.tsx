@@ -25,6 +25,7 @@ import {
 } from "react-native";
 import type { SheetData } from "read-excel-file/universal";
 import { readSheet } from "read-excel-file/universal";
+import { z } from "zod";
 
 import { AddPartForm } from "@/components/AddPartForm";
 import { BarcodeAddPart } from "@/components/BarcodeAddPart";
@@ -172,6 +173,64 @@ type EnrichSummary = {
   enriched: number;
   unenriched: number;
 };
+
+const EnrichSummarySchema = z.object({ total: z.number(), enriched: z.number(), unenriched: z.number() });
+const BulkJobStatusSchema = z.object({
+  running: z.boolean(),
+  stopRequested: z.boolean(),
+  force: z.boolean(),
+  startedAt: z.string().nullable(),
+  processed: z.number(),
+  errors: z.number(),
+  total: z.number().nullable(),
+  finishedAt: z.string().nullable(),
+  lastError: z.string().nullable(),
+  model: z.string().nullable(),
+});
+const MeasureJobStatusSchema = z.object({
+  running: z.boolean(),
+  startedAt: z.string().nullable(),
+  processed: z.number(),
+  updated: z.number(),
+  total: z.number().nullable(),
+  finishedAt: z.string().nullable(),
+  lastError: z.string().nullable(),
+});
+const SseExpandDescDataSchema = z.object({
+  status: z.string().optional(),
+  done: z.boolean().optional(),
+  processed: z.number().optional(),
+  total: z.number().optional(),
+  remaining: z.number().optional(),
+  id: z.number().optional(),
+  partNumber: z.string().optional(),
+  originalDescription: z.string().optional(),
+  expandedDescription: z.string().nullable().optional(),
+  error: z.string().optional(),
+  progress: z.number().optional(),
+  model: z.string().optional(),
+});
+const BinDiffSummarySchema = z.object({
+  willReplaceBins: z.number(),
+  willAddBins: z.number(),
+  willPreserveBins: z.number(),
+  noChange: z.number(),
+  rows: z.array(z.unknown()),
+  willReplaceBarcodes: z.number(),
+  willAddBarcodes: z.number(),
+  willPreserveBarcodes: z.number(),
+  willBarcodeConflicts: z.number(),
+});
+const BulkJobWrapperSchema = z.object({ job: BulkJobStatusSchema });
+const MeasureJobWrapperSchema = z.object({ job: MeasureJobStatusSchema });
+const ApiErrorSchema = z.object({ error: z.string().optional() });
+const UploadResultSchema = z.object({ inserted: z.number(), updated: z.number(), total: z.number() });
+const QueryResultSchema = z.object({
+  columns: z.array(z.string()).optional(),
+  rows: z.array(z.record(z.string(), z.unknown())).optional(),
+  rowCount: z.number().optional(),
+  error: z.string().optional(),
+});
 
 // ── Column header aliases ──────────────────────────────────────────────────
 const VENDOR_ALIASES = ["vendor", "mfr", "manufacturer", "brand", "make", "supplier"];
@@ -777,7 +836,9 @@ export default function UploadScreen() {
           return;
         }
         if (!r.ok) throw new Error("preview failed");
-        const data = await r.json() as BinDiffSummary;
+        const binParsed = BinDiffSummarySchema.safeParse(await r.json());
+        if (!binParsed.success) { console.warn("[upload] bin-diff unexpected shape:", binParsed.error.message); setBinDiffFailed(true); setUploadError("Unexpected response from server — please try again."); return; }
+        const data = binParsed.data as BinDiffSummary;
         setBinDiff(data);
         setBinDiffFailed(false);
         setReplaceConfirmed(false);
@@ -826,7 +887,9 @@ export default function UploadScreen() {
         return;
       }
       if (!res.ok) return;
-      const data = await res.json() as EnrichSummary;
+      const parsed = EnrichSummarySchema.safeParse(await res.json());
+      if (!parsed.success) { console.warn("[upload] fetchEnrichSummary unexpected shape:", parsed.error.message); return; }
+      const data = parsed.data;
       setEnrichSummary(data);
     } catch (err) {
       console.error('[upload] fetchEnrichSummary', err);
@@ -845,7 +908,9 @@ export default function UploadScreen() {
         return;
       }
       if (!res.ok) return;
-      const data = await res.json() as BulkJobStatus;
+      const parsed = BulkJobStatusSchema.safeParse(await res.json());
+      if (!parsed.success) { console.warn("[upload] pollBulkStatus unexpected shape:", parsed.error.message); return; }
+      const data = parsed.data;
       setBulkJobStatus(data);
       if (data.running) {
         void fetchEnrichSummary();
@@ -877,7 +942,9 @@ export default function UploadScreen() {
         return;
       }
       if (!res.ok) return;
-      const data = await res.json() as MeasureJobStatus;
+      const parsed = MeasureJobStatusSchema.safeParse(await res.json());
+      if (!parsed.success) { console.warn("[upload] pollMeasureStatus unexpected shape:", parsed.error.message); return; }
+      const data = parsed.data;
       setMeasureJobStatus(data);
       if (data.running) {
         void fetchEnrichSummary();
@@ -974,14 +1041,18 @@ export default function UploadScreen() {
           return;
         }
         if (bulkRes.ok) {
-          const data = await bulkRes.json() as BulkJobStatus;
-          setBulkJobStatus(data);
-          if (data.running) startBulkPoll();
+          const bulkParsed = BulkJobStatusSchema.safeParse(await bulkRes.json());
+          if (bulkParsed.success) {
+            setBulkJobStatus(bulkParsed.data);
+            if (bulkParsed.data.running) startBulkPoll();
+          }
         }
         if (measureRes.ok) {
-          const data = await measureRes.json() as MeasureJobStatus;
-          setMeasureJobStatus(data);
-          if (data.running) startMeasurePoll();
+          const measureParsed = MeasureJobStatusSchema.safeParse(await measureRes.json());
+          if (measureParsed.success) {
+            setMeasureJobStatus(measureParsed.data);
+            if (measureParsed.data.running) startMeasurePoll();
+          }
         }
       } catch (err) {
         console.error('[upload] load initial job status', err);
@@ -1007,18 +1078,19 @@ export default function UploadScreen() {
         body: JSON.stringify({ force }),
       });
       if (res.status === 409) {
-        const data = await res.json() as { job: BulkJobStatus };
-        setBulkJobStatus(data.job);
+        const p409 = BulkJobWrapperSchema.safeParse(await res.json());
+        if (p409.success) setBulkJobStatus(p409.data.job);
         startBulkPoll();
         return;
       }
       if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
-        setBulkEnrichError(err.error ?? "Failed to start bulk enrichment");
+        const errParsed = ApiErrorSchema.safeParse(await res.json().catch(() => ({})));
+        setBulkEnrichError(errParsed.success ? (errParsed.data.error ?? "Failed to start bulk enrichment") : "Failed to start bulk enrichment");
         return;
       }
-      const data = await res.json() as { job: BulkJobStatus };
-      setBulkJobStatus(data.job);
+      const pOk = BulkJobWrapperSchema.safeParse(await res.json());
+      if (!pOk.success) { console.warn("[upload] bulk-enrich start unexpected shape:", pOk.error.message); setBulkEnrichError("Unexpected response from server — please try again."); return; }
+      setBulkJobStatus(pOk.data.job);
       startBulkPoll();
     } catch {
       setBulkEnrichError("Failed to start bulk enrichment. Check your connection and try again.");
@@ -1035,8 +1107,8 @@ export default function UploadScreen() {
         headers: { ...adminHeaders },
       });
       if (res.ok) {
-        const data = await res.json() as { job: BulkJobStatus };
-        setBulkJobStatus(data.job);
+        const pStop = BulkJobWrapperSchema.safeParse(await res.json());
+        if (pStop.success) setBulkJobStatus(pStop.data.job);
       }
     } catch {
       // silently ignore — polling will detect the stopped state shortly
@@ -1054,18 +1126,19 @@ export default function UploadScreen() {
         headers: { "Content-Type": "application/json", ...adminHeaders },
       });
       if (res.status === 409) {
-        const data = await res.json() as { job: MeasureJobStatus };
-        setMeasureJobStatus(data.job);
+        const p409m = MeasureJobWrapperSchema.safeParse(await res.json());
+        if (p409m.success) setMeasureJobStatus(p409m.data.job);
         startMeasurePoll();
         return;
       }
       if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
-        setMeasureEnrichError(err.error ?? "Failed to start measurement enrichment");
+        const errParsedM = ApiErrorSchema.safeParse(await res.json().catch(() => ({})));
+        setMeasureEnrichError(errParsedM.success ? (errParsedM.data.error ?? "Failed to start measurement enrichment") : "Failed to start measurement enrichment");
         return;
       }
-      const data = await res.json() as { job: MeasureJobStatus };
-      setMeasureJobStatus(data.job);
+      const pOkM = MeasureJobWrapperSchema.safeParse(await res.json());
+      if (!pOkM.success) { console.warn("[upload] measure-enrich start unexpected shape:", pOkM.error.message); setMeasureEnrichError("Unexpected response from server — please try again."); return; }
+      setMeasureJobStatus(pOkM.data.job);
       startMeasurePoll();
     } catch {
       setMeasureEnrichError("Failed to start measurement enrichment. Check your connection and try again.");
@@ -1098,8 +1171,8 @@ export default function UploadScreen() {
           setUploadError("Admin session expired. Please unlock again.");
           return;
         }
-        const err = await response.json().catch(() => ({})) as { error?: string };
-        setExpandDescError(err.error ?? "Failed to start expansion");
+        const errParsedED = ApiErrorSchema.safeParse(await response.json().catch(() => ({})));
+        setExpandDescError(errParsedED.success ? (errParsedED.data.error ?? "Failed to start expansion") : "Failed to start expansion");
         return;
       }
 
@@ -1118,20 +1191,10 @@ export default function UploadScreen() {
       const processLine = (line: string) => {
         if (!line.startsWith("data: ")) return;
         try {
-          const data = JSON.parse(line.slice(6)) as {
-            status?: string;
-            done?: boolean;
-            processed?: number;
-            total?: number;
-            remaining?: number;
-            id?: number;
-            partNumber?: string;
-            originalDescription?: string;
-            expandedDescription?: string | null;
-            error?: string;
-            progress?: number;
-            model?: string;
-          };
+          const rawData: unknown = JSON.parse(line.slice(6));
+          const parsedData = SseExpandDescDataSchema.safeParse(rawData);
+          if (!parsedData.success) { console.warn("[upload] SSE expand-desc unexpected shape:", parsedData.error.message); return; }
+          const data = parsedData.data;
           if (data.status === "poe_chain_exhausted") {
             poeChainExhausted = true;
             return;
@@ -1431,17 +1494,19 @@ export default function UploadScreen() {
       });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { error?: string };
+        const bodyParsed = ApiErrorSchema.safeParse(await response.json().catch(() => ({})));
         if (response.status === 401) {
           logoutAdmin();
           setUploadError("Admin session expired. Please unlock again.");
         } else {
-          setUploadError(body.error ?? "Upload failed — could not save inventory items. Please try again.");
+          setUploadError(bodyParsed.success ? (bodyParsed.data.error ?? "Upload failed — could not save inventory items. Please try again.") : "Upload failed — could not save inventory items. Please try again.");
         }
         return;
       }
 
-      const result = await response.json() as { inserted: number; updated: number; total: number };
+      const resultParsed = UploadResultSchema.safeParse(await response.json());
+      if (!resultParsed.success) { console.warn("[upload] upload result unexpected shape:", resultParsed.error.message); setUploadError("Unexpected response from server — please try again."); return; }
+      const result = resultParsed.data;
       setUploadSuccess({ inserted: result.inserted, updated: result.updated, total: result.total });
       setParsedRows([]);
       setRawCsv(null);
@@ -1471,12 +1536,12 @@ export default function UploadScreen() {
       });
 
       if (!response.ok) {
-        const errBody = await response.json().catch(() => ({})) as { error?: string };
+        const errBodyParsed = ApiErrorSchema.safeParse(await response.json().catch(() => ({})));
         if (response.status === 401) {
           logoutAdmin();
           setUploadError("Admin session expired. Please unlock again.");
         } else {
-          setUploadError(errBody.error ?? "AI enrichment failed — please check your connection and try again.");
+          setUploadError(errBodyParsed.success ? (errBodyParsed.data.error ?? "AI enrichment failed — please check your connection and try again.") : "AI enrichment failed — please check your connection and try again.");
         }
         setEnrichProgress(null);
         return;
@@ -1617,8 +1682,8 @@ export default function UploadScreen() {
         body: JSON.stringify({ svg: content }),
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({ error: "Upload failed" })) as { error?: string };
-        setFloorPlanResult({ success: false, message: body.error ?? "Upload failed" });
+        const fpParsed = ApiErrorSchema.safeParse(await res.json().catch(() => ({ error: "Upload failed" })));
+        setFloorPlanResult({ success: false, message: fpParsed.success ? (fpParsed.data.error ?? "Upload failed") : "Upload failed" });
       } else {
         setFloorPlanResult({ success: true, message: "Floor plan uploaded — the app will use the new plan on next launch." });
         setFloorPlanFile(null);
@@ -3106,7 +3171,9 @@ export default function UploadScreen() {
                         setQueryError("Admin session expired. Please unlock again.");
                         return;
                       }
-                      const data = await res.json() as { columns?: Array<string>; rows?: Array<Record<string, unknown>>; rowCount?: number; error?: string };
+                      const qParsed = QueryResultSchema.safeParse(await res.json());
+                      if (!qParsed.success) { console.warn("[upload] query result unexpected shape:", qParsed.error.message); setQueryError("Unexpected response from server — query failed."); return; }
+                      const data = qParsed.data;
                       if (!res.ok || data.error) {
                         setQueryError(data.error ?? "Query failed");
                         return;

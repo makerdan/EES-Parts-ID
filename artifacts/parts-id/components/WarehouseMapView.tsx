@@ -58,6 +58,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { Ellipse,G, Path, Rect, Svg, SvgUri, SvgXml, Text as SvgText } from "react-native-svg";
+import { z } from "zod";
 
 import { useColors } from "@/hooks/useColors";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
@@ -98,6 +99,7 @@ import {
 } from "@/utils/tilePyramidCache";
 
 const VIEWPORT_KEY = "@rdc34/warehouse_map_viewport_v2";
+const FloorPlanMetaSchema = z.object({ hash: z.string() });
 
 // Standalone worklet — no closure over JS values
 function clamp(val: number, min: number, max: number) {
@@ -143,7 +145,7 @@ async function _loadFloorPlanFromServer(): Promise<void> {
   const metaRes = await fetchWithAuth(`${API_BASE}/floor-plan/meta`);
   if (!metaRes.ok) throw new Error("no server floor plan");
 
-  const { hash } = await metaRes.json() as { hash: string };
+  const { hash } = FloorPlanMetaSchema.parse(await metaRes.json());
   // Cache hit — skip re-fetching the SVG bytes entirely.
   if (getIfValid(hash) !== null) return;
 
@@ -1393,7 +1395,7 @@ export function WarehouseMapView({
       try {
         const res = await fetchWithAuth(`${API_BASE}/floor-plan/meta`);
         if (!res.ok || cancelled) return;
-        const { hash } = await res.json() as { hash: string };
+        const { hash } = FloorPlanMetaSchema.parse(await res.json());
         if (cancelled) return;
         if (knownServerHashRef.current === null) {
           // Record baseline hash on first successful fetch.

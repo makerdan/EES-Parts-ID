@@ -1004,7 +1004,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
                           style={[bsStyles.conflictText, { color: colors.destructive }]}
                           numberOfLines={2}
                         >
-                          ⚠ Barcode in use by {row!.conflictOwner}
+                          ⚠ Barcode in use by {row?.conflictOwner}
                         </Text>
                       ) : null}
                       {isError ? (

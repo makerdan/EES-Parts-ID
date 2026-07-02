@@ -40,6 +40,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { z } from "zod";
 
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
@@ -83,6 +84,20 @@ type JobStatus = {
   failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
   aiRawLog?: Array<AiRawLogEntry>;
 };
+
+const AiRawLogEntrySchema = z.object({ page: z.number(), text: z.string(), chunkJobId: z.string() });
+const JobStatusSchema = z.object({
+  jobId: z.string(),
+  status: z.enum(["pending", "processing", "done", "failed", "cancelled"]),
+  totalPages: z.number().nullable(),
+  processedPages: z.number(),
+  matchedParts: z.number(),
+  imagesMatched: z.number(),
+  unmatchedParts: z.array(z.object({ catalogNumber: z.string(), description: z.string() })).optional(),
+  errorMessage: z.string().nullable(),
+  failedChunks: z.array(z.object({ chunkJobId: z.string(), chunkIndex: z.number() })).optional(),
+  aiRawLog: z.array(AiRawLogEntrySchema).optional(),
+});
 
 type FailedChunkInfo = {
   chunkIndex: number;
@@ -202,8 +217,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   ): { speedStr: string | null; etaStr: string | null } {
     const none = { speedStr: null, etaStr: null };
     if (samples.length < 3) return none;
-    const oldest = samples[0]!;
-    const newest = samples[samples.length - 1]!;
+    const oldest = samples[0];
+    const newest = samples[samples.length - 1];
+    if (!oldest || !newest) return none;
     const dtMs = newest.t - oldest.t;
     if (dtMs < 100) return none;
     const deltaBytes = newest.loaded - oldest.loaded;
@@ -217,8 +233,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     // Coefficient of variation check over instantaneous inter-sample speeds
     const instSpeeds: Array<number> = [];
     for (let i = 1; i < samples.length; i++) {
-      const dt = samples[i]!.t - samples[i - 1]!.t;
-      const db = samples[i]!.loaded - samples[i - 1]!.loaded;
+      const s = samples[i];
+      const sp = samples[i - 1];
+      if (!s || !sp) continue;
+      const dt = s.t - sp.t;
+      const db = s.loaded - sp.loaded;
       if (dt > 0 && db >= 0) instSpeeds.push(dt > 0 ? db / dt : 0);
     }
     if (instSpeeds.length >= 2) {
@@ -405,18 +424,23 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           if (r.status === 401) { onSessionExpired(); return; }
 
           if (r.ok) {
-            const data = await r.json() as JobStatus;
+            const raw = await r.json();
             if (pollGenRef.current !== gen) return;
-
-            setJobStatus(data);
-            if (data.aiRawLog && data.aiRawLog.length > 0) {
-              const newEntries = data.aiRawLog.filter(e => !seenAiPagesRef.current.has(`${e.chunkJobId}:${e.page}`));
-              if (newEntries.length > 0) {
-                newEntries.forEach(e => seenAiPagesRef.current.add(`${e.chunkJobId}:${e.page}`));
-                setAiRawLog(prev => [...prev, ...newEntries].sort((a, b) => a.page - b.page));
+            const parsed = JobStatusSchema.safeParse(raw);
+            if (!parsed.success) {
+              console.warn("[CatalogPdfUpload] Unexpected job-status shape:", parsed.error.message);
+            } else {
+              const data = parsed.data;
+              setJobStatus(data);
+              if (data.aiRawLog && data.aiRawLog.length > 0) {
+                const newEntries = data.aiRawLog.filter(e => !seenAiPagesRef.current.has(`${e.chunkJobId}:${e.page}`));
+                if (newEntries.length > 0) {
+                  newEntries.forEach(e => seenAiPagesRef.current.add(`${e.chunkJobId}:${e.page}`));
+                  setAiRawLog(prev => [...prev, ...newEntries].sort((a, b) => a.page - b.page));
+                }
               }
+              if (data.status === "done" || data.status === "failed" || data.status === "cancelled") return;
             }
-            if (data.status === "done" || data.status === "failed" || data.status === "cancelled") return;
           }
         } catch {
           if (controller.signal.aborted || pollGenRef.current !== gen) return;
@@ -778,7 +802,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         return;
       }
 
-      if (i === 0) { parentJobId = result!.jobId; }
+      if (i === 0 && result !== null) { parentJobId = result.jobId; }
       resetUploadProgress();
       setChunksCompleted(i + 1);
     }
@@ -816,7 +840,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     // Single-element result: delegate to the regular single-upload path.
     // keep-awake for that path is handled by the useEffect on `loading`.
     if (chunks.length === 1) {
-      const base64 = bytesToBase64(chunks[0]!.bytes);
+      const base64 = bytesToBase64(chunks[0]?.bytes ?? new Uint8Array());
       handleSingleUpload(base64, 0);
       return;
     }
