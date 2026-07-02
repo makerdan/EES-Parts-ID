@@ -15,6 +15,9 @@
  *     relied upon as the primary control.
  *   - Statement timeout of QUERY_TIMEOUT_MS (default 5 000 ms) via SET LOCAL
  *   - Results capped at MAX_ROWS (default 500); response includes truncated flag
+ *   - Sensitive columns (matching SENSITIVE_COLUMN_PATTERN) are stripped from
+ *     every response before serialization; stripped column names are listed in
+ *     the response metadata so the admin knows data was omitted.
  *
  * Request body (JSON):
  *   { sql: string }
@@ -24,7 +27,7 @@
  *   format=xlsx — returns an Excel file download
  *
  * Response:
- *   200 { columns: string[], rows: Record<string, unknown>[], rowCount: number, truncated: boolean }
+ *   200 { columns: string[], rows: Record<string, unknown>[], rowCount: number, truncated: boolean, strippedColumns: string[] }
  *   200 text/csv attachment                      — when ?format=csv
  *   200 application/vnd.openxmlformats... attachment — when ?format=xlsx
  *   400 { error: string }  — non-SELECT query or empty input
@@ -42,6 +45,78 @@ const router = Router();
 
 const QUERY_TIMEOUT_MS = parseInt(process.env.ADMIN_QUERY_TIMEOUT_MS ?? "5000", 10);
 const MAX_ROWS = parseInt(process.env.ADMIN_QUERY_MAX_ROWS ?? "500", 10);
+
+/**
+ * Regex used to detect sensitive column names that must never be sent to the
+ * browser.  The default covers the most common patterns for secrets stored in
+ * relational databases.  Override via the ADMIN_QUERY_SENSITIVE_COLUMNS env
+ * var (a pipe-separated list of patterns, each treated as a full-column-name
+ * regex, case-insensitive).
+ *
+ * Default patterns (case-insensitive):
+ *   .*_hash     — e.g. password_hash, pin_hash
+ *   .*_token    — e.g. reset_token, refresh_token, api_token
+ *   .*_secret   — e.g. totp_secret, client_secret
+ *   .*_key      — e.g. api_key, encryption_key
+ *   password    — exact column named "password"
+ *   .*password.* — any column containing "password"
+ *   .*_salt     — e.g. password_salt
+ */
+const DEFAULT_SENSITIVE_PATTERN =
+  ".*_hash|.*_token|.*_secret|.*_key|password|.*password.*|.*_salt";
+
+function buildSensitiveColumnPattern(): RegExp {
+  const envPattern = process.env.ADMIN_QUERY_SENSITIVE_COLUMNS;
+  if (envPattern) {
+    try {
+      return new RegExp(`^(${envPattern})$`, "i");
+    } catch {
+      console.warn(
+        `[adminQuery] ADMIN_QUERY_SENSITIVE_COLUMNS contains an invalid regex ("${envPattern}"); ` +
+          "falling back to the default sensitive-column denylist.",
+      );
+    }
+  }
+  return new RegExp(`^(${DEFAULT_SENSITIVE_PATTERN})$`, "i");
+}
+
+const SENSITIVE_COLUMN_PATTERN = buildSensitiveColumnPattern();
+
+/**
+ * Given the raw column list and rows from the database, return filtered copies
+ * with any column whose name matches SENSITIVE_COLUMN_PATTERN removed.
+ * The list of stripped column names is returned alongside so callers can
+ * surface it in the response metadata.
+ */
+function filterSensitiveColumns(
+  columns: string[],
+  rows: Record<string, unknown>[],
+): { columns: string[]; rows: Record<string, unknown>[]; strippedColumns: string[] } {
+  const strippedColumns: string[] = [];
+  const safeColumns: string[] = [];
+
+  for (const col of columns) {
+    if (SENSITIVE_COLUMN_PATTERN.test(col)) {
+      strippedColumns.push(col);
+    } else {
+      safeColumns.push(col);
+    }
+  }
+
+  if (strippedColumns.length === 0) {
+    return { columns, rows, strippedColumns: [] };
+  }
+
+  const safeRows = rows.map((row) => {
+    const filtered: Record<string, unknown> = {};
+    for (const col of safeColumns) {
+      filtered[col] = row[col];
+    }
+    return filtered;
+  });
+
+  return { columns: safeColumns, rows: safeRows, strippedColumns };
+}
 
 function requireAdminAuth(
   req: import("express").Request,
@@ -196,15 +271,27 @@ router.post("/query", requireAdminAuth, async (req, res) => {
     // parser edge case), the database engine guarantees no mutation survives.
     await client.query("ROLLBACK");
 
-    const columns: string[] = result.fields.map((f: { name: string }) => f.name);
+    const rawColumns: string[] = result.fields.map((f: { name: string }) => f.name);
     const allRows = result.rows as Record<string, unknown>[];
     const truncated = allRows.length > MAX_ROWS;
-    const rows = truncated ? allRows.slice(0, MAX_ROWS) : allRows;
+    const cappedRows = truncated ? allRows.slice(0, MAX_ROWS) : allRows;
+
+    const {
+      columns,
+      rows,
+      strippedColumns,
+    } = filterSensitiveColumns(rawColumns, cappedRows);
 
     if (format === "csv") {
       const csv = buildCSV(columns, rows, truncated, MAX_ROWS);
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="query-results.csv"');
+      if (strippedColumns.length > 0) {
+        res.setHeader(
+          "X-Stripped-Columns",
+          strippedColumns.join(", "),
+        );
+      }
       return void res.send(csv);
     }
 
@@ -227,6 +314,13 @@ router.post("/query", requireAdminAuth, async (req, res) => {
         noteRow.getCell(1).font = { italic: true, color: { argb: "FFCC0000" } };
       }
 
+      if (strippedColumns.length > 0) {
+        const metaSheet = workbook.addWorksheet("_metadata");
+        metaSheet.addRow(["stripped_columns"]);
+        metaSheet.addRow([strippedColumns.join(", ")]);
+        metaSheet.getRow(1).font = { bold: true };
+      }
+
       res.setHeader(
         "Content-Type",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -236,7 +330,7 @@ router.post("/query", requireAdminAuth, async (req, res) => {
       return void res.end();
     }
 
-    res.json({ columns, rows, rowCount: rows.length, truncated });
+    res.json({ columns, rows, rowCount: rows.length, truncated, strippedColumns });
   } catch (err: unknown) {
     await client.query("ROLLBACK").catch(() => {});
 
