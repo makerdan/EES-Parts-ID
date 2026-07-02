@@ -47,6 +47,11 @@ export function useWarehouseZones() {
   // True once we have zones from either cache or a successful fetch.
   // When true, background-refresh failures are silent (map works offline).
   const hasDataRef = useRef(false);
+  // True when a 401 was received while hasDataRef is already true (mid-session
+  // token expiry). The tokenAvailable subscriber uses this to trigger a reload
+  // even though we already have cached data, so fresh data arrives once the
+  // user re-authenticates instead of waiting for the next foreground event.
+  const tokenExpiredMidSessionRef = useRef(false);
 
   const backgroundFetch = useCallback(async () => {
     if (fetchingRef.current) return;
@@ -62,6 +67,7 @@ export function useWarehouseZones() {
         setError(false);
         setLoading(false);
         hasDataRef.current = true;
+        tokenExpiredMidSessionRef.current = false;
       }
       const entry: ZoneCache = { zones: data.zones };
       await AsyncStorage.setItem(ZONES_CACHE_KEY, JSON.stringify(entry)).catch(() => {});
@@ -77,6 +83,12 @@ export function useWarehouseZones() {
           (err instanceof Error && err.message === "HTTP 401");
         if (!hasDataRef.current && !isAuthFailure) {
           setError(true);
+        }
+        // Mid-session expiry: we already have data but the token just expired.
+        // Mark it so the tokenAvailable subscriber will reload once a new token
+        // arrives (e.g. after the user re-authenticates).
+        if (hasDataRef.current && isAuthFailure) {
+          tokenExpiredMidSessionRef.current = true;
         }
         setLoading(false);
       }
@@ -119,13 +131,16 @@ export function useWarehouseZones() {
     return () => sub.remove();
   }, [backgroundFetch]);
 
-  // Re-fetch once auth settles if the initial fetch fired before a token was
-  // available (cold-start race: token refresh in flight on first tab visit).
-  // Only triggers when a token transitions null → non-null and we still have
-  // no data, so it does not fire on routine background token refreshes.
+  // Re-fetch once auth settles in two cases:
+  //   1. Cold-start race: initial fetch fired before a token was available.
+  //   2. Mid-session expiry: a 401 was received while zones were already loaded,
+  //      meaning the token expired and was cleared by onUnauthorized. We reload
+  //      once the user re-authenticates so fresh data arrives promptly.
+  // Routine background token refreshes (token still present) do NOT trigger
+  // a reload — the guard ensures this only fires after a null→non-null transition.
   useEffect(() => {
     const handleTokenAvailable = () => {
-      if (!hasDataRef.current) {
+      if (!hasDataRef.current || tokenExpiredMidSessionRef.current) {
         backgroundFetch();
       }
     };
