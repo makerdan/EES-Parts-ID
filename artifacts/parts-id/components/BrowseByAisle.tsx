@@ -23,7 +23,6 @@ import {
   Platform,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -385,8 +384,28 @@ function ShelfRow({
   onAddHere?: () => void;
   colors: ReturnType<typeof useColors>;
 }) {
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<FlatList>(null);
   useWebDragScroll(scrollRef);
+
+  const renderBinSlot = useCallback(
+    ({ item: part, index }: { item: PartOnShelf; index: number }) => {
+      const nextPart = shelf.parts[index + 1];
+      const gap = nextPart
+        ? Math.min(16, Math.max(4, (nextPart.bin.position - part.bin.position) * 2))
+        : 12;
+      return (
+        <BinSlot
+          part={part}
+          selected={selectedKey === `${part.item.id}-${part.bin.raw}`}
+          onPress={() => onSelectPart(part)}
+          gapRight={gap}
+          colors={colors}
+        />
+      );
+    },
+    [shelf.parts, selectedKey, onSelectPart, colors],
+  );
+
   return (
     <View>
       <View style={shelfRowStyles.labelRow}>
@@ -404,24 +423,17 @@ function ShelfRow({
           </Pressable>
         ) : null}
       </View>
-      <ScrollView ref={scrollRef} horizontal showsHorizontalScrollIndicator={false} style={shelfRowStyles.row} contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 4, gap: 0 }}>
-        {shelf.parts.map((part, idx) => {
-          const nextPart = shelf.parts[idx + 1];
-          const gap = nextPart
-            ? Math.min(16, Math.max(4, (nextPart.bin.position - part.bin.position) * 2))
-            : 12;
-          return (
-            <BinSlot
-              key={`${part.item.id}-${part.bin.raw}`}
-              part={part}
-              selected={selectedKey === `${part.item.id}-${part.bin.raw}`}
-              onPress={() => onSelectPart(part)}
-              gapRight={gap}
-              colors={colors}
-            />
-          );
-        })}
-      </ScrollView>
+      <FlatList
+        ref={scrollRef}
+        horizontal
+        data={shelf.parts}
+        keyExtractor={(part) => `${part.item.id}-${part.bin.raw}`}
+        renderItem={renderBinSlot}
+        showsHorizontalScrollIndicator={false}
+        style={shelfRowStyles.row}
+        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 4, gap: 0 }}
+        removeClippedSubviews={false}
+      />
       {(shelf.shelfHundreds !== 9 || shelf.parts.length > 3) ? (
         <View style={[shelfRowStyles.plank, { backgroundColor: colors.steel + "55" }]} />
       ) : null}
@@ -471,7 +483,7 @@ function SectionShelfView({
 }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedPart, setSelectedPart] = useState<PartOnShelf | null>(null);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<FlatList>(null);
 
   const handleSelectPart = useCallback((part: PartOnShelf) => {
     const key = `${part.item.id}-${part.bin.raw}`;
@@ -498,6 +510,43 @@ function SectionShelfView({
     [section.shelves],
   );
 
+  const renderShelf = useCallback(
+    ({ item: shelf }: { item: ShelfNode }) => (
+      <ShelfRow
+        shelf={shelf}
+        selectedKey={selectedKey}
+        onSelectPart={handleSelectPart}
+        onAddHere={onAddHereShelf ? () => onAddHereShelf(shelf.shelfHundreds) : undefined}
+        colors={colors}
+      />
+    ),
+    [selectedKey, handleSelectPart, onAddHereShelf, colors],
+  );
+
+  const listFooter = selectedPart ? (
+    <View style={{ marginHorizontal: 12, marginTop: 12 }}>
+      <ResultCard
+        result={{
+          item: selectedPart.item,
+          confidence: 1,
+          matchReason: "",
+          seriesLabel: undefined,
+          variants: [],
+        }}
+        onEditItem={onEditItem}
+        onShowOnMap={onShowOnMap}
+        rank={0}
+        fontScale={fontScale}
+      />
+    </View>
+  ) : (
+    <View style={{ alignItems: "center", padding: 24, marginTop: 8 }}>
+      <Text style={{ color: colors.mutedForeground, fontFamily: "Inter_400Regular", fontSize: 13 }}>
+        Tap a bin above to view part details
+      </Text>
+    </View>
+  );
+
   return (
     <View style={{ flex: 1 }} {...sectionPanHandlers}>
       <SectionNavBar
@@ -510,45 +559,17 @@ function SectionShelfView({
         colors={colors}
       />
       <View style={{ flex: 1 }} {...cardItemPanHandlers}>
-      <ScrollView
-        ref={scrollRef}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 160 }}
-      >
-        {orderedShelves.map(shelf => (
-          <ShelfRow
-            key={shelf.shelfHundreds}
-            shelf={shelf}
-            selectedKey={selectedKey}
-            onSelectPart={handleSelectPart}
-            onAddHere={onAddHereShelf ? () => onAddHereShelf(shelf.shelfHundreds) : undefined}
-            colors={colors}
-          />
-        ))}
-        {selectedPart ? (
-          <View style={{ marginHorizontal: 12, marginTop: 12 }}>
-            <ResultCard
-              result={{
-                item: selectedPart.item,
-                confidence: 1,
-                matchReason: "",
-                seriesLabel: undefined,
-                variants: [],
-              }}
-              onEditItem={onEditItem}
-              onShowOnMap={onShowOnMap}
-              rank={0}
-              fontScale={fontScale}
-            />
-          </View>
-        ) : (
-          <View style={{ alignItems: "center", padding: 24, marginTop: 8 }}>
-            <Text style={{ color: colors.mutedForeground, fontFamily: "Inter_400Regular", fontSize: 13 }}>
-              Tap a bin above to view part details
-            </Text>
-          </View>
-        )}
-      </ScrollView>
+        <FlatList
+          ref={scrollRef}
+          data={orderedShelves}
+          keyExtractor={(shelf) => String(shelf.shelfHundreds)}
+          renderItem={renderShelf}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 160 }}
+          keyboardShouldPersistTaps="handled"
+          removeClippedSubviews={false}
+          ListFooterComponent={listFooter}
+        />
       </View>
     </View>
   );

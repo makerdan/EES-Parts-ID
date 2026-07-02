@@ -161,16 +161,18 @@ describe("BrowseByAisle — scroll + swipe responder contracts", () => {
       expect(body).toMatch(/\{\.\.\.cardItemPanHandlers\}/);
     });
 
-    it("cardItemPanHandlers is NOT spread directly onto a <ScrollView in SectionShelfView", () => {
+    it("cardItemPanHandlers is NOT spread directly onto the scrollable list element in SectionShelfView", () => {
       const body = extractTopLevelFunction(source, "SectionShelfView");
       expect(body).not.toBeNull();
 
-      // Any line containing BOTH `<ScrollView` and `cardItemPanHandlers`
-      // would indicate the handlers were incorrectly placed on the scroll view.
+      // Any line containing BOTH the list element and `cardItemPanHandlers`
+      // would indicate the handlers were incorrectly placed on the list itself.
+      // The list was a <ScrollView and is now a <FlatList after virtualization.
       const lines = body!.split("\n");
       const offendingLine = lines.find(
         (line) =>
-          line.includes("<ScrollView") && line.includes("cardItemPanHandlers"),
+          (line.includes("<ScrollView") || line.includes("<FlatList")) &&
+          line.includes("cardItemPanHandlers"),
       );
       expect(offendingLine).toBeUndefined();
     });
@@ -181,26 +183,27 @@ describe("BrowseByAisle — scroll + swipe responder contracts", () => {
       expect(body).toMatch(/\{\.\.\.sectionPanHandlers\}/);
     });
 
-    it("cardItemPanHandlers spread appears BEFORE the JSX <ScrollView — confirming it is on an ancestor View", () => {
+    it("cardItemPanHandlers spread appears BEFORE the JSX scrollable list — confirming it is on an ancestor View", () => {
       const body = extractTopLevelFunction(source, "SectionShelfView");
       expect(body).not.toBeNull();
 
       const spreadIdx = body!.indexOf("{...cardItemPanHandlers}");
 
-      // Find the JSX <ScrollView element — it must be followed by whitespace or
-      // a newline, NOT by `>` (which would indicate a TypeScript generic like
-      // `useRef<ScrollView>`).
-      const jsxScrollRe = /<ScrollView[\s\n]/g;
-      jsxScrollRe.lastIndex = 0;
-      const scrollMatch = jsxScrollRe.exec(body!);
+      // Find the JSX scrollable list element — it must be followed by whitespace
+      // or a newline, NOT by `>` (which would indicate a TypeScript generic like
+      // `useRef<FlatList>`).  The list was a <ScrollView and is now a <FlatList
+      // after virtualization; try both so the test survives future refactors.
+      const jsxListRe = /<(?:FlatList|ScrollView)[\s\n]/g;
+      jsxListRe.lastIndex = 0;
+      const listMatch = jsxListRe.exec(body!);
 
       expect(spreadIdx).toBeGreaterThan(-1);
-      expect(scrollMatch).not.toBeNull();
-      const scrollIdx = scrollMatch!.index;
+      expect(listMatch).not.toBeNull();
+      const listIdx = listMatch!.index;
 
-      // The View with the pan handlers must open before the ScrollView opens,
-      // meaning it wraps the scroll view as a parent (not a sibling after it).
-      expect(spreadIdx).toBeLessThan(scrollIdx);
+      // The View with the pan handlers must open before the list opens,
+      // meaning it wraps the list as a parent (not a sibling after it).
+      expect(spreadIdx).toBeLessThan(listIdx);
     });
 
     it("PartsListView does NOT receive cardItemPanHandlers (no shelf card layer there)", () => {

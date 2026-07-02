@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { ScrollView } from "react-native";
+import type { FlatList, ScrollView } from "react-native";
 import { Platform } from "react-native";
 
 type ScrollableNode = { getScrollableNode: () => HTMLElement | undefined };
@@ -19,7 +19,7 @@ interface DragState {
  * threshold prevents accidental drags from interfering with clicks.
  * No-ops on iOS / Android.
  */
-export function useWebDragScroll(ref: React.RefObject<ScrollView | null>) {
+export function useWebDragScroll(ref: React.RefObject<ScrollView | FlatList | null>) {
   const drag = useRef<DragState>({
     active: false,
     moved: false,

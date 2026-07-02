@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
-import React from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import React, { useCallback } from "react";
+import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useColors } from "@/hooks/useColors";
 import type { ViewedEntry } from "@/utils/searchHistory";
@@ -27,6 +27,80 @@ export function RecentSearchesPanel({
   const hasQueries = queryHistory.length > 0;
   const hasViewed = viewedHistory.length > 0;
 
+  const renderQueryItem = useCallback(
+    ({ item: q }: { item: string }) => (
+      <Pressable
+        onPress={() => onSelectQuery(q)}
+        style={({ pressed }) => [
+          styles.row,
+          { backgroundColor: pressed ? colors.muted : "transparent" },
+        ]}
+        accessibilityLabel={`Re-run search: ${q}`}
+      >
+        <Feather
+          name="clock"
+          size={14}
+          color={colors.mutedForeground}
+          style={styles.rowIcon}
+        />
+        <Text
+          style={[styles.rowText, { color: colors.foreground }]}
+          numberOfLines={1}
+        >
+          {q}
+        </Text>
+        <Feather
+          name="chevron-right"
+          size={14}
+          color={colors.mutedForeground}
+        />
+      </Pressable>
+    ),
+    [colors, onSelectQuery],
+  );
+
+  const renderViewedItem = useCallback(
+    ({ item: entry }: { item: ViewedEntry }) => (
+      <Pressable
+        onPress={() => onSelectPart(entry.id)}
+        style={({ pressed }) => [
+          styles.row,
+          { backgroundColor: pressed ? colors.muted : "transparent" },
+        ]}
+        accessibilityLabel={`View part: ${entry.catalog}`}
+      >
+        <Feather
+          name="box"
+          size={14}
+          color={colors.mutedForeground}
+          style={styles.rowIcon}
+        />
+        <View style={styles.partRowContent}>
+          <Text
+            style={[styles.partCatalog, { color: colors.foreground }]}
+            numberOfLines={1}
+          >
+            {entry.catalog}
+          </Text>
+          {entry.name !== entry.catalog && entry.name.trim().length > 0 && (
+            <Text
+              style={[styles.partName, { color: colors.mutedForeground }]}
+              numberOfLines={1}
+            >
+              {entry.name}
+            </Text>
+          )}
+        </View>
+        <Feather
+          name="chevron-right"
+          size={14}
+          color={colors.mutedForeground}
+        />
+      </Pressable>
+    ),
+    [colors, onSelectPart],
+  );
+
   if (!hasQueries && !hasViewed) return null;
 
   return (
@@ -48,37 +122,14 @@ export function RecentSearchesPanel({
               </Text>
             </Pressable>
           </View>
-          <ScrollView scrollEnabled={false}>
-            {queryHistory.map((q) => (
-              <Pressable
-                key={q}
-                onPress={() => onSelectQuery(q)}
-                style={({ pressed }) => [
-                  styles.row,
-                  { backgroundColor: pressed ? colors.muted : "transparent" },
-                ]}
-                accessibilityLabel={`Re-run search: ${q}`}
-              >
-                <Feather
-                  name="clock"
-                  size={14}
-                  color={colors.mutedForeground}
-                  style={styles.rowIcon}
-                />
-                <Text
-                  style={[styles.rowText, { color: colors.foreground }]}
-                  numberOfLines={1}
-                >
-                  {q}
-                </Text>
-                <Feather
-                  name="chevron-right"
-                  size={14}
-                  color={colors.mutedForeground}
-                />
-              </Pressable>
-            ))}
-          </ScrollView>
+          <FlatList
+            data={queryHistory}
+            keyExtractor={(q) => q}
+            renderItem={renderQueryItem}
+            scrollEnabled={false}
+            keyboardShouldPersistTaps="handled"
+            removeClippedSubviews={false}
+          />
         </View>
       )}
 
@@ -99,47 +150,14 @@ export function RecentSearchesPanel({
               </Text>
             </Pressable>
           </View>
-          <ScrollView scrollEnabled={false}>
-            {viewedHistory.map((entry) => (
-              <Pressable
-                key={entry.id}
-                onPress={() => onSelectPart(entry.id)}
-                style={({ pressed }) => [
-                  styles.row,
-                  { backgroundColor: pressed ? colors.muted : "transparent" },
-                ]}
-                accessibilityLabel={`View part: ${entry.catalog}`}
-              >
-                <Feather
-                  name="box"
-                  size={14}
-                  color={colors.mutedForeground}
-                  style={styles.rowIcon}
-                />
-                <View style={styles.partRowContent}>
-                  <Text
-                    style={[styles.partCatalog, { color: colors.foreground }]}
-                    numberOfLines={1}
-                  >
-                    {entry.catalog}
-                  </Text>
-                  {entry.name !== entry.catalog && entry.name.trim().length > 0 && (
-                    <Text
-                      style={[styles.partName, { color: colors.mutedForeground }]}
-                      numberOfLines={1}
-                    >
-                      {entry.name}
-                    </Text>
-                  )}
-                </View>
-                <Feather
-                  name="chevron-right"
-                  size={14}
-                  color={colors.mutedForeground}
-                />
-              </Pressable>
-            ))}
-          </ScrollView>
+          <FlatList
+            data={viewedHistory}
+            keyExtractor={(entry) => String(entry.id)}
+            renderItem={renderViewedItem}
+            scrollEnabled={false}
+            keyboardShouldPersistTaps="handled"
+            removeClippedSubviews={false}
+          />
         </View>
       )}
     </View>
