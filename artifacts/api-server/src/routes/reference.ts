@@ -213,7 +213,7 @@ router.post("/ask", async (req, res) => {
         : await collectAnswer(question.trim());
       writeReferenceLog(question.trim(), answer, matchedItemCount);
       if (!hasHistory) {
-        setCachedAnswer(questionHash, normalized, answer, usedWebSearch).catch(() => {});
+        setCachedAnswer(questionHash, normalized, answer, usedWebSearch).catch((err) => logger.warn({ err }, "cache write failed"));
       }
       writeAiRequestLog("reference");
       return void res.json({ answer });
@@ -252,7 +252,7 @@ router.post("/ask", async (req, res) => {
     writeReferenceLog(question.trim(), fullAnswer, matchedItemCount);
     writeAiRequestLog("reference");
     if (fullAnswer) {
-      setCachedAnswer(questionHash, normalized, fullAnswer, usedWebSearch).catch(() => {});
+      setCachedAnswer(questionHash, normalized, fullAnswer, usedWebSearch).catch((err) => logger.warn({ err }, "cache write failed"));
     }
   } catch (err) {
     logger.error({ err }, "reference.ask failed");
