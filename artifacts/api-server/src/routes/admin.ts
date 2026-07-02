@@ -7,7 +7,7 @@ import { getProvider, setProvider, type AIProvider } from "../lib/aiProvider";
 
 const router = Router();
 
-const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (matches app session TTL; explicit logout uses _revokedBefore fence)
 
 // ── Token revocation state ────────────────────────────────────────────────────
 // In-memory timestamp: tokens issued AT OR BEFORE this time are rejected.

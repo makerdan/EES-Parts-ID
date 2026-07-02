@@ -69,11 +69,16 @@ export default function EditItemScreen() {
     catch { return null; }
   })();
 
-  // Admin guard — redirect non-admins after storage has finished loading
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  // Admin guard — redirect non-admins after storage has finished loading.
+  // Suppressed during an active or recently-failed save so the user can read
+  // the error banner and decide to cancel before being kicked to tabs.
   useEffect(() => {
+    if (saveStatus === "saving" || saveStatus === "error") return;
     if (shouldRedirectNonAdmin(isLoading, adminToken)) { router.replace("/(tabs)"); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading, adminToken]);
+  }, [isLoading, adminToken, saveStatus]);
 
   const [description, setDescription] = useState(item?.description ?? "");
   const [bins, setBins] = useState<Array<string>>(item?.binLocations ?? []);
@@ -82,7 +87,6 @@ export default function EditItemScreen() {
   const [newBarcode, setNewBarcode] = useState("");
   const [keywords, setKeywords] = useState<Array<string>>(item?.aiKeywords ?? []);
   const [newKeyword, setNewKeyword] = useState("");
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [measureOpen, setMeasureOpen] = useState(false);
@@ -188,7 +192,11 @@ export default function EditItemScreen() {
 
   const handleSave = async () => {
     const current = itemRef.current;
-    if (!current || !adminToken) return;
+    if (!current || !adminToken) {
+      setErrorMsg("Admin session expired. Tap Cancel, re-unlock as admin, then try again.");
+      setSaveStatus("error");
+      return;
+    }
     setSaveStatus("saving");
     setErrorMsg(null);
 
