@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 
 import { API_BASE } from "@/utils/apiBase";
-import { fetchWithAuth, subscribeToTokenAvailable, unsubscribeFromTokenAvailable } from "@/utils/appAuth";
+import { fetchWithAuth, getAuthToken, subscribeToTokenAvailable, unsubscribeFromTokenAvailable } from "@/utils/appAuth";
 import { retryAsync } from "@/utils/retryAsync";
 
 const ZONES_CACHE_KEY = "parts_id_warehouse_zones_v1";
@@ -65,10 +65,17 @@ export function useWarehouseZones() {
       }
       const entry: ZoneCache = { zones: data.zones };
       await AsyncStorage.setItem(ZONES_CACHE_KEY, JSON.stringify(entry)).catch(() => {});
-    } catch {
+    } catch (err) {
       if (mountedRef.current) {
-        // Only surface the error when there is no cached data to fall back on.
-        if (!hasDataRef.current) {
+        // Suppress the error badge when the failure is auth-related:
+        //   • no token present at fetch time (cold-start race), OR
+        //   • the server returned 401 (token expired / not yet issued).
+        // In both cases the tokenAvailable subscriber will re-fire backgroundFetch
+        // once auth settles, so showing an error badge here is a false alarm.
+        const isAuthFailure =
+          getAuthToken() === null ||
+          (err instanceof Error && err.message === "HTTP 401");
+        if (!hasDataRef.current && !isAuthFailure) {
           setError(true);
         }
         setLoading(false);
