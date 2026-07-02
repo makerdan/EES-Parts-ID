@@ -238,6 +238,7 @@ export type MapFocus = {
 interface AppContextValue {
   isAuthenticated: boolean;
   approvalStatus: ApprovalStatus;
+  recheckApprovalStatus: () => Promise<void>;
   isAdmin: boolean;
   adminToken: string | null;
   logout: () => Promise<void>;
@@ -367,6 +368,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // ── Approval status check ─────────────────────────────────────────────────
   // After Clerk confirms sign-in, call the API to verify the user is approved.
+  const doApprovalCheck = useCallback(async (signal?: AbortSignal) => {
+    const token = await getToken();
+    if (signal?.aborted) return;
+    if (!token) {
+      setApprovalStatus("pending");
+      return;
+    }
+
+    const resp = await fetch(`${API_BASE}/auth/status`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal,
+    });
+
+    if (signal?.aborted) return;
+
+    if (resp.ok) {
+      setApprovalStatus("approved");
+      notifyTokenAvailable();
+    } else if (resp.status === 403) {
+      const body = await resp.json() as { code?: string };
+      setApprovalStatus(body.code === "banned" ? "banned" : "pending");
+    } else {
+      setApprovalStatus("pending");
+    }
+  }, [getToken]);
+
   useEffect(() => {
     if (!clerkLoaded) return;
 
@@ -378,40 +405,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const controller = new AbortController();
     setApprovalStatus("loading");
 
-    (async () => {
-      try {
-        const token = await getToken();
-        if (controller.signal.aborted) return;
-        if (!token) {
-          setApprovalStatus("pending");
-          return;
-        }
-
-        const resp = await fetch(`${API_BASE}/auth/status`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        });
-
-        if (controller.signal.aborted) return;
-
-        if (resp.ok) {
-          setApprovalStatus("approved");
-          notifyTokenAvailable();
-        } else if (resp.status === 403) {
-          const body = await resp.json() as { code?: string };
-          setApprovalStatus(body.code === "banned" ? "banned" : "pending");
-        } else {
-          // On network error or other failure, default to pending (safe).
-          setApprovalStatus("pending");
-        }
-      } catch {
-        if (controller.signal.aborted) return;
-        setApprovalStatus("pending");
-      }
-    })();
+    doApprovalCheck(controller.signal).catch(() => {
+      if (!controller.signal.aborted) setApprovalStatus("pending");
+    });
 
     return () => { controller.abort(); };
-  }, [isSignedIn, userId, clerkLoaded, getToken]);
+  }, [isSignedIn, userId, clerkLoaded, doApprovalCheck]);
+
+  // Manual re-check: used by the pending screen so users don't have to sign
+  // out and back in after an admin approves them.
+  const recheckApprovalStatus = useCallback(async () => {
+    if (!isSignedIn) return;
+    setApprovalStatus("loading");
+    try {
+      await doApprovalCheck();
+    } catch {
+      setApprovalStatus("pending");
+    }
+  }, [isSignedIn, doApprovalCheck]);
 
   // ── Registry of in-memory logout handlers ─────────────────────────────────
   const logoutRegistryRef = useRef(new LogoutRegistry());
@@ -636,6 +647,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     <AppContext.Provider value={{
       isAuthenticated,
       approvalStatus,
+      recheckApprovalStatus,
       isAdmin: !!adminToken,
       adminToken,
       logout,
