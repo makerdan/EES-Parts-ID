@@ -788,11 +788,6 @@ export function WarehouseMapView({
   // zones-change effect below can retry once they arrive.
   const pendingFocusRef = useRef(false);
 
-  // Viewport restore values that arrived from AsyncStorage before the first
-  // layout pass completed.  onLayout drains this on its first call so the
-  // tx/ty are always clamped to the real container bounds, regardless of
-  // whether layout or the storage read wins the race.
-  const pendingRestore = useRef<{ s: number; tx: number; ty: number } | null>(null);
 
   // Snapshot of the viewport state captured at the moment the app moves to
   // background.  When the OS delivers a layout event after resume (e.g. because
@@ -878,27 +873,9 @@ export function WarehouseMapView({
         }
         bgSnapshotRef.current = null;
 
-        // If the AsyncStorage restore already ran while we were still at size 0,
-        // its tx/ty were saved unclamped in pendingRestore.  Apply them now that
-        // we have real dimensions so portrait-saved offsets don't bleed into a
-        // landscape session (and vice versa).
-        const pending = pendingRestore.current;
-        if (pending !== null) {
-          pendingRestore.current = null;
-          const { maxX, maxY } = panBounds(width, height, pending.s, width / svgAspectRef.current);
-          const clampedTX = Math.max(-maxX, Math.min(maxX, pending.tx));
-          const clampedTY = Math.max(-maxY, Math.min(maxY, pending.ty));
-          scale.value = pending.s;
-          savedScale.value = pending.s;
-          translateX.value = clampedTX;
-          translateY.value = clampedTY;
-          savedTX.value = clampedTX;
-          savedTY.value = clampedTY;
-        } else {
-          // No saved viewport — try to apply the fit-to-content position now
-          // that we have real container dimensions.
-          applyFitIfReadyRef.current();
-        }
+        // Apply fit-to-content now that we have real container dimensions.
+        // Fresh app opens always center the floor plan — no viewport restore.
+        applyFitIfReadyRef.current();
         return;
       }
 
@@ -1255,60 +1232,20 @@ export function WarehouseMapView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Viewport restore on mount ──────────────────────────────────────────────
-  // Read the persisted viewport (scale/tx/ty) once on mount.  When a saved
-  // value exists:
-  //   • pendingFit is cleared so applyFitIfReady skips the fit-to-screen path.
-  //   • pendingRestore is populated so onLayout can clamp and apply the values
-  //     once real container dimensions are known.
-  // When layout beats the async read (hasLaidOut.current is already true), the
-  // effect applies the restore directly instead of waiting for the next layout.
-  // When no saved value exists, pendingFit stays true and applyFitIfReadyRef is
-  // called in case layout already fired before this effect ran.
+  // ── Viewport startup fit ─────────────────────────────────────────────────────
+  // Fresh app opens always fit the floor plan to screen — saved viewports are
+  // NOT restored on mount so the map is always centred when the user opens it.
+  // Within a single JS session, pan/zoom position is preserved through shared
+  // values (the component stays mounted while tabs are switching), so tab-switch
+  // continuity works without any storage read.  The position is still written
+  // by persistViewport so it is available for a future "Resume last session"
+  // feature, but it is never read back here.
+  //
+  // This keeps pendingFit.current = true so applyFitIfReady fires once both
+  // contentVBRef and containerW are populated.  If onLayout has already fired
+  // before this effect runs (uncommon), we call applyFitIfReady directly.
   useEffect(() => {
-    AsyncStorage.getItem(VIEWPORT_KEY).then((raw) => {
-      if (!raw) {
-        // No stored viewport — trigger fit in case onLayout already fired.
-        if (hasLaidOut.current) applyFitIfReadyRef.current();
-        return;
-      }
-      try {
-        const parsed = JSON.parse(raw) as { s: number; tx: number; ty: number };
-        const { s, tx, ty } = parsed;
-        if (
-          typeof s !== "number" || !isFinite(s) || s <= 0 ||
-          typeof tx !== "number" || !isFinite(tx) ||
-          typeof ty !== "number" || !isFinite(ty)
-        ) {
-          if (hasLaidOut.current) applyFitIfReadyRef.current();
-          return;
-        }
-        pendingFit.current = false;
-        if (hasLaidOut.current) {
-          // Layout already fired — apply the restore directly now.
-          const w = containerWRef.current;
-          const h = containerHRef.current;
-          const { maxX, maxY } = panBounds(w, h, s, w / svgAspectRef.current);
-          const clampedTX = Math.max(-maxX, Math.min(maxX, tx));
-          const clampedTY = Math.max(-maxY, Math.min(maxY, ty));
-          scale.value = s;
-          savedScale.value = s;
-          translateX.value = clampedTX;
-          translateY.value = clampedTY;
-          savedTX.value = clampedTX;
-          savedTY.value = clampedTY;
-        } else {
-          // Layout hasn't fired yet — stash for onLayout to consume.
-          pendingRestore.current = { s, tx, ty };
-        }
-      } catch {
-        // Malformed JSON — fall through to fit path.
-        if (hasLaidOut.current) applyFitIfReadyRef.current();
-      }
-    }).catch(() => {
-      // Storage read failed — fall through to fit path.
-      if (hasLaidOut.current) applyFitIfReadyRef.current();
-    });
+    if (hasLaidOut.current) applyFitIfReadyRef.current();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
