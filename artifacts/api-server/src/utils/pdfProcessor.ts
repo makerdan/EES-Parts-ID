@@ -13,6 +13,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import * as fs from "fs/promises";
 import * as os from "os";
+import { logger } from "../lib/logger";
 import * as path from "path";
 
 const execFileAsync = promisify(execFile);
@@ -310,7 +311,11 @@ async function extractRichText(pdfBuffer: Buffer, numPages: number): Promise<str
       page.cleanup();
     }
     return results;
-  } catch {
+  } catch (err) {
+    logger.warn(
+      { err },
+      "extractRichText failed — returning empty text fallback",
+    );
     return Array(numPages).fill("") as string[];
   }
 }
