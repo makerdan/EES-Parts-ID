@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import crypto from "node:crypto";
-import { db, adminPreferencesTable } from "@workspace/db";
+import { db, adminPreferencesTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { AdminProfilePayloadSchema, ShelfPreferencesPayloadSchema } from "@workspace/api-zod";
 import { getProvider, setProvider, type AIProvider } from "../lib/aiProvider";
@@ -297,6 +297,74 @@ router.post("/ai-provider", requireAdminAuth, async (req, res) => {
 router.post("/restart", requireAdminAuth, (_req, res) => {
   res.status(202).json({ restarting: true });
   setTimeout(() => process.exit(0), 200);
+});
+
+// ── User Management ───────────────────────────────────────────────────────────
+
+// GET /admin/users — list all users with their status and email
+router.get("/users", requireAdminAuth, async (_req, res) => {
+  try {
+    const users = await db
+      .select({
+        clerkUserId: usersTable.clerkUserId,
+        email: usersTable.email,
+        status: usersTable.status,
+        createdAt: usersTable.createdAt,
+        updatedAt: usersTable.updatedAt,
+      })
+      .from(usersTable)
+      .orderBy(usersTable.createdAt);
+
+    return res.json({ users });
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+// POST /admin/users/:clerkUserId/approve — set status to approved
+router.post("/users/:clerkUserId/approve", requireAdminAuth, async (req, res) => {
+  const rawParam = req.params.clerkUserId;
+  const clerkUserId = Array.isArray(rawParam) ? rawParam[0] : rawParam;
+  if (typeof clerkUserId !== "string" || !clerkUserId) {
+    return res.status(400).json({ error: "Missing clerkUserId" });
+  }
+  try {
+    const updated = await db
+      .update(usersTable)
+      .set({ status: "approved", updatedAt: new Date() })
+      .where(eq(usersTable.clerkUserId, clerkUserId))
+      .returning();
+
+    if (updated.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    return res.json({ user: updated[0] });
+  } catch {
+    return res.status(500).json({ error: "Failed to approve user" });
+  }
+});
+
+// POST /admin/users/:clerkUserId/ban — set status to banned
+router.post("/users/:clerkUserId/ban", requireAdminAuth, async (req, res) => {
+  const rawParam = req.params.clerkUserId;
+  const clerkUserId = Array.isArray(rawParam) ? rawParam[0] : rawParam;
+  if (typeof clerkUserId !== "string" || !clerkUserId) {
+    return res.status(400).json({ error: "Missing clerkUserId" });
+  }
+  try {
+    const updated = await db
+      .update(usersTable)
+      .set({ status: "banned", updatedAt: new Date() })
+      .where(eq(usersTable.clerkUserId, clerkUserId))
+      .returning();
+
+    if (updated.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    return res.json({ user: updated[0] });
+  } catch {
+    return res.status(500).json({ error: "Failed to ban user" });
+  }
 });
 
 export default router;

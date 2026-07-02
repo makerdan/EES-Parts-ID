@@ -4,6 +4,7 @@ module.exports = {
   testEnvironment: "node",
   globals: { __DEV__: false },
   moduleNameMapper: {
+    "^@clerk/expo$": "<rootDir>/__mocks__/clerk-expo.js",
     "^react-native$": "<rootDir>/__mocks__/react-native.js",
     "^expo-clipboard$": "<rootDir>/__mocks__/expo-clipboard.js",
     "^expo-image-manipulator$": "<rootDir>/__mocks__/expo-image-manipulator.js",

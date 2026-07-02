@@ -14,6 +14,8 @@
     "seed:barcodes": "tsx src/seed/import-barcodes.ts"
   },
   "dependencies": {
+    "@clerk/express": "^2.1.35",
+    "@clerk/shared": "^4.23.0",
     "@google-cloud/storage": "^7.19.0",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
@@ -26,6 +28,7 @@
     "exceljs": "^4.4.0",
     "express": "^5",
     "fuse.js": "^7.1.0",
+    "http-proxy-middleware": "^4.1.1",
     "openai": "^6.27.0",
     "pdfjs-dist": "^5.7.284",
     "pino": "^9",

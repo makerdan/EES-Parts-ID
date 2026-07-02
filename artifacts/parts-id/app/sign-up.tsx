@@ -1,4 +1,4 @@
-import { useSignIn } from "@clerk/expo";
+import { useSignUp } from "@clerk/expo";
 import { Link, useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -14,16 +14,21 @@ import {
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
 
-export default function LoginScreen() {
+export default function SignUpScreen() {
   const colors = useColors();
   const router = useRouter();
-  const { signIn, errors, fetchStatus } = useSignIn();
+  const { signUp, errors, fetchStatus } = useSignUp();
 
   const [emailAddress, setEmailAddress] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
 
   const loading = fetchStatus === "fetching";
+  const awaitingVerification =
+    signUp.status === "missing_requirements" &&
+    signUp.unverifiedFields.includes("email_address") &&
+    signUp.missingFields.length === 0;
 
   const handleSubmit = async () => {
     if (loading) return;
@@ -33,14 +38,25 @@ export default function LoginScreen() {
     }
     setLocalError(null);
 
-    const { error } = await signIn.password({ emailAddress, password });
+    const { error } = await signUp.password({ emailAddress, password });
     if (error) {
-      setLocalError(error.message ?? "Sign in failed. Please try again.");
+      setLocalError(error.message ?? "Sign up failed. Please try again.");
       return;
     }
 
-    if (signIn.status === "complete") {
-      await signIn.finalize({
+    if (!error) {
+      await signUp.verifications.sendEmailCode();
+    }
+  };
+
+  const handleVerify = async () => {
+    if (loading || !code.trim()) return;
+    setLocalError(null);
+
+    await signUp.verifications.verifyEmailCode({ code });
+
+    if (signUp.status === "complete") {
+      await signUp.finalize({
         navigate: ({ decorateUrl }) => {
           const url = decorateUrl("/");
           if (typeof window !== "undefined" && url.startsWith("http")) {
@@ -55,8 +71,9 @@ export default function LoginScreen() {
 
   const displayError =
     localError ??
-    (errors?.fields?.identifier?.message ||
+    (errors?.fields?.emailAddress?.message ||
       errors?.fields?.password?.message ||
+      errors?.fields?.code?.message ||
       null);
 
   const styles = StyleSheet.create({
@@ -102,6 +119,13 @@ export default function LoginScreen() {
       letterSpacing: 0.5,
       textTransform: "uppercase",
     },
+    hint: {
+      fontSize: 13,
+      color: colors.mutedForeground,
+      marginBottom: 16,
+      fontFamily: "Inter_400Regular",
+      lineHeight: 18,
+    },
     input: {
       borderWidth: 1,
       borderColor: colors.input,
@@ -134,6 +158,19 @@ export default function LoginScreen() {
       color: colors.primaryForeground,
       fontFamily: "Inter_700Bold",
     },
+    secondaryButton: {
+      marginTop: 12,
+      borderRadius: colors.radius,
+      paddingVertical: 12,
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    secondaryButtonText: {
+      fontSize: 14,
+      color: colors.mutedForeground,
+      fontFamily: "Inter_500Medium",
+    },
     footer: {
       marginTop: 20,
       alignItems: "center",
@@ -151,7 +188,62 @@ export default function LoginScreen() {
       color: colors.primary,
       fontFamily: "Inter_600SemiBold",
     },
+    captcha: { height: 0 },
   });
+
+  if (awaitingVerification) {
+    return (
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.container}
+      >
+        <View style={styles.card}>
+          <Text style={styles.logo}>📧</Text>
+          <Text style={styles.title}>Check your email</Text>
+          <Text style={styles.subtitle}>
+            We sent a verification code to{"\n"}
+            <Text style={{ fontFamily: "Inter_600SemiBold", color: colors.foreground }}>
+              {emailAddress}
+            </Text>
+          </Text>
+
+          <Text style={styles.label}>Verification Code</Text>
+          <KeyboardDoneInput
+            style={[styles.input, displayError ? styles.inputError : null]}
+            value={code}
+            onChangeText={setCode}
+            placeholder="Enter 6-digit code"
+            placeholderTextColor={colors.mutedForeground}
+            keyboardType="numeric"
+            returnKeyType="go"
+            onSubmitEditing={handleVerify}
+          />
+
+          {displayError ? <Text style={styles.error}>{displayError}</Text> : null}
+
+          <Pressable
+            style={[styles.button, (loading || !code.trim()) && { opacity: 0.6 }]}
+            onPress={handleVerify}
+            disabled={loading || !code.trim()}
+          >
+            {loading ? (
+              <ActivityIndicator color={colors.primaryForeground} />
+            ) : (
+              <Text style={styles.buttonText}>Verify Email →</Text>
+            )}
+          </Pressable>
+
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => signUp.verifications.sendEmailCode()}
+            disabled={loading}
+          >
+            <Text style={styles.secondaryButtonText}>Resend code</Text>
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -160,9 +252,9 @@ export default function LoginScreen() {
     >
       <View style={styles.card}>
         <Text style={styles.logo}>⚡</Text>
-        <Text style={styles.title}>Parts ID</Text>
+        <Text style={styles.title}>Create Account</Text>
         <Text style={styles.subtitle}>
-          Electrical parts identification{"\n"}& warehouse lookup
+          Request access to Parts ID{"\n"}& warehouse lookup
         </Text>
 
         <Text style={styles.label}>Email</Text>
@@ -184,7 +276,7 @@ export default function LoginScreen() {
           value={password}
           onChangeText={setPassword}
           secureTextEntry
-          placeholder="Enter your password"
+          placeholder="Choose a password"
           placeholderTextColor={colors.mutedForeground}
           autoCapitalize="none"
           returnKeyType="go"
@@ -194,24 +286,26 @@ export default function LoginScreen() {
         {displayError ? <Text style={styles.error}>{displayError}</Text> : null}
 
         <Pressable
-          style={[styles.button, loading && { opacity: 0.6 }]}
+          style={[styles.button, (loading || !emailAddress || !password) && { opacity: 0.6 }]}
           onPress={handleSubmit}
-          disabled={loading}
+          disabled={loading || !emailAddress || !password}
         >
           {loading ? (
             <ActivityIndicator color={colors.primaryForeground} />
           ) : (
-            <Text style={styles.buttonText}>Sign In →</Text>
+            <Text style={styles.buttonText}>Create Account →</Text>
           )}
         </Pressable>
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>Don&apos;t have an account?</Text>
-          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-          <Link href={"/sign-up" as any}>
-            <Text style={styles.footerLink}>Sign up</Text>
+          <Text style={styles.footerText}>Already have an account?</Text>
+          <Link href="/login">
+            <Text style={styles.footerLink}>Sign in</Text>
           </Link>
         </View>
+
+        {/* Required for Clerk bot protection */}
+        <View nativeID="clerk-captcha" style={styles.captcha} />
       </View>
     </KeyboardAvoidingView>
   );
