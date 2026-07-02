@@ -418,11 +418,33 @@ describe("cleanStaleCacheDirs call site — null → string hash transition", ()
     const originalFetch = global.fetch;
     global.fetch = jest.fn().mockRejectedValue(new Error("network error"));
 
-    await act(async () => {
-      TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
-
-    global.fetch = originalFetch;
+    // Enable the React act() environment for this test only so that state
+    // updates from the async IIFE (which runs after the first await inside
+    // act()) are tracked by React's act() queue and do not produce an
+    // "environment not configured to support act()" console.error.
+    const g = global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const prevActEnv = g.IS_REACT_ACT_ENVIRONMENT;
+    g.IS_REACT_ACT_ENVIRONMENT = true;
+    try {
+      await act(async () => {
+        TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
+        // One macrotask boundary (setImmediate) lets the SVG-load async IIFE
+        // drain its entire microtask chain — _persistReadPromise resolves →
+        // fetch rejects → catch chain resolves — before this callback returns.
+        // The IIFE's `if (cancelled) return` guard fires at that point (cancelled
+        // is false; the component is still mounted) and setSvgLoading(false) is
+        // called while IS_REACT_ACT_ENVIRONMENT is true and IS_ACT_ACTIVE is
+        // set, so React tracks it without logging a warning.
+        await new Promise<void>(r => setImmediate(r));
+        // A second boundary ensures effects flushed by act() after the first
+        // setImmediate (e.g. the passive-effect re-run) also complete before
+        // we return from the act() callback.
+        await new Promise<void>(r => setImmediate(r));
+      });
+    } finally {
+      g.IS_REACT_ACT_ENVIRONMENT = prevActEnv;
+      global.fetch = originalFetch;
+    }
 
     expect(mockCleanStaleCacheDirs).not.toHaveBeenCalled();
   });

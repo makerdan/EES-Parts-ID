@@ -1415,6 +1415,7 @@ export function WarehouseMapView({
   // Load the SVG floor plan.  Runs once on mount (serverHashChanged === 0) and
   // again whenever the server reports a new floor-plan hash (serverHashChanged > 0).
   useEffect(() => {
+    let cancelled = false;
     const isServerUpdate = serverHashChanged > 0;
 
     if (!isServerUpdate && hasCachedData()) return; // already cached, no server update
@@ -1438,7 +1439,7 @@ export function WarehouseMapView({
       // getCachedData() returns SvgData | null — no cast needed here since it
       // is a function call (TypeScript narrows const locals correctly).
       const afterPersist = getCachedData();
-      if (afterPersist !== null && !isServerUpdate) {
+      if (afterPersist !== null && !isServerUpdate && !cancelled) {
         // Persisted data available — update state right away so the skeleton
         // never appears for returning users.
         setSvgUri(afterPersist.uri);
@@ -1453,6 +1454,7 @@ export function WarehouseMapView({
       // no network fetch.  If the hash has changed (new build or server update),
       // it re-fetches and writes the updated entry back to AsyncStorage.
       await loadSvgAsset();
+      if (cancelled) return;
       const afterLoad = getCachedData();
       if (afterLoad) {
         setSvgUri(afterLoad.uri);
@@ -1462,6 +1464,7 @@ export function WarehouseMapView({
       }
       setSvgLoading(false);
     })();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverHashChanged]);
 
