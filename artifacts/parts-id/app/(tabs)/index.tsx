@@ -222,6 +222,14 @@ export default function SearchScreen() {
   }, [filters.includeNullDimensions]);
 
   const [filterHeaderHeight, setFilterHeaderHeight] = useState(120);
+  const filterHeightSettleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (filterHeightSettleTimer.current !== null) {
+        clearTimeout(filterHeightSettleTimer.current);
+      }
+    };
+  }, []);
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
   const [queryHistory, setQueryHistory] = useState<Array<string>>([]);
   const [viewedHistory, setViewedHistory] = useState<Array<ViewedEntry>>([]);
@@ -1812,7 +1820,16 @@ export default function SearchScreen() {
         <View
           style={styles.filterOverlayWrapper}
           pointerEvents="box-none"
-          onLayout={(e) => setFilterHeaderHeight(e.nativeEvent.layout.height)}
+          onLayout={(e) => {
+            const h = e.nativeEvent.layout.height;
+            if (filterHeightSettleTimer.current !== null) {
+              clearTimeout(filterHeightSettleTimer.current);
+            }
+            filterHeightSettleTimer.current = setTimeout(() => {
+              filterHeightSettleTimer.current = null;
+              setFilterHeaderHeight(h);
+            }, 0);
+          }}
         >
           {!hasResults ? (
             <View style={styles.modeToggleRow}>
