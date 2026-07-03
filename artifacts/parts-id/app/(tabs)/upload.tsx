@@ -41,6 +41,10 @@ import { useApp } from "@/contexts/AppContext";
 import { useApiStatus } from "@/hooks/useApiStatus";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
+import {
+  fetchAdminUsers,
+  handleUserAction as runUserAction,
+} from "@/utils/adminUserActions";
 import { API_BASE } from "@/utils/apiBase";
 import {
   activeReplacementCount,
@@ -747,8 +751,7 @@ export default function UploadScreen() {
   const [queryHelpOpen, setQueryHelpOpen] = useState(false);
 
   // User management tab state
-  type UserRow = { clerkUserId: string; email: string; status: "pending" | "approved" | "banned"; createdAt: string };
-  const [usersData, setUsersData] = useState<Array<UserRow>>([]);
+  const [usersData, setUsersData] = useState<Array<import("@/utils/adminUserActions").UserRow>>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [userActionPending, setUserActionPending] = useState<string | null>(null);
@@ -1708,37 +1711,19 @@ export default function UploadScreen() {
 
   const fetchUsers = async () => {
     if (!adminToken) return;
-    setUsersLoading(true);
-    setUsersError(null);
-    try {
-      const resp = await fetch(`${API_BASE}/admin/users`, {
-        headers: { Authorization: `Bearer ${adminToken}` },
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const body = await resp.json() as { users: Array<UserRow> };
-      setUsersData(body.users);
-    } catch (err) {
-      setUsersError(err instanceof Error ? err.message : "Failed to load users");
-    } finally {
-      setUsersLoading(false);
-    }
+    await fetchAdminUsers({ apiBase: API_BASE, adminToken, setUsersLoading, setUsersError, setUsersData });
   };
 
   const handleUserAction = async (clerkUserId: string, action: "approve" | "ban") => {
-    if (!adminToken || userActionPending) return;
-    setUserActionPending(clerkUserId);
-    try {
-      const resp = await fetch(`${API_BASE}/admin/users/${clerkUserId}/${action}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${adminToken}` },
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      await fetchUsers();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : `Failed to ${action} user`, "error");
-    } finally {
-      setUserActionPending(null);
-    }
+    if (!adminToken) return;
+    await runUserAction(clerkUserId, action, {
+      apiBase: API_BASE,
+      adminToken,
+      userActionPending,
+      setUserActionPending,
+      showToast,
+      fetchUsers,
+    });
   };
 
   return (
