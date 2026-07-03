@@ -11,7 +11,7 @@ Poe has an **OpenAI-compatible** endpoint at `https://api.poe.com/v1`. Use the O
 **Why:** The legacy `https://api.poe.com/bot/` path uses Poe's own SSE protocol (for bot *servers*, not callers). The `/bot/` URL appended to the OpenAI SDK's `/chat/completions` always 404'd. The correct Creator-tier caller endpoint is `/v1/chat/completions`.
 
 ## Key: POE_API_KEY2 (not POE_API_KEY)
-`POE_API_KEY` is an old key tied to an account without bot-calling permissions. `POE_API_KEY2` is the Creator-tier key that works. Both `poeBot.ts` and `aiProvider.ts` must use `POE_API_KEY2`.
+`POE_API_KEY` is an old key tied to an account without bot-calling permissions. `POE_API_KEY2` is the Creator-tier key that works. Every Poe client construction must use `POE_API_KEY2`: `poeBot.ts`, `aiProvider.ts`, AND `lib/integrations-poe-server/src/index.ts`. The last one throws at module *import* time when its key is absent, so a wrong/missing key there crashes the entire api-server on startup (it's imported by `routes/ai.ts` for error helpers), even though its `poe` client export is otherwise unused.
 
 ## Model naming
 Poe model names are **PascalCase display names** with version dots, e.g.:

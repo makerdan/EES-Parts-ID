@@ -1,14 +1,14 @@
 import OpenAI from "openai";
 
-if (!process.env.POE_API_KEY) {
+if (!process.env.POE_API_KEY2) {
   throw new Error(
-    "POE_API_KEY must be set. Did you forget to add the Poe API key secret?",
+    "POE_API_KEY2 must be set. Did you forget to add the Poe API key secret?",
   );
 }
 
 export const poe = new OpenAI({
-  apiKey: process.env.POE_API_KEY,
-  baseURL: "https://api.poe.com/bot/",
+  apiKey: process.env.POE_API_KEY2,
+  baseURL: "https://api.poe.com/v1",
 });
 
 /**
@@ -42,7 +42,7 @@ export function isPoeTransientError(err: unknown): boolean {
  */
 export function poeErrorMessage(err: unknown): string | null {
   if (err instanceof OpenAI.AuthenticationError) {
-    return "Poe API key is invalid or has been revoked. Check the POE_API_KEY secret.";
+    return "Poe API key is invalid or has been revoked. Check the POE_API_KEY2 secret.";
   }
   if (err instanceof OpenAI.PermissionDeniedError) {
     return "Poe API key does not have access to the requested bot. Check your Poe subscription or bot permissions.";
