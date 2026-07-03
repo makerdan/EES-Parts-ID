@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { getAuth } from "@clerk/express";
 import { getAiClient, getIdentifyModel, getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
 import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace/integrations-poe-server";
@@ -9,12 +10,30 @@ import { aiRequestLogTable, inventoryTable, inventoryFtsVector, partCardCacheTab
 import { eq, gt, lt, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import OpenAI from "openai";
+import { AiIdentifyBodySchema, AiTranslateQueryBodySchema, AiPartCardBodySchema } from "@workspace/api-zod";
+import { identifyLimiter, translateLimiter, partCardLimiter } from "../lib/rateLimiter";
+
+/** Returns the rate-limit key for a request: Clerk userId if available, else IP. */
+function rateLimitKey(req: Parameters<typeof getAuth>[0]): string {
+  return getAuth(req)?.userId ?? String(req.ip ?? "unknown");
+}
 
 const router = Router();
 
 // POST /ai/identify
 router.post("/identify", async (req, res) => {
   try {
+    const rateCheck = identifyLimiter.check(rateLimitKey(req));
+    if (!rateCheck.allowed) {
+      res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
+      return void res.status(429).json({ error: "Too many identify requests. Please slow down." });
+    }
+
+    const identifyBody = AiIdentifyBodySchema.safeParse(req.body);
+    if (!identifyBody.success) {
+      return void res.status(400).json({ error: identifyBody.error.issues[0]?.message ?? "Invalid request body" });
+    }
+
     const {
       images = [],
       keywords = "",
@@ -23,15 +42,7 @@ router.post("/identify", async (req, res) => {
       size = "",
       material = "",
       textNumbers = "",
-    } = req.body as {
-      images?: string[];
-      keywords?: string;
-      vendor?: string;
-      color?: string;
-      size?: string;
-      material?: string;
-      textNumbers?: string;
-    };
+    } = identifyBody.data;
 
     if (!images.length) {
       return void res.status(400).json({ error: "At least one image is required" });
@@ -165,10 +176,18 @@ router.post("/identify", async (req, res) => {
 // When zeroResults=true, also identifies the part and finds substitute inventory matches.
 router.post("/translate-query", async (req, res) => {
   try {
-    const { query = "", zeroResults = false } = req.body as {
-      query?: string;
-      zeroResults?: boolean;
-    };
+    const rateCheck = translateLimiter.check(rateLimitKey(req));
+    if (!rateCheck.allowed) {
+      res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
+      return void res.status(429).json({ error: "Too many translate-query requests. Please slow down." });
+    }
+
+    const translateBody = AiTranslateQueryBodySchema.safeParse(req.body);
+    if (!translateBody.success) {
+      return void res.status(400).json({ error: translateBody.error.issues[0]?.message ?? "Invalid request body" });
+    }
+
+    const { query = "", zeroResults = false } = translateBody.data;
 
     if (!query.trim()) {
       return void res.status(400).json({ error: "query is required" });
@@ -302,17 +321,23 @@ const PART_CARD_DB_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days (DB persistent 
 // Pass force: true to bypass all cache layers and re-fetch from AI.
 router.post("/part-card", async (req, res) => {
   try {
+    const rateCheck = partCardLimiter.check(rateLimitKey(req));
+    if (!rateCheck.allowed) {
+      res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
+      return void res.status(429).json({ error: "Too many part-card requests. Please slow down." });
+    }
+
+    const partCardBody = AiPartCardBodySchema.safeParse(req.body);
+    if (!partCardBody.success) {
+      return void res.status(400).json({ error: partCardBody.error.issues[0]?.message ?? "Invalid request body" });
+    }
+
     const {
       catalog = "",
       vendor = "",
       description = "",
       force = false,
-    } = req.body as {
-      catalog?: string;
-      vendor?: string;
-      description?: string;
-      force?: boolean;
-    };
+    } = partCardBody.data;
 
     if (!catalog.trim()) {
       return void res.status(400).json({ error: "catalog is required" });
