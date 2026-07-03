@@ -49,7 +49,17 @@ const queryClient = new QueryClient({
   },
 });
 
+// EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY — required.
+// Paste the "Publishable key" value from your Clerk dashboard
+// (API Keys → Publishable key, format: pk_live_… or pk_test_…).
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
+
+// EXPO_PUBLIC_CLERK_PROXY_URL — optional, production only.
+// Set this to your deployed API server's Clerk proxy path when running in
+// production so that Clerk Frontend API traffic is routed through your own
+// domain (e.g. https://your-app.replit.app/api/__clerk).
+// Leave unset in development — Clerk proxying only works for production
+// instances (pk_live_…) and the API server skips the proxy in non-production.
 const proxyUrl = process.env.EXPO_PUBLIC_CLERK_PROXY_URL || undefined;
 
 function AuthGate() {
