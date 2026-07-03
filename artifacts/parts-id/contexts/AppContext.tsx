@@ -16,6 +16,7 @@ import colorTokens from "@/constants/colors";
 import type { ResumeProgress } from "@/types/catalogPdf";
 import { API_BASE, API_ORIGIN } from "@/utils/apiBase";
 import {
+  fetchWithAuth,
   notifyTokenAvailable,
   setAdminToken as setAdminTokenModule,
   setAppTokenGetter,
@@ -198,7 +199,7 @@ function mergeProfileIntoSettings(prev: AppSettings, profile: AdminProfilePayloa
 
 async function fetchAdminProfile(token: string): Promise<AdminProfilePayload | null> {
   try {
-    const resp = await fetch(`${API_BASE}/admin/profile`, {
+    const resp = await fetchWithAuth(`${API_BASE}/admin/profile`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!resp.ok) return null;
@@ -209,7 +210,7 @@ async function fetchAdminProfile(token: string): Promise<AdminProfilePayload | n
 }
 
 async function pushAdminProfile(token: string, settings: AppSettings): Promise<void> {
-  const res = await fetch(`${API_BASE}/admin/profile`, {
+  const res = await fetchWithAuth(`${API_BASE}/admin/profile`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -414,13 +415,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Manual re-check: used by the pending screen so users don't have to sign
   // out and back in after an admin approves them.
+  const recheckControllerRef = useRef<AbortController | null>(null);
+
+  // Abort any in-flight recheck when the provider unmounts.
+  useEffect(() => {
+    return () => { recheckControllerRef.current?.abort(); };
+  }, []);
+
   const recheckApprovalStatus = useCallback(async () => {
     if (!isSignedIn) return;
+    // Cancel any previous in-flight recheck before starting a new one.
+    recheckControllerRef.current?.abort();
+    const controller = new AbortController();
+    recheckControllerRef.current = controller;
     setApprovalStatus("loading");
     try {
-      await doApprovalCheck();
+      await doApprovalCheck(controller.signal);
     } catch {
-      setApprovalStatus("pending");
+      if (!controller.signal.aborted) setApprovalStatus("pending");
+    } finally {
+      if (recheckControllerRef.current === controller) {
+        recheckControllerRef.current = null;
+      }
     }
   }, [isSignedIn, doApprovalCheck]);
 
