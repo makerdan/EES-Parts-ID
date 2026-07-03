@@ -24,7 +24,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
+import { signAdminToken } from "./helpers/adminAuth";
 import { seedFixtures, cleanupFixtures, closePool } from "./helpers/testDb";
 import { db, warehouseZoneTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -35,7 +35,6 @@ const ADMIN_SECRET = "jest-zone-secret";
 let adminToken: string;
 
 beforeAll(async () => {
-  process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
   await cleanupZones();
 }, 15_000);
@@ -111,12 +110,12 @@ describe("POST /api/warehouse-zones", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 401 with an invalid admin token", async () => {
+  it("returns 403 with an invalid (unknown) admin token", async () => {
     const res = await supertest(app)
       .post("/api/warehouse-zones")
       .set("Authorization", "Bearer not-a-valid-token")
       .send(BASE_ZONE)
-      .expect(401);
+      .expect(403);
 
     expect(res.body).toHaveProperty("error");
   });
@@ -190,12 +189,12 @@ describe("PATCH /api/warehouse-zones/:id", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 401 with an invalid admin token", async () => {
+  it("returns 403 with an invalid (unknown) admin token", async () => {
     const res = await supertest(app)
       .patch("/api/warehouse-zones/1")
       .set("Authorization", "Bearer bad-token")
       .send({ svgX: 99 })
-      .expect(401);
+      .expect(403);
 
     expect(res.body).toHaveProperty("error");
   });
@@ -290,11 +289,11 @@ describe("DELETE /api/warehouse-zones/:id", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 401 with an invalid admin token", async () => {
+  it("returns 403 with an invalid (unknown) admin token", async () => {
     const res = await supertest(app)
       .delete("/api/warehouse-zones/1")
       .set("Authorization", "Bearer bad-token")
-      .expect(401);
+      .expect(403);
 
     expect(res.body).toHaveProperty("error");
   });

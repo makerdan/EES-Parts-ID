@@ -39,7 +39,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
+import { signAdminToken } from "./helpers/adminAuth";
 import { closePool } from "./helpers/testDb";
 import { db, warehouseZoneTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";

@@ -1,26 +1,26 @@
 import { type Request, type Response, type NextFunction } from "express";
 import { getAuth, clerkClient } from "@clerk/express";
-import { verifyAdminToken, getRevokedBefore } from "../routes/admin";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 // Paths relative to /api that do not require any authentication token.
-// /admin/login must stay public so the admin-bootstrap call can reach the handler.
-const PUBLIC_PATHS = new Set(["/healthz", "/admin/login"]);
+const PUBLIC_PATHS = new Set(["/healthz"]);
 
 /**
- * Middleware that validates either an admin HMAC token or a Clerk session token
- * on all /api/* routes except the public whitelist above.
+ * Middleware that validates a Clerk session token on all /api/* routes except
+ * the public whitelist above.
  *
- * Admin HMAC tokens (from POST /admin/login) bypass user approval checks —
- * they are for the AdminGate and are validated with ADMIN_PASSWORD.
+ * The Clerk session (set by clerkMiddleware in app.ts) represents an individual
+ * user. The user must exist in the `users` table with status='approved'. The
+ * designated bootstrap admin (ADMIN_CLERK_USER_ID env var) is always forced to
+ * status='approved' AND role='admin' so there is always a way in.
  *
- * Clerk session tokens represent individual user sessions. The user must exist
- * in the `users` table with status='approved'. The designated admin user
- * (ADMIN_CLERK_USER_ID env var) is always forced to approved status.
+ * On success the resolved user row is stored on `res.locals.appUser` so that
+ * downstream guards (e.g. requireAdminAuth) can read the role without a second
+ * database round-trip.
  *
- * 401 — no valid token
+ * 401 — no valid session
  * 403 { code: "pending" } — user awaiting approval
  * 403 { code: "banned" } — user permanently revoked
  */
@@ -30,31 +30,11 @@ export function requireAppAuth(req: Request, res: Response, next: NextFunction):
     return;
   }
 
-  const auth = req.headers["authorization"] ?? "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-
-  if (!token) {
-    res.status(401).json({ error: "Authentication required" });
-    return;
-  }
-
-  // Try admin HMAC token first — if valid, bypass Clerk and user approval checks.
-  const adminSecret = process.env.ADMIN_PASSWORD;
-  const isValidAdmin = adminSecret
-    ? verifyAdminToken(token, adminSecret, getRevokedBefore())
-    : false;
-
-  if (isValidAdmin) {
-    next();
-    return;
-  }
-
-  // Try Clerk session token (set by clerkMiddleware in app.ts).
   const clerkAuth = getAuth(req);
   const userId = clerkAuth?.userId;
 
   if (!userId) {
-    res.status(401).json({ error: "Invalid or expired session. Please log in again." });
+    res.status(401).json({ error: "Authentication required" });
     return;
   }
 
@@ -63,15 +43,16 @@ export function requireAppAuth(req: Request, res: Response, next: NextFunction):
     try {
       const adminClerkUserId = process.env.ADMIN_CLERK_USER_ID;
 
-      // Admin user: force status to approved on every request.
+      // Bootstrap admin: force status=approved AND role=admin on every request.
       if (adminClerkUserId && userId === adminClerkUserId) {
         await db
           .insert(usersTable)
-          .values({ clerkUserId: userId, email: "", status: "approved" })
+          .values({ clerkUserId: userId, email: "", status: "approved", role: "admin" })
           .onConflictDoUpdate({
             target: usersTable.clerkUserId,
-            set: { status: "approved", updatedAt: new Date() },
+            set: { status: "approved", role: "admin", updatedAt: new Date() },
           });
+        res.locals.appUser = { clerkUserId: userId, status: "approved", role: "admin" };
         next();
         return;
       }
@@ -120,6 +101,7 @@ export function requireAppAuth(req: Request, res: Response, next: NextFunction):
       }
 
       if (user.status === "approved") {
+        res.locals.appUser = user;
         next();
       } else if (user.status === "banned") {
         res.status(403).json({ code: "banned", error: "Your account has been disabled." });

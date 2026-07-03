@@ -1,15 +1,18 @@
 /**
  * Integration tests for admin user management endpoints.
  *
+ * Auth model (see auth.integration.test.ts): endpoints require a valid Clerk
+ * session (requireAppAuth) plus role='admin' (requireAdminAuth). No session →
+ * 401; approved non-admin → 403. The @clerk/express mock reads
+ * `Authorization: Bearer <token>` as the Clerk user id.
+ *
  * Covers:
- * - GET  /api/admin/users — auth guard (401 without token), returns user list
- * - POST /api/admin/users/:clerkUserId/approve — auth guard, approve path, 404 for unknown user
- * - POST /api/admin/users/:clerkUserId/ban    — auth guard, ban path, 404 for unknown user
- * - Authorization header is required and token must be valid for all three endpoints
+ * - GET  /api/admin/users — auth guard, returns user list (incl. role field)
+ * - POST /api/admin/users/:clerkUserId/approve — auth guard, approve path, 404
+ * - POST /api/admin/users/:clerkUserId/ban    — auth guard, ban path, 404
+ * - POST /api/admin/users/:clerkUserId/promote — role→admin, 400 unless approved
+ * - POST /api/admin/users/:clerkUserId/demote  — role→user, 400 for bootstrap admin
  */
-
-// ── Env vars — must be set before any require()/module imports ────────────────
-process.env.ADMIN_PASSWORD = "jest-admin-users-secret";
 
 // ── http-proxy-middleware is ESM-only — mock it before app is imported ────────
 jest.mock("http-proxy-middleware", () => ({
@@ -74,36 +77,40 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
+import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import { closePool } from "./helpers/testDb";
 import { db, usersTable } from "@workspace/db";
 import { eq, like } from "drizzle-orm";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const ADMIN_SECRET = "jest-admin-users-secret";
 const FIXTURE_PREFIX = "jest-itg-user-";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// The bootstrap admin authenticates by presenting their Clerk user id.
 function makeAdminToken(): string {
-  return signAdminToken(Date.now(), ADMIN_SECRET);
-}
-
-function makeWrongToken(): string {
-  return signAdminToken(Date.now(), "wrong-secret");
+  return ADMIN_TEST_USER_ID;
 }
 
 async function seedUser(
   clerkUserId: string,
   email: string,
   status: "pending" | "approved" | "banned" = "pending",
+  role: "user" | "admin" = "user",
 ) {
   await db
     .insert(usersTable)
-    .values({ clerkUserId, email, status })
+    .values({ clerkUserId, email, status, role })
     .onConflictDoUpdate({
       target: usersTable.clerkUserId,
-      set: { email, status },
+      set: { email, status, role },
     });
+}
+
+/** Seeds an approved, non-admin user and returns its Clerk user id (= token). */
+async function seedNonAdmin(): Promise<string> {
+  const id = `${FIXTURE_PREFIX}nonadmin`;
+  await seedUser(id, "nonadmin@example.com", "approved", "user");
+  return id;
 }
 
 async function cleanupUsers() {
@@ -134,20 +141,12 @@ describe("GET /api/admin/users — auth guard", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 401 when a garbage token is provided", async () => {
+  it("returns 403 for an approved non-admin user", async () => {
+    const nonAdmin = await seedNonAdmin();
     const res = await supertest(app)
       .get("/api/admin/users")
-      .set("Authorization", "Bearer not-a-real-token")
-      .expect(401);
-
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("returns 401 when the token is signed with the wrong secret", async () => {
-    const res = await supertest(app)
-      .get("/api/admin/users")
-      .set("Authorization", `Bearer ${makeWrongToken()}`)
-      .expect(401);
+      .set("Authorization", `Bearer ${nonAdmin}`)
+      .expect(403);
 
     expect(res.body).toHaveProperty("error");
   });
@@ -229,20 +228,12 @@ describe("POST /api/admin/users/:clerkUserId/approve — auth guard", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 401 when a garbage token is provided", async () => {
+  it("returns 403 for an approved non-admin user", async () => {
+    const nonAdmin = await seedNonAdmin();
     const res = await supertest(app)
       .post("/api/admin/users/some-user-id/approve")
-      .set("Authorization", "Bearer garbage-token")
-      .expect(401);
-
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("returns 401 when the token is signed with the wrong secret", async () => {
-    const res = await supertest(app)
-      .post("/api/admin/users/some-user-id/approve")
-      .set("Authorization", `Bearer ${makeWrongToken()}`)
-      .expect(401);
+      .set("Authorization", `Bearer ${nonAdmin}`)
+      .expect(403);
 
     expect(res.body).toHaveProperty("error");
   });
@@ -324,20 +315,12 @@ describe("POST /api/admin/users/:clerkUserId/ban — auth guard", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 401 when a garbage token is provided", async () => {
+  it("returns 403 for an approved non-admin user", async () => {
+    const nonAdmin = await seedNonAdmin();
     const res = await supertest(app)
       .post("/api/admin/users/some-user-id/ban")
-      .set("Authorization", "Bearer garbage-token")
-      .expect(401);
-
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("returns 401 when the token is signed with the wrong secret", async () => {
-    const res = await supertest(app)
-      .post("/api/admin/users/some-user-id/ban")
-      .set("Authorization", `Bearer ${makeWrongToken()}`)
-      .expect(401);
+      .set("Authorization", `Bearer ${nonAdmin}`)
+      .expect(403);
 
     expect(res.body).toHaveProperty("error");
   });
@@ -403,5 +386,145 @@ describe("POST /api/admin/users/:clerkUserId/ban — authenticated", () => {
       .expect(200);
 
     expect(res.body.user.status).toBe("banned");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/admin/users/:clerkUserId/promote
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/admin/users/:clerkUserId/promote", () => {
+  it("returns 401 without a token", async () => {
+    await supertest(app)
+      .post("/api/admin/users/some-user-id/promote")
+      .expect(401);
+  });
+
+  it("returns 403 for an approved non-admin user", async () => {
+    const nonAdmin = await seedNonAdmin();
+    await supertest(app)
+      .post("/api/admin/users/some-user-id/promote")
+      .set("Authorization", `Bearer ${nonAdmin}`)
+      .expect(403);
+  });
+
+  it("promotes an approved user to admin", async () => {
+    const userId = `${FIXTURE_PREFIX}promote-me`;
+    await seedUser(userId, "promote@example.com", "approved", "user");
+
+    const res = await supertest(app)
+      .post(`/api/admin/users/${userId}/promote`)
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    expect(res.body.user.role).toBe("admin");
+
+    const rows = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.clerkUserId, userId));
+    expect(rows[0]?.role).toBe("admin");
+  });
+
+  it("returns 400 when promoting a user who is not approved", async () => {
+    const userId = `${FIXTURE_PREFIX}promote-pending`;
+    await seedUser(userId, "pending@example.com", "pending", "user");
+
+    const res = await supertest(app)
+      .post(`/api/admin/users/${userId}/promote`)
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 404 when the clerkUserId does not exist", async () => {
+    await supertest(app)
+      .post("/api/admin/users/nonexistent-promote-xyz/promote")
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(404);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/admin/users/:clerkUserId/demote
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/admin/users/:clerkUserId/demote", () => {
+  it("returns 401 without a token", async () => {
+    await supertest(app)
+      .post("/api/admin/users/some-user-id/demote")
+      .expect(401);
+  });
+
+  it("returns 403 for an approved non-admin user", async () => {
+    const nonAdmin = await seedNonAdmin();
+    await supertest(app)
+      .post("/api/admin/users/some-user-id/demote")
+      .set("Authorization", `Bearer ${nonAdmin}`)
+      .expect(403);
+  });
+
+  it("demotes an admin user back to role=user", async () => {
+    const userId = `${FIXTURE_PREFIX}demote-me`;
+    await seedUser(userId, "demote@example.com", "approved", "admin");
+
+    const res = await supertest(app)
+      .post(`/api/admin/users/${userId}/demote`)
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    expect(res.body.user.role).toBe("user");
+
+    const rows = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.clerkUserId, userId));
+    expect(rows[0]?.role).toBe("user");
+  });
+
+  it("returns 400 when attempting to demote the bootstrap admin", async () => {
+    const res = await supertest(app)
+      .post(`/api/admin/users/${ADMIN_TEST_USER_ID}/demote`)
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 404 when the clerkUserId does not exist", async () => {
+    await supertest(app)
+      .post("/api/admin/users/nonexistent-demote-xyz/demote")
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(404);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/admin/me — self-check (app-auth only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("GET /api/admin/me", () => {
+  it("returns 401 without a token", async () => {
+    await supertest(app).get("/api/admin/me").expect(401);
+  });
+
+  it("returns { isAdmin: true } for the bootstrap admin", async () => {
+    const res = await supertest(app)
+      .get("/api/admin/me")
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    expect(res.body).toEqual({ isAdmin: true });
+  });
+
+  it("returns { isAdmin: false } for an approved non-admin", async () => {
+    const nonAdmin = await seedNonAdmin();
+    const res = await supertest(app)
+      .get("/api/admin/me")
+      .set("Authorization", `Bearer ${nonAdmin}`)
+      .expect(200);
+
+    expect(res.body).toEqual({ isAdmin: false });
   });
 });

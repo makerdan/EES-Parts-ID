@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireAdminAuth } from "./admin";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { getAllPoeModelNames, getProbeSummary, probePoeBotsOnStartup, probeSinglePoeBot } from "../lib/aiProvider";
 import { logger } from "../lib/logger";
 

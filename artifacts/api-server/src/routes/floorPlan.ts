@@ -16,7 +16,7 @@ import sharp from "sharp";
 import { db } from "@workspace/db";
 import { floorPlanMetaTable } from "@workspace/db";
 import { desc } from "drizzle-orm";
-import { verifyAdminToken } from "./admin";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { uploadFloorPlanSvg, readFloorPlanSvg } from "../lib/objectStorage";
 
 const router = Router();
@@ -135,25 +135,6 @@ async function invalidateTileCache(keepHash?: string): Promise<void> {
   } catch {
     // Cache dir may not exist yet — non-fatal.
   }
-}
-
-function requireAdminAuth(
-  req: import("express").Request,
-  res: import("express").Response,
-  next: import("express").NextFunction,
-): void {
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  if (!adminPassword) {
-    res.status(503).json({ error: "Admin access is not configured. Set ADMIN_PASSWORD." });
-    return;
-  }
-  const authHeader = req.headers["authorization"] ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  if (!token || !verifyAdminToken(token, adminPassword)) {
-    res.status(401).json({ error: "Unauthorized: valid admin token required" });
-    return;
-  }
-  next();
 }
 
 async function getLatestMeta() {

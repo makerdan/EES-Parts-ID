@@ -25,6 +25,11 @@ module.exports = {
   // transform them without relying on package.json "exports" field support
   // (which "moduleResolution: node" does not honour).
   moduleNameMapper: {
+    // Stub @clerk/express so tests can authenticate by passing a Clerk user id
+    // as the Bearer token (see __mocks__/clerkExpress.cjs).
+    "^@clerk/express$": "<rootDir>/__mocks__/clerkExpress.cjs",
+    // Stub the ESM-only http-proxy-middleware (see __mocks__/httpProxyMiddleware.cjs).
+    "^http-proxy-middleware$": "<rootDir>/__mocks__/httpProxyMiddleware.cjs",
     "^@workspace/db$":
       "<rootDir>/../../lib/db/src/index.ts",
     "^@workspace/api-zod$":

@@ -89,6 +89,15 @@ async function cleanupFloorPlan() {
     .where(eq(floorPlanMetaTable.hash, TEST_HASH));
 }
 
+beforeAll(() => {
+  process.env.ADMIN_CLERK_USER_ID = "jest-admin-user";
+  process.env.TEST_DEFAULT_AUTH_USER = "jest-admin-user";
+});
+afterAll(() => {
+  delete process.env.TEST_DEFAULT_AUTH_USER;
+  delete process.env.ADMIN_CLERK_USER_ID;
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Suite — valid floor plan in DB → 200 / 400
 // ─────────────────────────────────────────────────────────────────────────────

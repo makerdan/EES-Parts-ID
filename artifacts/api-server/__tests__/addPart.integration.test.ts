@@ -30,7 +30,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
+import { signAdminToken } from "./helpers/adminAuth";
 import { closePool } from "./helpers/testDb";
 import { db, inventoryTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -48,7 +48,6 @@ async function cleanupAddPartRows() {
 }
 
 beforeAll(async () => {
-  process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
   await cleanupAddPartRows();
 }, 30_000);
@@ -81,12 +80,12 @@ describe("POST /api/inventory/add-part", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 401 when an invalid token is provided", async () => {
+  it("returns 403 when an invalid (unknown) token is provided", async () => {
     const res = await supertest(app)
       .post("/api/inventory/add-part")
       .set("Authorization", "Bearer invalid-token-xyz")
       .send({ vendor: "JEST-VENDOR", catalog: `${CATALOG_PREFIX}AUTH-002` })
-      .expect(401);
+      .expect(403);
 
     expect(res.body).toHaveProperty("error");
   });
@@ -472,6 +471,7 @@ describe("POST /api/inventory/add-part", () => {
     while (!found) {
       const getRes = await supertest(app)
         .get(`/api/inventory?limit=500&page=${page}`)
+        .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
       const items = getRes.body.items as ListItem[];
       found = items.find(item => item.id === insertedId);

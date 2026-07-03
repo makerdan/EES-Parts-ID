@@ -24,7 +24,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
+import { signAdminToken } from "./helpers/adminAuth";
 import { closePool } from "./helpers/testDb";
 import { db, inventoryTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -42,7 +42,6 @@ async function cleanupUploads() {
 }
 
 beforeAll(async () => {
-  process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
   await cleanupUploads();
 }, 30_000);
@@ -107,12 +106,12 @@ describe("POST /api/admin/upload", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 401 when an invalid token is provided", async () => {
+  it("returns 403 when an invalid (unknown) token is provided", async () => {
     await supertest(app)
       .post("/api/admin/upload")
       .set("Authorization", "Bearer bad-token")
       .send({ csv: buildCsv([["ACME", `${UPLOAD_PREFIX}001`, "Widget", "A1"]]) })
-      .expect(401);
+      .expect(403);
   });
 
   // ── Malformed CSV → 400 ──

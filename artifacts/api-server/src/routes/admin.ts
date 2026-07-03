@@ -1,158 +1,25 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
-import crypto from "node:crypto";
+import { Router } from "express";
+import { getAuth } from "@clerk/express";
 import { db, adminPreferencesTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { AdminProfilePayloadSchema, ShelfPreferencesPayloadSchema } from "@workspace/api-zod";
 import { getProvider, setProvider, type AIProvider } from "../lib/aiProvider";
-import { logger } from "../lib/logger";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
 
-const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (matches app session TTL; explicit logout uses _revokedBefore fence)
-
-// ── Token revocation state ────────────────────────────────────────────────────
-// In-memory timestamp: tokens issued AT OR BEFORE this time are rejected.
-// Calling POST /admin/logout sets this to Date.now(), invalidating all
-// outstanding tokens without requiring a server restart.
-//
-// This value is also persisted to the DB so it survives process restarts:
-// - On startup, loadRevokedBefore() reads the DB and seeds this variable.
-// - On logout, the DB is updated atomically before the in-memory value changes.
-let _revokedBefore = 0;
-
-/** Exposed for testing only — lets tests reset revocation state between runs. */
-export function setRevokedBefore(ts: number): void {
-  _revokedBefore = ts;
-}
-
-/** Exposed for testing — returns the current revocation threshold. */
-export function getRevokedBefore(): number {
-  return _revokedBefore;
-}
-
-/**
- * Read the persisted revocation fence from the DB and apply it to the
- * in-memory state.  Should be called once at server startup.  A failure
- * here is non-fatal but logged — the fence defaults to 0 (no revocation).
- */
-export async function loadRevokedBefore(): Promise<void> {
-  try {
-    const rows = await db
-      .select({ revokedBefore: adminPreferencesTable.revokedBefore })
-      .from(adminPreferencesTable)
-      .where(eq(adminPreferencesTable.id, 1))
-      .limit(1);
-    if (rows.length > 0 && rows[0]!.revokedBefore > 0) {
-      _revokedBefore = rows[0]!.revokedBefore;
-      logger.info({ revokedBefore: _revokedBefore }, "admin: loaded persisted revocation fence from DB");
-    }
-  } catch (err) {
-    logger.warn({ err }, "admin: failed to load revocation fence from DB — fence defaults to 0");
+// ── GET /admin/me ─────────────────────────────────────────────────────────────
+// Self-check: tells the current (approved) Clerk user whether they are an admin.
+// Only requires app-level auth (applied globally in app.ts), NOT admin auth, so
+// non-admin users can call it to discover they are not admins.
+router.get("/me", (req, res) => {
+  const appUser = res.locals.appUser as { role?: string } | undefined;
+  if (appUser) {
+    return res.json({ isAdmin: appUser.role === "admin" });
   }
-}
-
-/**
- * Sign a timestamp with ADMIN_PASSWORD using HMAC-SHA256.
- * Returns a token string: "<timestamp>.<hex-sig>"
- */
-export function signAdminToken(ts: number, secret: string): string {
-  const payload = String(ts);
-  const sig = crypto.createHmac("sha256", secret).update(payload).digest("hex");
-  return Buffer.from(`${payload}.${sig}`).toString("base64url");
-}
-
-/**
- * Verify a signed admin token.
- * Returns true if valid, not expired, and issued after `notBefore`.
- *
- * @param notBefore  Unix ms timestamp — tokens issued AT OR BEFORE this time
- *                   are rejected (revocation fence).  Defaults to 0 (no fence).
- */
-export function verifyAdminToken(token: string, secret: string, notBefore = 0): boolean {
-  try {
-    const decoded = Buffer.from(token, "base64url").toString("utf8");
-    const dotIdx = decoded.indexOf(".");
-    if (dotIdx === -1) return false;
-
-    const payload = decoded.slice(0, dotIdx);
-    const sig = decoded.slice(dotIdx + 1);
-
-    const expectedSig = crypto
-      .createHmac("sha256", secret)
-      .update(payload)
-      .digest("hex");
-
-    if (!crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expectedSig, "hex"))) {
-      return false;
-    }
-
-    const ts = parseInt(payload, 10);
-    if (isNaN(ts)) return false;
-
-    // Token must not be expired AND must have been issued AFTER the revocation fence
-    return Date.now() - ts < TOKEN_TTL_MS && ts > notBefore;
-  } catch {
-    return false;
-  }
-}
-
-export function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
-  const secret = process.env.ADMIN_PASSWORD;
-  if (!secret) {
-    res.status(503).json({ error: "Admin access is not configured on this server. Set ADMIN_PASSWORD." });
-    return;
-  }
-  const auth = req.headers["authorization"] ?? "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (!token || !verifyAdminToken(token, secret, _revokedBefore)) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-  next();
-}
-
-// ── POST /admin/login ─────────────────────────────────────────────────────────
-router.post("/login", (req, res) => {
-  const adminPassword = process.env.ADMIN_PASSWORD;
-
-  if (!adminPassword) {
-    return res
-      .status(503)
-      .json({ error: "Admin access is not configured on this server. Set ADMIN_PASSWORD." });
-  }
-
-  const { password } = req.body as { password?: string };
-
-  if (!password || password !== adminPassword) {
-    return res.status(401).json({ error: "Incorrect admin password" });
-  }
-
-  const token = signAdminToken(Date.now(), adminPassword);
-  return res.json({ token, expiresIn: TOKEN_TTL_MS / 1000 });
-});
-
-// ── POST /admin/logout ────────────────────────────────────────────────────────
-// Revokes all outstanding tokens immediately by advancing the revocation fence
-// to the current time.  Any token whose issue timestamp is <= revokedBefore
-// will be rejected on the next request, without requiring a server restart.
-// The new fence is persisted to the DB atomically before the response is sent
-// so that a subsequent process restart still honours the revocation.
-router.post("/logout", requireAdminAuth, async (_req, res) => {
-  const revokedAt = Date.now();
-  try {
-    await db
-      .insert(adminPreferencesTable)
-      .values({ id: 1, revokedBefore: revokedAt, updatedAt: new Date() })
-      .onConflictDoUpdate({
-        target: adminPreferencesTable.id,
-        set: { revokedBefore: revokedAt, updatedAt: new Date() },
-      });
-  } catch (err) {
-    logger.error({ err }, "admin: failed to persist revocation fence to DB — fence NOT advanced");
-    return res.status(500).json({ error: "Logout failed: could not persist revocation state." });
-  }
-  _revokedBefore = revokedAt;
-  return res.json({ success: true, revokedAt: _revokedBefore });
+  const userId = getAuth(req)?.userId;
+  const adminClerkUserId = process.env.ADMIN_CLERK_USER_ID;
+  return res.json({ isAdmin: Boolean(adminClerkUserId && userId === adminClerkUserId) });
 });
 
 // ── GET /admin/profile ────────────────────────────────────────────────────────
@@ -342,7 +209,7 @@ router.post("/restart", requireAdminAuth, (_req, res) => {
 
 // ── User Management ───────────────────────────────────────────────────────────
 
-// GET /admin/users — list all users with their status and email
+// GET /admin/users — list all users with their status, role and email
 router.get("/users", requireAdminAuth, async (_req, res) => {
   try {
     const users = await db
@@ -350,6 +217,7 @@ router.get("/users", requireAdminAuth, async (_req, res) => {
         clerkUserId: usersTable.clerkUserId,
         email: usersTable.email,
         status: usersTable.status,
+        role: usersTable.role,
         createdAt: usersTable.createdAt,
         updatedAt: usersTable.updatedAt,
       })
@@ -405,6 +273,70 @@ router.post("/users/:clerkUserId/ban", requireAdminAuth, async (req, res) => {
     return res.json({ user: updated[0] });
   } catch {
     return res.status(500).json({ error: "Failed to ban user" });
+  }
+});
+
+// POST /admin/users/:clerkUserId/promote — grant admin role to an approved user
+router.post("/users/:clerkUserId/promote", requireAdminAuth, async (req, res) => {
+  const rawParam = req.params.clerkUserId;
+  const clerkUserId = Array.isArray(rawParam) ? rawParam[0] : rawParam;
+  if (typeof clerkUserId !== "string" || !clerkUserId) {
+    return res.status(400).json({ error: "Missing clerkUserId" });
+  }
+  try {
+    const existing = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.clerkUserId, clerkUserId))
+      .limit(1);
+
+    const user = existing[0];
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    if (user.status !== "approved") {
+      return res.status(400).json({ error: "Only approved users can be promoted to admin" });
+    }
+
+    const updated = await db
+      .update(usersTable)
+      .set({ role: "admin", updatedAt: new Date() })
+      .where(eq(usersTable.clerkUserId, clerkUserId))
+      .returning();
+
+    return res.json({ user: updated[0] });
+  } catch {
+    return res.status(500).json({ error: "Failed to promote user" });
+  }
+});
+
+// POST /admin/users/:clerkUserId/demote — revoke admin role
+router.post("/users/:clerkUserId/demote", requireAdminAuth, async (req, res) => {
+  const rawParam = req.params.clerkUserId;
+  const clerkUserId = Array.isArray(rawParam) ? rawParam[0] : rawParam;
+  if (typeof clerkUserId !== "string" || !clerkUserId) {
+    return res.status(400).json({ error: "Missing clerkUserId" });
+  }
+
+  // The bootstrap admin is always an admin — demoting it would be a no-op that
+  // requireAppAuth immediately reverses, so reject it explicitly.
+  if (clerkUserId === process.env.ADMIN_CLERK_USER_ID) {
+    return res.status(400).json({ error: "The bootstrap admin cannot be demoted" });
+  }
+
+  try {
+    const updated = await db
+      .update(usersTable)
+      .set({ role: "user", updatedAt: new Date() })
+      .where(eq(usersTable.clerkUserId, clerkUserId))
+      .returning();
+
+    if (updated.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    return res.json({ user: updated[0] });
+  } catch {
+    return res.status(500).json({ error: "Failed to demote user" });
   }
 });
 

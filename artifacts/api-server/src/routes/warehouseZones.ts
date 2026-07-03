@@ -3,7 +3,7 @@ import { eq, asc, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { warehouseZoneTable, inventoryTable } from "@workspace/db";
 import { CreateWarehouseZoneBody, UpdateWarehouseZoneBody } from "@workspace/api-zod";
-import { requireAdminAuth } from "./admin";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 /** Strips leading zeros from numeric aisle ID strings ("08" → "8", "A1" → "A1"). */
 function normalizeAisleId(v: string): string {
