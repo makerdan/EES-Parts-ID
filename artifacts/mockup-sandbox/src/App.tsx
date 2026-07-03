@@ -1,4 +1,21 @@
 import { useEffect, useState, lazy, Suspense, type ComponentType } from "react";
+import {
+  Switch,
+  Route,
+  useLocation,
+  Router as WouterRouter,
+} from "wouter";
+import { ClerkProvider } from "@clerk/react";
+import {
+  clerkPubKey,
+  clerkProxyUrl,
+  clerkAppearance,
+  clerkLocalization,
+  basePath,
+  stripBase,
+} from "./auth/clerkConfig";
+import { SignInPage, SignUpPage } from "./components/AuthPages";
+import { AdminGate } from "./components/AdminGate";
 
 const ZoneEditorPage = lazy(() =>
   import("./pages/ZoneEditor").then((m) => ({ default: m.ZoneEditor }))
@@ -97,10 +114,6 @@ function PreviewRenderer({
   return <Component />;
 }
 
-function getBasePath(): string {
-  return import.meta.env.BASE_URL.replace(/\/$/, "");
-}
-
 const TOOLS = [
   {
     name: "Zone Editor",
@@ -117,7 +130,6 @@ const TOOLS = [
 ];
 
 function Gallery() {
-  const basePath = getBasePath();
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-2xl mx-auto">
@@ -158,7 +170,6 @@ function Gallery() {
 }
 
 function getPreviewPath(): string | null {
-  const basePath = getBasePath();
   const { pathname } = window.location;
   const local =
     basePath && pathname.startsWith(basePath)
@@ -168,29 +179,61 @@ function getPreviewPath(): string | null {
   return match ? match[1] : null;
 }
 
-function isZoneEditorPath(): boolean {
-  const basePath = getBasePath();
-  const { pathname } = window.location;
-  const local =
-    basePath && pathname.startsWith(basePath)
-      ? pathname.slice(basePath.length) || "/"
-      : pathname;
-  return local === "/zone-editor" || local.startsWith("/zone-editor/");
+function ZoneEditorRoute() {
+  return (
+    <AdminGate requireAdmin>
+      <Suspense fallback={null}>
+        <ZoneEditorPage />
+      </Suspense>
+    </AdminGate>
+  );
 }
 
-function isWarehouseMapPath(): boolean {
-  const basePath = getBasePath();
-  const { pathname } = window.location;
-  const local =
-    basePath && pathname.startsWith(basePath)
-      ? pathname.slice(basePath.length) || "/"
-      : pathname;
-  return local === "/warehouse-map" || local.startsWith("/warehouse-map/");
+function WarehouseMapRoute() {
+  // Read-only tool — still needs a signed-in Clerk session for API access.
+  return (
+    <AdminGate requireAdmin={false}>
+      <Suspense fallback={null}>
+        <WarehouseMapViewerPage />
+      </Suspense>
+    </AdminGate>
+  );
+}
+
+function AdminRoutes() {
+  const [, setLocation] = useLocation();
+
+  return (
+    <ClerkProvider
+      publishableKey={clerkPubKey}
+      proxyUrl={clerkProxyUrl}
+      appearance={clerkAppearance}
+      signInUrl={`${basePath}/sign-in`}
+      signUpUrl={`${basePath}/sign-up`}
+      localization={clerkLocalization}
+      routerPush={(to) => setLocation(stripBase(to))}
+      routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
+    >
+      <Switch>
+        <Route path="/" component={Gallery} />
+        {/* REQUIRED — copy "/sign-in/*?" and "/sign-up/*?" verbatim. The /*?
+            optional wildcard is the only wouter syntax that matches both the bare
+            URL and Clerk's OAuth sub-paths. */}
+        <Route path="/sign-in/*?" component={SignInPage} />
+        <Route path="/sign-up/*?" component={SignUpPage} />
+        <Route path="/zone-editor" component={ZoneEditorRoute} />
+        <Route path="/warehouse-map" component={WarehouseMapRoute} />
+        <Route component={Gallery} />
+      </Switch>
+    </ClerkProvider>
+  );
 }
 
 function App() {
   const previewPath = getPreviewPath();
 
+  // Canvas preview iframes render arbitrary mockup components and must NOT be
+  // wrapped in Clerk/auth — they are the design sandbox, not an admin tool.
   if (previewPath) {
     return (
       <PreviewRenderer
@@ -200,23 +243,11 @@ function App() {
     );
   }
 
-  if (isZoneEditorPath()) {
-    return (
-      <Suspense fallback={null}>
-        <ZoneEditorPage />
-      </Suspense>
-    );
-  }
-
-  if (isWarehouseMapPath()) {
-    return (
-      <Suspense fallback={null}>
-        <WarehouseMapViewerPage />
-      </Suspense>
-    );
-  }
-
-  return <Gallery />;
+  return (
+    <WouterRouter base={basePath}>
+      <AdminRoutes />
+    </WouterRouter>
+  );
 }
 
 export default App;
