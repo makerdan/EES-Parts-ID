@@ -820,6 +820,10 @@ components:
         maxDiameter:
           type: number
           description: Maximum part diameter in mm (size-range filter)
+        includeNullDimensions:
+          type: boolean
+          description: When true (default), items with no recorded dimensions are included in a separate sizeUnknownResults bucket when a size filter is active
+          default: true
       required: []
 
     SearchResult:

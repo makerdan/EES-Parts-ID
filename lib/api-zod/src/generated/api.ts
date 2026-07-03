@@ -152,6 +152,8 @@ export const searchInventoryBodyConfidenceThresholdDefault = 50;
 export const searchInventoryBodyConfidenceThresholdMin = 0;
 export const searchInventoryBodyConfidenceThresholdMax = 100;
 
+export const searchInventoryBodyIncludeNullDimensionsDefault = true;
+
 export const SearchInventoryBody = zod.object({
   keywords: zod.string().optional(),
   catalog: zod.string().optional(),
@@ -247,6 +249,12 @@ export const SearchInventoryBody = zod.object({
     .number()
     .optional()
     .describe("Maximum part diameter in mm (size-range filter)"),
+  includeNullDimensions: zod
+    .boolean()
+    .default(searchInventoryBodyIncludeNullDimensionsDefault)
+    .describe(
+      "When true (default), items with no recorded dimensions are included in a separate sizeUnknownResults bucket when a size filter is active",
+    ),
 });
 
 export const SearchInventoryResponse = zod
