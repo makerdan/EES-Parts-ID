@@ -43,6 +43,7 @@ import {
   shouldUpdateScore,
   fuseConfidence,
 } from "../utils/scoreHelpers";
+import { SearchInventoryBody as SearchInventoryBodySchema } from "@workspace/api-zod";
 
 const router = Router();
 
@@ -212,6 +213,11 @@ const CHIP_DIMS_SERVER = [
 
 router.post("/search", async (req, res) => {
   try {
+    const bodyParsed = SearchInventoryBodySchema.safeParse(req.body);
+    if (!bodyParsed.success) {
+      return void res.status(400).json({ error: bodyParsed.error.issues[0]?.message ?? "Invalid request body" });
+    }
+
     const {
       keywords = "",
       catalog: catalogInput = "",
@@ -248,30 +254,7 @@ router.post("/search", async (req, res) => {
       minDiameter,
       maxDiameter,
       includeNullDimensions = true,
-    } = req.body as {
-      keywords?: string;
-      catalog?: string;
-      vendor?: string;
-      color?: string;
-      size?: string;
-      material?: string;
-      textNumbers?: string;
-      confidenceThreshold?: number;
-      category?: string; amperage?: string; colorChip?: string; manufacturer?: string;
-      sizeChip?: string; rating?: string; wireType?: string; wireGauge?: string;
-      conduitType?: string; conduitSize?: string; boxType?: string; boxGangCount?: string;
-      mountingType?: string; environment?: string; voltage?: string; poleCount?: string;
-      categorySlug?: string;
-      minLength?: number | null;
-      maxLength?: number | null;
-      minWidth?: number | null;
-      maxWidth?: number | null;
-      minHeight?: number | null;
-      maxHeight?: number | null;
-      minDiameter?: number | null;
-      maxDiameter?: number | null;
-      includeNullDimensions?: boolean;
-    };
+    } = bodyParsed.data;
 
     // Normalize length bounds — body takes precedence; fall back to query string so
     // callers can pass ?minLength=30&maxLength=60 on the URL as well.

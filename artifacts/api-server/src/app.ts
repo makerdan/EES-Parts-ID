@@ -41,7 +41,52 @@ app.use(
     },
   }),
 );
-app.use(cors());
+
+// ── CORS ──────────────────────────────────────────────────────────────────────
+// Restrict origins to the known Expo and web client origins.
+// In production, set CORS_ALLOWED_ORIGINS to a comma-separated list of allowed
+// origins (e.g. "https://app.example.com,https://admin.example.com").
+// In development, all localhost origins are allowed when the env var is absent.
+const isDev = process.env.NODE_ENV !== "production";
+const rawAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS;
+
+if (!isDev && !rawAllowedOrigins) {
+  logger.warn(
+    "CORS_ALLOWED_ORIGINS is not set in production — all origins are denied. " +
+    "Set this env var to a comma-separated list of allowed origins.",
+  );
+}
+
+const allowedOrigins: string[] = rawAllowedOrigins
+  ? rawAllowedOrigins.split(",").map((o) => o.trim()).filter(Boolean)
+  : [];
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Same-origin requests (no Origin header) are always allowed.
+      if (!origin) return callback(null, true);
+
+      // In development with no explicit allowlist, permit all localhost origins.
+      if (isDev && !rawAllowedOrigins) {
+        if (/^https?:\/\/localhost(:\d+)?$/.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
+          return callback(null, true);
+        }
+        // Also allow Replit dev domain tunnels in development.
+        if (/\.replit\.dev$/.test(origin) || /\.repl\.co$/.test(origin) || /\.replit\.app$/.test(origin)) {
+          return callback(null, true);
+        }
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      callback(new Error(`CORS: origin ${origin} is not allowed`));
+    },
+    credentials: true,
+  }),
+);
 // Increase body limit for base64 payloads (AI photo identify + PDF catalog upload)
 // A 25 MB PDF base64-encodes to ~34 MB; set limit to 50 MB to provide headroom.
 app.use(express.json({ limit: "50mb" }));

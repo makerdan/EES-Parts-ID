@@ -5,6 +5,7 @@ import { db } from "@workspace/db";
 import { catalogPdfJobTable, warehouseZoneTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
 import { initProvider, probePoeBotsOnStartup } from "./lib/aiProvider";
+import { loadRevokedBefore } from "./routes/admin";
 
 process.on("uncaughtException", (err) => {
   logger.error({ err }, "Uncaught exception — exiting");
@@ -123,7 +124,8 @@ async function migrateAdminPreferences(): Promise<void> {
         ADD COLUMN IF NOT EXISTS scan_sound BOOLEAN NOT NULL DEFAULT true,
         ADD COLUMN IF NOT EXISTS shelf_prefix TEXT,
         ADD COLUMN IF NOT EXISTS shelf_step INTEGER,
-        ADD COLUMN IF NOT EXISTS ai_provider TEXT
+        ADD COLUMN IF NOT EXISTS ai_provider TEXT,
+        ADD COLUMN IF NOT EXISTS revoked_before BIGINT NOT NULL DEFAULT 0
     `);
   } catch (err) {
     logger.error({ err }, "Failed to migrate admin_preferences table");
@@ -179,6 +181,7 @@ async function migrateUsersTable(): Promise<void> {
 }
 
 Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), checkZoneSectionNumIntegrity(), migrateUsersTable()])
+  .then(() => loadRevokedBefore())
   .then(() => initProvider())
   .then(() => probePoeBotsOnStartup())
   .then(() => startServer(app, port, MAX_RETRIES))
