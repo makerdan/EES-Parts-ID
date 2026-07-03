@@ -1714,7 +1714,10 @@ export default function UploadScreen() {
     await fetchAdminUsers({ apiBase: API_BASE, adminToken, setUsersLoading, setUsersError, setUsersData });
   };
 
-  const handleUserAction = async (clerkUserId: string, action: "approve" | "ban") => {
+  const handleUserAction = async (
+    clerkUserId: string,
+    action: import("@/utils/adminUserActions").UserAction,
+  ) => {
     if (!adminToken) return;
     await runUserAction(clerkUserId, action, {
       apiBase: API_BASE,
@@ -3281,7 +3284,7 @@ export default function UploadScreen() {
                   </Pressable>
                 </View>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Approve or ban users who have signed up via the app.
+                  Approve, ban, and manage admin access for users who have signed up via the app.
                 </Text>
 
                 {usersError ? (
@@ -3302,6 +3305,9 @@ export default function UploadScreen() {
                       user.status === "approved" ? "#10b981" :
                       user.status === "banned"   ? colors.destructive :
                       colors.mutedForeground;
+                    const isAdminRole = user.role === "admin";
+                    const roleColor = isAdminRole ? colors.primary : colors.mutedForeground;
+                    const roleLabel = isAdminRole ? "Admin" : "Member";
                     const isPending = userActionPending === user.clerkUserId;
                     return (
                       <View
@@ -3319,10 +3325,17 @@ export default function UploadScreen() {
                           <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: colors.foreground, flexShrink: 1, marginRight: 8 }}>
                             {user.email || "(no email)"}
                           </Text>
-                          <View style={{ backgroundColor: statusColor + "22", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: statusColor + "44" }}>
-                            <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: statusColor, textTransform: "capitalize" }}>
-                              {user.status}
-                            </Text>
+                          <View style={{ flexDirection: "row", gap: 6, flexShrink: 0 }}>
+                            <View style={{ backgroundColor: roleColor + "22", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: roleColor + "44" }}>
+                              <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: roleColor }}>
+                                {roleLabel}
+                              </Text>
+                            </View>
+                            <View style={{ backgroundColor: statusColor + "22", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: statusColor + "44" }}>
+                              <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: statusColor, textTransform: "capitalize" }}>
+                                {user.status}
+                              </Text>
+                            </View>
                           </View>
                         </View>
                         <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: colors.mutedForeground }}>
@@ -3364,6 +3377,40 @@ export default function UploadScreen() {
                             </Pressable>
                           ) : null}
                         </View>
+                        {/* Admin role controls — only approved users may be promoted */}
+                        {isAdminRole ? (
+                          <Pressable
+                            onPress={() => handleUserAction(user.clerkUserId, "demote")}
+                            disabled={!!userActionPending}
+                            style={{
+                              borderRadius: 6, paddingVertical: 8, alignItems: "center",
+                              backgroundColor: colors.muted, borderWidth: 1, borderColor: colors.border,
+                              opacity: userActionPending ? 0.6 : 1,
+                            }}
+                          >
+                            {isPending ? (
+                              <ActivityIndicator size="small" color={colors.foreground} />
+                            ) : (
+                              <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.foreground }}>↓ Revoke Admin</Text>
+                            )}
+                          </Pressable>
+                        ) : user.status === "approved" ? (
+                          <Pressable
+                            onPress={() => handleUserAction(user.clerkUserId, "promote")}
+                            disabled={!!userActionPending}
+                            style={{
+                              borderRadius: 6, paddingVertical: 8, alignItems: "center",
+                              backgroundColor: colors.primary + "15", borderWidth: 1, borderColor: colors.primary + "44",
+                              opacity: userActionPending ? 0.6 : 1,
+                            }}
+                          >
+                            {isPending ? (
+                              <ActivityIndicator size="small" color={colors.primary} />
+                            ) : (
+                              <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.primary }}>↑ Make Admin</Text>
+                            )}
+                          </Pressable>
+                        ) : null}
                       </View>
                     );
                   })

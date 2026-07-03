@@ -4,14 +4,17 @@
  * Separated so it can be unit-tested without mounting the full screen.
  *
  * fetchAdminUsers   — GET  /admin/users, populates the user list.
- * handleUserAction  — POST /admin/users/:clerkUserId/approve|ban,
+ * handleUserAction  — POST /admin/users/:clerkUserId/approve|ban|promote|demote,
  *                     then refreshes the list on success.
  */
+
+export type UserAction = "approve" | "ban" | "promote" | "demote";
 
 export type UserRow = {
   clerkUserId: string;
   email: string;
   status: "pending" | "approved" | "banned";
+  role: "user" | "admin";
   createdAt: string;
 };
 
@@ -58,7 +61,7 @@ export async function fetchAdminUsers(deps: FetchAdminUsersDeps): Promise<void> 
 }
 
 /**
- * Sends POST /admin/users/:clerkUserId/approve|ban.
+ * Sends POST /admin/users/:clerkUserId/approve|ban|promote|demote.
  *
  * Guards against concurrent calls (userActionPending already set).
  * On success calls deps.fetchUsers() to refresh the list.
@@ -67,7 +70,7 @@ export async function fetchAdminUsers(deps: FetchAdminUsersDeps): Promise<void> 
  */
 export async function handleUserAction(
   clerkUserId: string,
-  action: "approve" | "ban",
+  action: UserAction,
   deps: HandleUserActionDeps,
 ): Promise<void> {
   const {
