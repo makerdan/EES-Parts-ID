@@ -9,16 +9,37 @@ export const API_BASE: string =
       : "");
 
 /**
- * Bare origin (no /api suffix) for the generated API client's setBaseUrl().
- * The generated client paths already start with /api/…, so including /api
- * here would double the prefix. Empty string means "use relative URLs"
+ * Bare origin (no path) for the generated API client's setBaseUrl().
+ * The generated client paths already start with /api/…, so including any
+ * path here would double the prefix. Empty string means "use relative URLs"
  * (web dev — no base URL needed).
  */
-export const API_ORIGIN: string =
-  process.env.EXPO_PUBLIC_API_BASE
-    ? process.env.EXPO_PUBLIC_API_BASE.replace(/\/api$/, "")
-    : process.env.EXPO_PUBLIC_DOMAIN
-      ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-      : Platform.OS !== "web"
-        ? "http://localhost:8080"
-        : "";
+function deriveApiOrigin(): string {
+  if (process.env.EXPO_PUBLIC_API_BASE) {
+    try {
+      return new URL(process.env.EXPO_PUBLIC_API_BASE).origin;
+    } catch {
+      return process.env.EXPO_PUBLIC_API_BASE.replace(/\/api$/, "");
+    }
+  }
+  if (process.env.EXPO_PUBLIC_DOMAIN) {
+    return `https://${process.env.EXPO_PUBLIC_DOMAIN}`;
+  }
+  if (Platform.OS !== "web") {
+    return "http://localhost:8080";
+  }
+  return "";
+}
+
+export const API_ORIGIN: string = deriveApiOrigin();
+
+if (
+  API_ORIGIN === "http://localhost:8080" &&
+  Platform.OS !== "web" &&
+  !__DEV__
+) {
+  console.error(
+    "[apiBase] API origin is not configured for this production build. " +
+      "Set EXPO_PUBLIC_API_BASE or EXPO_PUBLIC_DOMAIN before building."
+  );
+}
