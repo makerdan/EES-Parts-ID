@@ -405,6 +405,11 @@ export default function SearchScreen() {
       aiSearchGenRef.current += 1;
       searchMutationRef.current?.reset();
     });
+  // `registerLogoutHandler` is the only reactive dep needed — it is a stable
+  // useCallback ref ([] deps) from AppContext. The state setters called inside
+  // the callback have stable identities (from useState/useRef), and mutable
+  // values (settingsRef, searchMutationRef, aiSearchGenRef) are read via refs
+  // on purpose to avoid re-registering the handler on every settings change.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registerLogoutHandler]);
 

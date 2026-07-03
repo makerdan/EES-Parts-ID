@@ -159,6 +159,10 @@ export function BrowseByCategory({
       .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
       .catch(e => { if (!cancelled) { setError(String(e)); setLoading(false); } });
     return () => { cancelled = true; };
+  // `debouncedDimKey` is the sole reactive trigger. The actual filter values are
+  // read from `dimFiltersRef.current` (a stable ref) so the effect does not
+  // re-run on every keystroke while still forwarding the latest values to the
+  // server request.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedDimKey]);
 

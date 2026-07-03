@@ -139,6 +139,11 @@ export function MeasurePartScreen({
   "use no memo";
   const { settings, updateSetting } = useApp();
   const unit = settings.dimensionUnit;
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState<Phase>("preview");
   const [estimateError, setEstimateError] = useState<string | null>(null);
@@ -295,6 +300,7 @@ export function MeasurePartScreen({
     setEstimateError(null);
     try {
       const dims = await measureObject(LIDAR_TIMEOUT_S);
+      if (!isMountedRef.current) return;
       lengthMmRef.current   = dims.length ?? null;
       widthMmRef.current    = dims.width  ?? null;
       heightMmRef.current   = dims.height ?? null;
@@ -308,6 +314,7 @@ export function MeasurePartScreen({
       if (scanInterruptedRef.current) {
         return;
       }
+      if (!isMountedRef.current) return;
       const msg = err instanceof Error ? err.message : "LiDAR scan failed";
       setEstimateError(msg);
       setPhase("preview");
@@ -324,17 +331,19 @@ export function MeasurePartScreen({
     setRescanningAxis(axis);
     try {
       const dims = await measureObject(LIDAR_TIMEOUT_S);
+      if (!isMountedRef.current) return;
       if (axis === "length") { lengthMmRef.current = dims.length ?? null; setLengthStr(fmtForUnit(dims.length, unit)); }
       else if (axis === "width") { widthMmRef.current = dims.width ?? null; setWidthStr(fmtForUnit(dims.width, unit)); }
       else if (axis === "height") { heightMmRef.current = dims.height ?? null; setHeightStr(fmtForUnit(dims.height, unit)); }
     } catch (err) {
+      if (!isMountedRef.current) return;
       const msg = err instanceof Error ? err.message : "LiDAR scan failed";
       Alert.alert(
         "Re-scan failed",
         `${msg}\n\n${getLidarHint(msg)}`
       );
     } finally {
-      setRescanningAxis(null);
+      if (isMountedRef.current) setRescanningAxis(null);
     }
   }, [unit]);
 
@@ -377,6 +386,8 @@ export function MeasurePartScreen({
         }),
       });
 
+      if (!isMountedRef.current) return;
+
       if (!response.ok) {
         const err = (await response.json().catch(() => ({}))) as {
           error?: string;
@@ -385,6 +396,7 @@ export function MeasurePartScreen({
       }
 
       const dims = (await response.json()) as PartDimensions;
+      if (!isMountedRef.current) return;
       lengthMmRef.current   = dims.length   ?? null;
       widthMmRef.current    = dims.width    ?? null;
       heightMmRef.current   = dims.height   ?? null;
@@ -395,6 +407,7 @@ export function MeasurePartScreen({
       setDiameterStr(fmtForUnit(dims.diameter, unit));
       setPhase("confirm");
     } catch (err) {
+      if (!isMountedRef.current) return;
       const msg = err instanceof Error ? err.message : "Estimation failed";
       setEstimateError(msg);
       setPhase("preview");
@@ -452,6 +465,8 @@ export function MeasurePartScreen({
         }),
       });
 
+      if (!isMountedRef.current) return;
+
       if (!response.ok) {
         const err = (await response.json().catch(() => ({}))) as {
           error?: string;
@@ -460,6 +475,7 @@ export function MeasurePartScreen({
       }
 
       const dims = (await response.json()) as PartDimensions;
+      if (!isMountedRef.current) return;
       // Show the pre-estimate values as "Previous" so admins can compare.
       lengthMmRef.current   = dims.length   ?? null;
       widthMmRef.current    = dims.width    ?? null;
@@ -471,10 +487,11 @@ export function MeasurePartScreen({
       setHeightStr(fmtForUnit(dims.height, unit));
       setDiameterStr(fmtForUnit(dims.diameter, unit));
     } catch (err) {
+      if (!isMountedRef.current) return;
       const msg = err instanceof Error ? err.message : "Estimation failed";
       setConfirmEstimateError(msg);
     } finally {
-      setIsReestimating(false);
+      if (isMountedRef.current) setIsReestimating(false);
     }
   }, [adminToken, unit, lengthStr, widthStr, heightStr, diameterStr]);
 

@@ -404,9 +404,17 @@ assert_contains "db push run — prints running message" "Schema changed — run
 API_CLIENT_PKG="$SCRIPT_DIR/../lib/api-client-react/package.json"
 
 if [[ -f "$API_CLIENT_PKG" ]]; then
+  # Extract the effective type-resolution path from exports['.'].
+  # exports['.'] may be a string (legacy) or a conditions object
+  # {"types":"./dist/index.d.ts","default":"./src/index.ts"}.
+  # In both cases we resolve the "types" condition (or the string itself)
+  # as the path TypeScript will actually load.
   EXPORTS_ENTRY=$(node -e \
     "const p=JSON.parse(require('fs').readFileSync('$API_CLIENT_PKG','utf8')); \
-     console.log(p.exports && p.exports['.'] ? p.exports['.'] : '')" 2>/dev/null || true)
+     const e=p.exports && p.exports['.']; \
+     if (!e) { console.log(''); } \
+     else if (typeof e === 'string') { console.log(e); } \
+     else { console.log(e.types || e.default || e.import || ''); }" 2>/dev/null || true)
 
   if [[ -n "$EXPORTS_ENTRY" ]]; then
     pass "api-client-react — exports['.'] field is set (${EXPORTS_ENTRY})"
@@ -441,7 +449,13 @@ fi
 # zero errors.  This is the direct regression guard for TS2305 "no exported
 # member" and TS7006 "implicit any" errors that previously prevented the
 # typecheck quality gate from passing.
+#
+# Build workspace lib declarations before typechecking.
+# This ensures dist/ declaration files are up to date so tsc --noEmit reads
+# stable compiled .d.ts files rather than the volatile generated TS source
+# files that codegen:check may clean concurrently in the validation framework.
 # ---------------------------------------------------------------------------
+pnpm -w run typecheck:libs > /dev/null 2>&1 || true
 TYPECHECK_OUTPUT=$(pnpm --filter @workspace/parts-id run typecheck 2>&1)
 TYPECHECK_EXIT=$?
 assert_exit "typecheck — parts-id tsc --noEmit exits 0" 0 "$TYPECHECK_EXIT"

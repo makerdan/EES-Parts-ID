@@ -458,6 +458,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     void run();
   }, [stopPolling, onSessionExpired]);
 
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
   const handleCancelJob = useCallback(async () => {
     const token = adminTokenRef.current;
     if (!token || !jobStatus?.jobId) return;
@@ -467,13 +473,14 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
+      if (!isMountedRef.current) return;
       if (r.status === 401) { stopPolling(); onSessionExpired(); return; }
       if (r.ok) {
         stopPolling();
         setJobStatus(prev => prev ? { ...prev, status: "cancelled" } : prev);
       }
     } catch { /* ignore — polling will pick up the change */ }
-    finally { setCancellingJob(false); }
+    finally { if (isMountedRef.current) setCancellingJob(false); }
   }, [jobStatus, stopPolling, onSessionExpired]);
 
   const handlePickFile = async () => {

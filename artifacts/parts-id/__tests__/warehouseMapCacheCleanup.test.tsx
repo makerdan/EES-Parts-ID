@@ -57,6 +57,7 @@ jest.mock("react-native-reanimated", () => {
     useAnimatedStyle: (_fn: () => unknown) => ({}),
     useAnimatedReaction: () => {},
     runOnJS: (fn: (...args: unknown[]) => unknown) => fn,
+    cancelAnimation: () => {},
     withSpring: passThrough,
     withTiming: passThrough,
     withRepeat: passThrough,
