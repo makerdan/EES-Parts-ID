@@ -15,6 +15,37 @@
  *   to present, so they don't fire on every routine token refresh.
  */
 
+import { TimeoutError } from "@workspace/api-client-react";
+
+export { DEFAULT_FETCH_TIMEOUT_MS } from "@workspace/api-client-react";
+
+/**
+ * Combines multiple AbortSignals into one that fires when any of them fires.
+ * Falls back to a manual listener-based race when `AbortSignal.any` is not
+ * available (e.g. older React Native runtimes).
+ */
+function combineSignals(
+  signals: Array<AbortSignal | null | undefined>,
+): AbortSignal | undefined {
+  const valid = signals.filter((s): s is AbortSignal => s != null);
+  if (valid.length === 0) return undefined;
+  if (valid.length === 1) return valid[0];
+
+  if (typeof AbortSignal !== "undefined" && typeof (AbortSignal as { any?: unknown }).any === "function") {
+    return (AbortSignal as { any: (signals: Array<AbortSignal>) => AbortSignal }).any(valid);
+  }
+
+  const controller = new AbortController();
+  for (const signal of valid) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      return controller.signal;
+    }
+    signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+  }
+  return controller.signal;
+}
+
 let _appToken: string | null = null;
 let _adminToken: string | null = null;
 let _onUnauthorized: (() => void) | null = null;
@@ -106,10 +137,15 @@ export function getAuthHeaders(): Record<string, string> {
  *  1. Admin HMAC token (takes precedence — allows admin to act as any user)
  *  2. Async Clerk token getter (registered by AppContext on mount) — always fresh
  *  3. Sync _appToken fallback (legacy / test path)
+ *
+ * Pass `timeoutMs` to abort the request if no response arrives within that
+ * duration. A `TimeoutError` is thrown in that case. If `init.signal` is also
+ * provided, the timeout races against it — whichever fires first wins.
  */
 export async function fetchWithAuth(
   url: string,
   init?: RequestInit,
+  timeoutMs?: number,
 ): Promise<Response> {
   let token: string | null = _adminToken;
   if (!token) {
@@ -122,16 +158,34 @@ export async function fetchWithAuth(
   const authHeaders: Record<string, string> = token
     ? { Authorization: `Bearer ${token}` }
     : {};
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let effectiveSignal: AbortSignal | undefined = init?.signal as AbortSignal | undefined;
+
+  if (timeoutMs != null) {
+    const timeoutController = new AbortController();
+    timeoutId = setTimeout(() => {
+      timeoutController.abort(new TimeoutError(timeoutMs));
+    }, timeoutMs);
+    effectiveSignal = combineSignals([effectiveSignal, timeoutController.signal]);
+  }
+
   const merged: RequestInit = {
     ...init,
+    signal: effectiveSignal,
     headers: {
       ...authHeaders,
       ...(init?.headers as Record<string, string> | undefined),
     },
   };
-  const res = await fetch(url, merged);
-  if (res.status === 401 && _onUnauthorized) {
-    _onUnauthorized();
+
+  try {
+    const res = await fetch(url, merged);
+    if (res.status === 401 && _onUnauthorized) {
+      _onUnauthorized();
+    }
+    return res;
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
-  return res;
 }

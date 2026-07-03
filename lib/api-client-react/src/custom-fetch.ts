@@ -1,5 +1,6 @@
 export type CustomFetchOptions = RequestInit & {
   responseType?: "json" | "text" | "blob" | "auto";
+  timeoutMs?: number;
 };
 
 export type ErrorType<T = unknown> = ApiError<T>;
@@ -10,6 +11,52 @@ export type AuthTokenGetter = () => Promise<string | null> | string | null;
 
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
+
+/**
+ * Shared default timeout callers can reference instead of hard-coding a magic
+ * number.  Not applied automatically — callers opt in by passing
+ * `timeoutMs: DEFAULT_FETCH_TIMEOUT_MS` (or any other value).
+ */
+export const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+
+/** Thrown when a request exceeds its `timeoutMs` deadline. */
+export class TimeoutError extends Error {
+  readonly name = "TimeoutError";
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`Request timed out after ${timeoutMs}ms`);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * Combines multiple AbortSignals into one that fires when any of them fires.
+ * Falls back to a manual listener-based race when `AbortSignal.any` is not
+ * available (e.g. older React Native runtimes).
+ */
+function combineSignals(
+  signals: Array<AbortSignal | null | undefined>,
+): AbortSignal | undefined {
+  const valid = signals.filter((s): s is AbortSignal => s != null);
+  if (valid.length === 0) return undefined;
+  if (valid.length === 1) return valid[0];
+
+  if (typeof AbortSignal !== "undefined" && typeof (AbortSignal as { any?: unknown }).any === "function") {
+    return (AbortSignal as { any: (signals: Array<AbortSignal>) => AbortSignal }).any(valid);
+  }
+
+  const controller = new AbortController();
+  for (const signal of valid) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      return controller.signal;
+    }
+    signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+  }
+  return controller.signal;
+}
 
 // ---------------------------------------------------------------------------
 // Module-level configuration
@@ -341,7 +388,7 @@ export async function customFetch<T = unknown>(
   options: CustomFetchOptions = {},
 ): Promise<T> {
   input = applyBaseUrl(input);
-  const { responseType = "auto", headers: headersInit, ...init } = options;
+  const { responseType = "auto", headers: headersInit, timeoutMs, ...init } = options;
 
   const method = resolveMethod(input, init.method);
 
@@ -374,15 +421,32 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(input) };
 
-  const response = await fetch(input, { ...init, method, headers });
+  // Build a combined abort signal that respects both the caller-supplied
+  // signal and an optional per-request timeout.
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let effectiveSignal: AbortSignal | undefined = init.signal as AbortSignal | undefined;
 
-  if (!response.ok) {
-    if (response.status === 401 && _unauthorizedHandler) {
-      _unauthorizedHandler();
-    }
-    const errorData = await parseErrorBody(response, method);
-    throw new ApiError(response, errorData, requestInfo);
+  if (timeoutMs != null) {
+    const timeoutController = new AbortController();
+    timeoutId = setTimeout(() => {
+      timeoutController.abort(new TimeoutError(timeoutMs));
+    }, timeoutMs);
+    effectiveSignal = combineSignals([effectiveSignal, timeoutController.signal]);
   }
 
-  return (await parseSuccessBody(response, responseType, requestInfo)) as T;
+  try {
+    const response = await fetch(input, { ...init, method, headers, signal: effectiveSignal });
+
+    if (!response.ok) {
+      if (response.status === 401 && _unauthorizedHandler) {
+        _unauthorizedHandler();
+      }
+      const errorData = await parseErrorBody(response, method);
+      throw new ApiError(response, errorData, requestInfo);
+    }
+
+    return (await parseSuccessBody(response, responseType, requestInfo)) as T;
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
 }
