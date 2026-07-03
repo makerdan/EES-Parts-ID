@@ -5,10 +5,14 @@
  * authentication on custom domains and .replit.app deployments without
  * requiring CNAME DNS configuration.
  *
- * AUTH CONFIGURATION: To manage users, enable/disable login providers
- * (Google, GitHub, etc.), change app branding, or configure OAuth credentials,
- * use the Auth pane in the workspace toolbar. There is no external Clerk
- * dashboard — all auth configuration is done through the Auth pane.
+ * AUTH CONFIGURATION: Log in to your Clerk dashboard (https://dashboard.clerk.com)
+ * to manage users, enable/disable login providers (Google, GitHub, etc.),
+ * configure MFA, change app branding, or manage OAuth credentials.
+ *
+ * REQUIRED SECRETS (set in the Replit Secrets pane):
+ *   CLERK_SECRET_KEY      — Secret key from Clerk dashboard → API Keys
+ *   CLERK_PUBLISHABLE_KEY — Publishable key from Clerk dashboard → API Keys
+ *                           (same value as EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY)
  *
  * IMPORTANT:
  * - Only active in production (Clerk proxying doesn't work for dev instances)
