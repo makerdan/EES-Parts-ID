@@ -63,6 +63,16 @@ export class SlidingWindowRateLimiter {
     bucket.timestamps.push(now);
     return { allowed: true };
   }
+
+  /**
+   * Clear all recorded hits across every key.
+   *
+   * Intended for test isolation so one test's requests do not consume another
+   * test's rate-limit budget. Not used in production request paths.
+   */
+  reset(): void {
+    this.buckets.clear();
+  }
 }
 
 const IDENTIFY_MAX = Number(process.env.RATE_LIMIT_IDENTIFY_PER_MIN ?? 20);

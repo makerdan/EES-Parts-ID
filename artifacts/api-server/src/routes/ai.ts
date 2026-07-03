@@ -31,7 +31,15 @@ router.post("/identify", async (req, res) => {
 
     const identifyBody = AiIdentifyBodySchema.safeParse(req.body);
     if (!identifyBody.success) {
-      return void res.status(400).json({ error: identifyBody.error.issues[0]?.message ?? "Invalid request body" });
+      const issue = identifyBody.error.issues[0];
+      // A missing `images` field yields Zod's generic "Required" message; map it
+      // to the same actionable text as the empty-array (min(1)) case. Other
+      // image errors (e.g. too_big for >10 images) keep their own message.
+      const message =
+        issue?.path[0] === "images" && issue.code === "invalid_type"
+          ? "At least one image is required"
+          : issue?.message ?? "Invalid request body";
+      return void res.status(400).json({ error: message });
     }
 
     const {

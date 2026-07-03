@@ -5,15 +5,34 @@
  *  - GET  /api/reference/quick-lookups/:label
  *  - POST /api/reference/quick-lookups/:label (AI fallback + DB write-back)
  *
- * The OpenAI client is mocked so no live API key or network access is needed.
- * The database is the real test DB (quick_lookup_cache table must exist).
+ * The reference route answers questions via Gemini-2.5-Flash
+ * (@workspace/integrations-gemini-ai → ai.models.generateContent), so that
+ * call is mocked here — no live API key or network access is needed.
+ *
+ * The answer cache (answerCache) is mocked so the /ask tests are deterministic
+ * and never touch the reference_answer_cache table. The quick-lookup tests use
+ * the real test DB (quick_lookup_cache table must exist).
  */
 
-const mockCreate = jest.fn();
+// ── Mocks — must be declared before any imports so Jest can hoist them ─────────
+
+const mockGenerateContent = jest.fn();
+const mockGetCachedAnswer = jest.fn<Promise<string | null>, [string]>();
+const mockSetCachedAnswer = jest.fn<Promise<void>, [string, string, string, (boolean | undefined)?]>();
+
+jest.mock("@workspace/integrations-gemini-ai", () => ({
+  ai: {
+    models: { generateContent: mockGenerateContent },
+  },
+  generateImage: jest.fn(),
+  batchProcess: jest.fn(),
+  batchProcessWithSSE: jest.fn(),
+  isRateLimitError: jest.fn(() => false),
+}));
 
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
   openai: {
-    chat: { completions: { create: mockCreate } },
+    chat: { completions: { create: jest.fn() } },
     audio: { transcriptions: { create: jest.fn() } },
   },
   generateImageBuffer: jest.fn(),
@@ -29,6 +48,17 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
+jest.mock("../src/lib/answerCache", () => ({
+  normalizeQuestion: (q: string): string => q.toLowerCase().trim().replace(/\s+/g, " "),
+  hashQuestion: (normalized: string): string => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require("crypto").createHash("sha256").update(normalized).digest("hex");
+  },
+  getCachedAnswer: mockGetCachedAnswer,
+  setCachedAnswer: mockSetCachedAnswer,
+  invalidateReferenceAnswerCache: jest.fn(),
+}));
+
 process.env.LOG_LEVEL = "silent";
 
 import supertest from "supertest";
@@ -40,6 +70,17 @@ import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
 const TEST_LABEL = "JEST-REF-TEST-LABEL";
+
+/**
+ * Reconstruct the full answer text from an SSE response body by concatenating
+ * every `data: {"content":"…"}` frame in order.
+ */
+function reconstructSseContent(body: string): string {
+  const matches = [...body.matchAll(/data: (\{"content":.*?\})\n\n/g)];
+  return matches
+    .map((m) => (JSON.parse(m[1]!) as { content: string }).content)
+    .join("");
+}
 
 async function ensureQuickLookupTable() {
   await db.execute(sql`
@@ -73,8 +114,11 @@ afterAll(async () => {
   await closePool();
 });
 
-afterEach(() => {
+beforeEach(() => {
   jest.clearAllMocks();
+  // Cache miss by default so the AI path runs; individual tests override.
+  mockGetCachedAnswer.mockResolvedValue(null);
+  mockSetCachedAnswer.mockResolvedValue(undefined);
 });
 
 // ── POST /api/reference/ask ────────────────────────────────────────────────────
@@ -89,7 +133,9 @@ describe("POST /api/reference/ask", () => {
   });
 
   it("error before headers: returns 500 JSON, never starts a stream", async () => {
-    mockCreate.mockRejectedValueOnce(new Error("upstream auth blew up"));
+    // getCachedAnswer runs before any SSE frame is written; a failure here
+    // must surface as a clean 500 JSON response, not a partial stream.
+    mockGetCachedAnswer.mockRejectedValueOnce(new Error("cache lookup blew up"));
 
     const res = await supertest(app)
       .post("/api/reference/ask")
@@ -98,27 +144,13 @@ describe("POST /api/reference/ask", () => {
 
     expect(res.headers["content-type"]).toMatch(/application\/json/);
     expect(res.body).toHaveProperty("error");
-    expect(JSON.stringify(res.body)).not.toMatch(/upstream auth blew up/);
+    expect(JSON.stringify(res.body)).not.toMatch(/cache lookup blew up/);
   });
 
   it("error after headers: emits a terminal event:error SSE frame", async () => {
-    mockCreate.mockResolvedValueOnce({
-      [Symbol.asyncIterator]() {
-        let i = 0;
-        return {
-          async next() {
-            if (i === 0) {
-              i++;
-              return {
-                value: { choices: [{ delta: { content: "Hello" } }] },
-                done: false,
-              };
-            }
-            throw new Error("upstream stream broke mid-flight");
-          },
-        };
-      },
-    });
+    // Cache miss → headers flush → Gemini call fails mid-request, so the error
+    // arrives after the SSE headers have been sent.
+    mockGenerateContent.mockRejectedValueOnce(new Error("upstream gemini broke"));
 
     const res = await supertest(app)
       .post("/api/reference/ask")
@@ -127,19 +159,13 @@ describe("POST /api/reference/ask", () => {
 
     expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
     const body = res.text;
-    expect(body).toContain('data: {"content":"Hello"}');
     expect(body).toContain("event: error");
     expect(body).toMatch(/data: \{"error":"[^"]+"\}/);
-    expect(body).not.toMatch(/upstream stream broke mid-flight/);
+    expect(body).not.toMatch(/upstream gemini broke/);
   });
 
   it("happy path: streams content frames followed by done", async () => {
-    mockCreate.mockResolvedValueOnce({
-      async *[Symbol.asyncIterator]() {
-        yield { choices: [{ delta: { content: "**THWN-2** is " } }] };
-        yield { choices: [{ delta: { content: "a wire type." } }] };
-      },
-    });
+    mockGenerateContent.mockResolvedValueOnce({ text: "**THWN-2** is a wire type." });
 
     const res = await supertest(app)
       .post("/api/reference/ask")
@@ -147,19 +173,13 @@ describe("POST /api/reference/ask", () => {
       .expect(200);
 
     expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
-    expect(res.text).toContain('data: {"content":"**THWN-2** is "}');
-    expect(res.text).toContain('data: {"content":"a wire type."}');
+    expect(reconstructSseContent(res.text)).toBe("**THWN-2** is a wire type.");
     expect(res.text).toContain('data: {"done":true}');
     expect(res.text).not.toContain("event: error");
   });
 
   it("JSON mode (?stream=false): returns { answer } as a single JSON object", async () => {
-    mockCreate.mockResolvedValueOnce({
-      async *[Symbol.asyncIterator]() {
-        yield { choices: [{ delta: { content: "**THWN-2** is " } }] };
-        yield { choices: [{ delta: { content: "a wire type." } }] };
-      },
-    });
+    mockGenerateContent.mockResolvedValueOnce({ text: "**THWN-2** is a wire type." });
 
     const res = await supertest(app)
       .post("/api/reference/ask?stream=false")
@@ -171,11 +191,7 @@ describe("POST /api/reference/ask", () => {
   });
 
   it("JSON mode (Accept: application/json): returns { answer } as a single JSON object", async () => {
-    mockCreate.mockResolvedValueOnce({
-      async *[Symbol.asyncIterator]() {
-        yield { choices: [{ delta: { content: "Answer text." } }] };
-      },
-    });
+    mockGenerateContent.mockResolvedValueOnce({ text: "Answer text." });
 
     const res = await supertest(app)
       .post("/api/reference/ask")
@@ -257,17 +273,13 @@ describe("GET /api/reference/quick-lookups/:label", () => {
       .expect(200);
 
     expect(res.body).toEqual({ answer: "Pre-seeded answer" });
-    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockGenerateContent).not.toHaveBeenCalled();
   });
 
   it("DB miss falls through to AI (POST); subsequent GET returns from DB without another AI call", async () => {
     await cleanupTestLabel();
 
-    mockCreate.mockResolvedValueOnce({
-      async *[Symbol.asyncIterator]() {
-        yield { choices: [{ delta: { content: "Fresh AI answer." } }] };
-      },
-    });
+    mockGenerateContent.mockResolvedValueOnce({ text: "Fresh AI answer." });
 
     // Layer 3: POST triggers AI and writes the answer to DB
     await supertest(app)
@@ -275,7 +287,7 @@ describe("GET /api/reference/quick-lookups/:label", () => {
       .send({ question: "What is this?" })
       .expect(200);
 
-    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(mockGenerateContent).toHaveBeenCalledTimes(1);
 
     // Layer 2: subsequent GET reads from DB — AI must NOT be called again
     const res = await supertest(app)
@@ -283,7 +295,7 @@ describe("GET /api/reference/quick-lookups/:label", () => {
       .expect(200);
 
     expect(res.body).toEqual({ answer: "Fresh AI answer." });
-    expect(mockCreate).toHaveBeenCalledTimes(1); // still exactly 1 — no second AI call
+    expect(mockGenerateContent).toHaveBeenCalledTimes(1); // still exactly 1 — no second AI call
   });
 });
 
@@ -301,11 +313,7 @@ describe("POST /api/reference/quick-lookups/:label", () => {
   it("calls AI, returns answer, and writes to DB cache", async () => {
     await cleanupTestLabel();
 
-    mockCreate.mockResolvedValueOnce({
-      async *[Symbol.asyncIterator]() {
-        yield { choices: [{ delta: { content: "AI generated answer." } }] };
-      },
-    });
+    mockGenerateContent.mockResolvedValueOnce({ text: "AI generated answer." });
 
     const res = await supertest(app)
       .post(`/api/reference/quick-lookups/${TEST_LABEL}`)
@@ -324,11 +332,7 @@ describe("POST /api/reference/quick-lookups/:label", () => {
   });
 
   it("upserts on second call (overwrites existing cache)", async () => {
-    mockCreate.mockResolvedValueOnce({
-      async *[Symbol.asyncIterator]() {
-        yield { choices: [{ delta: { content: "Updated answer." } }] };
-      },
-    });
+    mockGenerateContent.mockResolvedValueOnce({ text: "Updated answer." });
 
     const res = await supertest(app)
       .post(`/api/reference/quick-lookups/${TEST_LABEL}`)
