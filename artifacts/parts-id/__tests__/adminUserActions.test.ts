@@ -45,8 +45,8 @@ const API_BASE = "http://localhost:3001/api";
 const ADMIN_TOKEN = "test-admin-token-abc123";
 
 const FIXTURE_USERS: Array<UserRow> = [
-  { clerkUserId: "user_a", email: "a@example.com", status: "pending", createdAt: "2024-01-01T00:00:00Z" },
-  { clerkUserId: "user_b", email: "b@example.com", status: "approved", createdAt: "2024-01-02T00:00:00Z" },
+  { clerkUserId: "user_a", email: "a@example.com", status: "pending", role: "user", createdAt: "2024-01-01T00:00:00Z" },
+  { clerkUserId: "user_b", email: "b@example.com", status: "approved", role: "admin", createdAt: "2024-01-02T00:00:00Z" },
 ];
 
 function makeOkUsersResponse(): Response {
@@ -253,6 +253,58 @@ describe("handleUserAction — ban path", () => {
     const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
     const headers = options?.headers as Record<string, string>;
     expect(headers?.["Authorization"]).toBe(`Bearer ${ADMIN_TOKEN}`);
+  });
+});
+
+describe("handleUserAction — promote path", () => {
+  it("POSTs to /admin/users/:id/promote and then calls fetchUsers on success", async () => {
+    mockFetch.mockResolvedValueOnce(makeOkActionResponse());
+    const { deps, mocks } = makeHandleUserActionDeps();
+
+    await handleUserAction("user_b", "promote", deps);
+
+    const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/admin/users/user_b/promote");
+    expect(options?.method).toBe("POST");
+    expect(mocks.fetchUsers).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the admin token in the Authorization header for promote", async () => {
+    mockFetch.mockResolvedValueOnce(makeOkActionResponse());
+    const { deps } = makeHandleUserActionDeps();
+
+    await handleUserAction("user_b", "promote", deps);
+
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = options?.headers as Record<string, string>;
+    expect(headers?.["Authorization"]).toBe(`Bearer ${ADMIN_TOKEN}`);
+  });
+});
+
+describe("handleUserAction — demote path", () => {
+  it("POSTs to /admin/users/:id/demote and then calls fetchUsers on success", async () => {
+    mockFetch.mockResolvedValueOnce(makeOkActionResponse());
+    const { deps, mocks } = makeHandleUserActionDeps();
+
+    await handleUserAction("user_b", "demote", deps);
+
+    const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/admin/users/user_b/demote");
+    expect(options?.method).toBe("POST");
+    expect(mocks.fetchUsers).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a toast and does NOT refresh when demote is rejected (e.g. bootstrap admin)", async () => {
+    mockFetch.mockResolvedValueOnce(makeErrorResponse(400));
+    const { deps, mocks } = makeHandleUserActionDeps();
+
+    await handleUserAction("user_b", "demote", deps);
+
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      expect.stringContaining("400"),
+      "error",
+    );
+    expect(mocks.fetchUsers).not.toHaveBeenCalled();
   });
 });
 
