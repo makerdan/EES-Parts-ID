@@ -1,9 +1,9 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
+import { Router } from "express";
 import { logger } from "../lib/logger";
 import { db } from "@workspace/db";
 import { quickLookupCacheTable, inventoryTable, referenceLogTable, aiRequestLogTable } from "@workspace/db";
 import { desc, eq, lt, or, ilike, sql } from "drizzle-orm";
-import { verifyAdminToken } from "./admin";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import {
   normalizeQuestion,
   hashQuestion,
@@ -13,21 +13,6 @@ import {
 import { callGemini, callGeminiWithHistory, WEB_REFERENCE_MODEL } from "../lib/webSearch";
 
 const router = Router();
-
-function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
-  const adminPassword = process.env.ADMIN_PASSWORD ?? "";
-  if (!adminPassword) {
-    res.status(503).json({ error: "Server misconfigured: ADMIN_PASSWORD is not set" });
-    return;
-  }
-  const auth = req.headers["authorization"] ?? "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (!token || !verifyAdminToken(token, adminPassword)) {
-    res.status(401).json({ error: "Admin authentication required" });
-    return;
-  }
-  next();
-}
 
 const GENERIC_ERROR_MESSAGE =
   "Sorry, the reference assistant ran into a problem. Please try again.";

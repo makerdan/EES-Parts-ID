@@ -74,7 +74,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../app";
-import { signAdminToken } from "../routes/admin";
+import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
 import { closePool } from "../../__tests__/helpers/testDb";
 import {
   setProvider,
@@ -82,18 +82,33 @@ import {
   probePoeBotsOnStartup,
   getAllPoeModelNames,
 } from "../lib/aiProvider";
+import { db, usersTable } from "@workspace/db";
+import { like } from "drizzle-orm";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const ADMIN_SECRET = "jest-ai-status-secret";
-
+// The bootstrap admin authenticates by presenting their Clerk user id.
 function makeAdminToken(): string {
-  return signAdminToken(Date.now(), ADMIN_SECRET);
+  return ADMIN_TEST_USER_ID;
 }
 
-// ── Teardown ──────────────────────────────────────────────────────────────────
+// An approved, non-admin user — authorised for the app but not for admin routes.
+const NON_ADMIN_USER = "jest-aistatus-nonadmin";
+
+// ── Setup / teardown ──────────────────────────────────────────────────────────
+beforeAll(async () => {
+  await db
+    .insert(usersTable)
+    .values({ clerkUserId: NON_ADMIN_USER, email: "na@test.example", status: "approved", role: "user" })
+    .onConflictDoUpdate({
+      target: usersTable.clerkUserId,
+      set: { status: usersTable.status, role: usersTable.role },
+    });
+});
+
 afterAll(async () => {
   // Restore provider to "poe" so module state is clean for any subsequent suites
   setProvider("poe");
+  await db.delete(usersTable).where(like(usersTable.clerkUserId, "jest-aistatus-%"));
   await closePool();
 }, 15_000);
 
@@ -110,21 +125,11 @@ describe("GET /api/admin/ai-status — auth guard", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 401 when an invalid token is provided", async () => {
+  it("returns 403 for an approved non-admin user", async () => {
     const res = await supertest(app)
       .get("/api/admin/ai-status")
-      .set("Authorization", "Bearer not-a-real-token")
-      .expect(401);
-
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("returns 401 when the token is signed with the wrong secret", async () => {
-    const wrongToken = signAdminToken(Date.now(), "wrong-secret");
-    const res = await supertest(app)
-      .get("/api/admin/ai-status")
-      .set("Authorization", `Bearer ${wrongToken}`)
-      .expect(401);
+      .set("Authorization", `Bearer ${NON_ADMIN_USER}`)
+      .expect(403);
 
     expect(res.body).toHaveProperty("error");
   });
@@ -139,11 +144,11 @@ describe("POST /api/admin/ai-status/probe — auth guard", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 401 when an invalid token is provided", async () => {
+  it("returns 403 for an approved non-admin user", async () => {
     const res = await supertest(app)
       .post("/api/admin/ai-status/probe")
-      .set("Authorization", "Bearer garbage")
-      .expect(401);
+      .set("Authorization", `Bearer ${NON_ADMIN_USER}`)
+      .expect(403);
 
     expect(res.body).toHaveProperty("error");
   });

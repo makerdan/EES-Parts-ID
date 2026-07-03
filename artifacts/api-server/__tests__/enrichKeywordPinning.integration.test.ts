@@ -41,7 +41,7 @@ jest.mock("../src/lib/answerCache", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
+import { signAdminToken } from "./helpers/adminAuth";
 import { closePool } from "./helpers/testDb";
 import { db, inventoryTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";

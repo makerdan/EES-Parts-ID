@@ -56,7 +56,7 @@ jest.mock("../src/lib/webSearch", () => ({
 
 import supertest from "supertest";
 import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
+import { signAdminToken } from "./helpers/adminAuth";
 import { closePool } from "./helpers/testDb";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";

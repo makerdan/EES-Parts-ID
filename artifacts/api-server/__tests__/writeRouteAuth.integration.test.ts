@@ -1,6 +1,14 @@
 /**
- * Regression guard: every write route that added requireAdminAuth middleware
- * must reject unauthenticated and invalid-token requests forever.
+ * Regression guard: every write route protected by requireAdminAuth must reject
+ * unauthenticated and non-admin requests forever.
+ *
+ * Auth model (see auth.integration.test.ts):
+ *   - No Clerk session → 401
+ *   - Authenticated, approved, non-admin → 403
+ *   - Bootstrap admin → passes the auth layer
+ *
+ * The @clerk/express mock reads `Authorization: Bearer <token>` as the Clerk
+ * user id, so a "token" here is just a Clerk user id.
  *
  * Covered endpoints:
  *   POST   /api/warehouse-zones
@@ -8,17 +16,6 @@
  *   DELETE /api/warehouse-zones/:id
  *   POST   /api/reference/quick-lookups/:label
  *   PATCH  /api/inventory/:id/keywords
- *
- * For each route we assert:
- *   1. No token          → 401
- *   2. Garbage token     → 401
- *   3. Structurally valid token signed with the wrong secret → 401
- *
- * Additional:
- *   4. When ADMIN_PASSWORD is unset, POST /reference/quick-lookups/:label → 503
- *
- * None of these tests exercise successful writes — they stop at the auth
- * layer, so no database fixtures are needed.
  */
 
 // ── Mock OpenAI before app is imported ────────────────────────────────────────
@@ -43,240 +40,82 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { signAdminToken, setRevokedBefore } from "../src/routes/admin";
+import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import { closePool } from "./helpers/testDb";
+import { db, usersTable } from "@workspace/db";
+import { like } from "drizzle-orm";
 
-// ── Global setup ──────────────────────────────────────────────────────────────
-const ADMIN_SECRET = "jest-write-auth-secret";
+// ── Setup ─────────────────────────────────────────────────────────────────────
+const ADMIN_TOKEN = ADMIN_TEST_USER_ID;
+const NON_ADMIN_USER = "jest-writeauth-user";
 
-beforeAll(() => {
-  process.env.ADMIN_PASSWORD = ADMIN_SECRET;
-});
-
-beforeEach(() => {
-  setRevokedBefore(0);
+beforeAll(async () => {
+  await db
+    .insert(usersTable)
+    .values({ clerkUserId: NON_ADMIN_USER, email: "u@test.example", status: "approved", role: "user" })
+    .onConflictDoUpdate({
+      target: usersTable.clerkUserId,
+      set: { status: usersTable.status, role: usersTable.role },
+    });
 });
 
 afterAll(async () => {
+  await db.delete(usersTable).where(like(usersTable.clerkUserId, "jest-writeauth-%"));
   await closePool();
 }, 15_000);
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+/** Runs the standard no-token / non-admin / admin assertions for one route. */
+function describeWriteGuard(
+  label: string,
+  send: (token?: string) => supertest.Test,
+) {
+  describe(`${label} — auth guard`, () => {
+    it("no token → 401", async () => {
+      const res = await send().expect(401);
+      expect(res.body).toHaveProperty("error");
+    });
 
-function validToken(): string {
-  return signAdminToken(Date.now(), ADMIN_SECRET);
+    it("approved non-admin → 403", async () => {
+      const res = await send(NON_ADMIN_USER).expect(403);
+      expect(res.body).toHaveProperty("error");
+    });
+
+    it("admin → passes auth (not 401/403)", async () => {
+      const res = await send(ADMIN_TOKEN);
+      expect(res.status).not.toBe(401);
+      expect(res.status).not.toBe(403);
+    });
+  });
 }
 
-function wrongSecretToken(): string {
-  return signAdminToken(Date.now(), "not-the-real-secret");
+function withAuth(t: supertest.Test, token?: string): supertest.Test {
+  return token ? t.set("Authorization", `Bearer ${token}`) : t;
 }
 
-const GARBAGE_TOKEN = "this.is.not.a.real.token";
+describeWriteGuard("POST /api/warehouse-zones", (token) =>
+  withAuth(
+    supertest(app).post("/api/warehouse-zones"),
+    token,
+  ).send({ aisleId: "JEST-W", svgX: 0, svgY: 0, svgWidth: 10, svgHeight: 10 }),
+);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/warehouse-zones
-// ─────────────────────────────────────────────────────────────────────────────
+describeWriteGuard("PATCH /api/warehouse-zones/:id", (token) =>
+  withAuth(supertest(app).patch("/api/warehouse-zones/1"), token).send({ svgX: 5 }),
+);
 
-describe("POST /api/warehouse-zones — auth guard", () => {
-  const BODY = { aisleId: "JEST-W", svgX: 0, svgY: 0, svgWidth: 10, svgHeight: 10 };
+describeWriteGuard("DELETE /api/warehouse-zones/:id", (token) =>
+  withAuth(supertest(app).delete("/api/warehouse-zones/1"), token),
+);
 
-  it("no token → 401", async () => {
-    const res = await supertest(app).post("/api/warehouse-zones").send(BODY).expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
+describeWriteGuard("POST /api/reference/quick-lookups/:label", (token) =>
+  withAuth(
+    supertest(app).post("/api/reference/quick-lookups/test-label"),
+    token,
+  ).send({ question: "What is the part number?" }),
+);
 
-  it("garbage token → 401", async () => {
-    const res = await supertest(app)
-      .post("/api/warehouse-zones")
-      .set("Authorization", `Bearer ${GARBAGE_TOKEN}`)
-      .send(BODY)
-      .expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("wrong-secret token → 401", async () => {
-    const res = await supertest(app)
-      .post("/api/warehouse-zones")
-      .set("Authorization", `Bearer ${wrongSecretToken()}`)
-      .send(BODY)
-      .expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("valid token → request passes auth (not 401)", async () => {
-    const res = await supertest(app)
-      .post("/api/warehouse-zones")
-      .set("Authorization", `Bearer ${validToken()}`)
-      .send(BODY);
-    expect(res.status).not.toBe(401);
-    expect(res.status).not.toBe(403);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PATCH /api/warehouse-zones/:id
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("PATCH /api/warehouse-zones/:id — auth guard", () => {
-  const BODY = { svgX: 5 };
-
-  it("no token → 401", async () => {
-    const res = await supertest(app).patch("/api/warehouse-zones/1").send(BODY).expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("garbage token → 401", async () => {
-    const res = await supertest(app)
-      .patch("/api/warehouse-zones/1")
-      .set("Authorization", `Bearer ${GARBAGE_TOKEN}`)
-      .send(BODY)
-      .expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("wrong-secret token → 401", async () => {
-    const res = await supertest(app)
-      .patch("/api/warehouse-zones/1")
-      .set("Authorization", `Bearer ${wrongSecretToken()}`)
-      .send(BODY)
-      .expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("valid token → request passes auth (not 401/403)", async () => {
-    const res = await supertest(app)
-      .patch("/api/warehouse-zones/1")
-      .set("Authorization", `Bearer ${validToken()}`)
-      .send(BODY);
-    expect(res.status).not.toBe(401);
-    expect(res.status).not.toBe(403);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DELETE /api/warehouse-zones/:id
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("DELETE /api/warehouse-zones/:id — auth guard", () => {
-  it("no token → 401", async () => {
-    const res = await supertest(app).delete("/api/warehouse-zones/1").expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("garbage token → 401", async () => {
-    const res = await supertest(app)
-      .delete("/api/warehouse-zones/1")
-      .set("Authorization", `Bearer ${GARBAGE_TOKEN}`)
-      .expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("wrong-secret token → 401", async () => {
-    const res = await supertest(app)
-      .delete("/api/warehouse-zones/1")
-      .set("Authorization", `Bearer ${wrongSecretToken()}`)
-      .expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("valid token → request passes auth (not 401/403)", async () => {
-    const res = await supertest(app)
-      .delete("/api/warehouse-zones/1")
-      .set("Authorization", `Bearer ${validToken()}`);
-    expect(res.status).not.toBe(401);
-    expect(res.status).not.toBe(403);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/reference/quick-lookups/:label
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("POST /api/reference/quick-lookups/:label — auth guard", () => {
-  const BODY = { question: "What is the part number?" };
-
-  it("no token → 401", async () => {
-    const res = await supertest(app)
-      .post("/api/reference/quick-lookups/test-label")
-      .send(BODY)
-      .expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("garbage token → 401", async () => {
-    const res = await supertest(app)
-      .post("/api/reference/quick-lookups/test-label")
-      .set("Authorization", `Bearer ${GARBAGE_TOKEN}`)
-      .send(BODY)
-      .expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("wrong-secret token → 401", async () => {
-    const res = await supertest(app)
-      .post("/api/reference/quick-lookups/test-label")
-      .set("Authorization", `Bearer ${wrongSecretToken()}`)
-      .send(BODY)
-      .expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-});
-
-describe("POST /api/reference/quick-lookups/:label — ADMIN_PASSWORD unset → 503", () => {
-  it("returns 503 when ADMIN_PASSWORD env var is not set", async () => {
-    const originalPassword = process.env.ADMIN_PASSWORD;
-    delete process.env.ADMIN_PASSWORD;
-
-    const res = await supertest(app)
-      .post("/api/reference/quick-lookups/test-label")
-      .send({ question: "What is the part number?" });
-
-    process.env.ADMIN_PASSWORD = originalPassword;
-
-    expect(res.status).toBe(503);
-    expect(res.body).toHaveProperty("error");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PATCH /api/inventory/:id/keywords
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("PATCH /api/inventory/:id/keywords — auth guard", () => {
-  const BODY = { keywords: ["motor", "bearing"] };
-
-  it("no token → 401", async () => {
-    const res = await supertest(app)
-      .patch("/api/inventory/1/keywords")
-      .send(BODY)
-      .expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("garbage token → 401", async () => {
-    const res = await supertest(app)
-      .patch("/api/inventory/1/keywords")
-      .set("Authorization", `Bearer ${GARBAGE_TOKEN}`)
-      .send(BODY)
-      .expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("wrong-secret token → 401", async () => {
-    const res = await supertest(app)
-      .patch("/api/inventory/1/keywords")
-      .set("Authorization", `Bearer ${wrongSecretToken()}`)
-      .send(BODY)
-      .expect(401);
-    expect(res.body).toHaveProperty("error");
-  });
-
-  it("valid token → request passes auth (not 401/403)", async () => {
-    const res = await supertest(app)
-      .patch("/api/inventory/1/keywords")
-      .set("Authorization", `Bearer ${validToken()}`)
-      .send(BODY);
-    expect(res.status).not.toBe(401);
-    expect(res.status).not.toBe(403);
-  });
-});
+describeWriteGuard("PATCH /api/inventory/:id/keywords", (token) =>
+  withAuth(supertest(app).patch("/api/inventory/1/keywords"), token).send({
+    keywords: ["motor", "bearing"],
+  }),
+);

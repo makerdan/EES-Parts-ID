@@ -34,7 +34,7 @@
 import { Router } from "express";
 import { sql, eq, or, and } from "drizzle-orm";
 import { db, inventoryTable } from "@workspace/db";
-import { verifyAdminToken } from "./admin";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 
 const router = Router();
@@ -45,26 +45,6 @@ const router = Router();
 const UPLOAD_MAX_BYTES = 15 * 1024 * 1024; // 15 MB
 // Defense-in-depth cap on the parsed CSV string length itself.
 const UPLOAD_MAX_CSV_CHARS = 15 * 1024 * 1024; // ~15M chars
-
-// ── Admin auth middleware (same contract as inventory.ts) ─────────────────────
-function requireAdminAuth(
-  req: import("express").Request,
-  res: import("express").Response,
-  next: import("express").NextFunction,
-): void {
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  if (!adminPassword) {
-    res.status(503).json({ error: "Admin access is not configured. Set ADMIN_PASSWORD." });
-    return;
-  }
-  const authHeader = req.headers["authorization"] ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  if (!token || !verifyAdminToken(token, adminPassword)) {
-    res.status(401).json({ error: "Unauthorized: valid admin token required" });
-    return;
-  }
-  next();
-}
 
 // ── CSV parser ────────────────────────────────────────────────────────────────
 

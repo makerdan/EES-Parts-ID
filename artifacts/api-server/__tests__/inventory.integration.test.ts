@@ -30,7 +30,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
+import { ADMIN_TEST_USER_ID, signAdminToken } from "./helpers/adminAuth";
 import {
   seedFixtures,
   cleanupFixtures,
@@ -44,13 +44,14 @@ const ADMIN_SECRET = "jest-integration-test-secret";
 let adminToken: string;
 
 beforeAll(async () => {
-  process.env.ADMIN_PASSWORD = ADMIN_SECRET;
+  process.env.TEST_DEFAULT_AUTH_USER = ADMIN_TEST_USER_ID;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
   await cleanupFixtures();
   await seedFixtures(STANDARD_FIXTURES);
 }, 30_000);
 
 afterAll(async () => {
+  delete process.env.TEST_DEFAULT_AUTH_USER;
   await cleanupFixtures();
   await closePool();
 }, 30_000);
@@ -484,6 +485,11 @@ describe("POST /api/inventory/search — size-range filters without keywords", (
 describe("POST /api/inventory/upsert-batch", () => {
   const NEW_CATALOG = "JEST-ITG-UPSERT-001";
 
+  // No default auth in this describe — tests either set their own token or
+  // intentionally omit it to verify 401/403 behaviour.
+  beforeAll(() => { delete process.env.TEST_DEFAULT_AUTH_USER; });
+  afterAll(() => { process.env.TEST_DEFAULT_AUTH_USER = ADMIN_TEST_USER_ID; });
+
   afterEach(async () => {
     // Clean up any items created by upsert-batch tests
     const { db, inventoryTable } = await import("@workspace/db");
@@ -498,12 +504,12 @@ describe("POST /api/inventory/upsert-batch", () => {
       .expect(401);
   });
 
-  it("returns 401 when an invalid token is provided", async () => {
+  it("returns 403 when an invalid (unknown) token is provided", async () => {
     await supertest(app)
       .post("/api/inventory/upsert-batch")
       .set("Authorization", "Bearer invalid-token-xyz")
       .send({ items: [{ vendor: "TEST", catalog: NEW_CATALOG, description: "test" }] })
-      .expect(401);
+      .expect(403);
   });
 
   it("returns 400 when items array is empty", async () => {
@@ -830,10 +836,18 @@ describe("PATCH /api/inventory/:id/bins", () => {
 
   it("rejects requests without an admin token (401)", async () => {
     const id = await seededItemId("JEST-ITG-BR120");
-    await supertest(app)
-      .patch(`/api/inventory/${id}/bins`)
-      .send({ binLocations: ["Z-1"] })
-      .expect(401);
+    // seededItemId() uses the file-level default auth (search POST needs it),
+    // then we clear the default so the actual PATCH goes out with no token.
+    const savedAuth = process.env.TEST_DEFAULT_AUTH_USER;
+    delete process.env.TEST_DEFAULT_AUTH_USER;
+    try {
+      await supertest(app)
+        .patch(`/api/inventory/${id}/bins`)
+        .send({ binLocations: ["Z-1"] })
+        .expect(401);
+    } finally {
+      if (savedAuth !== undefined) process.env.TEST_DEFAULT_AUTH_USER = savedAuth;
+    }
   });
 
   it("rejects non-array binLocations (400)", async () => {

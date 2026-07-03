@@ -26,7 +26,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
+import { signAdminToken } from "./helpers/adminAuth";
 import { closePool } from "./helpers/testDb";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { inArray } from "drizzle-orm";
@@ -66,7 +66,6 @@ async function seedJob(opts: SeedOptions): Promise<number> {
 }
 
 beforeAll(async () => {
-  process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
 }, 15_000);
 
@@ -92,11 +91,11 @@ describe("GET /api/admin/catalog-pdf/failed-jobs — auth", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 401 when an invalid token is provided", async () => {
+  it("returns 403 when an invalid (unknown) token is provided", async () => {
     const res = await supertest(app)
       .get("/api/admin/catalog-pdf/failed-jobs")
       .set("Authorization", "Bearer invalid-token-xyz")
-      .expect(401);
+      .expect(403);
 
     expect(res.body).toHaveProperty("error");
   });

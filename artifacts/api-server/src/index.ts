@@ -5,7 +5,6 @@ import { db } from "@workspace/db";
 import { catalogPdfJobTable, warehouseZoneTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
 import { initProvider, probePoeBotsOnStartup } from "./lib/aiProvider";
-import { loadRevokedBefore } from "./routes/admin";
 
 process.on("uncaughtException", (err) => {
   logger.error({ err }, "Uncaught exception — exiting");
@@ -171,9 +170,15 @@ async function migrateUsersTable(): Promise<void> {
         clerk_user_id TEXT PRIMARY KEY,
         email         TEXT NOT NULL DEFAULT '',
         status        TEXT NOT NULL DEFAULT 'pending',
+        role          TEXT NOT NULL DEFAULT 'user',
         created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
       )
+    `);
+    // Add the role column to pre-existing users tables that lack it.
+    await db.execute(sql`
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'
     `);
   } catch (err) {
     logger.error({ err }, "Failed to migrate users table");
@@ -181,7 +186,6 @@ async function migrateUsersTable(): Promise<void> {
 }
 
 Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), checkZoneSectionNumIntegrity(), migrateUsersTable()])
-  .then(() => loadRevokedBefore())
   .then(() => initProvider())
   .then(() => probePoeBotsOnStartup())
   .then(() => startServer(app, port, MAX_RETRIES))

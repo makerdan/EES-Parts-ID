@@ -60,11 +60,15 @@ async function cleanupTestLabel() {
 }
 
 beforeAll(async () => {
+  process.env.ADMIN_CLERK_USER_ID = "jest-admin-user";
+  process.env.TEST_DEFAULT_AUTH_USER = "jest-admin-user";
   await ensureQuickLookupTable();
   await cleanupTestLabel();
 });
 
 afterAll(async () => {
+  delete process.env.TEST_DEFAULT_AUTH_USER;
+  delete process.env.ADMIN_CLERK_USER_ID;
   await cleanupTestLabel();
   await closePool();
 });

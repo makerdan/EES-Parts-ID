@@ -11,9 +11,6 @@
  *   transaction path)
  */
 
-// ── Env vars — must be set before any require()/module imports ────────────────
-process.env.ADMIN_PASSWORD = "jest-adminquery-secret";
-
 // ── OpenAI constructor mock (loaded transitively by ai routes at module init) ─
 const mockCompletionsCreate = jest.fn().mockResolvedValue({
   id: "chatcmpl-mock",
@@ -82,12 +79,42 @@ jest.mock("@workspace/db", () => ({
   pool: { connect: mockConnect },
   db: {},
   inventoryTable: {},
+  usersTable: {},
+}));
+
+// ── Auth middleware mock ───────────────────────────────────────────────────────
+// adminQuery is a unit test for the route handler; real Clerk auth would need a
+// live DB + drizzle chain that is not set up in this suite.  We replace
+// requireAppAuth with a lightweight shim that mirrors the real behaviour:
+//   - no Bearer header → 401
+//   - bootstrap admin token (ADMIN_CLERK_USER_ID) → sets appUser role="admin"
+//   - any other token → 403 pending
+jest.mock("../middlewares/requireAppAuth", () => ({
+  requireAppAuth: (req: any, res: any, next: any): void => {
+    const auth: string = (req.headers.authorization as string) ?? "";
+    if (!auth.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    const token = auth.slice(7);
+    if (!token) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    const adminId = process.env.ADMIN_CLERK_USER_ID ?? "";
+    if (adminId && token === adminId) {
+      res.locals.appUser = { clerkUserId: token, role: "admin", status: "approved" };
+      next();
+      return;
+    }
+    res.status(403).json({ error: "Account awaiting approval", code: "pending" });
+  },
 }));
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../app";
-import { signAdminToken } from "../routes/admin";
+import { signAdminToken } from "../../__tests__/helpers/adminAuth";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const ADMIN_SECRET = "jest-adminquery-secret";
@@ -108,12 +135,12 @@ describe("POST /api/admin/query — auth guard", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 401 when an invalid token is provided", async () => {
+  it("returns 403 when an invalid (unknown) token is provided", async () => {
     const res = await supertest(app)
       .post("/api/admin/query")
       .set("Authorization", "Bearer not-a-real-token")
       .send({ sql: "SELECT 1" })
-      .expect(401);
+      .expect(403);
 
     expect(res.body).toHaveProperty("error");
   });

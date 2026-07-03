@@ -13,7 +13,7 @@ import {
 } from "@workspace/db";
 import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
 import Fuse from "fuse.js";
-import { verifyAdminToken } from "./admin";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { expandMeasurements } from "../utils/measurementConversion";
 import { logger } from "../lib/logger";
 import {
@@ -1039,31 +1039,6 @@ router.post("/search", async (req, res) => {
     res.status(500).json({ error: "Search failed" });
   }
 });
-
-// ── Admin token middleware ─────────────────────────────────────────────────────
-function requireAdminAuth(
-  req: import("express").Request,
-  res: import("express").Response,
-  next: import("express").NextFunction,
-): void {
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  if (!adminPassword) {
-    res.status(503).json({
-      error: "Admin access is not configured on this server. Set ADMIN_PASSWORD.",
-    });
-    return;
-  }
-
-  const authHeader = req.headers["authorization"] ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-
-  if (!token || !verifyAdminToken(token, adminPassword)) {
-    res.status(401).json({ error: "Unauthorized: valid admin token required" });
-    return;
-  }
-
-  next();
-}
 
 // ── POST /inventory/add-part ──────────────────────────────────────────────────
 // Quick single-part entry. Admin-protected. Returns 409 if the vendor+catalog
