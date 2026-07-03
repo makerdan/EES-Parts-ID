@@ -170,6 +170,8 @@ export interface SearchInventoryBody {
   minDiameter?: number;
   /** Maximum part diameter in mm (size-range filter) */
   maxDiameter?: number;
+  /** When true (default), items with no recorded dimensions are included in a separate sizeUnknownResults bucket when a size filter is active */
+  includeNullDimensions?: boolean;
 }
 
 export interface SearchResult {
