@@ -1,16 +1,9 @@
 import { vi, beforeEach } from "vitest";
 
 beforeEach(() => {
-  // Pre-populate the admin token so ZoneEditor skips the login modal.
-  // Without this, the password <input> remains focused and keyboard-shortcut
-  // handlers and active-element checks fail silently.
-  // Tests that deliberately need the token absent (e.g. the 401 login-form
-  // test) must call sessionStorage.removeItem("zoneEditorAdminToken") in
-  // their own body — the next test's beforeEach will restore it.
-  try {
-    sessionStorage.setItem("zoneEditorAdminToken", "test-token");
-  } catch {}
-
+  // Admin auth is handled by <AdminGate> in App.tsx (Clerk session), so ZoneEditor
+  // itself no longer renders a login modal — it assumes it only mounts for an
+  // authenticated admin. Tests can render <ZoneEditor /> directly.
   global.fetch = vi.fn().mockResolvedValue({
     ok: true,
     status: 200,

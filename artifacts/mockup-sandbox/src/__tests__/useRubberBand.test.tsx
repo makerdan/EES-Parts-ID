@@ -540,12 +540,12 @@ describe("useRubberBand — Zone Editor integration", () => {
     expect(mouseRemovals.length).toBeGreaterThanOrEqual(mouseAdditions.length);
   });
 
-  // ── Permissions — unauthenticated (401) ─────────────────────────────────────
+  // ── Permissions — session expired (401) ─────────────────────────────────────
 
-  it("shows the login form (not a raw error) when the zone fetch returns 401", async () => {
-    // Clear admin token so the login overlay is shown
-    try { sessionStorage.removeItem("zoneEditorAdminToken"); } catch {}
-
+  it("surfaces a session-expired load error (no crash) when the zone fetch returns 401", async () => {
+    // Auth is now handled by <AdminGate> (Clerk) upstream, so ZoneEditor no longer
+    // renders a login form. A 401 mid-session means the Clerk cookie expired — the
+    // editor should surface a clear load error rather than crashing.
     const fetchMock = vi.fn(() =>
       Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({}), text: () => Promise.resolve("") }),
     );
@@ -556,13 +556,10 @@ describe("useRubberBand — Zone Editor integration", () => {
       ({ container } = render(<ZoneEditor />));
     });
 
-    // The login overlay should be rendered when adminToken is not set
+    // The editor surfaces a load error instead of crashing.
     await waitFor(() => {
-      expect(within(container).getByText(/Zone Editor.*Admin Login/i)).toBeTruthy();
+      expect(within(container).getByText(/Failed to load zones/i)).toBeTruthy();
     });
-
-    // A raw error message must not appear
-    expect(container.textContent).not.toMatch(/^Error:/);
   });
 
   // ── Permissions — read-only role ─────────────────────────────────────────────

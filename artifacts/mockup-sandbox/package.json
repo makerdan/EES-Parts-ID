@@ -11,7 +11,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@workspace/zone-validation": "workspace:*"
+    "@clerk/react": "^6.11.3",
+    "@clerk/themes": "^2.4.57",
+    "@workspace/zone-validation": "workspace:*",
+    "wouter": "catalog:"
   },
   "devDependencies": {
     "@hookform/resolvers": "^3.10.0",

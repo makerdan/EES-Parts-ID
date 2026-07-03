@@ -18,3 +18,4 @@
 - [Jest mockReset needs default Promise after reset](jest-mockreset-promise-default.md) — mockReset() leaves a mock returning undefined; any mock used in a Promise chain needs mockResolvedValue(null) as a default after each reset, or .then() crashes.
 - [Concurrent effects consume fetchWithAuth mocks out of order](concurrent-effects-mock-order.md) — WarehouseMapView has a server-hash polling effect (line 1452) that fires on mount alongside the SVG load effect; stub it first or the SVG-load mock sequence gets misaligned.
 - [exports['.'] types condition for workspace libs](exports-types-condition.md) — moduleResolution:bundler reads exports['.'] before root types; libs must embed a "types" condition in the exports object pointing to stable dist/.
+- [api-zod codegen race in repo typecheck](api-zod-codegen-race.md) — a wall of TS6053 "not found" under lib/api-zod/src/generated is a codegen-ordering race, not a real error; check files exist and re-run.
