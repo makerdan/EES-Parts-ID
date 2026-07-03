@@ -74,6 +74,9 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
   const [isRefreshing, setIsRefreshing] = useState(false);
   const fetchedRef = useRef(false);
 
+  const isMountedRef = useRef(true);
+  const controllerRef = useRef<AbortController | null>(null);
+  const fetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const spinAnim = useRef(new Animated.Value(0)).current;
   const spinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
 
@@ -107,8 +110,17 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
       setFetchState({ status: "loading" });
     }
 
+    // Abort any previous in-flight request before starting a new one.
+    if (fetchTimerRef.current !== null) {
+      clearTimeout(fetchTimerRef.current);
+      fetchTimerRef.current = null;
+    }
+    controllerRef.current?.abort();
+
     const controller = new AbortController();
+    controllerRef.current = controller;
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    fetchTimerRef.current = timer;
 
     fetchWithAuth(`${API_BASE}/ai/part-card`, {
       method: "POST",
@@ -118,16 +130,21 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
     })
       .then(async (res) => {
         clearTimeout(timer);
+        fetchTimerRef.current = null;
         stopSpin();
+        if (!isMountedRef.current) return;
         setIsRefreshing(false);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json() as PartCardData;
+        if (!isMountedRef.current) return;
         const hasContent = data.displayName || data.specs.length > 0 || data.crossRefs.length > 0 || data.compatibilityNote;
         setFetchState(hasContent ? { status: "done", data } : { status: "empty" });
       })
       .catch((err) => {
         clearTimeout(timer);
+        fetchTimerRef.current = null;
         stopSpin();
+        if (!isMountedRef.current) return;
         setIsRefreshing(false);
         if ((err as Error).name === "AbortError") {
           setFetchState({ status: "empty" });
@@ -139,7 +156,19 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
   }, [catalog, vendor, description]);
 
   useEffect(() => {
-    return () => { stopSpin(); };
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      // Cancel any in-flight fetch and its abort timer so no state updates
+      // fire after the component unmounts.
+      if (fetchTimerRef.current !== null) {
+        clearTimeout(fetchTimerRef.current);
+        fetchTimerRef.current = null;
+      }
+      controllerRef.current?.abort();
+      controllerRef.current = null;
+      stopSpin();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

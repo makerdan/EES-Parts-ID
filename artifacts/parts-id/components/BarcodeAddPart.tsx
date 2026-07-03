@@ -230,12 +230,15 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
 
   // Check for a saved session on mount
   useEffect(() => {
+    let cancelled = false;
     loadShelfSession().then(session => {
+      if (cancelled) return;
       if (session && session.shelfPrefix) {
         setResumeSession(session);
       }
       setSessionChecked(true);
     });
+    return () => { cancelled = true; };
   }, []);
 
   // Persist session whenever it changes

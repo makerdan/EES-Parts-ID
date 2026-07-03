@@ -70,6 +70,7 @@ jest.mock("react-native-reanimated", () => {
     useAnimatedStyle: (_fn: () => unknown) => ({}),
     useAnimatedReaction: () => {},
     runOnJS: (fn: (...args: unknown[]) => unknown) => fn,
+    cancelAnimation: () => {},
     // Pass through the target value AND fire the onEnd callback so that
     // setRenderZoom runs inside applyFit's spring completion path.
     withSpring: (

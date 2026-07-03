@@ -47,6 +47,7 @@ import {
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
+  cancelAnimation,
   runOnJS,
   type SharedValue,
   useAnimatedProps,
@@ -285,6 +286,7 @@ export function ZoneOverlayItem({
       fillOpacitySV.value = 0;
       fillOpacitySV.value = withTiming(1, { duration: 250 });
     }
+    return () => { cancelAnimation(fillOpacitySV); };
   }, [isPinnedNow, fillOpacitySV]);
 
   const rectPinAnimatedProps = useAnimatedProps(() => ({
@@ -613,6 +615,7 @@ export function MapPin3D({
       pinScale.value = 0;
       pinScale.value = withSpring(1, { damping: 8, stiffness: 180, mass: 0.7 });
     }
+    return () => { cancelAnimation(pinScale); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew]);
 
@@ -676,6 +679,7 @@ export function MapPinEmoji({
       pinScale.value = 0;
       pinScale.value = withSpring(1, { damping: 8, stiffness: 180, mass: 0.7 });
     }
+    return () => { cancelAnimation(pinScale); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew]);
 

@@ -17,3 +17,4 @@
 - [panBounds 4th-param svgRenderH](panbounds-svgrenderh.md) — mapViewport.panBounds() takes explicit svgRenderH as 4th arg (not derived internally from SVG_ASPECT); all call sites must pass it.
 - [Jest mockReset needs default Promise after reset](jest-mockreset-promise-default.md) — mockReset() leaves a mock returning undefined; any mock used in a Promise chain needs mockResolvedValue(null) as a default after each reset, or .then() crashes.
 - [Concurrent effects consume fetchWithAuth mocks out of order](concurrent-effects-mock-order.md) — WarehouseMapView has a server-hash polling effect (line 1452) that fires on mount alongside the SVG load effect; stub it first or the SVG-load mock sequence gets misaligned.
+- [exports['.'] types condition for workspace libs](exports-types-condition.md) — moduleResolution:bundler reads exports['.'] before root types; libs must embed a "types" condition in the exports object pointing to stable dist/.
