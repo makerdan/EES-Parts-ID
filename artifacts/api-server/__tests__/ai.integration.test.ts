@@ -100,6 +100,7 @@ jest.mock("../src/lib/poeBot", () => {
 import supertest from "supertest";
 import app from "../src/app";
 import { closePool } from "./helpers/testDb";
+import { identifyLimiter } from "../src/lib/rateLimiter";
 
 // Minimal valid base64 string (1×1 white pixel JPEG)
 const TINY_BASE64_JPEG =
@@ -114,6 +115,12 @@ afterAll(async () => {
   delete process.env.TEST_DEFAULT_AUTH_USER;
   delete process.env.ADMIN_CLERK_USER_ID;
   await closePool();
+});
+
+beforeEach(() => {
+  // Clear rate-limit buckets so one test's requests never consume another
+  // test's budget (IDENTIFY_MAX defaults to 20; this file makes more calls).
+  identifyLimiter.reset();
 });
 
 afterEach(() => {
