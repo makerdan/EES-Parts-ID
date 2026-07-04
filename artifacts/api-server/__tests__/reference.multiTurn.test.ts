@@ -104,6 +104,7 @@ jest.mock("@workspace/db", () => {
     aiRequestLogTable: { createdAt: "createdAt" },
     quickLookupCacheTable: { label: "label" },
     referenceAnswerCacheTable: { questionHash: "questionHash" },
+    usersTable: { clerkUserId: "clerkUserId", status: "status", role: "role", updatedAt: "updatedAt" },
   };
 });
 
@@ -130,6 +131,16 @@ const FIRST_QUESTION = "What gauge wire for a 15 amp circuit?";
 const CACHED_ANSWER = "Use 14 AWG wire for 15 amps.";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
+
+beforeAll(() => {
+  process.env.ADMIN_CLERK_USER_ID = "jest-admin-user";
+  process.env.TEST_DEFAULT_AUTH_USER = "jest-admin-user";
+});
+
+afterAll(() => {
+  delete process.env.TEST_DEFAULT_AUTH_USER;
+  delete process.env.ADMIN_CLERK_USER_ID;
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
