@@ -141,6 +141,20 @@
       "when": 1751500000000,
       "tag": "0028_admin_revoked_before",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1751673600000,
+      "tag": "0029_backfill_missing_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1751673600001,
+      "tag": "0030_backfill_missing_columns",
+      "breakpoints": true
     }
   ]
 }
