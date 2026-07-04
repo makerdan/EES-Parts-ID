@@ -5,7 +5,10 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AiReferenceBodyHistoryItem } from "./aiReferenceBodyHistoryItem";
 
 export interface AiReferenceBody {
   question: string;
+  /** Prior conversation turns for multi-turn follow-up questions */
+  history?: AiReferenceBodyHistoryItem[];
 }

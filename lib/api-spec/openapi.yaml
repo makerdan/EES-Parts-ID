@@ -1284,5 +1284,16 @@ components:
       properties:
         question:
           type: string
+        history:
+          type: array
+          description: Prior conversation turns for multi-turn follow-up questions
+          items:
+            type: object
+            properties:
+              q:
+                type: string
+              a:
+                type: string
+            required: [q, a]
       required:
         - question

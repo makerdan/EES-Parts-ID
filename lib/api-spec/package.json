@@ -4,9 +4,12 @@
   "private": true,
   "scripts": {
     "codegen": "orval --config ./orval.config.ts && pnpm -w run typecheck:libs",
-    "codegen:check": "pnpm run codegen && git diff --exit-code -- ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated"
+    "codegen:check": "pnpm run codegen && git diff --exit-code -- ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated && pnpm run spec:check",
+    "spec:check": "tsx src/check-route-drift.ts"
   },
   "devDependencies": {
-    "orval": "^8.5.2"
+    "orval": "^8.5.2",
+    "tsx": "catalog:",
+    "yaml": "^2.8.2"
   }
 }
