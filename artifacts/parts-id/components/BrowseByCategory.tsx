@@ -136,7 +136,7 @@ export function BrowseByCategory({
   // can retry once auth settles (mirrors the useWarehouseZones pattern).
   const got401Ref = useRef(false);
 
-  const doFetch = useCallback((cancelled: { current: boolean }) => {
+  const doFetch = useCallback((signal: AbortSignal) => {
     setLoading(true);
     setError(null);
     got401Ref.current = false;
@@ -154,7 +154,7 @@ export function BrowseByCategory({
       ? `${API_BASE}/inventory/categories?${qs}`
       : `${API_BASE}/inventory/categories`;
 
-    fetchWithAuth(url)
+    fetchWithAuth(url, { signal })
       .then(r => {
         if (!r.ok) {
           if (r.status === 401) got401Ref.current = true;
@@ -162,25 +162,25 @@ export function BrowseByCategory({
         }
         return r.json() as Promise<CategoriesResponse>;
       })
-      .then(d => { if (!cancelled.current) { setData(d); setLoading(false); } })
-      .catch(e => { if (!cancelled.current) { setError(String(e)); setLoading(false); } });
+      .then(d => { if (!signal.aborted) { setData(d); setLoading(false); } })
+      .catch(e => { if (!signal.aborted) { setError(String(e)); setLoading(false); } });
   }, []);
 
   useEffect(() => {
-    const cancelled = { current: false };
-    doFetch(cancelled);
+    const controller = new AbortController();
+    doFetch(controller.signal);
 
     // Retry once auth settles in case the component mounted before AppContext
     // had a chance to register the token getter (cold-start race).
     const handleTokenAvailable = () => {
-      if (got401Ref.current && !cancelled.current) {
-        doFetch(cancelled);
+      if (got401Ref.current && !controller.signal.aborted) {
+        doFetch(controller.signal);
       }
     };
     subscribeToTokenAvailable(handleTokenAvailable);
 
     return () => {
-      cancelled.current = true;
+      controller.abort();
       unsubscribeFromTokenAvailable(handleTokenAvailable);
     };
   // `debouncedDimKey` is the sole reactive trigger. The actual filter values are

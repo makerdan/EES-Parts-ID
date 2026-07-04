@@ -1144,7 +1144,7 @@ export default function SearchScreen() {
               <Pressable
                 onPress={() => {
                   syncAllInventory();
-                  NetInfo.fetch().then(state => setIsOffline(!state.isConnected)).catch(() => {});
+                  NetInfo.fetch().then(state => { if (isMountedRef.current) setIsOffline(!state.isConnected); }).catch(() => {});
                 }}
                 style={[styles.statusBadge, { backgroundColor: colors.primary + "18" }]}
               >
