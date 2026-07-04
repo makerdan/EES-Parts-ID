@@ -570,6 +570,64 @@ assert_exit     "codegen:fix commit fail — post-merge exits non-zero"  1 "$COD
 assert_contains "codegen:fix commit fail — prints error message"       "codegen:fix failed" "$CODEGEN_FAIL_OUTPUT"
 
 # ---------------------------------------------------------------------------
+# Test 18: background install exits non-zero — script logs warning and proceeds
+#
+# Spawns post-merge.sh with:
+#   - mock git  : reports pnpm-lock.yaml changed so the install branch is taken
+#   - mock timeout: exits 1 when called for pnpm install (failed install);
+#                   passes through all other timeout-wrapped commands so codegen
+#                   and db-push steps succeed normally
+#   - mock pnpm : exits 0 for all calls (codegen:fix, etc.)
+#   - mock curl : returns '{"status":"ok"}' so the health check passes
+#
+# Verifies:
+#   (a) the WARNING message about the non-zero install exit is logged
+#   (b) post-merge proceeds to the health check and exits 0 (not aborted)
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR18=$(mktemp -d)
+
+cat > "$MOCK_BIN_DIR18/git" << 'MOCKEOF'
+#!/bin/bash
+echo "pnpm-lock.yaml"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR18/git"
+
+# timeout: exit 1 only for the pnpm install call; run everything else normally.
+# The install is launched as a background job so its non-zero exit must be
+# tolerated by `wait` rather than aborting the script.
+cat > "$MOCK_BIN_DIR18/timeout" << 'MOCKEOF'
+#!/bin/bash
+shift  # drop the timeout value; $@ is now the wrapped command
+if echo "$*" | grep -q 'pnpm install'; then
+  exit 1
+fi
+# All other wrapped commands (codegen:fix, db push): run them so they can
+# succeed via the mock pnpm also present on PATH.
+"$@"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR18/timeout"
+
+cat > "$MOCK_BIN_DIR18/pnpm" << 'MOCKEOF'
+#!/bin/bash
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR18/pnpm"
+
+cat > "$MOCK_BIN_DIR18/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR18/curl"
+
+INSTALL_FAIL_OUTPUT=$(PATH="$MOCK_BIN_DIR18:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+INSTALL_FAIL_EXIT=$?
+rm -rf "$MOCK_BIN_DIR18"
+
+assert_exit     "install fail — script exits 0 (warning, not abort)"          0 "$INSTALL_FAIL_EXIT"
+assert_contains "install fail — WARNING message logged"                        "WARNING: background install exited" "$INSTALL_FAIL_OUTPUT"
+assert_contains "install fail — proceeds to health check after install wait"   "health check" "$INSTALL_FAIL_OUTPUT"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
