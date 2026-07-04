@@ -18,10 +18,14 @@
 
 import { compressImagesForUpload, MAX_UPLOAD_PAYLOAD_BYTES } from "../utils/compressForUpload";
 
-jest.mock("../utils/resizeImage", () => ({
-  totalPayloadBytes: jest.fn(),
-  downscaleToFit: jest.fn(),
-}));
+jest.mock("../utils/resizeImage", () => {
+  const actual = jest.requireActual<typeof import("../utils/resizeImage")>("../utils/resizeImage");
+  return {
+    ...actual,
+    totalPayloadBytes: jest.fn(),
+    downscaleToFit: jest.fn(),
+  };
+});
 
 import { totalPayloadBytes, downscaleToFit } from "../utils/resizeImage";
 

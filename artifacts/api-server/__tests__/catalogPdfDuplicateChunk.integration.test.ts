@@ -30,13 +30,11 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 }));
 
 jest.mock("../src/lib/poeBot", () => {
-  class PoeBotChainExhaustedError extends Error {
-    constructor() {
-      super("All Poe bots in the fallback chain failed");
-      this.name = "PoeBotChainExhaustedError";
-    }
-  }
-  return { tryPoeBotChain: jest.fn(), PoeBotChainExhaustedError };
+  const actual = jest.requireActual<typeof import("../src/lib/poeBot")>("../src/lib/poeBot");
+  return {
+    ...actual,
+    tryPoeBotChain: jest.fn(),
+  };
 });
 
 jest.mock("../src/utils/pdfProcessor", () => ({

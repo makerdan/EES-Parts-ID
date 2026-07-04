@@ -6,6 +6,7 @@
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "clean-keywords": "tsx ./src/clean-keywords.ts",
+    "lint:mocks": "tsx ./src/check-mock-factories.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

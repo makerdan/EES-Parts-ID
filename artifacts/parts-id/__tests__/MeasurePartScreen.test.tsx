@@ -35,12 +35,16 @@ jest.mock("@workspace/api-client-react", () => ({
   setAuthTokenGetter: jest.fn(),
 }));
 
-jest.mock("../utils/logoutRegistry", () => ({
-  LogoutRegistry: class {
-    register() { return () => {}; }
-    fire() {}
-  },
-}));
+jest.mock("../utils/logoutRegistry", () => {
+  const actual = jest.requireActual<typeof import("../utils/logoutRegistry")>("../utils/logoutRegistry");
+  return {
+    ...actual,
+    LogoutRegistry: class {
+      register() { return () => {}; }
+      fire() {}
+    },
+  };
+});
 
 jest.mock("../utils/sessionStorage", () => ({
   SEARCH_CACHE_KEYS: [],
