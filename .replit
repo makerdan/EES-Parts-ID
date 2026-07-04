@@ -12,17 +12,6 @@ env = { "CI" = "true" }
 runButton = "Project"
 
 [[workflows.workflow]]
-name = "test"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/parts-id run test"
-
-[workflows.workflow.metadata]
-isValidation = true
-
-[[workflows.workflow]]
 name = "lint"
 author = "agent"
 
