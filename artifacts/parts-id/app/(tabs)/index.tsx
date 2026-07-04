@@ -1117,36 +1117,6 @@ export default function SearchScreen() {
               keyboardShouldPersistTaps="handled"
             >
 
-            {/* Admin links */}
-            {isAdmin ? (
-              <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 8 }]}>
-                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Admin-Only Tools:</Text>
-                <View style={{ flexDirection: "column" }}>
-                  <Pressable
-                    onPress={() => { setShowLogoutModal(false); router.push("/admin"); }}
-                    style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6 }}
-                  >
-                    <Text style={{ color: colors.foreground, fontSize: 15, marginRight: 8 }}>•</Text>
-                    <Text style={{ color: colors.primary, fontSize: 14, fontFamily: "Inter_600SemiBold" }}>Dashboard</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => { setShowLogoutModal(false); router.push("/ai-log"); }}
-                    style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6 }}
-                  >
-                    <Text style={{ color: colors.foreground, fontSize: 15, marginRight: 8 }}>•</Text>
-                    <Text style={{ color: colors.foreground, fontSize: 14, fontFamily: "Inter_500Medium" }}>AI Log</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => { setShowLogoutModal(false); router.push("/admin-inbox"); }}
-                    style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6 }}
-                  >
-                    <Text style={{ color: colors.foreground, fontSize: 15, marginRight: 8 }}>•</Text>
-                    <Text style={{ color: colors.foreground, fontSize: 14, fontFamily: "Inter_500Medium" }}>Inbox</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : null}
-
             {/* Clear cache row */}
             <View style={[styles.settingsRow, { borderColor: colors.border }]}>
               <View style={{ flex: 1 }}>
