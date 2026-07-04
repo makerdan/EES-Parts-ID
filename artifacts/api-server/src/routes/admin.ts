@@ -1,9 +1,10 @@
-import { Router } from "express";
 import { getAuth } from "@clerk/express";
-import { db, adminPreferencesTable, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
 import { AdminProfilePayloadSchema, ShelfPreferencesPayloadSchema } from "@workspace/api-zod";
-import { getProvider, setProvider, type AIProvider } from "../lib/aiProvider";
+import { adminPreferencesTable, db, usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { Router } from "express";
+
+import { type AIProvider,getProvider, setProvider } from "../lib/aiProvider";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
@@ -50,7 +51,7 @@ router.get("/profile", requireAdminAuth, async (_req, res) => {
       defaultConfidenceThreshold: row.defaultConfidenceThreshold,
       scanSound: row.scanSound,
     });
-  } catch (err) {
+  } catch (_err) {
     return res.status(500).json({ error: "Failed to fetch admin profile" });
   }
 });
@@ -90,7 +91,7 @@ router.put("/profile", requireAdminAuth, async (req, res) => {
       });
 
     return res.json({ dimensionUnit, textSize, themeMode, defaultConfidenceThreshold, scanSound });
-  } catch (err) {
+  } catch (_err) {
     return res.status(500).json({ error: "Failed to update admin profile" });
   }
 });
@@ -192,7 +193,7 @@ router.post("/ai-provider", requireAdminAuth, async (req, res) => {
         target: adminPreferencesTable.id,
         set: { aiProvider: provider, updatedAt: new Date() },
       });
-  } catch (dbErr) {
+  } catch (_dbErr) {
     persisted = false;
   }
 

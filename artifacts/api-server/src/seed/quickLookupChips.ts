@@ -1,7 +1,8 @@
 import { db } from "@workspace/db";
 import { quickLookupCacheTable } from "@workspace/db";
+
 import { getAiClient, getEnrichModel } from "../lib/aiProvider";
-import { normalizeQuestion, hashQuestion, setCachedAnswer } from "../lib/answerCache";
+import { hashQuestion, normalizeQuestion, setCachedAnswer } from "../lib/answerCache";
 
 const SYSTEM_PROMPT =
   "You are a concise electrical supply reference assistant for warehouse workers. Answer questions about electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology. Use **bold** for key terms and - bullets for lists. Keep answers under 200 words. Be precise and practical.";

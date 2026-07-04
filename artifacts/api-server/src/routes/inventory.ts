@@ -1,47 +1,37 @@
-import { Router } from "express";
-import { eq, sql, ilike, or, and, desc } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
-  inventoryTable,
-  inventoryFtsVector,
   abbreviationMapTable,
-  vendorMapTable,
-  synonymMapTable,
-  misspellingMapTable,
   electricalSlangMapTable,
+  inventoryFtsVector,
+  inventoryTable,
   measureEnrichJobTable,
+  misspellingMapTable,
+  synonymMapTable,
+  vendorMapTable,
 } from "@workspace/db";
+import { collectKeywords, findNodeBySlug, getAllTaxonomyKeywords,TAXONOMY } from "@workspace/db";
 import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
+import { and, desc, eq, or, sql } from "drizzle-orm";
+import { Router } from "express";
 import Fuse from "fuse.js";
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
-import { expandMeasurements } from "../utils/measurementConversion";
-import { logger } from "../lib/logger";
-import {
-  normalizeMeasurement,
-  parseCatalogNumber,
-  correctMisspelling,
-  compareBySize,
-  getSeriesBase,
-  itemFullText,
-  tokenMatch,
-  matchesChipFilters,
-  buildChipFilterRegexes,
-} from "../utils/searchHelpers";
-import { TAXONOMY, findNodeBySlug, collectKeywords, getAllTaxonomyKeywords } from "@workspace/db";
-import { generateKeywords, mergeWithPinned } from "../utils/generateKeywords";
-import { getAiClient, getEnrichModel, getDimensionsModel, getOpenAIFallbackClient, getOpenAIModelForFeature, getProvider } from "../lib/aiProvider";
-import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/poeModelLimits";
-import { estimateImageBytes } from "../utils/aiHelpers";
-import { callPoeBotWithChain, tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
+
+import { getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
+import { logger } from "../lib/logger";
 import { uploadCatalogImage } from "../lib/objectStorage";
+import { callPoeBotWithChain, PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
+import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/poeModelLimits";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import { estimateImageBytes } from "../utils/aiHelpers";
+import { generateKeywords, mergeWithPinned } from "../utils/generateKeywords";
 import { resizeImages } from "../utils/imageResize";
+import { expandMeasurements } from "../utils/measurementConversion";
 import {
+  applyVendorBoost,
   blendPgScore,
   catalogScore,
-  applyVendorBoost,
-  shouldUpdateScore,
   fuseConfidence,
+  shouldUpdateScore,
 } from "../utils/scoreHelpers";
 import {
   SearchInventoryBody as SearchInventoryBodySchema,
@@ -53,6 +43,17 @@ import {
   UpdateItemKeywordsResponse,
   UpdateItemDimensionsResponse,
 } from "@workspace/api-zod";
+import {
+  buildChipFilterRegexes,
+  compareBySize,
+  correctMisspelling,
+  getSeriesBase,
+  itemFullText,
+  matchesChipFilters,
+  normalizeMeasurement,
+  parseCatalogNumber,
+  tokenMatch,
+} from "../utils/searchHelpers";
 
 const router = Router();
 
@@ -61,10 +62,10 @@ const router = Router();
 // them once and reusing the result avoids 5 DB round-trips on every /search call.
 interface DictionaryCache {
   correctionMap: Map<string, string>;
-  abbrevMap: Map<string, string[]>;
-  vendorMapData: Map<string, string[]>;
-  synonymMapLookup: Map<string, string[]>;
-  slangMap: Map<string, string[]>;
+  abbrevMap: Map<string, Array<string>>;
+  vendorMapData: Map<string, Array<string>>;
+  synonymMapLookup: Map<string, Array<string>>;
+  slangMap: Map<string, Array<string>>;
   reverseVendorMap: Map<string, string>;
 }
 
@@ -402,7 +403,7 @@ router.post("/search", async (req, res) => {
         .limit(200);
 
       // When a size filter is active and the caller opted in, also collect category items with no relevant dimension data.
-      let catSizeUnknownItems: typeof inventoryTable.$inferSelect[] = [];
+      let catSizeUnknownItems: Array<typeof inventoryTable.$inferSelect> = [];
       if (hasSizeFilter && includeNullDimensions) {
         const catNullDimWhere = catHasLenFilter && catHasDiaFilter
           ? sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex} AND (dimensions->>'length') IS NULL AND (dimensions->>'diameter') IS NULL`
@@ -461,7 +462,7 @@ router.post("/search", async (req, res) => {
       });
 
       // When a size filter is active and the caller opted in, also fetch uncategorized items with no relevant dimension.
-      let uncatSizeUnknownItems: typeof inventoryTable.$inferSelect[] = [];
+      let uncatSizeUnknownItems: Array<typeof inventoryTable.$inferSelect> = [];
       if (hasSizeFilter && includeNullDimensions) {
         const nullDimConditions = [
           uncatHasLenFilter ? sql`(dimensions->>'length') IS NULL` : undefined,
@@ -509,7 +510,7 @@ router.post("/search", async (req, res) => {
       const hasHgtFilter = hgtMin !== null || hgtMax !== null;
       const hasDiaFilter = diaMin !== null || diaMax !== null;
       // Require the relevant dimension to be non-null so the expression index fires.
-      const presenceParts: ReturnType<typeof sql>[] = [];
+      const presenceParts: Array<ReturnType<typeof sql>> = [];
       if (hasLenFilter) presenceParts.push(sql`(dimensions->>'length')::numeric IS NOT NULL`);
       if (hasWidFilter) presenceParts.push(sql`(dimensions->>'width')::numeric IS NOT NULL`);
       if (hasHgtFilter) presenceParts.push(sql`(dimensions->>'height')::numeric IS NOT NULL`);
@@ -526,7 +527,7 @@ router.post("/search", async (req, res) => {
             : sql`ORDER BY (dimensions->>'diameter')::numeric ASC`;
 
       // Null-dimension clause: items missing ALL of the filtered dimension(s)
-      const nullDimParts: ReturnType<typeof sql>[] = [];
+      const nullDimParts: Array<ReturnType<typeof sql>> = [];
       if (hasLenFilter) nullDimParts.push(sql`(dimensions->>'length') IS NULL`);
       if (hasWidFilter) nullDimParts.push(sql`(dimensions->>'width') IS NULL`);
       if (hasHgtFilter) nullDimParts.push(sql`(dimensions->>'height') IS NULL`);
@@ -551,11 +552,11 @@ router.post("/search", async (req, res) => {
               .where(nullDimPresenceClause)
               .orderBy(inventoryTable.vendor, inventoryTable.catalog)
               .limit(200)
-          : Promise.resolve([] as typeof inventoryTable.$inferSelect[]),
+          : Promise.resolve([] as Array<typeof inventoryTable.$inferSelect>),
       ]);
 
 
-      const sizeRows = (sizeItems as { rows: unknown[] }).rows as typeof inventoryTable.$inferSelect[];
+      const sizeRows = (sizeItems as { rows: Array<unknown> }).rows as Array<typeof inventoryTable.$inferSelect>;
       const toSizeResult = (item: typeof inventoryTable.$inferSelect, matchReason: string) => ({
         item,
         confidence: 1.0,
@@ -625,7 +626,7 @@ router.post("/search", async (req, res) => {
     // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
     type RawRow = {
       id: number; vendor: string; catalog: string; description: string;
-      bin_locations: string[]; ai_keywords: string[]; pinned_keywords: string[]; barcodes: string[];
+      bin_locations: Array<string>; ai_keywords: Array<string>; pinned_keywords: Array<string>; barcodes: Array<string>;
       enriched_at: Date | null; image_url: string | null; thumbnail_url: string | null; image_url_2: string | null; thumbnail_url_2: string | null;
       expanded_description: string | null;
       dimensions: { length?: number | null; width?: number | null; height?: number | null; diameter?: number | null } | null;
@@ -642,7 +643,7 @@ router.post("/search", async (req, res) => {
     // items that ranked outside the top 200 candidates.
     const chipRegexes = buildChipFilterRegexes(activeChipFilters);
 
-    let pgResults: RawRow[] = [];
+    let pgResults: Array<RawRow> = [];
     try {
       if (tsQuery.trim() || kwLike) {
         // Pass raw keyword string alongside expanded terms for catalog trigram scoring
@@ -762,7 +763,7 @@ router.post("/search", async (req, res) => {
           LIMIT 200
         `);
         // Drizzle returns { rows: unknown[] } for raw SQL — validate shape at runtime
-        const rawRows = (pgQueryResult as { rows: unknown[] }).rows;
+        const rawRows = (pgQueryResult as { rows: Array<unknown> }).rows;
         pgResults = rawRows.filter((r): r is RawRow => {
           if (!r || typeof r !== "object") {
             console.warn("[inventory/search] Unexpected non-object row from raw SQL:", r);
@@ -813,9 +814,9 @@ router.post("/search", async (req, res) => {
         catalog: row.catalog,
         description: row.description,
         // Safe fallbacks for fields not included in the runtime shape-validation filter
-        binLocations: Array.isArray(row.bin_locations) ? row.bin_locations as string[] : [],
-        aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as string[] : [],
-        barcodes: Array.isArray(row.barcodes) ? row.barcodes as string[] : [],
+        binLocations: Array.isArray(row.bin_locations) ? row.bin_locations as Array<string> : [],
+        aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as Array<string> : [],
+        barcodes: Array.isArray(row.barcodes) ? row.barcodes as Array<string> : [],
         enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
         // PDF catalog enrichment columns — image_url and thumbnail_url are included in the SELECT
         imageUrl: typeof row.image_url === "string" ? row.image_url : null,
@@ -827,7 +828,7 @@ router.post("/search", async (req, res) => {
         imageConfidence: null,
         previousDescription: null,
         catalogPdfJobId: null,
-        pinnedKeywords: Array.isArray(row.pinned_keywords) ? row.pinned_keywords as string[] : [],
+        pinnedKeywords: Array.isArray(row.pinned_keywords) ? row.pinned_keywords as Array<string> : [],
         dimensions: row.dimensions ?? null,
         createdAt: row.created_at instanceof Date ? row.created_at : new Date(0),
         updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(0),
@@ -888,7 +889,7 @@ router.post("/search", async (req, res) => {
     }
 
     // Apply vendor boost/penalty
-    const results: ScoredItem[] = [];
+    const results: Array<ScoredItem> = [];
     for (const entry of scoreMap.values()) {
       const conf = applyVendorBoost(entry.confidence, vendorFilter, entry.item.vendor);
       results.push({ ...entry, confidence: conf });
@@ -974,7 +975,7 @@ router.post("/search", async (req, res) => {
     const sizeUnknownItems = Array.from(sizeUnknownSet.values());
 
     // Group into series + find variants
-    const seriesGroups = new Map<string, { label: string; items: typeof inventoryTable.$inferSelect[] }>();
+    const seriesGroups = new Map<string, { label: string; items: Array<typeof inventoryTable.$inferSelect> }>();
     for (const r of dimFiltered) {
       const series = getSeriesBase(r.item.vendor, r.item.catalog, r.item.description);
       if (series) {
@@ -984,7 +985,7 @@ router.post("/search", async (req, res) => {
       }
     }
 
-    const variantMap = new Map<number, typeof inventoryTable.$inferSelect[]>();
+    const variantMap = new Map<number, Array<typeof inventoryTable.$inferSelect>>();
     const resultIds = new Set(dimFiltered.map(r => r.item.id));
 
     if (seriesGroups.size > 0) {
@@ -1126,7 +1127,7 @@ router.post("/upsert-batch/preview", requireAdminAuth, async (req, res) => {
     }
 
     const { items } = req.body as {
-      items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: string[] }>;
+      items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: Array<string> }>;
     };
 
     if (!items?.length) {
@@ -1165,7 +1166,7 @@ router.post("/upsert-batch/preview", requireAdminAuth, async (req, res) => {
           )
       : [];
 
-    const existingMap = new Map<string, string[]>();
+    const existingMap = new Map<string, Array<string>>();
     for (const row of existingRows) {
       existingMap.set(`${row.vendor}\0${row.catalog}`, row.binLocations);
     }
@@ -1176,11 +1177,11 @@ router.post("/upsert-batch/preview", requireAdminAuth, async (req, res) => {
       vendor: string;
       catalog: string;
       status: RowStatus;
-      existingBins: string[];
-      incomingBins: string[];
+      existingBins: Array<string>;
+      incomingBins: Array<string>;
     }
 
-    const rows: BinDiffRow[] = [];
+    const rows: Array<BinDiffRow> = [];
     let willReplaceBins = 0;
     let willAddBins = 0;
     let willPreserveBins = 0;
@@ -1248,7 +1249,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
     }
 
     const { items } = req.body as {
-      items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: string[]; barcodes?: string[] }>;
+      items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: Array<string>; barcodes?: Array<string> }>;
     };
 
     if (!items?.length) {
@@ -1321,7 +1322,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
 // ── POST /inventory/enrich ────────────────────────────────────────────────────
 router.post("/enrich", requireAdminAuth, async (req, res) => {
   try {
-    const { ids } = req.body as { ids?: number[] };
+    const { ids } = req.body as { ids?: Array<number> };
 
     // Enrichment runs in batches of 50 items max per request to allow
     // progress + ETA reporting without long-running unbounded requests.
@@ -1442,7 +1443,7 @@ async function enrichItemWithRetry(item: {
   vendor: string;
   catalog: string;
   description: string | null;
-}): Promise<string[]> {
+}): Promise<Array<string>> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= BULK_ENRICH_MAX_RETRY; attempt++) {
     try {
@@ -1471,13 +1472,14 @@ async function runBulkEnrich(force = false) {
 
   let cursorId = 0;
 
+  // eslint-disable-next-line no-constant-condition
   while (true) {
     if (bulkEnrichJob.stopRequested) {
       console.log("[bulk-enrich] Stop requested – halting after current batch");
       break;
     }
 
-    let batch: { id: number; vendor: string; catalog: string; description: string | null; pinnedKeywords: string[] }[];
+    let batch: Array<{ id: number; vendor: string; catalog: string; description: string | null; pinnedKeywords: Array<string> }>;
 
     if (force) {
       batch = await db
@@ -1559,7 +1561,7 @@ router.get("/enrich-summary", requireAdminAuth, async (_req, res) => {
       .from(inventoryTable)
       .where(sql`${inventoryTable.enrichedAt} IS NOT NULL`);
     res.json({ total, enriched, unenriched: total - enriched });
-  } catch (err) {
+  } catch (_err) {
     res.status(500).json({ error: "Failed to fetch enrichment summary" });
   }
 });
@@ -1805,6 +1807,7 @@ async function runMeasureEnrich(): Promise<void> {
 
   let lastId = 0;
 
+  // eslint-disable-next-line no-constant-condition
   while (true) {
     const batch = await db
       .select({
@@ -1975,8 +1978,8 @@ router.patch("/:id/barcodes", requireAdminAuth, async (req, res) => {
     }
 
     const seen = new Set<string>();
-    const normalised: string[] = [];
-    for (const raw of barcodes as string[]) {
+    const normalised: Array<string> = [];
+    for (const raw of barcodes as Array<string>) {
       const trimmed = raw.trim();
       if (!trimmed) continue;
       if (seen.has(trimmed)) continue;
@@ -2013,8 +2016,8 @@ router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
     // Normalise: trim, drop empties, de-duplicate (case-insensitive). Preserves
     // the user-typed casing of the first occurrence so display stays predictable.
     const seen = new Set<string>();
-    const normalised: string[] = [];
-    for (const raw of binLocations as string[]) {
+    const normalised: Array<string> = [];
+    for (const raw of binLocations as Array<string>) {
       const trimmed = raw.trim();
       if (!trimmed) continue;
       const key = trimmed.toLowerCase();
@@ -2108,7 +2111,7 @@ router.patch("/:id/enrich", requireAdminAuth, async (req, res) => {
 router.patch("/:id/keywords", requireAdminAuth, async (req, res) => {
   try {
     const id = parseInt(req.params["id"] as string ?? "0");
-    const { keywords } = req.body as { keywords: string[] };
+    const { keywords } = req.body as { keywords: Array<string> };
 
     if (!Array.isArray(keywords)) {
       return void res.status(400).json({ error: "keywords must be an array" });
@@ -2138,7 +2141,7 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
     const id = parseInt(String(req.params["id"] ?? "0"));
     if (!id) return void res.status(400).json({ error: "Invalid item id" });
 
-    const { imageBase64, mimeType, remove, slot = 1 } = req.body as {
+    const { imageBase64, mimeType: _mimeType, remove, slot = 1 } = req.body as {
       imageBase64?: string;
       mimeType?: string;
       remove?: boolean;
@@ -2326,7 +2329,7 @@ logger.info(
   "estimate-dimensions/search rate limit config",
 );
 
-const estimateSearchHits = new Map<string, number[]>();
+const estimateSearchHits = new Map<string, Array<number>>();
 
 // Evict map entries whose most-recent hit is older than the window, preventing
 // unbounded growth when callers are not seen again (runs every 5 minutes).

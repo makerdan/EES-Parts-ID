@@ -16,12 +16,13 @@
  *   Final DB count:    7397
  */
 
-import { resolve, dirname } from "node:path";
+import { dirname,resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import ExcelJS from "exceljs";
+
 import { db, pool } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import ExcelJS from "exceljs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -47,14 +48,14 @@ async function importSpreadsheet() {
 
   // Read header row
   const headerRow = sheet.getRow(1);
-  const headers: string[] = [];
+  const headers: Array<string> = [];
   headerRow.eachCell({ includeEmpty: false }, (cell, colIdx) => {
     headers[colIdx - 1] = String(cell.value ?? "").trim();
   });
   console.log("Columns found:", headers.filter(Boolean));
 
   // Build object rows keyed by header name
-  const rawRows: SpreadsheetRow[] = [];
+  const rawRows: Array<SpreadsheetRow> = [];
   sheet.eachRow({ includeEmpty: false }, (row, rowNum) => {
     if (rowNum === 1) return;
     const obj: SpreadsheetRow = {};
@@ -73,7 +74,7 @@ async function importSpreadsheet() {
   }
 
   // Normalize column names (lowercase, strip spaces)
-  function normalizeKey(row: SpreadsheetRow, ...candidates: string[]): string {
+  function normalizeKey(row: SpreadsheetRow, ...candidates: Array<string>): string {
     for (const key of Object.keys(row)) {
       const normalized = key.toLowerCase().replace(/\s+/g, "");
       if (candidates.some(c => normalized === c || normalized.includes(c))) {

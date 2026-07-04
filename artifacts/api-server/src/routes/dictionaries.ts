@@ -1,13 +1,13 @@
-import { Router } from "express";
-import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   abbreviationMapTable,
-  vendorMapTable,
-  synonymMapTable,
-  misspellingMapTable,
   electricalSlangMapTable,
+  misspellingMapTable,
+  synonymMapTable,
+  vendorMapTable,
 } from "@workspace/db";
+import { sql } from "drizzle-orm";
+import { Router } from "express";
 
 const router = Router();
 

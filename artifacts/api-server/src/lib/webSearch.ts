@@ -32,7 +32,7 @@ export async function callGemini(
  */
 export async function callGeminiWithHistory(
   systemInstruction: string,
-  history: { q: string; a: string }[],
+  history: Array<{ q: string; a: string }>,
   userMessage: string,
 ): Promise<string> {
   const priorTurns = history.flatMap((turn) => [

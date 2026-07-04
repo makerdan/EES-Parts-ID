@@ -16,9 +16,10 @@
 
 import { db, pool } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
-import { sql, eq } from "drizzle-orm";
-import { generateKeywords, mergeWithPinned, type PoeEnrichedError } from "../utils/generateKeywords";
 import { poeErrorMessage } from "@workspace/integrations-poe-server";
+import { eq,sql } from "drizzle-orm";
+
+import { generateKeywords, mergeWithPinned, type PoeEnrichedError } from "../utils/generateKeywords";
 
 const BATCH_SIZE   = parseInt(process.env["ENRICH_BATCH_SIZE"]   ?? "10",  10);
 const CONCURRENCY  = parseInt(process.env["ENRICH_CONCURRENCY"]  ?? "5",   10);
@@ -49,8 +50,8 @@ async function enrichWithRetry(item: {
   vendor: string;
   catalog: string;
   description: string | null;
-  pinnedKeywords: string[];
-}): Promise<string[]> {
+  pinnedKeywords: Array<string>;
+}): Promise<Array<string>> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -94,6 +95,7 @@ async function bulkEnrich() {
   let errors = 0;
   const startTime = Date.now();
 
+  // eslint-disable-next-line no-constant-condition
   while (true) {
     const batch = await db
       .select({

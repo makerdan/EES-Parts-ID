@@ -18,7 +18,7 @@ interface LimiterConfig {
 }
 
 interface BucketState {
-  timestamps: number[];
+  timestamps: Array<number>;
 }
 
 export class SlidingWindowRateLimiter {

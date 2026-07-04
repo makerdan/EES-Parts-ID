@@ -36,9 +36,10 @@
  *   500 { error: string }  — query execution error (message forwarded)
  */
 
-import { Router } from "express";
-import ExcelJS from "exceljs";
 import { pool } from "@workspace/db";
+import ExcelJS from "exceljs";
+import { Router } from "express";
+
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
@@ -89,11 +90,11 @@ const SENSITIVE_COLUMN_PATTERN = buildSensitiveColumnPattern();
  * surface it in the response metadata.
  */
 function filterSensitiveColumns(
-  columns: string[],
-  rows: Record<string, unknown>[],
-): { columns: string[]; rows: Record<string, unknown>[]; strippedColumns: string[] } {
-  const strippedColumns: string[] = [];
-  const safeColumns: string[] = [];
+  columns: Array<string>,
+  rows: Array<Record<string, unknown>>,
+): { columns: Array<string>; rows: Array<Record<string, unknown>>; strippedColumns: Array<string> } {
+  const strippedColumns: Array<string> = [];
+  const safeColumns: Array<string> = [];
 
   for (const col of columns) {
     if (SENSITIVE_COLUMN_PATTERN.test(col)) {
@@ -213,8 +214,8 @@ function escapeCSVField(value: unknown): string {
 }
 
 function buildCSV(
-  columns: string[],
-  rows: Record<string, unknown>[],
+  columns: Array<string>,
+  rows: Array<Record<string, unknown>>,
   truncated: boolean,
   maxRows: number,
 ): string {
@@ -252,8 +253,8 @@ router.post("/query", requireAdminAuth, async (req, res) => {
     // parser edge case), the database engine guarantees no mutation survives.
     await client.query("ROLLBACK");
 
-    const rawColumns: string[] = result.fields.map((f: { name: string }) => f.name);
-    const allRows = result.rows as Record<string, unknown>[];
+    const rawColumns: Array<string> = result.fields.map((f: { name: string }) => f.name);
+    const allRows = result.rows as Array<Record<string, unknown>>;
     const truncated = allRows.length > MAX_ROWS;
     const cappedRows = truncated ? allRows.slice(0, MAX_ROWS) : allRows;
 

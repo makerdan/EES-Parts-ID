@@ -1,7 +1,7 @@
 import { db } from "@workspace/db";
 import { quickLookupCacheTable } from "@workspace/db";
 
-const BREAKER_ATTRIBUTE_CHIPS: { label: string; answer: string }[] = [
+const BREAKER_ATTRIBUTE_CHIPS: Array<{ label: string; answer: string }> = [
   {
     label: "Amp Rating",
     answer:

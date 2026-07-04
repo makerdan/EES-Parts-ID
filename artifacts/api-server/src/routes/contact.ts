@@ -1,9 +1,10 @@
-import { Router } from "express";
-import { desc, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { contactMessagesTable } from "@workspace/db";
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import { desc, eq } from "drizzle-orm";
+import { Router } from "express";
+
 import { logger } from "../lib/logger";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
 

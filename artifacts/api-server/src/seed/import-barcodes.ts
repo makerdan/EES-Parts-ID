@@ -12,12 +12,13 @@
  * in the current working directory.
  */
 
-import { resolve } from "node:path";
 import { createWriteStream } from "node:fs";
-import ExcelJS from "exceljs";
+import { resolve } from "node:path";
+
 import { db, pool } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
+import ExcelJS from "exceljs";
 
 const filePath = process.argv[2];
 if (!filePath) {
@@ -68,12 +69,12 @@ interface CsvRow {
 }
 
 function normalizeHeader(h: string): string {
-  return h.toLowerCase().replace(/[\s_\-]+/g, "");
+  return h.toLowerCase().replace(/[\s_-]+/g, "");
 }
 
 function detectColumn(
-  headers: string[],
-  variants: string[],
+  headers: Array<string>,
+  variants: Array<string>,
 ): number | null {
   for (let i = 0; i < headers.length; i++) {
     const normalized = normalizeHeader(headers[i]);
@@ -104,7 +105,7 @@ async function importBarcodes() {
 
   // Read headers from row 1
   const headerRow = sheet.getRow(1);
-  const headers: string[] = [];
+  const headers: Array<string> = [];
   headerRow.eachCell({ includeEmpty: false }, (cell, colIdx) => {
     headers[colIdx - 1] = String(cell.value ?? "").trim();
   });
@@ -140,7 +141,7 @@ async function importBarcodes() {
   }
 
   // Read all data rows
-  const rawRows: CsvRow[] = [];
+  const rawRows: Array<CsvRow> = [];
   sheet.eachRow({ includeEmpty: false }, (row, rowNum) => {
     if (rowNum === 1) return;
     const obj: CsvRow = {};
@@ -164,7 +165,7 @@ async function importBarcodes() {
   let updated = 0;
   let alreadyHad = 0;
   let unmatched = 0;
-  const unmatchedRows: CsvRow[] = [];
+  const unmatchedRows: Array<CsvRow> = [];
 
   for (const row of rawRows) {
     processed++;
@@ -216,7 +217,7 @@ async function importBarcodes() {
 
     // Use first match (catalog is unique per vendor; if no vendor filter, take first)
     const inv = rows[0];
-    const existing: string[] = inv.barcodes ?? [];
+    const existing: Array<string> = inv.barcodes ?? [];
 
     if (existing.includes(barcodeRaw)) {
       alreadyHad++;

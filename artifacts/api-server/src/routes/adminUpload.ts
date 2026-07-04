@@ -31,11 +31,12 @@
  *   401
  */
 
-import { Router } from "express";
-import { sql, eq, or, and } from "drizzle-orm";
 import { db, inventoryTable } from "@workspace/db";
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import { and,eq, or, sql } from "drizzle-orm";
+import { Router } from "express";
+
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
 
@@ -49,8 +50,8 @@ const UPLOAD_MAX_CSV_CHARS = 15 * 1024 * 1024; // ~15M chars
 // ── CSV parser ────────────────────────────────────────────────────────────────
 
 /** Split a single CSV line into fields, respecting double-quoted fields. */
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
+function parseCsvLine(line: string): Array<string> {
+  const fields: Array<string> = [];
   let current = "";
   let inQuotes = false;
 
@@ -80,15 +81,15 @@ export interface ParsedRow {
   vendor: string;
   catalog: string;
   description: string;
-  binLocations: string[];
-  barcodes: string[];
+  binLocations: Array<string>;
+  barcodes: Array<string>;
 }
 
 /**
  * Parse a raw CSV string into structured inventory rows.
  * Returns null if the CSV is malformed (no header, or missing required columns).
  */
-export function parseCsv(csvText: string): ParsedRow[] | null {
+export function parseCsv(csvText: string): Array<ParsedRow> | null {
   // Strip UTF-8 BOM (\uFEFF) if present so Excel-exported files parse correctly.
   const text = csvText.startsWith("\uFEFF") ? csvText.slice(1) : csvText;
   const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
@@ -103,7 +104,7 @@ export function parseCsv(csvText: string): ParsedRow[] | null {
   const binIdx = header.findIndex(h => h === "binlocation" || h === "bin" || h === "binnumber");
   const barcodeIdx = header.findIndex(h => h === "barcodes" || h === "barcode" || h === "upc" || h === "ean" || h === "gtin" || h === "barcode#");
 
-  const rows: ParsedRow[] = [];
+  const rows: Array<ParsedRow> = [];
   for (let i = 1; i < lines.length; i++) {
     const fields = parseCsvLine(lines[i]);
     const vendor = fields[vendorIdx]?.trim() ?? "";
@@ -187,8 +188,8 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
         ),
       );
 
-    const existingMap = new Map<string, string[]>();
-    const existingBarcodesMap = new Map<string, string[]>();
+    const existingMap = new Map<string, Array<string>>();
+    const existingBarcodesMap = new Map<string, Array<string>>();
     for (const row of existingRows) {
       existingMap.set(`${row.vendor}\0${row.catalog}`, row.binLocations);
       existingBarcodesMap.set(`${row.vendor}\0${row.catalog}`, row.barcodes ?? []);
@@ -201,14 +202,14 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
       vendor: string;
       catalog: string;
       status: RowStatus;
-      existingBins: string[];
-      incomingBins: string[];
+      existingBins: Array<string>;
+      incomingBins: Array<string>;
       barcodeStatus: BarcodeStatus;
-      existingBarcodes: string[];
+      existingBarcodes: Array<string>;
       conflictingItem?: { vendor: string; catalog: string };
     }
 
-    const diffRows: BinDiffRow[] = [];
+    const diffRows: Array<BinDiffRow> = [];
     let willReplaceBins = 0;
     let willAddBins = 0;
     let willPreserveBins = 0;
@@ -231,7 +232,7 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
     // We track ALL owners per barcode (not just the first) so that even if a
     // barcode is already duplicated across multiple DB items we can still find
     // a conflicting owner that differs from the current CSV row.
-    const barcodeToItemMap = new Map<string, { vendor: string; catalog: string }[]>();
+    const barcodeToItemMap = new Map<string, Array<{ vendor: string; catalog: string }>>();
     if (allIncomingBarcodes.length > 0) {
       const conflictRows = await db
         .select({

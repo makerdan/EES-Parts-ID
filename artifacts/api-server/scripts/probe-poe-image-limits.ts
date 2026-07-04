@@ -40,10 +40,10 @@
  *   JSON results written to /tmp/poe-probe-results.json.
  */
 
+import { randomBytes } from "crypto";
+import { writeFileSync } from "fs";
 import OpenAI from "openai";
 import sharp from "sharp";
-import { writeFileSync } from "fs";
-import { randomBytes } from "crypto";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -87,7 +87,7 @@ const botsArgVal =
   botsArgIdx !== -1
     ? process.argv[botsArgIdx + 1]
     : process.argv.find((a) => a.startsWith("--bots="))?.split("=")[1];
-const BOTS: string[] = botsArgVal
+const BOTS: Array<string> = botsArgVal
   ? botsArgVal.split(",").map((s) => s.trim()).filter(Boolean)
   : ALL_BOTS;
 
@@ -143,7 +143,7 @@ async function buildPaddedJpeg(targetBytes: number): Promise<Buffer> {
   if (targetBytes <= baseSize) return baseJpeg;
 
   const MAX_COM_PAYLOAD = 65533;
-  const comBlocks: Buffer[] = [];
+  const comBlocks: Array<Buffer> = [];
   let remaining = targetBytes - baseSize;
 
   while (remaining > 0) {
@@ -346,7 +346,7 @@ async function main() {
   }
   console.log();
 
-  const allResults: ProbeResult[] = [];
+  const allResults: Array<ProbeResult> = [];
 
   for (const bot of BOTS) {
     console.log(`\n── ${bot} ──`);

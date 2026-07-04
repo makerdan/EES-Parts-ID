@@ -1,8 +1,10 @@
-import { Router } from "express";
 import crypto from "node:crypto";
+
 import { db } from "@workspace/db";
 import { screenViewLogTable } from "@workspace/db";
 import { lt } from "drizzle-orm";
+import { Router } from "express";
+
 import { logger } from "../lib/logger";
 
 const router = Router();

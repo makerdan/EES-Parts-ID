@@ -1,8 +1,8 @@
-import { type Request, type Response, type NextFunction } from "express";
-import { getAuth, clerkClient } from "@clerk/express";
+import { clerkClient,getAuth } from "@clerk/express";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { type NextFunction,type Request, type Response } from "express";
 
 // Paths relative to /api that do not require any authentication token.
 const PUBLIC_PATHS = new Set(["/healthz"]);
@@ -108,7 +108,7 @@ export function requireAppAuth(req: Request, res: Response, next: NextFunction):
       } else {
         res.status(403).json({ code: "pending", error: "Your account is awaiting approval." });
       }
-    } catch (err) {
+    } catch (_err) {
       res.status(500).json({ error: "Authentication check failed. Please try again." });
     }
   })();

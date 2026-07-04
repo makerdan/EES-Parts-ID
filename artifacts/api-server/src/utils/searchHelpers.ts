@@ -19,8 +19,8 @@ export function normalizeMeasurement(input: string): string {
     .replace(/\bin\b/g, '"');
 }
 
-export function parseCatalogNumber(catalog: string): string[] {
-  const terms: string[] = [];
+export function parseCatalogNumber(catalog: string): Array<string> {
+  const terms: Array<string> = [];
   const c = catalog.toUpperCase();
 
   // Breakers: BR120, QO120, CH120, HOM120, THQL1120
@@ -143,7 +143,7 @@ export function compareBySize(
 export function getSeriesBase(
   vendor: string,
   catalog: string,
-  description: string,
+  _description: string,
 ): { key: string; label: string } | null {
   const c = catalog.toUpperCase();
   const v = vendor.toUpperCase();
@@ -183,7 +183,7 @@ export function itemFullText(item: {
   vendor: string;
   catalog: string;
   description: string;
-  aiKeywords: string[] | null;
+  aiKeywords: Array<string> | null;
   expandedDescription?: string | null;
 }): string {
   return `${item.vendor} ${item.catalog} ${item.description} ${item.expandedDescription ?? ""} ${(item.aiKeywords ?? []).join(" ")}`.toLowerCase();
@@ -200,7 +200,7 @@ export function tokenMatch(text: string, filterValue: string): boolean {
 }
 
 export function matchesChipFilters(
-  item: { vendor: string; catalog: string; description: string; aiKeywords: string[] | null },
+  item: { vendor: string; catalog: string; description: string; aiKeywords: Array<string> | null },
   chipFilters: Array<{ key: string; value: string }>,
 ): boolean {
   const text = itemFullText(item);
@@ -232,8 +232,8 @@ export function matchesChipFilters(
  */
 export function buildChipFilterRegexes(
   filters: Array<{ key: string; value: string }>,
-): string[] {
-  const regexes: string[] = [];
+): Array<string> {
+  const regexes: Array<string> = [];
   for (const f of filters) {
     const value = f.value.trim().toLowerCase();
     if (!value) continue;

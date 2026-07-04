@@ -1,18 +1,19 @@
-import { Router } from "express";
 import { db } from "@workspace/db";
+import { collectKeywords,getAllTaxonomyKeywords, TAXONOMY } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { TAXONOMY, getAllTaxonomyKeywords, collectKeywords } from "@workspace/db";
+import { Router } from "express";
 
 const router = Router();
 
 // Matches the chip-text expression used in chip-filter WHERE clauses
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const CHIP_FN = `inventory_chip_text(vendor, catalog, description, ai_keywords)`;
 
 function escapeForPattern(kw: string): string {
   return kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function buildPattern(keywords: string[]): string | null {
+function buildPattern(keywords: Array<string>): string | null {
   if (!keywords || keywords.length === 0) return null;
   return keywords.map(escapeForPattern).join("|");
 }
@@ -57,7 +58,7 @@ router.get("/categories", async (req, res) => {
 
     // Build WHERE conditions using the same expression pattern as the indexed
     // columns so Postgres can use expression indexes.
-    const dimClauses: ReturnType<typeof sql>[] = [];
+    const dimClauses: Array<ReturnType<typeof sql>> = [];
     if (minWidth    !== null) dimClauses.push(sql`(dimensions->>'width')::numeric    >= ${minWidth}`);
     if (maxWidth    !== null) dimClauses.push(sql`(dimensions->>'width')::numeric    <= ${maxWidth}`);
     if (minHeight   !== null) dimClauses.push(sql`(dimensions->>'height')::numeric   >= ${minHeight}`);
@@ -74,12 +75,12 @@ router.get("/categories", async (req, res) => {
     const raw = await db.execute(
       sql`SELECT inventory_chip_text(vendor, catalog, description, ai_keywords) AS chip FROM inventory ${whereFragment}`
     );
-    const chips = (raw.rows as { chip: string | null }[]).map(r => r.chip ?? "");
+    const chips = (raw.rows as Array<{ chip: string | null }>).map(r => r.chip ?? "");
 
     // ── Step 2: compile all item-type regex patterns (JS RegExp, same semantics
     //            as PostgreSQL ~* for simple keyword alternation patterns) ──────
     type ItemEntry = { slug: string; re: RegExp | null };
-    const itemEntries: ItemEntry[] = [];
+    const itemEntries: Array<ItemEntry> = [];
 
     for (const cat of TAXONOMY) {
       for (const sub of cat.subcategories) {
