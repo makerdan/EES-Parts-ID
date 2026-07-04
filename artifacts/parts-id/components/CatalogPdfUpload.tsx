@@ -33,9 +33,9 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  FlatList,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -1476,9 +1476,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
                   </Pressable>
                 </View>
               </View>
-              <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
-                {getPdfPickLogs().map(entry => (
-                  <View key={entry.seq} style={s.logEntry}>
+              <FlatList
+                style={{ maxHeight: 300 }}
+                nestedScrollEnabled
+                data={getPdfPickLogs()}
+                keyExtractor={entry => String(entry.seq)}
+                renderItem={({ item: entry }) => (
+                  <View style={s.logEntry}>
                     <Text style={[s.logEntryTime, { color: colors.primary }]}>
                       {`+${entry.relMs}ms`.padStart(8)}
                     </Text>
@@ -1490,8 +1494,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
                       {entry.data !== undefined ? `\n    ${JSON.stringify(entry.data)}` : ""}
                     </Text>
                   </View>
-                ))}
-              </ScrollView>
+                )}
+              />
             </>
           ) : (
             /* ── AI Raw tab ── */
@@ -1544,9 +1548,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
                   No AI responses captured yet.
                 </Text>
               ) : (
-                <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
-                  {aiRawLog.map(entry => (
-                    <View key={`${entry.chunkJobId}:${entry.page}`} style={s.aiRawEntry}>
+                <FlatList
+                  style={{ maxHeight: 300 }}
+                  nestedScrollEnabled
+                  data={aiRawLog}
+                  keyExtractor={entry => `${entry.chunkJobId}:${entry.page}`}
+                  renderItem={({ item: entry }) => (
+                    <View style={s.aiRawEntry}>
                       <Text style={[s.aiRawPageLabel, { color: colors.primary }]}>
                         Page {entry.page}
                       </Text>
@@ -1557,8 +1565,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
                         {entry.text}
                       </Text>
                     </View>
-                  ))}
-                </ScrollView>
+                  )}
+                />
               )}
             </>
           )}
