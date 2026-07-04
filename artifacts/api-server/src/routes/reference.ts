@@ -178,7 +178,13 @@ router.post("/ask", async (req, res) => {
 
     const hasHistory = Array.isArray(history) && history.length > 0;
     const normalized = normalizeQuestion(question);
-    const questionHash = hashQuestion(normalized);
+    // Pass history into hashQuestion so that a follow-up answer (which is
+    // context-dependent) always gets a different hash from the cold-start
+    // answer for the same question text. This is the structural safety layer:
+    // history-path hashes and cold-start hashes occupy disjoint key spaces,
+    // so a history-path answer can never poison the single-turn cache even if
+    // the !hasHistory write guard below is accidentally removed in the future.
+    const questionHash = hashQuestion(normalized, hasHistory ? history : undefined);
 
     const wantsJson =
       req.query["stream"] === "false" ||
@@ -198,6 +204,11 @@ router.post("/ask", async (req, res) => {
         ? await collectAnswerWithHistory(question.trim(), history!)
         : await collectAnswer(question.trim());
       writeReferenceLog(question.trim(), answer, matchedItemCount);
+      // Secondary guard: skip the DB write entirely for history-path answers
+      // (they are context-dependent and not worth storing). The primary safety
+      // layer is the hash itself — history hashes and cold-start hashes are
+      // disjoint (see hashQuestion), so even if this guard were removed,
+      // a history answer could never be served as a cold-start answer.
       if (!hasHistory) {
         setCachedAnswer(questionHash, normalized, answer, usedWebSearch).catch((err) => logger.warn({ err }, "cache write failed"));
       }
@@ -239,6 +250,9 @@ router.post("/ask", async (req, res) => {
 
     writeReferenceLog(question.trim(), fullAnswer, matchedItemCount);
     writeAiRequestLog("reference");
+    // Secondary guard: same reasoning as the JSON path above — skip the DB
+    // write for history-path answers. The primary safety layer is the hash
+    // itself (history hashes and cold-start hashes are disjoint via hashQuestion).
     if (fullAnswer && !hasHistory) {
       setCachedAnswer(questionHash, normalized, fullAnswer, usedWebSearch).catch((err) => logger.warn({ err }, "cache write failed"));
     }
