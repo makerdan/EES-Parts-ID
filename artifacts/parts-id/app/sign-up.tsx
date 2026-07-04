@@ -12,6 +12,7 @@ import {
 } from "react-native";
 
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { OAuthButtons } from "@/components/OAuthButtons";
 import { useColors } from "@/hooks/useColors";
 
 export default function SignUpScreen() {
@@ -296,6 +297,8 @@ export default function SignUpScreen() {
             <Text style={styles.buttonText}>Create Account →</Text>
           )}
         </Pressable>
+
+        <OAuthButtons mode="sign-up" />
 
         <View style={styles.footer}>
           <Text style={styles.footerText}>Already have an account?</Text>

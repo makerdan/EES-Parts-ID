@@ -12,6 +12,7 @@ import {
 } from "react-native";
 
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { OAuthButtons } from "@/components/OAuthButtons";
 import { useColors } from "@/hooks/useColors";
 
 export default function LoginScreen() {
@@ -204,6 +205,8 @@ export default function LoginScreen() {
             <Text style={styles.buttonText}>Sign In →</Text>
           )}
         </Pressable>
+
+        <OAuthButtons mode="sign-in" />
 
         <View style={styles.footer}>
           <Text style={styles.footerText}>Don&apos;t have an account?</Text>
