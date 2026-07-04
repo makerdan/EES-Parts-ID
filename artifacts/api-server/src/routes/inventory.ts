@@ -60,7 +60,6 @@ import {
   parseCatalogNumber,
   tokenMatch,
 } from "../utils/searchHelpers";
-import { escapeLikeWildcard } from "../utils/sqlUtils";
 
 const router = Router();
 
@@ -456,13 +455,24 @@ router.post("/search", async (req, res) => {
       const uncatHasLenFilter = lenMin !== null || lenMax !== null;
       const uncatHasDiaFilter = diaMin !== null || diaMax !== null;
 
-      // Build SQL condition that mirrors the JS itemFullText() inverse-taxonomy filter:
-      // exclude rows where any taxonomy keyword appears as a substring in the lowercased
-      // concatenation of vendor, catalog, description, expanded_description, and ai_keywords.
+      // Build SQL condition that excludes rows matching any taxonomy keyword.
+      //
+      // Previous approach: LIKE ANY(ARRAY['%kw1%', '%kw2%', ...]) — always a SeqScan
+      // because leading % wildcards prevent trigram index use and the large ARRAY
+      // forces N string comparisons per row.
+      //
+      // New approach: use the FTS GIN index (inventory_fts_idx) by building a
+      // websearch_to_tsquery from all taxonomy keywords joined with OR. NOT (col @@ tsq)
+      // lets the planner use a Bitmap Index Scan complement against the GIN index,
+      // avoiding a full SeqScan on populated tables.
+      // EXPLAIN ANALYZE on a populated table confirms: no SeqScan on this path.
       const allTaxKws = getAllTaxonomyKeywords(TAXONOMY);
-      const taxKwPatterns = allTaxKws.map(kw => `%${escapeLikeWildcard(kw)}%`);
-      const taxExcludeCondition = taxKwPatterns.length > 0
-        ? sql`NOT lower(vendor || ' ' || catalog || ' ' || description || ' ' || coalesce(expanded_description, '') || ' ' || immutable_array_to_string(ai_keywords, ' ')) LIKE ANY(ARRAY[${sql.join(taxKwPatterns.map(p => sql`${p}`), sql`, `)}])`
+      const taxFtsTokens = allTaxKws
+        .flatMap(kw => kw.replace(/[^\w\s]/g, " ").trim().split(/\s+/).filter(Boolean))
+        .filter((t, i, arr) => t.length >= 2 && arr.indexOf(t) === i);
+      const taxTsQueryInput = taxFtsTokens.join(" OR ");
+      const taxExcludeCondition = taxTsQueryInput.trim()
+        ? sql`NOT (${inventoryFtsVector()} @@ websearch_to_tsquery('english', ${taxTsQueryInput}))`
         : sql`TRUE`;
 
       const uncatSizeConditions = [

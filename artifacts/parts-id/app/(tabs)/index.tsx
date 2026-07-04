@@ -293,6 +293,10 @@ export default function SearchScreen() {
   }, [setPinnedParts]);
 
   const [offlineResults, setOfflineResults] = useState<Array<SearchResult> | null>(null);
+  // Web-only: set when the user triggers offline fallback but the Fuse index
+  // isn't available in the browser (no persistent storage).  Cleared on each
+  // new search or clear action.
+  const [offlineWebError, setOfflineWebError] = useState<string | null>(null);
   // Local string state for the custom threshold TextInput in Settings
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
   const [isOffline, setIsOffline] = useState(false);
@@ -394,6 +398,7 @@ export default function SearchScreen() {
       setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settingsRef.current.defaultConfidenceThreshold });
       setOfflineResults(null);
       setIsOffline(false);
+      setOfflineWebError(null);
       setFuseSyncedAt(null);
       setDimensionCounts(undefined);
       setShowSimilarSizeBanner(false);
@@ -646,7 +651,17 @@ export default function SearchScreen() {
         timestamp: result.cacheType === 'exact' ? (pruned[queryKey]?.timestamp ?? null) : null,
       };
       setIsOffline(true);
-      setOfflineResults(result.results);
+      // On web the Fuse index is never persisted to disk, so it is null on
+      // first load before any successful search.  When offline + fuse path +
+      // no index is available, show a user-friendly error instead of an empty
+      // results list.  The exact-cache path still works normally on web.
+      if (Platform.OS === 'web' && result.cacheType === 'fuse' && fuseRef.current === null) {
+        setOfflineWebError("Offline search isn't available in the browser — connect to load results.");
+        setOfflineResults(null);
+      } else {
+        setOfflineWebError(null);
+        setOfflineResults(result.results);
+      }
     });
     _queryCacheWriteLock = next.catch(() => {});
     next.catch(err => reportStorageError("Could not run offline fallback", err));
@@ -815,11 +830,12 @@ export default function SearchScreen() {
 
     // Check connectivity before firing the network request. When the device
     // is definitely offline we skip the mutation and the 8-second wait
-    // entirely and go straight to the local Fuse fallback.
-    let isDeviceConnected = true;
+    // entirely and go straight to the local Fuse fallback. This makes the
+    // UX instant for users on no connection.
+    let isCurrentlyConnected = true;
     try {
       const netState = await NetInfo.fetch();
-      isDeviceConnected = netState.isConnected !== false;
+      isCurrentlyConnected = netState.isConnected !== false;
     } catch {
       // If NetInfo itself fails, assume connected and let the normal
       // timeout + error-handler path deal with it.
@@ -828,15 +844,14 @@ export default function SearchScreen() {
     setPinnedParts([]);
     setOfflineResults(null);
     setIsOffline(false);
+    setOfflineWebError(null);
     setAITranslation(null);
     setAITranslationDismissed(false);
     setAIZeroResults(null);
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-    if (!isDeviceConnected) {
-      // Device is offline — skip the network request and go directly to the
-      // local Fuse/cache fallback with no delay.
+    if (!isCurrentlyConnected) {
       runOfflineFallback();
       return;
     }
@@ -875,6 +890,7 @@ export default function SearchScreen() {
     searchMutation.reset();
     setOfflineResults(null);
     setIsOffline(false);
+    setOfflineWebError(null);
     setDimensionCounts(undefined);
     setShowSimilarSizeBanner(false);
     setSimilarSizeTolerance(0.10);
@@ -1611,7 +1627,17 @@ export default function SearchScreen() {
                 </Text>
               </View>
             ) : null}
-            {isOffline && cachedCount === 0 ? (
+            {offlineWebError !== null ? (
+              <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
+                <Text style={{ fontSize: 32, textAlign: "center", marginBottom: 8 }}>📡</Text>
+                <Text style={[styles.errorText, { color: colors.warning, textAlign: "center", fontFamily: "Inter_600SemiBold", marginBottom: 4 }]}>
+                  Offline search unavailable
+                </Text>
+                <Text style={[styles.errorText, { color: colors.warning, textAlign: "center" }]}>
+                  {offlineWebError}
+                </Text>
+              </View>
+            ) : isOffline && cachedCount === 0 ? (
               <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
                 <Text style={{ fontSize: 32, textAlign: "center", marginBottom: 8 }}>📡</Text>
                 <Text style={[styles.errorText, { color: colors.warning, textAlign: "center", fontFamily: "Inter_600SemiBold", marginBottom: 4 }]}>
@@ -1625,6 +1651,12 @@ export default function SearchScreen() {
               <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
                 <Text style={[styles.errorText, { color: colors.warning }]}>
                   Offline — no cached items match your search. Connect to load more results.
+                </Text>
+              </View>
+            ) : isOffline && offlineResults !== null && offlineResults.length > 0 ? (
+              <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
+                <Text style={[styles.errorText, { color: colors.warning }]}>
+                  📡 Offline — showing cached results.
                 </Text>
               </View>
             ) : null}
