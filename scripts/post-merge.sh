@@ -88,6 +88,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # commits any changes to the generated directories so a merge that carries a
   # stale generated file is fixed automatically rather than failing post-merge.
   # codegen:check (unchanged) is still used by CI/PR gates.
+  #
+  # git commit requires a user identity in the container; set it if missing.
+  git config --global user.email "post-merge@replit.local" 2>/dev/null || true
+  git config --global user.name "Post-Merge Bot" 2>/dev/null || true
+
   echo "[post-merge] Regenerating API client and auto-committing any drift..."
   timeout 120 pnpm --filter @workspace/api-spec run codegen:fix || {
     CODEGEN_EXIT=$?
