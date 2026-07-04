@@ -2,6 +2,7 @@
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
+  testTimeout: 10_000,
   globals: { __DEV__: false },
   moduleNameMapper: {
     "^@clerk/expo$": "<rootDir>/__mocks__/clerk-expo.js",
