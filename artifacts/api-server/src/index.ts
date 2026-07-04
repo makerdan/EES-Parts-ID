@@ -187,6 +187,50 @@ async function migrateUsersTable(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to migrate users table");
   }
+
+  // Deduplicate rows with the same email address, keeping the row with the
+  // highest combined role+status priority (admin > user, approved > pending > banned).
+  // This is a one-time idempotent migration; re-runs are harmless.
+  try {
+    await db.execute(sql`
+      DELETE FROM users
+      WHERE clerk_user_id IN (
+        SELECT clerk_user_id
+        FROM (
+          SELECT
+            clerk_user_id,
+            email,
+            ROW_NUMBER() OVER (
+              PARTITION BY email
+              ORDER BY
+                CASE role   WHEN 'admin' THEN 0 ELSE 1 END,
+                CASE status WHEN 'approved' THEN 0
+                            WHEN 'pending'  THEN 1
+                            ELSE                 2 END,
+                created_at ASC
+            ) AS rn
+          FROM users
+          WHERE email <> ''
+        ) ranked
+        WHERE rn > 1
+      )
+    `);
+  } catch (err) {
+    logger.error({ err }, "Failed to deduplicate users by email");
+  }
+
+  // Add a partial unique index on email (excluding empty strings) so future
+  // duplicates are prevented at the DB level without blocking users whose email
+  // could not be resolved from Clerk (stored as ''). IF NOT EXISTS makes re-runs safe.
+  try {
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique
+        ON users (email)
+       WHERE email <> ''
+    `);
+  } catch (err) {
+    logger.error({ err }, "Failed to add users_email_unique partial index");
+  }
 }
 
 Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), checkZoneSectionNumIntegrity(), migrateUsersTable()])
