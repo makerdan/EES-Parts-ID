@@ -13,7 +13,7 @@
  * snapshot mechanism entirely, which is important because this project's meta
  * snapshot pre-dates many manually-written migrations.
  */
-import { readdirSync, readFileSync } from "fs";
+import { readdirSync, readFileSync, statSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { getTableColumns } from "drizzle-orm";
@@ -143,12 +143,100 @@ for (const match of indexSource.matchAll(/export\s+\*\s+from\s+["']\.\/([^"']+)[
 const missingFromBarrel = schemaFiles.filter((f) => !exportedSpecifiers.has(f));
 
 // ---------------------------------------------------------------------------
-// 6. Report all failures together.
+// 6. Taxonomy reachability check — every .ts file under src/taxonomy/ must be
+//    reachable from src/index.ts.
+//
+//    Two shapes are supported:
+//      a) Flat file:  src/taxonomy.ts   — verify "./taxonomy" is exported from
+//                                         src/index.ts.
+//      b) Directory: src/taxonomy/      — verify every non-barrel .ts file is
+//                                         re-exported from src/taxonomy/index.ts,
+//                                         AND that src/index.ts exports "./taxonomy"
+//                                         or "./taxonomy/index".
+// ---------------------------------------------------------------------------
+const SRC_DIR = join(DB_DIR, "src");
+const TAXONOMY_DIR = join(SRC_DIR, "taxonomy");
+const TAXONOMY_FILE = join(SRC_DIR, "taxonomy.ts");
+const TOP_INDEX = join(SRC_DIR, "index.ts");
+const topIndexSource = readFileSync(TOP_INDEX, "utf-8");
+
+// Collect specifiers exported from the top-level src/index.ts.
+const topExportedSpecifiers = new Set<string>();
+for (const match of topIndexSource.matchAll(
+  /export\s+\*\s+from\s+["']\.\/([^"']+)["']/g,
+)) {
+  topExportedSpecifiers.add(match[1]);
+}
+
+const missingFromTaxonomy: string[] = [];
+let taxonomyTopLevelMissing = false;
+
+const taxonomyIsDir =
+  existsSync(TAXONOMY_DIR) && statSync(TAXONOMY_DIR).isDirectory();
+const taxonomyIsFile = !taxonomyIsDir && existsSync(TAXONOMY_FILE);
+
+if (taxonomyIsDir) {
+  // Check the directory barrel (index.ts) is reachable from src/index.ts.
+  const topExportsTaxonomy =
+    topExportedSpecifiers.has("taxonomy") ||
+    topExportedSpecifiers.has("taxonomy/index");
+  if (!topExportsTaxonomy) {
+    taxonomyTopLevelMissing = true;
+  }
+
+  // Check every non-barrel file inside taxonomy/ is re-exported from
+  // src/taxonomy/index.ts.
+  // Always enumerate sub-files — if the barrel itself is absent every sub-file
+  // is unreachable and must be reported as missing.
+  const taxonomyBarrel = join(TAXONOMY_DIR, "index.ts");
+  const taxonomySubFiles = readdirSync(TAXONOMY_DIR)
+    .filter((f) => f.endsWith(".ts") && f !== "index.ts")
+    .map((f) => f.replace(/\.ts$/, ""));
+
+  if (!existsSync(taxonomyBarrel)) {
+    // No barrel at all — every sub-file is invisible to callers.
+    for (const sub of taxonomySubFiles) {
+      missingFromTaxonomy.push(`taxonomy/${sub}.ts`);
+    }
+    // Also flag that the barrel itself is missing (top-level will be wrong too).
+    missingFromTaxonomy.push("taxonomy/index.ts (barrel missing)");
+  } else {
+    const taxonomyBarrelSource = readFileSync(taxonomyBarrel, "utf-8");
+    const taxonomyExportedSpecifiers = new Set<string>();
+    for (const match of taxonomyBarrelSource.matchAll(
+      /export\s+\*\s+from\s+["']\.\/([^"']+)["']/g,
+    )) {
+      taxonomyExportedSpecifiers.add(match[1]);
+    }
+
+    for (const sub of taxonomySubFiles) {
+      if (!taxonomyExportedSpecifiers.has(sub)) {
+        missingFromTaxonomy.push(`taxonomy/${sub}.ts`);
+      }
+    }
+  }
+} else if (taxonomyIsFile) {
+  // Flat file: just ensure src/index.ts re-exports it.
+  if (!topExportedSpecifiers.has("taxonomy")) {
+    taxonomyTopLevelMissing = true;
+  }
+} else {
+  // Neither shape exists — that is itself an error.
+  console.error(
+    "ERROR: Neither lib/db/src/taxonomy.ts nor lib/db/src/taxonomy/ found.",
+  );
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// 7. Report all failures together.
 // ---------------------------------------------------------------------------
 const migrationsFailed = missingTables.length > 0 || missingColumns.length > 0;
 const barrelFailed = missingFromBarrel.length > 0;
+const taxonomyFailed =
+  taxonomyTopLevelMissing || missingFromTaxonomy.length > 0;
 
-if (!migrationsFailed && !barrelFailed) {
+if (!migrationsFailed && !barrelFailed && !taxonomyFailed) {
   console.log(
     `OK  Schema and migrations are in sync (${tableNames.length} tables, ` +
       `${columns.length} columns checked).`
@@ -156,6 +244,12 @@ if (!migrationsFailed && !barrelFailed) {
   console.log(
     `OK  Barrel completeness: all ${schemaFiles.length} schema file(s) are ` +
       `re-exported from schema/index.ts.`
+  );
+  console.log(
+    taxonomyIsDir
+      ? `OK  Taxonomy reachability: all taxonomy file(s) are re-exported ` +
+          `from taxonomy/index.ts and reachable from src/index.ts.`
+      : `OK  Taxonomy reachability: taxonomy.ts is exported from src/index.ts.`
   );
   process.exit(0);
 }
@@ -203,6 +297,35 @@ if (barrelFailed) {
   );
   for (const f of missingFromBarrel) {
     console.error(`  export * from "./${f}";`);
+  }
+}
+
+if (taxonomyFailed) {
+  console.error("");
+  if (taxonomyTopLevelMissing) {
+    console.error(
+      "FAIL  src/index.ts does not export the taxonomy module."
+    );
+    console.error("");
+    console.error("To fix: add to lib/db/src/index.ts:");
+    console.error(`  export * from "./taxonomy";`);
+  }
+  if (missingFromTaxonomy.length > 0) {
+    console.error(
+      "FAIL  The following taxonomy file(s) are not re-exported from " +
+        "src/taxonomy/index.ts and will be invisible to callers:"
+    );
+    for (const f of missingFromTaxonomy) {
+      console.error(`  - ${f}`);
+    }
+    console.error("");
+    console.error(
+      "To fix: add the missing export to lib/db/src/taxonomy/index.ts, e.g.:"
+    );
+    for (const f of missingFromTaxonomy) {
+      const stem = f.replace(/^taxonomy\//, "").replace(/\.ts$/, "");
+      console.error(`  export * from "./${stem}";`);
+    }
   }
 }
 
