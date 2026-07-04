@@ -18,13 +18,11 @@ import { API_BASE, API_ORIGIN } from "@/utils/apiBase";
 import {
   fetchWithAuth,
   notifyTokenAvailable,
-  setAdminToken as setAdminTokenModule,
   setAppTokenGetter,
   setOnUnauthorized,
 } from "@/utils/appAuth";
 import { type LogoutHandler,LogoutRegistry } from "@/utils/logoutRegistry";
 import {
-  ADMIN_TOKEN_KEY,
   clearSessionStorage,
   SEARCH_CACHE_KEYS,
 } from "@/utils/sessionStorage";
@@ -243,7 +241,6 @@ interface AppContextValue {
   isAdmin: boolean;
   adminToken: string | null;
   logout: () => Promise<void>;
-  loginAdmin: (password: string) => Promise<{ success: boolean; error?: string }>;
   logoutAdmin: () => Promise<void>;
   clearCache: () => Promise<void>;
   isLoading: boolean;
@@ -277,25 +274,6 @@ interface AppContextValue {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
-async function secureGet(key: string): Promise<string | null> {
-  if (Platform.OS === "web") {
-    try { return localStorage.getItem(key); } catch { return null; }
-  }
-  return SecureStore.getItemAsync(key);
-}
-
-async function secureSet(key: string, value: string): Promise<void> {
-  if (Platform.OS === "web") {
-    try {
-      localStorage.setItem(key, value);
-    } catch (err) {
-      reportStorageError("Could not save to local storage", err);
-    }
-    return;
-  }
-  return SecureStore.setItemAsync(key, value);
-}
-
 async function secureDelete(key: string): Promise<void> {
   if (Platform.OS === "web") {
     try {
@@ -317,6 +295,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>("idle");
   const isAuthenticated = approvalStatus === "approved";
 
+  // `isAdmin` is the source of truth (derived from the server's role check via
+  // GET /admin/me). `adminToken` mirrors the current Clerk session token but is
+  // only populated while the user is an admin, so downstream call sites that
+  // still expect an admin bearer token keep working unchanged.
+  const [isAdmin, setIsAdmin] = useState(false);
   const [adminToken, setAdminToken] = useState<string | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const isLoading = !clerkLoaded || !settingsLoaded;
@@ -333,7 +316,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const adminTokenRef = useRef<string | null>(null);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
-  useEffect(() => { setAdminTokenModule(adminToken); }, [adminToken]);
+
+  const isAdminRef = useRef(false);
+  useEffect(() => { isAdminRef.current = isAdmin; }, [isAdmin]);
 
   // Keep a stable ref to getToken so we don't recreate the auth getter on every render.
   const getTokenRef = useRef(getToken);
@@ -348,16 +333,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       if (API_ORIGIN) setBaseUrl(API_ORIGIN);
 
-      // Admin token takes precedence over Clerk session token.
-      const tokenGetter = async () => {
-        const adminTok = adminTokenRef.current;
-        if (adminTok) return adminTok;
-        return getTokenRef.current();
-      };
+      // All requests use the Clerk session token; admin authority is enforced
+      // server-side by the user's role, not by a separate token.
+      const tokenGetter = () => getTokenRef.current();
 
       // Wire into both the generated API client and fetchWithAuth (manual fetches).
       setAuthTokenGetter(tokenGetter);
-      setAppTokenGetter(() => getTokenRef.current());
+      setAppTokenGetter(tokenGetter);
     } catch {
       setApiInitError(true);
     }
@@ -367,6 +349,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // ── Admin role check ──────────────────────────────────────────────────────
+  // Determine admin status from the server (role-based) via GET /admin/me.
+  // When the user is an admin, mirror the current Clerk token into `adminToken`
+  // so downstream admin-only fetches keep a bearer token to send.
+  const verifyAdmin = useCallback(async (token: string, signal?: AbortSignal) => {
+    try {
+      const resp = await fetch(`${API_BASE}/admin/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal,
+      });
+      if (signal?.aborted) return;
+      if (resp.ok) {
+        const body = await resp.json() as { isAdmin?: boolean };
+        const admin = !!body.isAdmin;
+        setIsAdmin(admin);
+        setAdminToken(admin ? token : null);
+      } else {
+        setIsAdmin(false);
+        setAdminToken(null);
+      }
+    } catch {
+      if (!signal?.aborted) {
+        setIsAdmin(false);
+        setAdminToken(null);
+      }
+    }
+  }, []);
+
   // ── Approval status check ─────────────────────────────────────────────────
   // After Clerk confirms sign-in, call the API to verify the user is approved.
   const doApprovalCheck = useCallback(async (signal?: AbortSignal) => {
@@ -374,6 +384,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (signal?.aborted) return;
     if (!token) {
       setApprovalStatus("pending");
+      setIsAdmin(false);
+      setAdminToken(null);
       return;
     }
 
@@ -387,13 +399,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (resp.ok) {
       setApprovalStatus("approved");
       notifyTokenAvailable();
+      await verifyAdmin(token, signal);
     } else if (resp.status === 403) {
       const body = await resp.json() as { code?: string };
       setApprovalStatus(body.code === "banned" ? "banned" : "pending");
+      setIsAdmin(false);
+      setAdminToken(null);
     } else {
       setApprovalStatus("pending");
+      setIsAdmin(false);
+      setAdminToken(null);
     }
-  }, [getToken]);
+  }, [getToken, verifyAdmin]);
 
   useEffect(() => {
     if (!clerkLoaded) return;
@@ -458,19 +475,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // ── 401 handler ──────────────────────────────────────────────────────────
   useEffect(() => {
     const handle401 = () => {
-      if (adminTokenRef.current !== null) {
-        secureDelete(ADMIN_TOKEN_KEY).catch(err => {
-          console.warn("[AppContext] Failed to delete admin token from secure storage:", err);
-          reportStorageError("Could not clear admin session token", err);
-        });
-        setAdminToken(null);
-        showToast("Admin session expired. Please log in again.", "error");
-      } else {
-        // Clerk session expired — sign out and re-check
-        signOut().catch(() => {});
-        setApprovalStatus("idle");
-        showToast("Session expired. Please sign in again.", "error");
-      }
+      // Every request now carries the Clerk session token, so a 401 means the
+      // session expired — sign out and reset admin state.
+      signOut().catch(() => {});
+      setApprovalStatus("idle");
+      setIsAdmin(false);
+      setAdminToken(null);
+      showToast("Session expired. Please sign in again.", "error");
     };
 
     try {
@@ -501,36 +512,74 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // ── Boot: restore admin token and settings from storage ──────────────────
+  // ── Boot: restore settings from storage ──────────────────────────────────
   useEffect(() => {
-    Promise.all([
-      secureGet(ADMIN_TOKEN_KEY),
-      loadSettings(),
-    ]).then(([token, s]) => {
-      if (token) setAdminToken(token);
+    loadSettings().then((s) => {
       setSettings(s);
       applyThemeMode(s.themeMode);
       setSettingsLoaded(true);
-
-      // Background: if already logged in as admin, pull server profile.
-      if (token) {
-        fetchAdminProfile(token).then(profile => {
-          if (!profile) return;
-          setSettings(prev => {
-            const merged = mergeProfileIntoSettings(prev, profile);
-            if (merged === prev) return prev;
-            saveSettings(merged);
-            if (merged.themeMode !== prev.themeMode) applyThemeMode(merged.themeMode);
-            return merged;
-          });
-        }).catch(err => {
-          console.warn("[AppContext] Background admin profile sync failed:", err);
-        });
-      }
     }).catch(() => {
       setSettingsLoaded(true);
     });
   }, []);
+
+  // ── Admin profile sync ────────────────────────────────────────────────────
+  // When the user becomes an admin, pull their server-stored profile settings
+  // once and merge them in. Reset the guard when admin status is lost.
+  const adminProfileSyncedRef = useRef(false);
+  useEffect(() => {
+    if (!isAdmin) {
+      adminProfileSyncedRef.current = false;
+      return;
+    }
+    if (adminProfileSyncedRef.current) return;
+    adminProfileSyncedRef.current = true;
+    (async () => {
+      const token = await getTokenRef.current();
+      if (!token) return;
+      try {
+        const profile = await fetchAdminProfile(token);
+        if (!profile) return;
+        setSettings(prev => {
+          const merged = mergeProfileIntoSettings(prev, profile);
+          if (merged === prev) return prev;
+          saveSettings(merged);
+          if (merged.themeMode !== prev.themeMode) applyThemeMode(merged.themeMode);
+          return merged;
+        });
+      } catch (err) {
+        console.warn("[AppContext] Admin profile sync failed:", err);
+      }
+    })();
+  }, [isAdmin]);
+
+  // ── Keep the admin bearer token fresh ─────────────────────────────────────
+  // Clerk auto-rotates session tokens; refresh the mirrored admin token on a
+  // light interval and whenever the app returns to the foreground so long-lived
+  // admin sessions don't send a stale bearer token.
+  const refreshAdminToken = useCallback(async () => {
+    if (!isAdminRef.current) return;
+    const token = await getTokenRef.current();
+    if (token) {
+      setAdminToken(token);
+    } else {
+      setIsAdmin(false);
+      setAdminToken(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const id = setInterval(() => { refreshAdminToken(); }, 45_000);
+    return () => clearInterval(id);
+  }, [isAdmin, refreshAdminToken]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") refreshAdminToken();
+    });
+    return () => sub.remove();
+  }, [refreshAdminToken]);
 
   const currentSettingsRef = useRef(settings);
   useEffect(() => { currentSettingsRef.current = settings; }, [settings]);
@@ -583,64 +632,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       reportStorageError("Could not clear session storage on logout", err);
     }
     logoutRegistryRef.current.fire();
+    setIsAdmin(false);
     setAdminToken(null);
     setApprovalStatus("idle");
     await signOut();
   }, [signOut]);
 
-  const loginAdmin = useCallback(async (password: string) => {
-    try {
-      const resp = await fetch(`${API_BASE}/admin/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
-      });
-      const body = await resp.json() as { token?: string; error?: string };
-
-      if (!resp.ok) {
-        if (resp.status === 503) {
-          return { success: false, error: body.error ?? "Admin access is not configured on the server" };
-        }
-        return { success: false, error: body.error ?? "Incorrect admin password" };
-      }
-
-      if (!body.token) {
-        return { success: false, error: "Server did not return a token" };
-      }
-
-      await secureSet(ADMIN_TOKEN_KEY, body.token);
-      setAdminToken(body.token);
-
-      fetchAdminProfile(body.token).then(profile => {
-        if (!profile) return;
-        setSettings(prev => {
-          const merged = mergeProfileIntoSettings(prev, profile);
-          if (merged === prev) return prev;
-          saveSettings(merged);
-          if (merged.themeMode !== prev.themeMode) applyThemeMode(merged.themeMode);
-          return merged;
-        });
-      }).catch(err => {
-        console.warn("[AppContext] Post-login admin profile sync failed:", err);
-      });
-
-      return { success: true };
-    } catch {
-      return { success: false, error: "Could not reach the server. Check your connection." };
-    }
-  }, []);
-
+  // Re-verify admin status against the server using a fresh Clerk token. Called
+  // when an admin action returns 401/403 so a stale token or a role change is
+  // reconciled without dropping the user out of the app entirely.
   const logoutAdmin = useCallback(async () => {
-    const token = adminTokenRef.current;
-    if (token && API_BASE) {
-      fetch(`${API_BASE}/admin/logout`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      }).catch(() => {});
+    const token = await getTokenRef.current();
+    if (!token) {
+      setIsAdmin(false);
+      setAdminToken(null);
+      return;
     }
-    await secureDelete(ADMIN_TOKEN_KEY);
-    setAdminToken(null);
-  }, []);
+    await verifyAdmin(token);
+  }, [verifyAdmin]);
 
   const clearCache = useCallback(async () => {
     try {
@@ -664,10 +673,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated,
       approvalStatus,
       recheckApprovalStatus,
-      isAdmin: !!adminToken,
+      isAdmin,
       adminToken,
       logout,
-      loginAdmin,
       logoutAdmin,
       clearCache,
       isLoading,

@@ -35,7 +35,6 @@
 import {
   clearSessionStorage,
   SESSION_KEY,
-  ADMIN_TOKEN_KEY,
   SEARCH_CACHE_KEYS,
 } from "../utils/sessionStorage";
 import { LogoutRegistry } from "../utils/logoutRegistry";
@@ -48,13 +47,6 @@ describe("clearSessionStorage", () => {
     const multiRemove  = jest.fn().mockResolvedValue(undefined);
     await clearSessionStorage(secureDelete, multiRemove);
     expect(secureDelete).toHaveBeenCalledWith(SESSION_KEY);
-  });
-
-  it("calls secureDelete with ADMIN_TOKEN_KEY", async () => {
-    const secureDelete = jest.fn().mockResolvedValue(undefined);
-    const multiRemove  = jest.fn().mockResolvedValue(undefined);
-    await clearSessionStorage(secureDelete, multiRemove);
-    expect(secureDelete).toHaveBeenCalledWith(ADMIN_TOKEN_KEY);
   });
 
   it("calls multiRemove with the exact SEARCH_CACHE_KEYS array", async () => {
@@ -78,7 +70,6 @@ describe("clearSessionStorage", () => {
   it("after clearing, mocked store reads return null for session keys", async () => {
     const store: Record<string, string | null> = {
       [SESSION_KEY]: "authenticated",
-      [ADMIN_TOKEN_KEY]: "admin-jwt-token",
     };
     const secureDelete = jest.fn(async (key: string) => { store[key] = null; });
     const multiRemove  = jest.fn().mockResolvedValue(undefined);
@@ -86,7 +77,6 @@ describe("clearSessionStorage", () => {
     await clearSessionStorage(secureDelete, multiRemove);
 
     expect(store[SESSION_KEY]).toBeNull();
-    expect(store[ADMIN_TOKEN_KEY]).toBeNull();
   });
 
   it("after clearing, mocked AsyncStorage returns null for search-cache keys", async () => {
@@ -182,7 +172,7 @@ describe("LogoutRegistry + clearSessionStorage integration", () => {
     await clearSessionStorage(secureDelete, multiRemove);
     expect(() => reg.fire()).not.toThrow();
 
-    expect(secureDelete).toHaveBeenCalledTimes(2); // SESSION_KEY + ADMIN_TOKEN_KEY
+    expect(secureDelete).toHaveBeenCalledTimes(1); // SESSION_KEY only
     expect(multiRemove).toHaveBeenCalledTimes(1);
   });
 });

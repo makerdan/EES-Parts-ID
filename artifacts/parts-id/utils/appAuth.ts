@@ -1,9 +1,10 @@
 /**
- * Module-level app-session and admin token store.
+ * Module-level app-session token store.
  *
  * Allows hooks and standalone fetch calls to include the correct
  * Authorization header without threading the token through every component.
- * AppContext calls setAppToken / setAdminToken whenever either token changes.
+ * AppContext registers a Clerk token getter (setAppTokenGetter) so fetchWithAuth
+ * always resolves a fresh session token.
  *
  * fetchWithAuth wraps the global fetch so every non-generated-client call site
  * gets automatic 401 → logout handling without duplicating that logic.
@@ -47,7 +48,6 @@ function combineSignals(
 }
 
 let _appToken: string | null = null;
-let _adminToken: string | null = null;
 let _onUnauthorized: (() => void) | null = null;
 
 /**
@@ -76,7 +76,7 @@ function _notifyTokenAvailable(): void {
 }
 
 export function setAppToken(token: string | null): void {
-  const wasAbsent = _appToken === null && _adminToken === null;
+  const wasAbsent = _appToken === null;
   _appToken = token;
   if (wasAbsent && token !== null) _notifyTokenAvailable();
 }
@@ -100,12 +100,6 @@ export function notifyTokenAvailable(): void {
   _notifyTokenAvailable();
 }
 
-export function setAdminToken(token: string | null): void {
-  const wasAbsent = _appToken === null && _adminToken === null;
-  _adminToken = token;
-  if (wasAbsent && token !== null) _notifyTokenAvailable();
-}
-
 /**
  * Register a callback that fires whenever fetchWithAuth receives a 401.
  * AppContext sets this on mount and clears it on unmount.
@@ -114,9 +108,9 @@ export function setOnUnauthorized(fn: (() => void) | null): void {
   _onUnauthorized = fn;
 }
 
-/** Returns the best available auth token: admin takes precedence over app. */
+/** Returns the synchronous app token fallback (async getter is preferred). */
 export function getAuthToken(): string | null {
-  return _adminToken ?? _appToken;
+  return _appToken;
 }
 
 /**
@@ -134,9 +128,8 @@ export function getAuthHeaders(): Record<string, string> {
  * clear tokens and reset auth state centrally instead of per call site.
  *
  * Token resolution order:
- *  1. Admin HMAC token (takes precedence — allows admin to act as any user)
- *  2. Async Clerk token getter (registered by AppContext on mount) — always fresh
- *  3. Sync _appToken fallback (legacy / test path)
+ *  1. Async Clerk token getter (registered by AppContext on mount) — always fresh
+ *  2. Sync _appToken fallback (legacy / test path)
  *
  * Pass `timeoutMs` to abort the request if no response arrives within that
  * duration. A `TimeoutError` is thrown in that case. If `init.signal` is also
@@ -147,13 +140,11 @@ export async function fetchWithAuth(
   init?: RequestInit,
   timeoutMs?: number,
 ): Promise<Response> {
-  let token: string | null = _adminToken;
-  if (!token) {
-    if (_appTokenGetter) {
-      token = await _appTokenGetter();
-    } else {
-      token = _appToken;
-    }
+  let token: string | null;
+  if (_appTokenGetter) {
+    token = await _appTokenGetter();
+  } else {
+    token = _appToken;
   }
   const authHeaders: Record<string, string> = token
     ? { Authorization: `Bearer ${token}` }

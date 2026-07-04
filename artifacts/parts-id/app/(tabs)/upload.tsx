@@ -413,60 +413,18 @@ const rowStyles = StyleSheet.create({
 });
 
 // ── Admin gate component ──────────────────────────────────────────────────
-function AdminGate({ colors }: { colors: ReturnType<typeof useColors> }) {
-  const { loginAdmin } = useApp();
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const handleLogin = async () => {
-    setError(null);
-    setLoading(true);
-    const result = await loginAdmin(password);
-    setLoading(false);
-    if (!result.success) {
-      setError(result.error ?? "Incorrect admin password");
-      setPassword("");
-    }
-  };
-
+// Admin authority is role-based (Clerk). Non-admins simply see a restricted
+// notice — there is no password to enter.
+function AdminRestricted({ colors }: { colors: ReturnType<typeof useColors> }) {
   return (
     <View style={[gateStyles.container, { backgroundColor: colors.background }]}>
       <View style={[gateStyles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[gateStyles.icon]}>🔒</Text>
         <Text style={[gateStyles.title, { color: colors.foreground }]}>Admin Access Required</Text>
         <Text style={[gateStyles.hint, { color: colors.mutedForeground }]}>
-          Inventory import is restricted to administrators. Enter the admin password to continue.
+          Inventory tools are restricted to administrators. Ask an existing admin to grant your
+          account admin access, then reopen this tab.
         </Text>
-
-        <KeyboardDoneInput
-          style={[gateStyles.input, { backgroundColor: colors.muted, color: colors.foreground, borderColor: error ? colors.destructive : colors.border }]}
-          placeholder="Admin password"
-          placeholderTextColor={colors.mutedForeground}
-          secureTextEntry
-          value={password}
-          onChangeText={setPassword}
-          onSubmitEditing={handleLogin}
-          returnKeyType="done"
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-
-        {error ? (
-          <Text style={[gateStyles.error, { color: colors.destructive }]}>{error}</Text>
-        ) : null}
-
-        <Pressable
-          onPress={handleLogin}
-          disabled={loading || !password}
-          style={[gateStyles.btn, { backgroundColor: loading || !password ? colors.muted : colors.primary }]}
-        >
-          {loading ? (
-            <ActivityIndicator color={colors.primaryForeground} />
-          ) : (
-            <Text style={[gateStyles.btnText, { color: colors.primaryForeground }]}>Unlock</Text>
-          )}
-        </Pressable>
       </View>
     </View>
   );
@@ -478,10 +436,6 @@ const gateStyles = StyleSheet.create({
   icon: { fontSize: 40 },
   title: { fontSize: 20, fontFamily: "Inter_700Bold", textAlign: "center" },
   hint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
-  input: { width: "100%", borderRadius: 8, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, fontFamily: "Inter_400Regular" },
-  error: { fontSize: 13, fontFamily: "Inter_500Medium", textAlign: "center" },
-  btn: { width: "100%", borderRadius: 8, paddingVertical: 14, alignItems: "center" },
-  btnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
 });
 
 // ── ExpandDescResultCard ───────────────────────────────────────────────────
@@ -1860,17 +1814,14 @@ export default function UploadScreen() {
                   </View>
                 ) : null}
               </View>
-              <Pressable onPress={logoutAdmin} style={[styles.lockBtn, { borderColor: colors.border }]}>
-                <Text style={[styles.lockBtnText, { color: colors.mutedForeground }]}>🔓 Log Out</Text>
-              </Pressable>
             </View>
           ) : null}
         </View>
       </View>
 
-      {/* Admin gate — show when user is not yet authenticated as admin */}
+      {/* Admin gate — inventory tools are restricted to admin-role users */}
       {!isAdmin ? (
-        <AdminGate colors={colors} />
+        <AdminRestricted colors={colors} />
       ) : (
         <>
           {/* Inline error/success banners */}
@@ -3341,6 +3292,11 @@ export default function UploadScreen() {
                         <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: colors.mutedForeground }}>
                           ID: {user.clerkUserId}
                         </Text>
+                        {user.role === "admin" ? (
+                          <View style={{ alignSelf: "flex-start", backgroundColor: colors.primary + "22", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: colors.primary + "44" }}>
+                            <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.primary }}>Admin</Text>
+                          </View>
+                        ) : null}
                         <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
                           {user.status !== "approved" ? (
                             <Pressable

@@ -279,6 +279,19 @@ describe("handleUserAction — promote path", () => {
     const headers = options?.headers as Record<string, string>;
     expect(headers?.["Authorization"]).toBe(`Bearer ${ADMIN_TOKEN}`);
   });
+
+  it("promote API error calls showToast and does NOT call fetchUsers", async () => {
+    mockFetch.mockResolvedValueOnce(makeErrorResponse(403));
+    const { deps, mocks } = makeHandleUserActionDeps();
+
+    await handleUserAction("user_b", "promote", deps);
+
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      expect.stringContaining("403"),
+      "error",
+    );
+    expect(mocks.fetchUsers).not.toHaveBeenCalled();
+  });
 });
 
 describe("handleUserAction — demote path", () => {
@@ -294,6 +307,17 @@ describe("handleUserAction — demote path", () => {
     expect(mocks.fetchUsers).toHaveBeenCalledTimes(1);
   });
 
+  it("passes the admin token in the Authorization header for demote", async () => {
+    mockFetch.mockResolvedValueOnce(makeOkActionResponse());
+    const { deps } = makeHandleUserActionDeps();
+
+    await handleUserAction("user_b", "demote", deps);
+
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = options?.headers as Record<string, string>;
+    expect(headers?.["Authorization"]).toBe(`Bearer ${ADMIN_TOKEN}`);
+  });
+
   it("shows a toast and does NOT refresh when demote is rejected (e.g. bootstrap admin)", async () => {
     mockFetch.mockResolvedValueOnce(makeErrorResponse(400));
     const { deps, mocks } = makeHandleUserActionDeps();
@@ -302,6 +326,19 @@ describe("handleUserAction — demote path", () => {
 
     expect(mocks.showToast).toHaveBeenCalledWith(
       expect.stringContaining("400"),
+      "error",
+    );
+    expect(mocks.fetchUsers).not.toHaveBeenCalled();
+  });
+
+  it("demote API error calls showToast and does NOT call fetchUsers", async () => {
+    mockFetch.mockResolvedValueOnce(makeErrorResponse(500));
+    const { deps, mocks } = makeHandleUserActionDeps();
+
+    await handleUserAction("user_b", "demote", deps);
+
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      expect.stringContaining("500"),
       "error",
     );
     expect(mocks.fetchUsers).not.toHaveBeenCalled();
