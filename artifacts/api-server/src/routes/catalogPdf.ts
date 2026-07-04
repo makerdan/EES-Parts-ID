@@ -704,6 +704,9 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
       }
     } finally {
       activePdfJobs--;
+      if (activePdfJobs < 0) {
+        logger.error({ activePdfJobs }, "[catalog-pdf] activePdfJobs went negative — counter drift detected");
+      }
     }
   });
 
@@ -711,7 +714,12 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
     // Release the reserved slot on any early exit (validation failure, DB error,
     // thrown exception). If backgroundLaunched=true, the setImmediate's finally
     // block is responsible for the decrement instead.
-    if (!backgroundLaunched) activePdfJobs--;
+    if (!backgroundLaunched) {
+      activePdfJobs--;
+      if (activePdfJobs < 0) {
+        logger.error({ activePdfJobs }, "[catalog-pdf] activePdfJobs went negative — counter drift detected");
+      }
+    }
   }
 });
 
