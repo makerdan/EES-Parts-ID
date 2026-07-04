@@ -167,6 +167,35 @@ describe("collectResJsonLiterals", () => {
     const hits = collectResJsonLiterals(sf);
     expect(hits).toHaveLength(0);
   });
+
+  it("skips res.status(variable).json({}) — dynamic status code is ambiguous, not a false-positive success", () => {
+    const sf = parse("res.status(code).json({ ghost: true });");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(0);
+  });
+
+  it("skips res.status(statusCode).json({}) where statusCode is an identifier", () => {
+    const sf = parse(`
+      const statusCode = computeStatus();
+      res.status(statusCode).json({ undeclared: 1 });
+    `);
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(0);
+  });
+
+  it("still collects plain res.json({}) (no .status() call at all) as a non-error response", () => {
+    const sf = parse("res.json({ id: 1 });");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].isErrorResponse).toBe(false);
+  });
+
+  it("still collects res.status(200).json({}) as a non-error response", () => {
+    const sf = parse("res.status(200).json({ id: 1 });");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].isErrorResponse).toBe(false);
+  });
 });
 
 // ── collectReqBodyFieldAccesses ───────────────────────────────────────────────
@@ -359,6 +388,24 @@ describe("analyzeFile (integration)", () => {
       "",
       specOps,
     );
+    expect(violations).toHaveLength(0);
+  });
+
+  it("does not produce a false-positive violation when status code is a variable (res.status(code).json({}))", () => {
+    const fp = writeRoute(
+      "dynamic-status-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", (req, res) => {
+        const code = computeStatus();
+        res.status(code).json({ undeclaredField: "value" });
+      });
+      export default router;
+    `,
+    );
+
+    const violations = analyzeFile(fp, "", specOps);
     expect(violations).toHaveLength(0);
   });
 
