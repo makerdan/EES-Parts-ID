@@ -4,14 +4,24 @@ import { Tabs } from "expo-router";
 import React from "react";
 import { Platform, StyleSheet, View } from "react-native";
 
+import { useApp } from "@/contexts/AppContext";
 import { useColors, useIsDark } from "@/hooks/useColors";
 import { searchResetEvent } from "@/utils/searchResetEvent";
 
 export default function TabLayout() {
+  const { isAuthenticated } = useApp();
   const colors = useColors();
   const isDark = useIsDark();
   const isIOS = Platform.OS === "ios";
   const isWeb = Platform.OS === "web";
+
+  // Guard: render nothing while approvalStatus has not settled to "approved".
+  // This closes the narrow window between setActive() resolving (isSignedIn=true)
+  // and the /auth/status fetch completing where approvalStatus is still "loading".
+  // During that window OAuthButtons may have already called router.replace("/(tabs)"),
+  // so without this guard tab content would briefly flash for pending/banned users
+  // before AuthGate fires its corrective redirect.
+  if (!isAuthenticated) return null;
 
   return (
     <Tabs
