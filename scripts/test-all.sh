@@ -5,7 +5,11 @@ set -uo pipefail
 # runner: jest | vitest
 SUITES=(
   "mockup-sandbox:./artifacts/mockup-sandbox:90:vitest"
-  "parts-id:./artifacts/parts-id:300:jest"
+  # Budget rationale: 102 test files (90 suites passing + 12 failing-to-compile due to
+  # codegen drift) complete in ~70s locally. 150s is ~2× that realistic ceiling and
+  # gives CI headroom without hiding genuinely slow tests. The old 300s was never
+  # measured and was pure headroom.
+  "parts-id:./artifacts/parts-id:150:jest"
   # Budget rationale: 17 unit files complete in ~9s locally; 31 integration files
   # need postgres. With the CI postgres service container always healthy, the full
   # suite runs in ~60-90s (no DB-hang overhead). 120s is ~2× that realistic ceiling.
