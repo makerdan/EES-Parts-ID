@@ -30,7 +30,7 @@ import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { useColors } from "@/hooks/useColors";
 import { API_BASE } from "@/utils/apiBase";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
-import { evictDeletedItemFromAllCaches,invalidateListCache } from "@/utils/editItemCache";
+import { evictDeletedItemFromAllCaches, invalidateListCache } from "@/utils/editItemCache";
 import type { QueryCache } from "@/utils/searchHelpers";
 import { evictItemFromQueryCache,QUERY_CACHE_KEY } from "@/utils/searchHelpers";
 
@@ -320,8 +320,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
                 Alert.alert("Delete Failed", data.error ?? `Could not delete part (HTTP ${res.status}).`);
                 return;
               }
-              // Synchronously remove the item from all in-memory caches so the
-              // list view updates instantly, then invalidate for a background refetch.
+              // Synchronously remove the item from all in-memory caches so
+              // BrowseByAisle / aisle-shelf views don't show it on the next
+              // render, then trigger a background refetch to confirm removal.
               await evictDeletedItemFromAllCaches({
                 queryClient,
                 asyncStorage: AsyncStorage,
