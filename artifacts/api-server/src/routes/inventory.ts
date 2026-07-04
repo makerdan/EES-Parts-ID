@@ -46,6 +46,7 @@ import {
   shouldUpdateScore,
 } from "../utils/scoreHelpers";
 import {
+  buildChipFilterRegexes,
   compareBySize,
   correctMisspelling,
   getSeriesBase,
