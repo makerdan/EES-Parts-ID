@@ -10,11 +10,12 @@
  */
 
 import { execFile } from "child_process";
-import { promisify } from "util";
 import * as fs from "fs/promises";
 import * as os from "os";
-import { logger } from "../lib/logger";
 import * as path from "path";
+import { promisify } from "util";
+
+import { logger } from "../lib/logger";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,7 +27,7 @@ export interface PageData {
    * Primary: [rendered full-page PNG]
    * Fallback: embedded raster images found on the page
    */
-  images: Buffer[];
+  images: Array<Buffer>;
   /** True when images[0] is a full rendered page image (not extracted objects) */
   isRendered: boolean;
   /** Pixel dimensions of the rendered page image (only set when isRendered=true) */
@@ -62,7 +63,7 @@ export function validatePdf(pdfBuffer: Buffer): void {
 /**
  * Process a PDF buffer and return per-page data ready for GPT-4o extraction.
  */
-export async function extractPdfPages(pdfBuffer: Buffer): Promise<PageData[]> {
+export async function extractPdfPages(pdfBuffer: Buffer): Promise<Array<PageData>> {
   // Try pdftoppm rendering first (best quality, full page context for GPT-4o)
   const rendered = await tryPdftoppmRendering(pdfBuffer);
   if (rendered) return rendered;
@@ -75,7 +76,7 @@ export async function extractPdfPages(pdfBuffer: Buffer): Promise<PageData[]> {
 
 interface RawItem {
   str?: string;
-  transform?: number[];
+  transform?: Array<number>;
 }
 
 interface PositionedItem {
@@ -91,14 +92,14 @@ interface PositionedItem {
  * newlines (rows). This keeps table rows intact instead of turning them into
  * word soup.
  */
-function reconstructText(items: RawItem[]): string {
-  const positioned: PositionedItem[] = items
+function reconstructText(items: Array<RawItem>): string {
+  const positioned: Array<PositionedItem> = items
     .map((i) => ({ str: i.str ?? "", x: i.transform?.[4] ?? 0, y: i.transform?.[5] ?? 0 }))
     .filter((i) => i.str.trim().length > 0);
 
   if (positioned.length === 0) return "";
 
-  const buckets: PositionedItem[][] = [];
+  const buckets: Array<Array<PositionedItem>> = [];
   for (const item of positioned) {
     const existing = buckets.find((b) => Math.abs(b[0].y - item.y) <= 4);
     if (existing) {
@@ -125,19 +126,19 @@ function reconstructText(items: RawItem[]): string {
 
 interface StructFigure {
   alt: string | null;
-  bbox: number[] | null;
+  bbox: Array<number> | null;
 }
 
 interface StructNode {
   role?: string;
   type?: string;
   alt?: string;
-  bbox?: number[];
-  children?: unknown[];
+  bbox?: Array<number>;
+  children?: Array<unknown>;
 }
 
 /** Walk the pdfjs structure tree recursively and collect Figure nodes. */
-function collectFigures(node: unknown, out: StructFigure[]): void {
+function collectFigures(node: unknown, out: Array<StructFigure>): void {
   if (!node || typeof node !== "object") return;
   const n = node as StructNode;
   if (n.role === "Figure") {
@@ -157,13 +158,13 @@ function collectFigures(node: unknown, out: StructFigure[]): void {
  * 3. Caption lines: text items spatially just below each figure bbox
  */
 function buildPageContext(
-  items: RawItem[],
-  figures: StructFigure[],
+  items: Array<RawItem>,
+  figures: Array<StructFigure>,
 ): string {
   const baseText = reconstructText(items);
 
   // Deduplicated alt text lines
-  const altLines: string[] = [];
+  const altLines: Array<string> = [];
   const seenAlts = new Set<string>();
   for (const fig of figures) {
     if (fig.alt && fig.alt.trim()) {
@@ -178,8 +179,8 @@ function buildPageContext(
   // Spatial caption extraction: text items whose baseline Y falls just below
   // each figure's bottom edge (within 40 pts below the figure).
   // PDF coordinate system: y increases upward, so figure bottom = bbox[1] (y_min).
-  const captionLines: string[] = [];
-  const positioned: PositionedItem[] = items
+  const captionLines: Array<string> = [];
+  const positioned: Array<PositionedItem> = items
     .map((i) => ({ str: i.str ?? "", x: i.transform?.[4] ?? 0, y: i.transform?.[5] ?? 0 }))
     .filter((i) => i.str.trim().length > 0);
 
@@ -207,7 +208,7 @@ function buildPageContext(
 
 // ── pdftoppm rendering (primary path) ────────────────────────────────────────
 
-async function tryPdftoppmRendering(pdfBuffer: Buffer): Promise<PageData[] | null> {
+async function tryPdftoppmRendering(pdfBuffer: Buffer): Promise<Array<PageData> | null> {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "catalog-pdf-"));
   const pdfPath = path.join(tmpDir, "input.pdf");
   const outPrefix = path.join(tmpDir, "page");
@@ -238,7 +239,7 @@ async function tryPdftoppmRendering(pdfBuffer: Buffer): Promise<PageData[] | nul
     // Get page text + alt text + captions via pdfjs-dist for supplementary context
     const textByPage = await extractRichText(pdfBuffer, pngFiles.length);
 
-    const pages: PageData[] = await Promise.all(
+    const pages: Array<PageData> = await Promise.all(
       pngFiles.map(async (fname, i) => {
         const imgBuf = await fs.readFile(path.join(tmpDir, fname));
         // Get dimensions from PNG header (bytes 16–24)
@@ -266,7 +267,7 @@ async function tryPdftoppmRendering(pdfBuffer: Buffer): Promise<PageData[] | nul
  * structure tree alt text, and spatial captions.
  */
 /** @internal exported for unit testing only */
-export async function extractRichText(pdfBuffer: Buffer, numPages: number): Promise<string[]> {
+export async function extractRichText(pdfBuffer: Buffer, numPages: number): Promise<Array<string>> {
   try {
     stubMissingDomGlobals();
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -295,14 +296,14 @@ export async function extractRichText(pdfBuffer: Buffer, numPages: number): Prom
       }),
     );
 
-    const results: string[] = [];
+    const results: Array<string> = [];
     for (let p = 1; p <= pageCount; p++) {
       const page = await doc.getPage(p);
       const tc = await page.getTextContent();
-      const items = tc.items as RawItem[];
+      const items = tc.items as Array<RawItem>;
 
       // Use the pre-fetched structure tree from cache.
-      const figures: StructFigure[] = [];
+      const figures: Array<StructFigure> = [];
       const cachedTree = structTreeCache.get(p);
       if (cachedTree !== undefined) {
         collectFigures(cachedTree, figures);
@@ -317,7 +318,7 @@ export async function extractRichText(pdfBuffer: Buffer, numPages: number): Prom
       { err },
       "extractRichText failed — returning empty text fallback",
     );
-    return Array(numPages).fill("") as string[];
+    return Array(numPages).fill("") as Array<string>;
   }
 }
 
@@ -343,7 +344,7 @@ function stubMissingDomGlobals(): void {
   }
 }
 
-async function pdfJsFallback(pdfBuffer: Buffer): Promise<PageData[]> {
+async function pdfJsFallback(pdfBuffer: Buffer): Promise<Array<PageData>> {
   stubMissingDomGlobals();
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   if (pdfjs.GlobalWorkerOptions) pdfjs.GlobalWorkerOptions.workerSrc = "";
@@ -378,19 +379,19 @@ async function pdfJsFallback(pdfBuffer: Buffer): Promise<PageData[]> {
     }),
   );
 
-  const pages: PageData[] = [];
+  const pages: Array<PageData> = [];
 
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
     const page = await doc.getPage(pageNum);
     let text = "";
-    const images: Buffer[] = [];
+    const images: Array<Buffer> = [];
 
     try {
       const tc = await page.getTextContent();
-      const items = tc.items as RawItem[];
+      const items = tc.items as Array<RawItem>;
 
       // Use the pre-fetched structure tree from cache.
-      const figures: StructFigure[] = [];
+      const figures: Array<StructFigure> = [];
       const cachedTree = structTreeCache.get(pageNum);
       if (cachedTree !== undefined) {
         collectFigures(cachedTree, figures);
@@ -410,7 +411,7 @@ async function pdfJsFallback(pdfBuffer: Buffer): Promise<PageData[]> {
             ops.fnArray[i] === pdfjs.OPS.paintImageXObject ||
             ops.fnArray[i] === pdfjs.OPS.paintInlineImageXObject
           ) {
-            const imgKey: string = (ops.argsArray[i] as string[])?.[0] ?? "";
+            const imgKey: string = (ops.argsArray[i] as Array<string>)?.[0] ?? "";
             if (!imgKey || seenKeys.has(imgKey)) continue;
             seenKeys.add(imgKey);
             try {

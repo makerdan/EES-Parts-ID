@@ -8,7 +8,7 @@
 
 import { db } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
-import { eq, sql, and } from "drizzle-orm";
+import { and, sql } from "drizzle-orm";
 
 export interface MatchResult {
   inventoryId: number;

@@ -1,14 +1,14 @@
 import { db } from "@workspace/db";
 import {
   abbreviationMapTable,
-  vendorMapTable,
-  synonymMapTable,
-  misspellingMapTable,
   electricalSlangMapTable,
+  misspellingMapTable,
+  synonymMapTable,
+  vendorMapTable,
 } from "@workspace/db";
 
 // ── ABBREVIATION MAP (~600 entries) ──────────────────────────────────────────
-const ABBREVIATIONS: Array<{ abbreviation: string; expansions: string[]; category: string }> = [
+const ABBREVIATIONS: Array<{ abbreviation: string; expansions: Array<string>; category: string }> = [
   // Poles / switching
   { abbreviation: "1p", expansions: ["single pole", "1 pole", "one pole", "sp"], category: "switching" },
   { abbreviation: "2p", expansions: ["double pole", "2 pole", "two pole", "dp"], category: "switching" },
@@ -366,7 +366,7 @@ const ABBREVIATIONS: Array<{ abbreviation: string; expansions: string[]; categor
 ];
 
 // ── VENDOR MAP (~300 entries) ─────────────────────────────────────────────────
-const VENDORS: Array<{ code: string; names: string[]; notes: string }> = [
+const VENDORS: Array<{ code: string; names: Array<string>; notes: string }> = [
   { code: "ETN", names: ["eaton", "cutler hammer", "cutler-hammer", "c-h", "ch", "westinghouse", "eaton electrical", "eaton corporation"], notes: "Major manufacturer" },
   { code: "SQD", names: ["square d", "schneider", "schneider electric", "squared", "sq d", "squaed d"], notes: "Schneider brand" },
   { code: "HUB", names: ["hubbell", "hubbell wiring", "hubbell incorporated", "hubbell lighting", "habirshaw"], notes: "Hubbell brands" },
@@ -612,7 +612,7 @@ const VENDORS: Array<{ code: string; names: string[]; notes: string }> = [
 // ── PRIMARY VENDOR MAP (68 authoritative entries) ─────────────────────────────
 // These are the real inventory vendors. They take priority over the extended
 // VENDORS list above during lookup/seed. isPrimary: true marks them as canonical.
-export const PRIMARY_VENDORS: Array<{ code: string; names: string[]; notes: string; isPrimary: true }> = [
+export const PRIMARY_VENDORS: Array<{ code: string; names: Array<string>; notes: string; isPrimary: true }> = [
   { code: "COP", names: ["copper", "copper wire", "bare copper"], notes: "Copper (wire material)", isPrimary: true },
   { code: "ALU", names: ["aluminum", "aluminium", "aluminum wire"], notes: "Aluminum (wire material)", isPrimary: true },
   { code: "COR", names: ["cord", "power cord", "extension cord"], notes: "Cord (wire type)", isPrimary: true },
@@ -684,7 +684,7 @@ export const PRIMARY_VENDORS: Array<{ code: string; names: string[]; notes: stri
 ];
 
 // ── SYNONYM MAP (~2000 entries, organized by category) ───────────────────────
-const SYNONYMS: Array<{ term: string; synonyms: string[]; category: string }> = [
+const SYNONYMS: Array<{ term: string; synonyms: Array<string>; category: string }> = [
   // ── Receptacles/Outlets ──
   { term: "receptacle", synonyms: ["outlet", "plug", "socket", "wall outlet", "duplex outlet", "power outlet", "rcpt", "dup"], category: "receptacle" },
   { term: "outlet", synonyms: ["receptacle", "plug", "socket", "wall outlet", "duplex", "rcpt"], category: "receptacle" },
@@ -1838,7 +1838,7 @@ const MISSPELLINGS: Array<{ misspelling: string; correction: string }> = [
 ];
 
 // ── ELECTRICAL SLANG MAP (~600 entries) ───────────────────────────────────────
-const SLANG: Array<{ slangTerm: string; standardTerms: string[]; category: string; notes: string }> = [
+const SLANG: Array<{ slangTerm: string; standardTerms: Array<string>; category: string; notes: string }> = [
   { slangTerm: "smurf tube", standardTerms: ["ent", "electrical nonmetallic tubing", "corrugated conduit", "blue conduit"], category: "conduit", notes: "Blue corrugated ENT conduit" },
   { slangTerm: "cheater plug", standardTerms: ["3 to 2 prong adapter", "cube tap adapter", "ground lift adapter"], category: "adapter", notes: "3-to-2 prong adapter" },
   { slangTerm: "pigtail", standardTerms: ["wire splice", "short wire connector", "lead wire", "service entrance pigtail"], category: "wire", notes: "Short wire section for splicing" },

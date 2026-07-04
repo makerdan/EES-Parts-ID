@@ -11,9 +11,10 @@
  * provider choice from the database (takes priority over AI_PROVIDER env var).
  */
 
-import OpenAI from "openai";
-import { db, adminPreferencesTable } from "@workspace/db";
+import { adminPreferencesTable,db } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import OpenAI from "openai";
+
 import { logger } from "./logger";
 
 export type AIProvider = "poe" | "openai";
@@ -213,7 +214,7 @@ export function getDimensionsModel(): string {
  * Return every distinct Poe bot name the app may call.
  * Used by probePoeBotsOnStartup() to validate names at boot time.
  */
-export function getAllPoeModelNames(): string[] {
+export function getAllPoeModelNames(): Array<string> {
   const names = [
     POE_ENRICH_BOT,     // enrich / reference
     POE_IDENTIFY_BOT,   // identify (photo-based)
@@ -238,7 +239,7 @@ export type PoeFeature = "enrich" | "identify" | "dimensions" | "catalog";
  * Uses the effective catalog bot name (may have been switched at startup by
  * probePoeBotsOnStartup() if POE_CATALOG_BOT returned 404).
  */
-export function getPoeChainForFeature(feature: PoeFeature): string[] {
+export function getPoeChainForFeature(feature: PoeFeature): Array<string> {
   const catalogBot = _effectiveCatalogBotName;
   switch (feature) {
     case "enrich":

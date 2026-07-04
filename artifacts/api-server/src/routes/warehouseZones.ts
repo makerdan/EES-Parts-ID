@@ -1,13 +1,13 @@
-import { Router } from "express";
-import { eq, asc, sql } from "drizzle-orm";
-import { db } from "@workspace/db";
-import { warehouseZoneTable, inventoryTable } from "@workspace/db";
 import {
   CreateWarehouseZoneBody,
   UpdateWarehouseZoneBody,
   ListWarehouseZonesResponse,
   UpdateWarehouseZoneResponse,
 } from "@workspace/api-zod";
+import { db } from "@workspace/db";
+import { inventoryTable, warehouseZoneTable } from "@workspace/db";
+import { asc, eq, sql } from "drizzle-orm";
+import { Router } from "express";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 /** Strips leading zeros from numeric aisle ID strings ("08" → "8", "A1" → "A1"). */
@@ -42,7 +42,7 @@ router.get("/coverage", async (_req, res) => {
   try {
     const result = await db.execute<{
       unsorted_count: number;
-      uncovered_aisles: string[];
+      uncovered_aisles: Array<string>;
     }>(sql`
       WITH
       -- Count inventory items that have no valid bin location.

@@ -1,21 +1,22 @@
-import { Router, type IRouter } from "express";
-import healthRouter from "./health";
+import { type IRouter,Router } from "express";
+
+import adminRouter from "./admin";
+import adminAiStatusRouter from "./adminAiStatus";
+import adminDashboardRouter from "./adminDashboard";
+import adminQueryRouter from "./adminQuery";
+import adminUploadRouter from "./adminUpload";
+import aiRouter from "./ai";
 import authRouter from "./auth";
+import catalogPdfRouter from "./catalogPdf";
+import contactRouter from "./contact";
+import dictionariesRouter from "./dictionaries";
+import floorPlanRouter from "./floorPlan";
+import healthRouter from "./health";
 import inventoryRouter from "./inventory";
 import inventoryCategoriesRouter from "./inventoryCategories";
-import dictionariesRouter from "./dictionaries";
-import aiRouter from "./ai";
 import referenceRouter from "./reference";
-import adminRouter from "./admin";
-import adminUploadRouter from "./adminUpload";
-import warehouseZonesRouter from "./warehouseZones";
-import catalogPdfRouter from "./catalogPdf";
-import floorPlanRouter from "./floorPlan";
-import contactRouter from "./contact";
-import adminQueryRouter from "./adminQuery";
-import adminDashboardRouter from "./adminDashboard";
 import trackRouter from "./track";
-import adminAiStatusRouter from "./adminAiStatus";
+import warehouseZonesRouter from "./warehouseZones";
 
 const router: IRouter = Router();
 

@@ -9,11 +9,12 @@
  */
 
 import OpenAI from "openai";
+
 import {
-  getPoeChainForFeature,
-  getProvider,
   getAiClient,
   getModelForFeature,
+  getPoeChainForFeature,
+  getProvider,
   type PoeFeature,
 } from "./aiProvider";
 

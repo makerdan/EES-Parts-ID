@@ -1,5 +1,6 @@
 import type { Application } from "express";
 import type { Server } from "http";
+
 import { logger } from "./logger";
 
 export const MAX_RETRIES = 10;

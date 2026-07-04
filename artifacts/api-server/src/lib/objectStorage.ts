@@ -6,8 +6,8 @@
  * dependency on google-auth-library (which would conflict with the version
  * already pulled in by @google-cloud/storage).
  */
-import { Storage } from "@google-cloud/storage";
 import type { StorageOptions } from "@google-cloud/storage";
+import { Storage } from "@google-cloud/storage";
 import { randomUUID } from "crypto";
 
 const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";

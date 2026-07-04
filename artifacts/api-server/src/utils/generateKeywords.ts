@@ -81,11 +81,11 @@ export interface PoeEnrichedError extends Error {
  * @param pinnedKeywords - Keywords the admin explicitly saved; never filtered.
  */
 export function mergeWithPinned(
-  aiKeywords: string[],
-  pinnedKeywords: string[],
-): string[] {
+  aiKeywords: Array<string>,
+  pinnedKeywords: Array<string>,
+): Array<string> {
   const seen = new Set<string>();
-  const result: string[] = [];
+  const result: Array<string> = [];
   for (const kw of [...pinnedKeywords, ...aiKeywords]) {
     const normalised = kw.trim();
     if (normalised.length === 0) continue;
@@ -101,7 +101,7 @@ export function mergeWithPinned(
 export async function generateKeywords(
   item: EnrichItem,
   model: string = getEnrichModel(),
-): Promise<string[]> {
+): Promise<Array<string>> {
   void model;
   const systemInstruction =
     "You are an electrical supplies identifier and warehouse cataloger specializing in keyword extraction for searchable inventory systems. " +
@@ -129,14 +129,14 @@ export async function generateKeywords(
     enriched.cause = err;
     throw enriched;
   }
-  let keywords: string[] = [];
+  let keywords: Array<string> = [];
   try {
     const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
     if (Array.isArray(parsed)) keywords = parsed.map(String).slice(0, 10);
   } catch {
     keywords = text
       .split(/[,\n]/)
-      .map((k: string) => k.trim().replace(/["\[\]]/g, ""))
+      .map((k: string) => k.trim().replace(/["[\]]/g, ""))
       .filter((k: string) => k.length > 1)
       .slice(0, 10);
   }

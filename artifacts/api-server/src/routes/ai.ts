@@ -1,17 +1,18 @@
-import { Router } from "express";
 import { getAuth } from "@clerk/express";
-import { getAiClient, getIdentifyModel, getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
-import { tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
-import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace/integrations-poe-server";
-import { buildImageContent, checkImagePayloadSize, checkPerImageSize, extractJsonFromText, normalizeAnalysis, isProviderPayloadTooLargeError } from "../utils/aiHelpers";
-import { MAX_IMAGE_BYTES_CLAUDE_SONNET } from "../lib/poeModelLimits";
+import { AiIdentifyBodySchema, AiPartCardBodySchema,AiTranslateQueryBodySchema } from "@workspace/api-zod";
 import { db } from "@workspace/db";
-import { aiRequestLogTable, inventoryTable, inventoryFtsVector, partCardCacheTable } from "@workspace/db";
-import { eq, gt, lt, sql } from "drizzle-orm";
-import { logger } from "../lib/logger";
+import { aiRequestLogTable, inventoryFtsVector, inventoryTable, partCardCacheTable } from "@workspace/db";
+import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace/integrations-poe-server";
+import { lt, sql } from "drizzle-orm";
+import { Router } from "express";
 import OpenAI from "openai";
-import { AiIdentifyBodySchema, AiTranslateQueryBodySchema, AiPartCardBodySchema } from "@workspace/api-zod";
-import { identifyLimiter, translateLimiter, partCardLimiter } from "../lib/rateLimiter";
+
+import { getAiClient, getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
+import { logger } from "../lib/logger";
+import { PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
+import { MAX_IMAGE_BYTES_CLAUDE_SONNET } from "../lib/poeModelLimits";
+import { identifyLimiter, partCardLimiter,translateLimiter } from "../lib/rateLimiter";
+import { buildImageContent, checkImagePayloadSize, checkPerImageSize, extractJsonFromText, isProviderPayloadTooLargeError,normalizeAnalysis } from "../utils/aiHelpers";
 
 /** Returns the rate-limit key for a request: Clerk userId if available, else IP. */
 function rateLimitKey(req: Parameters<typeof getAuth>[0]): string {
@@ -77,7 +78,7 @@ router.post("/identify", async (req, res) => {
       }
     }
 
-    const contextParts: string[] = [];
+    const contextParts: Array<string> = [];
     if (keywords) contextParts.push(`Keywords: ${keywords}`);
     if (vendor) contextParts.push(`Manufacturer/Vendor: ${vendor}`);
     if (color) contextParts.push(`Color: ${color}`);
@@ -237,7 +238,7 @@ router.post("/translate-query", async (req, res) => {
     const parsed = extractJsonFromText(text) ?? {};
 
     const translatedTerms = Array.isArray(parsed.translatedTerms)
-      ? (parsed.translatedTerms as unknown[]).filter((t): t is string => typeof t === "string").slice(0, 8)
+      ? (parsed.translatedTerms as Array<unknown>).filter((t): t is string => typeof t === "string").slice(0, 8)
       : [];
     const interpretation = typeof parsed.interpretation === "string" ? parsed.interpretation : "";
     const appliedTranslation =
@@ -249,17 +250,17 @@ router.post("/translate-query", async (req, res) => {
 
     const partName = typeof parsed.partName === "string" ? parsed.partName : "";
     const partSpecs = Array.isArray(parsed.partSpecs)
-      ? (parsed.partSpecs as unknown[]).filter((s): s is string => typeof s === "string").slice(0, 6)
+      ? (parsed.partSpecs as Array<unknown>).filter((s): s is string => typeof s === "string").slice(0, 6)
       : [];
     const catalogNumbers = Array.isArray(parsed.catalogNumbers)
-      ? (parsed.catalogNumbers as unknown[]).filter((s): s is string => typeof s === "string").slice(0, 4)
+      ? (parsed.catalogNumbers as Array<unknown>).filter((s): s is string => typeof s === "string").slice(0, 4)
       : [];
     const suggestedRequery =
       typeof parsed.suggestedRequery === "string" && parsed.suggestedRequery.trim()
         ? parsed.suggestedRequery.trim()
         : translatedTerms.join(" ");
 
-    let substitutes: object[] = [];
+    let substitutes: Array<object> = [];
     if (suggestedRequery) {
       try {
         const subRows = await db
@@ -385,7 +386,7 @@ router.post("/part-card", async (req, res) => {
       partCardCache.delete(cacheKey);
     }
 
-    const contextParts: string[] = [];
+    const contextParts: Array<string> = [];
     if (vendor.trim()) contextParts.push(`Manufacturer/Vendor: ${vendor.trim()}`);
     if (description.trim()) contextParts.push(`Description: ${description.trim()}`);
 
@@ -420,7 +421,7 @@ router.post("/part-card", async (req, res) => {
 
     const displayName = typeof parsed.displayName === "string" ? parsed.displayName : "";
     const specs = Array.isArray(parsed.specs)
-      ? (parsed.specs as unknown[]).filter(
+      ? (parsed.specs as Array<unknown>).filter(
           (s): s is { label: string; value: string } =>
             typeof s === "object" && s !== null &&
             typeof (s as { label?: unknown }).label === "string" &&
@@ -428,7 +429,7 @@ router.post("/part-card", async (req, res) => {
         ).slice(0, 10)
       : [];
     const crossRefs = Array.isArray(parsed.crossRefs)
-      ? (parsed.crossRefs as unknown[]).filter((s): s is string => typeof s === "string").slice(0, 6)
+      ? (parsed.crossRefs as Array<unknown>).filter((s): s is string => typeof s === "string").slice(0, 6)
       : [];
     const compatibilityNote = typeof parsed.compatibilityNote === "string" ? parsed.compatibilityNote : "";
 

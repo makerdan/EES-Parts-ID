@@ -10,8 +10,8 @@
  *     → imageIndex / imageIndex2 are 0-based indices into that array.
  */
 
-import { getCatalogModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
-import { tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
+import { getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
+import { PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
 import { MAX_REQUEST_BYTES_GEMINI_3_1_PRO } from "../lib/poeModelLimits";
 
 export interface ImageRegion {
@@ -91,13 +91,13 @@ function parseRegion(val: unknown): ImageRegion | null {
 }
 
 export interface ExtractCatalogPageResult {
-  entries: CatalogEntry[];
+  entries: Array<CatalogEntry>;
   rawText: string;
 }
 
 export async function extractCatalogPage(
   pageText: string,
-  pageImages: Buffer[],
+  pageImages: Array<Buffer>,
   vendor: string,
   useOpenAiFallback = false,
 ): Promise<ExtractCatalogPageResult> {
@@ -163,7 +163,7 @@ export async function extractCatalogPage(
     const match = raw.match(/\[[\s\S]*?\]/);
     if (!match) return { entries: [], rawText: raw };
 
-    const parsed = JSON.parse(match[0]) as unknown[];
+    const parsed = JSON.parse(match[0]) as Array<unknown>;
     if (!Array.isArray(parsed)) return { entries: [], rawText: raw };
 
     const entries = parsed

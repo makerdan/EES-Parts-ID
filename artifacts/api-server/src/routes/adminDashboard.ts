@@ -1,15 +1,16 @@
-import { Router } from "express";
 import { db } from "@workspace/db";
 import {
   aiRequestLogTable,
-  screenViewLogTable,
-  inventoryTable,
   catalogPdfJobTable,
   contactMessagesTable,
+  inventoryTable,
+  screenViewLogTable,
 } from "@workspace/db";
-import { sql, count, eq } from "drizzle-orm";
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import { count, eq,sql } from "drizzle-orm";
+import { Router } from "express";
+
 import { logger } from "../lib/logger";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
 

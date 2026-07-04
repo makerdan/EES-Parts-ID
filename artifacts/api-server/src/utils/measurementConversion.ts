@@ -101,12 +101,12 @@ function nearestTradeSize(inches: number): string | null {
 }
 
 /** Produce metric-equivalent search terms for an inch value (mm + cm). */
-function inchToMetricTerms(inches: number): string[] {
+function inchToMetricTerms(inches: number): Array<string> {
   // Pre-round to 2 dp to eliminate IEEE-754 noise (e.g. 0.75 * 25.4 = 19.0499...)
   const mm = Math.round(inches * MM_PER_INCH * 100) / 100;
   const mmStr = fmt(mm, 1);
   const mmInt = String(Math.round(mm));
-  const terms: string[] = [`${mmStr}mm`, `${mmStr} mm`];
+  const terms: Array<string> = [`${mmStr}mm`, `${mmStr} mm`];
   if (mmInt !== mmStr) {
     terms.push(`${mmInt}mm`, `${mmInt} mm`);
   }
@@ -123,10 +123,10 @@ function inchToMetricTerms(inches: number): string[] {
 }
 
 /** Produce imperial-equivalent search terms for a mm value. */
-function mmToInchTerms(mm: number): string[] {
+function mmToInchTerms(mm: number): Array<string> {
   const inches = mm / MM_PER_INCH;
   const inStr = fmt(inches, 3);
-  const terms: string[] = [`${inStr} inch`, `${inStr}"`];
+  const terms: Array<string> = [`${inStr} inch`, `${inStr}"`];
   const ts = nearestTradeSize(inches);
   if (ts) {
     terms.push(`${ts} inch`, `${ts}"`, `${ts} in`);
@@ -144,7 +144,7 @@ function mmToInchTerms(mm: number): string[] {
  * Wire-gauge fractions (e.g. "14/2") are excluded because they never carry
  * an explicit inch-unit suffix in catalogue text.
  */
-export function expandMeasurements(text: string): string[] {
+export function expandMeasurements(text: string): Array<string> {
   const extra = new Set<string>();
 
   // ── Metric → Imperial ──────────────────────────────────────────────────────
@@ -236,7 +236,7 @@ export function expandMeasurements(text: string): string[] {
   // Lookbehind excludes denominators (3 in "1-1/4"") and multi-digit prefixes
   // (e.g. the "8" in "3/8"").  Range 1–12 avoids matching AWG sizes like "14",
   // voltage-adjacent numbers, or implausible conduit sizes.
-  for (const m of text.matchAll(/(?<![\/\d])([1-9]|1[0-2])\s*(?:"|in(?:ch(?:es?)?)?\b)/gi)) {
+  for (const m of text.matchAll(/(?<![/\d])([1-9]|1[0-2])\s*(?:"|in(?:ch(?:es?)?)?\b)/gi)) {
     const inches = parseInt(m[1]!);
     for (const t of inchToMetricTerms(inches)) extra.add(t);
   }

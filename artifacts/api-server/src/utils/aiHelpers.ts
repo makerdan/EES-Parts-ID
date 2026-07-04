@@ -27,7 +27,7 @@ export function estimateImageBytes(img: string): number {
  * `{ ok: false, message, imageIndex, byteSize }` for the first oversized image.
  */
 export function checkPerImageSize(
-  images: string[],
+  images: Array<string>,
   limitBytes: number,
 ): { ok: true } | { ok: false; message: string; imageIndex: number; byteSize: number } {
   for (let i = 0; i < images.length; i++) {
@@ -58,7 +58,7 @@ export function checkPerImageSize(
  * `ceil(base64Chars * 3 / 4)`.
  */
 export function checkImagePayloadSize(
-  images: string[],
+  images: Array<string>,
   limitBytes: number = MAX_IMAGE_PAYLOAD_BYTES,
 ): { ok: true } | { ok: false; message: string; byteSize: number } {
   const byteSize = images.reduce((sum, img) => {
@@ -79,10 +79,10 @@ export function checkImagePayloadSize(
 }
 
 export interface AiAnalysis {
-  partNumbers: string[];
-  searchTerms: string[];
-  synonyms: string[];
-  relatedTerms: string[];
+  partNumbers: Array<string>;
+  searchTerms: Array<string>;
+  synonyms: Array<string>;
+  relatedTerms: Array<string>;
   manufacturerVerified: boolean;
   detectedVendor: string | null;
   summary: string;
@@ -94,7 +94,7 @@ export interface AiAnalysis {
  * At most 4 images are used (matching the UI capture limit).
  * Bare base64 strings (no data: prefix) are treated as JPEG.
  */
-export function buildImageContent(images: string[]): Array<{
+export function buildImageContent(images: Array<string>): Array<{
   type: "image_url";
   image_url: { url: string };
 }> {
@@ -166,10 +166,10 @@ export function normalizeAnalysis(
     };
   }
   return {
-    partNumbers: Array.isArray(parsed.partNumbers) ? (parsed.partNumbers as string[]) : [],
-    searchTerms: Array.isArray(parsed.searchTerms) ? (parsed.searchTerms as string[]) : [],
-    synonyms: Array.isArray(parsed.synonyms) ? (parsed.synonyms as string[]) : [],
-    relatedTerms: Array.isArray(parsed.relatedTerms) ? (parsed.relatedTerms as string[]) : [],
+    partNumbers: Array.isArray(parsed.partNumbers) ? (parsed.partNumbers as Array<string>) : [],
+    searchTerms: Array.isArray(parsed.searchTerms) ? (parsed.searchTerms as Array<string>) : [],
+    synonyms: Array.isArray(parsed.synonyms) ? (parsed.synonyms as Array<string>) : [],
+    relatedTerms: Array.isArray(parsed.relatedTerms) ? (parsed.relatedTerms as Array<string>) : [],
     manufacturerVerified: typeof parsed.manufacturerVerified === "boolean"
       ? parsed.manufacturerVerified
       : false,

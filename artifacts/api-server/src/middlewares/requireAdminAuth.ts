@@ -1,7 +1,7 @@
-import { type Request, type Response, type NextFunction } from "express";
 import { getAuth } from "@clerk/express";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { type NextFunction,type Request, type Response } from "express";
 
 /**
  * Role-based admin guard for admin-only API endpoints.

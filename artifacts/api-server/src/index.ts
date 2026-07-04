@@ -1,10 +1,11 @@
-import app from "./app";
-import { logger } from "./lib/logger";
-import { startServer, MAX_RETRIES } from "./lib/startServer";
 import { db } from "@workspace/db";
 import { catalogPdfJobTable, warehouseZoneTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
+
+import app from "./app";
 import { initProvider, probePoeBotsOnStartup } from "./lib/aiProvider";
+import { logger } from "./lib/logger";
+import { MAX_RETRIES,startServer } from "./lib/startServer";
 
 process.on("uncaughtException", (err) => {
   logger.error({ err }, "Uncaught exception — exiting");
@@ -70,7 +71,7 @@ async function initQuickLookupCache(): Promise<void> {
   }
 }
 
-const ZONE_SECTION_SENTINELS: { id: number; expectedSectionNum: number }[] = [
+const ZONE_SECTION_SENTINELS: Array<{ id: number; expectedSectionNum: number }> = [
   { id: 431, expectedSectionNum: 3 },
   { id: 555, expectedSectionNum: 1 },
   { id: 840, expectedSectionNum: 1 },
@@ -89,7 +90,7 @@ async function checkZoneSectionNumIntegrity(): Promise<void> {
       return;
     }
 
-    const mismatches: { id: number; expected: number; actual: number | null }[] = [];
+    const mismatches: Array<{ id: number; expected: number; actual: number | null }> = [];
     for (const sentinel of ZONE_SECTION_SENTINELS) {
       const row = rows.find((r) => r.id === sentinel.id);
       if (row && row.sectionNum !== sentinel.expectedSectionNum) {

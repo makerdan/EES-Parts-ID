@@ -23,9 +23,9 @@
  *   app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
  */
 
-import { createProxyMiddleware } from "http-proxy-middleware";
 import type { RequestHandler } from "express";
 import type { IncomingHttpHeaders } from "http";
+import { createProxyMiddleware } from "http-proxy-middleware";
 
 const CLERK_FAPI = "https://frontend-api.clerk.dev";
 export const CLERK_PROXY_PATH = "/api/__clerk";
@@ -128,7 +128,7 @@ export function clerkProxyMiddleware(): RequestHandler {
           return;
         }
 
-        const chunks: Buffer[] = [];
+        const chunks: Array<Buffer> = [];
         proxyRes.on("data", (chunk: Buffer) => chunks.push(chunk));
         proxyRes.on("end", () => {
           const body = Buffer.concat(chunks);

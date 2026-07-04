@@ -1,16 +1,17 @@
-import express, { type Express } from "express";
-import cors from "cors";
-import pinoHttp from "pino-http";
 import { clerkMiddleware } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
-import router from "./routes";
+import cors from "cors";
+import express, { type Express } from "express";
+import pinoHttp from "pino-http";
+
 import { logger } from "./lib/logger";
-import { requireAppAuth } from "./middlewares/requireAppAuth";
 import {
   CLERK_PROXY_PATH,
   clerkProxyMiddleware,
   getClerkProxyHost,
 } from "./middlewares/clerkProxyMiddleware";
+import { requireAppAuth } from "./middlewares/requireAppAuth";
+import router from "./routes";
 
 const app: Express = express();
 
@@ -57,7 +58,7 @@ if (!isDev && !rawAllowedOrigins) {
   );
 }
 
-const allowedOrigins: string[] = rawAllowedOrigins
+const allowedOrigins: Array<string> = rawAllowedOrigins
   ? rawAllowedOrigins.split(",").map((o) => o.trim()).filter(Boolean)
   : [];
 

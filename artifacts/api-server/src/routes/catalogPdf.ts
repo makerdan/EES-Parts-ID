@@ -19,19 +19,19 @@
  *   imageUrl/imageSource/imageConfidence/catalogPdfJobId.
  */
 
-import { Router } from "express";
-import { eq, sql, and, or, lt, desc, inArray, isNull } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { inventoryTable, catalogPdfJobTable } from "@workspace/db";
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
-import { extractPdfPages, validatePdf } from "../utils/pdfProcessor";
-import { extractCatalogPage, CatalogAiError } from "../utils/catalogExtractor";
-import type { ImageRegion } from "../utils/catalogExtractor";
+import { catalogPdfJobTable,inventoryTable } from "@workspace/db";
+import { and, desc, eq, inArray, isNull,lt, or, sql } from "drizzle-orm";
+import { Router } from "express";
 
-import { matchCatalogNumber } from "../utils/catalogMatcher";
 import { uploadCatalogImage } from "../lib/objectStorage";
 import { PoeBotChainExhaustedError } from "../lib/poeBot";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { isProviderPayloadTooLargeError } from "../utils/aiHelpers";
+import type { ImageRegion } from "../utils/catalogExtractor";
+import { CatalogAiError,extractCatalogPage } from "../utils/catalogExtractor";
+import { matchCatalogNumber } from "../utils/catalogMatcher";
+import { extractPdfPages, validatePdf } from "../utils/pdfProcessor";
 
 // ── In-memory AI raw log store (in-session only, not persisted to DB) ─────────
 // Keyed by job ID (child job or single-upload job). Entries are appended as
@@ -72,7 +72,7 @@ const router = Router();
 // ── Image helper ──────────────────────────────────────────────────────────────
 type PageCtx = {
   isRendered: boolean;
-  images: Buffer[];
+  images: Array<Buffer>;
   pageWidth: number;
   pageHeight: number;
 };
@@ -1047,7 +1047,7 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
     // parent job's review screen we match against both the requested jobId
     // directly *and* any child job whose parent_job_id equals the requested
     // jobId.
-    let effectiveJobIds: number[] | null = null;
+    let effectiveJobIds: Array<number> | null = null;
     if (jobIdFilter !== null) {
       const childRows = await db
         .select({ id: catalogPdfJobTable.id })
@@ -1081,8 +1081,8 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
       )
       .orderBy(desc(inventoryTable.catalogPdfJobId), desc(inventoryTable.updatedAt));
 
-    const jobIds = [...new Set(rows.map((r) => r.catalogPdfJobId).filter(Boolean))] as number[];
-    let jobs: { id: number; vendor: string; filename: string; status: string; createdAt: Date; parentJobId: number | null }[] = [];
+    const jobIds = [...new Set(rows.map((r) => r.catalogPdfJobId).filter(Boolean))] as Array<number>;
+    let jobs: Array<{ id: number; vendor: string; filename: string; status: string; createdAt: Date; parentJobId: number | null }> = [];
     if (jobIds.length > 0) {
       jobs = await db
         .select({

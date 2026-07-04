@@ -1,16 +1,17 @@
-import { Router } from "express";
-import { logger } from "../lib/logger";
 import { db } from "@workspace/db";
-import { quickLookupCacheTable, inventoryTable, referenceLogTable, aiRequestLogTable } from "@workspace/db";
-import { desc, eq, lt, or, ilike, sql } from "drizzle-orm";
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import { aiRequestLogTable,inventoryTable, quickLookupCacheTable, referenceLogTable } from "@workspace/db";
+import { desc, eq, ilike, lt, or, sql } from "drizzle-orm";
+import { Router } from "express";
+
 import {
-  normalizeQuestion,
-  hashQuestion,
   getCachedAnswer,
+  hashQuestion,
+  normalizeQuestion,
   setCachedAnswer,
 } from "../lib/answerCache";
-import { callGemini, callGeminiWithHistory, WEB_REFERENCE_MODEL } from "../lib/webSearch";
+import { logger } from "../lib/logger";
+import { callGemini, callGeminiWithHistory } from "../lib/webSearch";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
 
@@ -155,7 +156,7 @@ async function collectAnswer(
  */
 async function collectAnswerWithHistory(
   question: string,
-  history: { q: string; a: string }[],
+  history: Array<{ q: string; a: string }>,
 ): Promise<{ answer: string; matchedItemCount: number; usedWebSearch: boolean }> {
   const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question);
   const systemContent = BASE_SYSTEM_PROMPT + inventoryContext;
@@ -169,7 +170,7 @@ router.post("/ask", async (req, res) => {
   try {
     const { question, history } = req.body as {
       question: string;
-      history?: { q: string; a: string }[];
+      history?: Array<{ q: string; a: string }>;
     };
     if (!question?.trim()) {
       return void res.status(400).json({ error: "question is required" });
