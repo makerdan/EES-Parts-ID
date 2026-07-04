@@ -1104,11 +1104,12 @@ router.post("/search", async (req, res) => {
 // combination already exists in the database.
 router.post("/add-part", requireAdminAuth, async (req, res) => {
   try {
-    const { vendor, catalog, description, binLocation } = req.body as {
+    const { vendor, catalog, description, binLocation, imageBase64 } = req.body as {
       vendor?: string;
       catalog?: string;
       description?: string;
       binLocation?: string;
+      imageBase64?: string;
     };
 
     if (!vendor?.trim() || !catalog?.trim()) {
@@ -1155,8 +1156,33 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
       })
       .returning();
 
+    // If the caller included an image, upload it now. If the upload fails we
+    // delete the just-created row so the client can retry without hitting a
+    // 409 conflict on the next attempt (no orphaned records).
+    let finalItem = created;
+    if (imageBase64?.trim() && created) {
+      try {
+        const rawBuffer = Buffer.from(imageBase64, "base64");
+        const { fullBuffer, thumbnailBuffer } = await resizeImages(rawBuffer);
+        const [uploadedUrl, uploadedThumbUrl] = await Promise.all([
+          uploadCatalogImage(fullBuffer, "image/jpeg"),
+          uploadCatalogImage(thumbnailBuffer, "image/jpeg"),
+        ]);
+        const [withPhoto] = await db
+          .update(inventoryTable)
+          .set({ imageUrl: uploadedUrl, thumbnailUrl: uploadedThumbUrl, updatedAt: new Date() })
+          .where(eq(inventoryTable.id, created.id))
+          .returning();
+        if (withPhoto) finalItem = withPhoto;
+      } catch (uploadErr) {
+        await db.delete(inventoryTable).where(eq(inventoryTable.id, created.id)).catch(() => {});
+        logger.error({ err: uploadErr }, "[inventory/add-part] Photo upload failed — rolling back inserted row");
+        return void res.status(500).json({ error: "Failed to upload photo — part was not saved." });
+      }
+    }
+
     invalidateReferenceAnswerCache().catch(() => {});
-    res.status(201).json(AddPartResponse.parse({ item: created }));
+    res.status(201).json(AddPartResponse.parse({ item: finalItem }));
   } catch (err) {
     logger.error({ err }, "[inventory/add-part] Failed to add part");
     res.status(500).json({ error: "Failed to add part" });
