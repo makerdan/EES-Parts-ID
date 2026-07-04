@@ -24,6 +24,7 @@ import { catalogPdfJobTable,inventoryTable } from "@workspace/db";
 import { and, desc, eq, inArray, isNull,lt, or, sql } from "drizzle-orm";
 import { Router } from "express";
 
+import { logger } from "../lib/logger";
 import { uploadCatalogImage } from "../lib/objectStorage";
 import { PoeBotChainExhaustedError } from "../lib/poeBot";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
@@ -97,7 +98,7 @@ async function cropOrSelectImage(
         .png()
         .toBuffer();
     } catch (cropErr) {
-      console.warn("[catalog-pdf] Crop failed, skipping image:", cropErr);
+      logger.warn({ err: cropErr }, "[catalog-pdf] Crop failed, skipping image");
       return null;
     }
   } else {
@@ -151,7 +152,7 @@ async function finalizeParentIfComplete(parentId: number): Promise<void> {
         AND catalog_pdf_job.status NOT IN ('done', 'done_with_errors', 'failed')
     `);
   } catch (err) {
-    console.error(`[catalog-pdf] finalizeParentIfComplete failed for parent=${parentId}:`, err);
+    logger.error({ err, parentId }, "[catalog-pdf] finalizeParentIfComplete failed");
   }
 }
 
@@ -218,8 +219,9 @@ async function processPdfPages(
     }
 
     const textPreview = page.text.slice(0, 200).replace(/\n/g, " ");
-    console.log(
-      `[catalog-pdf] page=${page.pageNum + pageOffset} text=${page.text.length}chars images=${page.images.length} preview="${textPreview}"`,
+    logger.info(
+      { jobId, page: page.pageNum + pageOffset, textChars: page.text.length, images: page.images.length, preview: textPreview },
+      "[catalog-pdf] processing page",
     );
 
     let entries: Awaited<ReturnType<typeof extractCatalogPage>>["entries"];
@@ -243,14 +245,14 @@ async function processPdfPages(
               AND status NOT IN ('done', 'failed')
           `);
         }
-        console.warn(`[catalog-pdf] job=${jobId} poe_chain_exhausted on page ${page.pageNum + pageOffset}`);
+        logger.warn({ jobId, page: page.pageNum + pageOffset }, "[catalog-pdf] poe_chain_exhausted");
         return;
       }
       // Payload-too-large: re-throw to fail the entire job (image size won't
       // change on other pages, so all would fail anyway).
       // Transient AI error: log and skip this page so the rest of the job continues.
       if (err instanceof CatalogAiError && err.code !== "ai_payload_too_large") {
-        console.warn(`[catalog-pdf] job=${jobId} page=${page.pageNum + pageOffset} transient ai_error — skipping:`, err.originalMessage);
+        logger.warn({ jobId, page: page.pageNum + pageOffset, originalMessage: err.originalMessage }, "[catalog-pdf] transient ai_error — skipping page");
         processedPages++;
         await db.update(catalogPdfJobTable).set({ processedPages }).where(eq(catalogPdfJobTable.id, jobId));
         continue;
@@ -297,7 +299,7 @@ async function processPdfPages(
           catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             hadImageUploadFailure = true;
-            console.warn("[catalog-pdf] Image 1 upload failed:", err);
+            logger.warn({ err, jobId }, "[catalog-pdf] Image 1 upload failed");
             await db
               .update(catalogPdfJobTable)
               .set({ errorMessage: `image_upload_failed: ${msg}` })
@@ -310,7 +312,7 @@ async function processPdfPages(
           catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             hadImageUploadFailure = true;
-            console.warn("[catalog-pdf] Image 2 upload failed:", err);
+            logger.warn({ err, jobId }, "[catalog-pdf] Image 2 upload failed");
             await db
               .update(catalogPdfJobTable)
               .set({ errorMessage: `image_upload_failed: ${msg}` })
@@ -364,7 +366,7 @@ async function processPdfPages(
       .update(catalogPdfJobTable)
       .set({ finishedAt: new Date() })
       .where(eq(catalogPdfJobTable.id, jobId));
-    console.log(`[catalog-pdf] job=${jobId} cancelled after page ${processedPages} (offset=${pageOffset})`);
+    logger.info({ jobId, processedPages, pageOffset }, "[catalog-pdf] job cancelled");
     return;
   }
 
@@ -382,8 +384,9 @@ async function processPdfPages(
     })
     .where(eq(catalogPdfJobTable.id, jobId));
 
-  console.log(
-    `[catalog-pdf] job=${jobId} ${finalStatus} — pages=${processedPages} found=${partsFound} matched=${matchedParts} images=${imagesMatched} unmatched=${unmatchedPartsList.length} (offset=${pageOffset})`,
+  logger.info(
+    { jobId, status: finalStatus, pages: processedPages, found: partsFound, matched: matchedParts, images: imagesMatched, unmatched: unmatchedPartsList.length, pageOffset },
+    "[catalog-pdf] job complete",
   );
 
   if (parentJobId !== null) {
@@ -453,7 +456,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
     validatePdf(pdfBuffer);
   } catch (preErr) {
     const msg = preErr instanceof Error ? preErr.message : String(preErr);
-    console.warn(`[catalog-pdf] PDF pre-validation failed: ${msg}`);
+    logger.warn({ msg }, "[catalog-pdf] PDF pre-validation failed");
     return void res.status(400).json({ error: msg });
   }
 
@@ -644,9 +647,9 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
         .where(eq(catalogPdfJobTable.id, jobRow.id));
 
       if (!isCatalogAiError && isProviderPayloadTooLargeError(err)) {
-        console.warn(`[catalog-pdf] job=${jobId} provider rejected payload as too large`);
+        logger.warn({ jobId }, "[catalog-pdf] provider rejected payload as too large");
       } else {
-        console.error(`[catalog-pdf] job=${jobId} background processing failed:`, err);
+        logger.error({ err, jobId }, "[catalog-pdf] background processing failed");
       }
 
       if (resolvedParentJobId !== null) {
@@ -701,7 +704,7 @@ router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => 
       AND status IN ('pending', 'processing')
   `);
 
-  console.log(`[catalog-pdf] job=${jobId} cancel requested`);
+  logger.info({ jobId }, "[catalog-pdf] cancel requested");
   res.json({ ok: true, jobId: String(jobId) });
 });
 
@@ -878,7 +881,7 @@ router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
 
     res.json({ jobs: rows });
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[catalog-pdf] Failed to fetch failed jobs");
     res.status(500).json({ error: "Failed to fetch failed jobs" });
   }
 });
@@ -1008,7 +1011,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
         .update(catalogPdfJobTable)
         .set({ status: "failed", errorMessage: msg, finishedAt: new Date() })
         .where(eq(catalogPdfJobTable.id, jobId));
-      console.error(`[catalog-pdf] job=${jobId} resume failed:`, err);
+      logger.error({ err, jobId }, "[catalog-pdf] resume failed");
     }
   });
 });
@@ -1038,7 +1041,7 @@ router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) =>
     }
     res.json({ ok: true });
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[catalog-pdf] Failed to dismiss job");
     res.status(500).json({ error: "Failed to dismiss job" });
   }
 });
@@ -1155,7 +1158,7 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
       total: rows.length,
     });
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[catalog-pdf] Failed to fetch reviews");
     res.status(500).json({ error: "Failed to fetch reviews" });
   }
 });
