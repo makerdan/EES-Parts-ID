@@ -58,6 +58,7 @@ import {
   parseCatalogNumber,
   tokenMatch,
 } from "../utils/searchHelpers";
+import { escapeLikeWildcard } from "../utils/sqlUtils";
 
 const router = Router();
 
@@ -450,7 +451,7 @@ router.post("/search", async (req, res) => {
       // exclude rows where any taxonomy keyword appears as a substring in the lowercased
       // concatenation of vendor, catalog, description, expanded_description, and ai_keywords.
       const allTaxKws = getAllTaxonomyKeywords(TAXONOMY);
-      const taxKwPatterns = allTaxKws.map(kw => `%${kw}%`);
+      const taxKwPatterns = allTaxKws.map(kw => `%${escapeLikeWildcard(kw)}%`);
       const taxExcludeCondition = taxKwPatterns.length > 0
         ? sql`NOT lower(vendor || ' ' || catalog || ' ' || description || ' ' || coalesce(expanded_description, '') || ' ' || immutable_array_to_string(ai_keywords, ' ')) LIKE ANY(ARRAY[${sql.join(taxKwPatterns.map(p => sql`${p}`), sql`, `)}])`
         : sql`TRUE`;
