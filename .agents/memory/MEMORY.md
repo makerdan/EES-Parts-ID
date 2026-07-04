@@ -20,3 +20,4 @@
 - [exports['.'] types condition for workspace libs](exports-types-condition.md) — moduleResolution:bundler reads exports['.'] before root types; libs must embed a "types" condition in the exports object pointing to stable dist/.
 - [api-zod codegen race in repo typecheck](api-zod-codegen-race.md) — a wall of TS6053 "not found" under lib/api-zod/src/generated is a codegen-ordering race, not a real error; check files exist and re-run.
 - [Clerk role-based admin (parts-id)](clerk-admin-role-migration.md) — admin is Clerk role via GET /admin/me; context `adminToken` now holds the Clerk token and `logoutAdmin` re-verifies admin; gate on isAdmin boolean.
+- [Codegen drift in post-merge script](codegen-drift-post-merge.md) — task agents regenerate lib/api-zod + lib/api-client-react but can't commit; fix by running codegen on main and committing once the git lock clears.
