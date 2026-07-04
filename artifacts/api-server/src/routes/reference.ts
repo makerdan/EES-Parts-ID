@@ -294,8 +294,8 @@ router.post("/ask", async (req, res) => {
         res.write(
           `event: error\ndata: ${JSON.stringify({ error: GENERIC_ERROR_MESSAGE })}\n\n`,
         );
-      } catch {
-        // Connection may already be torn down.
+      } catch (writeErr) {
+        console.warn("[reference/ask] Failed to write SSE error event (connection may already be torn down):", writeErr);
       }
       res.end();
     } else {

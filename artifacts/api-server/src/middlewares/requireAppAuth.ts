@@ -4,6 +4,8 @@ import { usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { type NextFunction,type Request, type Response } from "express";
 
+import { logger } from "../lib/logger";
+
 // Paths relative to /api that do not require any authentication token.
 const PUBLIC_PATHS = new Set(["/healthz"]);
 
@@ -75,8 +77,10 @@ export async function requireAppAuth(req: Request, res: Response, next: NextFunc
           return;
         }
         email = clerkUser.emailAddresses[0]?.emailAddress ?? "";
-      } catch {
-        // Proceed without email; it can be updated later.
+      } catch (clerkErr) {
+        logger.error({ err: clerkErr, userId }, "requireAppAuth: Clerk email fetch failed");
+        res.status(500).json({ error: "Failed to retrieve user profile. Please try again." });
+        return;
       }
 
       // Before inserting, check whether a row already exists for this email

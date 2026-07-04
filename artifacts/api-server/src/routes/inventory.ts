@@ -1822,31 +1822,35 @@ router.patch("/:id/expanded-description", requireAdminAuth, async (req, res) => 
 });
 
 // ── POST /inventory/bulk-enrich ───────────────────────────────────────────────
-router.post("/bulk-enrich", requireAdminAuth, (req, res) => {
-  if (bulkEnrichJob.running) {
-    return void res.status(409).json({ error: "Bulk enrichment already running", job: bulkEnrichJob });
+router.post("/bulk-enrich", requireAdminAuth, (req, res, next) => {
+  try {
+    if (bulkEnrichJob.running) {
+      return void res.status(409).json({ error: "Bulk enrichment already running", job: bulkEnrichJob });
+    }
+
+    const force = req.body?.force === true;
+
+    bulkEnrichJob.running = true;
+    bulkEnrichJob.stopRequested = false;
+    bulkEnrichJob.force = force;
+    bulkEnrichJob.startedAt = new Date();
+    bulkEnrichJob.processed = 0;
+    bulkEnrichJob.errors = 0;
+    bulkEnrichJob.total = null;
+    bulkEnrichJob.finishedAt = null;
+    bulkEnrichJob.lastError = null;
+    runBulkEnrich(force).catch((err) => {
+      bulkEnrichJob.running = false;
+      bulkEnrichJob.finishedAt = new Date();
+      bulkEnrichJob.lastError = String(err);
+      logger.error({ err }, "[bulk-enrich] Fatal error");
+    });
+
+    const message = force ? "Force re-enrichment started (all items)" : "Bulk enrichment started";
+    res.status(202).json({ message, job: bulkEnrichJob });
+  } catch (err) {
+    next(err);
   }
-
-  const force = req.body?.force === true;
-
-  bulkEnrichJob.running = true;
-  bulkEnrichJob.stopRequested = false;
-  bulkEnrichJob.force = force;
-  bulkEnrichJob.startedAt = new Date();
-  bulkEnrichJob.processed = 0;
-  bulkEnrichJob.errors = 0;
-  bulkEnrichJob.total = null;
-  bulkEnrichJob.finishedAt = null;
-  bulkEnrichJob.lastError = null;
-  runBulkEnrich(force).catch((err) => {
-    bulkEnrichJob.running = false;
-    bulkEnrichJob.finishedAt = new Date();
-    bulkEnrichJob.lastError = String(err);
-    logger.error({ err }, "[bulk-enrich] Fatal error");
-  });
-
-  const message = force ? "Force re-enrichment started (all items)" : "Bulk enrichment started";
-  res.status(202).json({ message, job: bulkEnrichJob });
 });
 
 // ── GET /inventory/bulk-enrich/status ─────────────────────────────────────────
@@ -1977,37 +1981,41 @@ async function runMeasureEnrich(): Promise<void> {
 }
 
 // ── POST /inventory/enrich-measurements ───────────────────────────────────────
-router.post("/enrich-measurements", requireAdminAuth, (_req, res) => {
-  if (measureEnrichJob.running) {
-    return void res.status(409).json({
-      error: "Measurement enrichment already running",
-      job: measureEnrichJob,
-    });
-  }
-
-  measureEnrichJob.running    = true;
-  measureEnrichJob.startedAt  = new Date();
-  measureEnrichJob.processed  = 0;
-  measureEnrichJob.updated    = 0;
-  measureEnrichJob.total      = null;
-  measureEnrichJob.finishedAt = null;
-  measureEnrichJob.lastError  = null;
-  measureEnrichJob.dbJobId    = null;
-
-  runMeasureEnrich().catch(err => {
-    measureEnrichJob.running    = false;
-    measureEnrichJob.finishedAt = new Date();
-    measureEnrichJob.lastError  = String(err);
-    logger.error({ err, processed: measureEnrichJob.processed, updated: measureEnrichJob.updated }, "[measure-enrich] Fatal error");
-    if (measureEnrichJob.dbJobId !== null) {
-      db.update(measureEnrichJobTable)
-        .set({ status: "failed", finishedAt: new Date(), errorMessage: String(err), processed: measureEnrichJob.processed, updated: measureEnrichJob.updated })
-        .where(eq(measureEnrichJobTable.id, measureEnrichJob.dbJobId))
-        .catch(dbErr => logger.warn({ err: dbErr }, "[measure-enrich] Failed to persist failure to DB"));
+router.post("/enrich-measurements", requireAdminAuth, (_req, res, next) => {
+  try {
+    if (measureEnrichJob.running) {
+      return void res.status(409).json({
+        error: "Measurement enrichment already running",
+        job: measureEnrichJob,
+      });
     }
-  });
 
-  res.status(202).json({ message: "Measurement enrichment started", job: measureEnrichJob });
+    measureEnrichJob.running    = true;
+    measureEnrichJob.startedAt  = new Date();
+    measureEnrichJob.processed  = 0;
+    measureEnrichJob.updated    = 0;
+    measureEnrichJob.total      = null;
+    measureEnrichJob.finishedAt = null;
+    measureEnrichJob.lastError  = null;
+    measureEnrichJob.dbJobId    = null;
+
+    runMeasureEnrich().catch(err => {
+      measureEnrichJob.running    = false;
+      measureEnrichJob.finishedAt = new Date();
+      measureEnrichJob.lastError  = String(err);
+      logger.error({ err, processed: measureEnrichJob.processed, updated: measureEnrichJob.updated }, "[measure-enrich] Fatal error");
+      if (measureEnrichJob.dbJobId !== null) {
+        db.update(measureEnrichJobTable)
+          .set({ status: "failed", finishedAt: new Date(), errorMessage: String(err), processed: measureEnrichJob.processed, updated: measureEnrichJob.updated })
+          .where(eq(measureEnrichJobTable.id, measureEnrichJob.dbJobId))
+          .catch(dbErr => logger.warn({ err: dbErr }, "[measure-enrich] Failed to persist failure to DB"));
+      }
+    });
+
+    res.status(202).json({ message: "Measurement enrichment started", job: measureEnrichJob });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ── GET /inventory/enrich-measurements/status ─────────────────────────────────
