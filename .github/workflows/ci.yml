@@ -87,3 +87,35 @@ jobs:
 
       - name: Check codegen output is up to date
         run: pnpm --filter @workspace/api-spec run codegen:check
+
+  typecheck:
+    name: Typecheck (codegen:check → libs → artifacts)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (codegen drift + libs + all artifacts)
+        run: pnpm run typecheck
