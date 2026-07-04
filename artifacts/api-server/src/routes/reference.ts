@@ -175,7 +175,7 @@ const REFERENCE_ASK_MAX_HISTORY_ITEM_LENGTH = 2000;
 router.post("/ask", async (req, res) => {
   try {
     const rateLimitKey = getAuth(req)?.userId ?? String(req.ip ?? "unknown");
-    const rateCheck = referenceAskLimiter.check(rateLimitKey);
+    const rateCheck = await referenceAskLimiter.check(rateLimitKey);
     if (!rateCheck.allowed) {
       res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
       return void res.status(429).json({ error: "Too many requests. Please slow down." });

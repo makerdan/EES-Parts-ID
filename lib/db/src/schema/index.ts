@@ -18,3 +18,4 @@ export * from "./screen_view_log";
 export * from "./admin_preferences";
 export * from "./measure_enrich_job";
 export * from "./users";
+export * from "./rate_limit_buckets";
