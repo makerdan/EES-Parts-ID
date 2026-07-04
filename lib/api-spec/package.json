@@ -5,10 +5,14 @@
   "scripts": {
     "codegen": "orval --config ./orval.config.ts && pnpm -w run typecheck:libs",
     "codegen:check": "pnpm run codegen && git diff --exit-code -- ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated && pnpm run spec:check",
-    "spec:check": "tsx src/check-route-drift.ts"
+    "spec:check": "tsx src/check-route-drift.ts",
+    "test": "jest"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "jest": "^30.3.0",
     "orval": "^8.5.2",
+    "ts-jest": "^29.4.9",
     "tsx": "catalog:",
     "yaml": "^2.8.2"
   }
