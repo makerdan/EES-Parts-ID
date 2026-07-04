@@ -36,11 +36,13 @@
  *   500 { error: string }  — query execution error (message forwarded)
  */
 
+import { getAuth } from "@clerk/express";
 import { pool } from "@workspace/db";
 import ExcelJS from "exceljs";
 import { Router } from "express";
 
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import { adminQueryLimiter } from "../lib/rateLimiter";
 
 const router = Router();
 
@@ -241,6 +243,13 @@ function buildCSV(
 }
 
 router.post("/query", requireAdminAuth, async (req, res) => {
+  const rlKey = getAuth(req)?.userId ?? String(req.ip ?? "unknown");
+  const rateCheck = await adminQueryLimiter.check(rlKey);
+  if (!rateCheck.allowed) {
+    res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
+    return void res.status(429).json({ error: "Too many admin query requests. Please slow down." });
+  }
+
   const { sql: rawSql } = req.body as { sql?: string };
   const format = (req.query.format as string | undefined)?.toLowerCase();
 

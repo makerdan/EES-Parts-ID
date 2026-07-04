@@ -125,9 +125,8 @@ const _persistReadPromise = initPersistRead();
 // duplicate network requests.
 let _svgLoadPromise: Promise<void> | null = null;
 
-// AbortController for the current in-flight SVG fetch.  Replaced (and the
-// previous one aborted) each time a new load is initiated so that a stale
-// fetch completing after a newer one can never overwrite state.
+// AbortController for the active SVG fetch.  Aborted before each new fetch
+// so stale in-flight requests don't overwrite state after a floor-plan upload.
 let _svgLoadAbortController: AbortController | null = null;
 
 export function prefetchSvgAsset(): Promise<void> {
@@ -140,35 +139,29 @@ export function prefetchSvgAsset(): Promise<void> {
  * to the bundled asset, and finally set an empty fallback if both fail.
  * Uses hash-based cache invalidation so cold-start renders skip network.
  *
- * Each call aborts any previous in-flight fetch via `_svgLoadAbortController`
- * so a stale response can never overwrite a newer one.
+ * Aborts any previously in-flight fetch before starting a new one so that
+ * a stale server response cannot overwrite state after a floor-plan upload.
  */
 function loadSvgAsset(): Promise<void> {
   if (_svgLoadPromise) return _svgLoadPromise;
-  // Abort any previous in-flight SVG fetch before starting a new one.
+
+  // Abort any previous in-flight fetch before starting a new one.
   _svgLoadAbortController?.abort();
   const controller = new AbortController();
   _svgLoadAbortController = controller;
+
   _svgLoadPromise = _loadFloorPlanFromServer(controller.signal)
-    .catch((err) => {
-      // Don't fall back to the bundle when the fetch was intentionally
-      // cancelled — a newer load is already in flight.
-      if (controller.signal.aborted) throw err;
-      return _loadFloorPlanFromBundle();
-    })
-    .catch((err) => {
-      if (controller.signal.aborted) return; // silently swallow abort
-      setFallbackEmpty();
-      void err;
-    });
+    .catch(() => _loadFloorPlanFromBundle(controller.signal))
+    .catch(() => { if (!controller.signal.aborted) setFallbackEmpty(); });
   return _svgLoadPromise;
 }
 
-async function _loadFloorPlanFromServer(signal?: AbortSignal): Promise<void> {
+async function _loadFloorPlanFromServer(signal: AbortSignal): Promise<void> {
   const metaRes = await fetchWithAuth(`${API_BASE}/floor-plan/meta`, { signal });
   if (!metaRes.ok) throw new Error("no server floor plan");
 
   const { hash } = FloorPlanMetaSchema.parse(await metaRes.json());
+  if (signal.aborted) throw new Error("aborted");
   // Cache hit — skip re-fetching the SVG bytes entirely.
   if (getIfValid(hash) !== null) return;
   // Bail out early if the fetch was cancelled between the meta check and the SVG fetch.
@@ -177,6 +170,7 @@ async function _loadFloorPlanFromServer(signal?: AbortSignal): Promise<void> {
   const svgRes = await fetchWithAuth(`${API_BASE}/floor-plan/svg`, { signal });
   if (!svgRes.ok) throw new Error("floor-plan svg fetch failed");
   const xml = await svgRes.text();
+  if (signal.aborted) throw new Error("aborted");
 
   // Guard against abort firing between the response body read and the state write.
   if (signal?.aborted) throw new Error("aborted");
@@ -197,11 +191,12 @@ async function _loadFloorPlanFromServer(signal?: AbortSignal): Promise<void> {
   setCached(hash, newData);
 }
 
-async function _loadFloorPlanFromBundle(): Promise<void> {
+async function _loadFloorPlanFromBundle(signal: AbortSignal): Promise<void> {
   const [asset] = await Asset.loadAsync(
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     require("../assets/warehouse-map.svg"),
   );
+  if (signal.aborted) throw new Error("aborted");
   const currentHash = asset.hash ?? "";
   // Cache hit — persisted hash matches; skip the URI fetch entirely.
   if (getIfValid(currentHash) !== null) return;
@@ -209,8 +204,9 @@ async function _loadFloorPlanFromBundle(): Promise<void> {
   const uri = asset.localUri ?? asset.uri ?? "";
   let newData: SvgData;
   if (Platform.OS === "web") {
-    const res = await fetch(uri);
+    const res = await fetch(uri, { signal });
     const xml = await res.text();
+    if (signal.aborted) throw new Error("aborted");
     // Strip the outer <svg> wrapper so the content can be embedded
     // directly inside the main SVG canvas as a child <g> element.
     // This matches the approach used in the Zone Editor and keeps the
@@ -223,7 +219,8 @@ async function _loadFloorPlanFromBundle(): Promise<void> {
   } else {
     // Fetch the SVG text so the tile renderer can use SvgXml with per-tile
     // viewBox crops at high zoom.  This is a local-file read so it is fast.
-    const res = await fetch(uri);
+    const res = await fetch(uri, { signal });
+    if (signal.aborted) throw new Error("aborted");
     const xml = res.ok ? await res.text() : "";
     newData = { xml, innerXml: "", uri, contentViewBox: parseContentViewBox(xml) ?? undefined };
   }
@@ -1567,27 +1564,20 @@ export function WarehouseMapView({
   // snapshot the old tiles still stored in prevTilesRef.
   const isTierChange = Platform.OS !== "web" && renderZoom !== prevRenderZoomRef.current;
   if (isTierChange && prevTilesRef.current.length > 0) {
-    const oldN = tileGridSize(prevRenderZoomRef.current);
-    // visibleRange may have been updated in the same React batch as renderZoom
-    // (both arrive via runOnJS from the worklet).  Filter prevTilesRef by the
-    // CURRENT visibleRange so off-screen tiles are never included in the fade
-    // layer — they would briefly double live SvgXml/PngTile instances without
-    // contributing anything visible to the crossfade.  Only filter when
-    // visibleRange.N matches the old grid size so we never apply a range from
-    // a mismatched tier.
-    const { N: vrN, c0, c1, r0, r1 } = visibleRange;
-    const filteredTiles = vrN === oldN
-      ? prevTilesRef.current.filter(
-          ({ col, row }) => col >= c0 && col <= c1 && row >= r0 && row <= r1
-        )
-      : prevTilesRef.current;
-    if (filteredTiles.length > 0) {
-      pendingFadeRef.current = {
-        tiles: filteredTiles,
-        z: prevRenderZoomRef.current,
-        numTiles: oldN,
-      };
-    }
+    // Filter to the currently visible range so the fade-out layer never
+    // contains the entire grid on large zoom levels (e.g. z4 = 16×16).
+    // visibleRange is current JS state, which reflects the old tier's
+    // visible tile set at the moment the tier change is first detected.
+    // Fallback to the full set only if the filter yields nothing (edge case).
+    const vr = visibleRange;
+    const visibleOldTiles = prevTilesRef.current.filter(
+      ({ col, row }) => col >= vr.c0 && col <= vr.c1 && row >= vr.r0 && row <= vr.r1,
+    );
+    pendingFadeRef.current = {
+      tiles: visibleOldTiles.length > 0 ? visibleOldTiles : prevTilesRef.current,
+      z: prevRenderZoomRef.current,
+      numTiles: tileGridSize(prevRenderZoomRef.current),
+    };
   }
 
   // ── Tile position memoisation ─────────────────────────────────────────────
