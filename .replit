@@ -109,6 +109,10 @@ args = "verify-fts"
 task = "workflow.run"
 args = "typecheck"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "tsc"
+
 [[workflows.workflow]]
 name = "post-merge-health-test"
 author = "agent"
@@ -141,6 +145,17 @@ args = "pnpm -w run typecheck:libs && pnpm --filter @workspace/parts-id exec tsc
 
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow]]
+name = "tsc"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm run typecheck"
+
+[workflows.workflow.metadata]
+isValidation = true
 
 [agent]
 stack = "PNPM_WORKSPACE"
