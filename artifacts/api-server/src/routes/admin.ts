@@ -261,6 +261,13 @@ router.post("/users/:clerkUserId/ban", requireAdminAuth, async (req, res) => {
   if (typeof clerkUserId !== "string" || !clerkUserId) {
     return res.status(400).json({ error: "Missing clerkUserId" });
   }
+
+  // The bootstrap admin cannot be banned — requireAppAuth would immediately
+  // re-grant access on the next request anyway, so reject it explicitly.
+  if (clerkUserId === process.env.ADMIN_CLERK_USER_ID) {
+    return res.status(400).json({ error: "The bootstrap admin cannot be banned" });
+  }
+
   try {
     const updated = await db
       .update(usersTable)
