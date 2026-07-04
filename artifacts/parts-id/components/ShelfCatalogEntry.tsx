@@ -137,7 +137,13 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
         Authorization: `Bearer ${adminToken}`,
       },
       body: JSON.stringify({ shelfPrefix: prefix, shelfStep: stepVal }),
-    }).catch(() => {});
+    }).then(async (res) => {
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+    }).catch(() => {
+      setError("Could not save preferences — check your connection.");
+    });
   }, [adminToken]);
 
   useEffect(() => {
