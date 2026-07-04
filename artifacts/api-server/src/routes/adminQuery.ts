@@ -204,9 +204,15 @@ function validateSelect(rawSql: string): string | null {
   return null;
 }
 
+const FORMULA_TRIGGER = /^[=+\-@]/;
+
+function sanitizeFormula(str: string): string {
+  return FORMULA_TRIGGER.test(str) ? `'${str}` : str;
+}
+
 function escapeCSVField(value: unknown): string {
   if (value === null || value === undefined) return "";
-  const str = String(value);
+  const str = typeof value === "string" ? sanitizeFormula(value) : String(value);
   if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
     return `"${str.replace(/"/g, '""')}"`;
   }
@@ -284,7 +290,12 @@ router.post("/query", requireAdminAuth, async (req, res) => {
       sheet.columns = columns.map((col) => ({ header: col, key: col }));
 
       for (const row of rows) {
-        sheet.addRow(row);
+        const sanitizedRow: Record<string, unknown> = {};
+        for (const col of columns) {
+          const v = row[col];
+          sanitizedRow[col] = typeof v === "string" ? sanitizeFormula(v) : v;
+        }
+        sheet.addRow(sanitizedRow);
       }
 
       sheet.getRow(1).font = { bold: true };
