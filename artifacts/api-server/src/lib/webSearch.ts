@@ -1,7 +1,7 @@
 import { ai } from "@workspace/integrations-gemini-ai";
 
 /** Gemini model used for reference Q&A (web-grounded). */
-export const WEB_REFERENCE_MODEL = "gemini-2.5-flash";
+const WEB_REFERENCE_MODEL = "gemini-2.5-flash";
 
 /**
  * Call Gemini-2.5-Flash via Replit AI Integrations for a reference answer.
