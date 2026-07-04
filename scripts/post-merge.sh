@@ -83,22 +83,22 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "[post-merge] Schema unchanged — skipping db push and FTS check."
   fi
 
-  # Regenerate API client files and verify no generated-file drift.
-  # codegen:check runs orval, rebuilds the lib declarations (tsc --build), then
-  # asserts git diff --exit-code on the generated directories so a merge that
-  # carries a stale generated file is caught immediately rather than silently
-  # serving wrong types to 38 consumer files.
-  echo "[post-merge] Regenerating API client and checking for drift..."
-  timeout 120 pnpm --filter @workspace/api-spec run codegen:check || {
+  # Regenerate API client files and auto-commit any drift.
+  # codegen:fix runs orval, rebuilds the lib declarations (tsc --build), then
+  # commits any changes to the generated directories so a merge that carries a
+  # stale generated file is fixed automatically rather than failing post-merge.
+  # codegen:check (unchanged) is still used by CI/PR gates.
+  echo "[post-merge] Regenerating API client and auto-committing any drift..."
+  timeout 120 pnpm --filter @workspace/api-spec run codegen:fix || {
     CODEGEN_EXIT=$?
     if [[ "$CODEGEN_EXIT" -eq 124 ]]; then
-      echo "[post-merge] ERROR: codegen:check timed out after 120s. Aborting."
+      echo "[post-merge] ERROR: codegen:fix timed out after 120s. Aborting."
     else
-      echo "[post-merge] ERROR: codegen:check failed (exit ${CODEGEN_EXIT}) — generated files may have drifted from the OpenAPI spec. Run 'pnpm --filter @workspace/api-spec run codegen' and commit the result."
+      echo "[post-merge] ERROR: codegen:fix failed (exit ${CODEGEN_EXIT}) — codegen or spec:check encountered an error."
     fi
     exit 1
   }
-  echo "[post-merge] API client regenerated and drift check passed."
+  echo "[post-merge] API client regenerated and any drift auto-committed."
 
   # Push latest main branch to GitHub after every successful merge.
   # Uses || true so a network error never causes post-merge to report failure.

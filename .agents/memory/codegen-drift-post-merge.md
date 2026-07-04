@@ -1,17 +1,23 @@
 ---
 name: Codegen drift in post-merge script
-description: Task agents regenerate lib/api-zod and lib/api-client-react but can't commit to main; post-merge codegen:check then fails.
+description: Post-merge now auto-commits generated file drift; manual cleanup is no longer needed.
 ---
 
 ## The rule
-After any task merge that touches `lib/api-spec/openapi.yaml` or that runs `pnpm --filter @workspace/api-spec run codegen`, the generated files in `lib/api-zod/src/generated/` and `lib/api-client-react/src/generated/` may be ahead of what's committed on main. The post-merge script's `codegen:check` step then fails with a non-empty `git diff --exit-code`.
+After any task merge that touches `lib/api-spec/openapi.yaml` or that runs `pnpm --filter @workspace/api-spec run codegen`, the generated files in `lib/api-zod/src/generated/` and `lib/api-client-react/src/generated/` may be ahead of what's committed on main.
 
-**Why:** Task agents regenerate files in their isolated environment but only their own changes get merged. The codegen output is deterministic, so the fix is always just running codegen on main and committing the result.
+**Why:** Task agents regenerate files in their isolated environment but only their own changes get merged. The codegen output is deterministic, so the fix is always running codegen on main and committing the result.
 
-**How to apply:**
-1. Wait for the git index lock to clear (task merges hold it; check with `ls .git/index.lock`).
-2. Run `pnpm --filter @workspace/api-spec run codegen` — it regenerates both targets and runs `typecheck:libs` to confirm they compile.
-3. Stage and commit the generated files: `git add lib/api-client-react/src/generated lib/api-zod/src/generated`.
-4. The post-merge script will pass on subsequent merges.
+**How post-merge handles it (current behaviour):**
+The post-merge script calls `pnpm --filter @workspace/api-spec run codegen:fix` instead of `codegen:check`. `codegen:fix`:
+1. Runs `pnpm run codegen` (orval + typecheck:libs).
+2. Checks `git diff --quiet` on the two generated dirs.
+3. If changes exist, stages and commits them with the message `chore: regenerate api clients [post-merge]`.
+4. Runs `spec:check` after.
+5. Exits 0 whether or not a commit was made.
 
-**Note:** The CI `codegen-check` job (added in Task #76) now blocks PRs that commit stale stubs, so this issue should become less frequent over time. But concurrent merges can still cause it transiently on main.
+Manual cleanup is no longer needed — post-merge handles it automatically.
+
+**CI/PR gate is unchanged:** `codegen:check` (used by the CI workflow, not post-merge) still asserts `git diff --exit-code` and blocks PRs that commit stale stubs.
+
+**Note:** Concurrent merges can still produce transient drift on main, but post-merge will commit the fix as part of the second merge's run.
