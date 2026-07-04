@@ -36,6 +36,7 @@ import {
   analyzeFile,
   collectUnguardedJsonCalls,
   checkSpecRouteCoverage,
+  checkHandcraftedZodTypes,
   type OpenApiSpec,
   type Violation,
 } from "./check-route-drift-helpers.js";
@@ -48,6 +49,7 @@ const ROOT = resolve(__dirname, "../../..");
 const SPEC_PATH = resolve(ROOT, "lib/api-spec/openapi.yaml");
 const ROUTES_INDEX = resolve(ROOT, "artifacts/api-server/src/routes/index.ts");
 const ROUTES_DIR = resolve(ROOT, "artifacts/api-server/src/routes");
+const INVENTORY_ROUTES_PATH = resolve(ROOT, "lib/api-zod/src/inventoryRoutes.ts");
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -70,6 +72,15 @@ function main(): void {
   // Check reverse direction: spec paths that have no Express handler at all
   const coverageViolations = checkSpecRouteCoverage(specOps, prefixMap, ROUTES_DIR);
   allViolations.push(...coverageViolations);
+
+  // Check hand-crafted Zod schemas for type drift vs the spec
+  const inventoryRoutesSource = readFileSync(INVENTORY_ROUTES_PATH, "utf-8");
+  const zodTypeViolations = checkHandcraftedZodTypes(
+    spec,
+    inventoryRoutesSource,
+    INVENTORY_ROUTES_PATH,
+  );
+  allViolations.push(...zodTypeViolations);
 
   if (allViolations.length === 0) {
     console.log(
@@ -101,6 +112,10 @@ function main(): void {
         const lineSuffix = v.line != null ? `:${v.line}` : "";
         console.error(
           `    ${v.method} ${v.specPath}  [unguardedResponse]  ${v.note ?? "res.json() argument is not the result of a Zod .parse() call"}${lineSuffix ? `  (line ${v.line})` : ""}`,
+        );
+      } else if (v.kind === "typeMismatch") {
+        console.error(
+          `    ${v.method}  [typeMismatch]  ${v.note ?? `field type mismatch: ${v.undeclaredFields.join(", ")}`}`,
         );
       } else {
         const suffix = v.note ? `  (${v.note})` : "";

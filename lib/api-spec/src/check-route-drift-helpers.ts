@@ -59,7 +59,7 @@ export interface Violation {
   line?: number;
   method: string;
   specPath: string;
-  kind: "response" | "requestBody" | "missingHandler" | "unguardedResponse";
+  kind: "response" | "requestBody" | "missingHandler" | "unguardedResponse" | "typeMismatch";
   undeclaredFields: string[];
   note?: string;
 }
@@ -850,5 +850,298 @@ export function checkSpecRouteCoverage(
       });
     }
   }
+  return violations;
+}
+
+// ── Hand-crafted Zod type checks ──────────────────────────────────────────────
+
+/**
+ * Walks a Zod expression (e.g. `z.string().nullish().describe("...")`) and
+ * extracts the base type identifier and whether `.optional()` / `.nullish()`
+ * appears anywhere in the chain.
+ *
+ * Returns null when no recognisable `z.*` call is found (e.g. bare identifier
+ * references to another schema).
+ */
+function extractZodInfo(
+  expr: ts.Expression,
+): { zodType: string; isOptional: boolean } | null {
+  const methodsInChain: string[] = [];
+  let current: ts.Expression = expr;
+
+  while (ts.isCallExpression(current)) {
+    const callee = current.expression;
+    if (!ts.isPropertyAccessExpression(callee)) break;
+
+    const methodName = callee.name.text;
+    methodsInChain.push(methodName);
+    const receiver = callee.expression;
+
+    // z.TYPE() — direct call on the z namespace
+    if (ts.isIdentifier(receiver) && receiver.text === "z") {
+      const isOptional = methodsInChain.some(
+        (m) => m === "optional" || m === "nullish",
+      );
+      return { zodType: methodName, isOptional };
+    }
+
+    // z.coerce.TYPE() — call on z.coerce
+    if (
+      ts.isPropertyAccessExpression(receiver) &&
+      ts.isIdentifier(receiver.expression) &&
+      receiver.expression.text === "z" &&
+      receiver.name.text === "coerce"
+    ) {
+      const isOptional = methodsInChain.some(
+        (m) => m === "optional" || m === "nullish",
+      );
+      return { zodType: "coerce." + methodName, isOptional };
+    }
+
+    current = receiver;
+  }
+
+  return null;
+}
+
+/**
+ * Builds a map of `fieldName → { specType, requiredIn, optionalInAny }` from
+ * all scalar properties in the spec's component schemas.  Only `string`,
+ * `number`, `integer`, and `boolean` fields are indexed; arrays and objects
+ * are skipped.
+ *
+ * `requiredIn` lists schema names where the field is required.
+ * `optionalInAny` is true when at least one schema contains the field without
+ * requiring it (nullable / not in the required array).  When `optionalInAny`
+ * is true the required check is suppressed to avoid false positives that arise
+ * from the same field name appearing as required in one schema and optional in
+ * another.
+ */
+function buildSpecFieldTypeMap(
+  spec: OpenApiSpec,
+): Map<string, { specType: string; requiredIn: string[]; optionalInAny: boolean }> {
+  const fieldMap = new Map<
+    string,
+    { specType: string; requiredIn: string[]; optionalInAny: boolean }
+  >();
+  const schemas = spec.components?.schemas ?? {};
+
+  for (const [schemaName, schema] of Object.entries(schemas)) {
+    const s = schema as SchemaObject;
+    if (!s.properties) continue;
+    const requiredSet = new Set(s.required ?? []);
+
+    for (const [fieldName, fieldSchema] of Object.entries(s.properties)) {
+      if ("$ref" in fieldSchema) continue;
+      const fs = fieldSchema as SchemaObject;
+      const specType = fs.type;
+      if (
+        !specType ||
+        !["string", "number", "integer", "boolean"].includes(specType)
+      )
+        continue;
+
+      const isRequired = requiredSet.has(fieldName);
+      const existing = fieldMap.get(fieldName);
+      if (existing) {
+        const typesCompatible =
+          existing.specType === specType ||
+          (existing.specType === "integer" && specType === "number") ||
+          (existing.specType === "number" && specType === "integer");
+        if (typesCompatible) {
+          if (isRequired) {
+            existing.requiredIn.push(schemaName);
+          } else {
+            existing.optionalInAny = true;
+          }
+        }
+      } else {
+        fieldMap.set(fieldName, {
+          specType,
+          requiredIn: isRequired ? [schemaName] : [],
+          optionalInAny: !isRequired,
+        });
+      }
+    }
+  }
+
+  return fieldMap;
+}
+
+/**
+ * Returns true when a Zod base type is compatible with a spec-declared type.
+ *
+ *   spec integer / number → z.number()
+ *   spec boolean          → z.boolean()
+ *   spec string           → z.string()  OR  z.coerce.date() (for date-time fields)
+ */
+function isZodTypeCompatible(zodType: string, specType: string): boolean {
+  switch (specType) {
+    case "integer":
+    case "number":
+      return zodType === "number";
+    case "boolean":
+      return zodType === "boolean";
+    case "string":
+      return zodType === "string" || zodType === "coerce.date";
+    default:
+      return true;
+  }
+}
+
+/**
+ * Walks up the AST to find the name of the variable that the given node is
+ * being assigned to (e.g. `const InventoryItemSchema = z.object({...})`).
+ * Returns null when no enclosing variable declaration is found.
+ */
+function getEnclosingVariableName(node: ts.Node): string | null {
+  let current: ts.Node = node;
+  while (current.parent) {
+    current = current.parent;
+    if (
+      ts.isVariableDeclaration(current) &&
+      ts.isIdentifier(current.name)
+    ) {
+      return current.name.text;
+    }
+    if (
+      ts.isFunctionDeclaration(current) ||
+      ts.isArrowFunction(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isClassDeclaration(current)
+    ) {
+      break;
+    }
+  }
+  return null;
+}
+
+/**
+ * Zod base types that represent compound shapes — arrays, objects, unions, etc.
+ * Fields with these types are out of scope for the first-pass scalar check.
+ */
+const COMPOUND_ZOD_TYPES = new Set([
+  "array",
+  "object",
+  "enum",
+  "union",
+  "discriminatedUnion",
+  "intersection",
+  "record",
+  "map",
+  "set",
+  "tuple",
+  "lazy",
+  "nativeEnum",
+]);
+
+/**
+ * Checks that scalar field types in the hand-crafted Zod schemas in
+ * `lib/api-zod/src/inventoryRoutes.ts` are compatible with their
+ * spec-declared counterparts.
+ *
+ * Only scalar types (string, number/integer, boolean) are checked.
+ * Arrays, objects, unions, and enums are skipped (out of scope for first pass).
+ * `z.coerce.date()` is treated as compatible with spec `type: string`.
+ * Fields not found in any spec component schema are silently skipped.
+ *
+ * Generated schemas in `lib/api-zod/src/generated/` are never passed to this
+ * function — the caller supplies only the hand-crafted source text.
+ *
+ * @param spec                  Parsed OpenAPI spec
+ * @param inventoryRoutesSource Source text of inventoryRoutes.ts
+ * @param inventoryRoutesPath   Absolute path (used in violation `.file` field)
+ */
+export function checkHandcraftedZodTypes(
+  spec: OpenApiSpec,
+  inventoryRoutesSource: string,
+  inventoryRoutesPath: string,
+): Violation[] {
+  const fieldTypeMap = buildSpecFieldTypeMap(spec);
+
+  const sf = ts.createSourceFile(
+    inventoryRoutesPath,
+    inventoryRoutesSource,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TS,
+  );
+
+  const violations: Violation[] = [];
+
+  function walk(node: ts.Node) {
+    // Find z.object({...}) calls
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "object" &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "z" &&
+      node.arguments.length >= 1 &&
+      ts.isObjectLiteralExpression(node.arguments[0])
+    ) {
+      const objLiteral = node.arguments[0] as ts.ObjectLiteralExpression;
+      const schemaName = getEnclosingVariableName(node) ?? "(unknown schema)";
+
+      for (const prop of objLiteral.properties) {
+        if (!ts.isPropertyAssignment(prop)) continue;
+
+        const fieldName = ts.isIdentifier(prop.name)
+          ? prop.name.text
+          : ts.isStringLiteral(prop.name)
+            ? prop.name.text
+            : null;
+        if (!fieldName) continue;
+
+        const zodInfo = extractZodInfo(prop.initializer);
+        if (!zodInfo) continue; // bare identifier, template literal, etc. — skip
+
+        if (COMPOUND_ZOD_TYPES.has(zodInfo.zodType)) continue; // out of scope
+
+        const specField = fieldTypeMap.get(fieldName);
+        if (!specField) continue; // field absent from spec — skip
+
+        const typeMismatch = !isZodTypeCompatible(zodInfo.zodType, specField.specType);
+        // Only flag a required mismatch when ALL spec schemas that declare this
+        // field mark it as required.  If any schema has it as optional the
+        // field name alone is ambiguous and we suppress the required check to
+        // avoid false positives (e.g. imageUrl is required in UploadPhotoResponse
+        // but optional/nullable in InventoryItem).
+        const requiredMismatch =
+          specField.requiredIn.length > 0 &&
+          !specField.optionalInAny &&
+          zodInfo.isOptional;
+
+        if (!typeMismatch && !requiredMismatch) continue;
+
+        const notes: string[] = [];
+        if (typeMismatch) {
+          notes.push(
+            `field "${fieldName}": spec declares type "${specField.specType}" but Zod uses z.${zodInfo.zodType}()`,
+          );
+        }
+        if (requiredMismatch) {
+          notes.push(
+            `field "${fieldName}": required in spec (schema: ${specField.requiredIn[0]}) but Zod marks it as optional/nullish`,
+          );
+        }
+
+        violations.push({
+          file: inventoryRoutesPath,
+          method: schemaName,
+          specPath: specField.requiredIn[0]
+            ? `#/components/schemas/${specField.requiredIn[0]}`
+            : "(spec)",
+          kind: "typeMismatch",
+          undeclaredFields: [fieldName],
+          note: notes.join("; "),
+        });
+      }
+    }
+
+    ts.forEachChild(node, walk);
+  }
+
+  walk(sf);
   return violations;
 }

@@ -22,7 +22,9 @@ import {
   collectRegisteredRoutes,
   collectUnguardedJsonCalls,
   checkSpecRouteCoverage,
+  checkHandcraftedZodTypes,
   regexLiteralToOpenApiPath,
+  type OpenApiSpec,
 } from "../check-route-drift-helpers";
 
 // ── Parsing helpers ───────────────────────────────────────────────────────────
@@ -807,6 +809,305 @@ describe("collectRegisteredRoutes", () => {
     const routes = collectRegisteredRoutes(fp, "/inventory");
     // The regex converts to /barcode/{param}; with prefix it becomes /inventory/barcode/{param}
     expect(routes.has("GET /inventory/barcode/{param}")).toBe(true);
+  });
+});
+
+// ── checkHandcraftedZodTypes ──────────────────────────────────────────────────
+
+function makeMinimalSpec(
+  schemas: Record<string, {
+    properties: Record<string, { type: string }>;
+    required?: string[];
+  }>,
+): OpenApiSpec {
+  return {
+    paths: {},
+    components: { schemas: schemas as never },
+  };
+}
+
+describe("checkHandcraftedZodTypes", () => {
+  it("returns no violations when Zod types match spec types", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: {
+          id: { type: "integer" },
+          name: { type: "string" },
+          active: { type: "boolean" },
+          weight: { type: "number" },
+        },
+        required: ["id", "name"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        id: z.number(),
+        name: z.string(),
+        active: z.boolean(),
+        weight: z.number(),
+      });
+    `;
+
+    const violations = checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts");
+    expect(violations).toHaveLength(0);
+  });
+
+  it("reports a violation when Zod uses z.string() for a spec integer field", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { id: { type: "integer" } },
+        required: ["id"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        id: z.string(),
+      });
+    `;
+
+    const violations = checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts");
+    expect(violations).toHaveLength(1);
+    const v = violations[0];
+    expect(v.kind).toBe("typeMismatch");
+    expect(v.undeclaredFields).toContain("id");
+    expect(v.note).toMatch(/spec declares type "integer"/);
+    expect(v.note).toMatch(/z\.string\(\)/);
+    expect(v.method).toBe("WidgetSchema");
+  });
+
+  it("reports a violation when Zod uses z.string() for a spec boolean field", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { active: { type: "boolean" } },
+        required: [],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        active: z.string(),
+      });
+    `;
+
+    const violations = checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts");
+    expect(violations).toHaveLength(1);
+    expect(violations[0].kind).toBe("typeMismatch");
+    expect(violations[0].undeclaredFields).toContain("active");
+  });
+
+  it("reports a violation when a required spec field is marked optional in Zod", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        name: z.string().optional(),
+      });
+    `;
+
+    const violations = checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts");
+    expect(violations).toHaveLength(1);
+    const v = violations[0];
+    expect(v.kind).toBe("typeMismatch");
+    expect(v.undeclaredFields).toContain("name");
+    expect(v.note).toMatch(/required in spec/);
+    expect(v.note).toMatch(/optional\/nullish/);
+  });
+
+  it("reports a violation when a required spec field is marked nullish in Zod", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { count: { type: "integer" } },
+        required: ["count"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        count: z.number().nullish(),
+      });
+    `;
+
+    const violations = checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts");
+    expect(violations).toHaveLength(1);
+    expect(violations[0].note).toMatch(/required in spec/);
+  });
+
+  it("accepts z.number() for spec integer and spec number fields", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: {
+          count: { type: "integer" },
+          ratio: { type: "number" },
+        },
+        required: [],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        count: z.number(),
+        ratio: z.number(),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+
+  it("accepts z.coerce.date() for spec string fields (date-time coercion)", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { createdAt: { type: "string" } },
+        required: ["createdAt"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        createdAt: z.coerce.date(),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+
+  it("accepts z.coerce.date().nullish() for optional spec string fields", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { enrichedAt: { type: "string" } },
+        required: [],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        enrichedAt: z.coerce.date().nullish(),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+
+  it("skips array fields (out of scope for first pass)", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { id: { type: "integer" } },
+        required: [],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        tags: z.array(z.string()),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+
+  it("skips fields not found in any spec schema", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { id: { type: "integer" } },
+        required: [],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        customField: z.string(),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+
+  it("skips generated-schema source (empty source → no violations)", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { id: { type: "integer" } },
+        required: ["id"],
+      },
+    });
+
+    // Generated schemas would not be passed to this function at all;
+    // simulated here by passing empty source text.
+    const violations = checkHandcraftedZodTypes(spec, "", "generated/widget.ts");
+    expect(violations).toHaveLength(0);
+  });
+
+  it("skips fields with z.enum() (complex types deferred)", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { status: { type: "string" } },
+        required: [],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        status: z.enum(["active", "inactive"]),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+
+  it("reports both type mismatch and required violation in the same note when both occur", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { id: { type: "integer" } },
+        required: ["id"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        id: z.string().optional(),
+      });
+    `;
+
+    const violations = checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts");
+    expect(violations).toHaveLength(1);
+    const v = violations[0];
+    expect(v.note).toMatch(/spec declares type "integer"/);
+    expect(v.note).toMatch(/required in spec/);
+  });
+
+  it("accepts z.number().int().nonnegative() for spec integer fields", () => {
+    const spec = makeMinimalSpec({
+      BatchPreview: {
+        properties: { total: { type: "integer" } },
+        required: ["total"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const BatchPreviewSchema = z.object({
+        total: z.number().int().nonnegative(),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
   });
 });
 
