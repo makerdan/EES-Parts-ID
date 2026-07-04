@@ -37,6 +37,7 @@ import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { ShelfCatalogEntry } from "@/components/ShelfCatalogEntry";
+import { UserAdminButtonRow } from "@/components/UserAdminButtonRow";
 import { useApp } from "@/contexts/AppContext";
 import { useApiStatus } from "@/hooks/useApiStatus";
 import { useColors } from "@/hooks/useColors";
@@ -3334,39 +3335,12 @@ export default function UploadScreen() {
                           ) : null}
                         </View>
                         {/* Admin role controls — only approved users may be promoted */}
-                        {isAdminRole ? (
-                          <Pressable
-                            onPress={() => handleUserAction(user.clerkUserId, "demote")}
-                            disabled={!!userActionPending}
-                            style={{
-                              borderRadius: 6, paddingVertical: 8, alignItems: "center",
-                              backgroundColor: colors.muted, borderWidth: 1, borderColor: colors.border,
-                              opacity: userActionPending ? 0.6 : 1,
-                            }}
-                          >
-                            {isPending ? (
-                              <ActivityIndicator size="small" color={colors.foreground} />
-                            ) : (
-                              <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.foreground }}>↓ Revoke Admin</Text>
-                            )}
-                          </Pressable>
-                        ) : user.status === "approved" ? (
-                          <Pressable
-                            onPress={() => handleUserAction(user.clerkUserId, "promote")}
-                            disabled={!!userActionPending}
-                            style={{
-                              borderRadius: 6, paddingVertical: 8, alignItems: "center",
-                              backgroundColor: colors.primary + "15", borderWidth: 1, borderColor: colors.primary + "44",
-                              opacity: userActionPending ? 0.6 : 1,
-                            }}
-                          >
-                            {isPending ? (
-                              <ActivityIndicator size="small" color={colors.primary} />
-                            ) : (
-                              <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.primary }}>↑ Make Admin</Text>
-                            )}
-                          </Pressable>
-                        ) : null}
+                        <UserAdminButtonRow
+                          user={user}
+                          userActionPending={userActionPending}
+                          onPromote={() => handleUserAction(user.clerkUserId, "promote")}
+                          onDemote={() => handleUserAction(user.clerkUserId, "demote")}
+                        />
                       </View>
                     );
                   })
