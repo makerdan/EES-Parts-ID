@@ -45,6 +45,13 @@ module.exports = {
     // their own jest.mock() call on top of this stub.
     "^@workspace/integrations-gemini-ai$":
       "<rootDir>/__mocks__/integrations-gemini-ai-mock.cjs",
+    // exceljs transitively imports uuid@14 (pure ESM) which cannot be
+    // transformed by ts-jest in the CJS test environment. Stub it out so that
+    // any test loading app.ts (which pulls in routes/adminQuery.ts) can run.
+    "^exceljs$": "<rootDir>/__mocks__/exceljs.cjs",
+    // @google-cloud/storage transitively imports uuid@14 (pure ESM).
+    // Stub it out for tests that load app.ts.
+    "^@google-cloud/storage$": "<rootDir>/__mocks__/google-cloud-storage.cjs",
     "^@workspace/integrations-poe-server$":
       "<rootDir>/../../lib/integrations-poe-server/src/index.ts",
   },
