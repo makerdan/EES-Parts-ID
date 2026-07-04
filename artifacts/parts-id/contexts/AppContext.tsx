@@ -547,17 +547,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (adminProfileSyncedRef.current) return;
     adminProfileSyncedRef.current = true;
 
+    // Abort any previous in-flight sync before starting a new one.
     adminProfileAbortRef.current?.abort();
     const controller = new AbortController();
     adminProfileAbortRef.current = controller;
-    const { signal } = controller;
 
     (async () => {
       const token = await getTokenRef.current();
-      if (signal.aborted || !token) return;
+      if (controller.signal.aborted || !token) return;
       try {
-        const profile = await fetchAdminProfile(token, signal);
-        if (signal.aborted || !profile) return;
+        const profile = await fetchAdminProfile(token, controller.signal);
+        if (controller.signal.aborted || !profile) return;
         setSettings(prev => {
           const merged = mergeProfileIntoSettings(prev, profile);
           if (merged === prev) return prev;
@@ -566,7 +566,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return merged;
         });
       } catch (err) {
-        console.warn("[AppContext] Admin profile sync failed:", err);
+        if (!controller.signal.aborted) {
+          console.warn("[AppContext] Admin profile sync failed:", err);
+        }
       } finally {
         if (adminProfileAbortRef.current === controller) {
           adminProfileAbortRef.current = null;
@@ -575,10 +577,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     })();
 
     return () => {
-      controller.abort();
-      if (adminProfileAbortRef.current === controller) {
-        adminProfileAbortRef.current = null;
-      }
+      adminProfileAbortRef.current?.abort();
+      adminProfileAbortRef.current = null;
     };
   }, [isAdmin]);
 

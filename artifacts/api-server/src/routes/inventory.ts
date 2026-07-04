@@ -1,3 +1,4 @@
+import { getAuth } from "@clerk/express";
 import {
   AddPartConflictResponse,
   AddPartResponse,
@@ -36,6 +37,7 @@ import { uploadCatalogImage } from "../lib/objectStorage";
 import { callPoeBotWithChain, PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/poeModelLimits";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import { inventorySearchLimiter } from "../lib/rateLimiter";
 import { estimateImageBytes } from "../utils/aiHelpers";
 import { generateKeywords, mergeWithPinned } from "../utils/generateKeywords";
 import { resizeImages } from "../utils/imageResize";
@@ -228,6 +230,13 @@ const CHIP_DIMS_SERVER = [
 
 router.post("/search", async (req, res) => {
   try {
+    const rlKey = getAuth(req)?.userId ?? String(req.ip ?? "unknown");
+    const rateCheck = await inventorySearchLimiter.check(rlKey);
+    if (!rateCheck.allowed) {
+      res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
+      return void res.status(429).json({ error: "Too many search requests. Please slow down." });
+    }
+
     const bodyParsed = SearchInventoryBodySchema.safeParse(req.body);
     if (!bodyParsed.success) {
       return void res.status(400).json({ error: bodyParsed.error.issues[0]?.message ?? "Invalid request body" });

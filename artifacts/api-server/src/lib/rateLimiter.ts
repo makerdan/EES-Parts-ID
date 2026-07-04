@@ -235,3 +235,18 @@ export const catalogPdfUploadLimiter = new SlidingWindowRateLimiter({
   windowMs: WINDOW_MS,
   namespace: "catalog_pdf_upload",
 });
+
+const INVENTORY_SEARCH_MAX = Number(process.env.RATE_LIMIT_INVENTORY_SEARCH_PER_MIN ?? 60);
+const ADMIN_QUERY_MAX = Number(process.env.RATE_LIMIT_ADMIN_QUERY_PER_MIN ?? 20);
+
+export const inventorySearchLimiter = new SlidingWindowRateLimiter({
+  maxRequests: INVENTORY_SEARCH_MAX,
+  windowMs: WINDOW_MS,
+  namespace: "inventory_search",
+});
+
+export const adminQueryLimiter = new SlidingWindowRateLimiter({
+  maxRequests: ADMIN_QUERY_MAX,
+  windowMs: WINDOW_MS,
+  namespace: "admin_query",
+});
