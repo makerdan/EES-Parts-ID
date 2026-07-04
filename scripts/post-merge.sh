@@ -9,7 +9,12 @@ set -e
 # = 12s + 20s = 32s worst-case (~30s as specified).
 # ---------------------------------------------------------------------------
 
-HEALTH_URL="https://${REPLIT_DEV_DOMAIN}/api/healthz"
+if [[ -n "${PORT:-}" ]]; then
+  HEALTH_URL="http://localhost:${PORT}/api/healthz"
+else
+  echo "[post-merge] WARNING: PORT is not set — falling back to HTTPS proxy URL for health check."
+  HEALTH_URL="https://${REPLIT_DEV_DOMAIN}/api/healthz"
+fi
 MAX_RETRIES=6
 SLEEP_SECS=4
 
