@@ -205,8 +205,8 @@ router.post("/ask", async (req, res) => {
       return void res.json({ answer });
     }
 
-    // SSE path: check cache first, then call Gemini-2.5-Flash on miss.
-    const cached = await getCachedAnswer(questionHash);
+    // SSE path: check cache first (only when no history), then call Gemini-2.5-Flash on miss.
+    const cached = hasHistory ? null : await getCachedAnswer(questionHash);
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -223,7 +223,9 @@ router.post("/ask", async (req, res) => {
     }
 
     // Gemini-2.5-Flash call (non-streaming internally; pseudo-stream to client).
-    const { answer: fullAnswer, matchedItemCount, usedWebSearch } = await collectAnswer(question.trim());
+    const { answer: fullAnswer, matchedItemCount, usedWebSearch } = hasHistory
+      ? await collectAnswerWithHistory(question.trim(), history!)
+      : await collectAnswer(question.trim());
 
     // Emit the answer word-by-word for a live-typing effect.
     const words = fullAnswer.split(" ");
@@ -237,7 +239,7 @@ router.post("/ask", async (req, res) => {
 
     writeReferenceLog(question.trim(), fullAnswer, matchedItemCount);
     writeAiRequestLog("reference");
-    if (fullAnswer) {
+    if (fullAnswer && !hasHistory) {
       setCachedAnswer(questionHash, normalized, fullAnswer, usedWebSearch).catch((err) => logger.warn({ err }, "cache write failed"));
     }
   } catch (err) {
