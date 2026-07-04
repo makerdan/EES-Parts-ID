@@ -15,6 +15,7 @@ import { isLiDARSupported } from "lidar-measure";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -189,6 +190,50 @@ export default function EditItemScreen() {
     setNewKeyword("");
     setSaveStatus("idle");
   };
+
+  const handleDeleteItem = useCallback(() => {
+    const current = itemRef.current;
+    if (!current || !adminToken) {
+      setErrorMsg("Admin session expired. Re-unlock and try again.");
+      setSaveStatus("error");
+      return;
+    }
+    Alert.alert(
+      "Delete Part",
+      `Permanently delete "${current.catalog}"? This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const res = await fetch(`${API_BASE}/inventory/${current.id}`, {
+                method: "DELETE",
+                headers: { Authorization: `Bearer ${adminToken}` },
+              });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({})) as { error?: string };
+                setErrorMsg(data.error ?? `Could not delete part (HTTP ${res.status}).`);
+                setSaveStatus("error");
+                return;
+              }
+              // Invalidate React Query caches and evict from AsyncStorage offline cache
+              await invalidateAllCachesAfterSave({
+                queryClient,
+                asyncStorage: AsyncStorage,
+                itemId: current.id,
+              });
+              router.back();
+            } catch {
+              setErrorMsg("Could not delete the part. Check your connection and try again.");
+              setSaveStatus("error");
+            }
+          },
+        },
+      ],
+    );
+  }, [adminToken, queryClient, router]);
 
   const handleSave = async () => {
     const current = itemRef.current;
@@ -784,6 +829,16 @@ export default function EditItemScreen() {
 
         {/* Footer */}
         <View style={[s.footer, { borderTopColor: colors.border }]}>
+          {adminToken ? (
+            <Pressable
+              onPress={handleDeleteItem}
+              disabled={isSaving}
+              style={[s.deleteBtn, { backgroundColor: colors.destructive + "18", borderColor: colors.destructive + "44", opacity: isSaving ? 0.4 : 1 }]}
+              accessibilityLabel="Delete this part"
+            >
+              <Feather name="trash-2" size={14} color={colors.destructive} />
+            </Pressable>
+          ) : null}
           <Pressable
             onPress={() => router.back()}
             style={[s.cancelBtn, { borderColor: colors.border }]}
@@ -985,6 +1040,7 @@ const s = StyleSheet.create({
   errorBanner: { marginTop: 16, borderRadius: 8, borderWidth: 1, padding: 12 },
   errorText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
   footer: { flexDirection: "row", padding: 16, borderTopWidth: 1, gap: 10 },
+  deleteBtn: { alignItems: "center", justifyContent: "center", borderWidth: 1, borderRadius: 8, paddingVertical: 14, paddingHorizontal: 12 },
   cancelBtn: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 14, alignItems: "center" },
   cancelBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   saveBtn: { flex: 2, borderRadius: 8, paddingVertical: 14, alignItems: "center" },
