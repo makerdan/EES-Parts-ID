@@ -23,6 +23,9 @@
     },
     {
       "path": "./lib/integrations-gemini-ai"
+    },
+    {
+      "path": "./lib/integrations-poe-server"
     }
   ]
 }
