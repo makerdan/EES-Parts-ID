@@ -268,6 +268,12 @@ router.post("/users/:clerkUserId/ban", requireAdminAuth, async (req, res) => {
     return res.status(400).json({ error: "The bootstrap admin cannot be banned" });
   }
 
+  // An admin cannot ban themselves — that would instantly lock them out.
+  const requestingUser = res.locals.appUser as { clerkUserId?: string } | undefined;
+  if (requestingUser?.clerkUserId === clerkUserId) {
+    return res.status(400).json({ error: "You cannot perform this action on your own account" });
+  }
+
   try {
     const updated = await db
       .update(usersTable)
@@ -330,6 +336,13 @@ router.post("/users/:clerkUserId/demote", requireAdminAuth, async (req, res) => 
   // requireAppAuth immediately reverses, so reject it explicitly.
   if (clerkUserId === process.env.ADMIN_CLERK_USER_ID) {
     return res.status(400).json({ error: "The bootstrap admin cannot be demoted" });
+  }
+
+  // An admin cannot demote themselves — that would instantly remove their own
+  // access to the admin section.
+  const requestingUser = res.locals.appUser as { clerkUserId?: string } | undefined;
+  if (requestingUser?.clerkUserId === clerkUserId) {
+    return res.status(400).json({ error: "You cannot perform this action on your own account" });
   }
 
   try {

@@ -3,6 +3,8 @@ import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { type NextFunction,type Request, type Response } from "express";
 
+import { logger } from "../lib/logger";
+
 /**
  * Role-based admin guard for admin-only API endpoints.
  *
@@ -24,6 +26,16 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
 
   if (appUser) {
     if (appUser.role === "admin") {
+      // Emit an audit-level warning for every request made under the bootstrap
+      // admin identity so these privileged actions are visible in deployment logs.
+      if (res.locals.isBootstrapAdmin) {
+        logger.warn({
+          bootstrapAdmin: true,
+          path: req.path,
+          method: req.method,
+          clerkUserId: appUser.clerkUserId,
+        }, "Bootstrap admin request");
+      }
       next();
     } else {
       res.status(403).json({ error: "Admin access required" });

@@ -53,6 +53,7 @@ export function requireAppAuth(req: Request, res: Response, next: NextFunction):
             set: { status: "approved", role: "admin", updatedAt: new Date() },
           });
         res.locals.appUser = { clerkUserId: userId, status: "approved", role: "admin" };
+        res.locals.isBootstrapAdmin = true;
         next();
         return;
       }
