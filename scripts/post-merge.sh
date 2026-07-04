@@ -5,8 +5,16 @@ set -e
 # API Server health check — confirm the server is up after every merge and
 # automatically restart it if it is not responding.
 #
-# Timing per pass: 6 attempts × 2s curl timeout + 5 inter-attempt sleeps × 4s
-# = 12s + 20s = 32s worst-case (~30s as specified).
+# Worst-case timing budget (must fit within [postMerge] timeoutMs in .replit):
+#   DB push (conditional):  90s + FTS check: 15s          = 105s
+#   codegen:fix (timeout):                                 = 120s
+#   codegen settle sleep:                                  =   4s
+#   GitHub sync:                                           =   5s
+#   Health check pass 1:  6 × 2s curl + 5 × 4s sleep      =  32s
+#   SIGTERM/SIGKILL wait:                                  =  10s
+#   Health check pass 2:  6 × 2s curl + 5 × 4s sleep      =  32s
+#   Total worst case:                                      = 308s
+#   Recommended [postMerge] timeoutMs in .replit:          = 360000 (360s)
 # ---------------------------------------------------------------------------
 
 if [[ -n "${PORT:-}" ]]; then
@@ -104,6 +112,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     exit 1
   }
   echo "[post-merge] API client regenerated and any drift auto-committed."
+
+  # Give the API server's file watcher time to settle after codegen writes new
+  # generated files.  Without this pause the health check can start while the
+  # dev server is mid-reload and burn through early retries against an
+  # unresponsive process.
+  CODEGEN_SETTLE_SECS=4
+  echo "[post-merge] Waiting ${CODEGEN_SETTLE_SECS}s for file-watcher to settle after codegen..."
+  sleep "$CODEGEN_SETTLE_SECS"
 
   # Push latest main branch to GitHub after every successful merge.
   # Uses || true so a network error never causes post-merge to report failure.
