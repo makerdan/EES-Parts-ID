@@ -406,9 +406,10 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
 
     if (newPhotoData) {
       const photoUri = newPhotoData.uri;
+      const prevPhotoData = newPhotoData;
       ops.push({
         field: "photo",
-        restoreFn: () => {},
+        restoreFn: () => { setNewPhotoData(prevPhotoData); setRemoveCurrentPhoto(false); },
         promise: (async () => {
           const base64 = await FileSystem.readAsStringAsync(photoUri, {
             encoding: "base64",
@@ -446,9 +447,10 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
 
     if (newPhotoData2) {
       const photoUri2 = newPhotoData2.uri;
+      const prevPhotoData2 = newPhotoData2;
       ops.push({
         field: "photo2",
-        restoreFn: () => {},
+        restoreFn: () => { setNewPhotoData2(prevPhotoData2); setRemoveCurrentPhoto2(false); },
         promise: (async () => {
           const base64 = await FileSystem.readAsStringAsync(photoUri2, {
             encoding: "base64",

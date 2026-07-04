@@ -24,7 +24,7 @@ const PUBLIC_PATHS = new Set(["/healthz"]);
  * 403 { code: "pending" } — user awaiting approval
  * 403 { code: "banned" } — user permanently revoked
  */
-export const requireAppAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export async function requireAppAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (PUBLIC_PATHS.has(req.path)) {
     next();
     return;
@@ -110,4 +110,4 @@ export const requireAppAuth = async (req: Request, res: Response, next: NextFunc
   } catch (err) {
     next(err);
   }
-};
+}
