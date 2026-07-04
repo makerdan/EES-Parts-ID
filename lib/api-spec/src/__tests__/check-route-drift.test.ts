@@ -19,6 +19,9 @@ import {
   collectResJsonLiterals,
   collectReqBodyFieldAccesses,
   analyzeFile,
+  collectRegisteredRoutes,
+  checkSpecRouteCoverage,
+  regexLiteralToOpenApiPath,
 } from "../check-route-drift-helpers";
 
 // ── Parsing helpers ───────────────────────────────────────────────────────────
@@ -453,5 +456,277 @@ describe("analyzeFile (integration)", () => {
 
     // With wrong prefix (empty) neither file matches any spec route — no violations.
     expect(analyzeFile(badFp, "", prefixedSpecOps)).toHaveLength(0);
+  });
+});
+
+// ── regexLiteralToOpenApiPath ─────────────────────────────────────────────────
+
+describe("regexLiteralToOpenApiPath", () => {
+  it("converts a simple anchored regex with one capture group", () => {
+    expect(regexLiteralToOpenApiPath("/^\\/barcode\\/(.+)$/")).toBe(
+      "/barcode/{param}",
+    );
+  });
+
+  it("handles the real inventory barcode regex text verbatim", () => {
+    // Matches the literal source text produced by the TypeScript AST for
+    // router.get(/^\/barcode\/(.+)$/, ...)
+    expect(regexLiteralToOpenApiPath("/^\\/barcode\\/(.+)$/")).toBe(
+      "/barcode/{param}",
+    );
+  });
+
+  it("returns null for a non-path regex (no leading slash segment)", () => {
+    expect(regexLiteralToOpenApiPath("/^\\d+$/")).toBeNull();
+  });
+
+  it("returns null when residual metacharacters remain after substitution", () => {
+    // /^\/items\/?$/ contains a literal `?` after substitution
+    expect(regexLiteralToOpenApiPath("/^\\/items\\/?$/")).toBeNull();
+  });
+
+  it("handles regex flags (e.g. /i) without error", () => {
+    const result = regexLiteralToOpenApiPath("/^\\/foo\\/(.+)$/i");
+    expect(result).toBe("/foo/{param}");
+  });
+
+  it("returns null for an empty or invalid regex literal text", () => {
+    expect(regexLiteralToOpenApiPath("not-a-regex")).toBeNull();
+  });
+});
+
+// ── collectRegisteredRoutes ───────────────────────────────────────────────────
+
+describe("collectRegisteredRoutes", () => {
+  let tmpDir: string;
+
+  beforeAll(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "reg-routes-test-"));
+  });
+
+  afterAll(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeFile(name: string, content: string): string {
+    const fp = path.join(tmpDir, name);
+    fs.writeFileSync(fp, content, "utf-8");
+    return fp;
+  }
+
+  it("returns all METHOD /path strings from a route file with no prefix", () => {
+    const fp = writeFile(
+      "routes-no-prefix.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", (req, res) => res.json({}));
+      router.post("/items", (req, res) => res.json({}));
+      router.patch("/items/:id", (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const routes = collectRegisteredRoutes(fp, "");
+    expect(routes.has("GET /items")).toBe(true);
+    expect(routes.has("POST /items")).toBe(true);
+    expect(routes.has("PATCH /items/{id}")).toBe(true);
+  });
+
+  it("applies prefix to all collected routes", () => {
+    const fp = writeFile(
+      "routes-with-prefix.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/search", (req, res) => res.json({}));
+      router.delete("/:id", (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const routes = collectRegisteredRoutes(fp, "/inventory");
+    expect(routes.has("GET /inventory/search")).toBe(true);
+    expect(routes.has("DELETE /inventory/{id}")).toBe(true);
+  });
+
+  it("returns an empty set for a non-existent file", () => {
+    const routes = collectRegisteredRoutes(
+      path.join(tmpDir, "does-not-exist.ts"),
+      "",
+    );
+    expect(routes.size).toBe(0);
+  });
+
+  it("recognises a regex-literal route and converts it to an OpenAPI path", () => {
+    // Regression: router.get(/^\/barcode\/(.+)$/, ...) was previously skipped,
+    // causing a false-positive missingHandler violation for /inventory/barcode/{code}.
+    const fp = writeFile(
+      "routes-regex.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get(/^\\/barcode\\/(.+)$/, async (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const routes = collectRegisteredRoutes(fp, "/inventory");
+    // The regex converts to /barcode/{param}; with prefix it becomes /inventory/barcode/{param}
+    expect(routes.has("GET /inventory/barcode/{param}")).toBe(true);
+  });
+});
+
+// ── checkSpecRouteCoverage ────────────────────────────────────────────────────
+
+describe("checkSpecRouteCoverage", () => {
+  let tmpDir: string;
+
+  beforeAll(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-coverage-test-"));
+  });
+
+  afterAll(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeHandler(name: string, content: string): string {
+    const fp = path.join(tmpDir, name);
+    fs.writeFileSync(fp, content, "utf-8");
+    return fp;
+  }
+
+  it("returns no violations when every spec path has a matching handler", () => {
+    writeHandler(
+      "handler-full.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/widgets", (req, res) => res.json({}));
+      router.post("/widgets", (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const specOps = new Map([
+      [
+        "GET /widgets",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+      [
+        "POST /widgets",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+    ]);
+
+    const prefixMap = new Map([["handler-full.ts", ""]]);
+    const violations = checkSpecRouteCoverage(specOps, prefixMap, tmpDir);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("returns a missingHandler violation when a spec path has no handler", () => {
+    writeHandler(
+      "handler-partial.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/gadgets", (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const specOps = new Map([
+      [
+        "GET /gadgets",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+      [
+        "DELETE /gadgets/{id}",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+    ]);
+
+    const prefixMap = new Map([["handler-partial.ts", ""]]);
+    const violations = checkSpecRouteCoverage(specOps, prefixMap, tmpDir);
+    expect(violations).toHaveLength(1);
+    const v = violations[0];
+    expect(v.kind).toBe("missingHandler");
+    expect(v.method).toBe("DELETE");
+    expect(v.specPath).toBe("/gadgets/{id}");
+    expect(v.file).toBe("(spec)");
+    expect(v.undeclaredFields).toHaveLength(0);
+  });
+
+  it("returns violations for all unmatched spec paths", () => {
+    const specOps = new Map([
+      [
+        "GET /orphan-a",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+      [
+        "POST /orphan-b",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+    ]);
+
+    // Empty prefix map — no handler files at all
+    const violations = checkSpecRouteCoverage(specOps, new Map(), tmpDir);
+    expect(violations).toHaveLength(2);
+    expect(violations.every((v) => v.kind === "missingHandler")).toBe(true);
+  });
+
+  it("returns no violations when the spec is empty", () => {
+    writeHandler(
+      "handler-any.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/anything", (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const violations = checkSpecRouteCoverage(
+      new Map(),
+      new Map([["handler-any.ts", ""]]),
+      tmpDir,
+    );
+    expect(violations).toHaveLength(0);
+  });
+
+  it("matches spec paths correctly when the prefix map uses a non-empty prefix", () => {
+    writeHandler(
+      "handler-prefixed.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/search", (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const specOps = new Map([
+      [
+        "GET /inventory/search",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+    ]);
+
+    // Correct prefix — handler covers the spec path
+    const noViolations = checkSpecRouteCoverage(
+      specOps,
+      new Map([["handler-prefixed.ts", "/inventory"]]),
+      tmpDir,
+    );
+    expect(noViolations).toHaveLength(0);
+
+    // Wrong prefix — handler does NOT cover the spec path
+    const withViolation = checkSpecRouteCoverage(
+      specOps,
+      new Map([["handler-prefixed.ts", "/wrong"]]),
+      tmpDir,
+    );
+    expect(withViolation).toHaveLength(1);
+    expect(withViolation[0].kind).toBe("missingHandler");
   });
 });

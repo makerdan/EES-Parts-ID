@@ -34,6 +34,7 @@ import {
   buildSpecOperations,
   parsePrefixMap,
   analyzeFile,
+  checkSpecRouteCoverage,
   type OpenApiSpec,
   type Violation,
 } from "./check-route-drift-helpers.js";
@@ -63,6 +64,10 @@ function main(): void {
     allViolations.push(...violations);
   }
 
+  // Check reverse direction: spec paths that have no Express handler at all
+  const coverageViolations = checkSpecRouteCoverage(specOps, prefixMap, ROUTES_DIR);
+  allViolations.push(...coverageViolations);
+
   if (allViolations.length === 0) {
     console.log(
       "✅  spec:check passed — all route handlers conform to the OpenAPI spec.",
@@ -79,24 +84,31 @@ function main(): void {
   }
 
   console.error(
-    "❌  spec:check FAILED — route handler(s) use undeclared fields:\n",
+    "❌  spec:check FAILED — violations found:\n",
   );
   for (const [file, violations] of byFile) {
-    const rel = file.replace(ROOT + "/", "");
+    const rel = file === "(spec)" ? "(spec — missing handlers)" : file.replace(ROOT + "/", "");
     console.error(`  ${rel}`);
     for (const v of violations) {
-      const suffix = v.note ? `  (${v.note})` : "";
-      console.error(
-        `    ${v.method} ${v.specPath}  [${v.kind}]  ` +
-          `undeclared: ${v.undeclaredFields.join(", ")}${suffix}`,
-      );
+      if (v.kind === "missingHandler") {
+        console.error(
+          `    ${v.method} ${v.specPath}  [missingHandler]  spec path has no Express route handler`,
+        );
+      } else {
+        const suffix = v.note ? `  (${v.note})` : "";
+        console.error(
+          `    ${v.method} ${v.specPath}  [${v.kind}]  ` +
+            `undeclared: ${v.undeclaredFields.join(", ")}${suffix}`,
+        );
+      }
     }
     console.error("");
   }
 
   console.error(
     `  ${allViolations.length} violation(s) found.\n` +
-      "  Either add the field(s) to openapi.yaml or remove them from the handler.\n",
+      "  Fix handler drift: add missing fields to openapi.yaml (or remove from handler).\n" +
+      "  Fix missing handlers: add an Express route or remove the path from openapi.yaml.\n",
   );
   process.exit(1);
 }
