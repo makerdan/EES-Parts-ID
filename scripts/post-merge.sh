@@ -109,13 +109,23 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     exit 0
   fi
 
-  # All retries failed — kill any stale process and restart.
-  echo "[post-merge] API Server did not respond. Killing stale process and restarting..."
-  pkill -f "artifacts/api-server" 2>/dev/null || true
-  sleep 2
+  # All retries failed — gracefully stop any stale process and let the
+  # workflow supervisor restart it automatically.
+  echo "[post-merge] API Server did not respond. Sending SIGTERM to stale process..."
+  pkill -TERM -f "artifacts/api-server" 2>/dev/null || true
 
-  pnpm --filter @workspace/api-server dev &
-  echo "[post-merge] API Server restarted in background (PID $!)."
+  # Poll until the process exits (up to ~10 seconds), then SIGKILL if needed.
+  KILL_WAIT=0
+  while kill -0 "$(pgrep -f 'artifacts/api-server' | head -1)" 2>/dev/null; do
+    if [ "$KILL_WAIT" -ge 10 ]; then
+      echo "[post-merge] Process did not exit after ${KILL_WAIT}s — sending SIGKILL."
+      pkill -KILL -f "artifacts/api-server" 2>/dev/null || true
+      break
+    fi
+    sleep 1
+    KILL_WAIT=$((KILL_WAIT + 1))
+  done
+  echo "[post-merge] Stale process stopped. Workflow supervisor will restart the server."
 
   # Second health check pass after restart.
   if check_api_health "post-restart"; then
