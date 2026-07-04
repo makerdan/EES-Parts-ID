@@ -490,10 +490,10 @@ echo "artifacts/parts-id/components/PartCard.tsx"
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR16/git"
 
-# pnpm: record when codegen:check is invoked; exit 0 for everything.
+# pnpm: record when codegen:fix is invoked; exit 0 for everything.
 cat > "$MOCK_BIN_DIR16/pnpm" << MOCKEOF
 #!/bin/bash
-if echo "\$*" | grep -q 'codegen:check'; then
+if echo "\$*" | grep -q 'codegen:fix'; then
   touch "$CODEGEN_CHECK_CALLED_FILE16"
 fi
 exit 0
@@ -511,15 +511,57 @@ CODEGEN_NO_DRIFT_OUTPUT=$(PATH="$MOCK_BIN_DIR16:$PATH" REPLIT_DEV_DOMAIN="mock-d
 CODEGEN_NO_DRIFT_EXIT=$?
 
 if [[ -f "$CODEGEN_CHECK_CALLED_FILE16" ]]; then
-  pass "codegen:check no-drift — pnpm run codegen:check was invoked"
+  pass "codegen:fix no-drift — pnpm run codegen:fix was invoked"
 else
-  fail "codegen:check no-drift — pnpm run codegen:check was never invoked"
+  fail "codegen:fix no-drift — pnpm run codegen:fix was never invoked"
 fi
 
 rm -rf "$MOCK_BIN_DIR16"
 
-assert_exit     "codegen:check no-drift — post-merge exits 0"         0 "$CODEGEN_NO_DRIFT_EXIT"
-assert_contains "codegen:check no-drift — prints drift check passed"  "drift check passed" "$CODEGEN_NO_DRIFT_OUTPUT"
+assert_exit     "codegen:fix no-drift — post-merge exits 0"         0 "$CODEGEN_NO_DRIFT_EXIT"
+assert_contains "codegen:fix no-drift — prints drift auto-committed msg"  "drift auto-committed" "$CODEGEN_NO_DRIFT_OUTPUT"
+
+# ---------------------------------------------------------------------------
+# Test 17: codegen:fix commit failure — post-merge exits non-zero
+#
+# Spawns post-merge.sh with a mock pnpm that exits 1 when codegen:fix is
+# invoked, simulating a git commit failure (index lock, identity misconfigured,
+# etc.).  Asserts that post-merge itself exits non-zero so the operator knows
+# the auto-commit did not happen rather than silently succeeding.
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR17=$(mktemp -d)
+
+# git: report no lockfile or schema changes so those branches are skipped.
+cat > "$MOCK_BIN_DIR17/git" << 'MOCKEOF'
+#!/bin/bash
+echo "artifacts/parts-id/components/PartCard.tsx"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR17/git"
+
+# pnpm: exit 1 when codegen:fix is invoked to simulate a commit failure.
+cat > "$MOCK_BIN_DIR17/pnpm" << 'MOCKEOF'
+#!/bin/bash
+if echo "$*" | grep -q 'codegen:fix'; then
+  echo "[mock] codegen:fix: git commit failed: cannot lock ref" >&2
+  exit 1
+fi
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR17/pnpm"
+
+# curl: return a healthy response (should never be reached).
+cat > "$MOCK_BIN_DIR17/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR17/curl"
+
+CODEGEN_FAIL_OUTPUT=$(PATH="$MOCK_BIN_DIR17:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+CODEGEN_FAIL_EXIT=$?
+rm -rf "$MOCK_BIN_DIR17"
+
+assert_exit     "codegen:fix commit fail — post-merge exits non-zero"  1 "$CODEGEN_FAIL_EXIT"
+assert_contains "codegen:fix commit fail — prints error message"       "codegen:fix failed" "$CODEGEN_FAIL_OUTPUT"
 
 # ---------------------------------------------------------------------------
 # Summary
