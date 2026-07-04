@@ -121,6 +121,10 @@ args = "spec:check"
 task = "workflow.run"
 args = "lint"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "spec:check:tests"
+
 [[workflows.workflow]]
 name = "post-merge-health-test"
 author = "agent"
@@ -172,6 +176,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/api-spec run spec:check"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "spec:check:tests"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-spec test"
 
 [workflows.workflow.metadata]
 isValidation = true
