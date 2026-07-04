@@ -553,33 +553,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     })();
   }, [isAdmin]);
 
-  // ── Keep the admin bearer token fresh ─────────────────────────────────────
-  // Clerk auto-rotates session tokens; refresh the mirrored admin token on a
-  // light interval and whenever the app returns to the foreground so long-lived
-  // admin sessions don't send a stale bearer token.
-  const refreshAdminToken = useCallback(async () => {
-    if (!isAdminRef.current) return;
+  // ── Periodic admin-status re-check ────────────────────────────────────────
+  // Re-verify the user's admin role against the server on a short interval and
+  // whenever the app returns to the foreground. Running for ALL approved users
+  // (not just current admins) means a newly promoted user discovers their new
+  // role within one poll cycle — no sign-out required.
+  const refreshAdminStatus = useCallback(async () => {
     const token = await getTokenRef.current();
-    if (token) {
-      setAdminToken(token);
-    } else {
+    if (!token) {
       setIsAdmin(false);
       setAdminToken(null);
+      return;
     }
-  }, []);
+    await verifyAdmin(token);
+  }, [verifyAdmin]);
 
   useEffect(() => {
-    if (!isAdmin) return;
-    const id = setInterval(() => { refreshAdminToken(); }, 45_000);
+    if (!isAuthenticated) return;
+    const id = setInterval(() => { refreshAdminStatus(); }, 30_000);
     return () => clearInterval(id);
-  }, [isAdmin, refreshAdminToken]);
+  }, [isAuthenticated, refreshAdminStatus]);
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (nextState) => {
-      if (nextState === "active") refreshAdminToken();
+      if (nextState === "active" && isAuthenticated) refreshAdminStatus();
     });
     return () => sub.remove();
-  }, [refreshAdminToken]);
+  }, [isAuthenticated, refreshAdminStatus]);
 
   const currentSettingsRef = useRef(settings);
   useEffect(() => { currentSettingsRef.current = settings; }, [settings]);
