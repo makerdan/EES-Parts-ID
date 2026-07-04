@@ -377,7 +377,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // ── Approval status check ─────────────────────────────────────────────────
   // After Clerk confirms sign-in, call the API to verify the user is approved.
   const doApprovalCheck = useCallback(async (signal?: AbortSignal) => {
-    const token = await getToken();
+    // Use the stable ref so this callback is not recreated every time Clerk
+    // rotates the getToken function reference (e.g. on token refresh), which
+    // would cause the approval-check useEffect to re-fire in a tight loop.
+    const token = await getTokenRef.current();
     if (signal?.aborted) return;
     if (!token) {
       setApprovalStatus("pending");
@@ -407,7 +410,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setIsAdmin(false);
       setAdminToken(null);
     }
-  }, [getToken, verifyAdmin]);
+  }, [verifyAdmin]);
 
   useEffect(() => {
     if (!clerkLoaded) return;
