@@ -1,13 +1,14 @@
 import {
   CreateWarehouseZoneBody,
-  UpdateWarehouseZoneBody,
   ListWarehouseZonesResponse,
+  UpdateWarehouseZoneBody,
   UpdateWarehouseZoneResponse,
 } from "@workspace/api-zod";
 import { db } from "@workspace/db";
 import { inventoryTable, warehouseZoneTable } from "@workspace/db";
 import { asc, eq, sql } from "drizzle-orm";
 import { Router } from "express";
+
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 /** Strips leading zeros from numeric aisle ID strings ("08" → "8", "A1" → "A1"). */

@@ -1,3 +1,13 @@
+import {
+  LookupByBarcodeResponse,
+  ReenrichItemResponse,
+  SearchInventoryBody as SearchInventoryBodySchema,
+  UpdateItemBarcodesResponse,
+  UpdateItemBinsResponse,
+  UpdateItemDescriptionResponse,
+  UpdateItemDimensionsResponse,
+  UpdateItemKeywordsResponse,
+} from "@workspace/api-zod";
 import { db } from "@workspace/db";
 import {
   abbreviationMapTable,
@@ -33,16 +43,6 @@ import {
   fuseConfidence,
   shouldUpdateScore,
 } from "../utils/scoreHelpers";
-import {
-  SearchInventoryBody as SearchInventoryBodySchema,
-  LookupByBarcodeResponse,
-  UpdateItemBarcodesResponse,
-  UpdateItemBinsResponse,
-  UpdateItemDescriptionResponse,
-  ReenrichItemResponse,
-  UpdateItemKeywordsResponse,
-  UpdateItemDimensionsResponse,
-} from "@workspace/api-zod";
 import {
   buildChipFilterRegexes,
   compareBySize,
