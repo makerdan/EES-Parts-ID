@@ -125,6 +125,11 @@ const _persistReadPromise = initPersistRead();
 // duplicate network requests.
 let _svgLoadPromise: Promise<void> | null = null;
 
+// AbortController for the current in-flight SVG fetch.  Replaced (and the
+// previous one aborted) each time a new load is initiated so that a stale
+// fetch completing after a newer one can never overwrite state.
+let _svgLoadAbortController: AbortController | null = null;
+
 export function prefetchSvgAsset(): Promise<void> {
   if (hasCachedData()) return Promise.resolve();
   return loadSvgAsset();
@@ -134,26 +139,47 @@ export function prefetchSvgAsset(): Promise<void> {
  * Load the floor plan SVG: try the server first (admin-uploadable), fall back
  * to the bundled asset, and finally set an empty fallback if both fail.
  * Uses hash-based cache invalidation so cold-start renders skip network.
+ *
+ * Each call aborts any previous in-flight fetch via `_svgLoadAbortController`
+ * so a stale response can never overwrite a newer one.
  */
 function loadSvgAsset(): Promise<void> {
   if (_svgLoadPromise) return _svgLoadPromise;
-  _svgLoadPromise = _loadFloorPlanFromServer()
-    .catch(() => _loadFloorPlanFromBundle())
-    .catch(() => { setFallbackEmpty(); });
+  // Abort any previous in-flight SVG fetch before starting a new one.
+  _svgLoadAbortController?.abort();
+  const controller = new AbortController();
+  _svgLoadAbortController = controller;
+  _svgLoadPromise = _loadFloorPlanFromServer(controller.signal)
+    .catch((err) => {
+      // Don't fall back to the bundle when the fetch was intentionally
+      // cancelled — a newer load is already in flight.
+      if (controller.signal.aborted) throw err;
+      return _loadFloorPlanFromBundle();
+    })
+    .catch((err) => {
+      if (controller.signal.aborted) return; // silently swallow abort
+      setFallbackEmpty();
+      void err;
+    });
   return _svgLoadPromise;
 }
 
-async function _loadFloorPlanFromServer(): Promise<void> {
-  const metaRes = await fetchWithAuth(`${API_BASE}/floor-plan/meta`);
+async function _loadFloorPlanFromServer(signal?: AbortSignal): Promise<void> {
+  const metaRes = await fetchWithAuth(`${API_BASE}/floor-plan/meta`, { signal });
   if (!metaRes.ok) throw new Error("no server floor plan");
 
   const { hash } = FloorPlanMetaSchema.parse(await metaRes.json());
   // Cache hit — skip re-fetching the SVG bytes entirely.
   if (getIfValid(hash) !== null) return;
+  // Bail out early if the fetch was cancelled between the meta check and the SVG fetch.
+  if (signal?.aborted) throw new Error("aborted");
 
-  const svgRes = await fetchWithAuth(`${API_BASE}/floor-plan/svg`);
+  const svgRes = await fetchWithAuth(`${API_BASE}/floor-plan/svg`, { signal });
   if (!svgRes.ok) throw new Error("floor-plan svg fetch failed");
   const xml = await svgRes.text();
+
+  // Guard against abort firing between the response body read and the state write.
+  if (signal?.aborted) throw new Error("aborted");
 
   const contentViewBox = parseContentViewBox(xml) ?? undefined;
   let newData: SvgData;
