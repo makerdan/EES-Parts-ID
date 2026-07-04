@@ -628,6 +628,36 @@ assert_contains "install fail — WARNING message logged"                       
 assert_contains "install fail — proceeds to health check after install wait"   "health check" "$INSTALL_FAIL_OUTPUT"
 
 # ---------------------------------------------------------------------------
+# Test 19: env:check exits 0 — all server env vars are documented
+#
+# Runs check-env-vars.ts directly and asserts exit 0.  Any future env var
+# added to server code without a matching .env.example entry will fail here,
+# catching the omission at the health-gate before it reaches a reviewer.
+# ---------------------------------------------------------------------------
+ENV_CHECK_OUTPUT=$(pnpm --filter @workspace/scripts env:check 2>&1)
+ENV_CHECK_EXIT=$?
+assert_exit "env:check — exits 0 (all vars documented)" 0 "$ENV_CHECK_EXIT"
+if [[ "$ENV_CHECK_EXIT" -ne 0 ]]; then
+  echo "  env:check output:"
+  echo "$ENV_CHECK_OUTPUT" | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
+# Test 20: api-server lint exits 0 — no import-sort or other lint errors
+#
+# Runs eslint on the api-server package and asserts exit 0.  Any future
+# import-order violation or lint regression in api-server will fail here,
+# catching it at the health-gate before merge.
+# ---------------------------------------------------------------------------
+LINT_OUTPUT=$(pnpm --filter @workspace/api-server lint 2>&1)
+LINT_EXIT=$?
+assert_exit "api-server lint — exits 0 (no import-sort or lint errors)" 0 "$LINT_EXIT"
+if [[ "$LINT_EXIT" -ne 0 ]]; then
+  echo "  lint output (first 20 lines):"
+  echo "$LINT_OUTPUT" | head -20 | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
