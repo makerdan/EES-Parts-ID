@@ -41,7 +41,7 @@ import app from "../src/app";
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("HTTP security headers (helmet)", () => {
-  let res: Awaited<ReturnType<ReturnType<typeof supertest>>>;
+  let res: supertest.Response;
 
   beforeAll(async () => {
     res = await supertest(app).get("/api/inventory");
