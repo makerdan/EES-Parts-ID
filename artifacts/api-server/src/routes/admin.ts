@@ -238,6 +238,13 @@ router.post("/users/:clerkUserId/approve", requireAdminAuth, async (req, res) =>
   if (typeof clerkUserId !== "string" || !clerkUserId) {
     return res.status(400).json({ error: "Missing clerkUserId" });
   }
+
+  // An admin cannot approve themselves — self-approval bypasses any audit trail.
+  const requestingUser = res.locals.appUser as { clerkUserId?: string } | undefined;
+  if (requestingUser?.clerkUserId === clerkUserId) {
+    return res.status(400).json({ error: "You cannot perform this action on your own account" });
+  }
+
   try {
     const updated = await db
       .update(usersTable)
