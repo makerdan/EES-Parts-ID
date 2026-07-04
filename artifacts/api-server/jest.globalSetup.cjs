@@ -25,6 +25,8 @@ module.exports = async function globalSetup() {
 
   const dbPackageDir = path.resolve(__dirname, "../../lib/db");
 
+  const DRIZZLE_PUSH_TIMEOUT_MS = 30_000;
+
   try {
     execSync(
       "pnpm exec drizzle-kit push --force --config ./drizzle.config.ts",
@@ -32,10 +34,17 @@ module.exports = async function globalSetup() {
         cwd: dbPackageDir,
         env: { ...process.env },
         stdio: ["pipe", "pipe", "pipe"],
+        timeout: DRIZZLE_PUSH_TIMEOUT_MS,
       }
     );
     console.log("[jest globalSetup] Test DB schema is up to date.");
   } catch (err) {
+    if (err.signal === "SIGTERM" || err.code === "ETIMEDOUT") {
+      throw new Error(
+        "[jest globalSetup] drizzle-kit push exceeded 30s — check DATABASE_URL" +
+          " connectivity and that the DB server is reachable."
+      );
+    }
     const details =
       (err.stderr && err.stderr.toString().trim()) ||
       (err.stdout && err.stdout.toString().trim()) ||
