@@ -188,6 +188,50 @@ describe("POST /api/admin/users/:id/demote — self-action guard", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Self-approve protection
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/admin/users/:id/approve — self-action guard", () => {
+  it("returns 400 when a promoted admin tries to approve themselves", async () => {
+    const res = await supertest(app)
+      .post(`/api/admin/users/${PROMOTED_ADMIN}/approve`)
+      .set("Authorization", promotedAdminBearer())
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/cannot perform this action on your own account/i);
+  });
+
+  it("returns 400 when the bootstrap admin tries to approve themselves", async () => {
+    const res = await supertest(app)
+      .post(`/api/admin/users/${ADMIN_TEST_USER_ID}/approve`)
+      .set("Authorization", bootstrapBearer())
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/cannot perform this action on your own account/i);
+  });
+
+  it("returns 200 when a promoted admin approves a different user", async () => {
+    await db
+      .insert(usersTable)
+      .values({ clerkUserId: TARGET_USER, email: "target@test.example", status: "pending", role: "user" })
+      .onConflictDoUpdate({
+        target: usersTable.clerkUserId,
+        set: { status: "pending", updatedAt: new Date() },
+      });
+
+    const res = await supertest(app)
+      .post(`/api/admin/users/${TARGET_USER}/approve`)
+      .set("Authorization", promotedAdminBearer())
+      .expect(200);
+
+    expect(res.body).toHaveProperty("user");
+    expect(res.body.user.status).toBe("approved");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap admin flag — isBootstrapAdmin is set on the bootstrap admin path
 // ─────────────────────────────────────────────────────────────────────────────
 
