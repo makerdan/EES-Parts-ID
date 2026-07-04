@@ -2545,14 +2545,12 @@ router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req
     }
 
     // Enforce per-model image size limit before calling the AI.
-    // Poe path uses Claude Sonnet (10 MB per image); OpenAI fallback uses
-    // gpt-5.1 (20 MB per image).  Read the header here so the limit is
-    // consistent with the model actually used below.
-    const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
+    // The search endpoint always uses the Poe/Claude path; the x-use-openai-fallback
+    // header is intentionally ignored here so callers cannot force a more expensive
+    // provider or a higher per-image size limit.
+    const useOpenAiFallback = false;
     {
-      const perModelLimit = useOpenAiFallback
-        ? MAX_IMAGE_BYTES_GPT5_1
-        : MAX_IMAGE_BYTES_CLAUDE_SONNET;
+      const perModelLimit = MAX_IMAGE_BYTES_CLAUDE_SONNET;
       const imgBytes = estimateImageBytes(imageBase64);
       if (imgBytes > perModelLimit) {
         const mb = (imgBytes / (1024 * 1024)).toFixed(1);
