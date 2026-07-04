@@ -189,6 +189,45 @@ async function main() {
     console.log(
       "\nOK: query planner uses inventory_fts_idx for the FTS WHERE clause.",
     );
+
+    // -------------------------------------------------------------------------
+    // Phase 3: Check that inventory_fulltext_trgm_idx exists.
+    // This trigram GIN index is required by the uncategorized-browse exclusion
+    // query (id NOT IN (SELECT id FROM inventory WHERE lower(concat) ~ regex)).
+    // -------------------------------------------------------------------------
+    console.log("[verify-fts] Phase 3: checking inventory_fulltext_trgm_idx...");
+
+    const trgmResult = await client.query<{ indexdef: string }>(
+      `SELECT indexdef
+       FROM pg_indexes
+       WHERE schemaname = 'public'
+         AND tablename  = 'inventory'
+         AND indexname  = 'inventory_fulltext_trgm_idx'`,
+    );
+
+    if (trgmResult.rowCount === 0) {
+      console.error(
+        "FAIL: inventory_fulltext_trgm_idx does not exist.\n" +
+          "Run migration 0032_inventory_fulltext_trgm_idx.sql to create it:\n" +
+          "  psql $DATABASE_URL -f lib/db/drizzle/0032_inventory_fulltext_trgm_idx.sql",
+      );
+      process.exit(1);
+    }
+
+    const trgmDef = trgmResult.rows[0].indexdef;
+    const trgmMissing = ["gin_trgm_ops", "lower", "inventory_fulltext_trgm_idx"].filter(
+      (f) => !trgmDef.includes(f),
+    );
+    if (trgmMissing.length > 0) {
+      console.error(
+        `FAIL: inventory_fulltext_trgm_idx is missing expected fragments: ${trgmMissing.join(", ")}\n` +
+          `Actual definition:\n${trgmDef}`,
+      );
+      process.exit(1);
+    }
+
+    console.log("OK: inventory_fulltext_trgm_idx exists.");
+    console.log(`    ${trgmDef}`);
     console.log("[verify-fts] Done.");
   } finally {
     await client.end();
