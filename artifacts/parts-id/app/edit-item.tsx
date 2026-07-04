@@ -52,7 +52,7 @@ export default function EditItemScreen() {
   useTrackScreen("Edit Item");
   const colors = useColors();
   const router = useRouter();
-  const { adminToken, isLoading, pendingLidarDims, setPendingLidarDims } = useApp();
+  const { adminToken, isAdmin, isLoading, pendingLidarDims, setPendingLidarDims } = useApp();
   const { item: itemParam, section: sectionParam } = useLocalSearchParams<{ item: string; section?: string }>();
   const queryClient = useQueryClient();
   const scrollViewRef = useRef<ScrollView>(null);
@@ -76,9 +76,9 @@ export default function EditItemScreen() {
   // the error banner and decide to cancel before being kicked to tabs.
   useEffect(() => {
     if (saveStatus === "saving" || saveStatus === "error") return;
-    if (shouldRedirectNonAdmin(isLoading, adminToken)) { router.replace("/(tabs)"); }
+    if (shouldRedirectNonAdmin(isLoading, isAdmin)) { router.replace("/(tabs)"); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading, adminToken, saveStatus]);
+  }, [isLoading, isAdmin, saveStatus]);
 
   const [description, setDescription] = useState(item?.description ?? "");
   const [bins, setBins] = useState<Array<string>>(item?.binLocations ?? []);

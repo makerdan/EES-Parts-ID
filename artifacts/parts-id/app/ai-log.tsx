@@ -113,7 +113,7 @@ export default function AiLogScreen() {
   }, [adminToken]);
 
   useEffect(() => {
-    if (shouldRedirectNonAdmin(isLoading, adminToken)) {
+    if (shouldRedirectNonAdmin(isLoading, isAdmin)) {
       router.replace("/(tabs)");
       return;
     }
@@ -121,7 +121,7 @@ export default function AiLogScreen() {
       fetchLog();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading, adminToken, isAdmin, fetchLog, router]);
+  }, [isLoading, isAdmin, fetchLog, router]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>

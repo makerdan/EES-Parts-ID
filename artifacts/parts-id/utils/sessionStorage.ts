@@ -7,7 +7,6 @@
 export const SEARCH_CACHE_KEYS = ["parts_id_fuse_cache_v2", "parts_id_query_cache_v1"];
 
 export const SESSION_KEY       = "parts_id_session";
-export const ADMIN_TOKEN_KEY   = "parts_id_admin_token";
 
 /**
  * Delete all session and search-cache storage entries that belong to a logged-
@@ -23,6 +22,5 @@ export async function clearSessionStorage(
   multiRemoveFn:  (keys: Array<string>) => Promise<void>,
 ): Promise<void> {
   await secureDeleteFn(SESSION_KEY);
-  await secureDeleteFn(ADMIN_TOKEN_KEY);
   await multiRemoveFn(SEARCH_CACHE_KEYS);
 }

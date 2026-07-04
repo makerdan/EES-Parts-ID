@@ -8,13 +8,15 @@
  *                     then refreshes the list on success.
  */
 
+export type UserRole = "admin" | "user";
+
 export type UserAction = "approve" | "ban" | "promote" | "demote";
 
 export type UserRow = {
   clerkUserId: string;
   email: string;
   status: "pending" | "approved" | "banned";
-  role: "user" | "admin";
+  role?: UserRole;
   createdAt: string;
 };
 

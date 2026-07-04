@@ -154,7 +154,7 @@ export default function AdminInboxScreen() {
   }, [adminToken]);
 
   useEffect(() => {
-    if (shouldRedirectNonAdmin(isLoading, adminToken)) {
+    if (shouldRedirectNonAdmin(isLoading, isAdmin)) {
       router.replace("/(tabs)");
       return;
     }

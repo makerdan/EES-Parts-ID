@@ -47,7 +47,6 @@ jest.mock("../utils/logoutRegistry", () => ({
 jest.mock("../utils/sessionStorage", () => ({
   SEARCH_CACHE_KEYS: [],
   SESSION_KEY:       "parts_id_session",
-  ADMIN_TOKEN_KEY:   "parts_id_admin_token",
   clearSessionStorage: jest.fn(() => Promise.resolve()),
 }));
 
@@ -57,7 +56,7 @@ jest.mock("../utils/storageErrorReporter", () => ({
 }));
 
 jest.mock("../utils/appAuth", () => ({
-  setAdminToken:       jest.fn(),
+  fetchWithAuth:       jest.fn(() => Promise.resolve({ ok: false } as Response)),
   setAppToken:         jest.fn(),
   setAppTokenGetter:   jest.fn(),
   setOnUnauthorized:   jest.fn(),
@@ -294,16 +293,17 @@ describe("AppProvider — setAuthTokenGetter initialisation", () => {
     expect(await getter()).toBe("app-tok-abc123");
   });
 
-  it("getter resolves to adminToken (not Clerk token) when both tokens are stored", async () => {
+  it("getter always resolves to the Clerk token — there is no separate admin token", async () => {
+    // Admin authority is role-based now; the auth getter has a single source
+    // (the Clerk session token). Even a legacy admin token lingering in
+    // SecureStore must be ignored by the getter.
     const { setAuthTokenGetterSpy } = renderWithTokenGetterCapture({
       clerkToken: "app-tok-xyz",
-      adminToken: "admin-tok-xyz",
+      adminToken: "legacy-admin-tok-xyz",
     });
-    // adminTokenRef.current is synced via a state-update effect after
-    // setAdminToken() is called; flushing lets the full boot cycle complete.
     await flushAsync();
     const getter = setAuthTokenGetterSpy.mock.calls[0][0] as () => Promise<string | null>;
-    expect(await getter()).toBe("admin-tok-xyz");
+    expect(await getter()).toBe("app-tok-xyz");
   });
 
   it("calls setAuthTokenGetter(null) on unmount (cleanup path)", () => {
