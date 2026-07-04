@@ -7,5 +7,5 @@
   ],
   "project": ["src/**/*.ts", "scripts/**/*.ts"],
   "ignoreBinaries": ["tsc"],
-  "ignoreDependencies": ["cookie-parser", "@types/cookie-parser", "pdf-lib"]
+  "ignoreDependencies": ["pdf-lib"]
 }
