@@ -21,7 +21,7 @@ interface BucketState {
   timestamps: Array<number>;
 }
 
-export class SlidingWindowRateLimiter {
+class SlidingWindowRateLimiter {
   private readonly maxRequests: number;
   private readonly windowMs: number;
   private readonly buckets = new Map<string, BucketState>();

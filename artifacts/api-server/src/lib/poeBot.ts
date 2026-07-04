@@ -38,7 +38,7 @@ export class PoeHttpError extends Error {
   }
 }
 
-export class PoeBotError extends Error {
+class PoeBotError extends Error {
   readonly allowRetry: boolean;
   constructor(detail: string, allowRetry: boolean) {
     super(`Poe bot error: ${detail}`);

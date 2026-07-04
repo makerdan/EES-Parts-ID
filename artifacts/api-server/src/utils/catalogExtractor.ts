@@ -21,7 +21,7 @@ export interface ImageRegion {
   height: number;
 }
 
-export interface CatalogEntry {
+interface CatalogEntry {
   catalogNumber: string;
   description: string;
   confidence: number;

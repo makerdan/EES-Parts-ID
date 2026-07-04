@@ -7,7 +7,7 @@ import { hashQuestion, normalizeQuestion, setCachedAnswer } from "../lib/answerC
 const SYSTEM_PROMPT =
   "You are a concise electrical supply reference assistant for warehouse workers. Answer questions about electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology. Use **bold** for key terms and - bullets for lists. Keep answers under 200 words. Be precise and practical.";
 
-export const QUICK_LOOKUP_CHIPS: Array<{ label: string; question: string }> = [
+const QUICK_LOOKUP_CHIPS: Array<{ label: string; question: string }> = [
   { label: "1G",               question: "What is a 1-gang electrical box, what devices does it hold, and what are the standard dimensions?" },
   { label: "GFCI",             question: "What does GFCI stand for, how does it work, and where is it required by the NEC?" },
   { label: "AFCI",             question: "What is an AFCI breaker or receptacle, how does it work, and where does the NEC require it?" },
