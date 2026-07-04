@@ -7,6 +7,7 @@
  */
 
 import { readFileSync, existsSync } from "fs";
+import { resolve } from "path";
 import ts from "typescript";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -57,7 +58,7 @@ export interface Violation {
   file: string;
   method: string;
   specPath: string;
-  kind: "response" | "requestBody";
+  kind: "response" | "requestBody" | "missingHandler";
   undeclaredFields: string[];
   note?: string;
 }
@@ -486,5 +487,171 @@ export function analyzeFile(
   }
   walk(sf);
 
+  return violations;
+}
+
+// ── Spec route coverage ───────────────────────────────────────────────────────
+
+/**
+ * Best-effort conversion of a regex literal's text (e.g. `/^\/barcode\/(.+)$/`)
+ * to an OpenAPI-style path (e.g. `/barcode/{param}`).
+ *
+ * Returns null when the regex cannot be reliably mapped to a simple path
+ * (contains remaining metacharacters after substitution, or doesn't start
+ * with `/`).  Callers should skip routes whose path cannot be resolved rather
+ * than emitting a false-positive violation.
+ */
+export function regexLiteralToOpenApiPath(regexText: string): string | null {
+  // regexText = "/^\/barcode\/(.+)$/", "/^\/foo\/(\w+)$/i", etc.
+  const m = regexText.match(/^\/(.+?)\/[gimsuy]*$/);
+  if (!m) return null;
+
+  let source = m[1];
+  // Strip anchors
+  source = source.replace(/^\^/, "").replace(/\$$/, "");
+  // Unescape forward slashes
+  source = source.replace(/\\\//g, "/");
+  // Replace capture groups with {param}
+  source = source.replace(/\([^)]*\)/g, "{param}");
+  // Must start with /
+  if (!source.startsWith("/")) return null;
+  // Reject if remaining regex metacharacters are present (after {param} removal)
+  const residual = source.replace(/\{param\}/g, "");
+  if (/[.*+?^${}()|[\]\\]/.test(residual)) return null;
+
+  return source;
+}
+
+/**
+ * Walks a route file and returns the set of "METHOD /full/path" strings that
+ * are registered in it, applying the given prefix.  Used by
+ * checkSpecRouteCoverage to determine which spec paths have no handler.
+ *
+ * Handles both string-literal path arguments (`"/items"`) and regex-literal
+ * path arguments (`/^\/barcode\/(.+)$/`) via best-effort conversion.
+ * Non-convertible paths (variables, complex regexes) are skipped rather than
+ * being flagged as false-positive missing handlers.
+ */
+export function collectRegisteredRoutes(
+  filePath: string,
+  prefix: string,
+): Set<string> {
+  if (!existsSync(filePath)) return new Set();
+
+  const src = readFileSync(filePath, "utf-8");
+  const sf = ts.createSourceFile(
+    filePath,
+    src,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+
+  const routes = new Set<string>();
+
+  function walk(node: ts.Node) {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        ["get", "post", "put", "patch", "delete"].includes(callee.name.text)
+      ) {
+        const httpMethod = callee.name.text.toUpperCase();
+        const args = node.arguments;
+        if (args.length >= 1) {
+          const pathArg = args[0];
+          let openApiPath: string | null = null;
+
+          if (ts.isStringLiteral(pathArg)) {
+            openApiPath = expressToOpenApiPath(pathArg.text, prefix);
+          } else if (
+            pathArg.kind === ts.SyntaxKind.RegularExpressionLiteral
+          ) {
+            const regexPath = regexLiteralToOpenApiPath(
+              (pathArg as ts.RegularExpressionLiteral).text,
+            );
+            if (regexPath !== null) {
+              openApiPath = prefix + regexPath;
+            }
+          }
+          // Non-string, non-regex (identifier / template literal / etc.) args
+          // cannot be statically resolved and are intentionally skipped.
+
+          if (openApiPath !== null) {
+            routes.add(`${httpMethod} ${openApiPath}`);
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, walk);
+  }
+  walk(sf);
+
+  return routes;
+}
+
+/**
+ * Normalises path-parameter names in an OpenAPI-style path so that structural
+ * comparisons are parameter-name-agnostic.
+ *
+ * `/inventory/{id}/barcodes` → `/inventory/{p}/barcodes`
+ * `/barcode/{param}`         → `/barcode/{p}`
+ *
+ * This is intentionally internal to the coverage check: we only care whether
+ * *a* parameter occupies a given segment, not what it is called.
+ */
+function normalizeParamNames(path: string): string {
+  return path.replace(/\{[^}]+\}/g, "{p}");
+}
+
+/**
+ * Returns Violation records (kind = "missingHandler") for every spec operation
+ * that has no corresponding Express route registered across all handler files.
+ *
+ * Path-parameter names are normalised before comparison so that a regex route
+ * whose capture group maps to `{param}` still matches a spec path that uses
+ * `{code}` (or any other name) for the same segment.
+ *
+ * @param specOps   - The map built by buildSpecOperations()
+ * @param prefixMap - The map built by parsePrefixMap() (filename → prefix)
+ * @param routesDir - Absolute path to the routes directory (used to resolve filenames)
+ */
+export function checkSpecRouteCoverage(
+  specOps: Map<
+    string,
+    { requestFields: Set<string>; responseFields: Set<string> }
+  >,
+  prefixMap: Map<string, string>,
+  routesDir: string,
+): Violation[] {
+  // Build the set of normalised "METHOD normalised-path" keys from all handlers
+  const normalizedRegistered = new Set<string>();
+  for (const [filename, prefix] of prefixMap) {
+    const filePath = resolve(routesDir, filename);
+    collectRegisteredRoutes(filePath, prefix).forEach((r) => {
+      const spaceIdx = r.indexOf(" ");
+      normalizedRegistered.add(
+        r.slice(0, spaceIdx) + " " + normalizeParamNames(r.slice(spaceIdx + 1)),
+      );
+    });
+  }
+
+  const violations: Violation[] = [];
+  for (const key of specOps.keys()) {
+    const spaceIdx = key.indexOf(" ");
+    const normalizedKey =
+      key.slice(0, spaceIdx) +
+      " " +
+      normalizeParamNames(key.slice(spaceIdx + 1));
+    if (!normalizedRegistered.has(normalizedKey)) {
+      violations.push({
+        file: "(spec)",
+        method: key.slice(0, spaceIdx),
+        specPath: key.slice(spaceIdx + 1),
+        kind: "missingHandler",
+        undeclaredFields: [],
+      });
+    }
+  }
   return violations;
 }
