@@ -30,6 +30,7 @@ import {
   reportStorageError,
   setStorageErrorHandler,
 } from "@/utils/storageErrorReporter";
+import { verifyAdminRequest } from "@/utils/verifyAdminRequest";
 
 // ── App Settings ─────────────────────────────────────────────────────────────
 export const SETTINGS_KEY = "parts_id_settings_v1";
@@ -354,27 +355,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // When the user is an admin, mirror the current Clerk token into `adminToken`
   // so downstream admin-only fetches keep a bearer token to send.
   const verifyAdmin = useCallback(async (token: string, signal?: AbortSignal) => {
-    try {
-      const resp = await fetch(`${API_BASE}/admin/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal,
-      });
-      if (signal?.aborted) return;
-      if (resp.ok) {
-        const body = await resp.json() as { isAdmin?: boolean };
-        const admin = !!body.isAdmin;
-        setIsAdmin(admin);
-        setAdminToken(admin ? token : null);
-      } else {
-        setIsAdmin(false);
-        setAdminToken(null);
-      }
-    } catch {
-      if (!signal?.aborted) {
-        setIsAdmin(false);
-        setAdminToken(null);
-      }
-    }
+    await verifyAdminRequest({
+      apiBase: API_BASE,
+      token,
+      signal,
+      setIsAdmin,
+      setAdminToken,
+    });
   }, []);
 
   // ── Approval status check ─────────────────────────────────────────────────
