@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   AppState,
+  type AppStateStatus,
   FlatList,
   Modal,
   Platform,
@@ -344,6 +345,10 @@ export default function SearchScreen() {
   // captured the first time the effect ran.
   const settingsRef = useRef(settings);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
+  // Mirror fuseSyncedAt into a ref so the AppState foreground listener can
+  // read the current value without capturing a stale closure.
+  const fuseSyncedAtRef = useRef<number | null>(null);
+  useEffect(() => { fuseSyncedAtRef.current = fuseSyncedAt; }, [fuseSyncedAt]);
 
   // AI natural-language translation state
   const [aiTranslation, setAITranslation] = useState<{ terms: Array<string>; interpretation: string } | null>(null);
@@ -557,6 +562,25 @@ export default function SearchScreen() {
       setSyncErrorDismissed(false);
     }
   }, [syncError]);
+
+  // Trigger a background sync when the app returns to foreground and the Fuse
+  // index is soft-stale (older than FUSE_SOFT_STALE_MS). This catches the
+  // common case where a worker leaves the app overnight and returns the next
+  // morning — rather than waiting for a manual tap, the index refreshes silently.
+  useEffect(() => {
+    const handleAppStateChange = (state: AppStateStatus) => {
+      if (state !== "active") return;
+      const syncedAt = fuseSyncedAtRef.current;
+      if (syncedAt == null) return;
+      if (Date.now() - syncedAt > FUSE_SOFT_STALE_MS) {
+        syncAllInventory();
+      }
+    };
+    const sub = AppState.addEventListener("change", handleAppStateChange);
+    return () => sub.remove();
+  // syncAllInventory is stable (useCallback with [] deps); FUSE_SOFT_STALE_MS is constant.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncAllInventory]);
 
   // Seed local Fuse index from AsyncStorage on mount; sync from API if cache is
   // empty or stale. A stale cache (older than FUSE_SYNC_MAX_AGE_MS) is served
@@ -1128,6 +1152,18 @@ export default function SearchScreen() {
                   {`✓ Ready · ${cachedCount} items`}
                 </Text>
               </Pressable>
+            ) : null}
+            {/* Soft-stale indicator — subtle muted badge when the offline index
+                is 24–72 h old. Prompts the user to know a refresh is pending;
+                disappears once the sync completes (fuseSyncedAt updates). */}
+            {fuseSyncedAt != null && !syncProgress && !syncError &&
+              Date.now() - fuseSyncedAt > FUSE_SOFT_STALE_MS &&
+              Date.now() - fuseSyncedAt <= FUSE_SYNC_MAX_AGE_MS ? (
+              <View style={[styles.statusBadge, { backgroundColor: colors.muted }]}>
+                <Text style={[styles.statusBadgeText, { color: colors.mutedForeground }]}>
+                  {`⏱ ${Math.floor((Date.now() - fuseSyncedAt) / 3_600_000)}h old`}
+                </Text>
+              </View>
             ) : null}
             {isOffline ? (
               <View style={[styles.offlineBadge, { backgroundColor: colors.warning + "22" }]}>

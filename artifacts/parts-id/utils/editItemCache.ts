@@ -5,7 +5,7 @@
  * independently without mounting the full screen.
  */
 
-import type { SearchResult } from "@workspace/api-client-react";
+import type { InventoryListResponse, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 
 import type { QueryCache } from "@/utils/searchHelpers";
@@ -22,6 +22,13 @@ export type QueryClientLike = {
       | { queryKey: Array<string> }
       | { predicate: (q: { queryKey: unknown }) => boolean },
   ): Promise<void>;
+};
+
+export type QueryClientLikeWithSetQueries = QueryClientLike & {
+  setQueriesData<T>(
+    filter: { predicate: (q: { queryKey: unknown }) => boolean },
+    updater: (old: T | undefined) => T | undefined,
+  ): void;
 };
 
 /**
@@ -87,4 +94,60 @@ export async function invalidateAllCachesAfterSave(opts: {
 }): Promise<void> {
   await invalidateListCache(opts);
   await invalidateSearchAndEvictItem(opts);
+}
+
+/**
+ * Immediately remove a deleted item from all query caches — both the in-memory
+ * TanStack Query cache and the AsyncStorage offline search cache.
+ *
+ * Call this from any admin delete operation's onSuccess handler so the deleted
+ * item disappears from cached search results immediately on the current device
+ * without requiring the user to wait for a background refetch.
+ *
+ * Steps:
+ *   1. Synchronously filter out the item from all in-memory list + search caches.
+ *   2. Evict the item from the AsyncStorage offline search cache.
+ *   3. Invalidate affected query keys so a background refetch confirms the removal.
+ */
+export async function evictDeletedItemFromAllCaches(opts: {
+  queryClient: QueryClientLikeWithSetQueries;
+  asyncStorage: AsyncStorageLike;
+  itemId: number;
+}): Promise<void> {
+  const { queryClient, asyncStorage, itemId } = opts;
+  const listKeyPrefix = getListInventoryQueryKey()[0];
+
+  queryClient.setQueriesData<InventoryListResponse>(
+    { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+    (old) => {
+      if (!old) return old;
+      return { ...old, items: old.items.filter(i => i.id !== itemId) };
+    },
+  );
+
+  queryClient.setQueriesData<SearchInventoryResponse>(
+    { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+    (old) => {
+      if (!old) return old;
+      return {
+        ...old,
+        results: old.results.filter(r => r.item.id !== itemId),
+        sizeUnknownResults: old.sizeUnknownResults?.filter(r => r.item.id !== itemId),
+      };
+    },
+  );
+
+  try {
+    const raw = await asyncStorage.getItem(QUERY_CACHE_KEY);
+    if (raw) {
+      const cache = JSON.parse(raw) as QueryCache<SearchResult>;
+      const { pruned, changed } = evictItemFromQueryCache(cache, itemId);
+      if (changed) await asyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  await invalidateListCache(opts);
+  await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
 }

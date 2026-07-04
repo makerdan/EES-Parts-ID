@@ -9,14 +9,15 @@ export const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 // Used to detect stale caches so deleted items are periodically pruned.
 export const FUSE_CACHE_SYNCED_AT_KEY = "parts_id_fuse_cache_synced_at";
 
-// Age after which a subtle soft-stale indicator is shown and a background
-// sync is triggered on foreground (24 hours).
-export const FUSE_SOFT_STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
+// Maximum age for the offline cache before it is considered stale. A stale
+// cache may contain items that were deleted server-side since the last sync.
+// Exported so barcode and search screens can show a consistent staleness warning.
+export const FUSE_SYNC_MAX_AGE_MS = 72 * 60 * 60 * 1000; // 72 hours (3 days)
 
-// Maximum age for the offline cache before the prominent stale warning banner
-// is shown. A stale cache may contain items deleted server-side since the last
-// sync. Exported so barcode and search screens show a consistent warning.
-export const FUSE_SYNC_MAX_AGE_MS = 72 * 60 * 60 * 1000; // 72 hours
+// Age threshold for a "soft-stale" indicator — subtly flags that the index is
+// aging but still within the hard-warning window. At this age a background
+// sync is also triggered on foreground resume.
+export const FUSE_SOFT_STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // Hard cap on the number of items stored in the offline cache. Items merged
 // from individual search results could accumulate indefinitely without a bound.
