@@ -9,6 +9,7 @@ import {
   UpdateItemDescriptionResponse,
   UpdateItemDimensionsResponse,
   UpdateItemKeywordsResponse,
+  UpsertBatchPreviewResponse,
 } from "@workspace/api-zod";
 import { db } from "@workspace/db";
 import {
@@ -1225,7 +1226,7 @@ router.post("/upsert-batch/preview", requireAdminAuth, async (req, res) => {
       rows.push({ vendor: item.vendor, catalog: item.catalog, status, existingBins, incomingBins });
     }
 
-    res.json({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows });
+    res.json(UpsertBatchPreviewResponse.parse({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows }));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Preview failed" });

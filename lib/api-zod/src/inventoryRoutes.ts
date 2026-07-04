@@ -70,3 +70,20 @@ export const AddPartConflictResponse = z.object({
   error: z.string(),
   existingItem: InventoryItemSchema,
 });
+
+const BinDiffRowSchema = z.object({
+  vendor: z.string(),
+  catalog: z.string(),
+  status: z.enum(["replace", "add", "preserve", "none"]),
+  existingBins: z.array(z.string()),
+  incomingBins: z.array(z.string()),
+});
+
+/** 200 response for POST /inventory/upsert-batch/preview */
+export const UpsertBatchPreviewResponse = z.object({
+  willReplaceBins: z.number().int().nonnegative(),
+  willAddBins: z.number().int().nonnegative(),
+  willPreserveBins: z.number().int().nonnegative(),
+  noChange: z.number().int().nonnegative(),
+  rows: z.array(BinDiffRowSchema),
+});
