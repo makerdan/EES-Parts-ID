@@ -1,0 +1,61 @@
+Bug & error audit -- please review the code for the following categories and report findings with file, line, and recommended fix:
+
+Null / undefined safety
+- Unguarded access on values that could be null, undefined, or missing
+- Optional chaining missing where API responses may omit fields
+- Array access without bounds checking
+
+Async & timing
+- Promises that are not awaited or whose rejections are not caught
+- Race conditions where two async operations can produce inconsistent state
+- setState calls on unmounted components
+- Missing cleanup in useEffect (subscriptions, timers, event listeners)
+- Stale closures capturing outdated state or props
+
+Error handling
+- try/catch blocks that silently swallow errors (empty catch, console.log only)
+- API calls with no error state handled in the UI
+- Missing fallback when a fetch returns an unexpected shape or status code
+- Errors that crash the app instead of surfacing a user-facing message
+
+Type safety
+- Use of `any` that bypasses type checking
+- Type assertions (`as X`) that could fail at runtime
+- Mismatched types between what the API returns and what the code expects
+
+State & data integrity
+- State that can become out of sync between client and server
+- Mutations of state directly instead of through setters
+- Derived values recomputed on every render instead of memoized
+- Missing dependency arrays or incorrect deps in useEffect / useMemo / useCallback
+
+Security
+- User-controlled input passed to a query, command, or eval without sanitization
+- Sensitive data logged to the console
+- Hardcoded credentials, tokens, or secrets
+- Missing authentication or authorization checks on protected routes or actions
+
+Performance
+- Expensive operations inside render without memoization
+- Infinite re-render loops caused by unstable references in dependency arrays
+- Large lists rendered without virtualization
+- Redundant network requests triggered on every render
+
+Concurrency & shared state
+- Shared mutable state accessed from multiple async operations without locking
+- Optimistic UI updates not rolled back on failure
+
+Dead / unreachable code
+- Branches that can never be reached given the current type constraints
+- Variables declared but never used
+- Imports that are unused
+
+Dependency hygiene
+- Packages with known vulnerabilities
+- Mismatched peer dependency versions that cause silent runtime behavior differences
+
+For each finding:
+1. File and line number
+2. Category
+3. Description of the risk
+4. Recommended fix
