@@ -38,15 +38,6 @@ export class PoeHttpError extends Error {
   }
 }
 
-class PoeBotError extends Error {
-  readonly allowRetry: boolean;
-  constructor(detail: string, allowRetry: boolean) {
-    super(`Poe bot error: ${detail}`);
-    this.name = "PoeBotError";
-    this.allowRetry = allowRetry;
-  }
-}
-
 export function isPoeCallAuthError(err: unknown): boolean {
   return (
     err instanceof OpenAI.AuthenticationError ||
