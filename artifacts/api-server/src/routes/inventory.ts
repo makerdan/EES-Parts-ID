@@ -1,4 +1,6 @@
 import {
+  AddPartConflictResponse,
+  AddPartResponse,
   LookupByBarcodeResponse,
   ReenrichItemResponse,
   SearchInventoryBody as SearchInventoryBodySchema,
@@ -44,7 +46,6 @@ import {
   shouldUpdateScore,
 } from "../utils/scoreHelpers";
 import {
-  buildChipFilterRegexes,
   compareBySize,
   correctMisspelling,
   getSeriesBase,
@@ -1087,10 +1088,12 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
       .where(and(eq(inventoryTable.vendor, upperVendor), eq(inventoryTable.catalog, trimmedCatalog)));
 
     if (existing.length > 0) {
-      return void res.status(409).json({
-        error: `Part already exists: ${upperVendor} / ${trimmedCatalog}`,
-        existingItem: existing[0],
-      });
+      return void res.status(409).json(
+        AddPartConflictResponse.parse({
+          error: `Part already exists: ${upperVendor} / ${trimmedCatalog}`,
+          existingItem: existing[0],
+        }),
+      );
     }
 
     const [created] = await db
@@ -1105,7 +1108,7 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
       .returning();
 
     invalidateReferenceAnswerCache().catch(() => {});
-    res.status(201).json({ item: created });
+    res.status(201).json(AddPartResponse.parse({ item: created }));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to add part" });
