@@ -1,4 +1,5 @@
-import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 export type UserStatus = "pending" | "approved" | "banned";
 
@@ -15,7 +16,9 @@ export const usersTable = pgTable("users", {
   role: text("role").notNull().default("user").$type<UserRole>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => [
+  uniqueIndex("users_email_unique").on(table.email).where(sql`email <> ''`),
+]);
 
 export type User = typeof usersTable.$inferSelect;
 export type InsertUser = typeof usersTable.$inferInsert;

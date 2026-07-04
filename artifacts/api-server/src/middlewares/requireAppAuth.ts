@@ -75,22 +75,45 @@ export async function requireAppAuth(req: Request, res: Response, next: NextFunc
         // Proceed without email; it can be updated later.
       }
 
-      const inserted = await db
-        .insert(usersTable)
-        .values({ clerkUserId: userId, email, status: "pending" })
-        .onConflictDoNothing()
-        .returning();
-
-      if (inserted.length > 0) {
-        user = inserted[0]!;
-      } else {
-        // Race condition: another request inserted first, re-query.
-        const refetch = await db
+      // Before inserting, check whether a row already exists for this email
+      // (e.g. same person authenticated with a different Clerk ID previously).
+      // If found, migrate the existing row to the current Clerk ID instead of
+      // creating a duplicate.
+      if (email) {
+        const existingByEmail = await db
           .select()
           .from(usersTable)
-          .where(eq(usersTable.clerkUserId, userId))
+          .where(eq(usersTable.email, email))
           .limit(1);
-        user = refetch[0]!;
+
+        if (existingByEmail.length > 0) {
+          const updated = await db
+            .update(usersTable)
+            .set({ clerkUserId: userId, updatedAt: new Date() })
+            .where(eq(usersTable.email, email))
+            .returning();
+          user = updated[0]!;
+        }
+      }
+
+      if (!user) {
+        const inserted = await db
+          .insert(usersTable)
+          .values({ clerkUserId: userId, email, status: "pending" })
+          .onConflictDoNothing()
+          .returning();
+
+        if (inserted.length > 0) {
+          user = inserted[0]!;
+        } else {
+          // Race condition: another request inserted first, re-query.
+          const refetch = await db
+            .select()
+            .from(usersTable)
+            .where(eq(usersTable.clerkUserId, userId))
+            .limit(1);
+          user = refetch[0]!;
+        }
       }
     }
 
