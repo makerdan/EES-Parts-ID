@@ -38,8 +38,8 @@ if (
   Platform.OS !== "web" &&
   !__DEV__
 ) {
-  console.error(
+  throw new Error(
     "[apiBase] API origin is not configured for this production build. " +
-      "Set EXPO_PUBLIC_API_BASE or EXPO_PUBLIC_DOMAIN before building."
+      "Set EXPO_PUBLIC_API_BASE or EXPO_PUBLIC_DOMAIN before building.",
   );
 }

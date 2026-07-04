@@ -50,8 +50,9 @@ const MAX_ROWS = parseInt(process.env.ADMIN_QUERY_MAX_ROWS ?? "500", 10);
 /**
  * Regex used to detect sensitive column names that must never be sent to the
  * browser.  The default covers the most common patterns for secrets stored in
- * relational databases.  Override via the ADMIN_QUERY_SENSITIVE_COLUMNS env
- * var (a pipe-separated list of patterns, each treated as a full-column-name
+ * relational databases, as well as PII columns that should not be exposed to
+ * admin query results verbatim.  Override via the ADMIN_QUERY_SENSITIVE_COLUMNS
+ * env var (a pipe-separated list of patterns, each treated as a full-column-name
  * regex, case-insensitive).
  *
  * Default patterns (case-insensitive):
@@ -62,9 +63,13 @@ const MAX_ROWS = parseInt(process.env.ADMIN_QUERY_MAX_ROWS ?? "500", 10);
  *   password    — exact column named "password"
  *   .*password.* — any column containing "password"
  *   .*_salt     — e.g. password_salt
+ *   email       — exact column named "email" (PII)
+ *   clerk_user_id — Clerk identity reference (PII / auth)
+ *   .*phone.*   — any column containing "phone" (e.g. phone, phone_number, backup_phone)
+ *   .*user_id.* — any column whose name contains "user_id" (auth identifiers)
  */
 const DEFAULT_SENSITIVE_PATTERN =
-  ".*_hash|.*_token|.*_secret|.*_key|password|.*password.*|.*_salt";
+  ".*_hash|.*_token|.*_secret|.*_key|password|.*password.*|.*_salt|email|clerk_user_id|.*phone.*|.*user_id.*";
 
 function buildSensitiveColumnPattern(): RegExp {
   const envPattern = process.env.ADMIN_QUERY_SENSITIVE_COLUMNS;

@@ -132,10 +132,42 @@ app.use("/api/inventory/estimate-dimensions/search", (req, res, next) => {
   next();
 });
 
-// Increase body limit for base64 payloads (AI photo identify + PDF catalog upload)
-// A 25 MB PDF base64-encodes to ~34 MB; set limit to 50 MB to provide headroom.
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+// ── Per-route body size limits ─────────────────────────────────────────────────
+// Upload routes accept large base64 payloads. All other routes are capped at
+// 1 MB to prevent resource exhaustion via oversized payloads on lightweight
+// endpoints (search, auth status, barcode lookup, etc.).
+//
+// The generous parsers are mounted BEFORE the global 1 MB parser so Express
+// matches these specific paths first and uses the larger limit. The global
+// parser then applies to everything else.
+//
+// A 25 MB PDF base64-encodes to ~34 MB; 50 MB provides headroom.
+const LARGE_BODY_LIMIT = "50mb";
+const UPLOAD_PATHS = [
+  "/api/admin/catalog-pdf",
+  "/api/admin/upload",      // CSV/bulk-import uploads (large text payloads)
+  "/api/ai/identify",
+  "/api/ai/translate-query",
+  "/api/ai/part-card",
+  // estimate-dimensions prefix covers both:
+  //   POST /api/inventory/estimate-dimensions/search (user-facing, image)
+  //   POST /api/inventory/estimate-dimensions        (admin, image)
+  "/api/inventory/estimate-dimensions",
+];
+for (const p of UPLOAD_PATHS) {
+  app.use(p, express.json({ limit: LARGE_BODY_LIMIT }));
+  app.use(p, express.urlencoded({ extended: true, limit: LARGE_BODY_LIMIT }));
+}
+
+// Inventory photo upload (PATCH /api/inventory/:id/photo) — base64 image body.
+// Dynamic path cannot be listed in UPLOAD_PATHS above; matched via regex.
+const PHOTO_ROUTE_RE = /^\/api\/inventory\/[^/]+\/photo$/;
+app.use(PHOTO_ROUTE_RE, express.json({ limit: LARGE_BODY_LIMIT }));
+app.use(PHOTO_ROUTE_RE, express.urlencoded({ extended: true, limit: LARGE_BODY_LIMIT }));
+
+// Global body parser — 1 MB cap for all other routes.
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 // Clerk middleware resolves the publishable key from the incoming request host
 // so the same server can serve multiple Clerk custom domains. Falls back to

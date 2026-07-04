@@ -295,3 +295,118 @@ describe("POST /api/admin/query — valid SELECT uses rolled-back transaction", 
     expect(mockRelease).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── Sensitive column masking ───────────────────────────────────────────────────
+
+describe("POST /api/admin/query — sensitive column masking", () => {
+  let token: string;
+
+  beforeAll(() => {
+    token = makeAdminToken();
+  });
+
+  beforeEach(() => {
+    mockConnect.mockClear();
+    mockQuery.mockClear();
+    mockRelease.mockClear();
+  });
+
+  function stubQueryWithColumns(fields: Array<{ name: string }>, row: Record<string, unknown>) {
+    mockQuery
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ fields, rows: [row] })
+      .mockResolvedValueOnce({});
+  }
+
+  it("strips 'email' from response columns and rows", async () => {
+    stubQueryWithColumns(
+      [{ name: "id" }, { name: "email" }, { name: "name" }],
+      { id: 1, email: "test@example.com", name: "Alice" },
+    );
+
+    const res = await supertest(app)
+      .post("/api/admin/query")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sql: "SELECT id, email, name FROM users LIMIT 1" })
+      .expect(200);
+
+    expect(res.body.columns).toEqual(["id", "name"]);
+    expect(res.body.rows[0]).not.toHaveProperty("email");
+    expect(res.body.strippedColumns).toContain("email");
+  });
+
+  it("strips 'clerk_user_id' from response columns and rows", async () => {
+    stubQueryWithColumns(
+      [{ name: "id" }, { name: "clerk_user_id" }],
+      { id: 1, clerk_user_id: "user_abc123" },
+    );
+
+    const res = await supertest(app)
+      .post("/api/admin/query")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sql: "SELECT id, clerk_user_id FROM users LIMIT 1" })
+      .expect(200);
+
+    expect(res.body.columns).toEqual(["id"]);
+    expect(res.body.rows[0]).not.toHaveProperty("clerk_user_id");
+    expect(res.body.strippedColumns).toContain("clerk_user_id");
+  });
+
+  it("strips columns containing 'phone' (e.g. phone, phone_number, backup_phone)", async () => {
+    stubQueryWithColumns(
+      [{ name: "id" }, { name: "phone" }, { name: "phone_number" }, { name: "backup_phone" }, { name: "label" }],
+      { id: 1, phone: "+15550001111", phone_number: "+15550002222", backup_phone: "+15550003333", label: "Alice" },
+    );
+
+    const res = await supertest(app)
+      .post("/api/admin/query")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sql: "SELECT id, phone, phone_number, backup_phone, label FROM users LIMIT 1" })
+      .expect(200);
+
+    expect(res.body.columns).toEqual(["id", "label"]);
+    expect(res.body.rows[0]).not.toHaveProperty("phone");
+    expect(res.body.rows[0]).not.toHaveProperty("phone_number");
+    expect(res.body.rows[0]).not.toHaveProperty("backup_phone");
+    expect(res.body.strippedColumns).toContain("phone");
+    expect(res.body.strippedColumns).toContain("phone_number");
+    expect(res.body.strippedColumns).toContain("backup_phone");
+  });
+
+  it("strips columns containing 'user_id' (e.g. created_by_user_id, owner_user_id)", async () => {
+    stubQueryWithColumns(
+      [{ name: "id" }, { name: "created_by_user_id" }, { name: "owner_user_id" }, { name: "label" }],
+      { id: 1, created_by_user_id: "user_x", owner_user_id: "user_y", label: "shelf" },
+    );
+
+    const res = await supertest(app)
+      .post("/api/admin/query")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sql: "SELECT id, created_by_user_id, owner_user_id, label FROM zones LIMIT 1" })
+      .expect(200);
+
+    expect(res.body.columns).toEqual(["id", "label"]);
+    expect(res.body.rows[0]).not.toHaveProperty("created_by_user_id");
+    expect(res.body.rows[0]).not.toHaveProperty("owner_user_id");
+    expect(res.body.strippedColumns).toContain("created_by_user_id");
+    expect(res.body.strippedColumns).toContain("owner_user_id");
+  });
+
+  it("preserves non-sensitive columns and returns them intact", async () => {
+    stubQueryWithColumns(
+      [{ name: "id" }, { name: "catalog_number" }, { name: "aisle_id" }],
+      { id: 42, catalog_number: "PN-001", aisle_id: 7 },
+    );
+
+    const res = await supertest(app)
+      .post("/api/admin/query")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sql: "SELECT id, catalog_number, aisle_id FROM inventory LIMIT 1" })
+      .expect(200);
+
+    expect(res.body.columns).toEqual(["id", "catalog_number", "aisle_id"]);
+    expect(res.body.rows[0]).toEqual({ id: 42, catalog_number: "PN-001", aisle_id: 7 });
+    expect(res.body.strippedColumns).toEqual([]);
+  });
+});
