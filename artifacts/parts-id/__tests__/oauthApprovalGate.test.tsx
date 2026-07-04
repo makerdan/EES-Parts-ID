@@ -461,4 +461,171 @@ describe("OAuthButtons — source inspection", () => {
   it("guards the success path with a createdSessionId check (no navigation on cancel)", () => {
     expect(source).toMatch(/if\s*\(createdSessionId\)/);
   });
+
+  it("renders the approval note only in sign-up mode (source contains conditional)", () => {
+    // The note is guarded by {mode === "sign-up" && ...} in JSX.
+    expect(source).toMatch(/mode\s*===\s*["']sign-up["']/);
+    expect(source).toContain("You'll still need admin approval after signing up");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// § 5 — OAuthButtons sign-up mode: OAuth flow still routes through AuthGate
+//
+// A first-time OAuth sign-up creates a brand-new account. OAuthButtons does
+// not know whether the user is new or returning — it always calls
+// router.replace("/(tabs)") after setActive(). AuthGate then intercepts and
+// redirects a pending (new) user to /pending, exactly as it does for sign-in.
+//
+// These tests confirm:
+//  (a) OAuthButtons in sign-up mode calls router.replace("/(tabs)") — the
+//      same as sign-in mode, so AuthGate's guard is the only thing that matters.
+//  (b) The AuthGate routing decision correctly sends a brand-new user
+//      (approvalStatus "pending") who just signed up to /pending.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("OAuthButtons — Google sign-up flow (new account)", () => {
+  beforeEach(() => {
+    mockReplace.mockClear();
+    mockSetActive.mockClear();
+    mockStartGoogle.mockClear();
+    mockStartGoogle.mockResolvedValue({
+      createdSessionId: "session-new-user",
+      setActive: mockSetActive,
+    });
+  });
+
+  it("calls setActive() with the new session ID when signing up via Google", async () => {
+    let root: renderer.ReactTestRenderer;
+    await act(async () => {
+      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-up" }));
+    });
+
+    const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
+    await act(async () => {
+      pressables[0].props.onPress();
+    });
+
+    expect(mockSetActive).toHaveBeenCalledWith({ session: "session-new-user" });
+  });
+
+  it("calls router.replace('/(tabs)') after Google OAuth completes in sign-up mode", async () => {
+    // OAuthButtons always navigates to /(tabs) — AuthGate overrides this for
+    // users who are still pending.
+    let root: renderer.ReactTestRenderer;
+    await act(async () => {
+      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-up" }));
+    });
+
+    const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
+    await act(async () => {
+      pressables[0].props.onPress();
+    });
+
+    expect(mockReplace).toHaveBeenCalledWith("/(tabs)");
+  });
+
+  it("does NOT call router.replace when OAuth returns no session in sign-up mode (cancelled)", async () => {
+    // @ts-ignore — deliberately falsy sessionId to simulate a cancelled OAuth flow
+    mockStartGoogle.mockResolvedValueOnce({ createdSessionId: null, setActive: mockSetActive });
+
+    let root: renderer.ReactTestRenderer;
+    await act(async () => {
+      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-up" }));
+    });
+
+    const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
+    await act(async () => {
+      pressables[0].props.onPress();
+    });
+
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(mockSetActive).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// § 6 — AuthGate routing decision: OAuth sign-up for a brand-new account
+//
+// A brand-new user who signs up via OAuth has approvalStatus "pending" from the
+// moment their account is created. These tests confirm the routing decision
+// function — which mirrors AuthGate's useEffect — sends them to /pending
+// regardless of which screen OAuthButtons navigated to.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("AuthGate routing decision — OAuth sign-up (brand-new account)", () => {
+  it("redirects brand-new user to /pending when they land on /(tabs) after sign-up", () => {
+    // Scenario: user completes OAuth sign-up → OAuthButtons calls
+    // router.replace("/(tabs)") → AuthGate fires → user is pending → /pending.
+    const destination = authGateDecision({
+      isSignedIn: true,
+      approvalStatus: "pending",
+      segments: ["(tabs)"],
+    });
+    expect(destination).toBe("/pending");
+  });
+
+  it("redirects brand-new user to /pending when still on the sign-up screen after OAuth", () => {
+    // Scenario: OAuth completes but the segment has not yet changed from sign-up.
+    const destination = authGateDecision({
+      isSignedIn: true,
+      approvalStatus: "pending",
+      segments: ["sign-up"],
+    });
+    expect(destination).toBe("/pending");
+  });
+
+  it("does NOT redirect a brand-new user once they are already on /pending", () => {
+    // AuthGate must not create a redirect loop once the user reaches /pending.
+    const destination = authGateDecision({
+      isSignedIn: true,
+      approvalStatus: "pending",
+      segments: ["pending"],
+    });
+    expect(destination).toBeNull();
+  });
+
+  it("does not redirect while approvalStatus is still loading (sign-up just completed)", () => {
+    // Between setActive() resolving and the API confirming the approval status,
+    // the status is "loading". AuthGate must wait.
+    const destination = authGateDecision({
+      isSignedIn: true,
+      approvalStatus: "loading",
+      segments: ["(tabs)"],
+    });
+    expect(destination).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// § 7 — OAuthButtons approval note visibility
+//
+// The "You'll still need admin approval after signing up" note must appear only
+// in sign-up mode so that users are informed before completing the OAuth flow.
+// In sign-in mode the note must be absent (returning users already know their
+// status).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const APPROVAL_NOTE = "You'll still need admin approval after signing up";
+
+describe("OAuthButtons — approval note visibility", () => {
+  it("renders the approval note when mode is 'sign-up'", async () => {
+    let root: renderer.ReactTestRenderer;
+    await act(async () => {
+      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-up" }));
+    });
+
+    const json = JSON.stringify(root!.toJSON());
+    expect(json).toContain(APPROVAL_NOTE);
+  });
+
+  it("does NOT render the approval note when mode is 'sign-in'", async () => {
+    let root: renderer.ReactTestRenderer;
+    await act(async () => {
+      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-in" }));
+    });
+
+    const json = JSON.stringify(root!.toJSON());
+    expect(json).not.toContain(APPROVAL_NOTE);
+  });
 });
