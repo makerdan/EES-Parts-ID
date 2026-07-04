@@ -1998,11 +1998,11 @@ export function WarehouseMapView({
 
   // ── Early return before layout ─────────────────────────────────────────────
   if (containerW === 0) {
-    return <View style={styles.fill} onLayout={onLayout} />;
+    return <View style={[styles.fill, { backgroundColor: colors.background }]} onLayout={onLayout} />;
   }
 
   return (
-    <View style={styles.fill} onLayout={onLayout}>
+    <View style={[styles.fill, { backgroundColor: colors.background }]} onLayout={onLayout}>
       <View style={styles.mapCenter}>
       <GestureDetector gesture={mainGesture}>
         <Animated.View style={[{ width: svgRenderW, height: svgRenderH }, animatedStyle]}>
@@ -2030,7 +2030,6 @@ export function WarehouseMapView({
               <View
                 style={[
                   { width: svgRenderW, height: svgRenderH, overflow: "hidden" },
-                  styles.svgFloorPlanInvert,
                 ]}
               >
                 {/* ── Base single-tile layer ────────────────────────────────
@@ -2333,7 +2332,7 @@ export function WarehouseMapView({
 }
 
 const styles = StyleSheet.create({
-  fill: { flex: 1, overflow: "hidden", backgroundColor: "#fff" },
+  fill: { flex: 1, overflow: "hidden" },
   mapCenter: {
     position: "absolute",
     top: 0,
@@ -2344,13 +2343,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   svgFallback: { alignItems: "center", justifyContent: "center" },
-  // Invert + slight brightness reduction so floor plan always renders as
-  // white lines on black, regardless of light/dark mode.
-  // filter is supported in RN 0.76+ (Expo SDK 52+); type augmented in
-  // artifacts/parts-id/types/react-native-filter.d.ts
-  svgFloorPlanInvert: {
-    filter: [{ invert: 1 }, { brightness: 0.88 }],
-  },
   floatingBadge: {
     position: "absolute",
     top: 12,
