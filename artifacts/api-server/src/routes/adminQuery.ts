@@ -347,6 +347,14 @@ router.post("/query", requireAdminAuth, async (req, res) => {
     await client.query("ROLLBACK").catch(() => {});
 
     const message = err instanceof Error ? err.message : "Query failed";
+    // Redacted log: emit only the error message and a truncated,
+    // parameter-stripped SQL snippet so literal values (potential PII /
+    // credentials) never appear in server logs.
+    const redactedSql = (typeof rawSql === "string" ? rawSql : "")
+      .replace(/\$\d+/g, "?")
+      .replace(/'(?:[^'\\]|\\.)*'/g, "?")
+      .slice(0, 120);
+    console.error(`[adminQuery] error="${message}" query_prefix="${redactedSql}"`);
     const isTimeout =
       err instanceof Error &&
       (message.includes("canceling statement due to statement timeout") ||

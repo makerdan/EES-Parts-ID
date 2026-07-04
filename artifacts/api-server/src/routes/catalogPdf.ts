@@ -168,6 +168,36 @@ async function finalizeParentIfComplete(parentId: number): Promise<void> {
 const MAX_UNMATCHED_STORED = 300;
 const CANCEL_CHECK_INTERVAL = 10;
 
+// ── Session-items rollback helper ──────────────────────────────────────────────
+// Reverts every inventory row that was updated by a given job ID: restores the
+// previous description and clears all pdf-extraction fields (imageUrl, imageSource,
+// imageConfidence, catalogPdfJobId).  Called when a job fails or is cancelled
+// mid-run so partial writes never remain visible to clients.
+async function revertSessionItems(jobId: number): Promise<void> {
+  try {
+    await db
+      .update(inventoryTable)
+      .set({
+        description: sql`COALESCE(${inventoryTable.previousDescription}, ${inventoryTable.description})`,
+        previousDescription: null,
+        imageUrl: null,
+        imageUrl2: null,
+        imageSource: null,
+        imageConfidence: null,
+        catalogPdfJobId: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(inventoryTable.catalogPdfJobId, jobId),
+          sql`${inventoryTable.imageSource} = 'pdf_extraction'`,
+        ),
+      );
+  } catch (revertErr) {
+    logger.error({ err: revertErr, jobId }, "[catalog-pdf] Failed to revert session items on job failure");
+  }
+}
+
 // ── Core per-page processing loop ─────────────────────────────────────────────
 // Shared by both the POST (new job) and POST /resume routes.
 async function processPdfPages(
@@ -243,6 +273,7 @@ async function processPdfPages(
           .update(catalogPdfJobTable)
           .set({ status: "failed", errorMessage: "poe_chain_exhausted", finishedAt: new Date() })
           .where(eq(catalogPdfJobTable.id, jobId));
+        await revertSessionItems(jobId);
         if (parentJobId !== null) {
           await db.execute(sql`
             UPDATE catalog_pdf_job
@@ -370,11 +401,12 @@ async function processPdfPages(
   }
 
   if (wasCancelled) {
+    await revertSessionItems(jobId);
     await db
       .update(catalogPdfJobTable)
       .set({ finishedAt: new Date() })
       .where(eq(catalogPdfJobTable.id, jobId));
-    logger.info({ jobId, processedPages, pageOffset }, "[catalog-pdf] job cancelled");
+    logger.info({ jobId, processedPages, pageOffset }, "[catalog-pdf] job cancelled — session items reverted");
     return;
   }
 
@@ -685,6 +717,8 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
         .update(catalogPdfJobTable)
         .set({ status: "failed", errorMessage: errorCode, finishedAt: new Date() })
         .where(eq(catalogPdfJobTable.id, jobRow.id));
+
+      await revertSessionItems(jobRow.id);
 
       if (!isCatalogAiError && isProviderPayloadTooLargeError(err)) {
         logger.warn({ jobId }, "[catalog-pdf] provider rejected payload as too large");
@@ -1092,6 +1126,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
         .update(catalogPdfJobTable)
         .set({ status: "failed", errorMessage: msg, finishedAt: new Date() })
         .where(eq(catalogPdfJobTable.id, jobId));
+      await revertSessionItems(jobId);
       logger.error({ err, jobId }, "[catalog-pdf] resume failed");
     } finally {
       activePdfJobs--;

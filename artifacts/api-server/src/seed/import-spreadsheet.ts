@@ -136,7 +136,11 @@ async function importSpreadsheet() {
         else updated++;
       }
     } catch (err) {
-      console.error(`Batch ${i}–${i + batch.length} failed:`, err);
+      const firstIdentifier = batch[0]?.catalog || batch[0]?.vendor || "(unknown)";
+      console.error(
+        `Batch failed: ${batch.length} rows, first identifier: ${firstIdentifier} — ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
       errors += batch.length;
     }
 
