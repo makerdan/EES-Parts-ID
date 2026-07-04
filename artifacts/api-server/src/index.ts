@@ -142,16 +142,18 @@ async function migrateWarehouseZoneNullSectionNum(): Promise<void> {
     await db.execute(sql`
       ALTER TABLE warehouse_zone ALTER COLUMN section_num DROP NOT NULL
     `);
-  } catch {
-    // Silently ignore — column may already be nullable.
+  } catch (err) {
+    console.error("migrateWarehouseZoneNullSectionNum: failed to DROP NOT NULL on section_num:", err);
+    throw err;
   }
   try {
     // Drop the column default so new inserts don't fall back to 0.
     await db.execute(sql`
       ALTER TABLE warehouse_zone ALTER COLUMN section_num DROP DEFAULT
     `);
-  } catch {
-    // Silently ignore — default may already be gone.
+  } catch (err) {
+    console.error("migrateWarehouseZoneNullSectionNum: failed to DROP DEFAULT on section_num:", err);
+    throw err;
   }
   try {
     // Null out any leftover sentinel rows (section_num <= 0) that were used

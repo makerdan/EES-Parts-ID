@@ -18,6 +18,7 @@ import { desc } from "drizzle-orm";
 import { Router } from "express";
 import sharp from "sharp";
 
+import { logger } from "../lib/logger";
 import { readFloorPlanSvg,uploadFloorPlanSvg } from "../lib/objectStorage";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
@@ -141,8 +142,8 @@ async function generateTile(
 
   try {
     return await fs.readFile(cachePath);
-  } catch {
-    // Not cached — generate below.
+  } catch (err) {
+    logger.warn({ err, cachePath }, "[floor-plan/tiles] tile cache miss — generating");
   }
 
   const gridSize = tileGridSize(z);
@@ -179,8 +180,8 @@ async function invalidateTileCache(keepHash?: string): Promise<void> {
         .filter((f) => !keepHash || !f.startsWith(keepHash))
         .map((f) => fs.unlink(path.join(TILE_CACHE_DIR, f)).catch(() => {})),
     );
-  } catch {
-    // Cache dir may not exist yet — non-fatal.
+  } catch (err) {
+    logger.warn({ err }, "[floor-plan/tiles] invalidateTileCache error (cache dir may not exist yet)");
   }
 }
 
@@ -310,13 +311,13 @@ router.post("/floor-plan/tiles/warmup", async (_req, res) => {
             try {
               await generateTile(svgBuffer, meta.hash, z, x, y);
             } catch (tileErr) {
-              console.warn(`[warmup] tile ${z}/${x}/${y} failed:`, tileErr);
+              logger.warn({ err: tileErr, z, x, y }, "[floor-plan/warmup] tile generation failed");
             }
           }
         }
       }
     } catch (err) {
-      console.warn("[warmup] error:", err);
+      logger.warn({ err }, "[floor-plan/warmup] warmup error");
     }
   })();
 });
