@@ -285,6 +285,32 @@ describe("POST /api/admin/users/:id/approve — approval flow", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Bootstrap admin protection — ban and demote guards
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Bootstrap admin protection", () => {
+  it("POST /api/admin/users/:bootstrapAdminId/ban returns 400", async () => {
+    const res = await supertest(app)
+      .post(`/api/admin/users/${ADMIN_TEST_USER_ID}/ban`)
+      .set("Authorization", adminBearer())
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/bootstrap admin/i);
+  });
+
+  it("POST /api/admin/users/:bootstrapAdminId/demote returns 400", async () => {
+    const res = await supertest(app)
+      .post(`/api/admin/users/${ADMIN_TEST_USER_ID}/demote`)
+      .set("Authorization", adminBearer())
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/bootstrap admin/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Ban flow: pending → banned → 403 { code: "banned" }
 // ─────────────────────────────────────────────────────────────────────────────
 
