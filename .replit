@@ -133,6 +133,10 @@ args = "lint:mocks"
 task = "workflow.run"
 args = "schema:check"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "canvas-typecheck"
+
 [[workflows.workflow]]
 name = "post-merge-health-test"
 author = "agent"
@@ -217,6 +221,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/db run schema:check"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "canvas-typecheck"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter mockup-sandbox run typecheck"
 
 [workflows.workflow.metadata]
 isValidation = true
