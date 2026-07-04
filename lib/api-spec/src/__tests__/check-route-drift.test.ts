@@ -20,6 +20,7 @@ import {
   collectReqBodyFieldAccesses,
   analyzeFile,
   collectRegisteredRoutes,
+  collectUnguardedJsonCalls,
   checkSpecRouteCoverage,
   regexLiteralToOpenApiPath,
 } from "../check-route-drift-helpers";
@@ -492,6 +493,238 @@ describe("regexLiteralToOpenApiPath", () => {
 
   it("returns null for an empty or invalid regex literal text", () => {
     expect(regexLiteralToOpenApiPath("not-a-regex")).toBeNull();
+  });
+});
+
+// ── collectUnguardedJsonCalls ─────────────────────────────────────────────────
+
+describe("collectUnguardedJsonCalls", () => {
+  let tmpDir: string;
+
+  beforeAll(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "unguarded-test-"));
+  });
+
+  afterAll(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeRoute(filename: string, content: string): string {
+    const fp = path.join(tmpDir, filename);
+    fs.writeFileSync(fp, content, "utf-8");
+    return fp;
+  }
+
+  const specOps = new Map([
+    [
+      "GET /items",
+      {
+        requestFields: new Set<string>(),
+        responseFields: new Set(["id", "name"]),
+      },
+    ],
+    [
+      "POST /items",
+      {
+        requestFields: new Set(["name"]),
+        responseFields: new Set(["id", "name"]),
+      },
+    ],
+  ]);
+
+  it("returns no violation when the response is a Zod .parse() result (guarded)", () => {
+    const fp = writeRoute(
+      "guarded-route.ts",
+      `
+      import { Router } from "express";
+      import { ItemSchema } from "@workspace/api-zod";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const item = await db.getItem();
+        res.json(ItemSchema.parse(item));
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("returns a violation when the response is an unguarded variable", () => {
+    const fp = writeRoute(
+      "unguarded-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const item = await db.getItem();
+        res.json(item);
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(1);
+    const v = violations[0];
+    expect(v.kind).toBe("unguardedResponse");
+    expect(v.method).toBe("GET");
+    expect(v.specPath).toBe("/items");
+    expect(v.line).toBeGreaterThan(0);
+  });
+
+  it("does not flag an object literal (already handled by field-drift check)", () => {
+    const fp = writeRoute(
+      "literal-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        res.json({ id: 1, name: "Widget" });
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("does not flag an error-path res.status(4xx).json(variable)", () => {
+    const fp = writeRoute(
+      "error-path-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const err = getError();
+        res.status(404).json(err);
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("does not flag a route not in the spec (internal route)", () => {
+    const fp = writeRoute(
+      "internal-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/internal/status", async (req, res) => {
+        const job = getJob();
+        res.json(job);
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("does not flag res.status(variable).json(variable) — dynamic status code is skipped", () => {
+    const fp = writeRoute(
+      "dynamic-status-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const code = computeCode();
+        const data = getData();
+        res.status(code).json(data);
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("suppresses a violation when spec:ignore-unguarded comment is on the same line", () => {
+    const fp = writeRoute(
+      "suppressed-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const item = getItem();
+        res.json(item); // spec:ignore-unguarded — primitive job-status object
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("returns no violation when a variable was assigned from a .parse() call (indirect guard)", () => {
+    const fp = writeRoute(
+      "indirect-guarded-route.ts",
+      `
+      import { Router } from "express";
+      import { ItemSchema } from "@workspace/api-zod";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const raw = await db.getItem();
+        const data = ItemSchema.parse(raw);
+        res.json(data);
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("returns no violation for a non-existent file", () => {
+    const violations = collectUnguardedJsonCalls(
+      path.join(tmpDir, "does-not-exist.ts"),
+      "",
+      specOps,
+    );
+    expect(violations).toHaveLength(0);
+  });
+
+  it("applies the prefix when matching spec routes", () => {
+    const prefixedSpecOps = new Map([
+      [
+        "GET /v2/items",
+        {
+          requestFields: new Set<string>(),
+          responseFields: new Set(["id"]),
+        },
+      ],
+    ]);
+
+    const fp = writeRoute(
+      "prefixed-unguarded.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const item = await db.getItem();
+        res.json(item);
+      });
+      export default router;
+    `,
+    );
+
+    // With matching prefix → violation reported
+    const withPrefix = collectUnguardedJsonCalls(fp, "/v2", prefixedSpecOps);
+    expect(withPrefix).toHaveLength(1);
+    expect(withPrefix[0].specPath).toBe("/v2/items");
+
+    // With wrong prefix → route not in spec → no violation
+    const noMatch = collectUnguardedJsonCalls(fp, "", prefixedSpecOps);
+    expect(noMatch).toHaveLength(0);
   });
 });
 

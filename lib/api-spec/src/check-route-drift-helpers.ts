@@ -56,9 +56,10 @@ export interface SchemaObject {
 
 export interface Violation {
   file: string;
+  line?: number;
   method: string;
   specPath: string;
-  kind: "response" | "requestBody" | "missingHandler";
+  kind: "response" | "requestBody" | "missingHandler" | "unguardedResponse";
   undeclaredFields: string[];
   note?: string;
 }
@@ -328,6 +329,202 @@ export function collectResJsonLiterals(root: ts.Node): {
   }
   walk(root);
   return results;
+}
+
+// ── Zod parse-guard check ─────────────────────────────────────────────────────
+
+/**
+ * Returns true when `expr` is already safe to pass directly to `res.json`
+ * without a Zod `.parse()` guard:
+ *
+ *  - Object literals  → already checked by the field-drift detection above.
+ *  - Array literals   → statically typed; no dynamic DB shape to guard.
+ *  - Primitive literals (string / number / boolean / null) → fully covered.
+ *  - `.parse(...)` call → the guard IS present; all good.
+ *  - Parenthesised / cast expressions → unwrapped and re-checked.
+ */
+function isGuardedOrSkippable(expr: ts.Expression): boolean {
+  const inner = stripCast(expr);
+
+  if (ts.isObjectLiteralExpression(inner)) return true;
+  if (ts.isArrayLiteralExpression(inner)) return true;
+  if (
+    ts.isStringLiteral(inner) ||
+    ts.isNumericLiteral(inner) ||
+    inner.kind === ts.SyntaxKind.TrueKeyword ||
+    inner.kind === ts.SyntaxKind.FalseKeyword ||
+    inner.kind === ts.SyntaxKind.NullKeyword ||
+    inner.kind === ts.SyntaxKind.UndefinedKeyword
+  )
+    return true;
+
+  if (
+    ts.isCallExpression(inner) &&
+    ts.isPropertyAccessExpression(inner.expression) &&
+    inner.expression.name.text === "parse"
+  )
+    return true;
+
+  return false;
+}
+
+/**
+ * Scans a route file for success-path `res.json(expr)` calls where `expr` is
+ * NOT the result of a Zod `.parse()` call and is NOT a literal / object that is
+ * already covered by the field-drift check.
+ *
+ * Only routes that are declared in `specOps` are examined (internal endpoints
+ * that are intentionally undocumented are skipped, matching `analyzeFile`
+ * behaviour).
+ *
+ * Callers can suppress a specific call by adding a `// spec:ignore-unguarded`
+ * comment on the same source line.
+ */
+export function collectUnguardedJsonCalls(
+  filePath: string,
+  prefix: string,
+  specOps: Map<
+    string,
+    { requestFields: Set<string>; responseFields: Set<string> }
+  >,
+): Violation[] {
+  if (!existsSync(filePath)) return [];
+
+  const src = readFileSync(filePath, "utf-8");
+  const lines = src.split("\n");
+  const sf = ts.createSourceFile(
+    filePath,
+    src,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+
+  const violations: Violation[] = [];
+
+  /**
+   * Collect the names of all variables within `scope` that are directly
+   * initialised from a `.parse()` or `.parseAsync()` call (e.g.
+   * `const data = Schema.parse({...})`).  These count as guarded even though
+   * the `.parse()` call is not the immediate argument to `res.json()`.
+   */
+  function collectParsedVarNames(scope: ts.Node): Set<string> {
+    const parsed = new Set<string>();
+    function walk(node: ts.Node) {
+      if (
+        ts.isVariableDeclaration(node) &&
+        node.initializer &&
+        ts.isIdentifier(node.name)
+      ) {
+        let init = node.initializer;
+        // Unwrap `await expr`
+        if (ts.isAwaitExpression(init)) init = init.expression;
+        if (
+          ts.isCallExpression(init) &&
+          ts.isPropertyAccessExpression(init.expression) &&
+          (init.expression.name.text === "parse" ||
+            init.expression.name.text === "parseAsync")
+        ) {
+          parsed.add(node.name.text);
+        }
+      }
+      ts.forEachChild(node, walk);
+    }
+    walk(scope);
+    return parsed;
+  }
+
+  function walkHandler(
+    handler: ts.Node,
+    httpMethod: string,
+    openApiPath: string,
+  ) {
+    const parsedVarNames = collectParsedVarNames(handler);
+
+    function isGuardedExpr(expr: ts.Expression): boolean {
+      if (isGuardedOrSkippable(expr)) return true;
+      // Also accept a bare identifier that was assigned from a .parse() call
+      const stripped = stripCast(expr);
+      if (ts.isIdentifier(stripped) && parsedVarNames.has(stripped.text))
+        return true;
+      return false;
+    }
+
+    function inner(node: ts.Node) {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === "json" &&
+        isResReceiver(node.expression.expression)
+      ) {
+        const arg = node.arguments[0];
+        if (!arg) {
+          ts.forEachChild(node, inner);
+          return;
+        }
+
+        const statusCode = extractLiteralStatusCode(node.expression.expression);
+        const statusIsVariable =
+          statusCode === null && hasStatusCall(node.expression.expression);
+
+        if (!statusIsVariable && (statusCode === null || statusCode < 400)) {
+          if (!isGuardedExpr(arg)) {
+            const pos = sf.getLineAndCharacterOfPosition(node.getStart());
+            const lineNumber = pos.line + 1;
+            const lineText = lines[pos.line] ?? "";
+            if (!lineText.includes("spec:ignore-unguarded")) {
+              violations.push({
+                file: filePath,
+                line: lineNumber,
+                method: httpMethod,
+                specPath: openApiPath,
+                kind: "unguardedResponse",
+                undeclaredFields: [],
+                note: "res.json() argument is not the result of a Zod .parse() call",
+              });
+            }
+          }
+        }
+      }
+      ts.forEachChild(node, inner);
+    }
+    inner(handler);
+  }
+
+  function walk(node: ts.Node) {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        ["get", "post", "put", "patch", "delete"].includes(callee.name.text)
+      ) {
+        const httpMethod = callee.name.text.toUpperCase();
+        const args = node.arguments;
+
+        if (args.length >= 2 && ts.isStringLiteral(args[0])) {
+          const openApiPath = expressToOpenApiPath(args[0].text, prefix);
+          const opKey = `${httpMethod} ${openApiPath}`;
+          const specOp = specOps.get(opKey);
+
+          if (specOp) {
+            for (let i = 1; i < args.length; i++) {
+              const handler = args[i];
+              if (
+                !ts.isArrowFunction(handler) &&
+                !ts.isFunctionExpression(handler)
+              )
+                continue;
+              walkHandler(handler, httpMethod, openApiPath);
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, walk);
+  }
+  walk(sf);
+
+  return violations;
 }
 
 // ── req.body field detection ──────────────────────────────────────────────────
