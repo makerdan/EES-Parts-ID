@@ -2,6 +2,7 @@ import { clerkMiddleware } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
 import cors from "cors";
 import express, { type Express } from "express";
+import helmet from "helmet";
 import pinoHttp from "pino-http";
 
 import { logger } from "./lib/logger";
@@ -19,6 +20,31 @@ const app: Express = express();
 // This makes req.ip resolve to the real client IP from X-Forwarded-For rather
 // than the proxy's address, without allowing clients to spoof arbitrary IPs.
 app.set("trust proxy", 1);
+
+// ── Security headers ───────────────────────────────────────────────────────────
+// Mount helmet before CORS and body parsers so security headers are applied to
+// every response including error responses from upstream middleware.
+// HSTS is only set in production to avoid breaking local dev (http://localhost).
+// The API serves JSON only — tighten CSP so it can't be used to load scripts,
+// frames, or external resources from a browser context.
+app.use(
+  helmet({
+    hsts: process.env.NODE_ENV === "production"
+      ? { maxAge: 31536000, includeSubDomains: true }
+      : false,
+    frameguard: { action: "deny" },
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  }),
+);
 
 // Clerk proxy must be mounted BEFORE body parsers — it streams raw bytes.
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
