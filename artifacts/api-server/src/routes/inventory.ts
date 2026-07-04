@@ -75,58 +75,53 @@ interface DictionaryCache {
   reverseVendorMap: Map<string, string>;
 }
 
-let _dictCache: DictionaryCache | null = null;
-let _dictCachePromise: Promise<DictionaryCache> | null = null;
+let _initPromise: Promise<DictionaryCache> | null = null;
 
 async function loadDictionaries(): Promise<DictionaryCache> {
-  if (_dictCache) return _dictCache;
-  if (_dictCachePromise) return _dictCachePromise;
+  if (_initPromise) return _initPromise;
 
-  _dictCachePromise = (async () => {
-    try {
-      const [misspellings, abbreviations, vendors, synonyms, slang] = await Promise.all([
-        db.select().from(misspellingMapTable),
-        db.select().from(abbreviationMapTable),
-        db.select().from(vendorMapTable),
-        db.select().from(synonymMapTable),
-        db.select().from(electricalSlangMapTable),
-      ]);
+  _initPromise = (async () => {
+    const [misspellings, abbreviations, vendors, synonyms, slang] = await Promise.all([
+      db.select().from(misspellingMapTable),
+      db.select().from(abbreviationMapTable),
+      db.select().from(vendorMapTable),
+      db.select().from(synonymMapTable),
+      db.select().from(electricalSlangMapTable),
+    ]);
 
-      const correctionMap = new Map(misspellings.map(m => [m.misspelling, m.correction]));
-      const abbrevMap = new Map(abbreviations.map(a => [a.abbreviation, a.expansions]));
-      const vendorMapData = new Map(vendors.map(v => [v.code, v.names]));
-      const synonymMapLookup = new Map(synonyms.map(s => [s.term, s.synonyms]));
-      const slangMap = new Map(slang.map(s => [s.slangTerm, s.standardTerms]));
+    const correctionMap = new Map(misspellings.map(m => [m.misspelling, m.correction]));
+    const abbrevMap = new Map(abbreviations.map(a => [a.abbreviation, a.expansions]));
+    const vendorMapData = new Map(vendors.map(v => [v.code, v.names]));
+    const synonymMapLookup = new Map(synonyms.map(s => [s.term, s.synonyms]));
+    const slangMap = new Map(slang.map(s => [s.slangTerm, s.standardTerms]));
 
-      const reverseVendorMap = new Map<string, string>();
-      const extendedVendors = vendors.filter(v => !v.isPrimary);
-      const primaryVendors = vendors.filter(v => v.isPrimary);
-      for (const v of extendedVendors) {
-        for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
-      }
-      for (const v of primaryVendors) {
-        for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
-      }
-
-      const cache: DictionaryCache = {
-        correctionMap,
-        abbrevMap,
-        vendorMapData,
-        synonymMapLookup,
-        slangMap,
-        reverseVendorMap,
-      };
-      _dictCache = cache;
-      return cache;
-    } catch (err) {
-      logger.error({ err }, "Failed to load search dictionary tables; will retry on next request");
-      throw err;
-    } finally {
-      _dictCachePromise = null;
+    const reverseVendorMap = new Map<string, string>();
+    const extendedVendors = vendors.filter(v => !v.isPrimary);
+    const primaryVendors = vendors.filter(v => v.isPrimary);
+    for (const v of extendedVendors) {
+      for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
     }
+    for (const v of primaryVendors) {
+      for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
+    }
+
+    return {
+      correctionMap,
+      abbrevMap,
+      vendorMapData,
+      synonymMapLookup,
+      slangMap,
+      reverseVendorMap,
+    };
   })();
 
-  return _dictCachePromise;
+  // On failure, clear the promise so the next caller can retry.
+  _initPromise.catch(() => {
+    logger.error("Failed to load search dictionary tables; will retry on next request");
+    _initPromise = null;
+  });
+
+  return _initPromise;
 }
 
 // ── GET /inventory ────────────────────────────────────────────────────────────

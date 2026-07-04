@@ -70,6 +70,10 @@ export async function requireAppAuth(req: Request, res: Response, next: NextFunc
       let email = "";
       try {
         const clerkUser = await clerkClient.users.getUser(userId);
+        if (!clerkUser.emailAddresses.length) {
+          res.status(401).json({ error: "No email address associated with this account." });
+          return;
+        }
         email = clerkUser.emailAddresses[0]?.emailAddress ?? "";
       } catch {
         // Proceed without email; it can be updated later.
