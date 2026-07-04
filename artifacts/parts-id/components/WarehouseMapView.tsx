@@ -2333,7 +2333,7 @@ export function WarehouseMapView({
 }
 
 const styles = StyleSheet.create({
-  fill: { flex: 1, overflow: "hidden", backgroundColor: "#000" },
+  fill: { flex: 1, overflow: "hidden", backgroundColor: "#fff" },
   mapCenter: {
     position: "absolute",
     top: 0,
