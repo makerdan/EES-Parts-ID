@@ -321,6 +321,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const isAdminRef = useRef(false);
   useEffect(() => { isAdminRef.current = isAdmin; }, [isAdmin]);
 
+  // Stable ref to showToast so verifyAdmin can call it without being recreated
+  // on every render. Populated after showToast is defined below.
+  const showToastRef = useRef<(message: string, type?: ToastVariant) => void>(() => {});
+
   // Keep a stable ref to getToken so we don't recreate the auth getter on every render.
   const getTokenRef = useRef(getToken);
   useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
@@ -354,13 +358,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Determine admin status from the server (role-based) via GET /admin/me.
   // When the user is an admin, mirror the current Clerk token into `adminToken`
   // so downstream admin-only fetches keep a bearer token to send.
+  //
+  // Demotion detection: if the user was previously an admin (isAdminRef.current)
+  // and the server now reports they are not, a toast is shown immediately so
+  // the user understands why the admin UI has locked without a sign-out.
   const verifyAdmin = useCallback(async (token: string, signal?: AbortSignal) => {
     await verifyAdminRequest({
       apiBase: API_BASE,
       token,
       signal,
+      wasAdmin: isAdminRef.current,
       setIsAdmin,
       setAdminToken,
+      onDemotion: () => showToastRef.current("Your admin access has been revoked.", "error"),
     });
   }, []);
 
@@ -458,6 +468,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       toastTimerRef.current = null;
     }, 4000);
   }, []);
+
+  // Keep showToastRef in sync with the stable showToast callback so verifyAdmin
+  // can call it without capturing the initial no-op and without adding showToast
+  // as a dependency (which would recreate verifyAdmin on every toast render).
+  useEffect(() => { showToastRef.current = showToast; }, [showToast]);
 
   // ── 401 handler ──────────────────────────────────────────────────────────
   useEffect(() => {
