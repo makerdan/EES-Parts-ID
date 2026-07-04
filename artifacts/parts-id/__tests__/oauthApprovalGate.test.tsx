@@ -29,8 +29,9 @@ import renderer, { act } from "react-test-renderer";
 
 // ── Source paths ──────────────────────────────────────────────────────────────
 
-const LAYOUT_PATH = path.resolve(__dirname, "../app/_layout.tsx");
-const OAUTH_PATH = path.resolve(__dirname, "../components/OAuthButtons.tsx");
+const LAYOUT_PATH      = path.resolve(__dirname, "../app/_layout.tsx");
+const TABS_LAYOUT_PATH = path.resolve(__dirname, "../app/(tabs)/_layout.tsx");
+const OAUTH_PATH       = path.resolve(__dirname, "../components/OAuthButtons.tsx");
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 
@@ -627,5 +628,54 @@ describe("OAuthButtons — approval note visibility", () => {
 
     const json = JSON.stringify(root!.toJSON());
     expect(json).not.toContain(APPROVAL_NOTE);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// § 5 — (tabs)/_layout.tsx race-window guard (source inspection)
+//
+// There is a narrow window between setActive() resolving (isSignedIn=true) and
+// the /auth/status fetch completing where approvalStatus is still "loading".
+// During that window OAuthButtons may have already called
+// router.replace("/(tabs)"), so the tab layout must not render sensitive content
+// until approvalStatus has settled to "approved" (isAuthenticated=true).
+//
+// These tests lock the isAuthenticated guard in (tabs)/_layout.tsx so it cannot
+// be accidentally removed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("(tabs)/_layout.tsx — isAuthenticated race-window guard", () => {
+  let source: string;
+
+  beforeAll(() => {
+    source = fs.readFileSync(TABS_LAYOUT_PATH, "utf8");
+  });
+
+  it("imports useApp from AppContext", () => {
+    expect(source).toMatch(/useApp/);
+    expect(source).toMatch(/AppContext/);
+  });
+
+  it("reads isAuthenticated from useApp()", () => {
+    // Must destructure isAuthenticated out of the useApp() call.
+    expect(source).toMatch(/isAuthenticated/);
+    expect(source).toMatch(/useApp\(\)/);
+  });
+
+  it("returns null (renders nothing) when isAuthenticated is false", () => {
+    // The guard must short-circuit before the Tabs tree is returned.
+    // Accept both `if (!isAuthenticated) return null` and
+    // `if (!isAuthenticated) { return null; }` forms.
+    expect(source).toMatch(/if\s*\(!isAuthenticated\)\s*(return null|\{[^}]*return null)/s);
+  });
+
+  it("guard appears before the Tabs JSX (not after it)", () => {
+    // The null-return must come before the <Tabs …> tree so tabs never render
+    // for non-approved users.
+    const guardIdx = source.indexOf("if (!isAuthenticated)");
+    const tabsIdx  = source.indexOf("<Tabs");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(tabsIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(tabsIdx);
   });
 });
