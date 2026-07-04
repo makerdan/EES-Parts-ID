@@ -6,6 +6,7 @@ import app from "./app";
 import { initProvider, probePoeBotsOnStartup } from "./lib/aiProvider";
 import { logger } from "./lib/logger";
 import { MAX_RETRIES,startServer } from "./lib/startServer";
+import { validateEnv } from "./lib/validateEnv";
 
 process.on("uncaughtException", (err) => {
   logger.error({ err }, "Uncaught exception — exiting");
@@ -33,6 +34,8 @@ if (Number.isNaN(port) || port <= 0) {
       : "PORT environment variable is required but was not provided.",
   );
 }
+
+validateEnv();
 
 async function recoverOrphanedJobs(): Promise<void> {
   try {
