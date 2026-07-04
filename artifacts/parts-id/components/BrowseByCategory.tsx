@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -17,7 +17,7 @@ import type { FilterValues } from "@/components/FilterPanel";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
 import { API_BASE } from "@/utils/apiBase";
-import { fetchWithAuth } from "@/utils/appAuth";
+import { fetchWithAuth, subscribeToTokenAvailable, unsubscribeFromTokenAvailable } from "@/utils/appAuth";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -132,13 +132,15 @@ export function BrowseByCategory({
     return () => clearTimeout(timer);
   }, [dimKey]);
 
-  useEffect(() => {
-    let cancelled = false;
+  // Track whether the last fetch got a 401 so the token-available subscriber
+  // can retry once auth settles (mirrors the useWarehouseZones pattern).
+  const got401Ref = useRef(false);
+
+  const doFetch = useCallback((cancelled: { current: boolean }) => {
     setLoading(true);
     setError(null);
+    got401Ref.current = false;
 
-    // Build URL — append any active dimension filters as query params so the
-    // server can narrow counts to items that match the current size filter.
     const params = new URLSearchParams();
     const f = dimFiltersRef.current;
     if (f.minWidth.trim())    params.set("minWidth",    f.minWidth.trim());
@@ -154,18 +156,39 @@ export function BrowseByCategory({
 
     fetchWithAuth(url)
       .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        if (!r.ok) {
+          if (r.status === 401) got401Ref.current = true;
+          throw new Error(`HTTP ${r.status}`);
+        }
         return r.json() as Promise<CategoriesResponse>;
       })
-      .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
-      .catch(e => { if (!cancelled) { setError(String(e)); setLoading(false); } });
-    return () => { cancelled = true; };
+      .then(d => { if (!cancelled.current) { setData(d); setLoading(false); } })
+      .catch(e => { if (!cancelled.current) { setError(String(e)); setLoading(false); } });
+  }, []);
+
+  useEffect(() => {
+    const cancelled = { current: false };
+    doFetch(cancelled);
+
+    // Retry once auth settles in case the component mounted before AppContext
+    // had a chance to register the token getter (cold-start race).
+    const handleTokenAvailable = () => {
+      if (got401Ref.current && !cancelled.current) {
+        doFetch(cancelled);
+      }
+    };
+    subscribeToTokenAvailable(handleTokenAvailable);
+
+    return () => {
+      cancelled.current = true;
+      unsubscribeFromTokenAvailable(handleTokenAvailable);
+    };
   // `debouncedDimKey` is the sole reactive trigger. The actual filter values are
   // read from `dimFiltersRef.current` (a stable ref) so the effect does not
   // re-run on every keystroke while still forwarding the latest values to the
   // server request.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedDimKey]);
+  }, [debouncedDimKey, doFetch]);
 
   function handleBack() {
     if (level === "itemTypes") {
