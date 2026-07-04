@@ -139,12 +139,10 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     }, 2000);
   }, []);
 
-  const dimStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
-      if (dimStatusTimerRef.current) clearTimeout(dimStatusTimerRef.current);
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
       if (copyBinTimeoutRef.current) clearTimeout(copyBinTimeoutRef.current);
     };
@@ -194,9 +192,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     setDimWidth(fmtDim(dims?.width));
     setDimHeight(fmtDim(dims?.height));
     setDimDiameter(fmtDim(dims?.diameter));
-    setDimSaveStatus("idle");
-    setDimSaveError(null);
-    dimAutoSavedRef.current = null;
     setExpandedDescText(current.expandedDescription ?? "");
     setExpandedDescSaving("idle");
     setExpandedDescError(null);
@@ -239,60 +234,14 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     );
   };
 
-  const [dimSaveStatus, setDimSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [dimSaveError, setDimSaveError] = useState<string | null>(null);
-  // Tracks the dims that handleMeasureConfirm has already persisted, so
-  // handleSave won't send a redundant PATCH for the same values.
-  const dimAutoSavedRef = useRef<PartDimensions | null>(null);
-
-  const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
+  const handleMeasureConfirm = useCallback((dims: PartDimensions) => {
     setMeasureOpen(false);
     setDimLength(fmtDim(dims.length));
     setDimWidth(fmtDim(dims.width));
     setDimHeight(fmtDim(dims.height));
     setDimDiameter(fmtDim(dims.diameter));
-
-    const current = itemRef.current;
-    if (!current || !adminToken) return;
-
-    setDimSaveStatus("saving");
-    setDimSaveError(null);
-    try {
-      const res = await fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${adminToken}`,
-        },
-        body: JSON.stringify(dims),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({})) as { error?: string };
-        throw new Error(data.error ?? `HTTP ${res.status}`);
-      }
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-      // Store as parsed values so dimsAlreadySaved can compare apples-to-apples
-      // with what parseDimField(fmtDim(x)) would produce from the display string.
-      dimAutoSavedRef.current = {
-        length: parseDimField(fmtDim(dims.length)),
-        width: parseDimField(fmtDim(dims.width)),
-        height: parseDimField(fmtDim(dims.height)),
-        diameter: parseDimField(fmtDim(dims.diameter)),
-      };
-      setDimSaveStatus("saved");
-      if (dimStatusTimerRef.current) clearTimeout(dimStatusTimerRef.current);
-      dimStatusTimerRef.current = setTimeout(() => { dimStatusTimerRef.current = null; setDimSaveStatus("idle"); }, 2500);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Save failed";
-      setDimSaveError(
-        msg.includes("401")
-          ? "Admin session expired — re-unlock and try again."
-          : "Could not save dimensions — check connection.",
-      );
-      setDimSaveStatus("error");
-    }
-  }, [adminToken, queryClient]);
+    setSaveStatus("idle");
+  }, []);
 
   const handleSaveExpandedDesc = async () => {
     const current = itemRef.current;
@@ -427,15 +376,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
       newDims.height !== (oldDims.height ?? null) ||
       newDims.diameter !== (oldDims.diameter ?? null);
 
-    // Skip the PATCH if handleMeasureConfirm already persisted these exact values.
-    const autoSaved = dimAutoSavedRef.current;
-    const dimsAlreadySaved = autoSaved !== null &&
-      newDims.length === (autoSaved.length ?? null) &&
-      newDims.width === (autoSaved.width ?? null) &&
-      newDims.height === (autoSaved.height ?? null) &&
-      newDims.diameter === (autoSaved.diameter ?? null);
-
-    if (dimsChanged && !dimsAlreadySaved) {
+    if (dimsChanged) {
       ops.push({
         field: "dimensions",
         restoreFn: () => {
@@ -1009,13 +950,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
             <View style={[styles.dimHeader, { marginTop: 24 }]}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>DIMENSIONS (mm)</Text>
-                {dimSaveStatus === "saving" ? (
-                  <ActivityIndicator size="small" color={colors.warning} />
-                ) : dimSaveStatus === "saved" ? (
-                  <Text style={[styles.dimStatusText, { color: colors.success }]}>✓ Saved</Text>
-                ) : dimSaveStatus === "error" ? (
-                  <Text style={[styles.dimStatusText, { color: colors.destructive }]}>Save failed</Text>
-                ) : null}
               </View>
               {Platform.OS === "ios" ? (
                 lidarAvailable ? (
@@ -1092,9 +1026,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
                 />
               </View>
             </View>
-            {dimSaveError ? (
-              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{dimSaveError}</Text>
-            ) : fieldSaveErrors.dimensions ? (
+            {fieldSaveErrors.dimensions ? (
               <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.dimensions}</Text>
             ) : null}
             {(dimLength || dimWidth || dimHeight || dimDiameter) ? (
