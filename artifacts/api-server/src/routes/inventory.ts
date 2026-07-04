@@ -1,6 +1,7 @@
 import {
   AddPartConflictResponse,
   AddPartResponse,
+  EstimateDimensionsResponse,
   LookupByBarcodeResponse,
   ReenrichItemResponse,
   SearchInventoryBody as SearchInventoryBodySchema,
@@ -198,7 +199,7 @@ router.get("/", async (req, res) => {
       limit,
     });
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/list] Failed to list inventory");
     res.status(500).json({ error: "Failed to list inventory" });
   }
 });
@@ -780,7 +781,7 @@ router.post("/search", async (req, res) => {
         const rawRows = (pgQueryResult as { rows: Array<unknown> }).rows;
         pgResults = rawRows.filter((r): r is RawRow => {
           if (!r || typeof r !== "object") {
-            console.warn("[inventory/search] Unexpected non-object row from raw SQL:", r);
+            logger.warn({ row: r }, "[inventory/search] Unexpected non-object row from raw SQL");
             return false;
           }
           const row = r as Record<string, unknown>;
@@ -793,13 +794,13 @@ router.post("/search", async (req, res) => {
             typeof row.trgm_sim === "number"
           );
           if (!valid) {
-            console.warn("[inventory/search] Row has unexpected shape (possible schema drift):", JSON.stringify(row));
+            logger.warn({ row }, "[inventory/search] Row has unexpected shape (possible schema drift)");
           }
           return valid;
         });
       }
     } catch (pgErr) {
-      console.warn("PG search error, falling back to Fuse:", pgErr);
+      logger.warn({ err: pgErr }, "PG search error, falling back to Fuse");
     }
 
     // Map PG results into scored items
@@ -1059,7 +1060,7 @@ router.post("/search", async (req, res) => {
       sizeUnknownCount: sizeUnknownItems.length,
     });
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/search] Search failed");
     res.status(500).json({ error: "Search failed" });
   }
 });
@@ -1123,7 +1124,7 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.status(201).json(AddPartResponse.parse({ item: created }));
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/add-part] Failed to add part");
     res.status(500).json({ error: "Failed to add part" });
   }
 });
@@ -1239,7 +1240,7 @@ router.post("/upsert-batch/preview", requireAdminAuth, async (req, res) => {
 
     res.json(UpsertBatchPreviewResponse.parse({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows }));
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/upsert-batch/preview] Preview failed");
     res.status(500).json({ error: "Preview failed" });
   }
 });
@@ -1365,7 +1366,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
 
     res.json({ inserted, updated, total: items.length });
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/upsert-batch] Upsert failed");
     res.status(500).json({ error: "Upsert failed" });
   }
 });
@@ -1449,7 +1450,7 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
     res.end();
     invalidateReferenceAnswerCache().catch(() => {});
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/enrich-sse] SSE enrichment failed");
     res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
     res.end();
   }
@@ -1482,7 +1483,6 @@ const bulkEnrichJob: BulkEnrichJob = {
   model: null,
 };
 
-const BULK_ENRICH_MODEL      = process.env["ENRICH_MODEL"] ?? "gpt-4o-mini";
 const BULK_ENRICH_BATCH      = 10;
 const BULK_ENRICH_CONCUR     = 5;
 const BULK_ENRICH_DELAY_MS   = 200;
@@ -1498,7 +1498,7 @@ async function enrichItemWithRetry(item: {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= BULK_ENRICH_MAX_RETRY; attempt++) {
     try {
-      return await generateKeywords(item, BULK_ENRICH_MODEL);
+      return await generateKeywords(item, getEnrichModel());
     } catch (err) {
       lastErr = err;
       if (attempt < BULK_ENRICH_MAX_RETRY) {
@@ -1519,14 +1519,16 @@ async function runBulkEnrich(force = false) {
         .where(sql`${inventoryTable.enrichedAt} IS NULL`);
 
   bulkEnrichJob.total = countRow!.total;
-  console.log(`[bulk-enrich] Starting – ${countRow!.total} ${modeLabel} (model: ${BULK_ENRICH_MODEL})`);
+  const activeModel = getEnrichModel();
+  bulkEnrichJob.model = activeModel;
+  logger.info({ total: countRow!.total, mode: modeLabel, model: activeModel }, `[bulk-enrich] Starting`);
 
   let cursorId = 0;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
     if (bulkEnrichJob.stopRequested) {
-      console.log("[bulk-enrich] Stop requested – halting after current batch");
+      logger.info("[bulk-enrich] Stop requested – halting after current batch");
       break;
     }
 
@@ -1579,7 +1581,7 @@ async function runBulkEnrich(force = false) {
           // Leave enrichedAt NULL so the item remains retryable on next run
           bulkEnrichJob.errors++;
           bulkEnrichJob.lastError = String(r.reason);
-          console.error(`[bulk-enrich] Error id=${item.id} (${item.vendor}/${item.catalog}):`, r.reason);
+          logger.error({ err: r.reason, id: item.id, vendor: item.vendor, catalog: item.catalog }, "[bulk-enrich] Error enriching item");
         }
       }
     }
@@ -1593,9 +1595,7 @@ async function runBulkEnrich(force = false) {
 
   bulkEnrichJob.running = false;
   bulkEnrichJob.finishedAt = new Date();
-  console.log(
-    `[bulk-enrich] Done – processed=${bulkEnrichJob.processed} errors=${bulkEnrichJob.errors}`,
-  );
+  logger.info({ processed: bulkEnrichJob.processed, errors: bulkEnrichJob.errors }, "[bulk-enrich] Done");
   if (bulkEnrichJob.processed > 0) {
     invalidateReferenceAnswerCache().catch(() => {});
   }
@@ -1727,7 +1727,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
     send({ done: true, processed, total, remaining });
     res.end();
   } catch (err) {
-    console.error("[expand-descriptions]", err);
+    logger.error({ err }, "[expand-descriptions] failed");
     send({ error: String(err) });
     res.end();
   }
@@ -1756,7 +1756,7 @@ router.patch("/:id/expanded-description", requireAdminAuth, async (req, res) => 
     invalidateReferenceAnswerCache().catch(() => {});
     res.json({ success: true });
   } catch (err) {
-    console.error("[expanded-description PATCH]", err);
+    logger.error({ err }, "[expanded-description PATCH] failed");
     res.status(500).json({ error: "Failed to update expanded description" });
   }
 });
@@ -1778,13 +1778,11 @@ router.post("/bulk-enrich", requireAdminAuth, (req, res) => {
   bulkEnrichJob.total = null;
   bulkEnrichJob.finishedAt = null;
   bulkEnrichJob.lastError = null;
-  bulkEnrichJob.model = BULK_ENRICH_MODEL;
-
   runBulkEnrich(force).catch((err) => {
     bulkEnrichJob.running = false;
     bulkEnrichJob.finishedAt = new Date();
     bulkEnrichJob.lastError = String(err);
-    console.error("[bulk-enrich] Fatal error:", err);
+    logger.error({ err }, "[bulk-enrich] Fatal error");
   });
 
   const message = force ? "Force re-enrichment started (all items)" : "Bulk enrichment started";
@@ -1854,7 +1852,7 @@ async function runMeasureEnrich(): Promise<void> {
     .from(inventoryTable);
 
   measureEnrichJob.total = countRow?.total ?? 0;
-  console.log(`[measure-enrich] Starting – ${measureEnrichJob.total} items`);
+  logger.info({ total: measureEnrichJob.total }, "[measure-enrich] Starting");
 
   let lastId = 0;
 
@@ -1892,7 +1890,7 @@ async function runMeasureEnrich(): Promise<void> {
             measureEnrichJob.updated++;
           } catch (err) {
             measureEnrichJob.lastError = String(err);
-            console.error(`[measure-enrich] Error updating id=${item.id}:`, err);
+            logger.error({ err, id: item.id }, "[measure-enrich] Error updating item");
           }
         }
       }
@@ -1906,9 +1904,7 @@ async function runMeasureEnrich(): Promise<void> {
 
   measureEnrichJob.running = false;
   measureEnrichJob.finishedAt = new Date();
-  console.log(
-    `[measure-enrich] Done – processed=${measureEnrichJob.processed} updated=${measureEnrichJob.updated}`,
-  );
+  logger.info({ processed: measureEnrichJob.processed, updated: measureEnrichJob.updated }, "[measure-enrich] Done");
   if (measureEnrichJob.dbJobId !== null) {
     db.update(measureEnrichJobTable)
       .set({ status: "done", finishedAt: new Date(), processed: measureEnrichJob.processed, updated: measureEnrichJob.updated })
@@ -2012,7 +2008,7 @@ router.get(/^\/barcode\/(.+)$/, async (req, res) => {
     if (!item) return void res.status(404).json({ error: "No item found for that barcode" });
     res.json(LookupByBarcodeResponse.parse(item));
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/barcode-lookup] Barcode lookup failed");
     res.status(500).json({ error: "Barcode lookup failed" });
   }
 });
@@ -2047,7 +2043,7 @@ router.patch("/:id/barcodes", requireAdminAuth, async (req, res) => {
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     res.json(UpdateItemBarcodesResponse.parse(updated));
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/barcodes] Failed to update barcodes");
     res.status(500).json({ error: "Failed to update barcodes" });
   }
 });
@@ -2086,7 +2082,7 @@ router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     res.json(UpdateItemBinsResponse.parse(updated));
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/bins] Failed to update bins");
     res.status(500).json({ error: "Failed to update bins" });
   }
 });
@@ -2113,7 +2109,7 @@ router.patch("/:id/description", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.json(UpdateItemDescriptionResponse.parse(updated));
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/description] Failed to update description");
     res.status(500).json({ error: "Failed to update description" });
   }
 });
@@ -2153,7 +2149,7 @@ router.patch("/:id/enrich", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.json(ReenrichItemResponse.parse(updated));
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/enrich] Failed to enrich item");
     res.status(500).json({ error: "Failed to enrich item" });
   }
 });
@@ -2178,7 +2174,7 @@ router.patch("/:id/keywords", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.json(UpdateItemKeywordsResponse.parse(updated));
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/keywords] Failed to update keywords");
     res.status(500).json({ error: "Failed to update keywords" });
   }
 });
@@ -2261,7 +2257,7 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
     });
   } catch (err) {
     const id = req.params["id"] ?? "unknown";
-    console.error(`[photo upload] item ${id}:`, err);
+    logger.error({ err, id }, "[inventory/photo] Photo upload failed");
     res.status(500).json({ error: "Failed to upload photo — please try again later." });
   }
 });
@@ -2310,7 +2306,7 @@ router.patch("/:id/dimensions", requireAdminAuth, async (req, res) => {
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     res.json(UpdateItemDimensionsResponse.parse(updated));
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/dimensions] Failed to update dimensions");
     res.status(500).json({ error: "Failed to update dimensions" });
   }
 });
@@ -2453,6 +2449,85 @@ function estimateSearchRateLimiter(
   next();
 }
 
+// ── Shared dimension-estimation prompt and response parser ────────────────────
+// Used by both the admin endpoint and the public search endpoint.  Single source
+// of truth: update the prompt or extraction logic here and both paths benefit.
+
+const DIMENSION_PROMPT_TEXT = `Look at this image of an electrical or mechanical part.
+Estimate the part's physical dimensions in millimetres.
+If you can see a common scale reference object in the frame, use its known dimensions to anchor your estimate. Reference sizes: US quarter ≈ 24.26 mm diameter; US dollar bill 156 × 66 mm; credit card 85.6 × 54 mm; standard 12-inch ruler 305 mm long.
+Reply with ONLY a JSON object — no prose — in exactly this shape:
+{"length":null,"width":null,"height":null,"diameter":null}
+Use null for any value you cannot estimate with reasonable confidence.
+"length" is the longest dimension; "width" and "height" are the other two;
+"diameter" applies only to round/cylindrical parts.
+All values must be positive numbers (mm) or null.`;
+
+function buildDimMessages(imageBase64: string, mimeType: string) {
+  return [
+    {
+      role: "user" as const,
+      content: [
+        {
+          type: "image_url" as const,
+          image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: "low" as const },
+        },
+        { type: "text" as const, text: DIMENSION_PROMPT_TEXT },
+      ],
+    },
+  ];
+}
+
+async function callDimensionAi(imageBase64: string, mimeType: string, useOpenAiFallback: boolean) {
+  const messages = buildDimMessages(imageBase64, mimeType);
+  return useOpenAiFallback
+    ? getOpenAIFallbackClient().chat.completions.create({
+        model: getOpenAIModelForFeature("dimensions"),
+        max_completion_tokens: 256,
+        messages,
+      })
+    : tryPoeBotChain("dimensions", (client, model) =>
+        client.chat.completions.create({
+          model,
+          max_completion_tokens: 256,
+          messages,
+        }),
+      );
+}
+
+function parseDimensionResponse(raw: string): { length: number | null; width: number | null; height: number | null; diameter: number | null } {
+  // Extract the first balanced JSON object from the response.
+  // The flat regex /\{[^}]*\}/ fails on nested braces, so we scan manually.
+  let parsed: Record<string, unknown> = {};
+  const start = raw.indexOf("{");
+  if (start !== -1) {
+    let depth = 0;
+    let end = -1;
+    for (let i = start; i < raw.length; i++) {
+      if (raw[i] === "{") depth++;
+      else if (raw[i] === "}") {
+        depth--;
+        if (depth === 0) { end = i; break; }
+      }
+    }
+    if (end !== -1) {
+      try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { /* keep {} */ }
+    }
+  }
+
+  const sanitize = (v: unknown): number | null => {
+    const n = Number(v);
+    return isFinite(n) && n > 0 && n <= 100_000 ? Math.round(n * 10) / 10 : null;
+  };
+
+  return {
+    length: sanitize(parsed.length),
+    width: sanitize(parsed.width),
+    height: sanitize(parsed.height),
+    diameter: sanitize(parsed.diameter),
+  };
+}
+
 // ── POST /inventory/estimate-dimensions/search ────────────────────────────────
 // Open to all users (no admin token required): accepts a photo and uses OpenAI
 // Vision to estimate dimensions for search-mode use only (Measure-to-Search).
@@ -2473,9 +2548,9 @@ router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req
     // Poe path uses Claude Sonnet (10 MB per image); OpenAI fallback uses
     // gpt-5.1 (20 MB per image).  Read the header here so the limit is
     // consistent with the model actually used below.
-    const useOpenAiFallbackSearch = req.headers["x-use-openai-fallback"] === "true";
+    const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
     {
-      const perModelLimit = useOpenAiFallbackSearch
+      const perModelLimit = useOpenAiFallback
         ? MAX_IMAGE_BYTES_GPT5_1
         : MAX_IMAGE_BYTES_CLAUDE_SONNET;
       const imgBytes = estimateImageBytes(imageBase64);
@@ -2488,79 +2563,14 @@ router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req
       }
     }
 
-    const dimMessages = [
-      {
-        role: "user" as const,
-        content: [
-          {
-            type: "image_url" as const,
-            image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: "low" as const },
-          },
-          {
-            type: "text" as const,
-            text: `Look at this image of an electrical or mechanical part.
-Estimate the part's physical dimensions in millimetres.
-If you can see a common scale reference object in the frame, use its known dimensions to anchor your estimate. Reference sizes: US quarter ≈ 24.26 mm diameter; US dollar bill 156 × 66 mm; credit card 85.6 × 54 mm; standard 12-inch ruler 305 mm long.
-Reply with ONLY a JSON object — no prose — in exactly this shape:
-{"length":null,"width":null,"height":null,"diameter":null}
-Use null for any value you cannot estimate with reasonable confidence.
-"length" is the longest dimension; "width" and "height" are the other two;
-"diameter" applies only to round/cylindrical parts.
-All values must be positive numbers (mm) or null.`,
-          },
-        ],
-      },
-    ];
-
-    const response = useOpenAiFallbackSearch
-      ? await getOpenAIFallbackClient().chat.completions.create({
-          model: getOpenAIModelForFeature("dimensions"),
-          max_completion_tokens: 256,
-          messages: dimMessages,
-        })
-      : await tryPoeBotChain("dimensions", (client, model) =>
-          client.chat.completions.create({
-            model,
-            max_completion_tokens: 256,
-            messages: dimMessages,
-          }),
-        );
-
+    const response = await callDimensionAi(imageBase64, mimeType, useOpenAiFallback);
     const raw = response.choices[0]?.message?.content?.trim() ?? "{}";
-
-    let parsed: Record<string, unknown> = {};
-    const start = raw.indexOf("{");
-    if (start !== -1) {
-      let depth = 0;
-      let end = -1;
-      for (let i = start; i < raw.length; i++) {
-        if (raw[i] === "{") depth++;
-        else if (raw[i] === "}") {
-          depth--;
-          if (depth === 0) { end = i; break; }
-        }
-      }
-      if (end !== -1) {
-        try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { /* keep {} */ }
-      }
-    }
-
-    const sanitize = (v: unknown): number | null => {
-      const n = Number(v);
-      return isFinite(n) && n > 0 && n <= 100_000 ? Math.round(n * 10) / 10 : null;
-    };
-
-    res.json({
-      length: sanitize(parsed.length),
-      width: sanitize(parsed.width),
-      height: sanitize(parsed.height),
-      diameter: sanitize(parsed.diameter),
-    });
+    res.json(parseDimensionResponse(raw));
   } catch (err) {
     if (err instanceof PoeBotChainExhaustedError) {
       return void res.status(503).json({ status: "poe_chain_exhausted" });
     }
-    console.error("[estimate-dimensions/search]", err);
+    logger.error({ err }, "[estimate-dimensions/search] Dimension estimation failed");
     res.status(500).json({ error: "Dimension estimation failed" });
   }
 });
@@ -2583,9 +2593,9 @@ router.post("/estimate-dimensions", requireAdminAuth, async (req, res) => {
     // Enforce per-model image size limit before calling the AI.
     // Poe path uses Claude Sonnet (10 MB per image); OpenAI fallback uses
     // gpt-5.1 (20 MB per image).
-    const useOpenAiFallbackAdmin = req.headers["x-use-openai-fallback"] === "true";
+    const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
     {
-      const perModelLimit = useOpenAiFallbackAdmin
+      const perModelLimit = useOpenAiFallback
         ? MAX_IMAGE_BYTES_GPT5_1
         : MAX_IMAGE_BYTES_CLAUDE_SONNET;
       const imgBytes = estimateImageBytes(imageBase64);
@@ -2598,81 +2608,14 @@ router.post("/estimate-dimensions", requireAdminAuth, async (req, res) => {
       }
     }
 
-    const adminDimMessages = [
-      {
-        role: "user" as const,
-        content: [
-          {
-            type: "image_url" as const,
-            image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: "low" as const },
-          },
-          {
-            type: "text" as const,
-            text: `Look at this image of an electrical or mechanical part.
-Estimate the part's physical dimensions in millimetres.
-If you can see a common scale reference object in the frame, use its known dimensions to anchor your estimate. Reference sizes: US quarter ≈ 24.26 mm diameter; US dollar bill 156 × 66 mm; credit card 85.6 × 54 mm; standard 12-inch ruler 305 mm long.
-Reply with ONLY a JSON object — no prose — in exactly this shape:
-{"length":null,"width":null,"height":null,"diameter":null}
-Use null for any value you cannot estimate with reasonable confidence.
-"length" is the longest dimension; "width" and "height" are the other two;
-"diameter" applies only to round/cylindrical parts.
-All values must be positive numbers (mm) or null.`,
-          },
-        ],
-      },
-    ];
-
-    const response = useOpenAiFallbackAdmin
-      ? await getOpenAIFallbackClient().chat.completions.create({
-          model: getOpenAIModelForFeature("dimensions"),
-          max_completion_tokens: 256,
-          messages: adminDimMessages,
-        })
-      : await tryPoeBotChain("dimensions", (client, model) =>
-          client.chat.completions.create({
-            model,
-            max_completion_tokens: 256,
-            messages: adminDimMessages,
-          }),
-        );
-
+    const response = await callDimensionAi(imageBase64, mimeType, useOpenAiFallback);
     const raw = response.choices[0]?.message?.content?.trim() ?? "{}";
-
-    // Extract the first balanced JSON object from the response.
-    // The flat regex /\{[^}]*\}/ fails on nested braces, so we scan manually.
-    let parsed: Record<string, unknown> = {};
-    const start = raw.indexOf("{");
-    if (start !== -1) {
-      let depth = 0;
-      let end = -1;
-      for (let i = start; i < raw.length; i++) {
-        if (raw[i] === "{") depth++;
-        else if (raw[i] === "}") {
-          depth--;
-          if (depth === 0) { end = i; break; }
-        }
-      }
-      if (end !== -1) {
-        try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { /* keep {} */ }
-      }
-    }
-
-    const sanitize = (v: unknown): number | null => {
-      const n = Number(v);
-      return isFinite(n) && n > 0 && n <= 100_000 ? Math.round(n * 10) / 10 : null;
-    };
-
-    res.json({
-      length: sanitize(parsed.length),
-      width: sanitize(parsed.width),
-      height: sanitize(parsed.height),
-      diameter: sanitize(parsed.diameter),
-    });
+    res.json(EstimateDimensionsResponse.parse(parseDimensionResponse(raw)));
   } catch (err) {
     if (err instanceof PoeBotChainExhaustedError) {
       return void res.status(503).json({ status: "poe_chain_exhausted" });
     }
-    console.error("[estimate-dimensions]", err);
+    logger.error({ err }, "[estimate-dimensions] Dimension estimation failed");
     res.status(500).json({ error: "Dimension estimation failed" });
   }
 });
@@ -2696,7 +2639,7 @@ router.delete("/:id", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.status(200).json({ deleted: true });
   } catch (err) {
-    console.error(err);
+    logger.error({ err }, "[inventory/delete] Failed to delete item");
     res.status(500).json({ error: "Failed to delete item" });
   }
 });
