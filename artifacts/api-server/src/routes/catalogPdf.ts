@@ -409,7 +409,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   const adminUserId = (res.locals.appUser as { clerkUserId: string } | undefined)?.clerkUserId
     ?? getAuth(req)?.userId
     ?? String(req.ip ?? "unknown");
-  const uploadRateCheck = catalogPdfUploadLimiter.check(adminUserId);
+  const uploadRateCheck = await catalogPdfUploadLimiter.check(adminUserId);
   if (!uploadRateCheck.allowed) {
     res.set("Retry-After", String(Math.ceil(uploadRateCheck.retryAfterMs / 1000)));
     return void res.status(429).json({ error: "Too many catalog upload requests. Please slow down." });
@@ -941,7 +941,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
   const resumeAdminUserId = (res.locals.appUser as { clerkUserId: string } | undefined)?.clerkUserId
     ?? getAuth(req)?.userId
     ?? String(req.ip ?? "unknown");
-  const resumeRateCheck = catalogPdfUploadLimiter.check(resumeAdminUserId);
+  const resumeRateCheck = await catalogPdfUploadLimiter.check(resumeAdminUserId);
   if (!resumeRateCheck.allowed) {
     res.set("Retry-After", String(Math.ceil(resumeRateCheck.retryAfterMs / 1000)));
     return void res.status(429).json({ error: "Too many catalog requests. Please slow down." });

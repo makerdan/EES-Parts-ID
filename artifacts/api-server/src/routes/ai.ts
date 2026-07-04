@@ -24,7 +24,7 @@ const router = Router();
 // POST /ai/identify
 router.post("/identify", async (req, res) => {
   try {
-    const rateCheck = identifyLimiter.check(rateLimitKey(req));
+    const rateCheck = await identifyLimiter.check(rateLimitKey(req));
     if (!rateCheck.allowed) {
       res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
       return void res.status(429).json({ error: "Too many identify requests. Please slow down." });
@@ -185,7 +185,7 @@ router.post("/identify", async (req, res) => {
 // When zeroResults=true, also identifies the part and finds substitute inventory matches.
 router.post("/translate-query", async (req, res) => {
   try {
-    const rateCheck = translateLimiter.check(rateLimitKey(req));
+    const rateCheck = await translateLimiter.check(rateLimitKey(req));
     if (!rateCheck.allowed) {
       res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
       return void res.status(429).json({ error: "Too many translate-query requests. Please slow down." });
@@ -330,7 +330,7 @@ const PART_CARD_DB_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days (DB persistent 
 // Pass force: true to bypass all cache layers and re-fetch from AI.
 router.post("/part-card", async (req, res) => {
   try {
-    const rateCheck = partCardLimiter.check(rateLimitKey(req));
+    const rateCheck = await partCardLimiter.check(rateLimitKey(req));
     if (!rateCheck.allowed) {
       res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
       return void res.status(429).json({ error: "Too many part-card requests. Please slow down." });

@@ -112,10 +112,10 @@ afterAll(async () => {
   await closePool();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   // Clear rate-limit buckets so one test's requests never consume another
   // test's budget (IDENTIFY_MAX defaults to 20; this file makes more calls).
-  identifyLimiter.reset();
+  await identifyLimiter.reset();
 });
 
 afterEach(() => {
