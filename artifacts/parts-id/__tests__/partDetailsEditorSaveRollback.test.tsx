@@ -84,6 +84,11 @@ jest.mock("@expo/vector-icons", () => ({
   Feather: () => null,
 }));
 
+jest.mock("@/utils/apiBase", () => ({
+  API_BASE:   "http://localhost:8080/api",
+  API_ORIGIN: "http://localhost:8080",
+}));
+
 // ─── Suppress react-test-renderer deprecation warning ────────────────────────
 
 let origConsoleError: typeof console.error;
