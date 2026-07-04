@@ -439,12 +439,21 @@ router.post("/search", async (req, res) => {
     }
 
     // Special path: uncategorized browse with no search text — return all items that
-    // don't match any taxonomy keyword (same inverse-regex logic as the post-filter).
+    // don't match any taxonomy keyword. The taxonomy exclusion is pushed down to SQL
+    // so the full table is never loaded into Node.js memory.
     if (isCategoryUncategorized && !allSearchText.trim()) {
-      // Push size bounds into SQL so only matching rows are fetched before
-      // the JS-side inverse-taxonomy exclusion runs.
       const uncatHasLenFilter = lenMin !== null || lenMax !== null;
       const uncatHasDiaFilter = diaMin !== null || diaMax !== null;
+
+      // Build SQL condition that mirrors the JS itemFullText() inverse-taxonomy filter:
+      // exclude rows where any taxonomy keyword appears as a substring in the lowercased
+      // concatenation of vendor, catalog, description, expanded_description, and ai_keywords.
+      const allTaxKws = getAllTaxonomyKeywords(TAXONOMY);
+      const taxKwPatterns = allTaxKws.map(kw => `%${kw}%`);
+      const taxExcludeCondition = taxKwPatterns.length > 0
+        ? sql`NOT lower(vendor || ' ' || catalog || ' ' || description || ' ' || coalesce(expanded_description, '') || ' ' || immutable_array_to_string(ai_keywords, ' ')) LIKE ANY(ARRAY[${sql.join(taxKwPatterns.map(p => sql`${p}`), sql`, `)}])`
+        : sql`TRUE`;
+
       const uncatSizeConditions = [
         lenMin !== null ? sql`(dimensions->>'length')::numeric >= ${lenMin}` : undefined,
         lenMax !== null ? sql`(dimensions->>'length')::numeric <= ${lenMax}` : undefined,
@@ -455,14 +464,16 @@ router.post("/search", async (req, res) => {
         diaMin !== null ? sql`(dimensions->>'diameter')::numeric >= ${diaMin}` : undefined,
         diaMax !== null ? sql`(dimensions->>'diameter')::numeric <= ${diaMax}` : undefined,
       ].filter((c): c is NonNullable<typeof c> => c !== undefined);
-      const uncatSizeWhere = uncatSizeConditions.length > 0 ? and(...uncatSizeConditions) : undefined;
-      const allItems = await db.select().from(inventoryTable).where(uncatSizeWhere);
-      const allTaxKws = getAllTaxonomyKeywords(TAXONOMY);
-      const uncatItems = allItems.filter(item => {
-        const text = itemFullText(item);
-        if (allTaxKws.some(kw => text.includes(kw))) return false;
-        return true;
-      });
+
+      const uncatWhere = uncatSizeConditions.length > 0
+        ? and(taxExcludeCondition, ...uncatSizeConditions)
+        : taxExcludeCondition;
+
+      const uncatItems = await db
+        .select()
+        .from(inventoryTable)
+        .where(uncatWhere)
+        .orderBy(inventoryTable.vendor, inventoryTable.catalog);
 
       // When a size filter is active and the caller opted in, also fetch uncategorized items with no relevant dimension.
       let uncatSizeUnknownItems: Array<typeof inventoryTable.$inferSelect> = [];
@@ -475,13 +486,13 @@ router.post("/search", async (req, res) => {
         const nullDimWhere = nullDimConditions.length > 1
           ? and(...nullDimConditions)
           : nullDimConditions[0];
-        const allNullDimItems = nullDimWhere
-          ? await db.select().from(inventoryTable).where(nullDimWhere)
-          : [];
-        uncatSizeUnknownItems = allNullDimItems.filter(item => {
-          const text = itemFullText(item);
-          return !allTaxKws.some(kw => text.includes(kw));
-        });
+        if (nullDimWhere) {
+          uncatSizeUnknownItems = await db
+            .select()
+            .from(inventoryTable)
+            .where(and(taxExcludeCondition, nullDimWhere))
+            .orderBy(inventoryTable.vendor, inventoryTable.catalog);
+        }
       }
 
       const toUncatResult = (item: typeof inventoryTable.$inferSelect) => ({
