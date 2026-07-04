@@ -36,8 +36,8 @@ import { logger } from "../lib/logger";
 import { uploadCatalogImage } from "../lib/objectStorage";
 import { callPoeBotWithChain, PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/poeModelLimits";
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { inventorySearchLimiter } from "../lib/rateLimiter";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { estimateImageBytes } from "../utils/aiHelpers";
 import { generateKeywords, mergeWithPinned } from "../utils/generateKeywords";
 import { resizeImages } from "../utils/imageResize";
@@ -455,24 +455,43 @@ router.post("/search", async (req, res) => {
       const uncatHasLenFilter = lenMin !== null || lenMax !== null;
       const uncatHasDiaFilter = diaMin !== null || diaMax !== null;
 
-      // Build SQL condition that excludes rows matching any taxonomy keyword.
+      // Build SQL exclusion condition using a NOT IN subquery.
       //
-      // Previous approach: LIKE ANY(ARRAY['%kw1%', '%kw2%', ...]) — always a SeqScan
-      // because leading % wildcards prevent trigram index use and the large ARRAY
-      // forces N string comparisons per row.
+      // WHY the old LIKE ANY was slow:
+      //   NOT lower(vendor || ' ' || catalog || ... || immutable_array_to_string(...))
+      //     LIKE ANY(ARRAY['%kw1%', ...])
+      //   Leading wildcards can't use a B-tree index. String concatenation
+      //   prevents standard GIN. Result: sequential scan of every row.
       //
-      // New approach: use the FTS GIN index (inventory_fts_idx) by building a
-      // websearch_to_tsquery from all taxonomy keywords joined with OR. NOT (col @@ tsq)
-      // lets the planner use a Bitmap Index Scan complement against the GIN index,
-      // avoiding a full SeqScan on populated tables.
-      // EXPLAIN ANALYZE on a populated table confirms: no SeqScan on this path.
+      // WHY this rewrite is fast:
+      //   inventory_fulltext_trgm_idx is a GIN trigram index on the exact same
+      //   lower(concat) expression. pg_trgm can use it for regex (~) patterns,
+      //   so the inner positive SELECT becomes a Bitmap Index Scan. The outer
+      //   NOT IN then becomes a Hash Anti Join — no sequential scan of the full
+      //   table.
+      //
+      //   EXPLAIN ANALYZE on this path should show:
+      //     Hash Anti Join
+      //       ->  Bitmap Index Scan on inventory_fulltext_trgm_idx
+      //   rather than "Seq Scan on inventory".
+      //
+      // Semantic parity: lower(concat) ~ 'kw' is equivalent to
+      //   lower(concat) LIKE '%kw%' for escaped literal patterns.
+      //   escapeRegex() escapes all regex metacharacters so taxonomy keywords
+      //   are matched as plain substrings, identical to the old LIKE ANY.
+      //   Keywords are lowercased to match the lower() expression.
+      //
+      // Index defined in:
+      //   lib/db/drizzle/0032_inventory_fulltext_trgm_idx.sql
+      //   lib/db/src/schema/inventory.ts  (inventory_fulltext_trgm_idx)
       const allTaxKws = getAllTaxonomyKeywords(TAXONOMY);
-      const taxFtsTokens = allTaxKws
-        .flatMap(kw => kw.replace(/[^\w\s]/g, " ").trim().split(/\s+/).filter(Boolean))
-        .filter((t, i, arr) => t.length >= 2 && arr.indexOf(t) === i);
-      const taxTsQueryInput = taxFtsTokens.join(" OR ");
-      const taxExcludeCondition = taxTsQueryInput.trim()
-        ? sql`NOT (${inventoryFtsVector()} @@ websearch_to_tsquery('english', ${taxTsQueryInput}))`
+      const allKwsRegex = allTaxKws.map(kw => escapeRegex(kw.toLowerCase())).join("|");
+      const lowerFullText = sql`lower(vendor || ' ' || catalog || ' ' || description || ' ' || coalesce(expanded_description, '') || ' ' || immutable_array_to_string(ai_keywords, ' '))`;
+      const taxExcludeCondition = allTaxKws.length > 0
+        ? sql`id NOT IN (
+            SELECT id FROM inventory
+            WHERE ${lowerFullText} ~ ${allKwsRegex}
+          )`
         : sql`TRUE`;
 
       const uncatSizeConditions = [

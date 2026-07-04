@@ -130,6 +130,23 @@ export const inventoryTable = pgTable(
     // immutable_array_to_string is defined in _untracked_0001_fts_ai_keywords.sql
     // and must exist in the database before this index can be created.
     index("inventory_fts_idx").using("gin", inventoryFtsVector()),
+    // ── Lowercase full-text trigram GIN index ─────────────────────────────────
+    // Used exclusively by the uncategorized-browse exclusion query.  The query
+    // does:
+    //   id NOT IN (SELECT id FROM inventory WHERE lower_fulltext ~ 'kw1|kw2|...')
+    // pg_trgm can use this GIN index for regex (~) patterns, so the inner
+    // positive match becomes a Bitmap Index Scan instead of a sequential scan,
+    // and the outer NOT IN becomes a Hash Anti Join.
+    //
+    // The expression must exactly match the WHERE clause in the uncategorized
+    // browse path in artifacts/api-server/src/routes/inventory.ts so the planner
+    // recognises and uses this index.
+    //
+    // Defined in migration 0032_inventory_fulltext_trgm_idx.sql.
+    index("inventory_fulltext_trgm_idx").using(
+      "gin",
+      sql`lower(vendor || ' ' || catalog || ' ' || description || ' ' || coalesce(expanded_description, '') || ' ' || immutable_array_to_string(ai_keywords, ' ')) gin_trgm_ops`,
+    ),
   ],
 );
 
