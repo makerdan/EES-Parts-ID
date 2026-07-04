@@ -196,10 +196,11 @@ function mergeProfileIntoSettings(prev: AppSettings, profile: AdminProfilePayloa
   return next;
 }
 
-async function fetchAdminProfile(token: string): Promise<AdminProfilePayload | null> {
+async function fetchAdminProfile(token: string, signal?: AbortSignal): Promise<AdminProfilePayload | null> {
   try {
     const resp = await fetchWithAuth(`${API_BASE}/admin/profile`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal,
     });
     if (!resp.ok) return null;
     return await resp.json() as AdminProfilePayload;
@@ -531,20 +532,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // ── Admin profile sync ────────────────────────────────────────────────────
   // When the user becomes an admin, pull their server-stored profile settings
   // once and merge them in. Reset the guard when admin status is lost.
+  // An AbortController ensures only one fetch is active at a time: any
+  // in-flight fetch is cancelled before a new one starts, and setSettings is
+  // never called after the fetch has been aborted (e.g. on unmount or demotion).
   const adminProfileSyncedRef = useRef(false);
+  const adminProfileAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     if (!isAdmin) {
       adminProfileSyncedRef.current = false;
+      adminProfileAbortRef.current?.abort();
+      adminProfileAbortRef.current = null;
       return;
     }
     if (adminProfileSyncedRef.current) return;
     adminProfileSyncedRef.current = true;
+
+    adminProfileAbortRef.current?.abort();
+    const controller = new AbortController();
+    adminProfileAbortRef.current = controller;
+    const { signal } = controller;
+
     (async () => {
       const token = await getTokenRef.current();
-      if (!token) return;
+      if (signal.aborted || !token) return;
       try {
-        const profile = await fetchAdminProfile(token);
-        if (!profile) return;
+        const profile = await fetchAdminProfile(token, signal);
+        if (signal.aborted || !profile) return;
         setSettings(prev => {
           const merged = mergeProfileIntoSettings(prev, profile);
           if (merged === prev) return prev;
@@ -554,8 +567,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       } catch (err) {
         console.warn("[AppContext] Admin profile sync failed:", err);
+      } finally {
+        if (adminProfileAbortRef.current === controller) {
+          adminProfileAbortRef.current = null;
+        }
       }
     })();
+
+    return () => {
+      controller.abort();
+      if (adminProfileAbortRef.current === controller) {
+        adminProfileAbortRef.current = null;
+      }
+    };
   }, [isAdmin]);
 
   // ── Periodic admin-status re-check ────────────────────────────────────────
