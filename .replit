@@ -111,10 +111,6 @@ args = "typecheck"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "tsc"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
 args = "spec:check"
 
 [[workflows.workflow.tasks]]
@@ -124,6 +120,10 @@ args = "lint"
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "spec:check:tests"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "tsc"
 
 [[workflows.workflow]]
 name = "post-merge-health-test"
@@ -159,17 +159,6 @@ args = "pnpm -w run typecheck:libs && pnpm --filter @workspace/parts-id exec tsc
 outputType = "console"
 
 [[workflows.workflow]]
-name = "tsc"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm run typecheck"
-
-[workflows.workflow.metadata]
-isValidation = true
-
-[[workflows.workflow]]
 name = "spec:check"
 author = "agent"
 
@@ -190,6 +179,17 @@ args = "pnpm --filter @workspace/api-spec test"
 
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow]]
+name = "tsc"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+
+[workflows.workflow.metadata]
+outputType = "console"
 
 [agent]
 stack = "PNPM_WORKSPACE"
