@@ -157,6 +157,7 @@ async function finalizeParentIfComplete(parentId: number): Promise<void> {
 
 // Maximum number of unmatched parts to store per job (prevents unbounded JSON blobs).
 const MAX_UNMATCHED_STORED = 300;
+const CANCEL_CHECK_INTERVAL = 10;
 
 // ── Core per-page processing loop ─────────────────────────────────────────────
 // Shared by both the POST (new job) and POST /resume routes.
@@ -199,14 +200,19 @@ async function processPdfPages(
   }
 
   const remainingPages = pages.slice(startPage);
+  let cancelledCached = false;
 
-  for (const page of remainingPages) {
-    const [currentRow] = await db
-      .select({ status: catalogPdfJobTable.status })
-      .from(catalogPdfJobTable)
-      .where(eq(catalogPdfJobTable.id, jobId))
-      .limit(1);
-    if (currentRow?.status === "cancelled") {
+  for (let pageIndex = 0; pageIndex < remainingPages.length; pageIndex++) {
+    const page = remainingPages[pageIndex];
+    if (pageIndex % CANCEL_CHECK_INTERVAL === 0) {
+      const [currentRow] = await db
+        .select({ status: catalogPdfJobTable.status })
+        .from(catalogPdfJobTable)
+        .where(eq(catalogPdfJobTable.id, jobId))
+        .limit(1);
+      cancelledCached = currentRow?.status === "cancelled";
+    }
+    if (cancelledCached) {
       wasCancelled = true;
       break;
     }
@@ -761,7 +767,14 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
         // them — guards against the race where finalizeParentIfComplete failed
         // or hasn't run yet, which would leave the parent stuck at "processing".
         const anyFailed = children.some((c) => c.status === "failed");
-        aggStatus = anyFailed ? "failed" : "done";
+        const anyDoneWithErrors = children.some(
+          (c) => c.status === "done_with_errors",
+        );
+        aggStatus = anyFailed
+          ? "failed"
+          : anyDoneWithErrors
+            ? "done_with_errors"
+            : "done";
       }
     }
 
