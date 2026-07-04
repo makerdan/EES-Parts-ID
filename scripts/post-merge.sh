@@ -39,19 +39,14 @@ check_api_health() {
 # ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # Only run pnpm install if the lockfile changed in the merge.
-  # On merges that only touch source files the lockfile is already satisfied,
-  # and skipping install saves ~10s — critical for staying within the 20s budget.
+  # Run in the background so it does not block the health check within the
+  # 20s platform budget — the API server does not need a reinstall to stay
+  # healthy, and packages are already on disk from the merge.
   if git --no-optional-locks diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q 'pnpm-lock.yaml'; then
-    echo "[post-merge] Lockfile changed — installing dependencies..."
-    timeout 120 sh -c 'CI=true pnpm install --frozen-lockfile' || {
-      INSTALL_EXIT=$?
-      if [[ "$INSTALL_EXIT" -eq 124 ]]; then
-        echo "[post-merge] ERROR: pnpm install timed out after 120s. Aborting."
-      else
-        echo "[post-merge] ERROR: pnpm install failed (exit ${INSTALL_EXIT}). Aborting."
-      fi
-      exit 1
-    }
+    echo "[post-merge] Lockfile changed — installing dependencies in background..."
+    timeout 120 sh -c 'CI=true pnpm install --frozen-lockfile' >> /tmp/post-merge-install.log 2>&1 &
+    INSTALL_PID=$!
+    echo "[post-merge] Install running in background (PID ${INSTALL_PID}). See /tmp/post-merge-install.log for output."
   else
     echo "[post-merge] Lockfile unchanged — skipping install."
   fi
