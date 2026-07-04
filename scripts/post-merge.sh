@@ -125,6 +125,20 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # Uses || true so a network error never causes post-merge to report failure.
   bash "$(dirname "$0")/sync-github.sh" || true
 
+  # Wait for background install to finish before health-checking the server.
+  # A server that started before the install completed may crash due to missing
+  # packages; waiting here avoids a spurious health-check failure and restart.
+  if [ -n "${INSTALL_PID:-}" ]; then
+    echo "[post-merge] Waiting for background install (PID ${INSTALL_PID}) to finish..."
+    INSTALL_EXIT=0
+    wait "$INSTALL_PID" || INSTALL_EXIT=$?
+    if [ "$INSTALL_EXIT" -ne 0 ]; then
+      echo "[post-merge] WARNING: background install exited with code ${INSTALL_EXIT} — see /tmp/post-merge-install.log. Proceeding to health check anyway."
+    else
+      echo "[post-merge] Background install completed successfully."
+    fi
+  fi
+
   # First health check pass.
   if check_api_health "initial"; then
     exit 0

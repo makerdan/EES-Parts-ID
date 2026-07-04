@@ -6,6 +6,6 @@
     "scripts/**/*.ts"
   ],
   "project": ["src/**/*.ts", "scripts/**/*.ts"],
-  "ignoreBinaries": ["tsc"],
+  "ignoreBinaries": ["tsc", "fuser"],
   "ignoreDependencies": ["pdf-lib"]
 }
