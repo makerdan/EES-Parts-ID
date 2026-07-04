@@ -105,7 +105,7 @@
  * The relay imposes no undocumented cap at or below this value; the effective
  * limits are those of the underlying model providers.
  */
-const POE_RELAY_MAX_IMAGE_BYTES_PROBED = 20 * 1024 * 1024; // 20 MB (no cap found ≤ 20 MB)
+const _POE_RELAY_MAX_IMAGE_BYTES_PROBED = 20 * 1024 * 1024; // 20 MB (no cap found ≤ 20 MB)
 
 // ── Claude Sonnet 4.5 (Poe bots: POE_IDENTIFY_BOT, POE_DIMENSIONS_BOT) ───────
 //
@@ -134,19 +134,19 @@ export const MAX_IMAGE_BYTES_CLAUDE_SONNET = 10 * 1024 * 1024; // 10 MB
 const MAX_IMAGES_PER_REQUEST_CLAUDE_SONNET = 100;
 
 /** Max image dimension (width or height) for Claude Sonnet. */
-const MAX_IMAGE_DIMENSION_CLAUDE_SONNET = 8000; // px
+const _MAX_IMAGE_DIMENSION_CLAUDE_SONNET = 8000; // px
 
 /**
  * When a request has more than this many images, Claude imposes a stricter
  * per-image dimension cap of 2 000 × 2 000 px.
  */
-const CLAUDE_MANY_IMAGE_THRESHOLD = 20;
+const _CLAUDE_MANY_IMAGE_THRESHOLD = 20;
 
-/** Stricter per-image dimension limit when request exceeds CLAUDE_MANY_IMAGE_THRESHOLD. */
-const MAX_IMAGE_DIMENSION_CLAUDE_MANY = 2000; // px
+/** Stricter per-image dimension limit when request exceeds _CLAUDE_MANY_IMAGE_THRESHOLD. */
+const _MAX_IMAGE_DIMENSION_CLAUDE_MANY = 2000; // px
 
 /** Anthropic API total request size limit (32 MB); treat as upper bound for Poe relay too. */
-const MAX_REQUEST_BYTES_CLAUDE_SONNET = 32 * 1024 * 1024; // 32 MB
+const _MAX_REQUEST_BYTES_CLAUDE_SONNET = 32 * 1024 * 1024; // 32 MB
 
 // ── Gemini-3.1-Pro (Poe bot: POE_CATALOG_BOT) ────────────────────────────────
 //
@@ -346,7 +346,7 @@ export const MAX_IMAGE_BYTES_GPT5_1 = 20 * 1024 * 1024; // 20 MB
  * Returns the most restrictive known limit for the underlying provider.
  * Returns `null` when the bot name is unknown.
  */
-function getMaxImageBytesForPoeBot(botName: string): number | null {
+function _getMaxImageBytesForPoeBot(botName: string): number | null {
   switch (botName) {
     case "Claude-Sonnet-4.5":
       return MAX_IMAGE_BYTES_CLAUDE_SONNET; // 10 MB — Anthropic per-image limit
@@ -366,7 +366,7 @@ function getMaxImageBytesForPoeBot(botName: string): number | null {
  * Return the max images-per-request for a given Poe bot name.
  * Returns `null` when the bot name is unknown.
  */
-function getMaxImagesPerRequestForPoeBot(botName: string): number | null {
+function _getMaxImagesPerRequestForPoeBot(botName: string): number | null {
   switch (botName) {
     case "Claude-Sonnet-4.5":
       return MAX_IMAGES_PER_REQUEST_CLAUDE_SONNET;
@@ -385,7 +385,7 @@ function getMaxImagesPerRequestForPoeBot(botName: string): number | null {
  * Return the per-image byte limit for a given OpenAI model name.
  * Returns `null` when the model is unknown.
  */
-function getMaxImageBytesForOpenAIModel(model: string): number | null {
+function _getMaxImageBytesForOpenAIModel(model: string): number | null {
   switch (model) {
     case "gpt-4o":
       return MAX_IMAGE_BYTES_GPT4O;
