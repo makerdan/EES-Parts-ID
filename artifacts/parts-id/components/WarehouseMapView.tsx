@@ -30,6 +30,7 @@
  */
 import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import DOMPurify from "dompurify";
 import { Asset } from "expo-asset";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -2169,7 +2170,12 @@ export function WarehouseMapView({
               ? React.createElement(
                   "g" as unknown as React.ElementType,
                   {
-                    dangerouslySetInnerHTML: { __html: innerXml },
+                    dangerouslySetInnerHTML: {
+                      __html: DOMPurify.sanitize(innerXml, {
+                        USE_PROFILES: { svg: true, svgFilters: true },
+                        FORCE_BODY: false,
+                      }),
+                    },
                     ...(isDark && { style: { filter: "invert(1) brightness(0.88)" } }),
                   },
                 )
