@@ -122,40 +122,88 @@ for (const entry of columns) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Report.
+// 5. Barrel completeness check — every .ts file in src/schema/ must be
+//    re-exported from src/schema/index.ts.
 // ---------------------------------------------------------------------------
-if (missingTables.length === 0 && missingColumns.length === 0) {
+const SCHEMA_DIR = join(DB_DIR, "src", "schema");
+const SCHEMA_INDEX = join(SCHEMA_DIR, "index.ts");
+
+const schemaFiles = readdirSync(SCHEMA_DIR)
+  .filter((f) => f.endsWith(".ts") && f !== "index.ts")
+  .map((f) => f.replace(/\.ts$/, ""));
+
+const indexSource = readFileSync(SCHEMA_INDEX, "utf-8");
+
+// Collect every specifier from lines of the form:  export * from "./specifier"
+const exportedSpecifiers = new Set<string>();
+for (const match of indexSource.matchAll(/export\s+\*\s+from\s+["']\.\/([^"']+)["']/g)) {
+  exportedSpecifiers.add(match[1]);
+}
+
+const missingFromBarrel = schemaFiles.filter((f) => !exportedSpecifiers.has(f));
+
+// ---------------------------------------------------------------------------
+// 6. Report all failures together.
+// ---------------------------------------------------------------------------
+const migrationsFailed = missingTables.length > 0 || missingColumns.length > 0;
+const barrelFailed = missingFromBarrel.length > 0;
+
+if (!migrationsFailed && !barrelFailed) {
   console.log(
     `OK  Schema and migrations are in sync (${tableNames.length} tables, ` +
       `${columns.length} columns checked).`
   );
+  console.log(
+    `OK  Barrel completeness: all ${schemaFiles.length} schema file(s) are ` +
+      `re-exported from schema/index.ts.`
+  );
   process.exit(0);
 }
 
-console.error("");
-console.error(
-  "FAIL  Drizzle schema has changes not present in committed migrations."
-);
-console.error("");
-
-if (missingTables.length > 0) {
-  console.error("Tables defined in schema but missing from migrations:");
-  for (const t of missingTables) {
-    console.error(`  - ${t}`);
-  }
+if (migrationsFailed) {
   console.error("");
+  console.error(
+    "FAIL  Drizzle schema has changes not present in committed migrations."
+  );
+  console.error("");
+
+  if (missingTables.length > 0) {
+    console.error("Tables defined in schema but missing from migrations:");
+    for (const t of missingTables) {
+      console.error(`  - ${t}`);
+    }
+    console.error("");
+  }
+
+  if (missingColumns.length > 0) {
+    console.error("Columns defined in schema but missing from migrations:");
+    for (const c of missingColumns) {
+      console.error(`  - ${c.tableName}.${c.columnName}`);
+    }
+    console.error("");
+  }
+
+  console.error(
+    "To fix: generate a migration for the missing changes and commit it:"
+  );
+  console.error("  pnpm --filter @workspace/db run generate");
 }
 
-if (missingColumns.length > 0) {
-  console.error("Columns defined in schema but missing from migrations:");
-  for (const c of missingColumns) {
-    console.error(`  - ${c.tableName}.${c.columnName}`);
+if (barrelFailed) {
+  console.error("");
+  console.error(
+    "FAIL  The following schema file(s) are not re-exported from src/schema/index.ts:"
+  );
+  for (const f of missingFromBarrel) {
+    console.error(`  - ${f}.ts`);
   }
   console.error("");
+  console.error(
+    "To fix: add the missing export to lib/db/src/schema/index.ts, e.g.:"
+  );
+  for (const f of missingFromBarrel) {
+    console.error(`  export * from "./${f}";`);
+  }
 }
 
-console.error(
-  "To fix: generate a migration for the missing changes and commit it:"
-);
-console.error("  pnpm --filter @workspace/db run generate");
 process.exit(1);
