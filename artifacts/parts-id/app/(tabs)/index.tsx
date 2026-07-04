@@ -793,7 +793,7 @@ export default function SearchScreen() {
 
   const SEARCH_TIMEOUT_MS = 8000;
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
     // Guard: do not fire a search when there is nothing to search for.
     // This mirrors the canSearch computation below and also protects the
     // onSubmitEditing path (keyboard Return), which bypasses the button's
@@ -812,6 +812,18 @@ export default function SearchScreen() {
       activeCategorySlugRef.current != null;
     if (!hasAnyInput) return;
 
+    // Check connectivity before firing the network request. When the device
+    // is definitely offline we skip the mutation and the 8-second wait
+    // entirely and go straight to the local Fuse fallback.
+    let isDeviceConnected = true;
+    try {
+      const netState = await NetInfo.fetch();
+      isDeviceConnected = netState.isConnected !== false;
+    } catch {
+      // If NetInfo itself fails, assume connected and let the normal
+      // timeout + error-handler path deal with it.
+    }
+
     setPinnedParts([]);
     setOfflineResults(null);
     setIsOffline(false);
@@ -820,6 +832,14 @@ export default function SearchScreen() {
     setAIZeroResults(null);
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+
+    if (!isDeviceConnected) {
+      // Device is offline — skip the network request and go directly to the
+      // local Fuse/cache fallback with no delay.
+      runOfflineFallback();
+      return;
+    }
+
     // Fire NL translation non-blocking in parallel with the primary search.
     // Only when a keyword/catalog query is present (not dimension-only searches).
     const _aiGen = ++aiSearchGenRef.current;
