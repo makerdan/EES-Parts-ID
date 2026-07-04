@@ -115,19 +115,6 @@ export function getAiClient(): OpenAI {
   return _client;
 }
 
-/**
- * @deprecated Use getAiClient() so the reference stays live after setProvider().
- */
-export const aiClient: OpenAI = new Proxy({} as OpenAI, {
-  get(_target, prop) {
-    return (_client as unknown as Record<string | symbol, unknown>)[prop];
-  },
-});
-
-/**
- * @deprecated Use getProvider() for a live value.
- */
-export const AI_PROVIDER: AIProvider = _provider;
 
 // ── Poe bot name constants ─────────────────────────────────────────────────────
 
@@ -452,27 +439,3 @@ export async function probePoeBotsOnStartup(): Promise<void> {
   await Promise.all(botNames.map(_probeBotAndRecord));
 }
 
-/**
- * @deprecated Use getEnrichModel() so the value updates after setProvider().
- */
-export const ENRICH_MODEL: string = _provider === "openai" ? "gpt-4o-mini" : POE_ENRICH_BOT;
-
-/**
- * @deprecated Use getIdentifyModel() so the value updates after setProvider().
- */
-export const IDENTIFY_MODEL: string = _provider === "openai" ? "gpt-4o" : POE_IDENTIFY_BOT;
-
-/**
- * @deprecated Use getReferenceModel() so the value updates after setProvider().
- */
-export const REFERENCE_MODEL: string = ENRICH_MODEL;
-
-/**
- * @deprecated Use getCatalogModel() so the value updates after setProvider().
- */
-export const CATALOG_MODEL: string = _provider === "openai" ? "gpt-4o" : POE_CATALOG_BOT;
-
-/**
- * @deprecated Use getDimensionsModel() so the value updates after setProvider().
- */
-export const DIMENSIONS_MODEL: string = _provider === "openai" ? "gpt-5.1" : POE_DIMENSIONS_BOT;

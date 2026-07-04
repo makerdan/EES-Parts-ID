@@ -6,7 +6,7 @@ import { Router } from "express";
 const router = Router();
 
 // Matches the chip-text expression used in chip-filter WHERE clauses
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// eslint-disable-next-line unused-imports/no-unused-vars
 const CHIP_FN = `inventory_chip_text(vendor, catalog, description, ai_keywords)`;
 
 function escapeForPattern(kw: string): string {

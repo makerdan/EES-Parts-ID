@@ -4,7 +4,7 @@ module.exports = {
     ecmaVersion: 2022,
     sourceType: 'module',
   },
-  plugins: ['@typescript-eslint', 'simple-import-sort'],
+  plugins: ['@typescript-eslint', 'simple-import-sort', 'unused-imports'],
   extends: [
     'eslint:recommended',
     'plugin:@typescript-eslint/recommended',
@@ -13,7 +13,20 @@ module.exports = {
     '@typescript-eslint/array-type': ['error', { default: 'generic' }],
     'simple-import-sort/imports': 'error',
     'simple-import-sort/exports': 'error',
-    '@typescript-eslint/no-unused-vars': ['error', { vars: 'all', args: 'after-used', ignoreRestSiblings: true, argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrors: 'all', caughtErrorsIgnorePattern: '^_' }],
+    // Disable the built-in rule in favour of the unused-imports version,
+    // which also auto-removes entire import statements when all named imports
+    // from that statement are unused.
+    '@typescript-eslint/no-unused-vars': 'off',
+    'unused-imports/no-unused-imports': 'error',
+    'unused-imports/no-unused-vars': ['error', {
+      vars: 'all',
+      args: 'after-used',
+      ignoreRestSiblings: true,
+      argsIgnorePattern: '^_',
+      varsIgnorePattern: '^_',
+      caughtErrors: 'all',
+      caughtErrorsIgnorePattern: '^_',
+    }],
   },
   ignorePatterns: [
     'node_modules/',
