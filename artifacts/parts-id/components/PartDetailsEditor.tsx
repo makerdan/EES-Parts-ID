@@ -298,6 +298,53 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     }
   };
 
+  const handleDeleteItem = useCallback(() => {
+    const current = itemRef.current;
+    if (!current || !adminToken) return;
+    Alert.alert(
+      "Delete Part",
+      `Permanently delete "${current.catalog}"? This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const res = await fetch(`${API_BASE}/inventory/${current.id}`, {
+                method: "DELETE",
+                headers: { Authorization: `Bearer ${adminToken}` },
+              });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({})) as { error?: string };
+                Alert.alert("Delete Failed", data.error ?? `Could not delete part (HTTP ${res.status}).`);
+                return;
+              }
+              // Invalidate React Query in-memory caches so list/search views refresh
+              await invalidateListCache({ queryClient });
+              await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+              // Evict from the AsyncStorage offline search cache immediately so the
+              // 24-hour TTL never surfaces a result for an item that no longer exists.
+              try {
+                const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
+                if (raw) {
+                  const cache = JSON.parse(raw) as QueryCache<SearchResult>;
+                  const { pruned, changed } = evictItemFromQueryCache(cache, current.id);
+                  if (changed) await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
+                }
+              } catch {
+                // Non-fatal — worst case the search cache TTL will expire naturally
+              }
+              onClose();
+            } catch {
+              Alert.alert("Delete Failed", "Could not delete the part. Check your connection and try again.");
+            }
+          },
+        },
+      ],
+    );
+  }, [adminToken, queryClient, onClose]);
+
   const handleSave = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) return;
@@ -1058,6 +1105,16 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
                 <Text style={[styles.mapBtnText, { color: colors.accentForeground }]}>Map it!</Text>
               </Pressable>
             ) : null}
+            {adminToken ? (
+              <Pressable
+                onPress={handleDeleteItem}
+                disabled={isSaving}
+                style={[styles.deleteBtn, { backgroundColor: colors.destructive + "18", borderColor: colors.destructive + "44", opacity: isSaving ? 0.4 : 1 }]}
+                accessibilityLabel="Delete this part"
+              >
+                <Feather name="trash-2" size={14} color={colors.destructive} />
+              </Pressable>
+            ) : null}
             <Pressable
               onPress={onClose}
               style={[styles.cancelBtn, { borderColor: colors.border }]}
@@ -1293,6 +1350,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   mapBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  deleteBtn: {
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+  },
   cancelBtn: {
     flex: 1,
     borderWidth: 1,
