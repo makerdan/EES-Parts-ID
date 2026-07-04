@@ -25,13 +25,16 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
-jest.mock("../src/lib/poeBot", () => ({
-  callPoeBotWithChain: jest.fn(),
-  tryPoeBotChain: jest.fn(),
-  isPoeCallAuthError: jest.fn(() => false),
-  isPoeCallTransientError: jest.fn(() => false),
-  PoeBotChainExhaustedError: class PoeBotChainExhaustedError extends Error {},
-}));
+jest.mock("../src/lib/poeBot", () => {
+  const actual = jest.requireActual<typeof import("../src/lib/poeBot")>("../src/lib/poeBot");
+  return {
+    ...actual,
+    callPoeBotWithChain: jest.fn(),
+    tryPoeBotChain: jest.fn(),
+    isPoeCallAuthError: jest.fn(() => false),
+    isPoeCallTransientError: jest.fn(() => false),
+  };
+});
 
 // answerCache: must always return a Promise (never undefined) so .catch() works.
 jest.mock("../src/lib/answerCache", () => ({

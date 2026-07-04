@@ -20,11 +20,15 @@ process.env.POE_API_KEY2 = "test-poe-key";
 // generateKeywords() calls callPoeBotWithChain internally.
 // Returning a valid JSON array of keywords lets the real parsing + merge logic
 // run while avoiding any network dependency.
-jest.mock("../lib/poeBot", () => ({
-  callPoeBotWithChain: jest.fn().mockResolvedValue('["ai-keyword-alpha","ai-keyword-beta"]'),
-  isPoeCallAuthError: jest.fn(() => false),
-  isPoeCallTransientError: jest.fn(() => false),
-}));
+jest.mock("../lib/poeBot", () => {
+  const actual = jest.requireActual<typeof import("../lib/poeBot")>("../lib/poeBot");
+  return {
+    ...actual,
+    callPoeBotWithChain: jest.fn().mockResolvedValue('["ai-keyword-alpha","ai-keyword-beta"]'),
+    isPoeCallAuthError: jest.fn(() => false),
+    isPoeCallTransientError: jest.fn(() => false),
+  };
+});
 
 // ── Mock batchProcessWithSSE to actually execute the per-item callback ────────
 // The real implementation fans out concurrently and emits SSE events.

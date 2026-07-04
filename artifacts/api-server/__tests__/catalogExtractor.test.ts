@@ -28,17 +28,12 @@ jest.mock("@workspace/integrations-openai-ai-server", () => ({
 // makes every test that reaches the AI call fast, deterministic, and free of
 // network dependencies regardless of which AI_PROVIDER is configured.
 jest.mock("../src/lib/poeBot", () => {
-  class PoeBotChainExhaustedError extends Error {
-    constructor() {
-      super("All Poe bots in the fallback chain failed");
-      this.name = "PoeBotChainExhaustedError";
-    }
-  }
+  const actual = jest.requireActual<typeof import("../src/lib/poeBot")>("../src/lib/poeBot");
   return {
+    ...actual,
     tryPoeBotChain: jest.fn(async (_feature: unknown, fn: (client: unknown, model: string) => unknown) =>
       fn({ chat: { completions: { create: mockCreate } } }, "gpt-4o"),
     ),
-    PoeBotChainExhaustedError,
   };
 });
 
