@@ -2,8 +2,8 @@
 /**
  * check-env-vars.ts
  *
- * Diffs process.env reads in artifacts/api-server/src/ against the variables
- * declared in .env.example and reports two lists:
+ * Diffs process.env reads in artifacts/api-server/src/ and lib/db/src/ against
+ * the variables declared in .env.example and reports two lists:
  *
  *   UNDOCUMENTED  — vars read in server code but absent from .env.example
  *   OBSOLETE      — vars declared in .env.example but never read in server code
@@ -18,7 +18,10 @@ import { readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..");
-const SERVER_SRC = join(REPO_ROOT, "artifacts", "api-server", "src");
+const SCAN_DIRS = [
+  join(REPO_ROOT, "artifacts", "api-server", "src"),
+  join(REPO_ROOT, "lib", "db", "src"),
+];
 const ENV_EXAMPLE = join(REPO_ROOT, ".env.example");
 
 /**
@@ -33,15 +36,8 @@ const IGNORED_PREFIXES = ["EXPO_PUBLIC_"];
  */
 const ALWAYS_EXPECTED_IN_CODE = new Set(["NODE_ENV"]);
 
-/**
- * Vars that are injected by Replit/Neon automatically and are legitimately in
- * .env.example as documentation, but are consumed by lib/db (not directly by
- * server src files).  They are never "obsolete" — just outside the grep scope.
- */
-const SCOPE_EXCEPTIONS = new Set(["DATABASE_URL"]);
-
 // ---------------------------------------------------------------------------
-// Collect all .ts files under SERVER_SRC (recursive)
+// Collect all .ts files under a directory (recursive)
 // ---------------------------------------------------------------------------
 function collectTsFiles(dir: string): string[] {
   const result: string[] = [];
@@ -102,7 +98,7 @@ function collectExampleVars(content: string): Set<string> {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-const tsFiles = collectTsFiles(SERVER_SRC);
+const tsFiles = SCAN_DIRS.flatMap(collectTsFiles);
 const codeVars = collectCodeVars(tsFiles);
 const exampleContent = readFileSync(ENV_EXAMPLE, "utf-8");
 const exampleVars = collectExampleVars(exampleContent);
@@ -115,8 +111,7 @@ const obsolete = [...exampleVars]
   .filter(
     (v) =>
       !codeVars.has(v) &&
-      !IGNORED_PREFIXES.some((p) => v.startsWith(p)) &&
-      !SCOPE_EXCEPTIONS.has(v),
+      !IGNORED_PREFIXES.some((p) => v.startsWith(p)),
   )
   .sort();
 
