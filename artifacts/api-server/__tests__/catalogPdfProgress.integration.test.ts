@@ -57,7 +57,7 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { closePool } from "./helpers/testDb";
 import { db, catalogPdfJobTable, inventoryTable } from "@workspace/db";
-import { eq, inArray, desc } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
 import { matchCatalogNumber } from "../src/utils/catalogMatcher";
@@ -215,27 +215,28 @@ describe("PDF job progress — DB updated per page", () => {
     };
     let callCount = 0;
 
+    let captureJobId: number | null = null;
+
     mockExtractCatalogPage.mockImplementation(async (_text, _images, _vendor) => {
       callCount++;
-      if (callCount === 2) {
+      if (callCount === 2 && captureJobId !== null) {
         // Page 1 has already finished and its DB update has been awaited.
-        // Query DB directly for the current processing job (seededJobIds is not
-        // yet populated during synchronous route processing).
-        const [latest] = await db
+        // Use the jobId captured after startJob() to avoid any vendor-name collision.
+        const [row] = await db
           .select({ id: catalogPdfJobTable.id, processedPages: catalogPdfJobTable.processedPages, matchedParts: catalogPdfJobTable.matchedParts })
           .from(catalogPdfJobTable)
-          .where(eq(catalogPdfJobTable.vendor, VENDOR))
-          .orderBy(desc(catalogPdfJobTable.id))
+          .where(eq(catalogPdfJobTable.id, captureJobId))
           .limit(1);
-        if (latest) {
-          stateAtStartOfPage2.processedPages = latest.processedPages ?? -1;
-          stateAtStartOfPage2.matchedParts = latest.matchedParts ?? -1;
+        if (row) {
+          stateAtStartOfPage2.processedPages = row.processedPages ?? -1;
+          stateAtStartOfPage2.matchedParts = row.matchedParts ?? -1;
         }
       }
       return { entries: [], rawText: "" };
     });
 
     const jobId = await startJob();
+    captureJobId = Number(jobId);
     await waitForJobDone(jobId);
 
     // The DB state captured at the start of page 2 must show page 1 already counted.
@@ -273,20 +274,23 @@ describe("PDF job progress — DB updated per page", () => {
     };
     let callCount = 0;
 
+    let captureJobId: number | null = null;
+
     mockExtractCatalogPage.mockImplementation(async () => {
       callCount++;
       if (callCount === 2) {
         // Page 1 has already finished and its per-page DB update has been awaited.
-        // Query DB directly (seededJobIds not yet populated during synchronous processing).
-        const [latest] = await db
-          .select({ processedPages: catalogPdfJobTable.processedPages, matchedParts: catalogPdfJobTable.matchedParts })
-          .from(catalogPdfJobTable)
-          .where(eq(catalogPdfJobTable.vendor, VENDOR))
-          .orderBy(desc(catalogPdfJobTable.id))
-          .limit(1);
-        if (latest) {
-          stateAtStartOfPage2.processedPages = latest.processedPages ?? -1;
-          stateAtStartOfPage2.matchedParts = latest.matchedParts ?? -1;
+        // Use the jobId captured after startJob() to avoid any vendor-name collision.
+        if (captureJobId !== null) {
+          const [row] = await db
+            .select({ processedPages: catalogPdfJobTable.processedPages, matchedParts: catalogPdfJobTable.matchedParts })
+            .from(catalogPdfJobTable)
+            .where(eq(catalogPdfJobTable.id, captureJobId))
+            .limit(1);
+          if (row) {
+            stateAtStartOfPage2.processedPages = row.processedPages ?? -1;
+            stateAtStartOfPage2.matchedParts = row.matchedParts ?? -1;
+          }
         }
         return { entries: [], rawText: "" };
       }
@@ -297,6 +301,7 @@ describe("PDF job progress — DB updated per page", () => {
     });
 
     const jobId = await startJob();
+    captureJobId = Number(jobId);
     await waitForJobDone(jobId);
 
     // After page 1: processedPages=1, matchedParts=1 — captured at start of page 2.
@@ -321,24 +326,26 @@ describe("PDF job progress — DB updated per page", () => {
     const capturedCounts: number[] = [];
     let callCount = 0;
 
+    let captureJobId: number | null = null;
+
     mockExtractCatalogPage.mockImplementation(async () => {
       callCount++;
-      if (callCount >= 2) {
-        // Query DB directly (seededJobIds not yet populated during synchronous processing).
-        const [latest] = await db
+      if (callCount >= 2 && captureJobId !== null) {
+        // Use the jobId captured after startJob() to avoid any vendor-name collision.
+        const [row] = await db
           .select({ processedPages: catalogPdfJobTable.processedPages })
           .from(catalogPdfJobTable)
-          .where(eq(catalogPdfJobTable.vendor, VENDOR))
-          .orderBy(desc(catalogPdfJobTable.id))
+          .where(eq(catalogPdfJobTable.id, captureJobId))
           .limit(1);
-        if (latest?.processedPages !== undefined) {
-          capturedCounts.push(latest.processedPages);
+        if (row?.processedPages !== undefined) {
+          capturedCounts.push(row.processedPages);
         }
       }
       return { entries: [], rawText: "" };
     });
 
     const jobId = await startJob();
+    captureJobId = Number(jobId);
     await waitForJobDone(jobId);
 
     // At the start of page 2, processedPages should be 1.
