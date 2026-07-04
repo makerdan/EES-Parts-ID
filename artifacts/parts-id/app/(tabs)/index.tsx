@@ -8,6 +8,7 @@ import Fuse from "fuse.js";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   Modal,
   Platform,
@@ -38,7 +39,7 @@ import { parseBin } from "@/lib/aisleHierarchy";
 import { secondaryBtnBase } from "@/styles/shared";
 import { API_BASE } from "@/utils/apiBase";
 import { fetchWithAuth } from "@/utils/appAuth";
-import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, FUSE_SYNC_MAX_AGE_MS,getFuseCacheSyncedAt } from "@/utils/offlineBarcode";
+import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, FUSE_SOFT_STALE_MS, FUSE_SYNC_MAX_AGE_MS,getFuseCacheSyncedAt } from "@/utils/offlineBarcode";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 import { retryAsync } from "@/utils/retryAsync";
 import type { QueryCache } from "@/utils/searchHelpers";
@@ -897,6 +898,27 @@ export default function SearchScreen() {
     });
   }, []);
 
+  // Trigger a background sync whenever the app returns to the foreground and
+  // the Fuse index is older than FUSE_SOFT_STALE_MS (24 h). This is in addition
+  // to the mount-time check so workers who keep the app open all day still get
+  // fresh data when they bring the screen back up.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") return;
+      getFuseCacheSyncedAt().then(syncedAt => {
+        const age = syncedAt == null ? Infinity : Date.now() - syncedAt;
+        if (age > FUSE_SOFT_STALE_MS) {
+          syncAllInventory();
+        }
+      }).catch(() => {});
+    });
+    return () => sub.remove();
+  // syncAllInventory is a stable useCallback — the eslint dep warning is a
+  // false positive here because the mount-time guard (isSyncingRef) makes
+  // duplicate calls safe and avoids capturing a stale closure.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Re-run the last search with each dimension bound widened by the given tolerance fraction
   const handleSimilarSizeSearch = (tolerance: number = similarSizeTolerance) => {
     const f = filtersRef.current;
@@ -1468,6 +1490,16 @@ export default function SearchScreen() {
               interpretation={aiTranslation.interpretation}
               onDismiss={() => setAITranslationDismissed(true)}
             />
+          ) : null}
+
+          {/* Soft-stale indicator — muted badge when Fuse index is 24 h+ old */}
+          {fuseSyncedAt != null && Date.now() - fuseSyncedAt > FUSE_SOFT_STALE_MS ? (
+            <View style={[styles.softStaleIndicator, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+              <Feather name="clock" size={11} color={colors.mutedForeground} />
+              <Text style={[styles.softStaleIndicatorText, { color: colors.mutedForeground }]}>
+                Offline data {Math.floor((Date.now() - fuseSyncedAt) / (60 * 60 * 1000))} hrs old — syncing…
+              </Text>
+            </View>
           ) : null}
         </>
       ) : null}
@@ -2062,6 +2094,14 @@ const styles = StyleSheet.create({
     borderRadius: 8, borderWidth: 1,
   },
   staleCacheNoteText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  softStaleIndicator: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    marginHorizontal: 16, marginTop: 4, marginBottom: 2,
+    paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: 6, borderWidth: 1,
+    alignSelf: "flex-start",
+  },
+  softStaleIndicatorText: { fontSize: 11, fontFamily: "Inter_400Regular" },
   emptyContainer: { alignItems: "center", padding: 40 },
   emptyEmoji: { fontSize: 48, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
