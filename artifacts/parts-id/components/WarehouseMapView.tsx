@@ -1567,11 +1567,27 @@ export function WarehouseMapView({
   // snapshot the old tiles still stored in prevTilesRef.
   const isTierChange = Platform.OS !== "web" && renderZoom !== prevRenderZoomRef.current;
   if (isTierChange && prevTilesRef.current.length > 0) {
-    pendingFadeRef.current = {
-      tiles: prevTilesRef.current,
-      z: prevRenderZoomRef.current,
-      numTiles: tileGridSize(prevRenderZoomRef.current),
-    };
+    const oldN = tileGridSize(prevRenderZoomRef.current);
+    // visibleRange may have been updated in the same React batch as renderZoom
+    // (both arrive via runOnJS from the worklet).  Filter prevTilesRef by the
+    // CURRENT visibleRange so off-screen tiles are never included in the fade
+    // layer — they would briefly double live SvgXml/PngTile instances without
+    // contributing anything visible to the crossfade.  Only filter when
+    // visibleRange.N matches the old grid size so we never apply a range from
+    // a mismatched tier.
+    const { N: vrN, c0, c1, r0, r1 } = visibleRange;
+    const filteredTiles = vrN === oldN
+      ? prevTilesRef.current.filter(
+          ({ col, row }) => col >= c0 && col <= c1 && row >= r0 && row <= r1
+        )
+      : prevTilesRef.current;
+    if (filteredTiles.length > 0) {
+      pendingFadeRef.current = {
+        tiles: filteredTiles,
+        z: prevRenderZoomRef.current,
+        numTiles: oldN,
+      };
+    }
   }
 
   // ── Tile position memoisation ─────────────────────────────────────────────
