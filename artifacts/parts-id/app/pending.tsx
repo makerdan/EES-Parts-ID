@@ -10,12 +10,21 @@ import {
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 
+const POLL_INTERVAL_MS = 30_000;
+
 export default function PendingScreen() {
   const colors = useColors();
   const { logout, recheckApprovalStatus, approvalStatus } = useApp();
   const [signingOut, setSigningOut] = React.useState(false);
 
   const checking = approvalStatus === "loading";
+
+  React.useEffect(() => {
+    const id = setInterval(() => {
+      recheckApprovalStatus();
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [recheckApprovalStatus]);
 
   const handleSignOut = async () => {
     setSigningOut(true);
