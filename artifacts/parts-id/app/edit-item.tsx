@@ -35,7 +35,7 @@ import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 import { API_BASE } from "@/utils/apiBase";
-import { invalidateAllCachesAfterSave } from "@/utils/editItemCache";
+import { evictDeletedItemFromAllCaches, invalidateAllCachesAfterSave } from "@/utils/editItemCache";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
 function fmtDim(v: number | null | undefined): string {
@@ -218,8 +218,10 @@ export default function EditItemScreen() {
                 setSaveStatus("error");
                 return;
               }
-              // Invalidate React Query caches and evict from AsyncStorage offline cache
-              await invalidateAllCachesAfterSave({
+              // Synchronously remove the item from all in-memory caches so
+              // BrowseByAisle / aisle-shelf views don't show it on the next
+              // render, then trigger a background refetch to confirm removal.
+              await evictDeletedItemFromAllCaches({
                 queryClient,
                 asyncStorage: AsyncStorage,
                 itemId: current.id,
