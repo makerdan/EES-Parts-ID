@@ -15,6 +15,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import * as ScreenOrientation from "expo-screen-orientation";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Linking,
   Platform,
   Pressable,
@@ -405,6 +406,14 @@ export default function MapScreen() {
                 onPress={() => {
                   if (zoneEditorLongPressed.current) {
                     zoneEditorLongPressed.current = false;
+                    return;
+                  }
+                  if (ZONE_EDITOR_URL.includes("localhost") && !__DEV__) {
+                    Alert.alert(
+                      "Zone Editor Not Configured",
+                      "Zone Editor is not configured in this build. Set EXPO_PUBLIC_DOMAIN before building.",
+                      [{ text: "OK" }],
+                    );
                     return;
                   }
                   if (Platform.OS === "web") {
