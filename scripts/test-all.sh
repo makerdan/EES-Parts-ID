@@ -6,7 +6,11 @@ set -uo pipefail
 SUITES=(
   "mockup-sandbox:./artifacts/mockup-sandbox:90:vitest"
   "parts-id:./artifacts/parts-id:300:jest"
-  "api-server:./artifacts/api-server:600:jest"
+  # Budget rationale: 17 unit files complete in ~9s locally; 31 integration files
+  # need postgres. With the CI postgres service container always healthy, the full
+  # suite runs in ~60-90s (no DB-hang overhead). 120s is ~2× that realistic ceiling.
+  # The old 600s budget was sized for worst-case DB-hang scenarios that no longer apply.
+  "api-server:./artifacts/api-server:120:jest"
 )
 
 # Total outer wall-clock cap (18 min).
