@@ -105,7 +105,7 @@
  * The relay imposes no undocumented cap at or below this value; the effective
  * limits are those of the underlying model providers.
  */
-export const POE_RELAY_MAX_IMAGE_BYTES_PROBED = 20 * 1024 * 1024; // 20 MB (no cap found ≤ 20 MB)
+const POE_RELAY_MAX_IMAGE_BYTES_PROBED = 20 * 1024 * 1024; // 20 MB (no cap found ≤ 20 MB)
 
 // ── Claude Sonnet 4.5 (Poe bots: POE_IDENTIFY_BOT, POE_DIMENSIONS_BOT) ───────
 //
@@ -131,22 +131,22 @@ export const POE_RELAY_MAX_IMAGE_BYTES_PROBED = 20 * 1024 * 1024; // 20 MB (no c
 export const MAX_IMAGE_BYTES_CLAUDE_SONNET = 10 * 1024 * 1024; // 10 MB
 
 /** Max number of images per request for Claude Sonnet 4.5 (200k-token context). */
-export const MAX_IMAGES_PER_REQUEST_CLAUDE_SONNET = 100;
+const MAX_IMAGES_PER_REQUEST_CLAUDE_SONNET = 100;
 
 /** Max image dimension (width or height) for Claude Sonnet. */
-export const MAX_IMAGE_DIMENSION_CLAUDE_SONNET = 8000; // px
+const MAX_IMAGE_DIMENSION_CLAUDE_SONNET = 8000; // px
 
 /**
  * When a request has more than this many images, Claude imposes a stricter
  * per-image dimension cap of 2 000 × 2 000 px.
  */
-export const CLAUDE_MANY_IMAGE_THRESHOLD = 20;
+const CLAUDE_MANY_IMAGE_THRESHOLD = 20;
 
 /** Stricter per-image dimension limit when request exceeds CLAUDE_MANY_IMAGE_THRESHOLD. */
-export const MAX_IMAGE_DIMENSION_CLAUDE_MANY = 2000; // px
+const MAX_IMAGE_DIMENSION_CLAUDE_MANY = 2000; // px
 
 /** Anthropic API total request size limit (32 MB); treat as upper bound for Poe relay too. */
-export const MAX_REQUEST_BYTES_CLAUDE_SONNET = 32 * 1024 * 1024; // 32 MB
+const MAX_REQUEST_BYTES_CLAUDE_SONNET = 32 * 1024 * 1024; // 32 MB
 
 // ── Gemini-3.1-Pro (Poe bot: POE_CATALOG_BOT) ────────────────────────────────
 //
@@ -175,7 +175,7 @@ export const MAX_REQUEST_BYTES_CLAUDE_SONNET = 32 * 1024 * 1024; // 32 MB
 export const MAX_REQUEST_BYTES_GEMINI_3_1_PRO = 20 * 1024 * 1024; // 20 MB (total inline)
 
 /** Max inline images per request for Gemini models. */
-export const MAX_IMAGES_PER_REQUEST_GEMINI_3_1_PRO = 16;
+const MAX_IMAGES_PER_REQUEST_GEMINI_3_1_PRO = 16;
 
 // ── Gemini-2.5-Pro (Poe bot: POE_CATALOG_BOT_FALLBACK) ───────────────────────
 //
@@ -188,10 +188,10 @@ export const MAX_IMAGES_PER_REQUEST_GEMINI_3_1_PRO = 16;
 //         ai.google.dev/gemini-api/docs/vision
 
 /** Max total inline request payload for Gemini 2.5 Pro (same as other Gemini models). */
-export const MAX_REQUEST_BYTES_GEMINI_2_5_PRO = 20 * 1024 * 1024; // 20 MB (total inline)
+const MAX_REQUEST_BYTES_GEMINI_2_5_PRO = 20 * 1024 * 1024; // 20 MB (total inline)
 
 /** Max inline images per request for Gemini 2.5 Pro. */
-export const MAX_IMAGES_PER_REQUEST_GEMINI_2_5_PRO = 16;
+const MAX_IMAGES_PER_REQUEST_GEMINI_2_5_PRO = 16;
 
 // ── GPT-5-Mini (Poe bot: POE_ENRICH_BOT) ─────────────────────────────────────
 //
@@ -217,7 +217,7 @@ export const MAX_IMAGES_PER_REQUEST_GEMINI_2_5_PRO = 16;
  * HTTP 500 "Error from provider: openai and llm: gpt-5-mini-2025" is returned
  * for any inline base64 image, regardless of size (confirmed 2026-06-22).
  */
-export const MAX_IMAGE_BYTES_GPT5_MINI = 20 * 1024 * 1024; // 20 MB (OpenAI standard; vision not supported on Poe)
+const MAX_IMAGE_BYTES_GPT5_MINI = 20 * 1024 * 1024; // 20 MB (OpenAI standard; vision not supported on Poe)
 
 // ── OpenAI gpt-4o-mini (OpenAI fallback: enrich / reference) ─────────────────
 //
@@ -233,7 +233,7 @@ export const MAX_IMAGE_BYTES_GPT5_MINI = 20 * 1024 * 1024; // 20 MB (OpenAI stan
 // send images; these constants exist for completeness / future use.
 
 /** Max image file size for gpt-4o-mini (OpenAI published limit). */
-export const MAX_IMAGE_BYTES_GPT4O_MINI = 20 * 1024 * 1024; // 20 MB
+const MAX_IMAGE_BYTES_GPT4O_MINI = 20 * 1024 * 1024; // 20 MB
 
 // ── OpenAI gpt-4o (OpenAI fallback: identify / catalog) ──────────────────────
 //
@@ -247,7 +247,7 @@ export const MAX_IMAGE_BYTES_GPT4O_MINI = 20 * 1024 * 1024; // 20 MB
 //   • Enforcement layer:        "provider" (OpenAI API)
 
 /** Max image file size for gpt-4o (OpenAI published limit). */
-export const MAX_IMAGE_BYTES_GPT4O = 20 * 1024 * 1024; // 20 MB
+const MAX_IMAGE_BYTES_GPT4O = 20 * 1024 * 1024; // 20 MB
 
 // ── OpenAI gpt-5.1 (OpenAI fallback: dimensions) ─────────────────────────────
 //
@@ -346,7 +346,7 @@ export const MAX_IMAGE_BYTES_GPT5_1 = 20 * 1024 * 1024; // 20 MB
  * Returns the most restrictive known limit for the underlying provider.
  * Returns `null` when the bot name is unknown.
  */
-export function getMaxImageBytesForPoeBot(botName: string): number | null {
+function getMaxImageBytesForPoeBot(botName: string): number | null {
   switch (botName) {
     case "Claude-Sonnet-4.5":
       return MAX_IMAGE_BYTES_CLAUDE_SONNET; // 10 MB — Anthropic per-image limit
@@ -366,7 +366,7 @@ export function getMaxImageBytesForPoeBot(botName: string): number | null {
  * Return the max images-per-request for a given Poe bot name.
  * Returns `null` when the bot name is unknown.
  */
-export function getMaxImagesPerRequestForPoeBot(botName: string): number | null {
+function getMaxImagesPerRequestForPoeBot(botName: string): number | null {
   switch (botName) {
     case "Claude-Sonnet-4.5":
       return MAX_IMAGES_PER_REQUEST_CLAUDE_SONNET;
@@ -385,7 +385,7 @@ export function getMaxImagesPerRequestForPoeBot(botName: string): number | null 
  * Return the per-image byte limit for a given OpenAI model name.
  * Returns `null` when the model is unknown.
  */
-export function getMaxImageBytesForOpenAIModel(model: string): number | null {
+function getMaxImageBytesForOpenAIModel(model: string): number | null {
   switch (model) {
     case "gpt-4o":
       return MAX_IMAGE_BYTES_GPT4O;

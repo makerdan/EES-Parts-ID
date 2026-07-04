@@ -1,0 +1,11 @@
+{
+  "entry": [
+    "src/index.ts",
+    "src/seed/**/*.ts",
+    "src/scripts/**/*.ts",
+    "scripts/**/*.ts"
+  ],
+  "project": ["src/**/*.ts", "scripts/**/*.ts"],
+  "ignoreBinaries": ["tsc"],
+  "ignoreDependencies": ["cookie-parser", "@types/cookie-parser", "pdf-lib"]
+}
