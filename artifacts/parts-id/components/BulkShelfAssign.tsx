@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useMemo,useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
+  FlatList,
   Image,
   Modal,
   Pressable,
@@ -908,8 +909,13 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
             </View>
 
             {/* Item list */}
-            <ScrollView style={bsStyles.itemList} contentContainerStyle={{ paddingBottom: 8 }} keyboardShouldPersistTaps="handled">
-              {filteredShelfItems.map(item => {
+            <FlatList
+              style={bsStyles.itemList}
+              contentContainerStyle={{ paddingBottom: 8 }}
+              keyboardShouldPersistTaps="handled"
+              data={filteredShelfItems}
+              keyExtractor={item => String(item.id)}
+              renderItem={({ item }) => {
                 const row = itemRowStates[item.id];
                 const hasExistingBarcode =
                   Array.isArray(item.barcodes) && item.barcodes.length > 0;
@@ -942,7 +948,6 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
 
                 return (
                   <Pressable
-                    key={item.id}
                     onPress={() => {
                       if (isDone || isPendingSync) return;
                       setTargetItemId(prev => (prev === item.id ? null : item.id));
@@ -1058,8 +1063,8 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
                     </View>
                   </Pressable>
                 );
-              })}
-            </ScrollView>
+              }}
+            />
 
             {/* Camera strip */}
             <View style={[bsStyles.cameraSection, { borderTopColor: colors.border }]}>
