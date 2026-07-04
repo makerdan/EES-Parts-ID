@@ -736,6 +736,25 @@ export default function UploadScreen() {
     [adminToken],
   );
 
+  // Persist activeSection across tab switches so the user doesn't lose their
+  // place when they navigate away and come back.
+  const ACTIVE_SECTION_KEY = "admin_activeSection";
+  useEffect(() => {
+    AsyncStorage.getItem(ACTIVE_SECTION_KEY).then((val) => {
+      if (val === "import" || val === "enrichment" || val === "warehouse" || val === "people") {
+        setActiveSection(val);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (activeSection === null) {
+      AsyncStorage.removeItem(ACTIVE_SECTION_KEY);
+    } else {
+      AsyncStorage.setItem(ACTIVE_SECTION_KEY, activeSection);
+    }
+  }, [activeSection]);
+
   // Keep a ref so interval callbacks always see the current token
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
