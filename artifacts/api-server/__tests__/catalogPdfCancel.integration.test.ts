@@ -34,9 +34,15 @@ jest.mock("../src/utils/pdfProcessor", () => ({
   validatePdf: jest.fn(),
 }));
 
-jest.mock("../src/utils/catalogExtractor", () => ({
-  extractCatalogPage: jest.fn(),
-}));
+jest.mock("../src/utils/catalogExtractor", () => {
+  const actual = jest.requireActual<typeof import("../src/utils/catalogExtractor")>(
+    "../src/utils/catalogExtractor",
+  );
+  return {
+    ...actual,
+    extractCatalogPage: jest.fn(),
+  };
+});
 
 jest.mock("../src/utils/catalogMatcher", () => ({
   matchCatalogNumber: jest.fn(),
