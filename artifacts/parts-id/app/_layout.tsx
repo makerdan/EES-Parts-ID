@@ -11,6 +11,7 @@ import NetInfo from "@react-native-community/netinfo";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
+import * as WebBrowser from "expo-web-browser";
 import React, { useEffect } from "react";
 import { Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -23,6 +24,10 @@ import { prefetchSvgAsset } from "@/components/WarehouseMapView";
 import { AppProvider, useApp } from "@/contexts/AppContext";
 
 SplashScreen.preventAutoHideAsync();
+
+// Required so the OAuth redirect tab closes automatically after sign-in.
+// Must be called at module level, outside any component.
+WebBrowser.maybeCompleteAuthSession();
 
 if (Platform.OS === "web" && typeof document !== "undefined") {
   const EXPO_STYLE_ID = "expo-generated-fonts";
