@@ -2,6 +2,7 @@ import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import type { SearchResult } from "@workspace/api-client-react";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { aiIdentifyPart,lookupByBarcode, useAiIdentifyPart, useSearchInventory } from "@workspace/api-client-react";
+import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import React, { useCallback, useEffect,useRef, useState } from "react";
@@ -176,10 +177,23 @@ export default function PhotoScreen() {
   const requestIdRef = useRef(0);
   // Timer used to advance "uploading" → "analysing" after a fixed delay.
   const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks temp file:// URIs created by compressImagesForUpload so they can be
+  // deleted after identification completes or when the user navigates away.
+  const tempUrisRef = useRef<Array<string>>([]);
 
   // Clean up the phase-advance timer if the component unmounts mid-call.
   useEffect(() => () => {
     if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
+  }, []);
+
+  // Delete any in-flight temp compressed image files when navigating away.
+  useEffect(() => () => {
+    const uris = tempUrisRef.current;
+    if (uris.length === 0) return;
+    tempUrisRef.current = [];
+    uris.forEach((uri) => {
+      FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+    });
   }, []);
 
   const pickImage = useCallback(async (source: "camera" | "library") => {
@@ -268,6 +282,20 @@ export default function PhotoScreen() {
     // Pre-flight: downscale images if total payload exceeds the 20 MB AI limit.
     // This runs before the progress UI so the spinner reflects actual upload time.
     const imagesToSend = await compressImagesForUpload(images, showToast);
+
+    // Collect any newly-created compressed copies (URIs that differ from the
+    // originals) so they can be deleted when identification finishes or the user
+    // navigates away before the request completes.
+    const originalUris = new Set(images.map((i) => i.uri));
+    const newTempUris = imagesToSend
+      .map((i) => i.uri)
+      .filter((uri) => uri.startsWith("file://") && !originalUris.has(uri));
+    // Accumulate into the ref so concurrent requests each register their own
+    // temp files — the unmount cleanup drains everything regardless of which
+    // request is in flight.
+    if (newTempUris.length > 0) {
+      tempUrisRef.current = [...tempUrisRef.current, ...newTempUris];
+    }
 
     // Phase 1 — show "Uploading" immediately; advance to "Analysing" after 2 s,
     // which is roughly when photo data has been sent and the AI is processing.
@@ -444,6 +472,19 @@ export default function PhotoScreen() {
     } finally {
       // Only reset our own progress phase; never overwrite a newer request's state.
       if (requestIdRef.current === thisRequestId) setProgressPhase(null);
+
+      // Delete this invocation's temporary compressed copies regardless of success
+      // or failure. Remove only our URIs from the shared ref so a concurrent
+      // request's files aren't accidentally skipped by the unmount cleanup.
+      if (newTempUris.length > 0) {
+        const ours = new Set(newTempUris);
+        tempUrisRef.current = tempUrisRef.current.filter((u) => !ours.has(u));
+        await Promise.all(
+          newTempUris.map((uri) =>
+            FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {}),
+          ),
+        );
+      }
     }
   }, [images, keywords, vendor, color, size, textNumbers, identifyMutation, searchMutation, requestIdRef, progressTimerRef, setPinnedParts, setInlineError, setProgressPhase, setResults, setAiSummary, setAiTerms, setMapPromptBins, setAdminBridgeItem, setAdminBridgeMeasureItem, setBarcodeResult, isAdmin, adminToken, showToast]);
 
