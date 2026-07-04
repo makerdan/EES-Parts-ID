@@ -108,13 +108,19 @@ export function buildImageContent(images: Array<string>): Array<{
 
 /**
  * Extract the first JSON object from an AI response string and parse it.
- * Returns null when no valid JSON object is found or when JSON.parse throws.
+ * Returns null when no valid JSON object is found, when JSON.parse throws,
+ * or when the parsed value is not a plain non-null object (e.g. an array or
+ * primitive — which would pass an unchecked `as` cast but fail at use-time).
  */
 export function extractJsonFromText(text: string): Record<string, unknown> | null {
   try {
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return null;
-    return JSON.parse(match[0]) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(match[0]);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
   } catch {
     return null;
   }

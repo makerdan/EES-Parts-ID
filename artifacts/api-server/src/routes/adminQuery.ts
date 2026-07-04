@@ -41,10 +41,15 @@ import { pool } from "@workspace/db";
 import ExcelJS from "exceljs";
 import { Router } from "express";
 
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { adminQueryLimiter } from "../lib/rateLimiter";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
+
+/** A single row returned by the database: column name → cell value (unknown until narrowed). */
+interface AdminQueryRow {
+  [col: string]: unknown;
+}
 
 const QUERY_TIMEOUT_MS = parseInt(process.env.ADMIN_QUERY_TIMEOUT_MS ?? "5000", 10);
 const MAX_ROWS = parseInt(process.env.ADMIN_QUERY_MAX_ROWS ?? "500", 10);
@@ -98,8 +103,8 @@ const SENSITIVE_COLUMN_PATTERN = buildSensitiveColumnPattern();
  */
 function filterSensitiveColumns(
   columns: Array<string>,
-  rows: Array<Record<string, unknown>>,
-): { columns: Array<string>; rows: Array<Record<string, unknown>>; strippedColumns: Array<string> } {
+  rows: Array<AdminQueryRow>,
+): { columns: Array<string>; rows: Array<AdminQueryRow>; strippedColumns: Array<string> } {
   const strippedColumns: Array<string> = [];
   const safeColumns: Array<string> = [];
 
@@ -116,7 +121,7 @@ function filterSensitiveColumns(
   }
 
   const safeRows = rows.map((row) => {
-    const filtered: Record<string, unknown> = {};
+    const filtered: AdminQueryRow = {};
     for (const col of safeColumns) {
       filtered[col] = row[col];
     }
@@ -274,7 +279,7 @@ router.post("/query", requireAdminAuth, async (req, res) => {
     await client.query("ROLLBACK");
 
     const rawColumns: Array<string> = result.fields.map((f: { name: string }) => f.name);
-    const allRows = result.rows as Array<Record<string, unknown>>;
+    const allRows = result.rows as Array<AdminQueryRow>;
     const truncated = allRows.length > MAX_ROWS;
     const cappedRows = truncated ? allRows.slice(0, MAX_ROWS) : allRows;
 
@@ -304,7 +309,7 @@ router.post("/query", requireAdminAuth, async (req, res) => {
       sheet.columns = columns.map((col) => ({ header: col, key: col }));
 
       for (const row of rows) {
-        const sanitizedRow: Record<string, unknown> = {};
+        const sanitizedRow: AdminQueryRow = {};
         for (const col of columns) {
           const v = row[col];
           sanitizedRow[col] = typeof v === "string" ? sanitizeFormula(v) : v;
