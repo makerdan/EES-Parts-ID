@@ -30,7 +30,7 @@ import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { useColors } from "@/hooks/useColors";
 import { API_BASE } from "@/utils/apiBase";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
-import { invalidateListCache } from "@/utils/editItemCache";
+import { evictDeletedItemFromAllCaches,invalidateListCache } from "@/utils/editItemCache";
 import type { QueryCache } from "@/utils/searchHelpers";
 import { evictItemFromQueryCache,QUERY_CACHE_KEY } from "@/utils/searchHelpers";
 
@@ -320,21 +320,13 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
                 Alert.alert("Delete Failed", data.error ?? `Could not delete part (HTTP ${res.status}).`);
                 return;
               }
-              // Invalidate React Query in-memory caches so list/search views refresh
-              await invalidateListCache({ queryClient });
-              await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-              // Evict from the AsyncStorage offline search cache immediately so the
-              // 24-hour TTL never surfaces a result for an item that no longer exists.
-              try {
-                const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
-                if (raw) {
-                  const cache = JSON.parse(raw) as QueryCache<SearchResult>;
-                  const { pruned, changed } = evictItemFromQueryCache(cache, current.id);
-                  if (changed) await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
-                }
-              } catch {
-                // Non-fatal — worst case the search cache TTL will expire naturally
-              }
+              // Synchronously remove the item from all in-memory caches so the
+              // list view updates instantly, then invalidate for a background refetch.
+              await evictDeletedItemFromAllCaches({
+                queryClient,
+                asyncStorage: AsyncStorage,
+                itemId: current.id,
+              });
               onClose();
             } catch {
               Alert.alert("Delete Failed", "Could not delete the part. Check your connection and try again.");
