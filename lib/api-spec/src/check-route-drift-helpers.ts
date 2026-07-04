@@ -269,6 +269,30 @@ export function extractLiteralStatusCode(expr: ts.Expression): number | null {
   return null;
 }
 
+/**
+ * Returns true when `expr` contains a `.status(arg)` call anywhere in its
+ * receiver chain, regardless of whether `arg` is a literal or a variable.
+ * Used to distinguish "no status call at all" (plain res.json) from "status
+ * call with a non-literal argument" (res.status(code).json) so the latter can
+ * be skipped instead of being misclassified as a success response.
+ */
+function hasStatusCall(expr: ts.Expression): boolean {
+  if (ts.isCallExpression(expr)) {
+    if (
+      ts.isPropertyAccessExpression(expr.expression) &&
+      expr.expression.name.text === "status" &&
+      expr.arguments.length === 1
+    ) {
+      return true;
+    }
+    return hasStatusCall(expr.expression);
+  }
+  if (ts.isPropertyAccessExpression(expr)) {
+    return hasStatusCall(expr.expression);
+  }
+  return false;
+}
+
 export function collectResJsonLiterals(root: ts.Node): {
   literal: ts.ObjectLiteralExpression;
   hasSpread: boolean;
@@ -290,9 +314,13 @@ export function collectResJsonLiterals(root: ts.Node): {
       const arg = node.arguments[0];
       if (arg && ts.isObjectLiteralExpression(arg)) {
         const statusCode = extractLiteralStatusCode(node.expression.expression);
-        const isErrorResponse = statusCode !== null && statusCode >= 400;
-        const hasSpread = arg.properties.some(ts.isSpreadAssignment);
-        results.push({ literal: arg, hasSpread, isErrorResponse });
+        const statusIsVariable =
+          statusCode === null && hasStatusCall(node.expression.expression);
+        if (!statusIsVariable) {
+          const isErrorResponse = statusCode !== null && statusCode >= 400;
+          const hasSpread = arg.properties.some(ts.isSpreadAssignment);
+          results.push({ literal: arg, hasSpread, isErrorResponse });
+        }
       }
     }
     ts.forEachChild(node, walk);
