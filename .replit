@@ -141,6 +141,10 @@ args = "canvas-typecheck"
 task = "workflow.run"
 args = "tsconfig:check"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "env:check"
+
 [[workflows.workflow]]
 name = "post-merge-health-test"
 author = "agent"
@@ -247,6 +251,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/scripts run tsconfig:check"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "env:check"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/scripts env:check"
 
 [workflows.workflow.metadata]
 isValidation = true

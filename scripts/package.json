@@ -8,6 +8,7 @@
     "clean-keywords": "tsx ./src/clean-keywords.ts",
     "lint:mocks": "tsx ./src/check-mock-factories.ts",
     "tsconfig:check": "tsx ./src/check-tsconfig-refs.ts",
+    "env:check": "tsx ./src/check-env-vars.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
