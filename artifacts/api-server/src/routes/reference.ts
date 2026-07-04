@@ -1,3 +1,4 @@
+import { getAuth } from "@clerk/express";
 import { db } from "@workspace/db";
 import { aiRequestLogTable,inventoryTable, quickLookupCacheTable, referenceLogTable } from "@workspace/db";
 import { desc, eq, ilike, lt, or, sql } from "drizzle-orm";
@@ -10,6 +11,7 @@ import {
   setCachedAnswer,
 } from "../lib/answerCache";
 import { logger } from "../lib/logger";
+import { referenceAskLimiter } from "../lib/rateLimiter";
 import { callGemini, callGeminiWithHistory } from "../lib/webSearch";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
@@ -166,14 +168,43 @@ async function collectAnswerWithHistory(
 }
 
 // POST /reference/ask — SSE streaming or JSON reference Q&A
+const REFERENCE_ASK_MAX_QUESTION_LENGTH = 2000;
+const REFERENCE_ASK_MAX_HISTORY_ITEMS = 20;
+const REFERENCE_ASK_MAX_HISTORY_ITEM_LENGTH = 2000;
+
 router.post("/ask", async (req, res) => {
   try {
+    const rateLimitKey = getAuth(req)?.userId ?? String(req.ip ?? "unknown");
+    const rateCheck = referenceAskLimiter.check(rateLimitKey);
+    if (!rateCheck.allowed) {
+      res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
+      return void res.status(429).json({ error: "Too many requests. Please slow down." });
+    }
+
     const { question, history } = req.body as {
       question: string;
       history?: Array<{ q: string; a: string }>;
     };
     if (!question?.trim()) {
       return void res.status(400).json({ error: "question is required" });
+    }
+    if (question.length > REFERENCE_ASK_MAX_QUESTION_LENGTH) {
+      return void res.status(400).json({ error: `question must be ${REFERENCE_ASK_MAX_QUESTION_LENGTH} characters or fewer` });
+    }
+    if (Array.isArray(history)) {
+      if (history.length > REFERENCE_ASK_MAX_HISTORY_ITEMS) {
+        return void res.status(400).json({ error: `history must not exceed ${REFERENCE_ASK_MAX_HISTORY_ITEMS} items` });
+      }
+      for (const item of history) {
+        if (
+          typeof item.q !== "string" ||
+          typeof item.a !== "string" ||
+          item.q.length > REFERENCE_ASK_MAX_HISTORY_ITEM_LENGTH ||
+          item.a.length > REFERENCE_ASK_MAX_HISTORY_ITEM_LENGTH
+        ) {
+          return void res.status(400).json({ error: `each history item must have string q and a fields of ${REFERENCE_ASK_MAX_HISTORY_ITEM_LENGTH} characters or fewer` });
+        }
+      }
     }
 
     const hasHistory = Array.isArray(history) && history.length > 0;

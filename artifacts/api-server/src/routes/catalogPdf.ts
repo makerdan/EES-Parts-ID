@@ -19,20 +19,28 @@
  *   imageUrl/imageSource/imageConfidence/catalogPdfJobId.
  */
 
-import { db } from "@workspace/db";
-import { catalogPdfJobTable,inventoryTable } from "@workspace/db";
+import { getAuth } from "@clerk/express";
+import { catalogPdfJobTable,db,inventoryTable } from "@workspace/db";
 import { and, desc, eq, inArray, isNull,lt, or, sql } from "drizzle-orm";
 import { Router } from "express";
 
 import { logger } from "../lib/logger";
 import { uploadCatalogImage } from "../lib/objectStorage";
 import { PoeBotChainExhaustedError } from "../lib/poeBot";
+import { catalogPdfUploadLimiter } from "../lib/rateLimiter";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { isProviderPayloadTooLargeError } from "../utils/aiHelpers";
 import type { ImageRegion } from "../utils/catalogExtractor";
 import { CatalogAiError,extractCatalogPage } from "../utils/catalogExtractor";
 import { matchCatalogNumber } from "../utils/catalogMatcher";
 import { extractPdfPages, validatePdf } from "../utils/pdfProcessor";
+
+// ── Background-job concurrency semaphore ──────────────────────────────────────
+// Limits the number of PDF processing jobs that can run simultaneously in the
+// background to prevent a single admin (or a stolen admin token) from
+// enqueuing unlimited parallel AI and pdftoppm work.
+const MAX_CONCURRENT_PDF_JOBS = Number(process.env.MAX_CONCURRENT_PDF_JOBS ?? 3);
+let activePdfJobs = 0;
 
 // ── In-memory AI raw log store (in-session only, not persisted to DB) ─────────
 // Keyed by job ID (child job or single-upload job). Entries are appended as
@@ -396,6 +404,33 @@ async function processPdfPages(
 
 // ── POST /admin/catalog-pdf ───────────────────────────────────────────────────
 router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
+  // Per-admin upload rate limit: prevents a compromised admin account from
+  // flooding the background processing queue with many rapid uploads.
+  const adminUserId = (res.locals.appUser as { clerkUserId: string } | undefined)?.clerkUserId
+    ?? getAuth(req)?.userId
+    ?? String(req.ip ?? "unknown");
+  const uploadRateCheck = catalogPdfUploadLimiter.check(adminUserId);
+  if (!uploadRateCheck.allowed) {
+    res.set("Retry-After", String(Math.ceil(uploadRateCheck.retryAfterMs / 1000)));
+    return void res.status(429).json({ error: "Too many catalog upload requests. Please slow down." });
+  }
+
+  // Concurrency check: reject if too many background jobs are already running.
+  // Increment the counter immediately (no await between check and increment) so
+  // concurrent requests cannot both pass the gate before either one registers.
+  if (activePdfJobs >= MAX_CONCURRENT_PDF_JOBS) {
+    return void res.status(429).json({
+      error: `Too many catalog processing jobs are already running (max ${MAX_CONCURRENT_PDF_JOBS}). Please wait for a job to finish before starting another.`,
+    });
+  }
+  // Reserve the slot immediately (before any await) so concurrent requests
+  // cannot both pass the gate. A try/finally below releases it on any early
+  // exit (validation failure, DB error, etc.); the setImmediate background
+  // job takes ownership of the slot once it is launched.
+  activePdfJobs++;
+  let backgroundLaunched = false;
+  try {
+
   const {
     pdfBase64,
     vendor,
@@ -613,6 +648,11 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   // extractPdfPages (full rendering via pdftoppm) runs here, off the request
   // thread. pdfBuffer was decoded synchronously before the 200 response, so
   // no re-parsing of the base64 payload is needed.
+  // Transfer ownership of the reserved slot to the background job. Setting
+  // backgroundLaunched=true before the setImmediate call (synchronous here)
+  // ensures the outer try/finally does NOT decrement the counter — the
+  // setImmediate's own finally is responsible for releasing it.
+  backgroundLaunched = true;
   setImmediate(async () => {
     try {
       const pages = await extractPdfPages(pdfBuffer);
@@ -662,8 +702,17 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
             AND status NOT IN ('done', 'failed')
         `);
       }
+    } finally {
+      activePdfJobs--;
     }
   });
+
+  } finally {
+    // Release the reserved slot on any early exit (validation failure, DB error,
+    // thrown exception). If backgroundLaunched=true, the setImmediate's finally
+    // block is responsible for the decrement instead.
+    if (!backgroundLaunched) activePdfJobs--;
+  }
 });
 
 // ── POST /admin/catalog-pdf/:jobId/cancel ─────────────────────────────────────
@@ -888,6 +937,16 @@ router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
 
 // ── POST /admin/catalog-pdf/:jobId/resume ─────────────────────────────────────
 router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => {
+  // Rate limit (same per-admin limiter as upload: each resume triggers heavy work).
+  const resumeAdminUserId = (res.locals.appUser as { clerkUserId: string } | undefined)?.clerkUserId
+    ?? getAuth(req)?.userId
+    ?? String(req.ip ?? "unknown");
+  const resumeRateCheck = catalogPdfUploadLimiter.check(resumeAdminUserId);
+  if (!resumeRateCheck.allowed) {
+    res.set("Retry-After", String(Math.ceil(resumeRateCheck.retryAfterMs / 1000)));
+    return void res.status(429).json({ error: "Too many catalog requests. Please slow down." });
+  }
+
   const jobId = Number(req.params["jobId"]);
   if (!Number.isFinite(jobId)) {
     res.status(400).json({ error: "Invalid jobId" });
@@ -975,6 +1034,19 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
     return;
   }
 
+  // Concurrency gate: check and increment atomically (no await between them)
+  // so concurrent resume calls cannot both slip through before either registers.
+  if (activePdfJobs >= MAX_CONCURRENT_PDF_JOBS) {
+    return void res.status(429).json({
+      error: `Too many catalog processing jobs are already running (max ${MAX_CONCURRENT_PDF_JOBS}). Please wait for a job to finish before resuming.`,
+    });
+  }
+  // Reserve slot immediately; try/finally below releases it on any early exit
+  // (DB errors, etc.). The setImmediate background job takes ownership once launched.
+  activePdfJobs++;
+  let resumeBackgroundLaunched = false;
+  try {
+
   await db
     .update(catalogPdfJobTable)
     .set({ status: "processing", errorMessage: null, finishedAt: null })
@@ -985,6 +1057,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
   res.json({ jobId: String(jobId), message: "Job resuming", resumeFromPage });
 
   // ── Async resume processing ────────────────────────────────────────────────
+  resumeBackgroundLaunched = true;
   setImmediate(async () => {
     try {
       const pdfBuffer = Buffer.from(pdfBase64, "base64");
@@ -1012,8 +1085,14 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
         .set({ status: "failed", errorMessage: msg, finishedAt: new Date() })
         .where(eq(catalogPdfJobTable.id, jobId));
       logger.error({ err, jobId }, "[catalog-pdf] resume failed");
+    } finally {
+      activePdfJobs--;
     }
   });
+
+  } finally {
+    if (!resumeBackgroundLaunched) activePdfJobs--;
+  }
 });
 
 // ── POST /admin/catalog-pdf/:jobId/dismiss ────────────────────────────────────

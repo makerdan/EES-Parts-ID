@@ -88,6 +88,24 @@ app.use(
     credentials: true,
   }),
 );
+// Pre-body-parse Content-Length guard for the dimension-estimation search endpoint.
+// This route accepts a single image and now requires auth, but the global body
+// parser below still runs before auth. Reject oversized Content-Length headers
+// before the body is buffered to prevent large-payload exhaustion attacks on
+// this path even from unauthenticated callers.
+// A 10 MB image base64-encodes to ~13.4 MB; 15 MB gives generous headroom.
+app.use("/api/inventory/estimate-dimensions/search", (req, res, next) => {
+  const rawLen = req.headers["content-length"];
+  if (rawLen !== undefined) {
+    const len = parseInt(rawLen, 10);
+    if (Number.isFinite(len) && len > 15 * 1024 * 1024) {
+      res.status(413).json({ error: "Request body too large for this endpoint (max 15 MB)." });
+      return;
+    }
+  }
+  next();
+});
+
 // Increase body limit for base64 payloads (AI photo identify + PDF catalog upload)
 // A 25 MB PDF base64-encodes to ~34 MB; set limit to 50 MB to provide headroom.
 app.use(express.json({ limit: "50mb" }));
