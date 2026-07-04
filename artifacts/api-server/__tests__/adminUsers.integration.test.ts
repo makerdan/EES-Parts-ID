@@ -501,6 +501,67 @@ describe("POST /api/admin/users/:clerkUserId/demote", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /api/admin/users — role field
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("GET /api/admin/users — role field", () => {
+  it("includes a role field for each user", async () => {
+    await seedUser(`${FIXTURE_PREFIX}role-user`, "roleuser@example.com", "approved", "user");
+    await seedUser(`${FIXTURE_PREFIX}role-admin`, "roleadmin@example.com", "approved", "admin");
+
+    const res = await supertest(app)
+      .get("/api/admin/users")
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    const users: Array<Record<string, unknown>> = res.body.users;
+    const u = users.find(x => x.clerkUserId === `${FIXTURE_PREFIX}role-user`);
+    const a = users.find(x => x.clerkUserId === `${FIXTURE_PREFIX}role-admin`);
+
+    expect(u).toHaveProperty("role", "user");
+    expect(a).toHaveProperty("role", "admin");
+  });
+
+  it("reflects a promoted user's role immediately in the user list", async () => {
+    const userId = `${FIXTURE_PREFIX}role-after-promote`;
+    await seedUser(userId, "rafp@example.com", "approved", "user");
+
+    await supertest(app)
+      .post(`/api/admin/users/${userId}/promote`)
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    const res = await supertest(app)
+      .get("/api/admin/users")
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    const users: Array<Record<string, unknown>> = res.body.users;
+    const found = users.find(u => u.clerkUserId === userId);
+    expect(found).toHaveProperty("role", "admin");
+  });
+
+  it("reflects a demoted user's role immediately in the user list", async () => {
+    const userId = `${FIXTURE_PREFIX}role-after-demote`;
+    await seedUser(userId, "rafd@example.com", "approved", "admin");
+
+    await supertest(app)
+      .post(`/api/admin/users/${userId}/demote`)
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    const res = await supertest(app)
+      .get("/api/admin/users")
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    const users: Array<Record<string, unknown>> = res.body.users;
+    const found = users.find(u => u.clerkUserId === userId);
+    expect(found).toHaveProperty("role", "user");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/admin/me — self-check (app-auth only)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -526,5 +587,66 @@ describe("GET /api/admin/me", () => {
       .expect(200);
 
     expect(res.body).toEqual({ isAdmin: false });
+  });
+
+  it("returns { isAdmin: true } for a user after they are promoted", async () => {
+    const userId = `${FIXTURE_PREFIX}promote-then-me`;
+    await seedUser(userId, "promoteme@example.com", "approved", "user");
+
+    await supertest(app)
+      .post(`/api/admin/users/${userId}/promote`)
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    const res = await supertest(app)
+      .get("/api/admin/me")
+      .set("Authorization", `Bearer ${userId}`)
+      .expect(200);
+
+    expect(res.body).toEqual({ isAdmin: true });
+  });
+
+  it("returns { isAdmin: false } for a user after they are demoted", async () => {
+    const userId = `${FIXTURE_PREFIX}demote-then-me`;
+    await seedUser(userId, "demoteme@example.com", "approved", "admin");
+
+    await supertest(app)
+      .post(`/api/admin/users/${userId}/demote`)
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    const res = await supertest(app)
+      .get("/api/admin/me")
+      .set("Authorization", `Bearer ${userId}`)
+      .expect(200);
+
+    expect(res.body).toEqual({ isAdmin: false });
+  });
+
+  it("full round-trip: promote → isAdmin true → demote → isAdmin false", async () => {
+    const userId = `${FIXTURE_PREFIX}roundtrip`;
+    await seedUser(userId, "roundtrip@example.com", "approved", "user");
+
+    await supertest(app)
+      .post(`/api/admin/users/${userId}/promote`)
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    const afterPromote = await supertest(app)
+      .get("/api/admin/me")
+      .set("Authorization", `Bearer ${userId}`)
+      .expect(200);
+    expect(afterPromote.body).toEqual({ isAdmin: true });
+
+    await supertest(app)
+      .post(`/api/admin/users/${userId}/demote`)
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    const afterDemote = await supertest(app)
+      .get("/api/admin/me")
+      .set("Authorization", `Bearer ${userId}`)
+      .expect(200);
+    expect(afterDemote.body).toEqual({ isAdmin: false });
   });
 });
