@@ -394,8 +394,15 @@ export interface AdminRestartResponse {
   restarting: boolean;
 }
 
+export type AiReferenceBodyHistoryItem = {
+  q: string;
+  a: string;
+};
+
 export interface AiReferenceBody {
   question: string;
+  /** Prior conversation turns for multi-turn follow-up questions */
+  history?: AiReferenceBodyHistoryItem[];
 }
 
 export type ListInventoryParams = {

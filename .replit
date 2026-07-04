@@ -113,6 +113,10 @@ args = "typecheck"
 task = "workflow.run"
 args = "tsc"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "spec:check"
+
 [[workflows.workflow]]
 name = "post-merge-health-test"
 author = "agent"
@@ -153,6 +157,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm run typecheck"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "spec:check"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-spec run spec:check"
 
 [workflows.workflow.metadata]
 isValidation = true

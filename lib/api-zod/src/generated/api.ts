@@ -1341,6 +1341,15 @@ export const AiIdentifyPartResponse = zod.object({
  */
 export const AskReferenceBody = zod.object({
   question: zod.string(),
+  history: zod
+    .array(
+      zod.object({
+        q: zod.string(),
+        a: zod.string(),
+      }),
+    )
+    .optional()
+    .describe("Prior conversation turns for multi-turn follow-up questions"),
 });
 
 /**
@@ -1430,4 +1439,13 @@ export const DeleteWarehouseZoneResponse = zod.object({
  */
 export const AiReferenceBody = zod.object({
   question: zod.string(),
+  history: zod
+    .array(
+      zod.object({
+        q: zod.string(),
+        a: zod.string(),
+      }),
+    )
+    .optional()
+    .describe("Prior conversation turns for multi-turn follow-up questions"),
 });
