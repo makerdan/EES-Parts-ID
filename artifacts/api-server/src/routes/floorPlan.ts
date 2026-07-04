@@ -21,6 +21,51 @@ import sharp from "sharp";
 import { readFloorPlanSvg,uploadFloorPlanSvg } from "../lib/objectStorage";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
+/**
+ * Strip known XSS vectors from an SVG string before storage.
+ *
+ * This is intentionally conservative: it removes the narrowest set of
+ * constructs that can execute JavaScript in a browser while leaving all
+ * legitimate SVG markup intact.  The client also runs DOMPurify over the
+ * inner XML before rendering, providing defence-in-depth.
+ *
+ * Constructs removed:
+ *   • <script> elements (and their content)
+ *   • <foreignObject> elements (allow arbitrary HTML injection)
+ *   • event-handler attributes (on*)
+ *   • javascript: URIs in href / src / xlink:href / action attributes
+ *   • data: URIs in the same attributes (can carry HTML/JS payloads)
+ */
+function sanitizeSvg(svg: string): string {
+  let s = svg;
+
+  // Remove <script>…</script> blocks (case-insensitive, dotall)
+  s = s.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "");
+  // Also catch self-closing <script … />
+  s = s.replace(/<script\b[^/]*\/>/gi, "");
+
+  // Remove <foreignObject>…</foreignObject> blocks
+  s = s.replace(/<foreignObject\b[^>]*>[\s\S]*?<\/foreignObject\s*>/gi, "");
+  s = s.replace(/<foreignObject\b[^/]*\/>/gi, "");
+
+  // Strip event-handler attributes: on<word>=("…"|'…'|unquoted)
+  s = s.replace(/\s+on[a-z][a-z0-9]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, "");
+
+  // Strip javascript: and data: URIs from link-like attributes
+  const linkAttrs = /\b(href|src|xlink:href|action)\s*=\s*/gi;
+  s = s.replace(linkAttrs, (_match, attr: string) => `${attr}=`);
+  // Re-apply: remove the value when it starts with javascript: or data:
+  s = s.replace(
+    /\b(href|src|xlink:href|action)=\s*(?:"(javascript:|data:)[^"]*"|'(javascript:|data:)[^']*'|(javascript:|data:)\S*)/gi,
+    '$1=""',
+  );
+
+  if (!s.includes("<svg")) {
+    throw new Error("SVG failed sanitization: no valid <svg> element remains");
+  }
+  return s;
+}
+
 const router = Router();
 
 const MAX_SVG_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -295,8 +340,16 @@ router.post("/admin/floor-plan", requireAdminAuth, async (req, res) => {
       return;
     }
 
-    const hash = crypto.createHash("sha256").update(svg).digest("hex");
-    const objectPath = await uploadFloorPlanSvg(svg);
+    let safeSvg: string;
+    try {
+      safeSvg = sanitizeSvg(svg);
+    } catch {
+      res.status(400).json({ error: "SVG contains disallowed content and could not be sanitized" });
+      return;
+    }
+
+    const hash = crypto.createHash("sha256").update(safeSvg).digest("hex");
+    const objectPath = await uploadFloorPlanSvg(safeSvg);
 
     await db.insert(floorPlanMetaTable).values({ objectPath, hash });
 
