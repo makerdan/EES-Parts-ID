@@ -1998,7 +1998,7 @@ export function WarehouseMapView({
               <View
                 style={[
                   { width: svgRenderW, height: svgRenderH, overflow: "hidden" },
-                  isDark && styles.svgDarkFilter,
+                  styles.svgFloorPlanInvert,
                 ]}
               >
                 {/* ── Base single-tile layer ────────────────────────────────
@@ -2176,7 +2176,7 @@ export function WarehouseMapView({
                         FORCE_BODY: false,
                       }),
                     },
-                    ...(isDark && { style: { filter: "invert(1) brightness(0.88)" } }),
+                    style: { filter: "invert(1) brightness(0.88)" },
                   },
                 )
               : null}
@@ -2301,7 +2301,7 @@ export function WarehouseMapView({
 }
 
 const styles = StyleSheet.create({
-  fill: { flex: 1, overflow: "hidden" },
+  fill: { flex: 1, overflow: "hidden", backgroundColor: "#000" },
   mapCenter: {
     position: "absolute",
     top: 0,
@@ -2312,10 +2312,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   svgFallback: { alignItems: "center", justifyContent: "center" },
-  // Invert + slight brightness reduction for dark-mode floor plan legibility.
+  // Invert + slight brightness reduction so floor plan always renders as
+  // white lines on black, regardless of light/dark mode.
   // filter is supported in RN 0.76+ (Expo SDK 52+); type augmented in
   // artifacts/parts-id/types/react-native-filter.d.ts
-  svgDarkFilter: {
+  svgFloorPlanInvert: {
     filter: [{ invert: 1 }, { brightness: 0.88 }],
   },
   floatingBadge: {
