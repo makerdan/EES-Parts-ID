@@ -20,6 +20,12 @@
  *   2. Schema-level: .parse() called directly to pin exact Zod behaviour.
  */
 
+// ── Insert-chain mocks: db.insert(table).values({}).onConflictDoUpdate({}).returning({}) ──
+const mockInsertReturning = jest.fn();
+const mockInsertOnConflictDoUpdate = jest.fn(() => ({ returning: mockInsertReturning }));
+const mockInsertValues = jest.fn(() => ({ onConflictDoUpdate: mockInsertOnConflictDoUpdate }));
+const mockInsert = jest.fn(() => ({ values: mockInsertValues }));
+
 // ── Update-chain mocks: db.update(table).set({}).where(...).returning() ───────
 const mockUpdateReturning = jest.fn();
 const mockUpdateWhere = jest.fn(() => ({ returning: mockUpdateReturning }));
@@ -37,8 +43,11 @@ const mockSelect = jest.fn(() => ({ from: mockSelectFrom }));
 
 jest.mock("@workspace/db", () => ({
   db: {
+    insert: mockInsert,
     select: mockSelect,
     update: mockUpdate,
+    // Fire-and-forget ANALYZE call in upsert-batch; must exist or throws synchronously.
+    execute: jest.fn().mockResolvedValue(undefined),
   },
   inventoryTable: {},
   usersTable: {},
@@ -144,6 +153,12 @@ function makeWellFormedRow(overrides: Record<string, unknown> = {}) {
 // ─────────────────────────────────────────────────────────────────────────────
 beforeEach(() => {
   jest.clearAllMocks();
+
+  // Restore insert chain (default: returning resolves to [{ isNew: false }])
+  mockInsert.mockReturnValue({ values: mockInsertValues });
+  mockInsertValues.mockReturnValue({ onConflictDoUpdate: mockInsertOnConflictDoUpdate });
+  mockInsertOnConflictDoUpdate.mockReturnValue({ returning: mockInsertReturning });
+  mockInsertReturning.mockResolvedValue([{ isNew: false }]);
 
   // Restore update chain
   mockUpdate.mockReturnValue({ set: mockUpdateSet });
@@ -715,5 +730,113 @@ describe("UpsertBatchPreviewResponse schema", () => {
         rows: [],
       }),
     ).not.toThrow();
+  });
+});
+
+// =============================================================================
+// POST /inventory/upsert-batch  — partial-failure / silent-gap guard
+//
+// The batch loop does individual DB inserts. If one row rejects or if the
+// RETURNING clause comes back empty (silent schema-mismatch gap), the route
+// must surface a 500 rather than returning inflated inserted/updated counts.
+// =============================================================================
+
+describe("POST /api/inventory/upsert-batch — DB insert rejects on one row → 500", () => {
+  it("returns 500 when the DB insert throws for a row in the batch", async () => {
+    // First call succeeds, second call rejects — simulates a mid-batch failure.
+    mockInsertReturning
+      .mockResolvedValueOnce([{ isNew: true }])
+      .mockRejectedValueOnce(new Error("DB column does not exist"));
+
+    const res = await supertest(app)
+      .post("/api/inventory/upsert-batch")
+      .send({
+        items: [
+          { vendor: "ACME", catalog: "W-001" },
+          { vendor: "ACME", catalog: "W-002" },
+        ],
+      });
+
+    expect(res.status).toBe(500);
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 500 when a single-item batch rejects", async () => {
+    mockInsertReturning.mockRejectedValueOnce(new Error("relation does not exist"));
+
+    const res = await supertest(app)
+      .post("/api/inventory/upsert-batch")
+      .send({ items: [{ vendor: "ACME", catalog: "W-001" }] });
+
+    expect(res.status).toBe(500);
+    expect(res.body).toHaveProperty("error");
+  });
+});
+
+describe("POST /api/inventory/upsert-batch — RETURNING empty array (silent gap) → 500", () => {
+  it("returns 500 when the DB RETURNING clause yields no rows (schema mismatch scenario)", async () => {
+    // An empty RETURNING result means the row was silently not written.
+    // Without the guard this would have been counted as `updated` and returned
+    // 200 with wrong counts — the silent data gap this task fixes.
+    mockInsertReturning.mockResolvedValueOnce([]);
+
+    const res = await supertest(app)
+      .post("/api/inventory/upsert-batch")
+      .send({ items: [{ vendor: "ACME", catalog: "W-001" }] });
+
+    expect(res.status).toBe(500);
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 500 when first row is fine but second returns empty array", async () => {
+    mockInsertReturning
+      .mockResolvedValueOnce([{ isNew: false }])
+      .mockResolvedValueOnce([]);
+
+    const res = await supertest(app)
+      .post("/api/inventory/upsert-batch")
+      .send({
+        items: [
+          { vendor: "ACME", catalog: "W-001" },
+          { vendor: "ACME", catalog: "W-002" },
+        ],
+      });
+
+    expect(res.status).toBe(500);
+    expect(res.body).toHaveProperty("error");
+  });
+});
+
+describe("POST /api/inventory/upsert-batch — happy path returns correct counts", () => {
+  it("returns 200 with inserted+updated counts when all rows succeed", async () => {
+    // Two inserts: first is new, second is an update.
+    mockInsertReturning
+      .mockResolvedValueOnce([{ isNew: true }])
+      .mockResolvedValueOnce([{ isNew: false }]);
+
+    const res = await supertest(app)
+      .post("/api/inventory/upsert-batch")
+      .send({
+        items: [
+          { vendor: "ACME", catalog: "W-001", binLocations: ["A1"] },
+          { vendor: "ACME", catalog: "W-002" },
+        ],
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("inserted", 1);
+    expect(res.body).toHaveProperty("updated", 1);
+    expect(res.body).toHaveProperty("total", 2);
+  });
+
+  it("returns 200 with inserted=1 when a single new item is upserted", async () => {
+    mockInsertReturning.mockResolvedValueOnce([{ isNew: true }]);
+
+    const res = await supertest(app)
+      .post("/api/inventory/upsert-batch")
+      .send({ items: [{ vendor: "ACME", catalog: "W-NEW" }] });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ inserted: 1, updated: 0, total: 1 });
   });
 });

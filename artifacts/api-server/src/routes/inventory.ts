@@ -1303,7 +1303,19 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
         })
         .returning({ isNew: sql<boolean>`(xmax = 0)` });
 
-      if (result[0]?.isNew) inserted++;
+      // Guard: the RETURNING clause must always yield exactly one row. An empty
+      // result means the DB silently swallowed the write (e.g. a column rename
+      // caused the upsert to match no real column and the engine skipped the
+      // conflict-update branch without throwing). Surfacing this as a hard error
+      // prevents the caller from receiving inflated inserted/updated counts while
+      // rows were never actually committed.
+      if (!result.length) {
+        throw new Error(
+          `Upsert returned no rows for item ${item.vendor}/${item.catalog} — possible schema mismatch`
+        );
+      }
+
+      if (result[0].isNew) inserted++;
       else updated++;
     }
 
