@@ -1270,20 +1270,41 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
     let inserted = 0;
     let updated = 0;
 
-    for (const item of items) {
-      // Atomic upsert via the (vendor, catalog) unique index. Mirrors the seed
-      // importer pattern so that two concurrent writers for the same key can't
-      // both miss-then-insert and race on the unique constraint.
+    // Process items in chunks to avoid hitting PostgreSQL's parameter limit
+    // ($1…$N bound parameters cap out around 65 535). 500 rows × ~9 columns
+    // each stays well under that ceiling while still dramatically reducing the
+    // number of round-trips vs. the previous one-insert-per-item approach.
+    const CHUNK_SIZE = 500;
+
+    for (let chunkStart = 0; chunkStart < items.length; chunkStart += CHUNK_SIZE) {
+      const chunk = items.slice(chunkStart, chunkStart + CHUNK_SIZE);
+
+      // Deduplicate within the chunk: PostgreSQL rejects
+      // "ON CONFLICT DO UPDATE command cannot affect row a second time" when
+      // the same unique key appears twice in a single VALUES list. Keep the
+      // last occurrence so semantics match the previous serial-loop behaviour
+      // (later row wins for the same upload key).
+      const seen = new Map<string, typeof chunk[number]>();
+      for (const item of chunk) {
+        seen.set(`${item.vendor.toUpperCase()}::${item.catalog}`, item);
+      }
+      const dedupedChunk = Array.from(seen.values());
+
+      // Atomic batch upsert via the (vendor, catalog) unique index. Mirrors the
+      // seed-importer pattern so concurrent writers on the same key fall through
+      // to the update branch rather than racing on the constraint.
       const result = await db
         .insert(inventoryTable)
-        .values({
-          vendor: item.vendor.toUpperCase(),
-          catalog: item.catalog,
-          description: item.description ?? "",
-          binLocations: item.binLocations ?? [],
-          barcodes: item.barcodes ?? [],
-          aiKeywords: [],
-        })
+        .values(
+          dedupedChunk.map((item) => ({
+            vendor: item.vendor.toUpperCase(),
+            catalog: item.catalog,
+            description: item.description ?? "",
+            binLocations: item.binLocations ?? [],
+            barcodes: item.barcodes ?? [],
+            aiKeywords: [],
+          }))
+        )
         .onConflictDoUpdate({
           target: [inventoryTable.vendor, inventoryTable.catalog],
           set: {
@@ -1292,7 +1313,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
             // description column shouldn't blank out enriched descriptions).
             description: sql`CASE WHEN length(EXCLUDED.description) > 0 THEN EXCLUDED.description ELSE ${inventoryTable.description} END`,
             // Preserve existing bins when no bin data is supplied — guards
-            // multi-bin assignments during bulk re-uploads (Task #455).
+            // multi-bin assignments during bulk re-uploads.
             binLocations: sql`CASE WHEN coalesce(array_length(EXCLUDED.bin_locations, 1), 0) > 0 THEN EXCLUDED.bin_locations ELSE ${inventoryTable.binLocations} END`,
             // Preserve existing barcodes when no barcode data is supplied —
             // same semantics as binLocations so manual scan assignments survive
@@ -1301,22 +1322,24 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
             updatedAt: sql`now()`,
           },
         })
+        // xmax is set per-tuple by PostgreSQL: 0 means the row was freshly
+        // inserted; non-zero means an existing row was updated. This works
+        // correctly in a batch RETURNING clause — each row carries its own xmax.
         .returning({ isNew: sql<boolean>`(xmax = 0)` });
 
-      // Guard: the RETURNING clause must always yield exactly one row. An empty
-      // result means the DB silently swallowed the write (e.g. a column rename
-      // caused the upsert to match no real column and the engine skipped the
-      // conflict-update branch without throwing). Surfacing this as a hard error
-      // prevents the caller from receiving inflated inserted/updated counts while
-      // rows were never actually committed.
-      if (!result.length) {
+      // Guard: RETURNING must yield one row per deduplicated input row. An
+      // empty or short result means the DB silently dropped writes (e.g. a
+      // schema mismatch caused the conflict branch to skip without throwing).
+      if (result.length !== dedupedChunk.length) {
         throw new Error(
-          `Upsert returned no rows for item ${item.vendor}/${item.catalog} — possible schema mismatch`
+          `Upsert returned ${result.length} rows for chunk of ${dedupedChunk.length} — possible schema mismatch`
         );
       }
 
-      if (result[0].isNew) inserted++;
-      else updated++;
+      for (const row of result) {
+        if (row.isNew) inserted++;
+        else updated++;
+      }
     }
 
     invalidateReferenceAnswerCache().catch(() => {});
