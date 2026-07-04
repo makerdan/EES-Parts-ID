@@ -16,8 +16,37 @@ export function normalizeQuestion(question: string): string {
   return question.toLowerCase().trim().replace(/\s+/g, " ");
 }
 
-export function hashQuestion(normalized: string): string {
-  return crypto.createHash("sha256").update(normalized).digest("hex");
+/**
+ * Compute a cache key for a question.
+ *
+ * When `history` is provided (a follow-up turn), a stable fingerprint of the
+ * conversation is mixed into the hash so the resulting key is ALWAYS different
+ * from the cold-start key for the same question text. This is the primary
+ * structural defense against cache poisoning: even if the `!hasHistory` write
+ * guard in reference.ts is accidentally removed in the future, a history-aware
+ * answer can never overwrite — or be served as — a cold-start answer because
+ * the two hashes occupy disjoint key spaces.
+ *
+ * Cold-start:  sha256(normalized)
+ * With history: sha256(normalized + NUL + "history" + NUL + fingerprint)
+ */
+export function hashQuestion(
+  normalized: string,
+  history?: Array<{ q: string; a: string }>,
+): string {
+  const hasher = crypto.createHash("sha256");
+  hasher.update(normalized);
+  if (history && history.length > 0) {
+    // Each turn is separated by U+0000 (NUL) so that {"q":"a","a":"b c"} and
+    // {"q":"a b","a":"c"} produce different fingerprints. Turns are delimited
+    // by U+0001 (SOH). A sentinel prefix marks this as a history-keyed hash.
+    const fingerprint = history
+      .map((h) => `${h.q.trim()}\u0000${h.a.trim()}`)
+      .join("\u0001");
+    hasher.update("\u0000history\u0000");
+    hasher.update(fingerprint);
+  }
+  return hasher.digest("hex");
 }
 
 export async function getCachedAnswer(questionHash: string): Promise<string | null> {
