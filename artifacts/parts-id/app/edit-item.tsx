@@ -200,6 +200,14 @@ export default function EditItemScreen() {
     setSaveStatus("saving");
     setErrorMsg(null);
 
+    const listKeyPrefix = getListInventoryQueryKey()[0];
+    const inventorySnapshot = queryClient.getQueriesData<InventoryListResponse>(
+      { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+    );
+    const searchSnapshot = queryClient.getQueriesData<SearchInventoryResponse>(
+      { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+    );
+
     // Auto-add any pending barcode text before saving
     const pendingBarcode = newBarcode.trim();
     const finalBarcodes =
@@ -357,7 +365,6 @@ export default function EditItemScreen() {
             : String(failures[0].reason ?? "Save failed");
           throw new Error(firstMsg);
         }
-        const listKeyPrefix = getListInventoryQueryKey()[0];
 
         const patchItem = (i: InventoryItem): InventoryItem => {
           if (i.id !== current.id) return i;
@@ -413,6 +420,17 @@ export default function EditItemScreen() {
         setErrorMsg("Could not save changes. Check connection and try again.");
       }
       setSaveStatus("error");
+
+      for (const [key, data] of inventorySnapshot) {
+        queryClient.setQueryData(key, data);
+      }
+      for (const [key, data] of searchSnapshot) {
+        queryClient.setQueryData(key, data);
+      }
+      await queryClient.invalidateQueries(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+      );
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
     }
   };
 

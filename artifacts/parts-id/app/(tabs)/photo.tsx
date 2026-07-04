@@ -177,23 +177,22 @@ export default function PhotoScreen() {
   const requestIdRef = useRef(0);
   // Timer used to advance "uploading" → "analysing" after a fixed delay.
   const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Tracks temp file:// URIs created by compressImagesForUpload so they can be
-  // deleted after identification completes or when the user navigates away.
-  const tempUrisRef = useRef<Array<string>>([]);
+  // Maps request ID → temp file:// URIs created by compressImagesForUpload for
+  // that request. Using a Map ensures each request owns its own set of URIs so
+  // a stale request's finally block can still clean up its own files even after
+  // a newer request has started and would have overwritten a shared array ref.
+  const tempUrisRef = useRef<Map<number, Array<string>>>(new Map());
 
-  // Clean up the phase-advance timer if the component unmounts mid-call.
+  // Clean up the phase-advance timer and any remaining temp image files if the
+  // component unmounts while one or more identify requests are in-flight.
   useEffect(() => () => {
     if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
-  }, []);
-
-  // Delete any in-flight temp compressed image files when navigating away.
-  useEffect(() => () => {
-    const uris = tempUrisRef.current;
-    if (uris.length === 0) return;
-    tempUrisRef.current = [];
-    uris.forEach((uri) => {
-      FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-    });
+    for (const uris of tempUrisRef.current.values()) {
+      for (const uri of uris) {
+        FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+      }
+    }
+    tempUrisRef.current.clear();
   }, []);
 
   const pickImage = useCallback(async (source: "camera" | "library") => {
@@ -283,19 +282,12 @@ export default function PhotoScreen() {
     // This runs before the progress UI so the spinner reflects actual upload time.
     const imagesToSend = await compressImagesForUpload(images, showToast);
 
-    // Collect any newly-created compressed copies (URIs that differ from the
-    // originals) so they can be deleted when identification finishes or the user
-    // navigates away before the request completes.
-    const originalUris = new Set(images.map((i) => i.uri));
-    const newTempUris = imagesToSend
-      .map((i) => i.uri)
-      .filter((uri) => uri.startsWith("file://") && !originalUris.has(uri));
-    // Accumulate into the ref so concurrent requests each register their own
-    // temp files — the unmount cleanup drains everything regardless of which
-    // request is in flight.
-    if (newTempUris.length > 0) {
-      tempUrisRef.current = [...tempUrisRef.current, ...newTempUris];
-    }
+    // Track any new file:// URIs produced by compression, keyed by request ID
+    // so each request can always clean up its own files even if a newer request
+    // has since started (which would have overwritten a shared array).
+    const originalUriSet = new Set(images.map((i) => i.uri));
+    const newTempUris = imagesToSend.map((i) => i.uri).filter((u) => !originalUriSet.has(u));
+    tempUrisRef.current.set(thisRequestId, newTempUris);
 
     // Phase 1 — show "Uploading" immediately; advance to "Analysing" after 2 s,
     // which is roughly when photo data has been sent and the AI is processing.
@@ -470,20 +462,18 @@ export default function PhotoScreen() {
         setInlineError("Identification failed — could not analyze the part. Please try again.");
       }
     } finally {
-      // Only reset our own progress phase; never overwrite a newer request's state.
-      if (requestIdRef.current === thisRequestId) setProgressPhase(null);
+      // Always delete this request's own temp files regardless of whether a
+      // newer request has superseded this one — each request owns its own URIs.
+      const myTempUris = tempUrisRef.current.get(thisRequestId) ?? [];
+      for (const uri of myTempUris) {
+        FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+      }
+      tempUrisRef.current.delete(thisRequestId);
 
-      // Delete this invocation's temporary compressed copies regardless of success
-      // or failure. Remove only our URIs from the shared ref so a concurrent
-      // request's files aren't accidentally skipped by the unmount cleanup.
-      if (newTempUris.length > 0) {
-        const ours = new Set(newTempUris);
-        tempUrisRef.current = tempUrisRef.current.filter((u) => !ours.has(u));
-        await Promise.all(
-          newTempUris.map((uri) =>
-            FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {}),
-          ),
-        );
+      // Only reset the progress phase if this is still the active request;
+      // never overwrite a newer request's progress state.
+      if (requestIdRef.current === thisRequestId) {
+        setProgressPhase(null);
       }
     }
   }, [images, keywords, vendor, color, size, textNumbers, identifyMutation, searchMutation, requestIdRef, progressTimerRef, setPinnedParts, setInlineError, setProgressPhase, setResults, setAiSummary, setAiTerms, setMapPromptBins, setAdminBridgeItem, setAdminBridgeMeasureItem, setBarcodeResult, isAdmin, adminToken, showToast]);
