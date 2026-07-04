@@ -13,14 +13,18 @@ const router = Router();
 // Self-check: tells the current (approved) Clerk user whether they are an admin.
 // Only requires app-level auth (applied globally in app.ts), NOT admin auth, so
 // non-admin users can call it to discover they are not admins.
-router.get("/me", (req, res) => {
-  const appUser = res.locals.appUser as { role?: string } | undefined;
-  if (appUser) {
-    return res.json({ isAdmin: appUser.role === "admin" });
+router.get("/me", (req, res, next) => {
+  try {
+    const appUser = res.locals.appUser as { role?: string } | undefined;
+    if (appUser) {
+      return res.json({ isAdmin: appUser.role === "admin" });
+    }
+    const userId = getAuth(req)?.userId;
+    const adminClerkUserId = process.env.ADMIN_CLERK_USER_ID;
+    return res.json({ isAdmin: Boolean(adminClerkUserId && userId === adminClerkUserId) });
+  } catch (err) {
+    return void next(err);
   }
-  const userId = getAuth(req)?.userId;
-  const adminClerkUserId = process.env.ADMIN_CLERK_USER_ID;
-  return res.json({ isAdmin: Boolean(adminClerkUserId && userId === adminClerkUserId) });
 });
 
 // ── GET /admin/profile ────────────────────────────────────────────────────────
