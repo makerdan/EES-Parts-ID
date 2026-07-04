@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -38,10 +38,17 @@ export function ContactSheet({ visible, onClose, onSuccess, senderToken }: Props
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deviceToken, setDeviceToken] = useState<string>("anonymous");
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     AsyncStorage.getItem(DEVICE_TOKEN_KEY)
       .then((stored) => {
+        if (!isMountedRef.current) return;
         if (stored) {
           setDeviceToken(stored);
         } else {
