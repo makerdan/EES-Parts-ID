@@ -37,6 +37,40 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
+jest.mock("../src/lib/poeBot", () => {
+  class PoeBotChainExhaustedError extends Error {
+    constructor() {
+      super("All Poe bots in the fallback chain failed");
+      this.name = "PoeBotChainExhaustedError";
+    }
+  }
+  return {
+    tryPoeBotChain: jest.fn(async (_feature: unknown, fn: (client: unknown, model: string) => unknown) =>
+      fn({ chat: { completions: { create: mockCreate } } }, "test-model"),
+    ),
+    PoeBotChainExhaustedError,
+  };
+});
+
+jest.mock("../src/lib/aiProvider", () => ({
+  getOpenAIFallbackClient: jest.fn(() => ({
+    chat: { completions: { create: mockCreate } },
+  })),
+  getOpenAIModelForFeature: jest.fn(() => "test-model"),
+  initProvider: jest.fn(),
+  getProvider: jest.fn(() => "poe"),
+  probePoeBotsOnStartup: jest.fn(),
+  getProbeSummary: jest.fn(() => ({})),
+  setProvider: jest.fn(),
+  getAiClient: jest.fn(() => ({ chat: { completions: { create: mockCreate } } })),
+  getEnrichModel: jest.fn(() => "test-model"),
+  getIdentifyModel: jest.fn(() => "test-model"),
+  getCatalogModel: jest.fn(() => "test-model"),
+  getDimensionsModel: jest.fn(() => "test-model"),
+  getReferenceModel: jest.fn(() => "test-model"),
+  getModelForFeature: jest.fn(() => "test-model"),
+}));
+
 // ── Imports ───────────────────────────────────────────────────────────────────
 
 import supertest from "supertest";

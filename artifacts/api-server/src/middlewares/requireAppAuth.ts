@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { type NextFunction,type Request, type Response } from "express";
 
 // Paths relative to /api that do not require any authentication token.
-const PUBLIC_PATHS = new Set(["/healthz"]);
+const PUBLIC_PATHS = new Set(["/healthz", "/inventory/estimate-dimensions/search"]);
 
 /**
  * Middleware that validates a Clerk session token on all /api/* routes except
