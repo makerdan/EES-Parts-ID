@@ -43,7 +43,16 @@ import {
   shouldUpdateScore,
   fuseConfidence,
 } from "../utils/scoreHelpers";
-import { SearchInventoryBody as SearchInventoryBodySchema } from "@workspace/api-zod";
+import {
+  SearchInventoryBody as SearchInventoryBodySchema,
+  LookupByBarcodeResponse,
+  UpdateItemBarcodesResponse,
+  UpdateItemBinsResponse,
+  UpdateItemDescriptionResponse,
+  ReenrichItemResponse,
+  UpdateItemKeywordsResponse,
+  UpdateItemDimensionsResponse,
+} from "@workspace/api-zod";
 
 const router = Router();
 
@@ -1947,7 +1956,7 @@ router.get(/^\/barcode\/(.+)$/, async (req, res) => {
       .limit(1);
 
     if (!item) return void res.status(404).json({ error: "No item found for that barcode" });
-    res.json(item);
+    res.json(LookupByBarcodeResponse.parse(item));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Barcode lookup failed" });
@@ -1982,7 +1991,7 @@ router.patch("/:id/barcodes", requireAdminAuth, async (req, res) => {
       .returning();
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
-    res.json(updated);
+    res.json(UpdateItemBarcodesResponse.parse(updated));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to update barcodes" });
@@ -2021,7 +2030,7 @@ router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
       .returning();
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
-    res.json(updated);
+    res.json(UpdateItemBinsResponse.parse(updated));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to update bins" });
@@ -2048,7 +2057,7 @@ router.patch("/:id/description", requireAdminAuth, async (req, res) => {
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     invalidateReferenceAnswerCache().catch(() => {});
-    res.json(updated);
+    res.json(UpdateItemDescriptionResponse.parse(updated));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to update description" });
@@ -2088,7 +2097,7 @@ router.patch("/:id/enrich", requireAdminAuth, async (req, res) => {
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     invalidateReferenceAnswerCache().catch(() => {});
-    res.json(updated);
+    res.json(ReenrichItemResponse.parse(updated));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to enrich item" });
@@ -2113,7 +2122,7 @@ router.patch("/:id/keywords", requireAdminAuth, async (req, res) => {
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     invalidateReferenceAnswerCache().catch(() => {});
-    res.json(updated);
+    res.json(UpdateItemKeywordsResponse.parse(updated));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to update keywords" });
@@ -2245,7 +2254,7 @@ router.patch("/:id/dimensions", requireAdminAuth, async (req, res) => {
       .returning();
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
-    res.json(updated);
+    res.json(UpdateItemDimensionsResponse.parse(updated));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to update dimensions" });

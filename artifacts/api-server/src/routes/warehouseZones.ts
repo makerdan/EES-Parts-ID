@@ -2,7 +2,12 @@ import { Router } from "express";
 import { eq, asc, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { warehouseZoneTable, inventoryTable } from "@workspace/db";
-import { CreateWarehouseZoneBody, UpdateWarehouseZoneBody } from "@workspace/api-zod";
+import {
+  CreateWarehouseZoneBody,
+  UpdateWarehouseZoneBody,
+  ListWarehouseZonesResponse,
+  UpdateWarehouseZoneResponse,
+} from "@workspace/api-zod";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 /** Strips leading zeros from numeric aisle ID strings ("08" → "8", "A1" → "A1"). */
@@ -20,7 +25,7 @@ router.get("/", async (_req, res) => {
       .select()
       .from(warehouseZoneTable)
       .orderBy(asc(warehouseZoneTable.sortOrder), asc(warehouseZoneTable.aisleId));
-    res.json({ zones });
+    res.json(ListWarehouseZonesResponse.parse({ zones }));
   } catch {
     res.status(500).json({ error: "Failed to list zones" });
   }
@@ -124,7 +129,7 @@ router.post("/", requireAdminAuth, async (req, res) => {
         sortOrder: sortOrder ?? 0,
       })
       .returning();
-    res.status(201).json({ zone });
+    res.status(201).json(UpdateWarehouseZoneResponse.parse({ zone }));
   } catch (err) {
     console.error("[warehouseZones] POST failed:", err);
     res.status(500).json({ error: "Failed to create zone" });
@@ -157,7 +162,7 @@ router.patch("/:id", requireAdminAuth, async (req, res) => {
       res.status(404).json({ error: "Zone not found" });
       return;
     }
-    res.json({ zone });
+    res.json(UpdateWarehouseZoneResponse.parse({ zone }));
   } catch (err) {
     console.error("[warehouseZones] PATCH failed:", err);
     res.status(500).json({ error: "Failed to update zone" });
