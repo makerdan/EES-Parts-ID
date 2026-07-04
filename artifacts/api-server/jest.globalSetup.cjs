@@ -1,10 +1,15 @@
 /**
  * Jest globalSetup — runs once before the entire test suite.
  *
- * Pushes the current Drizzle schema to the test database so that any columns
- * or tables added since the DB was last synced are present before tests run.
- * This prevents cryptic "column does not exist" failures inside individual
- * test assertions — the error surfaces here instead, with a clear message.
+ * 1. Preflight health-check: opens a single pg connection and runs SELECT 1
+ *    to confirm the pool is reachable.  If it is not, the suite exits
+ *    immediately with a clear "DB pool unreachable" message instead of
+ *    hanging until the 20s per-test integration timeout fires 30+ times.
+ *
+ * 2. Schema sync: pushes the current Drizzle schema to the test database so
+ *    that any columns or tables added since the DB was last synced are present
+ *    before tests run.  This prevents cryptic "column does not exist" failures
+ *    inside individual test assertions.
  *
  * The DATABASE_URL env var must already be set (same one used by the tests).
  *
@@ -15,6 +20,37 @@
 
 const { execSync } = require("child_process");
 const path = require("path");
+const { Client } = require("pg");
+
+const DB_PREFLIGHT_TIMEOUT_MS = 5_000;
+const DRIZZLE_PUSH_TIMEOUT_MS = 30_000;
+
+async function checkDbReachable() {
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    connectionTimeoutMillis: DB_PREFLIGHT_TIMEOUT_MS,
+    statement_timeout: DB_PREFLIGHT_TIMEOUT_MS,
+  });
+
+  const timer = new Promise((_, reject) =>
+    setTimeout(
+      () => reject(new Error("timed out")),
+      DB_PREFLIGHT_TIMEOUT_MS
+    )
+  );
+
+  await Promise.race([
+    (async () => {
+      await client.connect();
+      await client.query("SELECT 1");
+      await client.end();
+    })(),
+    timer,
+  ]).catch(async (err) => {
+    await client.end().catch(() => {});
+    throw err;
+  });
+}
 
 module.exports = async function globalSetup() {
   if (!process.env.DATABASE_URL) {
@@ -23,9 +59,23 @@ module.exports = async function globalSetup() {
     );
   }
 
-  const dbPackageDir = path.resolve(__dirname, "../../lib/db");
+  // ── 1. Preflight health-check ─────────────────────────────────────────────
+  try {
+    await checkDbReachable();
+    console.log("[jest globalSetup] DB pool reachable (SELECT 1 OK).");
+  } catch (err) {
+    throw new Error(
+      "[jest globalSetup] DB pool unreachable — aborting test run.\n" +
+        "  Reason : " +
+        err.message +
+        "\n" +
+        "  Fix    : check DATABASE_URL connectivity and that the DB server is running.\n" +
+        "  (Skipping test run to avoid hanging on every integration test.)"
+    );
+  }
 
-  const DRIZZLE_PUSH_TIMEOUT_MS = 30_000;
+  // ── 2. Schema sync ────────────────────────────────────────────────────────
+  const dbPackageDir = path.resolve(__dirname, "../../lib/db");
 
   try {
     execSync(
