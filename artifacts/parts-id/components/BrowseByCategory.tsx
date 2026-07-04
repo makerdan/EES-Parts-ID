@@ -17,6 +17,7 @@ import type { FilterValues } from "@/components/FilterPanel";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
 import { API_BASE } from "@/utils/apiBase";
+import { fetchWithAuth } from "@/utils/appAuth";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -151,7 +152,7 @@ export function BrowseByCategory({
       ? `${API_BASE}/inventory/categories?${qs}`
       : `${API_BASE}/inventory/categories`;
 
-    fetch(url)
+    fetchWithAuth(url)
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json() as Promise<CategoriesResponse>;
