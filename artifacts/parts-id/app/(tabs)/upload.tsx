@@ -662,7 +662,7 @@ export default function UploadScreen() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
-  const [tab, setTab] = useState<"import" | "enrichment" | "addpart" | "query" | "users">("import");
+  const [activeSection, setActiveSection] = useState<"import" | "enrichment" | "warehouse" | "people" | null>(null);
   const [addpartScrollY, setAddpartScrollY] = useState(0);
   const [measureVisible, setMeasureVisible] = useState(false);
   const [measuredDims, setMeasuredDims] = useState<PartDimensions | null>(null);
@@ -1656,14 +1656,6 @@ export default function UploadScreen() {
   const inventory = inventoryQuery.data?.items ?? [];
   const inventoryTotal = inventoryQuery.data?.total ?? 0;
 
-  const TAB_LABELS: Record<"import" | "enrichment" | "addpart" | "query" | "users", string> = {
-    import: "Import",
-    enrichment: `Enrich (${inventoryTotal})`,
-    addpart: "Add Part / Barcode",
-    query: "Ask Database",
-    users: "Users",
-  };
-
   const fetchUsers = async () => {
     if (!adminToken) return;
     await fetchAdminUsers({ apiBase: API_BASE, adminToken, setUsersLoading, setUsersError, setUsersData });
@@ -1689,9 +1681,22 @@ export default function UploadScreen() {
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={styles.headerRow}>
-          <View style={{ flexShrink: 0 }}>
-            <Text style={[styles.headerTitle, { color: colors.foreground }]}>📤 Inventory</Text>
-            <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Upload & AI Enrich</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            {activeSection !== null ? (
+              <Pressable onPress={() => setActiveSection(null)} style={{ padding: 4 }}>
+                <Feather name="chevron-left" size={22} color={colors.foreground} />
+              </Pressable>
+            ) : null}
+            <View>
+              <Text style={[styles.headerTitle, { color: colors.foreground }]}>🛡 Admin</Text>
+              <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
+                {activeSection === "import" ? "Data Import"
+                  : activeSection === "enrichment" ? "AI & Enrichment"
+                  : activeSection === "warehouse" ? "Warehouse"
+                  : activeSection === "people" ? "People & System"
+                  : "Admin Hub"}
+              </Text>
+            </View>
           </View>
           {isAdmin ? (
             <View style={styles.headerActions}>
@@ -1840,7 +1845,7 @@ export default function UploadScreen() {
                 Upload complete — inserted {uploadSuccess.inserted}, updated {uploadSuccess.updated} ({uploadSuccess.total} total)
               </Text>
               <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                <Pressable onPress={() => { setUploadSuccess(null); setTab("enrichment"); }}>
+                <Pressable onPress={() => { setUploadSuccess(null); setActiveSection("enrichment"); }}>
                   <Text style={{ color: "#059669", fontSize: 12, fontFamily: "Inter_600SemiBold" }}>View →</Text>
                 </Pressable>
                 <Pressable onPress={() => setUploadSuccess(null)} style={styles.bannerClose}>
@@ -1850,28 +1855,92 @@ export default function UploadScreen() {
             </View>
           ) : null}
 
-          {/* Tab bar */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tabBar, { borderBottomColor: colors.border }]} contentContainerStyle={{ flexDirection: "row" }}>
-            {(["import", "enrichment", "addpart", "query", "users"] as const).map(t => (
-              <Pressable
-                key={t}
-                onPress={() => {
-                  setTab(t);
-                  if (t === "users") fetchUsers();
-                }}
-                style={[
-                  styles.tabItem,
-                  { borderBottomColor: tab === t ? colors.primary : "transparent" },
-                ]}
-              >
-                <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
-                  {TAB_LABELS[t]}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
+          {/* ── Hub home & section views ─────────────────────────────── */}
+          {activeSection === null ? (
+            /* ── Hub home ──────────────────────────────────────────────── */
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+              {/* Health strip */}
+              <View style={[hubStyles.healthStrip, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={hubStyles.healthItem}>
+                  <View style={[hubStyles.statusDot, {
+                    backgroundColor:
+                      apiStatus === "ok" ? "#10b981" :
+                      apiStatus === "degraded" ? "#f59e0b" :
+                      apiStatus === "error" ? "#ef4444" :
+                      colors.border,
+                  }]} />
+                  <Text style={[hubStyles.healthLabel, { color: colors.mutedForeground }]}>
+                    {apiStatus === "ok" ? "API Online" : apiStatus === "degraded" ? "API Degraded" : apiStatus === "error" ? "API Offline" : "Checking…"}
+                  </Text>
+                </View>
+                {enrichSummary && enrichSummary.total > 0 ? (
+                  <View style={hubStyles.healthItem}>
+                    <Text style={[hubStyles.healthValue, { color: colors.foreground }]}>
+                      {Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%
+                    </Text>
+                    <Text style={[hubStyles.healthLabel, { color: colors.mutedForeground }]}>Enriched</Text>
+                  </View>
+                ) : null}
+                <View style={hubStyles.healthItem}>
+                  <Text style={[hubStyles.healthValue, { color: colors.foreground }]}>{inventoryTotal.toLocaleString()}</Text>
+                  <Text style={[hubStyles.healthLabel, { color: colors.mutedForeground }]}>Items</Text>
+                </View>
+              </View>
 
-          {tab === "import" ? (
+              {/* 2×2 section card grid */}
+              <View style={hubStyles.cardGrid}>
+                <Pressable
+                  onPress={() => setActiveSection("import")}
+                  style={({ pressed }) => [hubStyles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 }]}
+                >
+                  <Text style={hubStyles.sectionCardIcon}>📥</Text>
+                  <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>Data Import</Text>
+                  <Text style={[hubStyles.sectionCardSub, { color: colors.mutedForeground }]}>CSV, Excel, PDF catalogs, floor plan</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => setActiveSection("enrichment")}
+                  style={({ pressed }) => [hubStyles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 }]}
+                >
+                  <Text style={hubStyles.sectionCardIcon}>🤖</Text>
+                  <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>AI & Enrichment</Text>
+                  <Text style={[hubStyles.sectionCardSub, { color: colors.mutedForeground }]}>Keywords, descriptions, measurements</Text>
+                  {enrichSummary && enrichSummary.total > 0 ? (
+                    <View style={[hubStyles.statBadge, { backgroundColor: colors.primary + "18" }]}>
+                      <Text style={[hubStyles.statBadgeText, { color: colors.primary }]}>
+                        {Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}% enriched
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+
+                <Pressable
+                  onPress={() => setActiveSection("warehouse")}
+                  style={({ pressed }) => [hubStyles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 }]}
+                >
+                  <Text style={hubStyles.sectionCardIcon}>📦</Text>
+                  <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>Warehouse</Text>
+                  <Text style={[hubStyles.sectionCardSub, { color: colors.mutedForeground }]}>Add parts, scan barcodes, inventory</Text>
+                  {inventoryTotal > 0 ? (
+                    <View style={[hubStyles.statBadge, { backgroundColor: colors.muted }]}>
+                      <Text style={[hubStyles.statBadgeText, { color: colors.mutedForeground }]}>
+                        {inventoryTotal.toLocaleString()} items
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+
+                <Pressable
+                  onPress={() => { setActiveSection("people"); fetchUsers(); }}
+                  style={({ pressed }) => [hubStyles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 }]}
+                >
+                  <Text style={hubStyles.sectionCardIcon}>👥</Text>
+                  <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>People & System</Text>
+                  <Text style={[hubStyles.sectionCardSub, { color: colors.mutedForeground }]}>Users, inbox, analytics, logs</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          ) : activeSection === "import" ? (
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
               {/* File upload card */}
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -2314,136 +2383,59 @@ export default function UploadScreen() {
                 </View>
               ) : null}
 
-              {/* AI Status card */}
+              {/* PDF Catalog Import — moved from AI & Enrichment */}
+              <CatalogPdfUpload
+                adminToken={adminToken}
+                onSessionExpired={() => {
+                  logoutAdmin();
+                  setUploadError("Admin session expired. Please unlock again.");
+                }}
+              />
+
+              {/* Floor Plan Upload — moved from AI & Enrichment */}
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <View style={styles.aiStatusHeader}>
-                  <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 AI Status</Text>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>🗺 Floor Plan</Text>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Upload an updated warehouse floor plan (SVG). The app fetches the new plan on next launch — no app update required.
+                </Text>
+                <Pressable onPress={handlePickFloorPlan} style={[styles.pickBtn, { borderColor: colors.primary }]}>
+                  <Text style={[styles.pickBtnText, { color: colors.primary }]}>
+                    {floorPlanFile ? `📄 ${floorPlanFile.name}` : "Choose SVG File"}
+                  </Text>
+                </Pressable>
+                {floorPlanFile ? (
                   <Pressable
-                    onPress={aiStatusProbing ? undefined : triggerAiProbe}
-                    disabled={aiStatusProbing}
+                    onPress={handleUploadFloorPlan}
+                    disabled={floorPlanUploading}
                     style={[
-                      styles.aiProbeBtn,
-                      { borderColor: aiStatusProbing ? colors.border : colors.primary },
+                      styles.pickBtn,
+                      { backgroundColor: floorPlanUploading ? colors.muted : colors.primary, borderColor: "transparent" },
                     ]}
                   >
-                    {aiStatusProbing ? (
-                      <ActivityIndicator size="small" color={colors.primary} />
+                    {floorPlanUploading ? (
+                      <ActivityIndicator size="small" color={colors.primaryForeground} />
                     ) : (
-                      <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Re-run probe</Text>
+                      <Text style={[styles.pickBtnText, { color: colors.primaryForeground }]}>Upload Floor Plan</Text>
                     )}
                   </Pressable>
-                </View>
-
-                {aiStatusLoading && Object.keys(aiStatusBots).length === 0 ? (
-                  <ActivityIndicator size="small" color={colors.primary} style={{ alignSelf: "flex-start" }} />
-                ) : aiStatusError ? (
-                  <Text style={[styles.aiStatusError, { color: colors.destructive }]}>⚠ {aiStatusError}</Text>
-                ) : Object.keys(aiStatusBots).length === 0 ? (
-                  <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                    No probe results yet. Tap "Re-run probe" to check bot health.
-                  </Text>
-                ) : (
-                  <View style={styles.aiStatusBotList}>
-                    {Object.entries(aiStatusBots).map(([name, botStatus]) => {
-                      const dotColor =
-                        botStatus === "ok"
-                          ? "#10b981"
-                          : botStatus === "timeout"
-                          ? "#f59e0b"
-                          : "#ef4444";
-                      return (
-                        <View
-                          key={name}
-                          style={[
-                            styles.aiStatusBotRow,
-                            { borderBottomColor: colors.border },
-                          ]}
-                        >
-                          <Text
-                            style={[styles.aiStatusBotName, { color: colors.foreground }]}
-                            numberOfLines={1}
-                          >
-                            {name}
-                          </Text>
-                          <View
-                            style={[
-                              styles.aiStatusBadge,
-                              { backgroundColor: dotColor + "20", borderColor: dotColor },
-                            ]}
-                          >
-                            <Text style={[styles.aiStatusBadgeDot, { color: dotColor }]}>●</Text>
-                            <Text style={[styles.aiStatusBadgeText, { color: dotColor }]}>
-                              {botStatus}
-                            </Text>
-                          </View>
-                        </View>
-                      );
-                    })}
+                ) : null}
+                {floorPlanResult ? (
+                  <View style={[styles.uploadCard, {
+                    backgroundColor: floorPlanResult.success ? "#10b98115" : colors.destructive + "15",
+                    borderColor: floorPlanResult.success ? "#10b98155" : colors.destructive + "55",
+                    marginBottom: 0,
+                  }]}>
+                    <Text style={{ color: floorPlanResult.success ? "#059669" : colors.destructive, fontSize: 13, fontFamily: "Inter_500Medium" }}>
+                      {floorPlanResult.success ? "✓ " : "⚠ "}{floorPlanResult.message}
+                    </Text>
                   </View>
-                )}
+                ) : null}
               </View>
 
             </ScrollView>
-          ) : tab === "enrichment" ? (
-            <View style={{ flex: 1 }}>
-              <FlatList
-                data={inventory}
-                keyExtractor={item => String(item.id)}
-                renderItem={({ item }) => (
-                  <InventoryRow item={item} colors={colors} onEditBins={setBinEditorItem} />
-                )}
-                contentContainerStyle={{ paddingBottom: 120 }}
-                ListHeaderComponent={
-                  <View style={{ padding: 16 }}>
-                    {/* PDF Catalog Import */}
-                    <CatalogPdfUpload
-                      adminToken={adminToken}
-                      onSessionExpired={() => {
-                        logoutAdmin();
-                        setUploadError("Admin session expired. Please unlock again.");
-                      }}
-                    />
-
-                    {/* Floor Plan Upload */}
-                    <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                      <Text style={[styles.cardTitle, { color: colors.foreground }]}>🗺 Floor Plan</Text>
-                      <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                        Upload an updated warehouse floor plan (SVG). The app fetches the new plan on next launch — no app update required.
-                      </Text>
-                      <Pressable onPress={handlePickFloorPlan} style={[styles.pickBtn, { borderColor: colors.primary }]}>
-                        <Text style={[styles.pickBtnText, { color: colors.primary }]}>
-                          {floorPlanFile ? `📄 ${floorPlanFile.name}` : "Choose SVG File"}
-                        </Text>
-                      </Pressable>
-                      {floorPlanFile ? (
-                        <Pressable
-                          onPress={handleUploadFloorPlan}
-                          disabled={floorPlanUploading}
-                          style={[
-                            styles.pickBtn,
-                            { backgroundColor: floorPlanUploading ? colors.muted : colors.primary, borderColor: "transparent" },
-                          ]}
-                        >
-                          {floorPlanUploading ? (
-                            <ActivityIndicator size="small" color={colors.primaryForeground} />
-                          ) : (
-                            <Text style={[styles.pickBtnText, { color: colors.primaryForeground }]}>Upload Floor Plan</Text>
-                          )}
-                        </Pressable>
-                      ) : null}
-                      {floorPlanResult ? (
-                        <View style={[styles.uploadCard, {
-                          backgroundColor: floorPlanResult.success ? "#10b98115" : colors.destructive + "15",
-                          borderColor: floorPlanResult.success ? "#10b98155" : colors.destructive + "55",
-                          marginBottom: 0,
-                        }]}>
-                          <Text style={{ color: floorPlanResult.success ? "#059669" : colors.destructive, fontSize: 13, fontFamily: "Inter_500Medium" }}>
-                            {floorPlanResult.success ? "✓ " : "⚠ "}{floorPlanResult.message}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </View>
-
+          ) : activeSection === "enrichment" ? (
+            /* ── AI & Enrichment section ─────────────────────────────── */
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
                     {/* Bulk Enrichment Coverage */}
                     <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                       <Text style={[styles.cardTitle, { color: colors.foreground }]}>📊 Enrichment Coverage</Text>
@@ -2630,38 +2622,6 @@ export default function UploadScreen() {
                             {measureJobStatus?.running ? "⏳ Running…" : "📐 Run Measurement Enrichment"}
                           </Text>
                         )}
-                      </Pressable>
-                    </View>
-
-                    {/* Measure Tool — LiDAR + admin only */}
-                    {lidarSupported && isAdmin ? (
-                      <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                        <Text style={[styles.cardTitle, { color: colors.foreground }]}>📐 Measure Tool</Text>
-                        <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                          Use LiDAR to scan a part's bounding-box dimensions, then search by size or pre-fill an item's dimension fields.
-                        </Text>
-                        <Pressable
-                          onPress={() => router.push("/measure")}
-                          style={[styles.enrichBtn, { backgroundColor: colors.primary }]}
-                        >
-                          <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>📐 Open Measure Tool</Text>
-                        </Pressable>
-                      </View>
-                    ) : null}
-
-                    {/* AI Log & Inbox */}
-                    <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
-                      <Pressable
-                        onPress={() => router.push("/ai-log")}
-                        style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
-                      >
-                        <Text style={[styles.exportCsvText, { color: colors.mutedForeground }]}>🤖 AI Log</Text>
-                      </Pressable>
-                      <Pressable
-                        onPress={() => router.push("/admin-inbox")}
-                        style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
-                      >
-                        <Text style={[styles.exportCsvText, { color: colors.mutedForeground }]}>📬 Inbox</Text>
                       </Pressable>
                     </View>
 
@@ -2883,46 +2843,357 @@ export default function UploadScreen() {
                       </Pressable>
                     </View>
 
-                    {/* Inventory section header */}
-                    {inventoryQuery.isLoading ? (
-                      <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color={colors.primary} />
-                        <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading inventory…</Text>
-                      </View>
+              {/* AI Status card — moved from Data Import */}
+              <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={styles.aiStatusHeader}>
+                  <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 AI Status</Text>
+                  <Pressable
+                    onPress={aiStatusProbing ? undefined : triggerAiProbe}
+                    disabled={aiStatusProbing}
+                    style={[
+                      styles.aiProbeBtn,
+                      { borderColor: aiStatusProbing ? colors.border : colors.primary },
+                    ]}
+                  >
+                    {aiStatusProbing ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
                     ) : (
-                      <View style={styles.inventoryHeader}>
-                        <Text style={[styles.inventoryCount, { color: colors.foreground }]}>
-                          {inventoryTotal} items total
-                        </Text>
-                        <View style={styles.inventoryHeaderActions}>
-                          <Pressable
-                            onPress={handleExportCsv}
-                            disabled={exportPending}
-                            style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card, opacity: exportPending ? 0.6 : 1 }]}
-                          >
-                            {exportPending ? (
-                              <ActivityIndicator size="small" color={colors.primary} />
-                            ) : (
-                              <Text style={[styles.exportCsvText, { color: colors.primary }]}>⬇ Export CSV</Text>
-                            )}
-                          </Pressable>
-                          <Pressable
-                            onPress={() => handleEnrich()}
-                            style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
-                          >
-                            <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
+                      <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Re-run probe</Text>
+                    )}
+                  </Pressable>
+                </View>
+                {aiStatusLoading && Object.keys(aiStatusBots).length === 0 ? (
+                  <ActivityIndicator size="small" color={colors.primary} style={{ alignSelf: "flex-start" }} />
+                ) : aiStatusError ? (
+                  <Text style={[styles.aiStatusError, { color: colors.destructive }]}>⚠ {aiStatusError}</Text>
+                ) : Object.keys(aiStatusBots).length === 0 ? (
+                  <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                    No probe results yet. Tap "Re-run probe" to check bot health.
+                  </Text>
+                ) : (
+                  <View style={styles.aiStatusBotList}>
+                    {Object.entries(aiStatusBots).map(([name, botStatus]) => {
+                      const dotColor =
+                        botStatus === "ok" ? "#10b981" :
+                        botStatus === "timeout" ? "#f59e0b" :
+                        "#ef4444";
+                      return (
+                        <View key={name} style={[styles.aiStatusBotRow, { borderBottomColor: colors.border }]}>
+                          <Text style={[styles.aiStatusBotName, { color: colors.foreground }]} numberOfLines={1}>
+                            {name}
+                          </Text>
+                          <View style={[styles.aiStatusBadge, { backgroundColor: dotColor + "20", borderColor: dotColor }]}>
+                            <Text style={[styles.aiStatusBadgeDot, { color: dotColor }]}>●</Text>
+                            <Text style={[styles.aiStatusBadgeText, { color: dotColor }]}>{botStatus}</Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+
+            </ScrollView>
+          ) : activeSection === "warehouse" ? (
+            /* ── Warehouse section ───────────────────────────────────── */
+            <View style={{ flex: 1 }}>
+              <FlatList
+                data={inventory}
+                keyExtractor={item => String(item.id)}
+                renderItem={({ item }) => (
+                  <InventoryRow item={item} colors={colors} onEditBins={setBinEditorItem} />
+                )}
+                contentContainerStyle={{ paddingBottom: 120 }}
+                scrollEventThrottle={100}
+                onScroll={(e) => setAddpartScrollY(e.nativeEvent.contentOffset.y)}
+                ListHeaderComponent={
+                  <View>
+                    <View style={{ padding: 16 }}>
+                      {/* Shelf Catalog Entry */}
+                      <Pressable
+                        onPress={() => setShelfEntryOpen(true)}
+                        style={[styles.shelfEntryBanner, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "55" }]}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.shelfEntryTitle, { color: colors.primary }]}>📦 Shelf Catalog Entry</Text>
+                          <Text style={[styles.shelfEntryHint, { color: colors.mutedForeground }]}>
+                            Rapid per-shelf mode — set prefix once, auto-increment position, optional photo per item.
+                          </Text>
+                        </View>
+                        <Feather name="chevron-right" size={20} color={colors.primary} />
+                      </Pressable>
+                      {/* Bulk Assign by Shelf */}
+                      <Pressable
+                        onPress={() => setBulkShelfOpen(true)}
+                        style={[styles.shelfEntryBanner, { backgroundColor: colors.success + "12", borderColor: colors.success + "55", marginTop: 10 }]}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.shelfEntryTitle, { color: colors.success }]}>🔖 Bulk Assign by Shelf</Text>
+                          <Text style={[styles.shelfEntryHint, { color: colors.mutedForeground }]}>
+                            Load all items on a shelf, then scan barcodes to assign them one at a time.
+                          </Text>
+                        </View>
+                        <Feather name="chevron-right" size={20} color={colors.success} />
+                      </Pressable>
+                      {/* Measure Part */}
+                      {lidarSupported && isAdmin && adminToken ? (
+                        <Pressable
+                          onPress={() => setMeasureVisible(true)}
+                          style={[styles.shelfEntryBanner, { backgroundColor: colors.foreground + "0D", borderColor: colors.foreground + "33", marginTop: 10 }]}
+                        >
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.shelfEntryTitle, { color: colors.foreground }]}>📐 Measure Part</Text>
+                            <Text style={[styles.shelfEntryHint, { color: colors.mutedForeground }]}>
+                              Use LiDAR or AI photo estimation to capture part dimensions.
+                            </Text>
+                          </View>
+                          <Feather name="maximize" size={20} color={colors.foreground} />
+                        </Pressable>
+                      ) : null}
+                    </View>
+                    <BarcodeAddPart scrollY={addpartScrollY} />
+                    <AddPartForm
+                      adminToken={adminToken}
+                      onSuccess={() => { inventoryQuery.refetch(); setMeasuredDims(null); }}
+                      initialDimensions={measuredDims}
+                    />
+                    <View style={{ padding: 16 }}>
+                      {/* Inventory header */}
+                      {inventoryQuery.isLoading ? (
+                        <View style={styles.loadingContainer}>
+                          <ActivityIndicator size="large" color={colors.primary} />
+                          <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading inventory…</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.inventoryHeader}>
+                          <Text style={[styles.inventoryCount, { color: colors.foreground }]}>
+                            {inventoryTotal} items total
+                          </Text>
+                          <View style={styles.inventoryHeaderActions}>
+                            <Pressable
+                              onPress={handleExportCsv}
+                              disabled={exportPending}
+                              style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card, opacity: exportPending ? 0.6 : 1 }]}
+                            >
+                              {exportPending ? (
+                                <ActivityIndicator size="small" color={colors.primary} />
+                              ) : (
+                                <Text style={[styles.exportCsvText, { color: colors.primary }]}>⬇ Export CSV</Text>
+                              )}
+                            </Pressable>
+                            <Pressable
+                              onPress={() => handleEnrich()}
+                              style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
+                            >
+                              <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
+                            </Pressable>
+                          </View>
+                        </View>
+                      )}
+                      {exportError ? (
+                        <View style={[styles.exportErrorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
+                          <Text style={[styles.exportErrorText, { color: colors.destructive }]}>⚠ Export failed: {exportError}</Text>
+                          <Pressable onPress={() => setExportError(null)}>
+                            <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
                           </Pressable>
                         </View>
-                      </View>
-                    )}
-                    {exportError ? (
-                      <View style={[styles.exportErrorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
-                        <Text style={[styles.exportErrorText, { color: colors.destructive }]}>⚠ Export failed: {exportError}</Text>
-                        <Pressable onPress={() => setExportError(null)}>
-                          <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
+                      ) : null}
+                    </View>
+                    {/* SQL Query — moved from Ask Database tab */}
+                    <View style={{ padding: 16, paddingTop: 0 }}>
+                      <View style={[styles.queryCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                        <Text style={[styles.cardTitle, { color: colors.foreground }]}>🔍 SQL Query</Text>
+                        <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                          Run a read-only SELECT against the live database. INSERT, UPDATE, DELETE, and DDL are blocked. Results capped at 500 rows.
+                        </Text>
+                        <Pressable
+                          onPress={() => setQueryHelpOpen(v => !v)}
+                          style={[styles.queryHelpToggle, { borderColor: colors.border }]}
+                        >
+                          <Text style={[styles.queryHelpToggleText, { color: colors.primary }]}>
+                            {queryHelpOpen ? "▲ Hide examples" : "▼ Examples & table reference"}
+                          </Text>
                         </Pressable>
+                        {queryHelpOpen && (
+                          <View style={[styles.queryHelpPanel, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                            <Text style={[styles.queryHelpHeading, { color: colors.foreground }]}>Key tables</Text>
+                            {[
+                              ["inventory", "vendor, catalog, description, bin_locations[], barcodes[], ai_keywords[], enriched_at, dimensions (jsonb), created_at"],
+                              ["warehouse_zone", "aisle_id, section_num, is_inventory, svg_x, svg_y, svg_width, svg_height"],
+                              ["catalog_pdf_job", "vendor, filename, status, matched_parts, total_pages, processed_pages, started_at, finished_at"],
+                            ].map(([table, cols]) => (
+                              <View key={table} style={styles.queryHelpTableRow}>
+                                <Text style={[styles.queryHelpTableName, { color: colors.foreground }]}>{table}</Text>
+                                <Text style={[styles.queryHelpTableCols, { color: colors.mutedForeground }]}>{cols}</Text>
+                              </View>
+                            ))}
+                            <Text style={[styles.queryHelpHeading, { color: colors.foreground, marginTop: 12 }]}>Tap an example to load it</Text>
+                            {(() => {
+                              const groups = Array.from(new Set(SQL_EXAMPLES.map(e => e.group)));
+                              return groups.map(group => (
+                                <View key={group}>
+                                  <Text style={[styles.queryHelpGroupLabel, { color: colors.mutedForeground }]}>{group}</Text>
+                                  {SQL_EXAMPLES.filter(e => e.group === group).map(ex => (
+                                    <Pressable
+                                      key={ex.label}
+                                      onPress={() => {
+                                        setQueryText(ex.sql);
+                                        setQueryError(null);
+                                        setQueryResult(null);
+                                        setQueryHelpOpen(false);
+                                      }}
+                                      style={({ pressed }) => [
+                                        styles.queryHelpExample,
+                                        { backgroundColor: pressed ? colors.primary + "18" : colors.card, borderColor: colors.border },
+                                      ]}
+                                    >
+                                      <Text style={[styles.queryHelpExampleLabel, { color: colors.foreground }]}>{ex.label}</Text>
+                                      <Text style={[styles.queryHelpExampleSql, { color: colors.mutedForeground }]} numberOfLines={2}>{ex.sql}</Text>
+                                    </Pressable>
+                                  ))}
+                                </View>
+                              ));
+                            })()}
+                          </View>
+                        )}
+                        <KeyboardDoneInput
+                          value={queryText}
+                          onChangeText={text => {
+                            setQueryText(text);
+                            setQueryError(null);
+                            setQueryResult(null);
+                          }}
+                          multiline
+                          scrollEnabled
+                          autoCorrect={false}
+                          autoCapitalize="none"
+                          spellCheck={false}
+                          placeholder="SELECT * FROM inventory LIMIT 20"
+                          placeholderTextColor={colors.mutedForeground}
+                          style={[styles.queryInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                          textAlignVertical="top"
+                        />
+                        {/\b(DELETE|DROP|TRUNCATE|UPDATE|INSERT)\b/i.test(queryText) ? (
+                          <View style={[styles.queryWriteWarning, { backgroundColor: "#f59e0b18", borderColor: "#f59e0b44" }]}>
+                            <Text style={[styles.queryWriteWarningText, { color: "#b45309" }]}>
+                              ⚠ This query contains a write operation. Make sure you intend to modify data.
+                            </Text>
+                          </View>
+                        ) : null}
+                        <Pressable
+                          onPress={async () => {
+                            if (!adminToken || queryRunning) return;
+                            setQueryRunning(true);
+                            setQueryError(null);
+                            setQueryResult(null);
+                            try {
+                              const res = await fetch(`${API_BASE}/admin/query`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+                                body: JSON.stringify({ sql: queryText }),
+                              });
+                              if (res.status === 401) {
+                                logoutAdmin();
+                                setQueryError("Admin session expired. Please unlock again.");
+                                return;
+                              }
+                              const qParsed = QueryResultSchema.safeParse(await res.json());
+                              if (!qParsed.success) { console.warn("[upload] query result unexpected shape:", qParsed.error.message); setQueryError("Unexpected response from server — query failed."); return; }
+                              const data = qParsed.data;
+                              if (!res.ok || data.error) {
+                                setQueryError(data.error ?? "Query failed");
+                                return;
+                              }
+                              setQueryResult({ columns: data.columns ?? [], rows: data.rows ?? [], rowCount: data.rowCount ?? 0 });
+                            } catch {
+                              setQueryError("Network error — could not reach the server.");
+                            } finally {
+                              setQueryRunning(false);
+                            }
+                          }}
+                          disabled={queryRunning || !queryText.trim()}
+                          style={[styles.queryRunBtn, { backgroundColor: (queryRunning || !queryText.trim()) ? colors.muted : colors.primary }]}
+                        >
+                          {queryRunning ? (
+                            <ActivityIndicator color={colors.primaryForeground} />
+                          ) : (
+                            <Text style={[styles.queryRunBtnText, { color: colors.primaryForeground }]}>▶ Run</Text>
+                          )}
+                        </Pressable>
+                        {queryError ? (
+                          <View style={[styles.queryErrorBox, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
+                            <Text style={[styles.queryErrorText, { color: colors.destructive }]}>⚠ {queryError}</Text>
+                          </View>
+                        ) : null}
+                        {queryResult && !queryError ? (
+                          queryResult.rowCount === 0 ? (
+                            <View style={[styles.queryEmptyBox, { backgroundColor: colors.muted }]}>
+                              <Text style={[styles.queryEmptyText, { color: colors.mutedForeground }]}>No rows returned</Text>
+                            </View>
+                          ) : (
+                            <View style={styles.queryResultsWrapper}>
+                              <Text style={[styles.queryRowCount, { color: colors.mutedForeground }]}>
+                                {queryResult.rowCount} row{queryResult.rowCount !== 1 ? "s" : ""}
+                              </Text>
+                              <ScrollView horizontal showsHorizontalScrollIndicator>
+                                <View>
+                                  <View style={[styles.queryHeaderRow, { backgroundColor: colors.muted }]}>
+                                    {queryResult.columns.map(col => (
+                                      <Text key={col} style={[styles.queryHeaderCell, { color: colors.foreground, minWidth: 110 }]} numberOfLines={1}>
+                                        {col}
+                                      </Text>
+                                    ))}
+                                  </View>
+                                  {queryResult.rows.map((row, ri) => (
+                                    <View
+                                      key={ri}
+                                      style={[
+                                        styles.queryDataRow,
+                                        { backgroundColor: ri % 2 === 0 ? colors.background : colors.muted + "66", borderBottomColor: colors.border },
+                                      ]}
+                                    >
+                                      {queryResult.columns.map(col => {
+                                        const val = row[col];
+                                        const display = val === null || val === undefined ? "" : Array.isArray(val) ? val.join(", ") : String(val);
+                                        return (
+                                          <Text key={col} style={[styles.queryDataCell, { color: colors.foreground, minWidth: 110 }]} numberOfLines={2}>
+                                            {display}
+                                          </Text>
+                                        );
+                                      })}
+                                    </View>
+                                  ))}
+                                </View>
+                              </ScrollView>
+                              <View style={styles.queryExportRow}>
+                                <Pressable
+                                  onPress={() => handleQueryExport("csv")}
+                                  disabled={queryExportPending !== null}
+                                  style={[styles.queryExportBtn, { borderColor: colors.border, backgroundColor: queryExportPending === "csv" ? colors.muted : colors.card }]}
+                                >
+                                  {queryExportPending === "csv" ? (
+                                    <ActivityIndicator size="small" color={colors.primary} />
+                                  ) : (
+                                    <Text style={[styles.queryExportBtnText, { color: colors.primary }]}>↓ Download CSV</Text>
+                                  )}
+                                </Pressable>
+                                <Pressable
+                                  onPress={() => handleQueryExport("xlsx")}
+                                  disabled={queryExportPending !== null}
+                                  style={[styles.queryExportBtn, { borderColor: colors.border, backgroundColor: queryExportPending === "xlsx" ? colors.muted : colors.card }]}
+                                >
+                                  {queryExportPending === "xlsx" ? (
+                                    <ActivityIndicator size="small" color={colors.primary} />
+                                  ) : (
+                                    <Text style={[styles.queryExportBtnText, { color: colors.primary }]}>↓ Download Excel</Text>
+                                  )}
+                                </Pressable>
+                              </View>
+                            </View>
+                          )
+                        ) : null}
                       </View>
-                    ) : null}
+                    </View>
                   </View>
                 }
                 ListEmptyComponent={!inventoryQuery.isLoading ? (
@@ -2933,7 +3204,7 @@ export default function UploadScreen() {
                       Upload a CSV or Excel file to add inventory items.
                     </Text>
                     <Pressable
-                      onPress={() => setTab("import")}
+                      onPress={() => setActiveSection("import")}
                       style={[styles.goUploadBtn, { backgroundColor: colors.primary }]}
                     >
                       <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>Go to Import</Text>
@@ -2952,276 +3223,35 @@ export default function UploadScreen() {
                 }
               />
             </View>
-          ) : tab === "addpart" ? (
-            <ScrollView
-              contentContainerStyle={{ paddingBottom: 100 }}
-              scrollEventThrottle={100}
-              onScroll={(e) => setAddpartScrollY(e.nativeEvent.contentOffset.y)}
-            >
-              <Pressable
-                onPress={() => setShelfEntryOpen(true)}
-                style={[styles.shelfEntryBanner, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "55" }]}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.shelfEntryTitle, { color: colors.primary }]}>📦 Shelf Catalog Entry</Text>
-                  <Text style={[styles.shelfEntryHint, { color: colors.mutedForeground }]}>
-                    Rapid per-shelf mode — set prefix once, auto-increment position, optional photo per item.
-                  </Text>
-                </View>
-                <Feather name="chevron-right" size={20} color={colors.primary} />
-              </Pressable>
-              <Pressable
-                onPress={() => setBulkShelfOpen(true)}
-                style={[styles.shelfEntryBanner, { backgroundColor: colors.success + "12", borderColor: colors.success + "55", marginTop: 10 }]}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.shelfEntryTitle, { color: colors.success }]}>🔖 Bulk Assign by Shelf</Text>
-                  <Text style={[styles.shelfEntryHint, { color: colors.mutedForeground }]}>
-                    Load all items on a shelf, then scan barcodes to assign them one at a time.
-                  </Text>
-                </View>
-                <Feather name="chevron-right" size={20} color={colors.success} />
-              </Pressable>
-              {isAdmin && adminToken && Platform.OS === "ios" ? (
-                <Pressable
-                  onPress={() => setMeasureVisible(true)}
-                  style={[styles.shelfEntryBanner, { backgroundColor: colors.foreground + "0D", borderColor: colors.foreground + "33", marginTop: 10 }]}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.shelfEntryTitle, { color: colors.foreground }]}>📐 Measure Part</Text>
-                    <Text style={[styles.shelfEntryHint, { color: colors.mutedForeground }]}>
-                      Use LiDAR or AI photo estimation to capture part dimensions.
-                    </Text>
-                  </View>
-                  <Feather name="maximize" size={20} color={colors.foreground} />
-                </Pressable>
-              ) : null}
-              <BarcodeAddPart scrollY={addpartScrollY} />
-              <AddPartForm
-                adminToken={adminToken}
-                onSuccess={() => { inventoryQuery.refetch(); setMeasuredDims(null); }}
-                initialDimensions={measuredDims}
-              />
-            </ScrollView>
-          ) : tab === "query" ? (
-            /* ── Query tab ───────────────────────────────────────────── */
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
-              <View style={[styles.queryCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>🔍 SQL Query</Text>
-                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Run a read-only SELECT against the live database. INSERT, UPDATE, DELETE, and DDL are blocked. Results capped at 500 rows.
-                </Text>
-
-                {/* Help / examples toggle */}
-                <Pressable
-                  onPress={() => setQueryHelpOpen(v => !v)}
-                  style={[styles.queryHelpToggle, { borderColor: colors.border }]}
-                >
-                  <Text style={[styles.queryHelpToggleText, { color: colors.primary }]}>
-                    {queryHelpOpen ? "▲ Hide examples" : "▼ Examples & table reference"}
-                  </Text>
-                </Pressable>
-
-                {queryHelpOpen && (
-                  <View style={[styles.queryHelpPanel, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-                    {/* Table reference */}
-                    <Text style={[styles.queryHelpHeading, { color: colors.foreground }]}>Key tables</Text>
-                    {[
-                      ["inventory", "vendor, catalog, description, bin_locations[], barcodes[], ai_keywords[], enriched_at, dimensions (jsonb), created_at"],
-                      ["warehouse_zone", "aisle_id, section_num, is_inventory, svg_x, svg_y, svg_width, svg_height"],
-                      ["catalog_pdf_job", "vendor, filename, status, matched_parts, total_pages, processed_pages, started_at, finished_at"],
-                    ].map(([table, cols]) => (
-                      <View key={table} style={styles.queryHelpTableRow}>
-                        <Text style={[styles.queryHelpTableName, { color: colors.foreground }]}>{table}</Text>
-                        <Text style={[styles.queryHelpTableCols, { color: colors.mutedForeground }]}>{cols}</Text>
-                      </View>
-                    ))}
-
-                    {/* Example queries grouped */}
-                    <Text style={[styles.queryHelpHeading, { color: colors.foreground, marginTop: 12 }]}>Tap an example to load it</Text>
-                    {(() => {
-                      const groups = Array.from(new Set(SQL_EXAMPLES.map(e => e.group)));
-                      return groups.map(group => (
-                        <View key={group}>
-                          <Text style={[styles.queryHelpGroupLabel, { color: colors.mutedForeground }]}>{group}</Text>
-                          {SQL_EXAMPLES.filter(e => e.group === group).map(ex => (
-                            <Pressable
-                              key={ex.label}
-                              onPress={() => {
-                                setQueryText(ex.sql);
-                                setQueryError(null);
-                                setQueryResult(null);
-                                setQueryHelpOpen(false);
-                              }}
-                              style={({ pressed }) => [
-                                styles.queryHelpExample,
-                                { backgroundColor: pressed ? colors.primary + "18" : colors.card, borderColor: colors.border },
-                              ]}
-                            >
-                              <Text style={[styles.queryHelpExampleLabel, { color: colors.foreground }]}>{ex.label}</Text>
-                              <Text style={[styles.queryHelpExampleSql, { color: colors.mutedForeground }]} numberOfLines={2}>{ex.sql}</Text>
-                            </Pressable>
-                          ))}
-                        </View>
-                      ));
-                    })()}
-                  </View>
-                )}
-
-                <KeyboardDoneInput
-                  value={queryText}
-                  onChangeText={text => {
-                    setQueryText(text);
-                    setQueryError(null);
-                    setQueryResult(null);
-                  }}
-                  multiline
-                  scrollEnabled
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  placeholder="SELECT * FROM inventory LIMIT 20"
-                  placeholderTextColor={colors.mutedForeground}
-                  style={[styles.queryInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
-                  textAlignVertical="top"
-                />
-
-                {/\b(DELETE|DROP|TRUNCATE|UPDATE|INSERT)\b/i.test(queryText) ? (
-                  <View style={[styles.queryWriteWarning, { backgroundColor: "#f59e0b18", borderColor: "#f59e0b44" }]}>
-                    <Text style={[styles.queryWriteWarningText, { color: "#b45309" }]}>
-                      ⚠ This query contains a write operation. Make sure you intend to modify data.
-                    </Text>
-                  </View>
-                ) : null}
-
-                <Pressable
-                  onPress={async () => {
-                    if (!adminToken || queryRunning) return;
-                    setQueryRunning(true);
-                    setQueryError(null);
-                    setQueryResult(null);
-                    try {
-                      const res = await fetch(`${API_BASE}/admin/query`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-                        body: JSON.stringify({ sql: queryText }),
-                      });
-                      if (res.status === 401) {
-                        logoutAdmin();
-                        setQueryError("Admin session expired. Please unlock again.");
-                        return;
-                      }
-                      const qParsed = QueryResultSchema.safeParse(await res.json());
-                      if (!qParsed.success) { console.warn("[upload] query result unexpected shape:", qParsed.error.message); setQueryError("Unexpected response from server — query failed."); return; }
-                      const data = qParsed.data;
-                      if (!res.ok || data.error) {
-                        setQueryError(data.error ?? "Query failed");
-                        return;
-                      }
-                      setQueryResult({ columns: data.columns ?? [], rows: data.rows ?? [], rowCount: data.rowCount ?? 0 });
-                    } catch {
-                      setQueryError("Network error — could not reach the server.");
-                    } finally {
-                      setQueryRunning(false);
-                    }
-                  }}
-                  disabled={queryRunning || !queryText.trim()}
-                  style={[styles.queryRunBtn, { backgroundColor: (queryRunning || !queryText.trim()) ? colors.muted : colors.primary }]}
-                >
-                  {queryRunning ? (
-                    <ActivityIndicator color={colors.primaryForeground} />
-                  ) : (
-                    <Text style={[styles.queryRunBtnText, { color: colors.primaryForeground }]}>▶ Run</Text>
-                  )}
-                </Pressable>
-
-                {queryError ? (
-                  <View style={[styles.queryErrorBox, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
-                    <Text style={[styles.queryErrorText, { color: colors.destructive }]}>⚠ {queryError}</Text>
-                  </View>
-                ) : null}
-
-                {queryResult && !queryError ? (
-                  queryResult.rowCount === 0 ? (
-                    <View style={[styles.queryEmptyBox, { backgroundColor: colors.muted }]}>
-                      <Text style={[styles.queryEmptyText, { color: colors.mutedForeground }]}>No rows returned</Text>
-                    </View>
-                  ) : (
-                    <View style={styles.queryResultsWrapper}>
-                      <Text style={[styles.queryRowCount, { color: colors.mutedForeground }]}>
-                        {queryResult.rowCount} row{queryResult.rowCount !== 1 ? "s" : ""}
-                      </Text>
-                      <ScrollView horizontal showsHorizontalScrollIndicator>
-                        <View>
-                          {/* Column headers */}
-                          <View style={[styles.queryHeaderRow, { backgroundColor: colors.muted }]}>
-                            {queryResult.columns.map(col => (
-                              <Text key={col} style={[styles.queryHeaderCell, { color: colors.foreground, minWidth: 110 }]} numberOfLines={1}>
-                                {col}
-                              </Text>
-                            ))}
-                          </View>
-                          {/* Data rows */}
-                          {queryResult.rows.map((row, ri) => (
-                            <View
-                              key={ri}
-                              style={[
-                                styles.queryDataRow,
-                                { backgroundColor: ri % 2 === 0 ? colors.background : colors.muted + "66", borderBottomColor: colors.border },
-                              ]}
-                            >
-                              {queryResult.columns.map(col => {
-                                const val = row[col];
-                                const display = val === null || val === undefined ? "" : Array.isArray(val) ? val.join(", ") : String(val);
-                                return (
-                                  <Text key={col} style={[styles.queryDataCell, { color: colors.foreground, minWidth: 110 }]} numberOfLines={2}>
-                                    {display}
-                                  </Text>
-                                );
-                              })}
-                            </View>
-                          ))}
-                        </View>
-                      </ScrollView>
-                      {/* Export buttons */}
-                      <View style={styles.queryExportRow}>
-                        <Pressable
-                          onPress={() => handleQueryExport("csv")}
-                          disabled={queryExportPending !== null}
-                          style={[
-                            styles.queryExportBtn,
-                            { borderColor: colors.border, backgroundColor: queryExportPending === "csv" ? colors.muted : colors.card },
-                          ]}
-                        >
-                          {queryExportPending === "csv" ? (
-                            <ActivityIndicator size="small" color={colors.primary} />
-                          ) : (
-                            <Text style={[styles.queryExportBtnText, { color: colors.primary }]}>↓ Download CSV</Text>
-                          )}
-                        </Pressable>
-                        <Pressable
-                          onPress={() => handleQueryExport("xlsx")}
-                          disabled={queryExportPending !== null}
-                          style={[
-                            styles.queryExportBtn,
-                            { borderColor: colors.border, backgroundColor: queryExportPending === "xlsx" ? colors.muted : colors.card },
-                          ]}
-                        >
-                          {queryExportPending === "xlsx" ? (
-                            <ActivityIndicator size="small" color={colors.primary} />
-                          ) : (
-                            <Text style={[styles.queryExportBtnText, { color: colors.primary }]}>↓ Download Excel</Text>
-                          )}
-                        </Pressable>
-                      </View>
-                    </View>
-                  )
-                ) : null}
-              </View>
-            </ScrollView>
           ) : (
-            /* ── Users tab ───────────────────────────────────────────── */
+            /* ── People & System section ─────────────────────────────── */
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+              {/* Navigation rows */}
+              <View style={[styles.queryCard, { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 14 }]}>
+                <Text style={[styles.cardTitle, { color: colors.foreground, marginBottom: 8 }]}>🔗 Navigation</Text>
+                <Pressable
+                  onPress={() => router.push("/admin")}
+                  style={[hubStyles.navRow, { borderColor: colors.border }]}
+                >
+                  <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>🏠 Admin Dashboard</Text>
+                  <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+                </Pressable>
+                <Pressable
+                  onPress={() => router.push("/admin-inbox")}
+                  style={[hubStyles.navRow, { borderColor: colors.border }]}
+                >
+                  <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>📬 Inbox</Text>
+                  <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+                </Pressable>
+                <Pressable
+                  onPress={() => router.push("/ai-log")}
+                  style={[hubStyles.navRow, { borderColor: colors.border, borderBottomWidth: 0 }]}
+                >
+                  <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>🤖 AI Log</Text>
+                  <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+                </Pressable>
+              </View>
+              {/* ── User Management ─── */}
               <View style={[styles.queryCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
                   <Text style={[styles.cardTitle, { color: colors.foreground }]}>👥 User Management</Text>
@@ -3238,13 +3268,11 @@ export default function UploadScreen() {
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   Approve, ban, and manage admin access for users who have signed up via the app.
                 </Text>
-
                 {usersError ? (
                   <View style={{ backgroundColor: colors.destructive + "15", borderRadius: 8, padding: 12, marginTop: 8 }}>
                     <Text style={{ color: colors.destructive, fontFamily: "Inter_400Regular", fontSize: 13 }}>⚠ {usersError}</Text>
                   </View>
                 ) : null}
-
                 {usersLoading && usersData.length === 0 ? (
                   <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 24 }} />
                 ) : usersData.length === 0 ? (
@@ -3279,9 +3307,7 @@ export default function UploadScreen() {
                           </Text>
                           <View style={{ flexDirection: "row", gap: 6, flexShrink: 0 }}>
                             <View style={{ backgroundColor: roleColor + "22", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: roleColor + "44" }}>
-                              <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: roleColor }}>
-                                {roleLabel}
-                              </Text>
+                              <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: roleColor }}>{roleLabel}</Text>
                             </View>
                             <View style={{ backgroundColor: statusColor + "22", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: statusColor + "44" }}>
                               <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: statusColor, textTransform: "capitalize" }}>
@@ -3334,7 +3360,6 @@ export default function UploadScreen() {
                             </Pressable>
                           ) : null}
                         </View>
-                        {/* Admin role controls — only approved users may be promoted */}
                         <UserAdminButtonRow
                           user={user}
                           userActionPending={userActionPending}
@@ -3385,6 +3410,23 @@ export default function UploadScreen() {
     </SafeAreaView>
   );
 }
+
+const hubStyles = StyleSheet.create({
+  healthStrip: { flexDirection: "row", borderRadius: 12, borderWidth: 1, padding: 14, marginBottom: 16, justifyContent: "space-around" },
+  healthItem: { alignItems: "center", gap: 4 },
+  statusDot: { width: 12, height: 12, borderRadius: 6 },
+  healthLabel: { fontSize: 11, fontFamily: "Inter_400Regular" },
+  healthValue: { fontSize: 18, fontFamily: "Inter_700Bold" },
+  cardGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  sectionCard: { width: "47%", borderRadius: 14, borderWidth: 1, padding: 16, gap: 4 },
+  sectionCardIcon: { fontSize: 28 },
+  sectionCardTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginTop: 4 },
+  sectionCardSub: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 16 },
+  statBadge: { alignSelf: "flex-start", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, marginTop: 6 },
+  statBadgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  navRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  navRowText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+});
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },

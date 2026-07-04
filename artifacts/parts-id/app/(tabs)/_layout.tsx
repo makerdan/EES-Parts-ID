@@ -85,7 +85,7 @@ export default function TabLayout() {
         name="upload"
         options={{
           title: "Admin",
-          tabBarIcon: ({ color }) => <Feather name="upload" size={22} color={color} />,
+          tabBarIcon: ({ color }) => <Feather name="shield" size={22} color={color} />,
         }}
       />
       <Tabs.Screen
