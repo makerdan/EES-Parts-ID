@@ -84,20 +84,6 @@ export function WarehouseMapWeb({
     [aisles],
   );
 
-  useEffect(() => {
-    if (focusAisleNum !== undefined && aisles.length > 0) {
-      const idx = aisles.findIndex(a => a.aisleNum === focusAisleNum);
-      if (idx !== -1) {
-        const rowIdx = Math.floor(idx / COLS);
-        const y = rowIdx * (cellSize + 6) + 60; // Approximate offset
-        scrollRef.current?.scrollToOffset({ offset: y, animated: true });
-        onFocusConsumed?.();
-      } else {
-        onFocusFailed?.();
-      }
-    }
-  }, [focusAisleNum, aisles, cellSize, onFocusConsumed, onFocusFailed]);
-
   const rows = useMemo(() => {
     const result: Array<typeof aisles> = [];
     for (let i = 0; i < aisles.length; i += COLS) {
