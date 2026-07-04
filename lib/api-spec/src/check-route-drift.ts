@@ -34,6 +34,7 @@ import {
   buildSpecOperations,
   parsePrefixMap,
   analyzeFile,
+  collectUnguardedJsonCalls,
   checkSpecRouteCoverage,
   type OpenApiSpec,
   type Violation,
@@ -62,6 +63,8 @@ function main(): void {
     const filePath = resolve(ROUTES_DIR, filename);
     const violations = analyzeFile(filePath, prefix, specOps);
     allViolations.push(...violations);
+    const unguardedViolations = collectUnguardedJsonCalls(filePath, prefix, specOps);
+    allViolations.push(...unguardedViolations);
   }
 
   // Check reverse direction: spec paths that have no Express handler at all
@@ -93,6 +96,11 @@ function main(): void {
       if (v.kind === "missingHandler") {
         console.error(
           `    ${v.method} ${v.specPath}  [missingHandler]  spec path has no Express route handler`,
+        );
+      } else if (v.kind === "unguardedResponse") {
+        const lineSuffix = v.line != null ? `:${v.line}` : "";
+        console.error(
+          `    ${v.method} ${v.specPath}  [unguardedResponse]  ${v.note ?? "res.json() argument is not the result of a Zod .parse() call"}${lineSuffix ? `  (line ${v.line})` : ""}`,
         );
       } else {
         const suffix = v.note ? `  (${v.note})` : "";
