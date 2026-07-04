@@ -454,8 +454,15 @@ fi
 # This ensures dist/ declaration files are up to date so tsc --noEmit reads
 # stable compiled .d.ts files rather than the volatile generated TS source
 # files that codegen:check may clean concurrently in the validation framework.
+#
+# Retry up to 3 times: if codegen:check is running concurrently and orval
+# deletes src/generated/ mid-run, tsc --build can hit TS6307.  Retrying
+# waits for orval to finish writing so the second attempt always succeeds.
 # ---------------------------------------------------------------------------
-pnpm -w run typecheck:libs > /dev/null 2>&1 || true
+for _attempt in 1 2 3; do
+  pnpm -w run typecheck:libs > /dev/null 2>&1 && break
+  sleep 2
+done
 TYPECHECK_OUTPUT=$(pnpm --filter @workspace/parts-id run typecheck 2>&1)
 TYPECHECK_EXIT=$?
 assert_exit "typecheck — parts-id tsc --noEmit exits 0" 0 "$TYPECHECK_EXIT"
