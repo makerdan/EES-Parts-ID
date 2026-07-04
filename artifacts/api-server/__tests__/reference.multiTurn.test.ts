@@ -296,3 +296,126 @@ describe("POST /api/reference/ask — multi-turn conversation (JSON mode)", () =
     });
   });
 });
+
+// ── SSE path helper ───────────────────────────────────────────────────────────
+
+/**
+ * Reconstruct the full answer text from an SSE response body by concatenating
+ * every `data: {"content":"…"}` frame in order.
+ */
+function reconstructSseContent(body: string): string {
+  const matches = [...body.matchAll(/data: (\{"content":.*?\})\n\n/g)];
+  return matches
+    .map((m) => (JSON.parse(m[1]!) as { content: string }).content)
+    .join("");
+}
+
+// ── SSE path: multi-turn conversation ────────────────────────────────────────
+
+describe("POST /api/reference/ask — multi-turn conversation (SSE mode)", () => {
+  describe("when history is a non-empty array", () => {
+    it("forwards history turns to callGeminiWithHistory (SSE)", async () => {
+      mockGenerateContent.mockResolvedValueOnce({ text: AI_ANSWER });
+
+      await supertest(app)
+        .post("/api/reference/ask")
+        .send({ question: FOLLOW_UP_QUESTION, history: HISTORY })
+        .expect(200);
+
+      expect(mockGenerateContent).toHaveBeenCalledTimes(1);
+
+      const callArg = mockGenerateContent.mock.calls[0]![0] as {
+        contents: Array<{ role: string; parts: Array<{ text: string }> }>;
+      };
+      const { contents } = callArg;
+
+      expect(contents[0]).toEqual({
+        role: "user",
+        parts: [{ text: HISTORY[0]!.q }],
+      });
+      expect(contents[1]).toEqual({
+        role: "model",
+        parts: [{ text: HISTORY[0]!.a }],
+      });
+      expect(contents[contents.length - 1]).toEqual({
+        role: "user",
+        parts: [{ text: FOLLOW_UP_QUESTION }],
+      });
+    });
+
+    it("streams the AI answer word-by-word and emits a done frame", async () => {
+      mockGenerateContent.mockResolvedValueOnce({ text: AI_ANSWER });
+
+      const res = await supertest(app)
+        .post("/api/reference/ask")
+        .send({ question: FOLLOW_UP_QUESTION, history: HISTORY })
+        .expect(200);
+
+      expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
+      expect(reconstructSseContent(res.text)).toBe(AI_ANSWER);
+      expect(res.text).toContain(`data: ${JSON.stringify({ done: true })}`);
+    });
+
+    it("does NOT call getCachedAnswer when history is present (SSE)", async () => {
+      mockGenerateContent.mockResolvedValueOnce({ text: AI_ANSWER });
+
+      await supertest(app)
+        .post("/api/reference/ask")
+        .send({ question: FOLLOW_UP_QUESTION, history: HISTORY })
+        .expect(200);
+
+      expect(mockGetCachedAnswer).not.toHaveBeenCalled();
+    });
+
+    it("does NOT write to cache after a history-aware SSE response", async () => {
+      mockGenerateContent.mockResolvedValueOnce({ text: AI_ANSWER });
+
+      await supertest(app)
+        .post("/api/reference/ask")
+        .send({ question: FOLLOW_UP_QUESTION, history: HISTORY })
+        .expect(200);
+
+      expect(mockSetCachedAnswer).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("when no history is provided (SSE cache path)", () => {
+    it("consults getCachedAnswer for a first question via SSE", async () => {
+      mockGetCachedAnswer.mockResolvedValueOnce(null);
+      mockGenerateContent.mockResolvedValueOnce({ text: AI_ANSWER });
+
+      await supertest(app)
+        .post("/api/reference/ask")
+        .send({ question: FIRST_QUESTION })
+        .expect(200);
+
+      expect(mockGetCachedAnswer).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns the cached answer via SSE on a cache hit (no AI call)", async () => {
+      mockGetCachedAnswer.mockResolvedValueOnce(CACHED_ANSWER);
+
+      const res = await supertest(app)
+        .post("/api/reference/ask")
+        .send({ question: FIRST_QUESTION })
+        .expect(200);
+
+      expect(reconstructSseContent(res.text)).toBe(CACHED_ANSWER);
+      expect(mockGenerateContent).not.toHaveBeenCalled();
+    });
+
+    it("calls the AI and writes to cache on an SSE cache miss", async () => {
+      mockGetCachedAnswer.mockResolvedValueOnce(null);
+      mockGenerateContent.mockResolvedValueOnce({ text: AI_ANSWER });
+
+      const res = await supertest(app)
+        .post("/api/reference/ask")
+        .send({ question: FIRST_QUESTION })
+        .expect(200);
+
+      expect(reconstructSseContent(res.text)).toBe(AI_ANSWER);
+      expect(mockGenerateContent).toHaveBeenCalledTimes(1);
+      expect(mockSetCachedAnswer).toHaveBeenCalledTimes(1);
+    });
+  });
+});
