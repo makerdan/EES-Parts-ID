@@ -19,24 +19,37 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 
+const jestBin = join(ROOT, "node_modules", ".bin", "jest");
+
 /**
- * Minimum number of test suites that must start (pass OR fail with real tests
- * OR fail to load — any state counts as "ran").  We currently have 68 .test.ts
- * files across __tests__/ and src/__tests__/; set the floor at 60 so a single
- * accidentally-excluded file doesn't trip the guard, but a broad module-load
+ * Auto-compute the suite floor by asking Jest which files it would run.
+ *
+ * The floor is set to 85 % of the discovered file count.  This means a single
+ * accidentally-excluded file won't trip the guard, but a broad module-load
  * failure (where many suites evaporate) is caught immediately.
  *
- * Update this constant when test files are intentionally added or removed.
+ * Raise or lower the percentage here if false positives / false negatives
+ * become a problem — no other change is required when test files are added or
+ * removed.
  */
-const SUITE_FLOOR = 60;
+const SUITE_FLOOR_RATIO = 0.85;
+
+const listResult = spawnSync(jestBin, ["--listTests"], { cwd: ROOT, encoding: "utf8" });
+if (listResult.error || listResult.status !== 0) {
+  const detail = listResult.error?.message ?? listResult.stderr?.trim() ?? "(no output)";
+  console.error(`\nERROR: Suite-count guard: "jest --listTests" failed — cannot compute floor.\n  ${detail}`);
+  process.exit(1);
+}
+const discoveredCount = listResult.stdout.trim().split("\n").filter(Boolean).length;
+const SUITE_FLOOR = Math.floor(discoveredCount * SUITE_FLOOR_RATIO);
+console.log(`Suite-count guard: discovered ${discoveredCount} test files → floor = ${SUITE_FLOOR} (${Math.round(SUITE_FLOOR_RATIO * 100)}%)`);
+
 
 const RESULTS_FILE = join(ROOT, "jest-results.json");
 
 if (existsSync(RESULTS_FILE)) {
   unlinkSync(RESULTS_FILE);
 }
-
-const jestBin = join(ROOT, "node_modules", ".bin", "jest");
 
 const result = spawnSync(
   jestBin,
