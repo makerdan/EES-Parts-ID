@@ -960,7 +960,7 @@ export default function SearchScreen() {
   }, []);
 
   // Re-run the last search with each dimension bound widened by the given tolerance fraction
-  const handleSimilarSizeSearch = (tolerance: number = similarSizeTolerance) => {
+  const handleSimilarSizeSearch = async (tolerance: number = similarSizeTolerance) => {
     const f = filtersRef.current;
     const expand = (val: string, factor: number): string => {
       const n = parseFloat(val);
@@ -980,6 +980,19 @@ export default function SearchScreen() {
       minDiameter: f.minDiameter.trim() !== "" ? expand(f.minDiameter, lo) : f.minDiameter,
       maxDiameter: f.maxDiameter.trim() !== "" ? expand(f.maxDiameter, hi) : f.maxDiameter,
     };
+
+    // Check connectivity before firing the network request. When the device
+    // is definitely offline we skip the mutation and the 8-second wait
+    // entirely and go straight to the local Fuse fallback (mirrors handleSearch).
+    let isCurrentlyConnected = true;
+    try {
+      const netState = await NetInfo.fetch();
+      isCurrentlyConnected = netState.isConnected !== false;
+    } catch {
+      // If NetInfo itself fails, assume connected and let the normal
+      // timeout + error-handler path deal with it.
+    }
+
     setShowSimilarSizeBanner(false);
     setFilters(expanded);
     setPinnedParts([]);
@@ -989,6 +1002,16 @@ export default function SearchScreen() {
     aiSearchGenRef.current += 1;
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+
+    if (!isCurrentlyConnected) {
+      // runOfflineFallback reads filtersRef.current, which the setFilters(expanded)
+      // above only updates after the next render. Sync the ref now so the offline
+      // fallback uses the widened tolerance bounds, not the stale pre-expanded ones.
+      filtersRef.current = expanded;
+      runOfflineFallback();
+      return;
+    }
+
     const body = buildSearchBody(expanded, activeCategorySlugRef.current);
     searchMutation.mutate({ data: body });
     searchTimeoutRef.current = setTimeout(() => {
@@ -999,11 +1022,24 @@ export default function SearchScreen() {
     }, SEARCH_TIMEOUT_MS);
   };
 
-  const handleCategorySelect = useCallback((slug: string, label: string) => {
+  const handleCategorySelect = useCallback(async (slug: string, label: string) => {
     setMode("search");
     setActiveCategorySlug(slug);
     setActiveCategoryLabel(label);
     activeCategorySlugRef.current = slug;
+
+    // Check connectivity before firing the network request. When the device
+    // is definitely offline we skip the mutation and the 8-second wait
+    // entirely and go straight to the local Fuse fallback (mirrors handleSearch).
+    let isCurrentlyConnected = true;
+    try {
+      const netState = await NetInfo.fetch();
+      isCurrentlyConnected = netState.isConnected !== false;
+    } catch {
+      // If NetInfo itself fails, assume connected and let the normal
+      // timeout + error-handler path deal with it.
+    }
+
     setPinnedParts([]);
     setOfflineResults(null);
     setIsOffline(false);
@@ -1013,6 +1049,12 @@ export default function SearchScreen() {
     aiSearchGenRef.current += 1;
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+
+    if (!isCurrentlyConnected) {
+      runOfflineFallback();
+      return;
+    }
+
     const body = buildSearchBody(filtersRef.current, slug);
     searchMutation.mutate({ data: body });
     searchTimeoutRef.current = setTimeout(() => {
