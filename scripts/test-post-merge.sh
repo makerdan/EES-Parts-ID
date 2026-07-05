@@ -838,6 +838,102 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 26: SVG viewBox sync check is wired into post-merge.sh
+#
+# Guards against the check being silently skipped.  post-merge.sh must:
+#   (a) invoke the svgViewBoxApiSync Jest test (cannot be skipped by a
+#       missing env var since EXPO_PUBLIC_API_BASE is always set explicitly)
+#   (b) set EXPO_PUBLIC_API_BASE explicitly (so the test env-var guard fires)
+#   (c) wrap the test with `timeout 30` (so a slow server boot cannot produce
+#       a silent CI hang)
+# ---------------------------------------------------------------------------
+SCRIPT_CONTENT=$(cat "$SCRIPT_DIR/post-merge.sh")
+
+if echo "$SCRIPT_CONTENT" | grep -q 'svgViewBoxApiSync'; then
+  pass "viewbox-sync — svgViewBoxApiSync test invocation present in post-merge.sh"
+else
+  fail "viewbox-sync — svgViewBoxApiSync test invocation MISSING from post-merge.sh"
+fi
+
+if echo "$SCRIPT_CONTENT" | grep -q 'EXPO_PUBLIC_API_BASE'; then
+  pass "viewbox-sync — EXPO_PUBLIC_API_BASE is set in post-merge.sh (check cannot be silently skipped)"
+else
+  fail "viewbox-sync — EXPO_PUBLIC_API_BASE is not set in post-merge.sh; the check would be silently skipped"
+fi
+
+if grep -A 25 'run_viewbox_sync_check()' "$SCRIPT_DIR/post-merge.sh" | grep -qP 'timeout\s+[0-9]+'; then
+  pass "viewbox-sync — run_viewbox_sync_check wraps the test with a timeout guard"
+else
+  fail "viewbox-sync — run_viewbox_sync_check must wrap the pnpm test call with 'timeout <N>' to prevent silent CI hang"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 27: run_viewbox_sync_check is invoked after a successful health check
+#
+# Spawns post-merge.sh with a mock pnpm that:
+#   - records whether the parts-id test step was called with EXPO_PUBLIC_API_BASE set
+#   - exits 0 for codegen:fix (emitting the expected "drift auto-committed" line)
+#   - exits 0 for the viewBox sync test (simulating a PASS)
+# Asserts:
+#   (a) svgViewBoxApiSync was invoked
+#   (b) EXPO_PUBLIC_API_BASE was non-empty at invocation time
+#   (c) post-merge exits 0
+#
+# NOTE: result files live outside MOCK_BIN_DIR27 so rm -rf cannot delete them
+# before the assertions run.
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR27=$(mktemp -d)
+VIEWBOX_RESULT_DIR27=$(mktemp -d)
+VIEWBOX_CALLED_FILE27="$VIEWBOX_RESULT_DIR27/viewbox_called"
+VIEWBOX_API_BASE_FILE27="$VIEWBOX_RESULT_DIR27/viewbox_api_base"
+
+cat > "$MOCK_BIN_DIR27/git" << 'MOCKEOF'
+#!/bin/bash
+echo "artifacts/parts-id/components/PartCard.tsx"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR27/git"
+
+cat > "$MOCK_BIN_DIR27/pnpm" << MOCKEOF
+#!/bin/bash
+if echo "\$*" | grep -q 'svgViewBoxApiSync'; then
+  touch "$VIEWBOX_CALLED_FILE27"
+  printf '%s' "\${EXPO_PUBLIC_API_BASE:-}" > "$VIEWBOX_API_BASE_FILE27"
+fi
+echo "drift auto-committed"
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR27/pnpm"
+
+cat > "$MOCK_BIN_DIR27/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR27/curl"
+
+VIEWBOX_OUTPUT=$(PATH="$MOCK_BIN_DIR27:$PATH" PORT=8080 REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+VIEWBOX_EXIT=$?
+rm -rf "$MOCK_BIN_DIR27"
+
+assert_exit "viewbox-sync wired — post-merge exits 0 when viewBox check passes" 0 "$VIEWBOX_EXIT"
+
+if [[ -f "$VIEWBOX_CALLED_FILE27" ]]; then
+  pass "viewbox-sync wired — svgViewBoxApiSync test was invoked after successful health check"
+else
+  fail "viewbox-sync wired — svgViewBoxApiSync test was NOT invoked after successful health check"
+  echo "  post-merge output (last 20 lines):"
+  echo "$VIEWBOX_OUTPUT" | tail -20 | sed 's/^/    /'
+fi
+
+SAVED_API_BASE=""
+[[ -f "$VIEWBOX_API_BASE_FILE27" ]] && SAVED_API_BASE=$(cat "$VIEWBOX_API_BASE_FILE27")
+if [[ -n "$SAVED_API_BASE" ]]; then
+  pass "viewbox-sync wired — EXPO_PUBLIC_API_BASE was set at invocation (${SAVED_API_BASE})"
+else
+  fail "viewbox-sync wired — EXPO_PUBLIC_API_BASE was empty or not recorded; check would be silently skipped"
+fi
+rm -rf "$VIEWBOX_RESULT_DIR27"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
