@@ -955,26 +955,6 @@ export default function SearchScreen() {
     });
   }, []);
 
-  // Trigger a background sync whenever the app returns to the foreground and
-  // the Fuse index is older than FUSE_SOFT_STALE_MS (24 h). This is in addition
-  // to the mount-time check so workers who keep the app open all day still get
-  // fresh data when they bring the screen back up.
-  useEffect(() => {
-    const sub = AppState.addEventListener("change", (nextState) => {
-      if (nextState !== "active") return;
-      getFuseCacheSyncedAt().then(syncedAt => {
-        const age = syncedAt == null ? Infinity : Date.now() - syncedAt;
-        if (age > FUSE_SOFT_STALE_MS) {
-          syncAllInventory();
-        }
-      }).catch(() => {});
-    });
-    return () => sub.remove();
-  // syncAllInventory is a stable useCallback — the eslint dep warning is a
-  // false positive here because the mount-time guard (isSyncingRef) makes
-  // duplicate calls safe and avoids capturing a stale closure.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Re-run the last search with each dimension bound widened by the given tolerance fraction
   const handleSimilarSizeSearch = async (tolerance: number = similarSizeTolerance) => {

@@ -3,9 +3,12 @@
  *
  * Behaviour:
  * - Returns cached data immediately if available.
- * - Always starts a background fetch to keep data fresh (no TTL gate).
+ * - Starts a background fetch to keep data fresh; skips if a fetch completed
+ *   within the last FOREGROUND_REFETCH_TTL_MS (2 minutes) to avoid hammering
+ *   the server on every foreground resume.
  * - Skips duplicate in-flight fetches (fetchingRef guard).
- * - Re-fetches on app foreground via AppState subscription.
+ * - Re-fetches on app foreground only when data is stale per TTL.
+ * - Token-available re-fetch is skipped when a fetch is already in-flight.
  * - Caller can trigger an explicit refresh via `refetch()` (e.g. on tab focus).
  * - Error badge is suppressed when cached zones are already loaded — the map
  *   works offline as long as a prior successful fetch has been cached.
@@ -19,6 +22,9 @@ import { fetchWithAuth, getAuthToken, subscribeToTokenAvailable, unsubscribeFrom
 import { retryAsync } from "@/utils/retryAsync";
 
 const ZONES_CACHE_KEY = "parts_id_warehouse_zones_v1";
+
+/** Minimum time between foreground-triggered re-fetches (2 minutes). */
+const FOREGROUND_REFETCH_TTL_MS = 2 * 60 * 1000;
 
 export type ApiWarehouseZone = {
   id: number;
@@ -44,6 +50,10 @@ export function useWarehouseZones() {
   const [error, setError] = useState(false);
   const mountedRef = useRef(true);
   const fetchingRef = useRef(false);
+  // Timestamp (Date.now()) of the last successful background fetch.
+  // Used by the foreground AppState listener to skip re-fetches that are
+  // younger than FOREGROUND_REFETCH_TTL_MS.
+  const lastFetchedAtRef = useRef<number | null>(null);
   // True once we have zones from either cache or a successful fetch.
   // When true, background-refresh failures are silent (map works offline).
   const hasDataRef = useRef(false);
@@ -68,6 +78,7 @@ export function useWarehouseZones() {
         setLoading(false);
         hasDataRef.current = true;
         tokenExpiredMidSessionRef.current = false;
+        lastFetchedAtRef.current = Date.now();
       }
       const entry: ZoneCache = { zones: data.zones };
       await AsyncStorage.setItem(ZONES_CACHE_KEY, JSON.stringify(entry)).catch(() => {});
@@ -121,12 +132,17 @@ export function useWarehouseZones() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-fetch when app returns to foreground.
+  // Re-fetch when app returns to foreground, but only if data is older than
+  // FOREGROUND_REFETCH_TTL_MS. This prevents hammering the server on every
+  // short app-switch (e.g. copy-paste from another app).
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state: AppStateStatus) => {
-      if (state === "active") {
-        backgroundFetch();
+      if (state !== "active") return;
+      const lastFetchedAt = lastFetchedAtRef.current;
+      if (lastFetchedAt !== null && Date.now() - lastFetchedAt < FOREGROUND_REFETCH_TTL_MS) {
+        return;
       }
+      backgroundFetch();
     });
     return () => sub.remove();
   }, [backgroundFetch]);
@@ -138,8 +154,12 @@ export function useWarehouseZones() {
   //      once the user re-authenticates so fresh data arrives promptly.
   // Routine background token refreshes (token still present) do NOT trigger
   // a reload — the guard ensures this only fires after a null→non-null transition.
+  // Additionally, if a fetch is already in-flight (e.g. the mount effect started
+  // one before the token settled), we skip the redundant call entirely rather
+  // than relying solely on the fetchingRef guard inside backgroundFetch.
   useEffect(() => {
     const handleTokenAvailable = () => {
+      if (fetchingRef.current) return;
       if (!hasDataRef.current || tokenExpiredMidSessionRef.current) {
         backgroundFetch();
       }
