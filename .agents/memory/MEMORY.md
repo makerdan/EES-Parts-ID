@@ -26,3 +26,4 @@
 - [Clerk getToken unstable reference on web](clerk-gettoken-unstable-web.md) — getToken from useAuth() gets a new ref on token refresh; putting it in useCallback deps causes an infinite re-render/re-mount loop manifesting as screen flashing + request storm.
 - [Stuck task in AWAITING_INPUT with no question](awaiting-input-stuck-task.md) — agent crash at state-transition moment; fix is clicking "Update from main" in the Replit UI (cannot be automated).
 - [Silent task failure recovery](silent-task-failure-recovery.md) — FAILED/ERROR with no error message; distinct from AWAITING_INPUT; fix is Retry/re-run in the Replit UI (cannot be automated).
+- [api-zod codegen dev-boot clean race](codegen-dev-boot-race.md) — dev predev must use locked idempotent `codegen:ensure`, not raw `orval` clean, or concurrent api-server boot dies ERR_MODULE_NOT_FOUND.
