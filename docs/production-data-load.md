@@ -14,34 +14,31 @@ will be the raw sequential values from the import rather than the spatially
 correct ones, and the **Map it!** feature will show wrong section numbers for
 all numeric aisles.
 
+**This is now handled automatically.** The API server startup migration
+(`applyZoneSectionNumFix` in `artifacts/api-server/src/index.ts`) re-applies
+the fix on every server boot, and the tracked Drizzle migration
+`lib/db/drizzle/0033_zone_section_num_refix.sql` ensures the correction is
+also applied during any fresh `push`. No manual script step is required after
+loading zone data.
+
 ## Required steps after loading zone data into production
 
-Run the fix immediately after any bulk zone data load:
-
-```bash
-DATABASE_URL="$PROD_DATABASE_URL" \
-  pnpm --filter @workspace/api-server exec tsx src/scripts/apply-zone-section-fix.ts
-```
-
-The script re-applies both UPDATE statements from `0016_zone_section_num_fix.sql`
-and reports how many rows were affected. If the count is 0, the zone data was
-not present when the script ran — recheck that zones were loaded first.
-
-### What the script does
-
-1. Negates all existing `section_num` values for numeric aisles (step 1 of 0016 — clears unique-index slots)
-2. Re-assigns the correct spatial `section_num` for each known zone ID (step 2 of 0016)
-3. Prints a row count so you can confirm it had an effect
+1. Load zone data into `warehouse_zone` (via API import or direct SQL).
+2. Restart the API server (or let it restart automatically after deploy). The
+   startup migration runs automatically and applies the `section_num` fix.
+3. Verify: open the warehouse map in the app and confirm aisles 13–22 show
+   correct section labels.
 
 ### Checklist
 
 - [ ] Schema migrations applied (`pnpm --filter db push --force`)
 - [ ] Zone data loaded into `warehouse_zone` (via API import or direct SQL)
-- [ ] `apply-zone-section-fix.ts` run against the production database
+- [ ] API server restarted (startup migration runs `applyZoneSectionNumFix` automatically)
 - [ ] Verify: open the warehouse map in the app and confirm aisles 13–22 show correct section labels
 
 ## Relevant files
 
-- `lib/db/drizzle/0016_zone_section_num_fix.sql` — the canonical SQL
-- `artifacts/api-server/src/scripts/apply-zone-section-fix.ts` — the runnable script
+- `lib/db/drizzle/0016_zone_section_num_fix.sql` — the original canonical SQL
+- `lib/db/drizzle/0033_zone_section_num_refix.sql` — tracked Drizzle migration (replacement)
+- `artifacts/api-server/src/index.ts` — startup migration (`applyZoneSectionNumFix`)
 - `scripts/post-merge.sh` — where drizzle push runs on every merge
