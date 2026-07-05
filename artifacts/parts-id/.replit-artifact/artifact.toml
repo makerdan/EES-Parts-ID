@@ -13,7 +13,7 @@ version = "1.0.0"
 ensurePreviewReachable = "/status"
 name = "expo"
 paths = [ "/" ]
-localPort = 22660
+localPort = 19000
 
 [services.development]
 run = "pnpm --filter @workspace/parts-id run dev"
@@ -25,10 +25,10 @@ args = ["pnpm", "--filter", "@workspace/parts-id", "run", "build"]
 args = ["pnpm", "--filter", "@workspace/parts-id", "run", "serve"]
 
 [services.production.run.env]
-PORT = "22660"
+PORT = "19000"
 NODE_ENV = "production"
 
 [services.env]
-PORT = "22660"
+PORT = "19000"
 BASE_PATH = "/"
 EXPO_NO_INTERACTIVE = "1"
