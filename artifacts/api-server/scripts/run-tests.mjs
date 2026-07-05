@@ -13,6 +13,7 @@
 
 import { spawnSync } from "child_process";
 import { existsSync, readFileSync, unlinkSync } from "fs";
+import { glob } from "node:fs/promises";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -22,7 +23,14 @@ const ROOT = join(__dirname, "..");
 const jestBin = join(ROOT, "node_modules", ".bin", "jest");
 
 /**
- * Auto-compute the suite floor by asking Jest which files it would run.
+ * Auto-compute the suite floor by globbing test files directly on the
+ * filesystem instead of spawning "jest --listTests".
+ *
+ * Using a glob avoids a full Jest startup just to enumerate files, which is
+ * noticeable on cold node_modules caches or large projects.  The pattern
+ * below intentionally mirrors the testMatch value in jest.config.cjs
+ * ("**\/__tests__\/**\/*.test.ts") so the two stay in sync — if testMatch
+ * ever changes, update this pattern to match.
  *
  * The floor is set to 85 % of the discovered file count.  This means a single
  * accidentally-excluded file won't trip the guard, but a broad module-load
@@ -34,13 +42,10 @@ const jestBin = join(ROOT, "node_modules", ".bin", "jest");
  */
 const SUITE_FLOOR_RATIO = 0.85;
 
-const listResult = spawnSync(jestBin, ["--listTests"], { cwd: ROOT, encoding: "utf8" });
-if (listResult.error || listResult.status !== 0) {
-  const detail = listResult.error?.message ?? listResult.stderr?.trim() ?? "(no output)";
-  console.error(`\nERROR: Suite-count guard: "jest --listTests" failed — cannot compute floor.\n  ${detail}`);
-  process.exit(1);
-}
-const discoveredCount = listResult.stdout.trim().split("\n").filter(Boolean).length;
+const globbed = await Array.fromAsync(
+  glob("**/__tests__/**/*.test.ts", { cwd: ROOT, withFileTypes: false, exclude: ["node_modules/**"] })
+);
+const discoveredCount = globbed.length;
 const SUITE_FLOOR = Math.floor(discoveredCount * SUITE_FLOOR_RATIO);
 console.log(`Suite-count guard: discovered ${discoveredCount} test files → floor = ${SUITE_FLOOR} (${Math.round(SUITE_FLOOR_RATIO * 100)}%)`);
 
