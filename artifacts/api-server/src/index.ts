@@ -244,11 +244,25 @@ const migrationsTimeout = new Promise<void>((resolve) =>
   }, STARTUP_MIGRATIONS_TIMEOUT_MS),
 );
 
+const INIT_PROVIDER_TIMEOUT_MS = 8_000;
+
+function withStartupTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T | void> {
+  return Promise.race([
+    promise,
+    new Promise<void>((resolve) =>
+      setTimeout(() => {
+        logger.warn({ timeoutMs, label }, `Startup step timed out — proceeding anyway`);
+        resolve();
+      }, timeoutMs),
+    ),
+  ]);
+}
+
 Promise.race([
   Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), checkZoneSectionNumIntegrity(), migrateUsersTable()]),
   migrationsTimeout,
 ])
-  .then(() => initProvider())
+  .then(() => withStartupTimeout(initProvider(), INIT_PROVIDER_TIMEOUT_MS, "initProvider"))
   .then(() => startServer(app, port, MAX_RETRIES))
   .then((server) => {
     const shutdown = (signal: string) => {
