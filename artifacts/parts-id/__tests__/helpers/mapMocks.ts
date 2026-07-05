@@ -152,25 +152,37 @@ export function createFloorPlanCacheMock(): object {
 }
 
 /**
- * @/utils/mapViewport — correct constants matching mapViewport.ts production values.
+ * @/utils/mapViewport — mock factory that derives numeric constants from the
+ * real source module via jest.requireActual so they can never drift.
  *
- * Earlier tests used stale constants (SVG_VIEWBOX_W: 3592.55, MIN_SCALE: 0.5) that
- * no longer matched the source.  This canonical factory uses the real values.
+ * Earlier tests hardcoded stale values (SVG_VIEWBOX_W: 3592.55, MIN_SCALE: 0.5)
+ * that no longer matched the source.  By importing the actual constants here,
+ * any future change to mapViewport.ts is reflected automatically and a drift
+ * causes a test failure rather than a silent wrong-value pass.
  */
 export function createMapViewportMock(): object {
+  const actual = jest.requireActual<{
+    SVG_VIEWBOX_W: number;
+    SVG_VIEWBOX_H: number;
+    SVG_ASPECT:    number;
+    MIN_SCALE:     number;
+    MAX_SCALE:     number;
+    FIT_PADDING:   number;
+    ZOOM_STOPS:    ReadonlyArray<{ z: number; scale: number; label: string }>;
+  }>("@/utils/mapViewport");
   return {
-    SVG_VIEWBOX_W:       7329.6001,
-    SVG_VIEWBOX_H:       4997.2798,
-    SVG_ASPECT:          7329.6001 / 4997.2798,
-    MIN_SCALE:           0.8,
-    MAX_SCALE:           50,
-    FIT_PADDING:         16,
-    ZOOM_STOPS:          [{ scale: 1.5 }, { scale: 4 }, { scale: 10 }, { scale: 22 }, { scale: 45 }],
+    SVG_VIEWBOX_W:       actual.SVG_VIEWBOX_W,
+    SVG_VIEWBOX_H:       actual.SVG_VIEWBOX_H,
+    SVG_ASPECT:          actual.SVG_ASPECT,
+    MIN_SCALE:           actual.MIN_SCALE,
+    MAX_SCALE:           actual.MAX_SCALE,
+    FIT_PADDING:         actual.FIT_PADDING,
+    ZOOM_STOPS:          actual.ZOOM_STOPS,
     panBounds:           jest.fn().mockReturnValue({ maxX: 0, maxY: 0 }),
-    clampScale:          jest.fn().mockImplementation((s: number) => Math.max(0.8, Math.min(50, s))),
+    clampScale:          jest.fn().mockImplementation((s: number) => Math.max(actual.MIN_SCALE, Math.min(actual.MAX_SCALE, s))),
     parseContentViewBox: jest.fn().mockReturnValue(null),
     fitContentViewport:  jest.fn().mockReturnValue({ scale: 1, tx: 0, ty: 0 }),
-    computeFitTarget:    jest.fn().mockReturnValue({ scale: 1.5, tx: 0, ty: 0 }),
+    computeFitTarget:    jest.fn().mockReturnValue({ scale: actual.ZOOM_STOPS[0].scale, tx: 0, ty: 0 }),
     makeTileViewBox:     jest.fn().mockReturnValue("0 0 100 100"),
     computeFocusPan:     jest.fn().mockReturnValue({ tx: 0, ty: 0 }),
     tileGridSize:        jest.fn().mockReturnValue(1),
