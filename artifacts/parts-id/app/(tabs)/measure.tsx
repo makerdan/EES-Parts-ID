@@ -39,6 +39,7 @@ import {
   View,
 } from "react-native";
 
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { fmtForUnit, parseFieldToMm } from "@/components/MeasurePartScreen";
 import { useApp } from "@/contexts/AppContext";
@@ -69,7 +70,7 @@ function getLidarHint(msg: string): string {
 
 type Phase = "ready" | "scanning" | "confirm";
 
-export default function MeasureScreen() {
+function MeasureScreen() {
   "use no memo";
   useTrackScreen("Measure Part");
 
@@ -458,6 +459,14 @@ export default function MeasureScreen() {
         )}
       </SafeAreaView>
     </View>
+  );
+}
+
+export default function MeasureTab() {
+  return (
+    <ErrorBoundary>
+      <MeasureScreen />
+    </ErrorBoundary>
   );
 }
 

@@ -24,6 +24,7 @@ import React, {
 import { Toaster, toast } from "sonner";
 import { computeWheelZoom } from "../utils/wheelZoom";
 import { normRect as normRectUtil } from "../utils/rubberBandSelect";
+import { screenToSvg } from "../utils/svgCoords";
 import { useRubberBand } from "../hooks/useRubberBand";
 import { isValidAisleId, findDuplicateConflict, normalizeAisleId, type ZoneLike } from "@workspace/zone-validation";
 import warehouseMapFallback from "../../public/warehouse-map.svg?raw";
@@ -506,18 +507,6 @@ export function buildAutoNumCollisions(
     }
   }
   return collisions;
-}
-
-function screenToSvg(
-  clientX: number,
-  clientY: number,
-  rect: DOMRect,
-  tf: Tf,
-): Pt {
-  return {
-    x: (clientX - rect.left - tf.x) / tf.s,
-    y: (clientY - rect.top - tf.y) / tf.s,
-  };
 }
 
 // normRect is imported from rubberBandSelect.ts as normRectUtil.
