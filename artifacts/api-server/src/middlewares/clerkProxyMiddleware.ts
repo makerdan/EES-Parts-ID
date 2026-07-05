@@ -27,6 +27,8 @@ import type { RequestHandler } from "express";
 import type { IncomingHttpHeaders } from "http";
 import { createProxyMiddleware } from "http-proxy-middleware";
 
+import { logger } from "../lib/logger";
+
 const CLERK_FAPI = "https://frontend-api.clerk.dev";
 export const CLERK_PROXY_PATH = "/api/__clerk";
 
@@ -137,6 +139,10 @@ export function clerkProxyMiddleware(): RequestHandler {
         proxyRes.on("data", (chunk: Buffer) => {
           buffered += chunk.length;
           if (buffered > MAX_BUFFER_BYTES) {
+            logger.warn(
+              { bytes: buffered },
+              "Clerk proxy: upstream response exceeds 10 MB buffer cap; aborting proxied response",
+            );
             proxyRes.destroy(new Error("Clerk proxy: upstream response exceeds buffer cap"));
             return;
           }
@@ -153,8 +159,13 @@ export function clerkProxyMiddleware(): RequestHandler {
             // Set a length so the empty 502 isn't sent chunked (which the
             // deployment edge would reject just like the original response).
             res.writeHead(502, { "content-length": "0" });
+            res.end();
+          } else {
+            // Headers already sent — we cannot write a new status code.
+            // Destroy the socket so the client sees a hard close rather than
+            // a response that never finishes (hung connection).
+            res.destroy();
           }
-          res.end();
         });
       },
     },
