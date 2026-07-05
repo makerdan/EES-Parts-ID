@@ -1,7 +1,7 @@
 import { clerkMiddleware } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
 import cors from "cors";
-import express, { type Express } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
 
@@ -183,5 +183,26 @@ app.use(
 
 app.use("/api", requireAppAuth);
 app.use("/api", router);
+
+// ── Global error handler ─────────────────────────────────────────────────────
+// Any error passed to next(err) by upstream middleware or route handlers (e.g.
+// an unexpected DB failure inside requireAppAuth) lands here. Log it through the
+// structured logger so it reaches the error log instead of being silently
+// swallowed by Express's default handler, then return a generic 500 JSON
+// response without leaking internal error details.
+//
+// The 4-argument signature is required for Express to treat this as an error
+// handler rather than a normal middleware.
+app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+  logger.error({ err }, "Unhandled error reached the global error handler");
+  // If the response has already started, we cannot rewrite the status/body;
+  // hand off to Express's default handler so the connection is torn down
+  // correctly rather than left hanging.
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+  res.status(500).json({ error: "Internal server error" });
+});
 
 export default app;
