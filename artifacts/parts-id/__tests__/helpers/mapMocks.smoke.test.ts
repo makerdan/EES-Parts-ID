@@ -28,7 +28,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { createReanimatedMock, createUseColorsMock, createFloorPlanCacheMock } from "./mapMocks";
+import { createFloorPlanCacheMock, createGestureHandlerMock, createReanimatedMock, createUseColorsMock } from "./mapMocks";
 
 const WAREHOUSE_MAP_VIEW_PATH = path.resolve(
   __dirname,
@@ -64,6 +64,158 @@ function parseReanimatedValueImports(source: string): string[] {
       return aliasIdx >= 0 ? s.slice(0, aliasIdx).trim() : s;
     });
 }
+
+/**
+ * Parse all method names called at depth-0 on each gesture chain in
+ * WarehouseMapView.tsx.  "Depth-0" means the method is called directly on the
+ * fluent gesture builder object — NOT inside a callback body passed to another
+ * method.  For example:
+ *
+ *   Gesture.Pan()
+ *     .minPointers(1)          ← depth-0: captured ✓
+ *     .onBegin(() => {
+ *       runOnJS(foo)();         ← depth > 0: ignored ✓
+ *     })
+ *     .onEnd(() => { ... });   ← depth-0: captured ✓
+ *
+ * Returns a sorted, deduplicated array of method names found across all
+ * Pan/Pinch/Tap/LongPress gesture constructions in the file.
+ */
+function parseGestureChainMethods(
+  source: string,
+): { type: string; methods: string[] }[] {
+  // Strip single-line comments before depth-tracking so unbalanced parens
+  // inside comments (e.g. "// screenX = (cx/VBW)*svgRW/2) * ...") do not
+  // corrupt the bracket depth counter and cause false-positive method matches.
+  const stripped = source
+    .split("\n")
+    .map((line) => {
+      const idx = line.indexOf("//");
+      return idx >= 0 ? line.slice(0, idx) : line;
+    })
+    .join("\n");
+
+  const GESTURE_TYPES = ["Pan", "Pinch", "Tap", "LongPress", "Fling", "Rotation"];
+  const result: { type: string; methods: string[] }[] = [];
+
+  for (const gestureType of GESTURE_TYPES) {
+    const methods = new Set<string>();
+    const startRe = new RegExp(`Gesture\\.${gestureType}\\(\\)`, "g");
+    let m: RegExpExecArray | null;
+
+    while ((m = startRe.exec(stripped)) !== null) {
+      let depth = 0;
+      let i = m.index + m[0].length;
+
+      while (i < stripped.length) {
+        const ch = stripped[i];
+        if (ch === "(" || ch === "{" || ch === "[") {
+          depth++;
+          i++;
+        } else if (ch === ")" || ch === "}" || ch === "]") {
+          depth--;
+          i++;
+        } else if (ch === ";" && depth === 0) {
+          break;
+        } else if (ch === "." && depth === 0) {
+          i++;
+          const nameStart = i;
+          while (i < stripped.length && /\w/.test(stripped[i])) i++;
+          const methodName = stripped.slice(nameStart, i);
+          if (methodName.length > 0 && i < stripped.length && stripped[i] === "(") {
+            methods.add(methodName);
+          }
+        } else {
+          i++;
+        }
+      }
+    }
+
+    if (methods.size > 0) {
+      result.push({ type: gestureType, methods: [...methods].sort() });
+    }
+  }
+
+  return result;
+}
+
+describe("createGestureHandlerMock() smoke — every gesture chain method used in WarehouseMapView is mocked", () => {
+  /**
+   * WHY THIS EXISTS
+   * ---------------
+   * createGestureHandlerMock() builds chainable gesture objects via a hardcoded
+   * list of method names in makeChainable().  If a new method is added to a
+   * Gesture.Pan / Pinch / Tap chain in WarehouseMapView.tsx but omitted from
+   * that list, the proxy silently swallows the call and tests still pass — the
+   * component actually receives `undefined` at runtime.
+   *
+   * This test extracts every method called at depth-0 on gesture chains in the
+   * component source and asserts each one exists as a function on the mock
+   * object.  A new method will cause this test to fail immediately with a clear
+   * message before it can cause a silent regression.
+   *
+   * HOW TO FIX A FAILURE
+   * --------------------
+   * If this test fails with "X is not a function":
+   *   1. Add X to the method name array inside makeChainable() in mapMocks.ts.
+   * The test itself never needs updating.
+   */
+
+  let gestureChains: { type: string; methods: string[] }[];
+  let gestureMock: Record<string, (...args: unknown[]) => Record<string, unknown>>;
+
+  beforeAll(() => {
+    const source = fs.readFileSync(WAREHOUSE_MAP_VIEW_PATH, "utf-8");
+    gestureChains = parseGestureChainMethods(source);
+    gestureMock = (
+      createGestureHandlerMock() as { Gesture: typeof gestureMock }
+    ).Gesture;
+  });
+
+  it("WarehouseMapView.tsx uses at least one Gesture chain method (sanity check)", () => {
+    const total = gestureChains.reduce((n, g) => n + g.methods.length, 0);
+    expect(total).toBeGreaterThan(0);
+  });
+
+  it("mock exports a Gesture object with Pan, Pinch, and Tap factories", () => {
+    expect(typeof gestureMock.Pan).toBe("function");
+    expect(typeof gestureMock.Pinch).toBe("function");
+    expect(typeof gestureMock.Tap).toBe("function");
+  });
+
+  it("every depth-0 chain method used in WarehouseMapView is callable on the mock chainable object", () => {
+    const failures: string[] = [];
+
+    for (const { type, methods } of gestureChains) {
+      const factory = gestureMock[type] as (() => Record<string, unknown>) | undefined;
+      if (typeof factory !== "function") {
+        failures.push(`  • Gesture.${type} factory is missing from the mock`);
+        continue;
+      }
+
+      const chainable = factory();
+      for (const method of methods) {
+        if (typeof chainable[method] !== "function") {
+          failures.push(
+            `  • Gesture.${type}().${method}() — missing from makeChainable() ` +
+              `(got: ${typeof chainable[method]})`,
+          );
+        }
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(
+        `The following gesture chain methods are used by WarehouseMapView.tsx ` +
+          `but are missing or not a function in createGestureHandlerMock():\n` +
+          failures.join("\n") +
+          `\n\nFix: add each missing method name to the array inside makeChainable() in mapMocks.ts.`,
+      );
+    }
+
+    expect(failures).toEqual([]);
+  });
+});
 
 describe("createReanimatedMock() smoke — every Reanimated value import in WarehouseMapView is mocked", () => {
   let mock: Record<string, unknown>;
