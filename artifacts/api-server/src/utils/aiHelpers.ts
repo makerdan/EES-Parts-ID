@@ -107,16 +107,58 @@ export function buildImageContent(images: Array<string>): Array<{
 }
 
 /**
- * Extract the first JSON object from an AI response string and parse it.
- * Returns null when no valid JSON object is found, when JSON.parse throws,
- * or when the parsed value is not a plain non-null object (e.g. an array or
- * primitive — which would pass an unchecked `as` cast but fail at use-time).
+ * Extract the first JSON value from an AI response string and parse it.
+ *
+ * Scans for the first `{` or `[` and walks the string tracking bracket depth
+ * (while respecting string literals and escapes) to isolate exactly that one
+ * balanced JSON structure — so trailing prose or a second object doesn't
+ * corrupt the parse the way a greedy `.*` match would.
+ *
+ * Returns null when no bracketed JSON is found, when JSON.parse throws, or
+ * when the parsed value is not a plain non-null object (e.g. an array — which
+ * would pass an unchecked `as` cast but fail at use-time downstream). This
+ * non-object guard is why arrays are rejected even though they parse cleanly.
  */
 export function extractJsonFromText(text: string): Record<string, unknown> | null {
+  const start = text.search(/[{[]/);
+  if (start === -1) return null;
+
+  const open = text[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let end = -1;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === open) {
+      depth++;
+    } else if (ch === close) {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+
+  if (end === -1) return null;
+
   try {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    const parsed: unknown = JSON.parse(match[0]);
+    const parsed: unknown = JSON.parse(text.slice(start, end + 1));
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
       return null;
     }
