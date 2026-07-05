@@ -31,7 +31,7 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
 import renderer, { act } from "react-test-renderer";
-import { flushPromises as rawFlush } from "./helpers/appMocks";
+import { makeAppMock, flushPromises as rawFlush } from "./helpers/appMocks";
 
 // ─── expo-router: capture useFocusEffect callback and router calls ────────────
 
@@ -284,32 +284,15 @@ const mockShowToast              = jest.fn();
 const mockSetPendingMapFocus     = jest.fn();
 const mockRegisterLogoutHandler  = jest.fn(() => () => {});
 
-function makeAppMock(overrides: Record<string, unknown> = {}) {
-  return {
-    settings: {
-      textSize: "normal" as const,
-      defaultConfidenceThreshold: 50,
-      themeMode: "system" as const,
-      shelfViewEnabled: true,
-      scanSound: true,
-      dimensionUnit: "mm" as const,
-    },
-    updateSetting:           jest.fn(),
-    logout:                  jest.fn(),
-    clearCache:              jest.fn(),
-    isLoading:               false,
-    isAdmin:                 false,
-    adminToken:              null,
+function makeTestAppMock(overrides: Record<string, unknown> = {}) {
+  return makeAppMock({
     registerLogoutHandler:   mockRegisterLogoutHandler,
     setPendingMapFocus:      mockSetPendingMapFocus,
     showToast:               mockShowToast,
     setPinnedParts:          mockSetPinnedParts,
-    pendingMeasureSearch:    null,
     setPendingMeasureSearch: mockSetPendingMeasureSearch,
-    textFontScale:           1.0,
-    pinnedParts:             [],
     ...overrides,
-  };
+  });
 }
 
 // ─── Suppress react-test-renderer deprecation warning ────────────────────────
@@ -383,7 +366,7 @@ import { WarehouseMapView } from "../components/WarehouseMapView";
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function renderSearch(appOverrides: Record<string, unknown> = {}) {
-  useApp.mockReturnValue(makeAppMock(appOverrides));
+  useApp.mockReturnValue(makeTestAppMock(appOverrides));
   const tree = await render(<SearchScreen />);
   activeTree = tree;
   await flushPromises();
@@ -391,7 +374,7 @@ async function renderSearch(appOverrides: Record<string, unknown> = {}) {
 }
 
 async function renderPhoto(appOverrides: Record<string, unknown> = {}) {
-  useApp.mockReturnValue(makeAppMock(appOverrides));
+  useApp.mockReturnValue(makeTestAppMock(appOverrides));
   const tree = await render(<PhotoScreen />);
   activeTree = tree;
   await flushPromises();
@@ -696,7 +679,7 @@ describe("PhotoScreen – MeasurePartScreen confirm (admin search mode)", () => 
 
 describe("WarehouseMapView – focusAisleNum effect calls onFocusConsumed when no zone matches", () => {
   it("calls onFocusConsumed exactly once and onFocusFailed exactly once", async () => {
-    useApp.mockReturnValue(makeAppMock());
+    useApp.mockReturnValue(makeTestAppMock());
 
     const onFocusConsumed = jest.fn();
     const onFocusFailed   = jest.fn();
