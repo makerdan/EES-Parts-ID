@@ -19,11 +19,26 @@ export function normalizeMeasurement(input: string): string {
     .replace(/\bin\b/g, '"');
 }
 
+/**
+ * Expand a manufacturer catalog number into a bag of natural-language search
+ * terms by decoding the electrical part-numbering conventions embedded in it.
+ *
+ * Electricians type catalog numbers ("QO120"), but the free-text description
+ * index is indexed on words ("single pole", "20 amp"). This function bridges
+ * the two: each regex recognises a family's encoding scheme and emits the human
+ * synonyms a searcher would actually use, so a catalog-number query still hits
+ * description-only matches. It is additive and best-effort — an unrecognised
+ * catalog simply yields no extra terms.
+ */
 export function parseCatalogNumber(catalog: string): Array<string> {
   const terms: Array<string> = [];
   const c = catalog.toUpperCase();
 
-  // Breakers: BR120, QO120, CH120, HOM120, THQL1120
+  // Breakers: <series><poles?><amps>, e.g. BR120 = BR series, 1 pole, 20 A;
+  // THQL1120 = THQL series, 1 pole, 120 A. Convention: the trailing 2-3 digits
+  // are the amperage and the optional 1-2 digits before them are the pole count
+  // (1=single, 2=double, 3=three). The leading letters name the breaker family
+  // (BR/QO/CH/HOM/… are the common load-center series across manufacturers).
   const breaker = c.match(/^(BR|QO|CH|HOM|THQL|MP|SWD|FH|HH|Q1)(\d{1,2})?(\d{2,3})/i);
   if (breaker) {
     const series = breaker[1];
@@ -34,7 +49,9 @@ export function parseCatalogNumber(catalog: string): Array<string> {
     if (amps) terms.push(`${amps}a`, `${amps}amp`, `${amps} ampere`, `${amps}A breaker`);
   }
 
-  // Wire/cable: NM-B, MC, THHN, THWN, with gauge patterns
+  // Wire/cable gauge as a "gauge/conductors" fraction, e.g. 12/2 = 12 AWG wire
+  // with 2 conductors, 14/3 = 14 AWG with 3. The second number is the conductor
+  // count, so emit the "N conductor" synonym for the common 2- and 3-wire cases.
   const wireGauge = c.match(/(\d+)\s*\/\s*(\d+)/);
   if (wireGauge) {
     terms.push(`${wireGauge[1]}/${wireGauge[2]}`, `${wireGauge[1]} ${wireGauge[2]} wire`, `${wireGauge[1]} awg`);
@@ -42,20 +59,26 @@ export function parseCatalogNumber(catalog: string): Array<string> {
     if (wireGauge[2] === "3") terms.push("3 conductor");
   }
 
-  // Wire gauge alone (AWG sizes range from 0000=4/0 up to 750 MCM)
+  // Bare wire gauge (no conductor count). AWG numbering runs inverted — a larger
+  // number is a thinner wire — and tops out around 750 MCM for the largest
+  // cables, so cap at 750 to avoid treating arbitrary big numbers as a gauge.
   const awg = c.match(/^(\d+)\s*(AWG|GA)?/);
   if (awg && parseInt(awg[1]) <= 750) {
     terms.push(`${awg[1]} awg`, `${awg[1]} gauge`, `#${awg[1]}`);
   }
 
-  // Aught notation (0, 00, 000, 0000 = 1/0, 2/0, 3/0, 4/0)
+  // "Aught" notation for gauges below 1 AWG: the count of zeros is the aught
+  // size, written N/0. So "0"=1/0 (one aught), "00"=2/0, "000"=3/0, "0000"=4/0.
   const aught = c.match(/^(0{1,4})$/);
   if (aught) {
     const n = aught[1].length;
     terms.push(`${n}/0`, `${n} aught`, `${n}/0 awg`);
   }
 
-  // Receptacle: DR15, CR20, etc.
+  // Receptacles: <type><amps><color?>, e.g. DR15 = 15 A duplex receptacle,
+  // CR20IVY = 20 A commercial receptacle in ivory. The 2-digit field is the
+  // amperage; the optional trailing letters are a manufacturer color code that
+  // we translate to the plain color word (WHI→white, IVY→ivory, …).
   const recep = c.match(/^(DR|CR|TR|GF|WR)(\d{2})(\w{2,5})?/i);
   if (recep) {
     const amps = parseInt(recep[2]);
@@ -70,13 +93,17 @@ export function parseCatalogNumber(catalog: string): Array<string> {
     }
   }
 
-  // Transformer voltage pattern
+  // Transformers: V<primaryVolts>M<VA>, e.g. V480M100 = 480 V primary, 100 VA.
+  // The "V…" number is the input voltage and the "M…" number is the capacity in
+  // volt-amperes.
   const xfmr = c.match(/^V(\d+)M(\d+)/i);
   if (xfmr) {
     terms.push("transformer", `${xfmr[1]}v`, `${xfmr[2]}va`);
   }
 
-  // Conduit size from catalog
+  // Conduit: <sizeInches><type>, e.g. 2EMT = 2-inch EMT, 1PVC = 1-inch PVC.
+  // The leading number is the trade size in inches; the letters are the conduit
+  // material/type code.
   const conduitSize = c.match(/^(\d+)\s*(EMT|IMC|RMC|PVC|ENT)/i);
   if (conduitSize) {
     terms.push(`${conduitSize[1]} inch`, conduitSize[2].toLowerCase(), "conduit");

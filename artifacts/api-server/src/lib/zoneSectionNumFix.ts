@@ -54,7 +54,24 @@ export async function applyZoneSectionNumFix(
 
     logger.info("Applying zone section_num fix for numeric aisles (13-22)…");
 
+    // The remap below is a per-id lookup table (WHEN <id> THEN <newSectionNum>).
+    // It is a permutation: the same section_num value can be both a source and a
+    // destination for different rows, so applying the CASE in place would let a
+    // row already rewritten to value V be re-read as the source V by a later
+    // row — except SQL CASE keys on `id`, not on the live value, so that hazard
+    // does not occur here.  The real reason for the two-step is idempotency and
+    // scope safety: the first UPDATE negates every numeric-aisle section_num,
+    // flipping it to a distinct negative "marker" state.  Because the sentinel
+    // probe above only re-runs the fix when a sentinel is wrong, and every id
+    // touched by the CASE is reset by an explicit WHEN, the negate step
+    // guarantees any row the CASE does NOT list (ELSE section_num) is left as a
+    // negative value it would never legitimately hold — making a partial/failed
+    // migration obvious rather than silently plausible.  Both statements run in
+    // one transaction so the intermediate negative state is never observable.
     await db.transaction(async (tx) => {
+      // Step 1: flip every numeric-aisle section_num to its negation as a guard
+      // marker (see block comment above).  Restricted to numeric aisle_ids
+      // (13-22) via the POSIX regex so alpha aisles are untouched.
       await tx.execute(sql`
         UPDATE warehouse_zone
         SET section_num = -section_num
@@ -62,6 +79,9 @@ export async function applyZoneSectionNumFix(
           AND section_num IS NOT NULL
       `);
 
+      // Step 2: remap each affected row to its corrected section_num via an
+      // explicit id→value lookup.  ELSE section_num leaves any unlisted numeric
+      // row at its negative marker so a gap in the table is detectable.
       await tx.execute(sql`
         UPDATE warehouse_zone
         SET section_num = CASE id
