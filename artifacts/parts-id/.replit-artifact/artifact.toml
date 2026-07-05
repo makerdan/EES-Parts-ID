@@ -18,9 +18,15 @@ localPort = 22660
 [services.development]
 run = "pnpm --filter @workspace/parts-id run dev"
 
-[services.production]
-build = [ "pnpm", "--filter", "@workspace/parts-id", "run", "build" ]
-run = [ "pnpm", "--filter", "@workspace/parts-id", "run", "serve" ]
+[services.production.build]
+args = ["pnpm", "--filter", "@workspace/parts-id", "run", "build"]
+
+[services.production.run]
+args = ["pnpm", "--filter", "@workspace/parts-id", "run", "serve"]
+
+[services.production.run.env]
+PORT = "22660"
+NODE_ENV = "production"
 
 [services.env]
 PORT = "22660"
