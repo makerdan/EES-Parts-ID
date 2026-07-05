@@ -837,7 +837,6 @@ else
   pass "settle — old fixed 'sleep \$CODEGEN_SETTLE_SECS' removed"
 fi
 
-# ---------------------------------------------------------------------------
 # Test 26: SVG viewBox sync check is wired into post-merge.sh
 #
 # Guards against the check being silently skipped.  post-merge.sh must:
@@ -932,6 +931,140 @@ else
   fail "viewbox-sync wired — EXPO_PUBLIC_API_BASE was empty or not recorded; check would be silently skipped"
 fi
 rm -rf "$VIEWBOX_RESULT_DIR27"
+
+# ---------------------------------------------------------------------------
+# Test 28: check_generated_files — returns 0 when both sentinel files exist
+#
+# Sources post-merge.sh so check_generated_files is in scope, then calls it
+# against real sentinel files.  Both lib/api-zod/src/generated/api.ts and
+# lib/api-client-react/src/generated/api.ts must be non-empty on a healthy
+# checkout.  This test fails if codegen was never run or the sentinel paths
+# have been renamed, giving a clear signal before any typecheck step.
+# ---------------------------------------------------------------------------
+SENTINELS_OUTPUT=$(env REPLIT_DEV_DOMAIN="mock-domain.test" bash -c '
+  source "'"$SCRIPT_DIR"'/post-merge.sh"
+  if check_generated_files; then
+    echo "SENTINELS_OK"
+  else
+    echo "SENTINELS_MISSING"
+  fi
+' 2>&1)
+
+if echo "$SENTINELS_OUTPUT" | grep -q "SENTINELS_OK"; then
+  pass "check_generated_files — both sentinel files exist and are non-empty"
+else
+  fail "check_generated_files — one or more sentinel files are missing/empty (run codegen first)"
+  echo "  output: $SENTINELS_OUTPUT"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 29: pre-flight warning — post-merge prints an interrupted-codegen
+#          warning when a sentinel file is missing before codegen:fix runs
+#
+# Spawns post-merge.sh with:
+#   - a mock that creates a temporary workspace where ONLY one sentinel file is
+#     absent (simulating a crash after orval's clean step but before write)
+#   - mock git: no lockfile or schema changes so those branches are skipped
+#   - mock pnpm: exits 0 for codegen:fix (simulating a successful re-run)
+#   - mock curl: healthy so the health check passes
+#
+# Verifies:
+#   (a) the WARNING about interrupted codegen is logged
+#   (b) post-merge still exits 0 (codegen:fix restored the files)
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR29=$(mktemp -d)
+MOCK_WORKSPACE29=$(mktemp -d)
+
+# Create the workspace directory tree with ONE sentinel missing.
+mkdir -p "$MOCK_WORKSPACE29/lib/api-zod/src/generated"
+mkdir -p "$MOCK_WORKSPACE29/lib/api-client-react/src/generated"
+# api-zod sentinel exists and is non-empty.
+echo "export const x = 1;" > "$MOCK_WORKSPACE29/lib/api-zod/src/generated/api.ts"
+# api-client-react sentinel is MISSING — simulates interrupted codegen.
+
+cat > "$MOCK_BIN_DIR29/git" << 'MOCKEOF'
+#!/bin/bash
+echo "artifacts/parts-id/components/PartCard.tsx"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR29/git"
+
+# pnpm: for codegen:fix, write the missing sentinel so the post-flight check
+# passes, simulating a successful codegen re-run.
+cat > "$MOCK_BIN_DIR29/pnpm" << MOCKEOF
+#!/bin/bash
+if echo "\$*" | grep -q 'codegen:fix'; then
+  echo "export const x = 1;" > "$MOCK_WORKSPACE29/lib/api-client-react/src/generated/api.ts"
+fi
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR29/pnpm"
+
+cat > "$MOCK_BIN_DIR29/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR29/curl"
+
+PREFLIGHT_OUTPUT=$(
+  PATH="$MOCK_BIN_DIR29:$PATH" \
+  REPLIT_DEV_DOMAIN="mock-domain.test" \
+  bash -c "cd '$MOCK_WORKSPACE29' && bash '$SCRIPT_DIR/post-merge.sh'" 2>&1
+)
+PREFLIGHT_EXIT=$?
+rm -rf "$MOCK_BIN_DIR29" "$MOCK_WORKSPACE29"
+
+assert_exit     "pre-flight warning — exits 0 after successful codegen:fix"           0 "$PREFLIGHT_EXIT"
+assert_contains "pre-flight warning — prints interrupted codegen warning"              "interrupted mid-run" "$PREFLIGHT_OUTPUT"
+
+# ---------------------------------------------------------------------------
+# Test 30: post-flight assertion — post-merge exits 1 with a clear error when
+#          generated files are still missing after codegen:fix completes
+#
+# Simulates the edge case where codegen:fix exits 0 but the sentinel files
+# are still absent (e.g. the orval output layout changed and no longer emits
+# the sentinel path).  post-merge must not silently succeed in this state —
+# it must fail loudly so the operator knows to investigate.
+#
+# Spawns post-merge.sh with:
+#   - mock pnpm: exits 0 for codegen:fix but does NOT create any sentinel files
+#   - mock git/curl: neutral so those branches succeed normally
+#   - workspace with NO sentinel files at all
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR30=$(mktemp -d)
+MOCK_WORKSPACE30=$(mktemp -d)
+
+mkdir -p "$MOCK_WORKSPACE30/lib/api-zod/src/generated"
+mkdir -p "$MOCK_WORKSPACE30/lib/api-client-react/src/generated"
+# Both sentinels absent — simulates a crash or config change.
+
+cat > "$MOCK_BIN_DIR30/git" << 'MOCKEOF'
+#!/bin/bash
+echo "artifacts/parts-id/components/PartCard.tsx"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR30/git"
+
+cat > "$MOCK_BIN_DIR30/pnpm" << 'MOCKEOF'
+#!/bin/bash
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR30/pnpm"
+
+cat > "$MOCK_BIN_DIR30/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR30/curl"
+
+POSTFLIGHT_OUTPUT=$(
+  PATH="$MOCK_BIN_DIR30:$PATH" \
+  REPLIT_DEV_DOMAIN="mock-domain.test" \
+  bash -c "cd '$MOCK_WORKSPACE30' && bash '$SCRIPT_DIR/post-merge.sh'" 2>&1
+)
+POSTFLIGHT_EXIT=$?
+rm -rf "$MOCK_BIN_DIR30" "$MOCK_WORKSPACE30"
+
+assert_exit     "post-flight assertion — exits 1 when sentinels still missing"        1 "$POSTFLIGHT_EXIT"
+assert_contains "post-flight assertion — prints clear error about missing files"       "Generated files still missing after codegen:fix" "$POSTFLIGHT_OUTPUT"
 
 # ---------------------------------------------------------------------------
 # Summary
