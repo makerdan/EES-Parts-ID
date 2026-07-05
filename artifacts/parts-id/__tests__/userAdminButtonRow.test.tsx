@@ -27,23 +27,7 @@ import type { UserRow } from "../utils/adminUserActions";
 
 // ─── @/hooks/useColors ────────────────────────────────────────────────────────
 
-jest.mock("@/hooks/useColors", () => ({
-  useColors: () => ({
-    background:        "#0f172a",
-    foreground:        "#f8fafc",
-    card:              "#1e293b",
-    border:            "#334155",
-    primary:           "#3b82f6",
-    primaryForeground: "#fff",
-    muted:             "#1e293b",
-    mutedForeground:   "#94a3b8",
-    destructive:       "#ef4444",
-    success:           "#22c55e",
-    warning:           "#f59e0b",
-    accent:            "#1e293b",
-    accentForeground:  "#f8fafc",
-  }),
-}));
+jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
 // ─── Suppress react-test-renderer deprecation noise ──────────────────────────
 
