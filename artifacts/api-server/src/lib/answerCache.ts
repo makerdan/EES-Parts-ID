@@ -27,12 +27,19 @@ export function normalizeQuestion(question: string): string {
  * answer can never overwrite — or be served as — a cold-start answer because
  * the two hashes occupy disjoint key spaces.
  *
- * Cold-start:  sha256(normalized)
- * With history: sha256(normalized + NUL + "history" + NUL + fingerprint)
+ * When `isAdmin` is true, an admin sentinel is mixed into the hash so that
+ * admin-aware answers (which may contain admin-only app knowledge) occupy a
+ * key space disjoint from non-admin answers. This guarantees a cached admin
+ * answer can never be served to a non-admin, and vice versa.
+ *
+ * Cold-start (non-admin):  sha256(normalized)
+ * Cold-start (admin):      sha256(normalized + NUL + "admin" + NUL)
+ * With history:            sha256(normalized + NUL + "history" + NUL + fingerprint [+ admin sentinel])
  */
 export function hashQuestion(
   normalized: string,
   history?: Array<{ q: string; a: string }>,
+  isAdmin = false,
 ): string {
   const hasher = crypto.createHash("sha256");
   hasher.update(normalized);
@@ -45,6 +52,10 @@ export function hashQuestion(
       .join("\u0001");
     hasher.update("\u0000history\u0000");
     hasher.update(fingerprint);
+  }
+  if (isAdmin) {
+    // Admin sentinel keeps admin and non-admin answers in disjoint key spaces.
+    hasher.update("\u0000admin\u0000");
   }
   return hasher.digest("hex");
 }
