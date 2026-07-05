@@ -143,8 +143,7 @@ async function migrateWarehouseZoneNullSectionNum(): Promise<void> {
       ALTER TABLE warehouse_zone ALTER COLUMN section_num DROP NOT NULL
     `);
   } catch (err) {
-    console.error("migrateWarehouseZoneNullSectionNum: failed to DROP NOT NULL on section_num:", err);
-    throw err;
+    logger.error({ err }, "migrateWarehouseZoneNullSectionNum: failed to DROP NOT NULL on section_num — skipping");
   }
   try {
     // Drop the column default so new inserts don't fall back to 0.
@@ -152,8 +151,7 @@ async function migrateWarehouseZoneNullSectionNum(): Promise<void> {
       ALTER TABLE warehouse_zone ALTER COLUMN section_num DROP DEFAULT
     `);
   } catch (err) {
-    console.error("migrateWarehouseZoneNullSectionNum: failed to DROP DEFAULT on section_num:", err);
-    throw err;
+    logger.error({ err }, "migrateWarehouseZoneNullSectionNum: failed to DROP DEFAULT on section_num — skipping");
   }
   try {
     // Null out any leftover sentinel rows (section_num <= 0) that were used
