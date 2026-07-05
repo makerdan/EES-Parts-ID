@@ -117,7 +117,7 @@ run_viewbox_sync_check() {
   local viewbox_output viewbox_exit
   viewbox_exit=0
   viewbox_output=$(EXPO_PUBLIC_API_BASE="$api_base" \
-    timeout 30 pnpm --filter @workspace/parts-id run test -- \
+    timeout 30 pnpm --filter @workspace/parts-id exec jest \
       --testPathPattern=svgViewBoxApiSync --passWithNoTests 2>&1) || viewbox_exit=$?
   echo "$viewbox_output" | sed 's/^/[post-merge][viewbox-sync] /'
   if [[ "$viewbox_exit" -eq 124 ]]; then
