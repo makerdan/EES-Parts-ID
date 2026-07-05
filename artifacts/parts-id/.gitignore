@@ -42,3 +42,6 @@ yarn-error.*
 .vercel
 
 .env
+
+# Jest output
+jest-results.json
