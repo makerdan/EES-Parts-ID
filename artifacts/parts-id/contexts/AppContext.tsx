@@ -236,7 +236,7 @@ export type MapFocus = {
   label?: string;
 };
 
-interface AppContextValue {
+export interface AppContextValue {
   isAuthenticated: boolean;
   approvalStatus: ApprovalStatus;
   recheckApprovalStatus: () => Promise<void>;

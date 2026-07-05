@@ -8,13 +8,21 @@
  *   const flush = () => act(async () => { await flushPromises(); });
  */
 
+import type { AppContextValue } from "@/contexts/AppContext";
+
 /**
  * Returns a default AppContext mock suitable for MapScreen tests.
  * Pass `overrides` to customise individual fields per-test or inject
  * tracked jest.fn() references for assertion.
+ *
+ * Typed against AppContextValue so TypeScript will emit a compile error
+ * if a required field is added to AppContextValue but omitted here.
  */
-export function makeAppMock(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+export function makeAppMock(overrides: Partial<AppContextValue> = {}): AppContextValue {
   return {
+    isAuthenticated:           false,
+    approvalStatus:            "approved",
+    recheckApprovalStatus:     jest.fn(),
     settings: {
       textSize:                   "normal" as const,
       defaultConfidenceThreshold: 50,
@@ -23,21 +31,28 @@ export function makeAppMock(overrides: Record<string, unknown> = {}): Record<str
       scanSound:                  true,
       dimensionUnit:              "mm" as const,
     },
-    updateSetting:           jest.fn(),
-    logout:                  jest.fn(),
-    clearCache:              jest.fn(),
-    isLoading:               false,
-    isAdmin:                 false,
-    adminToken:              null,
-    registerLogoutHandler:   jest.fn(() => () => {}),
-    setPendingMapFocus:      jest.fn(),
-    showToast:               jest.fn(),
-    setPinnedParts:          jest.fn(),
-    pendingMapFocus:         null,
-    pendingMeasureSearch:    null,
-    setPendingMeasureSearch: jest.fn(),
-    textFontScale:           1.0,
-    pinnedParts:             [],
+    updateSetting:             jest.fn(),
+    logout:                    jest.fn(),
+    logoutAdmin:               jest.fn(),
+    clearCache:                jest.fn(),
+    isLoading:                 false,
+    isAdmin:                   false,
+    adminToken:                null,
+    registerLogoutHandler:     jest.fn(() => () => {}),
+    setPendingMapFocus:        jest.fn(),
+    showToast:                 jest.fn(),
+    setPinnedParts:            jest.fn(),
+    pendingMapFocus:           null,
+    pendingMeasureSearch:      null,
+    setPendingMeasureSearch:   jest.fn(),
+    pendingInventorySearch:    null,
+    setPendingInventorySearch: jest.fn(),
+    pendingLidarDims:          null,
+    setPendingLidarDims:       jest.fn(),
+    textFontScale:             1.0,
+    pinnedParts:               [],
+    resumeProgress:            {},
+    setResumeProgress:         jest.fn(),
     ...overrides,
   };
 }
