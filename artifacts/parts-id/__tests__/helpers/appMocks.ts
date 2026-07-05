@@ -17,20 +17,19 @@ import type { AppContextValue } from "@/contexts/AppContext";
  *
  * Typed against AppContextValue so TypeScript will emit a compile error
  * if a required field is added to AppContextValue but omitted here.
+ *
+ * `settings` is seeded from DEFAULT_SETTINGS via jest.requireActual so it
+ * can never silently drift when AppContext.tsx changes the defaults.
  */
 export function makeAppMock(overrides: Partial<AppContextValue> = {}): AppContextValue {
+  const { DEFAULT_SETTINGS } = jest.requireActual<{
+    DEFAULT_SETTINGS: AppContextValue["settings"];
+  }>("@/contexts/AppContext");
   return {
     isAuthenticated:           false,
     approvalStatus:            "approved",
     recheckApprovalStatus:     jest.fn(),
-    settings: {
-      textSize:                   "normal" as const,
-      defaultConfidenceThreshold: 50,
-      themeMode:                  "system" as const,
-      shelfViewEnabled:           true,
-      scanSound:                  true,
-      dimensionUnit:              "mm" as const,
-    },
+    settings:                  { ...DEFAULT_SETTINGS },
     updateSetting:             jest.fn(),
     logout:                    jest.fn(),
     logoutAdmin:               jest.fn(),
