@@ -6,7 +6,7 @@
  * the implementation reads (ok, json()).
  */
 
-import { fetchChipAnswer, prefetchQuickLookups, MAX_AGE_MS, type CacheEntry } from "../utils/chipCache";
+import { fetchChipAnswer, prefetchQuickLookups, BoundedLruMap, MAX_AGE_MS, MAX_CACHE_SIZE, type CacheEntry } from "../utils/chipCache";
 
 const API_BASE = "https://test.example/api";
 const LABEL = "GFCI";
@@ -219,5 +219,95 @@ describe("prefetchQuickLookups", () => {
 
     await expect(prefetchQuickLookups(cache, API_BASE)).resolves.toBeUndefined();
     expect(cache.size).toBe(0);
+  });
+});
+
+// ── BoundedLruMap ─────────────────────────────────────────────────────────────
+
+describe("BoundedLruMap", () => {
+  it("does not evict any entry while size is below maxSize", () => {
+    const map = new BoundedLruMap<string, number>(3);
+    map.set("a", 1);
+    map.set("b", 2);
+    map.set("c", 3);
+
+    expect(map.size).toBe(3);
+    expect(map.has("a")).toBe(true);
+    expect(map.has("b")).toBe(true);
+    expect(map.has("c")).toBe(true);
+  });
+
+  it("evicts exactly one entry when maxSize is reached", () => {
+    const map = new BoundedLruMap<string, number>(3);
+    map.set("a", 1);
+    map.set("b", 2);
+    map.set("c", 3);
+    map.set("d", 4); // triggers eviction
+
+    expect(map.size).toBe(3);
+  });
+
+  it("evicts the least-recently-used (first-inserted, never accessed) key", () => {
+    const map = new BoundedLruMap<string, number>(3);
+    map.set("a", 1); // LRU candidate
+    map.set("b", 2);
+    map.set("c", 3);
+    map.set("d", 4); // evicts "a"
+
+    expect(map.has("a")).toBe(false);
+    expect(map.has("b")).toBe(true);
+    expect(map.has("c")).toBe(true);
+    expect(map.has("d")).toBe(true);
+  });
+
+  it("re-setting an existing key moves it to the tail so it is no longer the LRU candidate", () => {
+    const map = new BoundedLruMap<string, number>(3);
+    map.set("a", 1);
+    map.set("b", 2);
+    map.set("c", 3);
+
+    // Re-set "a" — it should move to the tail; "b" becomes the new LRU
+    map.set("a", 99);
+    map.set("d", 4); // should evict "b", not "a"
+
+    expect(map.has("b")).toBe(false);
+    expect(map.has("a")).toBe(true);
+    expect(map.get("a")).toBe(99);
+    expect(map.has("c")).toBe(true);
+    expect(map.has("d")).toBe(true);
+  });
+
+  it("does not corrupt surviving entries after eviction", () => {
+    const map = new BoundedLruMap<string, string>(3);
+    map.set("x", "val-x");
+    map.set("y", "val-y");
+    map.set("z", "val-z");
+    map.set("w", "val-w"); // evicts "x"
+
+    expect(map.get("y")).toBe("val-y");
+    expect(map.get("z")).toBe("val-z");
+    expect(map.get("w")).toBe("val-w");
+  });
+
+  it("evicts one entry per insertion beyond maxSize (no runaway eviction)", () => {
+    const maxSize = 3;
+    const map = new BoundedLruMap<number, number>(maxSize);
+    for (let i = 0; i < maxSize + 5; i++) {
+      map.set(i, i);
+      expect(map.size).toBe(Math.min(i + 1, maxSize));
+    }
+  });
+
+  it("respects MAX_CACHE_SIZE as the default maxSize", () => {
+    const map = new BoundedLruMap<number, number>();
+    for (let i = 0; i < MAX_CACHE_SIZE; i++) {
+      map.set(i, i);
+    }
+    expect(map.size).toBe(MAX_CACHE_SIZE);
+
+    map.set(MAX_CACHE_SIZE, MAX_CACHE_SIZE); // one over the cap
+    expect(map.size).toBe(MAX_CACHE_SIZE);
+    expect(map.has(0)).toBe(false); // key 0 was LRU
+    expect(map.has(MAX_CACHE_SIZE)).toBe(true);
   });
 });
