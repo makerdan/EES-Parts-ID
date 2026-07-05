@@ -14,7 +14,7 @@
 import * as FileSystem from "expo-file-system/legacy";
 import { Platform } from "react-native";
 
-import { API_BASE } from "@/utils/apiBase";
+import { tileApiUrl } from "@/utils/floorPlan";
 
 const TILES_BASE_DIR = (FileSystem.cacheDirectory ?? "") + "map-tiles/";
 
@@ -24,10 +24,6 @@ function tileHashDir(svgHash: string): string {
 
 function localTilePath(z: number, x: number, y: number, svgHash: string): string {
   return tileHashDir(svgHash) + `${z}_${x}_${y}.png`;
-}
-
-function tileApiUrl(z: number, x: number, y: number): string {
-  return `${API_BASE}/floor-plan/tiles/${z}/${x}/${y}.png`;
 }
 
 /**

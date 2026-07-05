@@ -63,7 +63,7 @@ export function useWarehouseZones() {
   // user re-authenticates instead of waiting for the next foreground event.
   const tokenExpiredMidSessionRef = useRef(false);
 
-  const backgroundFetch = useCallback(async () => {
+  const refetch = useCallback(async () => {
     if (fetchingRef.current) return;
     fetchingRef.current = true;
     try {
@@ -87,7 +87,7 @@ export function useWarehouseZones() {
         // Suppress the error badge when the failure is auth-related:
         //   • no token present at fetch time (cold-start race), OR
         //   • the server returned 401 (token expired / not yet issued).
-        // In both cases the tokenAvailable subscriber will re-fire backgroundFetch
+        // In both cases the tokenAvailable subscriber will re-fire refetch
         // once auth settles, so showing an error badge here is a false alarm.
         const isAuthFailure =
           getAuthToken() === null ||
@@ -125,7 +125,7 @@ export function useWarehouseZones() {
         }
       } catch { /* ignore corrupt cache */ }
 
-      backgroundFetch();
+      refetch();
     })();
 
     return () => { mountedRef.current = false; };
@@ -142,10 +142,10 @@ export function useWarehouseZones() {
       if (lastFetchedAt !== null && Date.now() - lastFetchedAt < FOREGROUND_REFETCH_TTL_MS) {
         return;
       }
-      backgroundFetch();
+      refetch();
     });
     return () => sub.remove();
-  }, [backgroundFetch]);
+  }, [refetch]);
 
   // Re-fetch once auth settles in two cases:
   //   1. Cold-start race: initial fetch fired before a token was available.
@@ -156,21 +156,17 @@ export function useWarehouseZones() {
   // a reload — the guard ensures this only fires after a null→non-null transition.
   // Additionally, if a fetch is already in-flight (e.g. the mount effect started
   // one before the token settled), we skip the redundant call entirely rather
-  // than relying solely on the fetchingRef guard inside backgroundFetch.
+  // than relying solely on the fetchingRef guard inside refetch.
   useEffect(() => {
     const handleTokenAvailable = () => {
       if (fetchingRef.current) return;
       if (!hasDataRef.current || tokenExpiredMidSessionRef.current) {
-        backgroundFetch();
+        refetch();
       }
     };
     subscribeToTokenAvailable(handleTokenAvailable);
     return () => unsubscribeFromTokenAvailable(handleTokenAvailable);
-  }, [backgroundFetch]);
-
-  const refetch = useCallback(() => {
-    backgroundFetch();
-  }, [backgroundFetch]);
+  }, [refetch]);
 
   return { zones, loading, error, refetch };
 }

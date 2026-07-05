@@ -157,6 +157,17 @@ function loadSvgAsset(): Promise<void> {
   return _svgLoadPromise;
 }
 
+/**
+ * Strip the outer <svg>…</svg> wrapper from SVG XML so the inner content can
+ * be injected directly into an existing SVG canvas as a child <g> element.
+ * Used on web to embed the floor plan inside the zone-overlay SVG viewport.
+ */
+function stripSvgWrapper(xml: string): string {
+  return xml
+    .replace(/^[\s\S]*?<svg[^>]*>/, "")
+    .replace(/<\/svg>\s*$/, "");
+}
+
 async function _loadFloorPlanFromServer(signal: AbortSignal): Promise<void> {
   const metaRes = await fetchWithAuth(`${API_BASE}/floor-plan/meta`, { signal });
   if (!metaRes.ok) throw new Error("no server floor plan");
@@ -179,12 +190,7 @@ async function _loadFloorPlanFromServer(signal: AbortSignal): Promise<void> {
   const contentViewBox = parseContentViewBox(xml) ?? undefined;
   let newData: SvgData;
   if (Platform.OS === "web") {
-    // Strip the outer <svg> wrapper so the content can be embedded
-    // directly inside the main SVG canvas as a child <g> element.
-    const innerXml = xml
-      .replace(/^[\s\S]*?<svg[^>]*>/, "")
-      .replace(/<\/svg>\s*$/, "");
-    newData = { xml, innerXml, uri: "", contentViewBox };
+    newData = { xml, innerXml: stripSvgWrapper(xml), uri: "", contentViewBox };
   } else {
     // On native, SvgUri can render directly from an http:// URL.
     newData = { xml, innerXml: "", uri: `${API_BASE}/floor-plan/svg`, contentViewBox };
@@ -208,15 +214,7 @@ async function _loadFloorPlanFromBundle(signal: AbortSignal): Promise<void> {
     const res = await fetch(uri, { signal });
     const xml = await res.text();
     if (signal.aborted) throw new Error("aborted");
-    // Strip the outer <svg> wrapper so the content can be embedded
-    // directly inside the main SVG canvas as a child <g> element.
-    // This matches the approach used in the Zone Editor and keeps the
-    // floor plan and zone overlays in the same SVG viewport, eliminating
-    // any CSS-transform rasterisation blur at high zoom levels.
-    const innerXml = xml
-      .replace(/^[\s\S]*?<svg[^>]*>/, "")
-      .replace(/<\/svg>\s*$/, "");
-    newData = { xml, innerXml, uri: "", contentViewBox: parseContentViewBox(xml) ?? undefined };
+    newData = { xml, innerXml: stripSvgWrapper(xml), uri: "", contentViewBox: parseContentViewBox(xml) ?? undefined };
   } else {
     // Fetch the SVG text so the tile renderer can use SvgXml with per-tile
     // viewBox crops at high zoom.  This is a local-file read so it is fast.
@@ -1049,22 +1047,11 @@ export function WarehouseMapView({
   // that zone refreshes from the server and container layout changes (keyboard,
   // SafeAreaView insets, orientation) do not re-trigger the zoom animation
   // while focusAisleNum is still set.
-  useEffect(() => {
-    if (focusAisleNum == null) {
-      pendingFocusRef.current = false;
-      return;
-    }
-    const w = containerWRef.current;
-    const h = containerHRef.current;
-    if (w === 0 || h === 0 || !zonesRef.current.length) {
-      // Zones not yet loaded (or container not yet laid out); defer until
-      // they arrive so we don't silently drop the focus request.
-      pendingFocusRef.current = true;
-      return;
-    }
-    pendingFocusRef.current = false;
-
-    // Check if the zone exists; fire the failure/consumed callbacks if not.
+  // Shared focus-pan body: find the target aisle zone, set pin shared values,
+  // reset to fit view, and notify the parent.  Both the focusAisleNum useEffect
+  // and _runPendingFocus call this after their own precondition guards pass.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const _applyFocus = useCallback(() => {
     const zoneExists = zonesRef.current.some(z => parseInt(z.aisleId, 10) === focusAisleNum);
     if (!zoneExists) {
       onFocusFailed?.();
@@ -1095,13 +1082,29 @@ export function WarehouseMapView({
     // focusAisleNum and prevent repeated re-centering on future tab visits.
     onFocusConsumed?.();
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusAisleNum, focusSectionNum, onFocusFailed, onFocusConsumed]);
+
+  useEffect(() => {
+    if (focusAisleNum == null) {
+      pendingFocusRef.current = false;
+      return;
+    }
+    const w = containerWRef.current;
+    const h = containerHRef.current;
+    if (w === 0 || h === 0 || !zonesRef.current.length) {
+      // Zones not yet loaded (or container not yet laid out); defer until
+      // they arrive so we don't silently drop the focus request.
+      pendingFocusRef.current = true;
+      return;
+    }
+    pendingFocusRef.current = false;
+    _applyFocus();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusAisleNum]);
 
-  // Shared helper: run the focus logic using current ref values.
-  // Called by the two deferred-retry effects below so the logic stays in one place.
-  // All reads go through refs/closure values that are stable by the time either
-  // retry fires.  Returns true if focus was consumed (either successfully or via
-  // failure callbacks), false if preconditions were not met.
+  // Deferred-retry helper: run focus using current ref values once preconditions
+  // are met.  Returns true if focus was consumed (successfully or via failure
+  // callbacks), false if preconditions were not met.
   const _runPendingFocus = useCallback((): boolean => {
     if (!pendingFocusRef.current) return false;
     if (!zonesRef.current.length) return false;
@@ -1109,31 +1112,10 @@ export function WarehouseMapView({
     const h = containerHRef.current;
     if (w === 0 || h === 0 || focusAisleNum == null) return false;
     pendingFocusRef.current = false;
-
-    const zoneExists = zonesRef.current.some(z => parseInt(z.aisleId, 10) === focusAisleNum);
-    if (!zoneExists) {
-      onFocusFailed?.();
-      onFocusConsumed?.();
-      return true;
-    }
-
-    const aisleZones = zonesRef.current.filter(z => parseInt(z.aisleId, 10) === focusAisleNum);
-    const zone =
-      focusSectionNum != null
-        ? (aisleZones.find(z => z.sectionNum === focusSectionNum) ?? aisleZones[0])
-        : aisleZones[0];
-
-    if (zone) {
-      pinFocusCxV.value = zone.svgX + zone.svgWidth  / 2;
-      pinFocusCyV.value = zone.svgY + zone.svgHeight / 2;
-      pinFocusModeV.value = 1;
-    }
-
-    applyFitRef.current();
-    onFocusConsumed?.();
+    _applyFocus();
     return true;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusAisleNum, focusSectionNum, onFocusFailed, onFocusConsumed]);
+  }, [focusAisleNum, _applyFocus]);
 
   // Retry focus once zones arrive (covers: focus requested before first zone load).
   // Only `zones` is a dependency so zone refreshes that arrive after focus is
