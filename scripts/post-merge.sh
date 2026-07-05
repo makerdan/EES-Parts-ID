@@ -41,6 +41,44 @@ CODEGEN_SETTLE_FLOOR_SECS="${CODEGEN_SETTLE_FLOOR_SECS:-2}"
 CODEGEN_SETTLE_MAX_SECS="${CODEGEN_SETTLE_MAX_SECS:-20}"
 CODEGEN_SETTLE_POLL_SECS="${CODEGEN_SETTLE_POLL_SECS:-2}"
 
+# ---------------------------------------------------------------------------
+# check_generated_files — detect a partial/missing codegen state left by a
+# previously crashed task and emit a clear diagnostic before proceeding.
+#
+# Orval runs with `clean: true`, so it wipes the generated directories before
+# writing.  If a task agent is killed between the wipe and the write the dirs
+# are left empty (or missing key sentinel files).  Without this guard the
+# failure surfaces as cryptic TypeScript import errors on the next run, with no
+# indication that a codegen crash was the root cause.
+#
+# The function checks the two sentinel files that orval always produces:
+#   lib/api-zod/src/generated/api.ts
+#   lib/api-client-react/src/generated/api.ts
+#
+# Returns:
+#   0 — both files exist and are non-empty (generated dirs are intact)
+#   1 — one or more files are missing or empty (interrupted codegen detected)
+#
+# The caller decides what to do; post-merge uses this for:
+#   • pre-flight: warn that codegen was interrupted before re-running it
+#   • post-flight: assert that codegen has fixed the state, exit 1 if not
+# ---------------------------------------------------------------------------
+GENERATED_SENTINELS=(
+  "lib/api-zod/src/generated/api.ts"
+  "lib/api-client-react/src/generated/api.ts"
+)
+
+check_generated_files() {
+  local missing=0
+  for sentinel in "${GENERATED_SENTINELS[@]}"; do
+    if [[ ! -s "$sentinel" ]]; then
+      echo "[post-merge] MISSING or EMPTY generated file: ${sentinel}"
+      missing=1
+    fi
+  done
+  return "$missing"
+}
+
 check_api_health() {
   local label="$1"
   echo "[post-merge] Starting API health check ($label) — up to ${MAX_RETRIES} attempts..."
@@ -176,6 +214,17 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "[post-merge] Schema unchanged — skipping db push and FTS check."
   fi
 
+  # Pre-flight: detect a partial/missing codegen state left by a previously
+  # crashed task agent.  Orval uses clean:true, so a mid-run crash wipes the
+  # generated dirs and leaves them empty.  Without this check the downstream
+  # failure (TypeScript import errors) has no obvious cause; naming the problem
+  # here makes it immediately actionable.
+  if ! check_generated_files; then
+    echo "[post-merge] WARNING: One or more generated files are missing or empty — a previous codegen run appears to have been interrupted mid-run. Proceeding with codegen:fix to restore them."
+  else
+    echo "[post-merge] Pre-flight: generated files present."
+  fi
+
   # Regenerate API client files and auto-commit any drift.
   # codegen:fix runs orval, rebuilds the lib declarations (tsc --build), then
   # commits any changes to the generated directories so a merge that carries a
@@ -197,6 +246,15 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     exit 1
   }
   echo "[post-merge] API client regenerated and any drift auto-committed."
+
+  # Post-flight: assert that codegen:fix actually produced all sentinel files.
+  # If codegen completed but a file is still missing (e.g. the orval output
+  # config changed and no longer emits the sentinel), fail loudly here rather
+  # than letting the API server crash on start with a cryptic import error.
+  if ! check_generated_files; then
+    echo "[post-merge] ERROR: Generated files still missing after codegen:fix — codegen may have completed with a different output layout or the orval config may have changed. Manual investigation required."
+    exit 1
+  fi
 
   # Give the API server's file watcher time to settle after codegen writes new
   # generated files.  Rather than a fixed sleep — which is either wasteful on a

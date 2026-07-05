@@ -7,7 +7,13 @@ import { type NextFunction,type Request, type Response } from "express";
 import { logger } from "../lib/logger";
 
 // Paths relative to /api that do not require any authentication token.
-const PUBLIC_PATHS = new Set(["/healthz"]);
+// These are either health/diagnostics endpoints or routes documented as public
+// in their route files (e.g. floor-plan read routes that serve tiles and SVG
+// to unauthenticated clients such as the post-merge viewBox sync check).
+const PUBLIC_PATHS = new Set(["/healthz", "/floor-plan/svg", "/floor-plan/meta"]);
+
+// Path prefixes (checked with startsWith) that are public without auth.
+const PUBLIC_PREFIXES = ["/floor-plan/tiles/"];
 
 /**
  * Middleware that validates a Clerk session token on all /api/* routes except
@@ -27,7 +33,7 @@ const PUBLIC_PATHS = new Set(["/healthz"]);
  * 403 { code: "banned" } — user permanently revoked
  */
 export async function requireAppAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (PUBLIC_PATHS.has(req.path)) {
+  if (PUBLIC_PATHS.has(req.path) || PUBLIC_PREFIXES.some((p) => req.path.startsWith(p))) {
     next();
     return;
   }

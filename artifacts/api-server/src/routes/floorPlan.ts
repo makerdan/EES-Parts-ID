@@ -247,7 +247,11 @@ router.get("/floor-plan/meta", async (_req, res) => {
 router.get("/floor-plan/svg", async (_req, res) => {
   try {
     const meta = await getLatestMeta();
-    if (!meta) {
+    // Return 404 when no floor plan has been uploaded, or when object storage
+    // is not configured (missing bucket env var). Both cases mean the SVG is
+    // unavailable — callers (e.g. the post-merge viewBox sync check) treat 404
+    // as a graceful skip rather than a hard failure.
+    if (!meta || !process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID) {
       res.status(404).json({ error: "No floor plan uploaded yet" });
       return;
     }
@@ -255,8 +259,15 @@ router.get("/floor-plan/svg", async (_req, res) => {
     res.set("Content-Type", "image/svg+xml");
     res.set("Cache-Control", "public, max-age=3600");
     res.send(svgBuffer);
-  } catch {
-    res.status(500).json({ error: "Failed to fetch floor plan SVG" });
+  } catch (err) {
+    // Any failure reading from object storage means we cannot serve the SVG,
+    // so treat it as "not available" (404) rather than an internal error (500).
+    // This covers both "object does not exist in bucket" and transient storage
+    // errors — callers such as the post-merge viewBox sync check treat 404 as a
+    // graceful skip rather than a hard failure.
+    const e = err as { code?: number; message?: string };
+    logger.warn({ errCode: e.code, errMsg: e.message }, "floor-plan/svg storage read failed — returning 404");
+    res.status(404).json({ error: "No floor plan uploaded yet" });
   }
 });
 
