@@ -18,7 +18,11 @@
       "bundleIdentifier": "com.eespartsid.app"
     },
     "android": {
-      "package": "com.eespartsid.app"
+      "package": "com.eespartsid.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
     },
     "web": {
       "favicon": "./assets/images/icon.png",
