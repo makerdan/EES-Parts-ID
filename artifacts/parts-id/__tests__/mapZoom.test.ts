@@ -6,7 +6,6 @@
  *  clampScale        — keeps gesture and button scales within [MIN_SCALE, MAX_SCALE].
  *  panBounds         — derives max translation limits from container size + scale;
  *                      must always be ≥ 0 and grow as the user zooms in.
- *  numTilesForScale  — legacy helper (Math.ceil); kept for backward-compat testing.
  *  visibleTileRange  — culls the N×N grid to only the tiles that are currently
  *                      on-screen (plus a 1-tile buffer), keeping memory constant.
  *  zoomStopForScale  — maps a continuous scale to the nearest discrete ZOOM_STOPS
@@ -30,7 +29,6 @@ import {
   ZOOM_STOPS,
   clampScale,
   panBounds,
-  numTilesForScale,
   visibleTileRange,
   fitContentViewport,
   computeFitTarget,
@@ -140,51 +138,6 @@ describe("panBounds — translation limits change with scale", () => {
     const { maxX } = panBounds(CW, CH, scale, SVG_RENDER_H);
     const expectedOverflow = CW * scale - CW;
     expect(maxX).toBeCloseTo(expectedOverflow / 2, 3);
-  });
-});
-
-// ── numTilesForScale ───────────────────────────────────────────────────────
-// Legacy helper kept for backward compatibility — tests document its contract.
-
-describe("numTilesForScale — tile-grid dimension advances by integer steps", () => {
-  it("is 1 at MIN_SCALE=0.8 (single texture, no splitting needed)", () => {
-    expect(numTilesForScale(MIN_SCALE)).toBe(1);
-  });
-
-  it("is 1 at scale=1.0 (no split required when map is at 1× zoom)", () => {
-    expect(numTilesForScale(1)).toBe(1);
-  });
-
-  it("jumps to 2 as soon as scale just exceeds 1", () => {
-    expect(numTilesForScale(1.001)).toBe(2);
-    expect(numTilesForScale(1.5)).toBe(2);
-    expect(numTilesForScale(2.0)).toBe(2);
-  });
-
-  it("jumps to 3 as soon as scale just exceeds 2", () => {
-    expect(numTilesForScale(2.001)).toBe(3);
-    expect(numTilesForScale(2.999)).toBe(3);
-  });
-
-  it("always equals Math.ceil(scale) across a range of zoom levels", () => {
-    const samples = [0.8, 1.0, 1.3, 1.9, 2.0, 2.7, 3.5, 7.9, 10.1, 49.99, 50];
-    for (const s of samples) {
-      expect(numTilesForScale(s)).toBe(Math.ceil(s));
-    }
-  });
-
-  it("reaches MAX_SCALE tiles at the top of the zoom range", () => {
-    expect(numTilesForScale(MAX_SCALE)).toBe(MAX_SCALE);
-  });
-
-  it("regression: floor() instead of ceil() would keep the tile count one step behind, leaving the map blurry during zoom-in", () => {
-    // At scale=1.5, ceil→2 (correct), floor→1 (under-tiled and blurry).
-    expect(numTilesForScale(1.5)).toBe(2);
-    expect(numTilesForScale(1.5)).not.toBe(Math.floor(1.5));
-
-    // At scale=2.1, ceil→3 (correct), floor→2 (blurry at this zoom tier).
-    expect(numTilesForScale(2.1)).toBe(3);
-    expect(numTilesForScale(2.1)).not.toBe(Math.floor(2.1));
   });
 });
 

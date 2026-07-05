@@ -232,25 +232,6 @@ export function panBounds(
   };
 }
 
-/**
- * The number of tile rows (and columns) to use at a given scale.
- *
- * numTiles = ceil(scale) so the grid advances by integer steps only.
- * Examples:
- *   scale 0.8–1.0 → 1  (single texture, no split)
- *   scale 1.01–2.0 → 2  (2×2 = 4 tiles)
- *   scale 2.01–3.0 → 3  (3×3 = 9 tiles)
- *
- * NOTE: The actual number of tiles rendered is further capped by the device's
- * maximum texture size (IOS_MAX_TEXTURE_PX) inside WarehouseMapView.  That cap
- * is device-specific.  This function returns the pure formula result.
- *
- * @deprecated Use zoomStopForScale + tileGridSize for the discrete-stop system.
- */
-export function numTilesForScale(scale: number): number {
-  return Math.ceil(scale);
-}
-
 // ── Discrete zoom-stop pyramid ────────────────────────────────────────────────
 // Five preset zoom levels map to z-levels 0–4.  At each level the tile grid
 // is 2^z × 2^z (1×1 at z0 through 16×16 at z4).  The client springs to the
