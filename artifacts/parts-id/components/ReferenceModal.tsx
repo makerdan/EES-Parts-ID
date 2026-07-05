@@ -20,7 +20,7 @@ import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
 import { API_BASE } from "@/utils/apiBase";
 import { fetchWithAuth } from "@/utils/appAuth";
-import { type CacheEntry,fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl } from "@/utils/chipCache";
+import { BoundedLruMap, type CacheEntry,fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl } from "@/utils/chipCache";
 
 type Props = {
   open?: boolean;
@@ -105,7 +105,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   const scrollRef = useRef<ScrollView>(null);
   const pulse = useRef(new Animated.Value(1)).current;
   const askedQuestionRef = useRef("");
-  const answerCacheRef = useRef<Map<string, CacheEntry>>(new Map());
+  const answerCacheRef = useRef<Map<string, CacheEntry>>(new BoundedLruMap<string, CacheEntry>());
   const lastTapRef = useRef<number>(0);
   // Stores the full chip context needed for retry when a chip call fails
   const failedChipRef = useRef<{ label: string; question: string } | null>(null);

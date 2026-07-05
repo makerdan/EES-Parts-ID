@@ -15,11 +15,44 @@ import { fetchWithAuth } from "@/utils/appAuth";
 /** Maximum age for an in-memory cache entry before it is considered stale. */
 export const MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
 
+/** Maximum number of entries kept in a BoundedLruMap before the oldest is evicted. */
+export const MAX_CACHE_SIZE = 500;
+
 /** Shape stored in the caller-owned cache Map. */
 export interface CacheEntry {
   answer: string;
   /** Unix timestamp (ms) when this entry was written into the cache. */
   fetchedAt: number;
+}
+
+/**
+ * A Map that evicts the least-recently-used entry once `maxSize` is reached.
+ *
+ * JS Map preserves insertion order. LRU is maintained by deleting and
+ * re-inserting a key on every write (set), which moves it to the tail.
+ * The head (first entry in iteration order) is therefore always the LRU
+ * candidate and is evicted when the map is full.
+ *
+ * Extends Map so it is a drop-in replacement wherever Map<K, V> is expected.
+ */
+export class BoundedLruMap<K, V> extends Map<K, V> {
+  private readonly maxSize: number;
+
+  constructor(maxSize: number = MAX_CACHE_SIZE) {
+    super();
+    this.maxSize = maxSize;
+  }
+
+  override set(key: K, value: V): this {
+    if (this.has(key)) {
+      this.delete(key);
+    } else if (this.size >= this.maxSize) {
+      const lruKey = this.keys().next().value as K;
+      this.delete(lruKey);
+    }
+    super.set(key, value);
+    return this;
+  }
 }
 
 export async function fetchChipAnswer(
