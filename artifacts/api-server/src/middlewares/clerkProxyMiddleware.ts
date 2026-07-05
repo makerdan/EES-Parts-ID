@@ -128,8 +128,20 @@ export function clerkProxyMiddleware(): RequestHandler {
           return;
         }
 
+        // Hard cap: prevent a single Clerk response from consuming unlimited
+        // RAM. 10 MB is far beyond any realistic Clerk API payload; if we
+        // exceed it something unexpected happened upstream.
+        const MAX_BUFFER_BYTES = 10 * 1024 * 1024; // 10 MB
+        let buffered = 0;
         const chunks: Array<Buffer> = [];
-        proxyRes.on("data", (chunk: Buffer) => chunks.push(chunk));
+        proxyRes.on("data", (chunk: Buffer) => {
+          buffered += chunk.length;
+          if (buffered > MAX_BUFFER_BYTES) {
+            proxyRes.destroy(new Error("Clerk proxy: upstream response exceeds buffer cap"));
+            return;
+          }
+          chunks.push(chunk);
+        });
         proxyRes.on("end", () => {
           const body = Buffer.concat(chunks);
           headers["content-length"] = String(body.length);
