@@ -154,6 +154,19 @@ const server = http.createServer((req, res) => {
 });
 
 const port = parseInt(process.env.PORT || "3000", 10);
+
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(
+      `[serve] Port ${port} is already in use. ` +
+        `Kill the process holding it (fuser -k ${port}/tcp) and retry.`,
+    );
+  } else {
+    console.error(`[serve] Server error:`, err);
+  }
+  process.exit(1);
+});
+
 server.listen(port, "0.0.0.0", () => {
   console.log(`Serving static Expo build on port ${port}`);
 });
