@@ -180,6 +180,16 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   },
 }));
 
+// ─── @/utils/apiBase ─────────────────────────────────────────────────────────
+// Provide a dummy origin so the module-load guard ("API origin is not configured")
+// never fires in a non-dev Jest run where __DEV__ === false, while keeping
+// API_BASE truthy so the server-hash polling effect is not short-circuited.
+
+jest.mock("@/utils/apiBase", () => ({
+  API_BASE: "http://test.local/api",
+  API_ORIGIN: "http://test.local",
+}));
+
 // ─── @/utils/appAuth ─────────────────────────────────────────────────────────
 
 const mockFetchWithAuth = jest.fn();
