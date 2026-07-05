@@ -61,6 +61,13 @@ interface PartDetailsEditorProps {
   adminToken: string | null;
   onClose: () => void;
   onShowOnMap?: (item: InventoryItem) => void;
+  /**
+   * Called after an item is successfully deleted so the host screen can prune
+   * the deleted item from its own offline structures (e.g. the Fuse.js barcode
+   * index held in the Search screen), which are not touched by
+   * evictDeletedItemFromAllCaches.
+   */
+  onItemDeleted?: (itemId: number) => void;
 }
 
 /**
@@ -73,7 +80,7 @@ interface PartDetailsEditorProps {
  * On non-LiDAR iOS devices the "Estimate" (photo AI) path is shown instead.
  * Android and Web see neither — manual entry only.
  */
-export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: PartDetailsEditorProps) {
+export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onItemDeleted }: PartDetailsEditorProps) {
   "use no memo";
   const colors = useColors();
   const queryClient = useQueryClient();
@@ -328,6 +335,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
                 asyncStorage: AsyncStorage,
                 itemId: current.id,
               });
+              // Let the host screen prune the item from its offline Fuse.js
+              // barcode index, which evictDeletedItemFromAllCaches does not touch.
+              onItemDeleted?.(current.id);
               onClose();
             } catch {
               Alert.alert("Delete Failed", "Could not delete the part. Check your connection and try again.");
@@ -336,7 +346,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
         },
       ],
     );
-  }, [adminToken, queryClient, onClose]);
+  }, [adminToken, queryClient, onClose, onItemDeleted]);
 
   const handleSave = async () => {
     const current = itemRef.current;

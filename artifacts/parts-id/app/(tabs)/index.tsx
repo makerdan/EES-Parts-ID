@@ -442,6 +442,22 @@ export default function SearchScreen() {
     });
   }, []);
 
+  // Prune a deleted item from the in-memory Fuse.js index and its persisted
+  // AsyncStorage copy. evictDeletedItemFromAllCaches only clears the React Query
+  // and offline search caches — the Fuse barcode/keyword index is a separate
+  // structure held here, so an offline barcode/keyword search would otherwise
+  // still surface the deleted item until the next full sync.
+  const handleItemDeleted = useCallback((itemId: number) => {
+    const pruned = fuseItemsRef.current.filter(it => it.id !== itemId);
+    if (pruned.length === fuseItemsRef.current.length) return;
+    buildFuseIndex(pruned);
+    if (Platform.OS !== "web") {
+      AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(pruned)).catch(err => {
+        reportStorageError("Could not save offline inventory cache", err);
+      });
+    }
+  }, [buildFuseIndex]);
+
   // Auto-retry constants
   const SYNC_RETRY_INITIAL_MS = 30_000;   // 30 s first retry
   const SYNC_RETRY_MAX_MS     = 300_000;  // 5 min ceiling
@@ -2025,6 +2041,7 @@ export default function SearchScreen() {
         adminToken={adminToken}
         onClose={() => setDetailsItem(null)}
         onShowOnMap={handleShowOnMap}
+        onItemDeleted={handleItemDeleted}
       />
 
       <ReferenceModal open={showReference} onClose={() => setShowReference(false)} />
