@@ -27,20 +27,50 @@ const GENERIC_ERROR_MESSAGE =
 const APP_KNOWLEDGE = `
 ## About the Parts ID App
 
-Parts ID is a mobile warehouse app for managing and identifying electrical supply inventory.
+Parts ID is a mobile warehouse app for identifying, locating, and managing electrical supply inventory. It has three main tabs everyone sees — **Search**, **Photo ID**, and **Map** — plus an **Admin** tab and a hidden **Measure** tab for admins.
 
-**Key features:**
-- **Search tab:** Full-text search across all inventory items (vendor, catalog number, description, AI keywords). Supports partial and keyword matching. Tapping a result shows full part details including expanded descriptions, dimensions, and barcode.
-- **Photo ID tab:** Workers point the camera at a part and the AI identifies it by comparing the photo against inventory descriptions and visual cues. Returns the best matching part.
-- **Barcode scan:** Scan a part's barcode to instantly look it up in inventory. Accessible from the Search tab and part detail screens.
-- **CSV import (admin):** Admins upload a CSV file of inventory items (vendor, catalog, description columns required). The server parses, deduplicates, and stores them.
-- **Admin upload / photo upload:** Admins can attach product images to inventory items directly from the app.
-- **Offline cache:** Recently viewed parts and quick-lookup chip answers are cached locally so workers can browse without a network connection.
-- **AI enrichment:** Admins can trigger bulk AI keyword generation for inventory items. The AI adds searchable keywords and an expanded description to every item, making search far more effective.
-- **Reference modal (this assistant):** A floating button on the main screen opens this AI chat. Workers can ask any question — electrical codes, part terminology, how the app works, or general warehouse questions.
-- **Settings:** Workers can set the server URL (API base), toggle dark mode, and view app version info.
-- **Cycle counting:** Visual overlay on the map screen for counting parts in bin locations.
-- **Warehouse map / floor plan:** Interactive floor plan showing bin locations, zone assignments, and aisle labels.
+**Accounts & signing in:**
+- **Getting an account:** Tap Sign Up on the login screen and register with email/password or with Google/Apple sign-in. New accounts are **not active immediately** — they land on a "Pending approval" screen until an admin approves them. There's a "Refresh status" button to re-check without restarting the app.
+- **Logging in:** Returning users tap Log In. Approved users go straight to the tabs; pending users see the waiting screen; blocked users see a "banned" screen and can't use the app.
+- **Getting admin access:** Admin is a role an existing admin grants to your account. Once you're promoted, admin features (the Admin tab, the Measure tab, zone editing) unlock automatically — usually within a minute or when you reopen the app — without logging out and back in. If access is revoked, the admin tools lock again automatically.
+
+**Search tab (everyone):**
+- **Search bar:** Type a plain-language query (e.g. "20 amp GFCI breaker" or "blue wire nut") and the app finds matching inventory across vendor, catalog number, description, and AI keywords. Works offline against a local cache, and falls back to the cache automatically on a slow connection.
+- **Advanced filters:** A collapsible filter panel narrows results by catalog number, vendor, color, size/rating, material, markings/UPC text, and by a **size range** (min/max length, width, height, diameter in mm). Quick attribute chips (amperage, voltage, wire gauge, conduit size, pole count, etc.) show live result counts.
+- **Recent searches:** Focusing the empty search bar shows your recent queries and recently viewed parts so you can jump back to them.
+- **Browse by aisle:** Drill down Aisle → Section → Shelf to see a visual layout of what's stored in each bin, and tap "Map it" to jump to that spot on the map.
+- **Browse by category:** Browse parts by functional group (Category → Subcategory → Item Type) without typing.
+- **Part details:** Tap a result to see full details — expanded description, specs, dimensions, photos (with full-screen zoom), other sizes/variants, and bin locations. Tap a bin location to see it on the Map tab.
+- **Barcode scan:** Tap the barcode button in the search bar to scan a part's UPC/barcode and look it up instantly.
+
+**Photo ID tab (everyone):**
+- Take or pick up to 4 photos of a part and the AI identifies it by comparing against inventory. You can add optional hints (keywords, vendor, color, size, markings) to improve accuracy. Results show as cards you can open for details or "Show on Map." Your last few scans are kept for quick access.
+
+**Map tab (everyone):**
+- **Interactive floor plan:** Pan and zoom an SVG warehouse map that stays crisp at high zoom. It unlocks landscape orientation for a wider view.
+- **Zones:** Tap a zone/section to see the items stored there.
+- **Pins:** When you identify a part in Search or Photo ID and tap "Show on Map," its bin location is pinned (the main match in amber, related sizes in purple).
+- **Cycle counting:** Toggle a counting layer to mark zones as counted as you walk the floor; progress is saved on the device.
+- **Zone editor (admin):** Admins get a button to open a dedicated zone editor for drawing, numbering, and fixing warehouse zones on the floor plan.
+
+**Measure tab (admin only, LiDAR devices only):**
+- On an iPhone/iPad with LiDAR, admins can scan a part's real bounding-box dimensions in a few seconds. Values can be reviewed and edited before confirming.
+- Launched from an item's edit form, the captured dimensions are written back to pre-fill that item's length/width/height. Launched on its own, the dimensions are applied as a **size-range filter on the Search tab** so you can find similarly sized parts.
+
+**Admin tab & admin tools (admin only):**
+- **Dashboard:** AI usage analytics (Photo ID vs. Reference assistant), screen-view and daily-visitor trends, and totals for inventory items, catalog jobs, and contact messages.
+- **CSV / spreadsheet import:** Bulk-upload inventory from a CSV/XLSX (vendor, catalog, description). Includes options to skip or replace existing bin locations. The server parses, deduplicates, and stores the rows.
+- **Catalog PDF upload & review:** Upload a manufacturer's catalog PDF; the app splits large files into chunks, extracts parts with AI, and flags low-confidence results for review. In the review screen admins see before/after descriptions and can fix, revert, or discard AI changes. Failed uploads can be resumed from where they stopped.
+- **AI enrichment:** Trigger bulk AI generation of searchable keywords and expanded descriptions for items that haven't been processed yet.
+- **Admin inbox:** Read messages workers send via the Contact button in this assistant, and mark them resolved.
+- **AI log:** Review recent questions asked to this assistant, the answers, and how many inventory items were matched.
+- **SQL console:** Run read-only queries against the database (e.g. "parts missing a bin").
+- **Photo upload:** Attach product images to inventory items from the app.
+
+**This assistant (the Ref chat):**
+- Open it with the **"Ref" button (⚡)** in the Search tab header. It's a chat where anyone can ask about electrical codes and terminology, look up inventory, ask how the app works, or ask a general question — and it can search the web when needed. Quick-lookup and breaker-attribute chips give instant answers, and the Contact button sends a message to the admin inbox.
+
+**Settings:** Set the server URL (API base), toggle dark mode, choose the dimension unit (in/cm/mm), and view app version info. Recently viewed parts and chip answers are cached for offline use.
 `;
 
 const BASE_SYSTEM_PROMPT = `You are a concise warehouse parts and general reference assistant for warehouse workers using the Parts ID app. You help with:
