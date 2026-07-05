@@ -101,23 +101,7 @@ jest.mock("@/contexts/AppContext", () => ({
 
 // ─── useColors ─────────────────────────────────────────────────────────────────
 
-jest.mock("@/hooks/useColors", () => ({
-  useColors: () => ({
-    background: "#fff",
-    foreground: "#000",
-    card: "#fff",
-    border: "#ccc",
-    primary: "#3b82f6",
-    primaryForeground: "#fff",
-    muted: "#f1f5f9",
-    mutedForeground: "#64748b",
-    destructive: "#ef4444",
-    success: "#22c55e",
-    warning: "#f59e0b",
-    accent: "#f1f5f9",
-    accentForeground: "#000",
-  }),
-}));
+jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
 // ─── KeyboardDoneInput — renders a tagged element so we can find it by placeholder
 

@@ -72,18 +72,7 @@ jest.mock("@expo/vector-icons", () => ({
 
 // ─── @/hooks/useColors ────────────────────────────────────────────────────────
 
-jest.mock("@/hooks/useColors", () => ({
-  useColors: () => ({
-    background: "#fff",
-    foreground: "#000",
-    card: "#fff",
-    border: "#ccc",
-    primary: "#3b82f6",
-    primaryForeground: "#fff",
-    muted: "#f1f5f9",
-    mutedForeground: "#64748b",
-  }),
-}));
+jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
 // ─── @/hooks/useWebHorizontalScroll ───────────────────────────────────────────
 

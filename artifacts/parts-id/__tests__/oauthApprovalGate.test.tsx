@@ -72,16 +72,7 @@ jest.mock("@clerk/expo", () => ({
 
 // ── useColors ─────────────────────────────────────────────────────────────────
 
-jest.mock("@/hooks/useColors", () => ({
-  useColors: () => ({
-    foreground: "#000",
-    mutedForeground: "#888",
-    border: "#ccc",
-    card: "#fff",
-    destructive: "#f00",
-    radius: 8,
-  }),
-}));
+jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // § 1 — AuthGate source inspection

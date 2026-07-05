@@ -65,9 +65,7 @@ jest.mock("@expo/vector-icons", () => ({
   Feather: function Feather() { return null; },
 }));
 
-jest.mock("@/hooks/useColors", () => ({
-  useColors: () => ({ background: "#fff", foreground: "#000", primary: "#3b82f6" }),
-}));
+jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
 // lidar-measure is already mapped via jest.config.js moduleNameMapper → __mocks__/lidar-measure.js
 

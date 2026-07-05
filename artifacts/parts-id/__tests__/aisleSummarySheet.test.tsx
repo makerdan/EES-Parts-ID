@@ -44,13 +44,7 @@ jest.mock("react-native", () => {
 
 // ─── @/hooks/useColors ────────────────────────────────────────────────────────
 
-jest.mock("@/hooks/useColors", () => ({
-  useColors: () => ({
-    background: "#fff", foreground: "#000", card: "#fff", border: "#ccc",
-    primary: "#3b82f6", primaryForeground: "#fff", muted: "#f1f5f9",
-    mutedForeground: "#64748b", overlay: "rgba(0,0,0,0.4)",
-  }),
-}));
+jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
 // ─── Subject under test ───────────────────────────────────────────────────────
 
