@@ -645,16 +645,31 @@ fi
 # ---------------------------------------------------------------------------
 # Test 20: api-server lint exits 0 — no import-sort or other lint errors
 #
-# Runs eslint on the api-server package and asserts exit 0.  Any future
-# import-order violation or lint regression in api-server will fail here,
-# catching it at the health-gate before merge.
+# The api-server "lint" script is `eslint . --ext .ts && knip`.  Because the
+# two checks are joined with `&&`, a failing eslint step short-circuits before
+# knip ever runs, so a green "lint" result on its own does NOT prove that the
+# knip (unused exports/imports) portion passed.  We therefore assert eslint and
+# knip independently below so a knip config drift (e.g. a new entrypoint added
+# without updating knip.json) is caught here at the health-gate before merge,
+# not silently masked by the combined lint script.
 # ---------------------------------------------------------------------------
 LINT_OUTPUT=$(pnpm --filter @workspace/api-server lint 2>&1)
 LINT_EXIT=$?
-assert_exit "api-server lint — exits 0 (no import-sort or lint errors)" 0 "$LINT_EXIT"
+assert_exit "api-server lint — exits 0 (eslint + knip combined)" 0 "$LINT_EXIT"
 if [[ "$LINT_EXIT" -ne 0 ]]; then
   echo "  lint output (first 20 lines):"
   echo "$LINT_OUTPUT" | head -20 | sed 's/^/    /'
+fi
+
+# Independently verify the knip (dead-exports) portion exits 0.  This runs knip
+# on its own via the `dead-exports` script so it is checked even if a future
+# eslint failure would otherwise short-circuit the combined `lint` script.
+KNIP_OUTPUT=$(pnpm --filter @workspace/api-server dead-exports 2>&1)
+KNIP_EXIT=$?
+assert_exit "api-server knip — exits 0 (no unused exports/imports; config not drifted)" 0 "$KNIP_EXIT"
+if [[ "$KNIP_EXIT" -ne 0 ]]; then
+  echo "  knip output (first 20 lines):"
+  echo "$KNIP_OUTPUT" | head -20 | sed 's/^/    /'
 fi
 
 # ---------------------------------------------------------------------------
