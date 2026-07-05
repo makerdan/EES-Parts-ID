@@ -21,6 +21,23 @@ module.exports = {
         },
       },
     ],
+    // Transpile the ESM-only `uuid` package (pulled in transitively by exceljs
+    // and @google-cloud/storage) down to CommonJS so it can be require()d in the
+    // Jest CJS environment. Runs transpile-only (isolatedModules) so ts-jest
+    // does not type-check third-party JS. See transformIgnorePatterns below,
+    // which un-ignores uuid so this transform is applied to it.
+    "^.+\\.jsx?$": [
+      "ts-jest",
+      {
+        isolatedModules: true,
+        tsconfig: {
+          allowJs: true,
+          module: "commonjs",
+          moduleResolution: "node",
+          esModuleInterop: true,
+        },
+      },
+    ],
   },
   testMatch: ["**/__tests__/**/*.test.ts"],
   // Resolve workspace packages to their TypeScript source so ts-jest can
@@ -45,12 +62,10 @@ module.exports = {
     // their own jest.mock() call on top of this stub.
     "^@workspace/integrations-gemini-ai$":
       "<rootDir>/__mocks__/integrations-gemini-ai-mock.cjs",
-    // exceljs transitively imports uuid@14 (pure ESM) which cannot be
-    // transformed by ts-jest in the CJS test environment. Stub it out so that
-    // any test loading app.ts (which pulls in routes/adminQuery.ts) can run.
-    "^exceljs$": "<rootDir>/__mocks__/exceljs.cjs",
-    // @google-cloud/storage transitively imports uuid@14 (pure ESM).
-    // Stub it out for tests that load app.ts.
+    // @google-cloud/storage is stubbed so tests never reach for real GCS
+    // credentials or the network. (It also transitively pulls the ESM-only
+    // uuid package, which the `.jsx?` transform + transformIgnorePatterns below
+    // now handle for the code paths that do load uuid, e.g. real exceljs.)
     "^@google-cloud/storage$": "<rootDir>/__mocks__/google-cloud-storage.cjs",
     "^@workspace/integrations-poe-server$":
       "<rootDir>/../../lib/integrations-poe-server/src/index.ts",
@@ -58,6 +73,9 @@ module.exports = {
   // Allow ts-jest to transform the workspace library source files even though
   // they live inside (or are symlinked from) node_modules.
   transformIgnorePatterns: [
-    "/node_modules/(?!@workspace/)",
+    // Transform @workspace source and the ESM-only `uuid` package; ignore
+    // everything else in node_modules. The `(?:\.pnpm/)?` prefix matches the
+    // pnpm virtual-store layout (node_modules/.pnpm/uuid@x.y.z/...).
+    "/node_modules/(?!(?:\\.pnpm/)?(?:@workspace|uuid)[@/])",
   ],
 };
