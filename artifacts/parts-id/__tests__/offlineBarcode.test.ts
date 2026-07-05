@@ -5,6 +5,7 @@
  * Covers:
  *   - lookupByBarcodeOffline: found, not-found, empty cache, corrupt cache
  *   - upsertItemInBarcodeCache: update existing, insert new, cap guard, empty cache
+ *   - replaceBarcodeCacheWithServerItems: full sync write + deleted-item pruning
  *   - getFuseCacheSyncedAt: valid timestamp, missing key, non-numeric value
  *   - Deleted-item cache guard: item removed from server is not in a refreshed cache
  */
@@ -12,6 +13,7 @@
 import {
   lookupByBarcodeOffline,
   upsertItemInBarcodeCache,
+  replaceBarcodeCacheWithServerItems,
   getFuseCacheSyncedAt,
   FUSE_CACHE_KEY,
   FUSE_CACHE_SYNCED_AT_KEY,
@@ -197,6 +199,53 @@ describe("upsertItemInBarcodeCache", () => {
   it("silently ignores AsyncStorage errors", async () => {
     mockGetItem.mockRejectedValue(new Error("io error"));
     await expect(upsertItemInBarcodeCache(makeItem(1))).resolves.toBeUndefined();
+  });
+});
+
+// ── replaceBarcodeCacheWithServerItems ────────────────────────────────────────
+
+describe("replaceBarcodeCacheWithServerItems", () => {
+  it("writes the full item list to FUSE_CACHE_KEY", async () => {
+    const items = [makeItem(1, ["A"]), makeItem(2, ["B"])];
+    await replaceBarcodeCacheWithServerItems(items);
+
+    expect(mockSetItem).toHaveBeenCalledWith(FUSE_CACHE_KEY, JSON.stringify(items));
+  });
+
+  it("writes a numeric timestamp to FUSE_CACHE_SYNCED_AT_KEY", async () => {
+    const before = Date.now();
+    await replaceBarcodeCacheWithServerItems([makeItem(1)]);
+    const after = Date.now();
+
+    const call = mockSetItem.mock.calls.find(([k]) => k === FUSE_CACHE_SYNCED_AT_KEY);
+    expect(call).toBeDefined();
+    const ts = Number(call![1]);
+    expect(ts).toBeGreaterThanOrEqual(before);
+    expect(ts).toBeLessThanOrEqual(after);
+  });
+
+  it("prunes deleted items: items absent from the server list are not written to cache", async () => {
+    const liveItems = [makeItem(1, ["KEEP-1"]), makeItem(3, ["KEEP-3"])];
+    await replaceBarcodeCacheWithServerItems(liveItems);
+
+    const cacheCall = mockSetItem.mock.calls.find(([k]) => k === FUSE_CACHE_KEY);
+    const saved = JSON.parse(cacheCall![1]) as InventoryItem[];
+    const ids = saved.map((i) => i.id);
+    expect(ids).toContain(1);
+    expect(ids).toContain(3);
+    expect(ids).not.toContain(2); // item 2 was deleted — must not appear
+  });
+
+  it("writes an empty array when no items are live", async () => {
+    await replaceBarcodeCacheWithServerItems([]);
+
+    const cacheCall = mockSetItem.mock.calls.find(([k]) => k === FUSE_CACHE_KEY);
+    expect(JSON.parse(cacheCall![1])).toEqual([]);
+  });
+
+  it("does not throw when AsyncStorage.setItem rejects", async () => {
+    mockSetItem.mockRejectedValueOnce(new Error("storage full"));
+    await expect(replaceBarcodeCacheWithServerItems([makeItem(1)])).resolves.toBeUndefined();
   });
 });
 

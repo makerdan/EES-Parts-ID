@@ -73,6 +73,27 @@ export async function upsertItemInBarcodeCache(
 }
 
 /**
+ * Replace the offline barcode cache with the authoritative server item list and
+ * record the sync timestamp. This is the canonical "full sync" write: any item
+ * that existed in the cache but is absent from `items` is silently dropped,
+ * which prunes ghost entries for inventory that has been deleted server-side.
+ *
+ * On native, both the item cache and the sync timestamp are written atomically
+ * (sequentially). On failure the error is reported via `reportStorageError` so
+ * the user sees a non-blocking toast rather than a silent failure.
+ */
+export async function replaceBarcodeCacheWithServerItems(
+  items: Array<InventoryItem>,
+): Promise<void> {
+  try {
+    await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items));
+    await AsyncStorage.setItem(FUSE_CACHE_SYNCED_AT_KEY, String(Date.now()));
+  } catch (err) {
+    reportStorageError("Could not replace offline barcode cache", err);
+  }
+}
+
+/**
  * Returns the unix timestamp (ms) of the last successful full sync, or null
  * if no sync has been recorded (cache was seeded before timestamp tracking).
  */

@@ -30,6 +30,7 @@ import { useColors } from "@/hooks/useColors";
 import { resolveShelfAssign } from "@/utils/barcodeResolver";
 import { invalidateListIfNew, undoBarcodeAndInvalidate } from "@/utils/listEditorHandlers";
 import { upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
+import { reportStorageError } from "@/utils/storageErrorReporter";
 
 const BULK_SESSION_KEY = "parts_id_bulk_shelf_session_v1";
 /**
@@ -48,6 +49,14 @@ function formatShelfPrefix(raw: string): string {
   return result;
 }
 
+/**
+ * Safety cap: maximum number of pages fetched by fetchAllInventory.
+ * With a page size of 500 this allows up to 250,000 items before aborting.
+ * If the server reports an inconsistent total that never converges, the loop
+ * exits here instead of running forever.
+ */
+const FETCH_ALL_MAX_PAGES = 500;
+
 /** Fetch every page of inventory until all items are collected.
  *  Pass binPrefix to restrict to a shelf; omit it for the full catalog. */
 async function fetchAllInventory(binPrefix?: string): Promise<Array<InventoryItem>> {
@@ -55,6 +64,17 @@ async function fetchAllInventory(binPrefix?: string): Promise<Array<InventoryIte
   let page = 1;
   const all: Array<InventoryItem> = [];
   while (true) {
+    if (page > FETCH_ALL_MAX_PAGES) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[fetchAllInventory] page cap of ${FETCH_ALL_MAX_PAGES} reached` +
+          (binPrefix ? ` for prefix "${binPrefix}"` : "") +
+          ` — aborting (collected ${all.length} items so far)`,
+      );
+      throw new Error(
+        `Inventory fetch exceeded ${FETCH_ALL_MAX_PAGES} pages — aborting to prevent an infinite loop`,
+      );
+    }
     const result = await listInventory({ page, limit: pageSize, binPrefix });
     all.push(...(result.items ?? []));
     if (all.length >= (result.total ?? 0)) break;
@@ -88,7 +108,9 @@ type BulkSession = {
 async function saveBulkSession(session: BulkSession): Promise<void> {
   try {
     await AsyncStorage.setItem(BULK_SESSION_KEY, JSON.stringify(session));
-  } catch {}
+  } catch (err) {
+    reportStorageError("Could not save bulk shelf session", err);
+  }
 }
 
 async function loadBulkSession(): Promise<BulkSession | null> {
@@ -104,7 +126,9 @@ async function loadBulkSession(): Promise<BulkSession | null> {
 async function clearBulkSession(): Promise<void> {
   try {
     await AsyncStorage.removeItem(BULK_SESSION_KEY);
-  } catch {}
+  } catch (err) {
+    reportStorageError("Could not clear bulk shelf session", err);
+  }
 }
 
 interface BulkShelfAssignProps {
