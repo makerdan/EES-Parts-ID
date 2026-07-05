@@ -1,4 +1,4 @@
-import { ai } from "@workspace/integrations-gemini-ai";
+import { getAiClient } from "@workspace/integrations-gemini-ai";
 
 /** Gemini model used for reference Q&A (web-grounded). */
 const WEB_REFERENCE_MODEL = "gemini-2.5-flash";
@@ -13,7 +13,7 @@ export async function callGemini(
   systemInstruction: string,
   userMessage: string,
 ): Promise<string> {
-  const response = await ai.models.generateContent({
+  const response = await getAiClient().models.generateContent({
     model: WEB_REFERENCE_MODEL,
     contents: [{ role: "user", parts: [{ text: userMessage }] }],
     config: {
@@ -40,7 +40,7 @@ export async function callGeminiWithHistory(
     { role: "model" as const, parts: [{ text: turn.a }] },
   ]);
 
-  const response = await ai.models.generateContent({
+  const response = await getAiClient().models.generateContent({
     model: WEB_REFERENCE_MODEL,
     contents: [...priorTurns, { role: "user", parts: [{ text: userMessage }] }],
     config: {

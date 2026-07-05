@@ -1,15 +1,21 @@
 import OpenAI from "openai";
 
-if (!process.env.POE_API_KEY2) {
-  throw new Error(
-    "POE_API_KEY2 must be set. Did you forget to add the Poe API key secret?",
-  );
-}
+let _poeClient: OpenAI | null = null;
 
-export const poe = new OpenAI({
-  apiKey: process.env.POE_API_KEY2,
-  baseURL: "https://api.poe.com/v1",
-});
+export function getPoeClient(): OpenAI {
+  if (!_poeClient) {
+    if (!process.env.POE_API_KEY2) {
+      throw new Error(
+        "POE_API_KEY2 must be set. Did you forget to add the Poe API key secret?",
+      );
+    }
+    _poeClient = new OpenAI({
+      apiKey: process.env.POE_API_KEY2,
+      baseURL: "https://api.poe.com/v1",
+    });
+  }
+  return _poeClient;
+}
 
 /**
  * Returns true if the error is a Poe authentication or authorization failure

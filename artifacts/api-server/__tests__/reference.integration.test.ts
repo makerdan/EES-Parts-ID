@@ -20,15 +20,17 @@ const mockGenerateContent = jest.fn();
 const mockGetCachedAnswer = jest.fn<Promise<string | null>, [string]>();
 const mockSetCachedAnswer = jest.fn<Promise<void>, [string, string, string, (boolean | undefined)?]>();
 
-jest.mock("@workspace/integrations-gemini-ai", () => ({
-  ai: {
-    models: { generateContent: mockGenerateContent },
-  },
-  generateImage: jest.fn(),
-  batchProcess: jest.fn(),
-  batchProcessWithSSE: jest.fn(),
-  isRateLimitError: jest.fn(() => false),
-}));
+jest.mock("@workspace/integrations-gemini-ai", () => {
+  const mockAi = { models: { generateContent: mockGenerateContent } };
+  return {
+    ai: mockAi,
+    getAiClient: () => mockAi,
+    generateImage: jest.fn(),
+    batchProcess: jest.fn(),
+    batchProcessWithSSE: jest.fn(),
+    isRateLimitError: jest.fn(() => false),
+  };
+});
 
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
   openai: {
