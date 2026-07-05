@@ -164,6 +164,7 @@ export function createFloorPlanCacheMock(): object {
     resetForServerUpdate: jest.fn(),
     setCached:            jest.fn(),
     setFallbackEmpty:     jest.fn(),
+    _resetForTests:       jest.fn(),
   };
 }
 

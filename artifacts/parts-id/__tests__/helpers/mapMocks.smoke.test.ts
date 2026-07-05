@@ -28,7 +28,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { createReanimatedMock, createUseColorsMock } from "./mapMocks";
+import { createReanimatedMock, createUseColorsMock, createFloorPlanCacheMock } from "./mapMocks";
 
 const WAREHOUSE_MAP_VIEW_PATH = path.resolve(
   __dirname,
@@ -160,6 +160,75 @@ describe("createUseColorsMock() smoke — every key from the real useColors hook
         `Missing keys in createUseColorsMock():\n` +
           missing.map((k) => `  • ${k}`).join("\n") +
           `\n\nFix: add each missing token to createUseColorsMock().useColors() in mapMocks.ts.`,
+      );
+    }
+
+    expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * Smoke test for createFloorPlanCacheMock().
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * createFloorPlanCacheMock() in mapMocks.ts hardcodes a fixed set of function
+ * stubs for "@/utils/floorPlanCache".  If a new function is added to
+ * floorPlanCache.ts but omitted from the mock, call sites inside components
+ * get `undefined` and tests throw a confusing "X is not a function" error deep
+ * inside an unrelated test file, making the root cause hard to trace.
+ *
+ * HOW IT WORKS
+ * ------------
+ * This test uses jest.requireActual to load the real floorPlanCache module,
+ * then filters its exports down to those whose value is a function.  Those
+ * names become the expected set.  When a developer adds a new function to
+ * floorPlanCache.ts, this test fails immediately at the mock layer with a
+ * clear message — no manual update to this test file is ever required.
+ *
+ * HOW TO FIX A FAILURE
+ * --------------------
+ * If this test fails with "Missing or non-function in createFloorPlanCacheMock(): [X, ...]":
+ *   1. Add X as a jest.fn() stub to createFloorPlanCacheMock() in mapMocks.ts.
+ * That's it.  The test itself never needs updating.
+ */
+describe("createFloorPlanCacheMock() smoke — every function export of floorPlanCache is present in the mock", () => {
+  let mock: Record<string, unknown>;
+  let expectedFnNames: string[];
+
+  beforeAll(() => {
+    const actual = jest.requireActual<Record<string, unknown>>(
+      "@/utils/floorPlanCache",
+    );
+
+    expectedFnNames = Object.entries(actual)
+      .filter(([, v]) => typeof v === "function")
+      .map(([k]) => k);
+
+    mock = createFloorPlanCacheMock() as Record<string, unknown>;
+  });
+
+  it("floorPlanCache.ts exports at least one function (sanity check)", () => {
+    expect(expectedFnNames.length).toBeGreaterThan(0);
+  });
+
+  it("createFloorPlanCacheMock() returns an object (sanity check)", () => {
+    expect(typeof mock).toBe("object");
+    expect(mock).not.toBeNull();
+  });
+
+  it("mock has a function stub for every function exported by floorPlanCache.ts", () => {
+    const missing = expectedFnNames.filter(
+      (name) => typeof mock[name] !== "function",
+    );
+
+    if (missing.length > 0) {
+      throw new Error(
+        `The following floorPlanCache.ts function exports are missing or not a ` +
+          `function in createFloorPlanCacheMock():\n` +
+          missing.map((n) => `  • ${n} (got: ${typeof mock[n]})`).join("\n") +
+          `\n\nFix: add each missing export as a jest.fn() stub to ` +
+          `createFloorPlanCacheMock() in mapMocks.ts.`,
       );
     }
 
