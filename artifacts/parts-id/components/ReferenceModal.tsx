@@ -319,9 +319,11 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
               </Pressable>
               <Pressable
                 onPress={handleClose}
-                style={[modalStyles.closeBtn, { backgroundColor: colors.muted }]}
+                accessibilityRole="button"
+                accessibilityLabel="Back"
+                style={[modalStyles.backBtn, { backgroundColor: colors.muted }]}
               >
-                <Text style={[modalStyles.closeText, { color: colors.foreground }]}>✕</Text>
+                <Text style={[modalStyles.backText, { color: colors.foreground }]}>← Back</Text>
               </Pressable>
             </View>
           </View>
@@ -565,6 +567,8 @@ const modalStyles = StyleSheet.create({
   subtitle: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   closeText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  backBtn: { height: 32, borderRadius: 16, paddingHorizontal: 12, alignItems: "center", justifyContent: "center" },
+  backText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   clearBtn: { ...secondaryBtnBase, paddingHorizontal: 10, paddingVertical: 5 },
   clearText: { fontSize: 12, fontFamily: "Inter_500Medium" },
 });
