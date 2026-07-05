@@ -23,6 +23,10 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import { renderHook, act } from "@testing-library/react";
 import { useWarehouseZones } from "../hooks/useWarehouseZones";
+import {
+  mockFetchWithAuth, mockGetAuthToken, mockUnsubscribeFromTokenAvailable,
+  mockGetItem, mockSetItem, flushPromises, setupBeforeEach,
+} from "./helpers/zonesMockSetup";
 
 // ---------------------------------------------------------------------------
 // retryAsync mock — bypass retry delays so tests run without fake timers.
@@ -34,39 +38,30 @@ jest.mock("@/utils/retryAsync", () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// appAuth mock
-//   fetchWithAuth       — controlled via mockFetchWithAuth
-//   getAuthToken        — controlled via mockGetAuthToken (null = no token yet)
-//   subscribeToTokenAvailable — captures the callback the hook registers
-//   unsubscribeFromTokenAvailable — tracked for unmount-cleanup assertion
+// appAuth mock — capturedTokenAvailableCallback is file-local;
+// tests fire the token-available callback directly via this ref.
 // ---------------------------------------------------------------------------
 let capturedTokenAvailableCallback: (() => void) | null = null;
 
-const mockFetchWithAuth = jest.fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>();
-const mockGetAuthToken = jest.fn<string | null, []>();
-const mockUnsubscribeFromTokenAvailable = jest.fn();
-
 jest.mock("@/utils/appAuth", () => ({
-  fetchWithAuth: (...args: Parameters<typeof fetch>) => mockFetchWithAuth(...args),
-  getAuthToken: () => mockGetAuthToken(),
+  fetchWithAuth: (...args: Parameters<typeof fetch>) =>
+    require("./helpers/zonesMockSetup").mockFetchWithAuth(...args),
+  getAuthToken: () => require("./helpers/zonesMockSetup").mockGetAuthToken(),
   subscribeToTokenAvailable: (fn: () => void) => {
     capturedTokenAvailableCallback = fn;
   },
   unsubscribeFromTokenAvailable: (...args: [() => void]) =>
-    mockUnsubscribeFromTokenAvailable(...args),
+    require("./helpers/zonesMockSetup").mockUnsubscribeFromTokenAvailable(...args),
 }));
 
 // ---------------------------------------------------------------------------
 // AsyncStorage mock — empty cache by default (no prior fetch to fall back on)
 // ---------------------------------------------------------------------------
-const mockGetItem = jest.fn<Promise<string | null>, [string]>();
-const mockSetItem = jest.fn<Promise<void>, [string, string]>();
-
 jest.mock("@react-native-async-storage/async-storage", () => ({
   __esModule: true,
   default: {
-    getItem: (...args: [string]) => mockGetItem(...args),
-    setItem: (...args: [string, string]) => mockSetItem(...args),
+    getItem: (...args: [string]) => require("./helpers/zonesMockSetup").mockGetItem(...args),
+    setItem: (...args: [string, string]) => require("./helpers/zonesMockSetup").mockSetItem(...args),
   },
 }));
 
@@ -76,7 +71,7 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 jest.mock("@/utils/apiBase", () => ({ API_BASE: "http://localhost:3001" }));
 
 // ---------------------------------------------------------------------------
-// Test data
+// Test data — sortOrder: 1 differs from SAMPLE_ZONES; kept local.
 // ---------------------------------------------------------------------------
 const MOCK_ZONES = [
   {
@@ -95,26 +90,11 @@ const MOCK_ZONES = [
 ];
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Flush all pending microtasks + one real setTimeout(0) inside act(). */
-const flushPromises = (): Promise<void> =>
-  act(async () => {
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  });
-
-// ---------------------------------------------------------------------------
 // Setup / teardown
 // ---------------------------------------------------------------------------
 beforeEach(() => {
   capturedTokenAvailableCallback = null;
-  mockFetchWithAuth.mockReset();
-  mockGetAuthToken.mockReset();
-  mockGetAuthToken.mockReturnValue(null);   // default: no token yet
-  mockUnsubscribeFromTokenAvailable.mockReset();
-  mockGetItem.mockResolvedValue(null);      // no cached zones
-  mockSetItem.mockResolvedValue(undefined);
+  setupBeforeEach();
 });
 
 afterEach(() => {

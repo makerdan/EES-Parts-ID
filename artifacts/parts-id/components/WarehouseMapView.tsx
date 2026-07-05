@@ -190,7 +190,10 @@ async function _loadFloorPlanFromServer(signal: AbortSignal): Promise<void> {
   const contentViewBox = parseContentViewBox(xml) ?? undefined;
   let newData: SvgData;
   if (Platform.OS === "web") {
-    newData = { xml, innerXml: stripSvgWrapper(xml), uri: "", contentViewBox };
+    // Strip the outer <svg> wrapper so the content can be embedded
+    // directly inside the main SVG canvas as a child <g> element.
+    const innerXml = stripSvgWrapper(xml);
+    newData = { xml, innerXml, uri: "", contentViewBox };
   } else {
     // On native, SvgUri can render directly from an http:// URL.
     newData = { xml, innerXml: "", uri: `${API_BASE}/floor-plan/svg`, contentViewBox };
@@ -214,7 +217,13 @@ async function _loadFloorPlanFromBundle(signal: AbortSignal): Promise<void> {
     const res = await fetch(uri, { signal });
     const xml = await res.text();
     if (signal.aborted) throw new Error("aborted");
-    newData = { xml, innerXml: stripSvgWrapper(xml), uri: "", contentViewBox: parseContentViewBox(xml) ?? undefined };
+    // Strip the outer <svg> wrapper so the content can be embedded
+    // directly inside the main SVG canvas as a child <g> element.
+    // This matches the approach used in the Zone Editor and keeps the
+    // floor plan and zone overlays in the same SVG viewport, eliminating
+    // any CSS-transform rasterisation blur at high zoom levels.
+    const innerXml = stripSvgWrapper(xml);
+    newData = { xml, innerXml, uri: "", contentViewBox: parseContentViewBox(xml) ?? undefined };
   } else {
     // Fetch the SVG text so the tile renderer can use SvgXml with per-tile
     // viewBox crops at high zoom.  This is a local-file read so it is fast.
@@ -1035,6 +1044,18 @@ export function WarehouseMapView({
   // latest zones without listing `zones` as a dependency.
   useEffect(() => { zonesRef.current = zones; }, [zones]);
 
+  // ── _applyFocusToZone helper ─────────────────────────────────────────────────
+  // Shared by the focusAisleNum effect and _runPendingFocus callback below.
+  function _applyFocusToZone(zone: ApiWarehouseZone | undefined): void {
+    if (zone) {
+      pinFocusCxV.value = zone.svgX + zone.svgWidth  / 2;
+      pinFocusCyV.value = zone.svgY + zone.svgHeight / 2;
+      pinFocusModeV.value = 1;
+    }
+    applyFitRef.current();
+    onFocusConsumed?.();
+  }
+
   // ── Auto-focus on pinned zone ───────────────────────────────────────────────
   // When a `focusAisleNum` is provided (set by the Map tab when the worker
   // taps "Show on Map" from Search / Photo), animate the viewport so the
@@ -1066,21 +1087,7 @@ export function WarehouseMapView({
         ? (aisleZones.find(z => z.sectionNum === focusSectionNum) ?? aisleZones[0])
         : aisleZones[0];
 
-    if (zone) {
-      // Store pin centre in SVG coordinates so the pinch gesture can pivot
-      // around it while pin-focus mode is active.
-      pinFocusCxV.value = zone.svgX + zone.svgWidth  / 2;
-      pinFocusCyV.value = zone.svgY + zone.svgHeight / 2;
-      pinFocusModeV.value = 1;
-    }
-
-    // Reset to the full fit view so the worker sees the whole warehouse with
-    // the highlighted pin before choosing whether and how far to zoom in.
-    applyFitRef.current();
-
-    // Notify parent that this focus has been consumed so it can clear
-    // focusAisleNum and prevent repeated re-centering on future tab visits.
-    onFocusConsumed?.();
+    _applyFocusToZone(zone);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusAisleNum, focusSectionNum, onFocusFailed, onFocusConsumed]);
 
