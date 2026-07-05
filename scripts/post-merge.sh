@@ -8,12 +8,12 @@ set -e
 # Worst-case timing budget (must fit within [postMerge] timeoutMs in .replit):
 #   DB push (conditional):  90s + FTS check: 15s          = 105s
 #   codegen:fix (timeout):                                 = 120s
-#   codegen settle sleep:                                  =   4s
+#   codegen settle poll (max window, early-exit typical):  =  20s
 #   GitHub sync:                                           =   5s
 #   Health check pass 1:  6 × 2s curl + 5 × 4s sleep      =  32s
 #   SIGTERM/SIGKILL wait:                                  =  10s
 #   Health check pass 2:  6 × 2s curl + 5 × 4s sleep      =  32s
-#   Total worst case:                                      = 308s
+#   Total worst case:                                      = 324s
 #   Recommended [postMerge] timeoutMs in .replit:          = 360000 (360s)
 # ---------------------------------------------------------------------------
 
@@ -25,6 +25,19 @@ else
 fi
 MAX_RETRIES=6
 SLEEP_SECS=4
+
+# Codegen settle window — see wait_for_codegen_settle below.
+#   FLOOR : minimum pause so the file-watcher can notice the codegen writes and
+#           *begin* reloading (polling immediately would see the still-up
+#           pre-reload process and return before the reload even starts).
+#   MAX   : upper bound on the settle window; on a slow container that takes
+#           longer than the old fixed 4s to reload, we keep polling up to here.
+#   POLL  : interval between health probes inside the settle window.
+# All three are env-overridable so a notably slow container can widen the
+# window without editing this script (e.g. CODEGEN_SETTLE_MAX_SECS=40).
+CODEGEN_SETTLE_FLOOR_SECS="${CODEGEN_SETTLE_FLOOR_SECS:-2}"
+CODEGEN_SETTLE_MAX_SECS="${CODEGEN_SETTLE_MAX_SECS:-20}"
+CODEGEN_SETTLE_POLL_SECS="${CODEGEN_SETTLE_POLL_SECS:-2}"
 
 check_api_health() {
   local label="$1"
@@ -44,6 +57,41 @@ check_api_health() {
     fi
   done
   return 1
+}
+
+# ---------------------------------------------------------------------------
+# wait_for_codegen_settle — replaces the old fixed 4s sleep after codegen.
+#
+# The dev server's file watcher reloads when codegen writes new generated
+# files.  A fixed sleep is fragile: on a fast container it wastes time, and on
+# a slow one (large codegen write, loaded container) the reload can still be
+# in progress when the sleep ends, so the first health-check pass catches the
+# server mid-reload, fails, and needlessly kills + restarts it.
+#
+# Instead we sleep a short floor (so the watcher has time to notice the writes
+# and *begin* reloading) and then poll the health endpoint, returning as soon
+# as the server responds — up to CODEGEN_SETTLE_MAX_SECS.  Fast containers
+# proceed in ~2s; slow ones get the extra time they need before the real
+# health check runs.  Always returns 0: this is a best-effort pre-warm, and
+# the authoritative gate is the health-check pass that follows.
+# ---------------------------------------------------------------------------
+wait_for_codegen_settle() {
+  echo "[post-merge] Settling ${CODEGEN_SETTLE_FLOOR_SECS}s so the file-watcher can begin reloading after codegen..."
+  sleep "$CODEGEN_SETTLE_FLOOR_SECS"
+
+  local waited="$CODEGEN_SETTLE_FLOOR_SECS"
+  while [ "$waited" -lt "$CODEGEN_SETTLE_MAX_SECS" ]; do
+    local body
+    body=$(curl -s --max-time 2 "$HEALTH_URL" 2>/dev/null || true)
+    if echo "$body" | grep -q '"status":"ok"'; then
+      echo "[post-merge] API Server responsive after ~${waited}s — codegen settle complete."
+      return 0
+    fi
+    sleep "$CODEGEN_SETTLE_POLL_SECS"
+    waited=$((waited + CODEGEN_SETTLE_POLL_SECS))
+  done
+  echo "[post-merge] Settle window (${CODEGEN_SETTLE_MAX_SECS}s) elapsed without a healthy response — proceeding to health check anyway."
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -114,12 +162,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   echo "[post-merge] API client regenerated and any drift auto-committed."
 
   # Give the API server's file watcher time to settle after codegen writes new
-  # generated files.  Without this pause the health check can start while the
-  # dev server is mid-reload and burn through early retries against an
-  # unresponsive process.
-  CODEGEN_SETTLE_SECS=4
-  echo "[post-merge] Waiting ${CODEGEN_SETTLE_SECS}s for file-watcher to settle after codegen..."
-  sleep "$CODEGEN_SETTLE_SECS"
+  # generated files.  Rather than a fixed sleep — which is either wasteful on a
+  # fast container or too short on a slow one — poll the health endpoint and
+  # proceed as soon as the server responds (up to a bounded max window).  This
+  # prevents the first health-check pass from catching the server mid-reload.
+  wait_for_codegen_settle
 
   # Push latest main branch to GitHub after every successful merge.
   # Uses || true so a network error never causes post-merge to report failure.
