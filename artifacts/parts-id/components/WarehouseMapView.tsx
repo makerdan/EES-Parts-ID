@@ -546,6 +546,63 @@ function PngTile({
   );
 }
 
+// ── Crossfade fade-out layer ───────────────────────────────────────────────
+// Renders one captured tier's tiles and fades itself from 1 → 0 over 150 ms on
+// mount, then calls onDone(id) so the parent can unmount it.  Each queued layer
+// owns its own opacity shared value, so several can fade independently and in
+// parallel during a rapid multi-step zoom without one clobbering another.
+function FadeOutTileLayer({
+  id,
+  tiles,
+  z,
+  numTiles,
+  svgHash,
+  svgRenderW,
+  svgRenderH,
+  onDone,
+}: {
+  id: number;
+  tiles: Array<{ col: number; row: number }>;
+  z: number;
+  numTiles: number;
+  svgHash: string;
+  svgRenderW: number;
+  svgRenderH: number;
+  onDone: (id: number) => void;
+}) {
+  "use no memo";
+  const opacity = useSharedValue(1);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+
+  useEffect(() => {
+    opacity.value = withTiming(0, { duration: 150 }, (finished) => {
+      if (finished) runOnJS(onDoneRef.current)(id);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  const tileW = svgRenderW / numTiles;
+  const tileH = svgRenderH / numTiles;
+
+  return (
+    <Animated.View style={[StyleSheet.absoluteFill, animatedStyle]} pointerEvents="none">
+      {tiles.map(({ col, row }) => (
+        <PngTile
+          key={`fade-${id}-${col}-${row}`}
+          z={z}
+          col={col}
+          row={row}
+          svgHash={svgHash}
+          tileW={tileW}
+          tileH={tileH}
+        />
+      ))}
+    </Animated.View>
+  );
+}
+
 export interface WarehouseMapViewProps {
   zones: Array<ApiWarehouseZone>;
   zonesLoading: boolean;
@@ -1551,13 +1608,25 @@ export function WarehouseMapView({
   // (they were written at the end of the previous render), giving us the
   // exact tile set to fade out.
   interface TileSpec { col: number; row: number; }
-  interface FadeLayer { tiles: Array<TileSpec>; z: number; numTiles: number; }
+  interface FadeLayer { id: number; tiles: Array<TileSpec>; z: number; numTiles: number; }
+
+  // Maximum number of fade-out layers kept mounted at once.  A very fast
+  // multi-step pinch (e.g. tier 2 → 3 → 4) can queue several crossfades in
+  // quick succession; each self-removes after ~150 ms, so the queue rarely
+  // exceeds one or two.  This cap bounds worst-case tile mounts if fades
+  // arrive faster than they drain — the oldest (nearly-invisible) layers are
+  // dropped first.
+  const MAX_FADE_LAYERS = 4;
 
   const prevRenderZoomRef = useRef(renderZoom);
   const prevTilesRef = useRef<Array<TileSpec>>([]);
-  const pendingFadeRef = useRef<FadeLayer | null>(null);
-  const [fadeOutLayer, setFadeOutLayer] = useState<FadeLayer | null>(null);
-  const fadeOutOpacity = useSharedValue(0);
+  // Queue of tier transitions captured during render but not yet promoted to a
+  // mounted fade layer.  Using an array (not a single ref) means intermediate
+  // tiers are never overwritten and dropped when several tier changes commit
+  // before the crossfade effect runs.
+  const pendingFadesRef = useRef<Array<FadeLayer>>([]);
+  const fadeLayerIdRef = useRef(0);
+  const [fadeLayers, setFadeLayers] = useState<Array<FadeLayer>>([]);
   const tileLayerOpacity = useSharedValue(1);
 
   // Detect a tier change BEFORE the tiles useMemo recomputes so we can
@@ -1573,11 +1642,17 @@ export function WarehouseMapView({
     const visibleOldTiles = prevTilesRef.current.filter(
       ({ col, row }) => col >= vr.c0 && col <= vr.c1 && row >= vr.r0 && row <= vr.r1,
     );
-    pendingFadeRef.current = {
+    // Push (don't overwrite) so a rapid multi-step zoom that commits several
+    // tier changes before the crossfade effect runs still fades EVERY
+    // intermediate tier — never dropping one to a raw SVG flash.  The
+    // end-of-render prevRenderZoomRef update below guards against duplicate
+    // pushes on StrictMode/concurrent double-renders of the same commit.
+    pendingFadesRef.current.push({
+      id: ++fadeLayerIdRef.current,
       tiles: visibleOldTiles.length > 0 ? visibleOldTiles : prevTilesRef.current,
       z: prevRenderZoomRef.current,
       numTiles: tileGridSize(prevRenderZoomRef.current),
-    };
+    });
   }
 
   // ── Tile position memoisation ─────────────────────────────────────────────
@@ -1606,36 +1681,42 @@ export function WarehouseMapView({
   prevRenderZoomRef.current = renderZoom;
   prevTilesRef.current = tiles;
 
+  // Remove a fade layer from the queue once its own fade-out completes.
+  // Passed to each FadeOutTileLayer so layers self-drain in any order.
+  const removeFadeLayer = useCallback((id: number) => {
+    setFadeLayers((prev) => prev.filter((l) => l.id !== id));
+  }, []);
+
   // Trigger the crossfade animation whenever the tile tier commits.
-  // pendingFadeRef holds the old tiles captured during this render (above).
+  // pendingFadesRef holds every tier transition captured during render since
+  // the last drain.  Draining the whole queue (rather than a single ref) means
+  // a rapid multi-step zoom fades each intermediate tier instead of dropping
+  // all but the last to a raw SVG flash.
   useEffect(() => {
     if (Platform.OS === "web") return;
-    const snap = pendingFadeRef.current;
-    pendingFadeRef.current = null;
-    if (!snap || snap.tiles.length === 0) {
-      // No old tiles to cross-dissolve (e.g. first zoom past 1 → 2), but
-      // still fade the new tile layer in so it appears without a hard pop.
-      tileLayerOpacity.value = 0;
-      tileLayerOpacity.value = withTiming(1, { duration: 150 });
-      return;
-    }
-    setFadeOutLayer(snap);
-    // New layer: snap opacity from 0 → 1 so tiles appear as they paint.
+    const pending = pendingFadesRef.current;
+    pendingFadesRef.current = [];
+    const withTiles = pending.filter((p) => p.tiles.length > 0);
+
+    // Always fade the new tile layer in so it appears without a hard pop,
+    // whether or not there were old tiles to cross-dissolve.
     tileLayerOpacity.value = 0;
     tileLayerOpacity.value = withTiming(1, { duration: 150 });
-    // Old layer: fade out in sync, then unmount.
-    fadeOutOpacity.value = 1;
-    fadeOutOpacity.value = withTiming(0, { duration: 150 }, (finished) => {
-      if (finished) runOnJS(setFadeOutLayer)(null);
+
+    if (withTiles.length === 0) return;
+
+    // Append the captured transitions to the mounted queue, keeping only the
+    // most recent MAX_FADE_LAYERS.  Each layer animates and self-removes via
+    // removeFadeLayer once its fade completes.
+    setFadeLayers((prev) => {
+      const next = [...prev, ...withTiles];
+      return next.length > MAX_FADE_LAYERS ? next.slice(next.length - MAX_FADE_LAYERS) : next;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderZoom]);
 
   const tileLayerAnimatedStyle = useAnimatedStyle(() => ({
     opacity: tileLayerOpacity.value,
-  }));
-  const fadeOutAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: fadeOutOpacity.value,
   }));
 
   // Skeleton shimmer — pulsing opacity while SVG is fetching.
@@ -2049,29 +2130,28 @@ export function WarehouseMapView({
                   // SvgUri also handles DPR internally — no oversample needed.
                   <SvgUri uri={svgUri} width={svgRenderW} height={svgRenderH} />
                 ) : null}
-                {/* ── Crossfade fade-out layer ──────────────────────────────
-                    Holds the previous tier's tiles while new tiles render.
-                    Fades from 1→0 over 150 ms in sync with the new layer
-                    fading in, so there is never a blank frame at the boundary.
-                    Rendered above the base layer, below the main tile layer,
-                    so the new tiles always appear on top as they paint. */}
-                {fadeOutLayer && fadeOutLayer.numTiles > 1 && (
-                  <Animated.View
-                    style={[StyleSheet.absoluteFill, fadeOutAnimatedStyle]}
-                    pointerEvents="none"
-                  >
-                    {fadeOutLayer.tiles.map(({ col, row }) => (
-                      <PngTile
-                        key={`fade-${col}-${row}`}
-                        z={fadeOutLayer.z}
-                        col={col}
-                        row={row}
-                        svgHash={svgHash}
-                        tileW={svgRenderW / fadeOutLayer.numTiles}
-                        tileH={svgRenderH / fadeOutLayer.numTiles}
-                      />
-                    ))}
-                  </Animated.View>
+                {/* ── Crossfade fade-out layers ─────────────────────────────
+                    Each queued layer holds a previous tier's tiles while new
+                    tiles render, fading from 1→0 over 150 ms so there is never
+                    a blank frame at the boundary.  A rapid multi-step zoom can
+                    queue several layers (oldest first, newest last / on top);
+                    each self-removes when its own fade completes.  Rendered
+                    above the base layer, below the main tile layer, so the new
+                    tiles always appear on top as they paint. */}
+                {fadeLayers.map((layer) =>
+                  layer.numTiles > 1 ? (
+                    <FadeOutTileLayer
+                      key={layer.id}
+                      id={layer.id}
+                      tiles={layer.tiles}
+                      z={layer.z}
+                      numTiles={layer.numTiles}
+                      svgHash={svgHash}
+                      svgRenderW={svgRenderW}
+                      svgRenderH={svgRenderH}
+                      onDone={removeFadeLayer}
+                    />
+                  ) : null,
                 )}
                 {/* ── Main tile layer — fades in on zoom-stop commit ─────── */}
                 <Animated.View style={[StyleSheet.absoluteFill, tileLayerAnimatedStyle]}>
