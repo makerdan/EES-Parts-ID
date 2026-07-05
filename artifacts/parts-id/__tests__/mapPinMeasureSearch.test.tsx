@@ -31,6 +31,7 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
 import renderer, { act } from "react-test-renderer";
+import { flushPromises as rawFlush } from "./helpers/appMocks";
 
 // ─── expo-router: capture useFocusEffect callback and router calls ────────────
 
@@ -159,10 +160,7 @@ jest.mock("@/components/BarcodeScreen",     () => ({ __esModule: true, default: 
 
 // ─── @expo/vector-icons ──────────────────────────────────────────────────────
 
-jest.mock("@expo/vector-icons", () => ({
-  Feather: () => null,
-  MaterialCommunityIcons: () => null,
-}));
+jest.mock("@expo/vector-icons", () => require("./helpers/mapMocks").createVectorIconsMock());
 
 // ─── @/constants/colors ──────────────────────────────────────────────────────
 
@@ -224,102 +222,31 @@ jest.mock("@/utils/searchHelpers", () => ({
 
 jest.mock("@/utils/useTrackScreen", () => ({ useTrackScreen: jest.fn() }));
 
+jest.mock("@/utils/apiBase", () => ({ API_BASE: "http://localhost:3001" }));
+
 // ─── react-native-reanimated (needed by WarehouseMapView) ─────────────────────
 
-jest.mock("react-native-reanimated", () => {
-  const React = require("react");
-  const makeShared = (v: unknown) => ({ value: v });
-  const AnimatedView = ({ children, style }: { children?: React.ReactNode; style?: unknown }) =>
-    React.createElement("rn-animated-view", { style }, children);
-  const createAnimatedComponent = (C: unknown) => C;
-  return {
-    __esModule: true,
-    useSharedValue: makeShared,
-    useAnimatedStyle: () => ({}),
-    useAnimatedProps: () => ({}),
-    useAnimatedReaction: () => {},
-    withSpring: (v: unknown) => v,
-    withRepeat: (a: unknown) => a,
-    withTiming: (v: unknown) => v,
-    runOnJS: (fn: unknown) => fn,
-    cancelAnimation: () => {},
-    Animated: { createAnimatedComponent, View: AnimatedView },
-    default:  { createAnimatedComponent, View: AnimatedView },
-  };
-});
+jest.mock("react-native-reanimated", () => require("./helpers/mapMocks").createReanimatedMock());
 
 // ─── react-native-gesture-handler (needed by WarehouseMapView) ───────────────
 
-jest.mock("react-native-gesture-handler", () => {
-  const chain = () => {
-    const c: Record<string, unknown> = {};
-    ["minPointers", "minDistance", "onBegin", "onUpdate", "onEnd", "numberOfTaps"].forEach(
-      (m) => { c[m] = () => c; }
-    );
-    return c;
-  };
-  return {
-    Gesture: {
-      Pan: chain,
-      Pinch: chain,
-      Tap: chain,
-      Simultaneous: (...args: unknown[]) => args[0],
-      Exclusive: (...args: unknown[]) => args[0],
-    },
-    GestureDetector: ({ children }: { children: React.ReactNode }) =>
-      React.createElement(React.Fragment, null, children),
-  };
-});
+jest.mock("react-native-gesture-handler", () => require("./helpers/mapMocks").createGestureHandlerMock());
 
 // ─── react-native-svg (needed by WarehouseMapView) ───────────────────────────
 
-jest.mock("react-native-svg", () => ({
-  Svg: () => null,
-  Rect: () => null,
-  G: () => null,
-  Text: () => null,
-  SvgUri: () => null,
-  SvgXml: () => null,
-  Path: () => null,
-  Ellipse: () => null,
-}));
+jest.mock("react-native-svg", () => require("./helpers/mapMocks").createSvgMock());
 
 // ─── expo-asset (needed by WarehouseMapView) ──────────────────────────────────
 
-jest.mock("expo-asset", () => ({
-  Asset: {
-    fromModule: () => ({ downloadAsync: async () => {}, localUri: "" }),
-  },
-}));
+jest.mock("expo-asset", () => require("./helpers/mapMocks").createExpoAssetMock());
 
 // ─── @/utils/floorPlanCache (needed by WarehouseMapView) ─────────────────────
 
-jest.mock("@/utils/floorPlanCache", () => ({
-  getCachedData:     jest.fn().mockReturnValue(null),
-  getCachedHash:     jest.fn().mockReturnValue(null),
-  getIfValid:        jest.fn().mockReturnValue(null),
-  hasCachedData:     jest.fn().mockReturnValue(false),
-  initPersistRead:   jest.fn().mockReturnValue(Promise.resolve()),
-  resetForServerUpdate: jest.fn(),
-  setCached:         jest.fn(),
-  setFallbackEmpty:  jest.fn(),
-}));
+jest.mock("@/utils/floorPlanCache", () => require("./helpers/mapMocks").createFloorPlanCacheMock());
 
 // ─── @/utils/mapViewport (needed by WarehouseMapView) ────────────────────────
 
-jest.mock("@/utils/mapViewport", () => ({
-  SVG_VIEWBOX_W:       3592.55,
-  SVG_VIEWBOX_H:       2457.41,
-  SVG_ASPECT:          3592.55 / 2457.41,
-  MIN_SCALE:           0.5,
-  MAX_SCALE:           5,
-  ZOOM_STOPS:          [{ scale: 1.5 }, { scale: 4 }, { scale: 10 }, { scale: 22 }, { scale: 45 }],
-  parseContentViewBox: jest.fn().mockReturnValue(null),
-  fitContentViewport:  jest.fn(),
-  makeTileViewBox:     jest.fn(),
-  tileGridSize:        jest.fn().mockReturnValue(1),
-  zoomStopForScale:    jest.fn().mockReturnValue(0),
-}));
+jest.mock("@/utils/mapViewport", () => require("./helpers/mapMocks").createMapViewportMock());
 
 // ─── PhotoScreen-specific mocks ───────────────────────────────────────────────
 
@@ -410,11 +337,7 @@ async function render(ui: React.ReactElement) {
   return tree;
 }
 
-const flushPromises = () => act(async () => {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-});
+const flushPromises = () => act(async () => { await rawFlush(); });
 
 // ─── Instance-tree helpers ────────────────────────────────────────────────────
 

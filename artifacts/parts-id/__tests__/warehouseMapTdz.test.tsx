@@ -33,96 +33,13 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 
 // ─── react-native-reanimated ──────────────────────────────────────────────────
-jest.mock("react-native-reanimated", () => {
-  const React = require("react");
-  const passThrough = (v: unknown) => v;
-
-  const AnimatedView = ({ children, ...rest }: Record<string, unknown>) =>
-    React.createElement("rn-reanimated-view", rest, children);
-
-  const createAnimatedComponent = (Component: React.ComponentType) => Component;
-
-  return {
-    __esModule: true,
-    default: {
-      View: AnimatedView,
-      ScrollView: ({ children }: { children: React.ReactNode }) =>
-        React.createElement("rn-animated-scroll", {}, children),
-      createAnimatedComponent,
-    },
-    useSharedValue: (initial: unknown) => ({ value: initial }),
-    useAnimatedProps: (_fn: () => unknown) => ({}),
-    useAnimatedStyle: (_fn: () => unknown) => ({}),
-    useAnimatedReaction: () => {},
-    runOnJS: (fn: (...args: unknown[]) => unknown) => fn,
-    cancelAnimation: () => {},
-    withSpring: passThrough,
-    withTiming: passThrough,
-    withRepeat: passThrough,
-    Easing: { bezier: () => 0, inOut: passThrough, ease: 0, linear: 0 },
-    createAnimatedComponent,
-  };
-});
+jest.mock("react-native-reanimated", () => require("./helpers/mapMocks").createReanimatedMock());
 
 // ─── react-native-gesture-handler ────────────────────────────────────────────
-jest.mock("react-native-gesture-handler", () => {
-  const React = require("react");
-
-  function makeChainable() {
-    const obj: Record<string, (...args: unknown[]) => typeof obj> = {};
-    [
-      "onBegin", "onUpdate", "onEnd", "onFinalize",
-      "onTouchesDown", "onTouchesUp", "onTouchesCancelled", "onTouchesMoved",
-      "minDistance", "maxDistance", "minPointers", "maxPointers",
-      "averageTouches", "enableTrackpadTwoFingerGesture",
-      "simultaneousWithExternalGesture", "requireExternalGestureToFail",
-      "blocksExternalGesture", "withTestId", "enabled",
-      "shouldCancelWhenOutside", "hitSlop", "activeCursor",
-      "runOnJS", "manualActivation", "numberOfTaps", "maxDuration",
-      "maxDelay", "minNumberOfPointers",
-    ].forEach((m) => { obj[m] = () => obj; });
-    return obj;
-  }
-
-  return {
-    Gesture: {
-      Pan: makeChainable,
-      Pinch: makeChainable,
-      Tap: makeChainable,
-      LongPress: makeChainable,
-      Simultaneous: (..._args: unknown[]) => makeChainable(),
-      Exclusive: (..._args: unknown[]) => makeChainable(),
-      Race: (..._args: unknown[]) => makeChainable(),
-    },
-    GestureDetector: ({ children }: { children: React.ReactNode }) =>
-      React.createElement(React.Fragment, null, children),
-  };
-});
+jest.mock("react-native-gesture-handler", () => require("./helpers/mapMocks").createGestureHandlerMock());
 
 // ─── react-native-svg ────────────────────────────────────────────────────────
-jest.mock("react-native-svg", () => {
-  const React = require("react");
-  const noop = () => null;
-  const make = (tag: string) =>
-    ({ children, ...rest }: Record<string, unknown>) =>
-      React.createElement(tag, rest, children);
-  return {
-    default: make("svg"),
-    Svg: make("svg"),
-    Rect: noop,
-    G: make("g"),
-    Text: make("svg-text"),
-    SvgUri: noop,
-    SvgXml: noop,
-    Path: noop,
-    Ellipse: noop,
-    Circle: noop,
-    Defs: make("defs"),
-    ClipPath: make("clip-path"),
-    Use: noop,
-    Symbol: noop,
-  };
-});
+jest.mock("react-native-svg", () => require("./helpers/mapMocks").createSvgMock());
 
 // ─── @/utils/apiBase ─────────────────────────────────────────────────────────
 // Return an empty API_BASE so the server-hash polling setInterval in
@@ -132,27 +49,10 @@ jest.mock("react-native-svg", () => {
 jest.mock("@/utils/apiBase", () => ({ API_BASE: "" }));
 
 // ─── expo-asset ──────────────────────────────────────────────────────────────
-jest.mock("expo-asset", () => ({
-  Asset: {
-    fromModule: () => ({
-      uri: "file:///mock/floor-plan.svg",
-      localUri: "file:///mock/floor-plan.svg",
-      downloaded: true,
-      downloadAsync: jest.fn(() => Promise.resolve()),
-    }),
-    loadAsync: jest.fn(() =>
-      Promise.resolve([{
-        uri: "file:///mock/floor-plan.svg",
-        localUri: "file:///mock/floor-plan.svg",
-        downloaded: true,
-        hash: "bundle-hash",
-      }])
-    ),
-  },
-}));
+jest.mock("expo-asset", () => require("./helpers/mapMocks").createExpoAssetMock());
 
 // ─── @expo/vector-icons ───────────────────────────────────────────────────────
-jest.mock("@expo/vector-icons", () => ({ Feather: () => null }));
+jest.mock("@expo/vector-icons", () => require("./helpers/mapMocks").createVectorIconsMock());
 
 // ─── @react-native-async-storage/async-storage ───────────────────────────────
 jest.mock("@react-native-async-storage/async-storage", () => ({
@@ -180,16 +80,7 @@ jest.mock("@/utils/tilePyramidCache", () => ({
 }));
 
 // ─── @/utils/floorPlanCache ──────────────────────────────────────────────────
-jest.mock("@/utils/floorPlanCache", () => ({
-  getCachedHash: jest.fn(() => null),
-  getCachedData: jest.fn(() => null),
-  hasCachedData: jest.fn(() => false),
-  getIfValid: jest.fn(() => null),
-  initPersistRead: jest.fn(() => Promise.resolve()),
-  resetForServerUpdate: jest.fn(),
-  setCached: jest.fn(),
-  setFallbackEmpty: jest.fn(),
-}));
+jest.mock("@/utils/floorPlanCache", () => require("./helpers/mapMocks").createFloorPlanCacheMock());
 
 // ─── import component under test (after all mocks) ───────────────────────────
 import { WarehouseMapView } from "@/components/WarehouseMapView";

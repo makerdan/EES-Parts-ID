@@ -16,44 +16,32 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import { renderHook, act } from "@testing-library/react";
 import { useWarehouseZones } from "../hooks/useWarehouseZones";
+import {
+  mockFetchWithAuth, mockGetAuthToken,
+  mockSubscribeToTokenAvailable, mockUnsubscribeFromTokenAvailable,
+  mockGetItem, mockSetItem, mockRetryAsync,
+  flushPromises, setupBeforeEach,
+} from "./helpers/zonesMockSetup";
 
-// ── retryAsync mock — calls fn(0) once, no delays ────────────────────────────
-const mockRetryAsync = jest.fn(
-  (fn: (attempt: number) => Promise<unknown>) => fn(0),
-);
-
+// ── Mock factories ────────────────────────────────────────────────────────────
 jest.mock("@/utils/retryAsync", () => ({
   retryAsync: (...args: [fn: (attempt: number) => Promise<unknown>]) =>
-    mockRetryAsync(...args),
+    require("./helpers/zonesMockSetup").mockRetryAsync(...args),
 }));
-
-// ── AsyncStorage mock ────────────────────────────────────────────────────────
-const mockGetItem = jest.fn<Promise<string | null>, [string]>(() =>
-  Promise.resolve(null),
-);
-const mockSetItem = jest.fn<Promise<void>, [string, string]>(() =>
-  Promise.resolve(),
-);
 
 jest.mock("@react-native-async-storage/async-storage", () => ({
-  getItem: (...args: [string]) => mockGetItem(...args),
-  setItem: (...args: [string, string]) => mockSetItem(...args),
+  getItem: (...args: [string]) => require("./helpers/zonesMockSetup").mockGetItem(...args),
+  setItem: (...args: [string, string]) => require("./helpers/zonesMockSetup").mockSetItem(...args),
 }));
-
-// ── appAuth mock ─────────────────────────────────────────────────────────────
-const mockFetchWithAuth = jest.fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>();
-const mockGetAuthToken = jest.fn<string | null, []>().mockReturnValue(null);
-const mockSubscribeToTokenAvailable = jest.fn<void, [() => void]>();
-const mockUnsubscribeFromTokenAvailable = jest.fn();
 
 jest.mock("@/utils/appAuth", () => ({
   fetchWithAuth: (...args: Parameters<typeof fetch>) =>
-    mockFetchWithAuth(...args),
-  getAuthToken: () => mockGetAuthToken(),
+    require("./helpers/zonesMockSetup").mockFetchWithAuth(...args),
+  getAuthToken: () => require("./helpers/zonesMockSetup").mockGetAuthToken(),
   subscribeToTokenAvailable: (fn: () => void) =>
-    mockSubscribeToTokenAvailable(fn),
+    require("./helpers/zonesMockSetup").mockSubscribeToTokenAvailable(fn),
   unsubscribeFromTokenAvailable: (...args: [() => void]) =>
-    mockUnsubscribeFromTokenAvailable(...args),
+    require("./helpers/zonesMockSetup").mockUnsubscribeFromTokenAvailable(...args),
 }));
 
 // ── apiBase mock ─────────────────────────────────────────────────────────────
@@ -105,31 +93,8 @@ const REFRESHED_ZONES = [
   },
 ];
 
-/**
- * Flush all pending microtasks and one macrotask turn so that async state
- * updates triggered by resolved Promises are committed before assertions run.
- */
-const flushPromises = (): Promise<void> =>
-  act(
-    async () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
-  );
-
 // ── Setup / teardown ──────────────────────────────────────────────────────────
-beforeEach(() => {
-  mockGetItem.mockReset();
-  mockGetItem.mockResolvedValue(null);
-  mockSetItem.mockReset();
-  mockSetItem.mockResolvedValue(undefined);
-  mockFetchWithAuth.mockReset();
-  mockGetAuthToken.mockReset();
-  mockGetAuthToken.mockReturnValue(null);
-  mockSubscribeToTokenAvailable.mockReset();
-  mockUnsubscribeFromTokenAvailable.mockReset();
-  mockRetryAsync.mockReset();
-  mockRetryAsync.mockImplementation(
-    (fn: (attempt: number) => Promise<unknown>) => fn(0),
-  );
-});
+beforeEach(() => { setupBeforeEach(); });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
