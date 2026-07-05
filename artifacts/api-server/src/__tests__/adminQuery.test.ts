@@ -410,3 +410,128 @@ describe("POST /api/admin/query — sensitive column masking", () => {
     expect(res.body.strippedColumns).toEqual([]);
   });
 });
+
+// ── ADMIN_QUERY_SENSITIVE_COLUMNS override / fallback ──────────────────────────
+// The sensitive-column denylist is compiled once at module load into
+// SENSITIVE_COLUMN_PATTERN via buildSensitiveColumnPattern().  A bad override
+// (invalid regex, or one that accidentally matches nothing) must NOT silently
+// disable PII masking.  Because the pattern is evaluated at import time, each
+// case here sets the env var, resets the module registry, and re-imports a
+// fresh Express app so the pattern is (re)built from the current env value.
+
+describe("POST /api/admin/query — ADMIN_QUERY_SENSITIVE_COLUMNS override/fallback", () => {
+  const token = makeAdminToken();
+  const originalEnv = process.env.ADMIN_QUERY_SENSITIVE_COLUMNS;
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.ADMIN_QUERY_SENSITIVE_COLUMNS;
+    } else {
+      process.env.ADMIN_QUERY_SENSITIVE_COLUMNS = originalEnv;
+    }
+    jest.resetModules();
+  });
+
+  /**
+   * Set the env override, reset the module registry, and re-import a fresh app
+   * so its module-level SENSITIVE_COLUMN_PATTERN is rebuilt from `envValue`.
+   */
+  function loadFreshApp(envValue: string | undefined): typeof app {
+    jest.resetModules();
+    if (envValue === undefined) {
+      delete process.env.ADMIN_QUERY_SENSITIVE_COLUMNS;
+    } else {
+      process.env.ADMIN_QUERY_SENSITIVE_COLUMNS = envValue;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require("../app").default as typeof app;
+  }
+
+  function stubQueryWithColumns(fields: Array<{ name: string }>, row: Record<string, unknown>) {
+    mockQuery
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ fields, rows: [row] })
+      .mockResolvedValueOnce({});
+  }
+
+  it("rebuilds the pattern from a valid custom override and strips the custom columns", async () => {
+    // Custom denylist that has nothing to do with the defaults: any column named
+    // "secret_field" or ending in "_private".  If the module rebuilt the pattern
+    // from the env var, these are stripped while the default-only "email" column
+    // (not in the custom pattern) is now returned verbatim.
+    const freshApp = loadFreshApp("secret_field|.*_private");
+    mockConnect.mockClear();
+    mockQuery.mockClear();
+    mockRelease.mockClear();
+
+    stubQueryWithColumns(
+      [{ name: "id" }, { name: "secret_field" }, { name: "notes_private" }, { name: "email" }],
+      { id: 1, secret_field: "xyz", notes_private: "hush", email: "test@example.com" },
+    );
+
+    const res = await supertest(freshApp)
+      .post("/api/admin/query")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sql: "SELECT id, secret_field, notes_private, email FROM users LIMIT 1" })
+      .expect(200);
+
+    // Custom columns stripped …
+    expect(res.body.strippedColumns).toContain("secret_field");
+    expect(res.body.strippedColumns).toContain("notes_private");
+    expect(res.body.rows[0]).not.toHaveProperty("secret_field");
+    expect(res.body.rows[0]).not.toHaveProperty("notes_private");
+    // … and the pattern truly replaced the default (email no longer matches).
+    expect(res.body.columns).toContain("email");
+    expect(res.body.rows[0].email).toBe("test@example.com");
+    expect(res.body.strippedColumns).not.toContain("email");
+  });
+
+  it("falls back to the default denylist when the override is an invalid regex", async () => {
+    // An unbalanced group makes `new RegExp` throw; buildSensitiveColumnPattern
+    // must catch it and fall back to the default denylist rather than leaking.
+    const freshApp = loadFreshApp("(unterminated[");
+    mockConnect.mockClear();
+    mockQuery.mockClear();
+    mockRelease.mockClear();
+
+    stubQueryWithColumns(
+      [
+        { name: "id" },
+        { name: "email" },
+        { name: "clerk_user_id" },
+        { name: "phone" },
+        { name: "created_by_user_id" },
+        { name: "label" },
+      ],
+      {
+        id: 1,
+        email: "test@example.com",
+        clerk_user_id: "user_abc",
+        phone: "+15550001111",
+        created_by_user_id: "user_x",
+        label: "Alice",
+      },
+    );
+
+    const res = await supertest(freshApp)
+      .post("/api/admin/query")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        sql: "SELECT id, email, clerk_user_id, phone, created_by_user_id, label FROM users LIMIT 1",
+      })
+      .expect(200);
+
+    // Default PII denylist is still enforced despite the bad override.
+    expect(res.body.strippedColumns).toEqual(
+      expect.arrayContaining(["email", "clerk_user_id", "phone", "created_by_user_id"]),
+    );
+    expect(res.body.rows[0]).not.toHaveProperty("email");
+    expect(res.body.rows[0]).not.toHaveProperty("clerk_user_id");
+    expect(res.body.rows[0]).not.toHaveProperty("phone");
+    expect(res.body.rows[0]).not.toHaveProperty("created_by_user_id");
+    // Non-sensitive columns still returned.
+    expect(res.body.columns).toContain("label");
+    expect(res.body.rows[0].label).toBe("Alice");
+  });
+});
