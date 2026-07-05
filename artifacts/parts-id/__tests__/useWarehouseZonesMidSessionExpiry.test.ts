@@ -98,6 +98,69 @@ beforeEach(() => { setupBeforeEach(); });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+describe("useWarehouseZones — cold-start token expiry (no cache)", () => {
+
+  // ── 0. Token present at mount but 401 returned, no cached fallback ──────────
+  //
+  // Scenario: the token expired between the last app session and this fresh
+  // launch. AsyncStorage has no cached zones. The initial fetch returns 401 and
+  // onUnauthorized clears the token. Because there is nothing to fall back on
+  // the map is genuinely broken — the error badge must appear so the user is
+  // not left staring at an empty, badge-free screen with no indication that
+  // re-authentication is needed.
+
+  describe("401 on cold start with empty cache", () => {
+    it("sets error=true so the error badge appears (map has no fallback data)", async () => {
+      // No cached zones in AsyncStorage.
+      mockGetItem.mockResolvedValue(null);
+
+      // A token is present when the fetch fires, but the server rejects it.
+      // After the 401 onUnauthorized clears the token.
+      mockGetAuthToken
+        .mockReturnValueOnce("valid-token") // read inside refetch before fetch
+        .mockReturnValue(null);             // token cleared by onUnauthorized
+
+      mockFetchWithAuth.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({}),
+      } as Response);
+
+      const { result } = renderHook(() => useWarehouseZones());
+      await flushPromises();
+
+      // The map has no data at all — show the error badge so the user knows
+      // something is wrong.
+      expect(result.current.error).toBe(true);
+      expect(result.current.zones).toEqual([]);
+      expect(result.current.loading).toBe(false);
+    });
+
+    it("keeps error=false on genuine cold-start race (no token at all from the start)", async () => {
+      // No cached zones.
+      mockGetItem.mockResolvedValue(null);
+
+      // Token was never present — tokenAvailable will fire when auth settles.
+      mockGetAuthToken.mockReturnValue(null);
+
+      mockFetchWithAuth.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({}),
+      } as Response);
+
+      const { result } = renderHook(() => useWarehouseZones());
+      await flushPromises();
+
+      // This is a cold-start race: the token hasn't arrived yet.
+      // Suppress the error badge — the tokenAvailable subscriber will retry.
+      expect(result.current.error).toBe(false);
+      expect(result.current.zones).toEqual([]);
+      expect(result.current.loading).toBe(false);
+    });
+  });
+});
+
 describe("useWarehouseZones — mid-session token expiry", () => {
 
   // ── 1. Mid-session 401, hasDataRef already true → error stays false ────────
