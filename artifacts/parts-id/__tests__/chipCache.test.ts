@@ -220,6 +220,29 @@ describe("prefetchQuickLookups", () => {
     await expect(prefetchQuickLookups(cache, API_BASE)).resolves.toBeUndefined();
     expect(cache.size).toBe(0);
   });
+
+  it("after MAX_AGE_MS elapses a prefetched entry is treated as stale and falls through to Layer 2", async () => {
+    const cache = new Map<string, CacheEntry>();
+    mockFetch.mockResolvedValueOnce(
+      makeResponse(200, [{ label: LABEL, answer: ANSWER }]),
+    );
+
+    await prefetchQuickLookups(cache, API_BASE);
+    mockFetch.mockClear();
+
+    // Freeze time past the TTL so the prefetched entry is expired.
+    const frozenNow = Date.now() + MAX_AGE_MS + 1;
+    jest.spyOn(Date, "now").mockReturnValue(frozenNow);
+
+    mockFetch.mockResolvedValueOnce(makeResponse(200, { answer: "refreshed answer" }));
+
+    const result = await fetchChipAnswer(LABEL, QUESTION, cache, API_BASE);
+
+    expect(result).toBe("refreshed answer");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    jest.restoreAllMocks();
+  });
 });
 
 // ── BoundedLruMap ─────────────────────────────────────────────────────────────
