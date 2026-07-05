@@ -21,3 +21,9 @@ Manual cleanup is no longer needed — post-merge handles it automatically.
 **CI/PR gate is unchanged:** `codegen:check` (used by the CI workflow, not post-merge) still asserts `git diff --exit-code` and blocks PRs that commit stale stubs.
 
 **Note:** Concurrent merges can still produce transient drift on main, but post-merge will commit the fix as part of the second merge's run.
+
+## Two failure shapes a task agent will hit (both environment, not your code)
+1. **`codegen:check` diff = prettier-vs-raw formatting.** The `afterAllFilesWrite` hook (`lib/api-spec/post-codegen.mjs` + `prettier: true`) reformats orval output (double quotes, multiline). If main committed the RAW orval output (single quotes, `{[key:string]:...}` on one line), fresh codegen reformats it and `git diff --exit-code` fails on files you never touched. You cannot fix this — you can't change the committed index. Regenerating only changes your working tree, not the index the check diffs against.
+2. **`... could not be found`/`is not a module` typecheck errors under `lib/api-*/src/generated` or `dist`.** These are the codegen RACE: validations run in parallel and `codegen:check` runs orval which *cleans the output folder* mid-run, so a concurrent `parts-id-typecheck`/`tsc --build` reads the folder while it's empty. The same typecheck passes in isolation.
+
+**How to apply:** If your task did NOT intentionally change the OpenAPI spec or generated files, and these are the only failures, they are environment-blocked — verify your real changes typecheck in isolation, then mark complete with a skip_validation_reason. Do NOT keep regenerating; it won't help and adds noise to your diff.
