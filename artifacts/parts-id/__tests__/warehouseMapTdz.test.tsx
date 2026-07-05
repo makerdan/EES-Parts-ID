@@ -25,6 +25,10 @@
  * which is exactly the code path where TDZ violations occur.
  */
 
+// React 19 requires IS_REACT_ACT_ENVIRONMENT = true for act() to flush
+// synchronous state updates and suppress spurious act() warnings.
+(global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 
@@ -120,6 +124,13 @@ jest.mock("react-native-svg", () => {
   };
 });
 
+// ─── @/utils/apiBase ─────────────────────────────────────────────────────────
+// Return an empty API_BASE so the server-hash polling setInterval in
+// WarehouseMapView (guarded by `if (!API_BASE) return`) is never registered.
+// Without this mock the guard throws in Jest (__DEV__=false, no env var set)
+// before any test can run.
+jest.mock("@/utils/apiBase", () => ({ API_BASE: "" }));
+
 // ─── expo-asset ──────────────────────────────────────────────────────────────
 jest.mock("expo-asset", () => ({
   Asset: {
@@ -196,6 +207,11 @@ const BASE_PROPS = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
+  // Fake timers prevent the 3 s setEmptyDismissed setTimeout from firing as a
+  // real macrotask after each test ends.  nextTick/setImmediate are kept real so
+  // act(async) and Promise chains resolve normally.
+  jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
+
   jest.clearAllMocks();
   // Force web mode — this is the platform where the TDZ crash occurred.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -203,7 +219,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Restore to native so other test files are not affected.
+  // Restore real timers and native platform so other test files are not affected.
+  jest.useRealTimers();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (require("react-native").Platform as { OS: string }).OS = "ios";
 });

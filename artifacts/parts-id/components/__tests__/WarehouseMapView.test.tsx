@@ -160,6 +160,13 @@ jest.mock("react-native-svg", () => {
   };
 });
 
+// ─── @/utils/apiBase ─────────────────────────────────────────────────────────
+// Return an empty API_BASE so the server-hash polling setInterval in
+// WarehouseMapView (guarded by `if (!API_BASE) return`) is never registered.
+// Without this mock the guard throws in Jest (__DEV__=false, no env var set)
+// before any test can run.
+jest.mock("@/utils/apiBase", () => ({ API_BASE: "" }));
+
 // ─── expo-asset ──────────────────────────────────────────────────────────────
 
 jest.mock("expo-asset", () => ({
@@ -314,6 +321,14 @@ let computeFitTargetSpy: jest.SpyInstance;
 let panBoundsSpy: jest.SpyInstance;
 
 beforeEach(() => {
+  // Fake timers prevent the 3 s setEmptyDismissed setTimeout (WarehouseMapView
+  // line ~846) from firing as a real macrotask after the test ends.  Promises
+  // and microtasks (nextTick / setImmediate) are kept real so flushPromises()
+  // and act(async) continue to work correctly.  Suite 4 overrides this with its
+  // own jest.useFakeTimers() call and restores real timers in its own afterEach,
+  // which is safe because jest.useRealTimers() is idempotent.
+  jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
+
   jest.clearAllMocks();
   trackedValues.length = 0;
 
@@ -342,6 +357,10 @@ beforeEach(() => {
 afterEach(() => {
   computeFitTargetSpy.mockRestore();
   panBoundsSpy.mockRestore();
+  // Restore real timers so subsequent suites that manage their own fake-timer
+  // lifecycle (Suite 4) start from a known real-timer state.  Calling this when
+  // timers are already real (Suite 4 restores them in its own afterEach) is safe.
+  jest.useRealTimers();
 });
 
 // =============================================================================
