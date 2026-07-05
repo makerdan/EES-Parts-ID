@@ -673,6 +673,34 @@ if [[ "$KNIP_EXIT" -ne 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Test 21: api-server typecheck exits 0 — full tsc, including test files
+#
+# Runs `pnpm --filter @workspace/api-server run typecheck`, which executes
+# BOTH `tsc -p tsconfig.json --noEmit` (src) AND
+# `tsc -p tsconfig.test.json --noEmit` (src + __tests__).  The test tsconfig
+# is the ONLY config that includes __tests__/*.ts, so this is the guard that
+# makes a type error in any api-server test file surface automatically at the
+# health-gate rather than slipping through unnoticed until a developer runs
+# the check manually.
+#
+# Build workspace lib declarations first so tsc reads stable compiled .d.ts
+# files.  Retry up to 3 times to survive a concurrent codegen:check run that
+# may delete src/generated/ mid-build (TS6307), mirroring the parts-id
+# typecheck guard above.
+# ---------------------------------------------------------------------------
+for _attempt in 1 2 3; do
+  pnpm -w run typecheck:libs > /dev/null 2>&1 && break
+  sleep 2
+done
+API_TYPECHECK_OUTPUT=$(pnpm --filter @workspace/api-server run typecheck 2>&1)
+API_TYPECHECK_EXIT=$?
+assert_exit "api-server typecheck — full tsc (incl. tsconfig.test.json) exits 0" 0 "$API_TYPECHECK_EXIT"
+if [[ "$API_TYPECHECK_EXIT" -ne 0 ]]; then
+  echo "  api-server typecheck output (first 20 lines):"
+  echo "$API_TYPECHECK_OUTPUT" | head -20 | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
