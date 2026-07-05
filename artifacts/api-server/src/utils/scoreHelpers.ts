@@ -7,6 +7,16 @@
  * Blend a PostgreSQL FTS rank and trigram similarity into a single base score.
  * Returns a value in [0, 0.95]; the +0.4 floor ensures any PG hit starts above
  * the Fuse.js fuzzy-fallback range (max ~0.70 * 0.95).
+ *
+ * Weighting rationale (empirically tuned against the electrical catalog):
+ *   - 0.6 * ftsRank vs 0.4 * trgmSim — FTS lexeme rank is the stronger signal
+ *     (it reflects term coverage/position), so it carries the majority weight;
+ *     trigram similarity is a softer typo-tolerant tie-breaker.
+ *   - +0.4 floor — a real PG index hit is inherently more trustworthy than a
+ *     Fuse.js in-memory fuzzy fallback, so we lift every PG hit above that band
+ *     to keep the two pipelines from interleaving badly.
+ *   - 0.95 cap — leaves headroom below 1.0, which is reserved exclusively for an
+ *     exact catalog-number match (see catalogScore).
  */
 export function blendPgScore(ftsRank: number, trgmSim: number): number {
   return Math.min(0.95, ftsRank * 0.6 + trgmSim * 0.4 + 0.4);
