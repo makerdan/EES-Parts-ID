@@ -29,7 +29,13 @@ import { createProxyMiddleware } from "http-proxy-middleware";
 
 import { logger } from "../lib/logger";
 
-const CLERK_FAPI = "https://frontend-api.clerk.dev";
+// Allow integration tests to point the proxy at a local fake upstream by
+// setting CLERK_FAPI_URL before the module is loaded.  Production code never
+// sets this variable, so the real Clerk FAPI is used in all deployed builds.
+// An empty or whitespace-only value is treated as "not set" so that an
+// accidental blank entry in .env.example does not break proxy initialisation.
+const CLERK_FAPI =
+  process.env.CLERK_FAPI_URL?.trim() || "https://frontend-api.clerk.dev";
 export const CLERK_PROXY_PATH = "/api/__clerk";
 
 /**

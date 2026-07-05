@@ -3,7 +3,13 @@
   "compilerOptions": {
     "rootDir": ".",
     "types": ["node", "jest"],
-    "noEmit": true
+    "noEmit": true,
+    // Required by clerkProxyReset.integration.runner.ts which uses explicit
+    // .ts import paths so that tsx (used to run it outside Jest) can resolve
+    // the ESM modules on Node.js v24 where bare imports no longer
+    // auto-resolve to .ts.  allowImportingTsExtensions requires noEmit:true
+    // (already set above).
+    "allowImportingTsExtensions": true
   },
   "include": ["src", "__tests__"],
   "exclude": []
