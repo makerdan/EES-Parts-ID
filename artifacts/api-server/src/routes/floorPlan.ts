@@ -76,8 +76,13 @@ const MAX_SVG_BYTES = 10 * 1024 * 1024; // 10 MB
 /** Width of each PNG tile in pixels.  Height is derived from the SVG aspect ratio. */
 const TILE_PX = 512;
 
-/** SVG viewBox aspect ratio (width / height).  Must match the floor-plan SVG. */
-const SVG_ASPECT = 7329.6001 / 4997.2798;
+/**
+ * Fallback SVG viewBox aspect ratio (width / height).  Used only when the
+ * stored SVG has no parseable viewBox attribute.  The primary path derives the
+ * ratio dynamically from the SVG buffer at tile-generation time so the tile
+ * pyramid stays correct even when the floor-plan SVG is replaced.
+ */
+const SVG_ASPECT_FALLBACK = 7329.6001 / 4997.2798;
 
 /** Directory for on-disk tile cache.  Tiles are keyed by {svgHash}_{z}_{x}_{y}.png. */
 const TILE_CACHE_DIR = path.join(os.tmpdir(), "floor-plan-tiles");
@@ -94,6 +99,23 @@ function tileGridSize(z: number): number {
 
 function tileCachePath(svgHash: string, z: number, x: number, y: number): string {
   return path.join(TILE_CACHE_DIR, `${svgHash}_${z}_${x}_${y}.png`);
+}
+
+/**
+ * Parse the width and height from the first `viewBox` attribute found in an SVG
+ * buffer.  Returns `null` when no valid four-number viewBox is present.
+ *
+ * The returned dimensions are the intrinsic SVG canvas size (the last two
+ * numbers in the viewBox), independent of any non-zero origin offset.
+ */
+function parseSvgViewBox(svgBuffer: Buffer): { w: number; h: number } | null {
+  const match = svgBuffer.toString("utf8").match(/viewBox="([^"]+)"/);
+  if (!match) return null;
+  const parts = match[1].trim().split(/[\s,]+/).map(Number);
+  if (parts.length !== 4 || parts.some((n) => !isFinite(n))) return null;
+  const [, , w, h] = parts;
+  if (!w || !h) return null;
+  return { w, h };
 }
 
 /**
@@ -146,17 +168,30 @@ async function generateTile(
     logger.warn({ err, cachePath }, "[floor-plan/tiles] tile cache miss — generating");
   }
 
+  // Normalise the SVG viewBox origin to (0, 0) so tile pixel coordinates align
+  // with the zone overlay coordinate frame on the client.
+  const normalizedSvg = normalizeViewBoxOrigin(svgBuffer);
+
+  // Derive the aspect ratio from the SVG's actual viewBox so the tile pyramid
+  // stays correct when the floor-plan SVG is replaced with one of different
+  // dimensions.  Fall back to the compile-time constant only when the SVG has
+  // no parseable viewBox (should never happen for a valid floor-plan SVG).
+  const vb = parseSvgViewBox(normalizedSvg);
+  if (!vb) {
+    logger.warn(
+      { svgHash },
+      "[floor-plan/tiles] SVG has no parseable viewBox — falling back to hardcoded aspect ratio; tiles may be misaligned if SVG dimensions changed",
+    );
+  }
+  const svgAspect = vb ? vb.w / vb.h : SVG_ASPECT_FALLBACK;
+
   const gridSize = tileGridSize(z);
   const totalW = TILE_PX * gridSize;
-  const totalH = Math.round(totalW / SVG_ASPECT);
+  const totalH = Math.round(totalW / svgAspect);
   const tileW = Math.round(totalW / gridSize);
   const tileH = Math.round(totalH / gridSize);
 
   await fs.mkdir(TILE_CACHE_DIR, { recursive: true });
-
-  // Normalise the SVG viewBox origin to (0, 0) so tile pixel coordinates align
-  // with the zone overlay coordinate frame on the client.
-  const normalizedSvg = normalizeViewBoxOrigin(svgBuffer);
 
   const pngBuffer = await sharp(normalizedSvg)
     .resize(totalW, totalH, { fit: "fill" })
