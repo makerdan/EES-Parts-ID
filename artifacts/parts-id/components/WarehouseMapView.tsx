@@ -63,6 +63,7 @@ import { Ellipse,G, Path, Rect, Svg, SvgUri, SvgXml, Text as SvgText } from "rea
 import { z } from "zod";
 
 import { useColors } from "@/hooks/useColors";
+import { useMapZoomSteps } from "@/hooks/useMapInteraction";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { API_BASE } from "@/utils/apiBase";
 import { fetchWithAuth } from "@/utils/appAuth";
@@ -2013,19 +2014,11 @@ export function WarehouseMapView({
 
   // Zoom buttons step through discrete ZOOM_STOPS rather than multiplying by
   // a fixed ratio, so each tap lands exactly on a preset stop.
-  const handleZoomIn = useCallback(() => {
-    const currentStop = zoomStopForScale(scale.value);
-    const nextStop = Math.min(ZOOM_STOPS.length - 1, currentStop + 1);
-    applyZoom(ZOOM_STOPS[nextStop].scale);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyZoom]);
-
-  const handleZoomOut = useCallback(() => {
-    const currentStop = zoomStopForScale(scale.value);
-    const prevStop = Math.max(0, currentStop - 1);
-    applyZoom(ZOOM_STOPS[prevStop].scale);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyZoom]);
+  const { stepIn: handleZoomIn, stepOut: handleZoomOut } = useMapZoomSteps(
+    ZOOM_STOPS.length,
+    (stopIndex) => applyZoom(ZOOM_STOPS[stopIndex].scale),
+    () => zoomStopForScale(scale.value),
+  );
 
   const handleFitScreen = useCallback(() => {
     applyFit();

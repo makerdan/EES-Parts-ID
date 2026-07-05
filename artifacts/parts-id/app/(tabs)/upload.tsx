@@ -32,6 +32,7 @@ import { BarcodeAddPart } from "@/components/BarcodeAddPart";
 import { BinEditor } from "@/components/BinEditor";
 import { BulkShelfAssign } from "@/components/BulkShelfAssign";
 import { CatalogPdfUpload } from "@/components/CatalogPdfUpload";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
@@ -3410,10 +3411,12 @@ export default function UploadScreen() {
         onClose={() => { setShelfEntryOpen(false); inventoryQuery.refetch(); }}
       />
 
-      <BulkShelfAssign
-        visible={bulkShelfOpen}
-        onClose={() => setBulkShelfOpen(false)}
-      />
+      <ErrorBoundary>
+        <BulkShelfAssign
+          visible={bulkShelfOpen}
+          onClose={() => setBulkShelfOpen(false)}
+        />
+      </ErrorBoundary>
 
       {isAdmin && adminToken ? (
         <MeasurePartScreen

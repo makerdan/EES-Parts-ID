@@ -16,7 +16,7 @@
  * Only rendered when Platform.OS === "web" (see app/(tabs)/map.tsx).
  */
 import type { InventoryItem } from "@workspace/api-client-react";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   FlatList,
   Pressable,
@@ -27,6 +27,7 @@ import {
 } from "react-native";
 
 import { useColors } from "@/hooks/useColors";
+import { useMapInteraction } from "@/hooks/useMapInteraction";
 import { buildAisleHierarchy } from "@/lib/aisleHierarchy";
 
 type Props = {
@@ -72,10 +73,21 @@ export function WarehouseMapWeb({
   "use no memo";
   const colors = useColors();
   const { height: windowHeight } = useWindowDimensions();
-  const [cellSize, setCellSize] = useState(CELL_BASE);
+  const {
+    zoom: cellSize,
+    zoomIn,
+    zoomOut,
+    highlightedId: highlightedAisle,
+    flashHighlight,
+    clearHighlight,
+  } = useMapInteraction({
+    initialZoom: CELL_BASE,
+    minZoom: CELL_MIN,
+    maxZoom: CELL_MAX,
+    zoomStep: 24,
+    highlightDurationMs: HIGHLIGHT_DURATION_MS,
+  });
   const scrollRef = useRef<FlatList<ReturnType<typeof buildAisleHierarchy>["aisles"]> | null>(null);
-  const [highlightedAisle, setHighlightedAisle] = useState<number | null>(null);
-  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { aisles } = useMemo(() => buildAisleHierarchy(inventory), [inventory]);
 
@@ -111,26 +123,14 @@ export function WarehouseMapWeb({
     const rowIndex = Math.floor(aisleIndex / COLS);
     const y = rowScrollY(rowIndex, cellSize);
     scrollRef.current?.scrollToOffset({ offset: y, animated: true });
-    setHighlightedAisle(focusAisleNum);
+    flashHighlight(focusAisleNum);
     onFocusConsumed?.();
-    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
-    highlightTimerRef.current = setTimeout(() => {
-      setHighlightedAisle(null);
-      highlightTimerRef.current = null;
-    }, HIGHLIGHT_DURATION_MS);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusAisleNum]);
 
   // Clear the highlight timer on unmount to avoid a state update on an
   // unmounted component.
-  useEffect(() => {
-    return () => {
-      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
-    };
-  }, []);
-
-  const zoomIn = () => setCellSize(s => Math.min(s + 24, CELL_MAX));
-  const zoomOut = () => setCellSize(s => Math.max(s - 24, CELL_MIN));
+  useEffect(() => () => clearHighlight(), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const aisleColor = useCallback((partCount: number): string => {
     const t = partCount / maxCount;
