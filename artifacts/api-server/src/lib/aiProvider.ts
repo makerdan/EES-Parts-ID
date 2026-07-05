@@ -63,7 +63,13 @@ function buildClient(provider: AIProvider): OpenAI {
 // ── Mutable runtime state ─────────────────────────────────────────────────────
 
 let _provider: AIProvider = rawProvider as AIProvider;
-let _client: OpenAI = buildClient(_provider);
+// Lazily initialized on first call to getAiClient() — NOT at module load time.
+// Eager initialization at module load throws if the required API key env var is
+// missing, which fires uncaughtException → process.exit(1) before the HTTP
+// server ever binds its port.  Deferring the build to first use means the
+// server always starts; any missing key surfaces cleanly when an AI route is
+// actually called (and validateEnv() will have already logged a clear warning).
+let _client: OpenAI | null = null;
 
 /**
  * Switch the active AI provider at runtime without restarting the server.
@@ -110,8 +116,13 @@ export function getProvider(): AIProvider {
  *
  * Always read this getter at call-time — do NOT destructure once at module
  * load, because setProvider() replaces the underlying instance.
+ * The client is built lazily on first call so that a missing API key env var
+ * does not crash the server at module load time.
  */
 export function getAiClient(): OpenAI {
+  if (!_client) {
+    _client = buildClient(_provider);
+  }
   return _client;
 }
 
@@ -320,7 +331,7 @@ async function _probeBotAndRecord(botName: string): Promise<void> {
 
     try {
       await Promise.race([
-        _client.chat.completions.create({
+        getAiClient().chat.completions.create({
           model: botName,
           messages: [{ role: "user", content: "hi" }],
           max_tokens: 16,
@@ -357,7 +368,7 @@ async function _probeBotAndRecord(botName: string): Promise<void> {
           `Poe catalog bot '${botName}' not found — probing fallback '${POE_CATALOG_BOT_FALLBACK}'`,
         );
         try {
-          await _client.chat.completions.create({
+          await getAiClient().chat.completions.create({
             model: POE_CATALOG_BOT_FALLBACK,
             messages: [{ role: "user", content: "hi" }],
             max_tokens: 16,

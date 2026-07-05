@@ -21,5 +21,6 @@
 - [api-zod codegen race in repo typecheck](api-zod-codegen-race.md) — a wall of TS6053 "not found" under lib/api-zod/src/generated is a codegen-ordering race, not a real error; check files exist and re-run.
 - [Clerk role-based admin (parts-id)](clerk-admin-role-migration.md) — admin is Clerk role via GET /admin/me; context `adminToken` now holds the Clerk token and `logoutAdmin` re-verifies admin; gate on isAdmin boolean.
 - [Codegen drift in post-merge script](codegen-drift-post-merge.md) — task agents regenerate lib/api-zod + lib/api-client-react but can't commit; fix by running codegen on main and committing once the git lock clears.
+- [api-server lazy AI client init](api-server-lazy-ai-client.md) — module-level buildClient() in aiProvider.ts crashes server before port binds if POE_API_KEY2 missing; _client must be lazily initialized in getAiClient(), not at module load.
 - [pnpm @babel/core override must be capped below 8](babel-core-override-cap.md) — Expo/Metro requires Babel ^7; a `>=7.x` override without `<8.0.0` resolves to Babel 8 and breaks web bundling with "Requires Babel ^7.0.0-0".
 - [Clerk getToken unstable reference on web](clerk-gettoken-unstable-web.md) — getToken from useAuth() gets a new ref on token refresh; putting it in useCallback deps causes an infinite re-render/re-mount loop manifesting as screen flashing + request storm.
