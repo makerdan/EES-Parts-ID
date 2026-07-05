@@ -11,10 +11,12 @@ set -e
 #   codegen settle poll (max window, early-exit typical):  =  20s
 #   GitHub sync:                                           =   5s
 #   Health check pass 1:  6 × 2s curl + 5 × 4s sleep      =  32s
+#   SVG viewBox sync check (timeout 30s, typical <2s):     =  30s
 #   SIGTERM/SIGKILL wait:                                  =  10s
 #   Health check pass 2:  6 × 2s curl + 5 × 4s sleep      =  32s
-#   Total worst case:                                      = 324s
-#   Recommended [postMerge] timeoutMs in .replit:          = 360000 (360s)
+#   SVG viewBox sync check (post-restart, typical <2s):    =  30s
+#   Total worst case:                                      = 379s
+#   Recommended [postMerge] timeoutMs in .replit:          = 420000 (420s)
 # ---------------------------------------------------------------------------
 
 if [[ -n "${PORT:-}" ]]; then
@@ -92,6 +94,41 @@ wait_for_codegen_settle() {
   done
   echo "[post-merge] Settle window (${CODEGEN_SETTLE_MAX_SECS}s) elapsed without a healthy response — proceeding to health check anyway."
   return 0
+}
+
+# ---------------------------------------------------------------------------
+# run_viewbox_sync_check — run the SVG viewBox sync Jest test against the
+# live local API server, with EXPO_PUBLIC_API_BASE set explicitly so the
+# check can never be silently skipped by a missing env var.
+#
+# Wraps the Jest invocation in `timeout 30` so a slow server boot cannot
+# produce a silent CI hang.  A 404 response (no floor plan uploaded yet) is
+# treated as a skip by the test itself; any other non-zero exit is a hard
+# failure that prints a fix hint before propagating the error.
+# ---------------------------------------------------------------------------
+run_viewbox_sync_check() {
+  local api_base
+  if [[ -n "${PORT:-}" ]]; then
+    api_base="http://localhost:${PORT}/api"
+  else
+    api_base="https://${REPLIT_DEV_DOMAIN}/api"
+  fi
+  echo "[post-merge] Running SVG viewBox sync check (EXPO_PUBLIC_API_BASE=${api_base})..."
+  local viewbox_output viewbox_exit
+  viewbox_exit=0
+  viewbox_output=$(EXPO_PUBLIC_API_BASE="$api_base" \
+    timeout 30 pnpm --filter @workspace/parts-id run test -- \
+      --testPathPattern=svgViewBoxApiSync --passWithNoTests 2>&1) || viewbox_exit=$?
+  echo "$viewbox_output" | sed 's/^/[post-merge][viewbox-sync] /'
+  if [[ "$viewbox_exit" -eq 124 ]]; then
+    echo "[post-merge] ERROR: SVG viewBox sync check timed out after 30s — ensure the API server is reachable."
+    return 1
+  elif [[ "$viewbox_exit" -ne 0 ]]; then
+    echo "[post-merge] ERROR: SVG viewBox sync check failed — SVG_VIEWBOX_W/H in mapViewport.ts may not match the server SVG."
+    echo "[post-merge] Fix: update SVG_VIEWBOX_W / SVG_VIEWBOX_H in artifacts/parts-id/utils/mapViewport.ts to match the server viewBox, then rebuild (npx expo export -p web) and commit."
+    return 1
+  fi
+  echo "[post-merge] SVG viewBox sync check passed."
 }
 
 # ---------------------------------------------------------------------------
@@ -188,6 +225,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
   # First health check pass.
   if check_api_health "initial"; then
+    run_viewbox_sync_check
     exit 0
   fi
 
@@ -211,6 +249,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
   # Second health check pass after restart.
   if check_api_health "post-restart"; then
+    run_viewbox_sync_check
     exit 0
   fi
 
