@@ -20,11 +20,12 @@ const router = Router();
 const GENERIC_ERROR_MESSAGE =
   "Sorry, the reference assistant ran into a problem. Please try again.";
 
-/**
- * Concise description of the Parts ID app injected into the system prompt so
- * the AI can answer "how does this app work?" questions without a web search.
- */
-const APP_KNOWLEDGE = `
+// Concise description of the Parts ID app injected into the system prompt so
+// the AI can answer "how does this app work?" questions without a web search.
+//
+// Worker-facing app knowledge — available to ALL approved users. Describes only
+// features a non-admin warehouse worker can actually use.
+const SHARED_APP_KNOWLEDGE = `
 ## About the Parts ID App
 
 Parts ID is a mobile warehouse app for identifying, locating, and managing electrical supply inventory. It has three main tabs everyone sees — **Search**, **Photo ID**, and **Map** — plus an **Admin** tab and a hidden **Measure** tab for admins.
@@ -51,7 +52,18 @@ Parts ID is a mobile warehouse app for identifying, locating, and managing elect
 - **Zones:** Tap a zone/section to see the items stored there.
 - **Pins:** When you identify a part in Search or Photo ID and tap "Show on Map," its bin location is pinned (the main match in amber, related sizes in purple).
 - **Cycle counting:** Toggle a counting layer to mark zones as counted as you walk the floor; progress is saved on the device.
-- **Zone editor (admin):** Admins get a button to open a dedicated zone editor for drawing, numbering, and fixing warehouse zones on the floor plan.
+
+**This assistant (the Ref chat):**
+- Open it with the **"Ref" button (⚡)** in the Search tab header. It's a chat where anyone can ask about electrical codes and terminology, look up inventory, ask how the app works, or ask a general question — and it can search the web when needed. Quick-lookup and breaker-attribute chips give instant answers, and the Contact button sends a message to the admin inbox.
+
+**Settings:** Set the server URL (API base), toggle dark mode, choose the dimension unit (in/cm/mm), and view app version info. Recently viewed parts and chip answers are cached for offline use.
+`;
+
+// Admin-only app knowledge — appended to the system prompt ONLY when the
+// requesting user is an admin. Describes privileged tooling and workflows that
+// a non-admin worker cannot perform, so the AI must not instruct them on it.
+const ADMIN_APP_KNOWLEDGE = `
+**Admin-only features (available to administrators only):**
 
 **Measure tab (admin only, LiDAR devices only):**
 - On an iPhone/iPad with LiDAR, admins can scan a part's real bounding-box dimensions in a few seconds. Values can be reviewed and edited before confirming.
@@ -67,10 +79,8 @@ Parts ID is a mobile warehouse app for identifying, locating, and managing elect
 - **SQL console:** Run read-only queries against the database (e.g. "parts missing a bin").
 - **Photo upload:** Attach product images to inventory items from the app.
 
-**This assistant (the Ref chat):**
-- Open it with the **"Ref" button (⚡)** in the Search tab header. It's a chat where anyone can ask about electrical codes and terminology, look up inventory, ask how the app works, or ask a general question — and it can search the web when needed. Quick-lookup and breaker-attribute chips give instant answers, and the Contact button sends a message to the admin inbox.
-
-**Settings:** Set the server URL (API base), toggle dark mode, choose the dimension unit (in/cm/mm), and view app version info. Recently viewed parts and chip answers are cached for offline use.
+**Map tab (admin tools):**
+- **Zone editor:** Admins get a button to open a dedicated zone editor for drawing, numbering, and fixing warehouse zones on the floor plan.
 `;
 
 const BASE_SYSTEM_PROMPT = `You are a concise warehouse parts and general reference assistant for warehouse workers using the Parts ID app. You help with:
@@ -81,8 +91,18 @@ const BASE_SYSTEM_PROMPT = `You are a concise warehouse parts and general refere
 Always check the inventory context below first. If relevant inventory items are listed, reference them.
 Use **bold** for key terms and - bullets for lists. Keep answers under 250 words. Be precise and practical.
 
-When you use your web search capability to answer a question, prefix your final answer with "*(web)*" on its own line so the worker knows the answer came from a live web search.
-${APP_KNOWLEDGE}`;
+When you use your web search capability to answer a question, prefix your final answer with "*(web)*" on its own line so the worker knows the answer came from a live web search.`;
+
+/**
+ * Assemble the system prompt. The shared, worker-facing app knowledge is always
+ * included. The admin-only knowledge section is appended ONLY when the
+ * requesting user is an admin so non-admins never receive descriptions of
+ * privileged tooling they cannot use.
+ */
+function buildSystemPrompt(inventoryContext: string, isAdmin: boolean): string {
+  const knowledge = isAdmin ? SHARED_APP_KNOWLEDGE + ADMIN_APP_KNOWLEDGE : SHARED_APP_KNOWLEDGE;
+  return BASE_SYSTEM_PROMPT + knowledge + inventoryContext;
+}
 
 /**
  * Search the inventory for items relevant to the question.
@@ -175,9 +195,10 @@ async function callGeminiReference(
  */
 async function collectAnswer(
   question: string,
+  isAdmin: boolean,
 ): Promise<{ answer: string; matchedItemCount: number; usedWebSearch: boolean }> {
   const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question);
-  const systemContent = BASE_SYSTEM_PROMPT + inventoryContext;
+  const systemContent = buildSystemPrompt(inventoryContext, isAdmin);
   const { answer, usedWebSearch } = await callGeminiReference(systemContent, question);
   return { answer, matchedItemCount, usedWebSearch };
 }
@@ -189,9 +210,10 @@ async function collectAnswer(
 async function collectAnswerWithHistory(
   question: string,
   history: Array<{ q: string; a: string }>,
+  isAdmin: boolean,
 ): Promise<{ answer: string; matchedItemCount: number; usedWebSearch: boolean }> {
   const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question);
-  const systemContent = BASE_SYSTEM_PROMPT + inventoryContext;
+  const systemContent = buildSystemPrompt(inventoryContext, isAdmin);
   const answer = await callGeminiWithHistory(systemContent, history, question);
   const usedWebSearch = answer.trimStart().startsWith("*(web)*");
   return { answer, matchedItemCount, usedWebSearch };
@@ -237,6 +259,13 @@ router.post("/ask", async (req, res) => {
       }
     }
 
+    // Resolve the requester's admin status the same way requireAdminAuth does,
+    // from the user row that requireAppAuth already put on res.locals. This
+    // route stays usable by all approved users — the flag only scopes which
+    // app-knowledge section reaches the AI and which cache key space is used.
+    const appUser = res.locals["appUser"] as { role?: string } | undefined;
+    const isAdmin = appUser?.role === "admin";
+
     const hasHistory = Array.isArray(history) && history.length > 0;
     const normalized = normalizeQuestion(question);
     // Pass history into hashQuestion so that a follow-up answer (which is
@@ -245,7 +274,12 @@ router.post("/ask", async (req, res) => {
     // history-path hashes and cold-start hashes occupy disjoint key spaces,
     // so a history-path answer can never poison the single-turn cache even if
     // the !hasHistory write guard below is accidentally removed in the future.
-    const questionHash = hashQuestion(normalized, hasHistory ? history : undefined);
+    //
+    // isAdmin is also mixed into the hash so admin-aware answers (which may
+    // contain admin-only knowledge) occupy a disjoint key space from non-admin
+    // answers — a cached admin answer can never be served to a non-admin, and
+    // vice versa.
+    const questionHash = hashQuestion(normalized, hasHistory ? history : undefined, isAdmin);
 
     const wantsJson =
       req.query["stream"] === "false" ||
@@ -262,8 +296,8 @@ router.post("/ask", async (req, res) => {
       }
 
       const { answer, matchedItemCount, usedWebSearch } = hasHistory
-        ? await collectAnswerWithHistory(question.trim(), history!)
-        : await collectAnswer(question.trim());
+        ? await collectAnswerWithHistory(question.trim(), history!, isAdmin)
+        : await collectAnswer(question.trim(), isAdmin);
       writeReferenceLog(question.trim(), answer, matchedItemCount);
       // Secondary guard: skip the DB write entirely for history-path answers
       // (they are context-dependent and not worth storing). The primary safety
@@ -296,8 +330,8 @@ router.post("/ask", async (req, res) => {
 
     // Gemini-2.5-Flash call (non-streaming internally; pseudo-stream to client).
     const { answer: fullAnswer, matchedItemCount, usedWebSearch } = hasHistory
-      ? await collectAnswerWithHistory(question.trim(), history!)
-      : await collectAnswer(question.trim());
+      ? await collectAnswerWithHistory(question.trim(), history!, isAdmin)
+      : await collectAnswer(question.trim(), isAdmin);
 
     // Emit the answer word-by-word for a live-typing effect.
     const words = fullAnswer.split(" ");
@@ -396,7 +430,9 @@ router.post("/quick-lookups/:label", requireAdminAuth, async (req, res) => {
       return void res.status(400).json({ error: "question is required" });
     }
 
-    const { answer } = await collectAnswer(question.trim());
+    // This route is admin-gated (requireAdminAuth), so the requester is always
+    // an admin — generate the answer with the admin-aware knowledge base.
+    const { answer } = await collectAnswer(question.trim(), true);
 
     await db
       .insert(quickLookupCacheTable)

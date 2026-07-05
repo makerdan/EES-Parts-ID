@@ -206,6 +206,73 @@ describe("POST /api/reference/ask", () => {
   });
 });
 
+// ── Admin-only knowledge scoping (POST /api/reference/ask) ─────────────────────
+
+/** Read the systemInstruction sent to Gemini from the first generateContent call. */
+function firstSystemInstruction(): string {
+  const arg = mockGenerateContent.mock.calls[0]![0] as {
+    config?: { systemInstruction?: string };
+  };
+  return arg.config?.systemInstruction ?? "";
+}
+
+describe("POST /api/reference/ask — admin knowledge scoping", () => {
+  const NON_ADMIN_USER = "jest-nonadmin-user";
+
+  beforeAll(async () => {
+    // Seed an approved, non-admin user so requests authenticated as this user
+    // pass requireAppAuth but resolve role='user'.
+    await db.execute(sql`
+      INSERT INTO users (clerk_user_id, email, status, role)
+      VALUES (${NON_ADMIN_USER}, ${`${NON_ADMIN_USER}@test.example`}, 'approved', 'user')
+      ON CONFLICT (clerk_user_id)
+      DO UPDATE SET status = 'approved', role = 'user'
+    `);
+  });
+
+  afterAll(async () => {
+    await db.execute(sql`DELETE FROM users WHERE clerk_user_id = ${NON_ADMIN_USER}`);
+  });
+
+  it("admin request: system prompt INCLUDES admin-only knowledge", async () => {
+    // Default auth user (jest-admin-user) is the bootstrap admin.
+    mockGenerateContent.mockResolvedValueOnce({ text: "Answer." });
+
+    await supertest(app)
+      .post("/api/reference/ask?stream=false")
+      .send({ question: "how do I import a CSV?" })
+      .expect(200);
+
+    const prompt = firstSystemInstruction();
+    expect(prompt).toContain("Admin-only features");
+    expect(prompt).toContain("CSV / spreadsheet import");
+    expect(prompt).toContain("Catalog PDF upload");
+    expect(prompt).toContain("AI enrichment");
+    expect(prompt).toContain("Measure tab (admin only");
+  });
+
+  it("non-admin request: system prompt EXCLUDES admin-only knowledge", async () => {
+    mockGenerateContent.mockResolvedValueOnce({ text: "Answer." });
+
+    await supertest(app)
+      .post("/api/reference/ask?stream=false")
+      .set("Authorization", `Bearer ${NON_ADMIN_USER}`)
+      .send({ question: "how do I import a CSV?" })
+      .expect(200);
+
+    const prompt = firstSystemInstruction();
+    // Shared, worker-facing knowledge is still present…
+    expect(prompt).toContain("Search tab (everyone)");
+    // …but nothing from the admin-only section leaks through.
+    expect(prompt).not.toContain("Admin-only features");
+    expect(prompt).not.toContain("CSV / spreadsheet import");
+    expect(prompt).not.toContain("Catalog PDF upload");
+    expect(prompt).not.toContain("AI enrichment");
+    expect(prompt).not.toContain("Measure tab (admin only");
+    expect(prompt).not.toContain("SQL console");
+  });
+});
+
 // ── GET /api/reference/quick-lookups ──────────────────────────────────────────
 
 describe("GET /api/reference/quick-lookups", () => {
