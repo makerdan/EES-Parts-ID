@@ -66,6 +66,19 @@ export function useWarehouseZones() {
   const refetch = useCallback(async () => {
     if (fetchingRef.current) return;
     fetchingRef.current = true;
+    // Capture token presence before the fetch begins.  This lets us tell the
+    // difference between two superficially similar failure modes that both
+    // end with getAuthToken() === null by the time the catch block runs:
+    //
+    //   • Cold-start race: no token was ever present → suppress the error badge
+    //     and wait for the tokenAvailable subscriber to re-fire once the token
+    //     arrives.  Showing a badge here would be a false alarm.
+    //
+    //   • Mid-session expiry with no cache: a token WAS present when we fired
+    //     but the server returned 401 and onUnauthorized cleared it.  The user
+    //     has no cached data to fall back on, so the map is genuinely broken
+    //     and the error badge should appear.
+    const hadToken = getAuthToken() !== null;
     try {
       const data: { zones: Array<ApiWarehouseZone> } = await retryAsync(async () => {
         const res = await fetchWithAuth(`${API_BASE}/warehouse-zones`);
@@ -84,21 +97,23 @@ export function useWarehouseZones() {
       await AsyncStorage.setItem(ZONES_CACHE_KEY, JSON.stringify(entry)).catch(() => {});
     } catch (err) {
       if (mountedRef.current) {
-        // Suppress the error badge when the failure is auth-related:
-        //   • no token present at fetch time (cold-start race), OR
-        //   • the server returned 401 (token expired / not yet issued).
-        // In both cases the tokenAvailable subscriber will re-fire refetch
-        // once auth settles, so showing an error badge here is a false alarm.
-        const isAuthFailure =
-          getAuthToken() === null ||
-          (err instanceof Error && err.message === "HTTP 401");
-        if (!hasDataRef.current && !isAuthFailure) {
+        const is401 = err instanceof Error && err.message === "HTTP 401";
+        // True cold-start race: no token was present before the fetch, so the
+        // tokenAvailable subscriber will re-fire when auth settles.
+        const isColdStartRace = !hadToken;
+        // Suppress the error badge when:
+        //   • we already have cached data (the map is still usable), OR
+        //   • it is a genuine cold-start race (token not yet issued).
+        // In all other cases surface the error so the user is not left staring
+        // at an empty, badge-free map with no way to know something is wrong.
+        const suppressError = hasDataRef.current || isColdStartRace;
+        if (!suppressError) {
           setError(true);
         }
         // Mid-session expiry: we already have data but the token just expired.
         // Mark it so the tokenAvailable subscriber will reload once a new token
         // arrives (e.g. after the user re-authenticates).
-        if (hasDataRef.current && isAuthFailure) {
+        if (hasDataRef.current && (is401 || isColdStartRace)) {
           tokenExpiredMidSessionRef.current = true;
         }
         setLoading(false);
