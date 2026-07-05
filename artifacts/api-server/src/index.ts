@@ -224,7 +224,7 @@ async function migrateUsersTable(): Promise<void> {
   // could not be resolved from Clerk (stored as ''). IF NOT EXISTS makes re-runs safe.
   try {
     await db.execute(sql`
-      CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique
+      CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS users_email_unique
         ON users (email)
        WHERE email <> ''
     `);
@@ -233,7 +233,21 @@ async function migrateUsersTable(): Promise<void> {
   }
 }
 
-Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), checkZoneSectionNumIntegrity(), migrateUsersTable()])
+const STARTUP_MIGRATIONS_TIMEOUT_MS = 25_000;
+const migrationsTimeout = new Promise<void>((resolve) =>
+  setTimeout(() => {
+    logger.warn(
+      { timeoutMs: STARTUP_MIGRATIONS_TIMEOUT_MS },
+      "Startup migrations exceeded time limit — proceeding to startServer anyway",
+    );
+    resolve();
+  }, STARTUP_MIGRATIONS_TIMEOUT_MS),
+);
+
+Promise.race([
+  Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), checkZoneSectionNumIntegrity(), migrateUsersTable()]),
+  migrationsTimeout,
+])
   .then(() => initProvider())
   .then(() => startServer(app, port, MAX_RETRIES))
   .then((server) => {
