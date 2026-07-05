@@ -11,3 +11,9 @@ id = "VwOyleKCerWpReTZG4eXv"
 uri = "file://.local/tasks/merged-tasks-record.txt"
 type = "text"
 title = "Merged Tasks Record (updated)"
+
+[[outputs]]
+id = "upIFKTsl-iuEspeuhoF84"
+uri = "file://warehouse_zones_backup_2026-07-05.csv"
+type = "table"
+title = "Zone shapes backup — 819 rows (2026-07-05)"
