@@ -237,7 +237,6 @@ async function migrateUsersTable(): Promise<void> {
 
 Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), checkZoneSectionNumIntegrity(), migrateUsersTable()])
   .then(() => initProvider())
-  .then(() => probePoeBotsOnStartup())
   .then(() => startServer(app, port, MAX_RETRIES))
   .then((server) => {
     const shutdown = (signal: string) => {
@@ -249,6 +248,11 @@ Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferen
     };
     process.on("SIGTERM", () => shutdown("SIGTERM"));
     process.on("SIGINT", () => shutdown("SIGINT"));
+
+    // Probe Poe bots in the background — must not block port open.
+    probePoeBotsOnStartup().catch((err) => {
+      logger.error({ err }, "Poe bot startup probe failed");
+    });
   })
   .catch((err) => {
     logger.error({ err }, "Fatal error during server startup — exiting");
