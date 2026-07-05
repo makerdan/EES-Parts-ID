@@ -192,22 +192,40 @@ describe("map constants — static web bundle sync", () => {
    *
    * The Metro minifier serialises each stop as:
    *   {z:0,scale:1.5,label:"overview"}
-   * so checking `scale:N,label:` is context-bound to the ZOOM_STOPS array and
-   * cannot accidentally match another occurrence of the scale number elsewhere.
+   * so checking `scale:N,label:"LABEL"` is context-bound to the ZOOM_STOPS
+   * array and cannot accidentally match another occurrence of the scale number
+   * or label string elsewhere in the bundle.
    */
-  it("every ZOOM_STOPS entry appears in the bundle as {…scale:N,label:…}", () => {
+  it("every ZOOM_STOPS entry appears in the bundle as {…scale:N,label:\"LABEL\"}", () => {
     for (const stop of ZOOM_STOPS) {
-      // Pattern: scale:VALUE,label: — anchors the scale to its stop object.
-      const pattern = `scale:${stop.scale},label:`;
+      // Full pattern: scale:VALUE,label:"LABEL" — verifies both scale and label
+      // string are present together so a rename without a rebuild is caught.
+      const pattern = `scale:${stop.scale},label:"${stop.label}"`;
       if (!bundle.includes(pattern)) {
         throw new Error(
-          `ZOOM_STOPS[${stop.z}] (scale=${stop.scale}) not found in the ` +
-          `bundle as the pattern "${pattern}".\n` +
+          `ZOOM_STOPS[${stop.z}] (scale=${stop.scale}, label="${stop.label}") ` +
+          `not found in the bundle as the pattern "${pattern}".\n` +
+          `This usually means the label was renamed in source but the bundle ` +
+          `was not rebuilt.\n` +
           REBUILD_HINT,
         );
       }
       expect(bundle).toContain(pattern);
     }
+  });
+
+  /**
+   * ZOOM_STOPS labels — snapshot so adding, removing, or renaming a label is
+   * also caught even if the scale values are unchanged.
+   */
+  it("ZOOM_STOPS label set snapshot matches source", () => {
+    const sourceLabels = ZOOM_STOPS.map((s) => s.label);
+    expect(sourceLabels).toMatchSnapshot();
+
+    const stopsWithMatchingLabel = ZOOM_STOPS.filter((stop) =>
+      bundle.includes(`scale:${stop.scale},label:"${stop.label}"`),
+    );
+    expect(stopsWithMatchingLabel.length).toBe(ZOOM_STOPS.length);
   });
 
   /**

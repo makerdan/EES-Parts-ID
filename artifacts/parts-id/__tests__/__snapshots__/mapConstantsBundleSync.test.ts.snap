@@ -1,5 +1,15 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`map constants — static web bundle sync ZOOM_STOPS label set snapshot matches source 1`] = `
+[
+  "overview",
+  "aisle",
+  "section",
+  "shelf",
+  "bin",
+]
+`;
+
 exports[`map constants — static web bundle sync ZOOM_STOPS scale set snapshot matches source 1`] = `
 [
   1.5,
