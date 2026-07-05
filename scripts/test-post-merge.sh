@@ -465,10 +465,21 @@ fi
 # deletes src/generated/ mid-run, tsc --build can hit TS6307.  Retrying
 # waits for orval to finish writing so the second attempt always succeeds.
 # ---------------------------------------------------------------------------
+TYPECHECK_LIBS_EXIT=1
+TYPECHECK_LIBS_OUTPUT=""
 for _attempt in 1 2 3; do
-  pnpm -w run typecheck:libs > /dev/null 2>&1 && break
+  TYPECHECK_LIBS_OUTPUT=$(pnpm -w run typecheck:libs 2>&1)
+  TYPECHECK_LIBS_EXIT=$?
+  if [[ "$TYPECHECK_LIBS_EXIT" -eq 0 ]]; then
+    break
+  fi
   sleep 2
 done
+assert_exit "typecheck:libs — workspace libraries tsc --build exits 0 (before parts-id check)" 0 "$TYPECHECK_LIBS_EXIT"
+if [[ "$TYPECHECK_LIBS_EXIT" -ne 0 ]]; then
+  echo "  typecheck:libs output (first 20 lines):"
+  echo "$TYPECHECK_LIBS_OUTPUT" | head -20 | sed 's/^/    /'
+fi
 TYPECHECK_OUTPUT=$(pnpm --filter @workspace/parts-id run typecheck 2>&1)
 TYPECHECK_EXIT=$?
 assert_exit "typecheck — parts-id tsc --noEmit exits 0" 0 "$TYPECHECK_EXIT"
@@ -688,10 +699,21 @@ fi
 # may delete src/generated/ mid-build (TS6307), mirroring the parts-id
 # typecheck guard above.
 # ---------------------------------------------------------------------------
+TYPECHECK_LIBS_EXIT2=1
+TYPECHECK_LIBS_OUTPUT2=""
 for _attempt in 1 2 3; do
-  pnpm -w run typecheck:libs > /dev/null 2>&1 && break
+  TYPECHECK_LIBS_OUTPUT2=$(pnpm -w run typecheck:libs 2>&1)
+  TYPECHECK_LIBS_EXIT2=$?
+  if [[ "$TYPECHECK_LIBS_EXIT2" -eq 0 ]]; then
+    break
+  fi
   sleep 2
 done
+assert_exit "typecheck:libs — workspace libraries tsc --build exits 0 (before api-server check)" 0 "$TYPECHECK_LIBS_EXIT2"
+if [[ "$TYPECHECK_LIBS_EXIT2" -ne 0 ]]; then
+  echo "  typecheck:libs output (first 20 lines):"
+  echo "$TYPECHECK_LIBS_OUTPUT2" | head -20 | sed 's/^/    /'
+fi
 API_TYPECHECK_OUTPUT=$(pnpm --filter @workspace/api-server run typecheck 2>&1)
 API_TYPECHECK_EXIT=$?
 assert_exit "api-server typecheck — full tsc (incl. tsconfig.test.json) exits 0" 0 "$API_TYPECHECK_EXIT"
