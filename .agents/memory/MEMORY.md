@@ -25,3 +25,4 @@
 - [pnpm @babel/core override must be capped below 8](babel-core-override-cap.md) — Expo/Metro requires Babel ^7; a `>=7.x` override without `<8.0.0` resolves to Babel 8 and breaks web bundling with "Requires Babel ^7.0.0-0".
 - [Clerk getToken unstable reference on web](clerk-gettoken-unstable-web.md) — getToken from useAuth() gets a new ref on token refresh; putting it in useCallback deps causes an infinite re-render/re-mount loop manifesting as screen flashing + request storm.
 - [Stuck task in AWAITING_INPUT with no question](awaiting-input-stuck-task.md) — agent crash at state-transition moment; fix is clicking "Update from main" in the Replit UI (cannot be automated).
+- [Silent task failure recovery](silent-task-failure-recovery.md) — FAILED/ERROR with no error message; distinct from AWAITING_INPUT; fix is Retry/re-run in the Replit UI (cannot be automated).
