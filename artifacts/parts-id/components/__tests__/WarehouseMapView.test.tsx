@@ -928,3 +928,170 @@ describe("device rotation — translate values scale by newW/oldW ratio", () => 
     expect(trackedValues.some((sv) => sv.value === expectedTY)).toBe(true);
   });
 });
+
+// =============================================================================
+// Suite 7 — _applyFocus: zone found, zone not found, section disambiguation
+//
+// _applyFocus is the shared focus-pan body called by both the focusAisleNum
+// useEffect and _runPendingFocus.  These tests drive it through a two-step
+// mount sequence to isolate _applyFocus from the initial startup-fit call:
+//
+//   Step 1. Mount without focusAisleNum + fire layout → startup fit runs,
+//           computeFitTarget spy accumulates the fit call.  Spy is then
+//           cleared so only calls originating from _applyFocus are visible.
+//
+//   Step 2. renderer.update(...) with focusAisleNum set → the focusAisleNum
+//           useEffect fires; all preconditions are now met (containerW > 0,
+//           zonesRef populated) so _applyFocus runs immediately.
+//
+// Three behaviours are covered:
+//   a. Zone found  → pinFocusCxV/CyV/ModeV are set, applyFit is called
+//      (evidenced by computeFitTarget being called), onFocusConsumed fires,
+//      onFocusFailed does NOT fire.
+//   b. Zone not found → onFocusFailed + onFocusConsumed fire, applyFit is
+//      NOT called (computeFitTarget NOT called after spy is cleared).
+//   c. focusSectionNum set → the matching section zone is chosen for the pin
+//      centre rather than the first zone returned by the aisle filter.
+// =============================================================================
+
+describe("_applyFocus — zone found / not found / section disambiguation", () => {
+  // Distinctive coordinates so pin CX/CY values cannot collide with any other
+  // tracked shared value.  Chosen to avoid ZOOM_STOPS scale values.
+  const FOCUS_ZONE: import("@/hooks/useWarehouseZones").ApiWarehouseZone = {
+    id:          1,
+    aisleId:     "5",
+    sectionNum:  1,
+    isInventory: true,
+    svgX:        1000,
+    svgY:        2000,
+    svgWidth:    500,
+    svgHeight:   300,
+    sortOrder:   0,
+    createdAt:   "",
+    updatedAt:   "",
+  };
+  // pinFocusCxV = svgX + svgWidth/2  = 1000 + 250 = 1250
+  // pinFocusCyV = svgY + svgHeight/2 = 2000 + 150 = 2150
+  const EXPECTED_CX = FOCUS_ZONE.svgX + FOCUS_ZONE.svgWidth  / 2;
+  const EXPECTED_CY = FOCUS_ZONE.svgY + FOCUS_ZONE.svgHeight / 2;
+
+  // Helper: mount WITHOUT focusAisleNum, lay out, clear spy, then update the
+  // renderer with the supplied extra props.  Returns the renderer so tests can
+  // make additional assertions on the tree.
+  async function mountThenFocus(
+    extraProps: Partial<Parameters<typeof WarehouseMapView>[0]>,
+    zones: Array<import("@/hooks/useWarehouseZones").ApiWarehouseZone>,
+  ) {
+    const onFocusConsumed = jest.fn();
+    const onFocusFailed   = jest.fn();
+
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <WarehouseMapView
+          {...BASE_PROPS}
+          zones={zones}
+          onFocusConsumed={onFocusConsumed}
+          onFocusFailed={onFocusFailed}
+        />,
+      );
+    });
+    await flushPromises();
+
+    // Fire layout so containerW/H are non-zero (startup fit runs here).
+    await act(async () => { fireOnLayout(renderer, 390, 761); });
+
+    // Clear the spy so only computeFitTarget calls from _applyFocus are visible.
+    computeFitTargetSpy.mockClear();
+
+    // Update with focusAisleNum (and any other extra props) to trigger _applyFocus.
+    await act(async () => {
+      renderer.update(
+        <WarehouseMapView
+          {...BASE_PROPS}
+          zones={zones}
+          onFocusConsumed={onFocusConsumed}
+          onFocusFailed={onFocusFailed}
+          {...extraProps}
+        />,
+      );
+    });
+
+    return { renderer, onFocusConsumed, onFocusFailed };
+  }
+
+  it("zone found: pinFocusCxV and pinFocusCyV receive the zone's SVG centre", async () => {
+    await mountThenFocus({ focusAisleNum: 5 }, [FOCUS_ZONE]);
+
+    expect(trackedValues.some((sv) => sv.value === EXPECTED_CX)).toBe(true);
+    expect(trackedValues.some((sv) => sv.value === EXPECTED_CY)).toBe(true);
+  });
+
+  it("zone found: pinFocusModeV is set to 1", async () => {
+    // After _applyFocus runs, pinFocusModeV (initially 0) becomes 1.
+    // ZOOM_STOPS[0].scale = 1.5, so the only tracked shared value that can
+    // hold exactly 1 is pinFocusModeV — all other slots hold 0, 1.5, or
+    // the distinctive CX/CY coordinates from the zone.
+    await mountThenFocus({ focusAisleNum: 5 }, [FOCUS_ZONE]);
+
+    expect(trackedValues.some((sv) => sv.value === 1)).toBe(true);
+  });
+
+  it("zone found: applyFit is called (computeFitTarget called after spy is cleared)", async () => {
+    await mountThenFocus({ focusAisleNum: 5 }, [FOCUS_ZONE]);
+
+    expect(computeFitTargetSpy).toHaveBeenCalled();
+  });
+
+  it("zone found: onFocusConsumed fires and onFocusFailed does NOT fire", async () => {
+    const { onFocusConsumed, onFocusFailed } =
+      await mountThenFocus({ focusAisleNum: 5 }, [FOCUS_ZONE]);
+
+    expect(onFocusConsumed).toHaveBeenCalledTimes(1);
+    expect(onFocusFailed).not.toHaveBeenCalled();
+  });
+
+  it("zone not found: onFocusFailed fires", async () => {
+    const { onFocusFailed } =
+      await mountThenFocus({ focusAisleNum: 99 }, [FOCUS_ZONE]);
+
+    expect(onFocusFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it("zone not found: onFocusConsumed still fires (request consumed even on failure)", async () => {
+    const { onFocusConsumed } =
+      await mountThenFocus({ focusAisleNum: 99 }, [FOCUS_ZONE]);
+
+    expect(onFocusConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it("zone not found: applyFit is NOT called (computeFitTarget not called after spy is cleared)", async () => {
+    await mountThenFocus({ focusAisleNum: 99 }, [FOCUS_ZONE]);
+
+    expect(computeFitTargetSpy).not.toHaveBeenCalled();
+  });
+
+  it("focusSectionNum: picks the matching section zone's centre, not the first zone's", async () => {
+    // Two zones for the same aisle; section 2 has a clearly distinct CX/CY.
+    const baseFields = {
+      aisleId: "7", isInventory: true,
+      svgY: 3000, svgHeight: 400,
+      sortOrder: 0, createdAt: "", updatedAt: "",
+    };
+    const ZONE_S1 = { ...baseFields, id: 10, sectionNum: 1, svgX: 100, svgWidth: 200 };
+    const ZONE_S2 = { ...baseFields, id: 11, sectionNum: 2, svgX: 500, svgWidth: 200 };
+    // pinFocusCxV for S1 = 100 + 100 = 200
+    // pinFocusCxV for S2 = 500 + 100 = 600  ← expected when focusSectionNum=2
+    const expectedCxS2 = ZONE_S2.svgX + ZONE_S2.svgWidth / 2;
+    const unexpectedCxS1 = ZONE_S1.svgX + ZONE_S1.svgWidth / 2;
+
+    await mountThenFocus(
+      { focusAisleNum: 7, focusSectionNum: 2 },
+      [ZONE_S1, ZONE_S2],
+    );
+
+    expect(trackedValues.some((sv) => sv.value === expectedCxS2)).toBe(true);
+    // The first zone's CX must NOT have been used.
+    expect(trackedValues.some((sv) => sv.value === unexpectedCxS1)).toBe(false);
+  });
+});
