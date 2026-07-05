@@ -40,7 +40,7 @@ import { parseBin } from "@/lib/aisleHierarchy";
 import { secondaryBtnBase } from "@/styles/shared";
 import { API_BASE } from "@/utils/apiBase";
 import { fetchWithAuth } from "@/utils/appAuth";
-import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, FUSE_SOFT_STALE_MS, FUSE_SYNC_MAX_AGE_MS,getFuseCacheSyncedAt } from "@/utils/offlineBarcode";
+import { FUSE_CACHE_KEY, FUSE_SOFT_STALE_MS, FUSE_SYNC_MAX_AGE_MS, getFuseCacheSyncedAt, replaceBarcodeCacheWithServerItems } from "@/utils/offlineBarcode";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 import { retryAsync } from "@/utils/retryAsync";
 import type { QueryCache } from "@/utils/searchHelpers";
@@ -519,20 +519,21 @@ export default function SearchScreen() {
       });
 
       syncRetryAttemptRef.current = 0; // success — reset backoff counter
-      try {
+      {
         const syncedAt = Date.now();
         if (Platform.OS !== "web") {
           // Skip the write on web: localStorage has a ~5 MB quota and the full
           // inventory JSON reliably exceeds it. The offline cache is for native
           // only (warehouse workers with spotty connectivity). On web the data
           // re-fetches from the server on next load.
-          await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(allItems));
-          await AsyncStorage.setItem(FUSE_CACHE_SYNCED_AT_KEY, String(syncedAt));
+          //
+          // replaceBarcodeCacheWithServerItems writes both the item list and the
+          // sync timestamp in one call, and prunes any ghost entries for items
+          // that were deleted server-side since the last sync.
+          await replaceBarcodeCacheWithServerItems(allItems);
         }
         // Always update in-memory state so any active offline warning clears.
         ifMounted(() => setFuseSyncedAt(syncedAt));
-      } catch (err) {
-        reportStorageError("Could not save offline inventory cache", err);
       }
       success = true;
     } catch {
