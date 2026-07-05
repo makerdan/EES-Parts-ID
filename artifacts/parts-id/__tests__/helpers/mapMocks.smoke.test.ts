@@ -28,7 +28,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { createReanimatedMock } from "./mapMocks";
+import { createReanimatedMock, createUseColorsMock } from "./mapMocks";
 
 const WAREHOUSE_MAP_VIEW_PATH = path.resolve(
   __dirname,
@@ -101,3 +101,69 @@ describe("createReanimatedMock() smoke — every Reanimated value import in Ware
     expect(notMocked).toEqual([]);
   });
 });
+
+/**
+ * Smoke test for createUseColorsMock().
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * createUseColorsMock() returns a hardcoded set of color tokens. If a new
+ * token is added to the real useColors hook (via constants/colors.ts) but
+ * omitted from the mock, components that destructure it get `undefined`
+ * silently — the test passes but the component renders incorrectly.
+ *
+ * HOW IT WORKS
+ * ------------
+ * The real useColors() returns { ...palette, radius } where palette is
+ * colors.light or colors.dark from constants/colors.ts. This test derives
+ * the expected key set from the actual module (via jest.requireActual) so it
+ * never drifts independently of the source. When a new token is added to
+ * colors.ts, this test fails immediately at the mock layer with a clear
+ * message.
+ *
+ * HOW TO FIX A FAILURE
+ * --------------------
+ * If this test fails with "Missing keys in createUseColorsMock(): [X, ...]":
+ *   1. Add X to the object returned by createUseColorsMock().useColors() in
+ *      mapMocks.ts.
+ * That's it. The test itself never needs updating.
+ */
+describe("createUseColorsMock() smoke — every key from the real useColors hook is present in the mock", () => {
+  let mockColors: Record<string, unknown>;
+  let expectedKeys: string[];
+
+  beforeAll(() => {
+    const actual = jest.requireActual<{
+      default: {
+        light: Record<string, unknown>;
+        dark: Record<string, unknown>;
+        radius: number;
+      };
+    }>("@/constants/colors");
+
+    expectedKeys = [...Object.keys(actual.default.light), "radius"];
+
+    const mod = createUseColorsMock() as { useColors: () => Record<string, unknown> };
+    mockColors = mod.useColors();
+  });
+
+  it("mock useColors() returns an object (sanity check)", () => {
+    expect(typeof mockColors).toBe("object");
+    expect(mockColors).not.toBeNull();
+  });
+
+  it("every key returned by the real useColors hook is present in the mock", () => {
+    const missing = expectedKeys.filter((k) => !(k in mockColors));
+
+    if (missing.length > 0) {
+      throw new Error(
+        `Missing keys in createUseColorsMock():\n` +
+          missing.map((k) => `  • ${k}`).join("\n") +
+          `\n\nFix: add each missing token to createUseColorsMock().useColors() in mapMocks.ts.`,
+      );
+    }
+
+    expect(missing).toEqual([]);
+  });
+});
+
