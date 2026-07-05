@@ -748,6 +748,74 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 23: wait_for_codegen_settle returns early once the server responds
+#
+# The file-backed curl mock returns a healthy body on the very first poll.
+# wait_for_codegen_settle should return 0 and log the "settle complete"
+# message after a single probe rather than waiting out the full window.
+# ---------------------------------------------------------------------------
+reset_mock '{"status":"ok"}'
+SETTLE_OUTPUT=$(wait_for_codegen_settle 2>&1)
+assert_exit     "settle early — returns 0"              0 $?
+assert_contains "settle early — logs settle complete"  'codegen settle complete' "$SETTLE_OUTPUT"
+
+SETTLE_POLLS=$(cat "$MOCK_DIR/count")
+assert_exit     "settle early — stops after 1 probe"   1 "$SETTLE_POLLS"
+
+# ---------------------------------------------------------------------------
+# Test 24: wait_for_codegen_settle exhausts the window but still returns 0
+#
+# curl never returns a healthy body.  wait_for_codegen_settle must poll up to
+# CODEGEN_SETTLE_MAX_SECS and then return 0 (best-effort pre-warm — the real
+# gate is the check_api_health pass that follows), logging the elapsed message.
+# ---------------------------------------------------------------------------
+reset_mock "" "" "" "" "" "" "" "" "" "" "" ""
+SETTLE_FAIL_OUTPUT=$(wait_for_codegen_settle 2>&1)
+assert_exit     "settle exhausted — returns 0 (non-fatal)"  0 $?
+assert_contains "settle exhausted — logs window elapsed"    'Settle window' "$SETTLE_FAIL_OUTPUT"
+
+# Must poll more than once (the floor + at least one probe), proving it is a
+# real poll loop and not a single fixed sleep.
+SETTLE_FAIL_POLLS=$(cat "$MOCK_DIR/count")
+if [[ "$SETTLE_FAIL_POLLS" -gt 1 ]]; then
+  pass "settle exhausted — polls multiple times (${SETTLE_FAIL_POLLS} probes)"
+else
+  fail "settle exhausted — expected multiple probes, got ${SETTLE_FAIL_POLLS}"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 25: post-merge.sh no longer relies on a fixed codegen settle sleep
+#
+# Guards against a regression back to `sleep "$CODEGEN_SETTLE_SECS"`.  The
+# settle step must call the poll-based wait_for_codegen_settle function.
+# ---------------------------------------------------------------------------
+# The definition line is `wait_for_codegen_settle() {`; a real invocation is a
+# bare call.  Exclude the definition so a deleted call site cannot pass this.
+SETTLE_CALL_LINE=$(grep -nE '^\s*wait_for_codegen_settle\s*$' "$SCRIPT_DIR/post-merge.sh" | head -1 | cut -d: -f1)
+if [[ -n "$SETTLE_CALL_LINE" ]]; then
+  pass "settle — post-merge.sh invokes wait_for_codegen_settle (line ${SETTLE_CALL_LINE})"
+else
+  fail "settle — post-merge.sh must invoke wait_for_codegen_settle (bare call, not just define it)"
+fi
+
+# The invocation must sit after codegen and before the first health-check pass
+# so the server is settled before the authoritative gate runs.
+SETTLE_CODEGEN_LINE=$(grep -nE 'api-spec (run codegen|exec orval)' "$SCRIPT_DIR/post-merge.sh" | head -1 | cut -d: -f1)
+SETTLE_HEALTHCHECK_LINE=$(grep -nE '^\s*if check_api_health' "$SCRIPT_DIR/post-merge.sh" | head -1 | cut -d: -f1)
+if [[ -n "$SETTLE_CALL_LINE" && -n "$SETTLE_CODEGEN_LINE" && -n "$SETTLE_HEALTHCHECK_LINE" \
+      && "$SETTLE_CALL_LINE" -gt "$SETTLE_CODEGEN_LINE" && "$SETTLE_CALL_LINE" -lt "$SETTLE_HEALTHCHECK_LINE" ]]; then
+  pass "settle — invocation runs after codegen and before first health check"
+else
+  fail "settle — invocation must be after codegen (${SETTLE_CODEGEN_LINE}) and before first check_api_health (${SETTLE_HEALTHCHECK_LINE}), got ${SETTLE_CALL_LINE}"
+fi
+
+if grep -qE 'sleep +"\$CODEGEN_SETTLE_SECS"' "$SCRIPT_DIR/post-merge.sh"; then
+  fail "settle — post-merge.sh still uses the old fixed 'sleep \$CODEGEN_SETTLE_SECS'"
+else
+  pass "settle — old fixed 'sleep \$CODEGEN_SETTLE_SECS' removed"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
