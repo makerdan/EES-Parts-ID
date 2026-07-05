@@ -701,6 +701,53 @@ if [[ "$API_TYPECHECK_EXIT" -ne 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Test 21: PORT unset — health check falls back to the HTTPS proxy URL
+#
+# The PORT branch at the top of post-merge.sh runs at source time.  Source the
+# script in a clean subshell with PORT unset and REPLIT_DEV_DOMAIN set, then
+# print the resulting HEALTH_URL.  Asserts that:
+#   (a) the WARNING line about the missing PORT is printed, and
+#   (b) the fallback HEALTH_URL contains the REPLIT_DEV_DOMAIN (proxy URL).
+# This guards against a future change silently removing the fallback and
+# breaking post-merge in environments where PORT is not exported.
+# ---------------------------------------------------------------------------
+PORT_UNSET_OUTPUT=$(env -u PORT REPLIT_DEV_DOMAIN="mock-domain.test" \
+  bash -c 'source "'"$SCRIPT_DIR"'/post-merge.sh"; echo "HEALTH_URL=$HEALTH_URL"' 2>&1)
+
+assert_contains "PORT unset — WARNING line printed" \
+  "WARNING: PORT is not set" "$PORT_UNSET_OUTPUT"
+assert_contains "PORT unset — fallback URL uses REPLIT_DEV_DOMAIN" \
+  "HEALTH_URL=https://mock-domain.test/api/healthz" "$PORT_UNSET_OUTPUT"
+
+# ---------------------------------------------------------------------------
+# Test 22: PORT set — health check uses the localhost URL
+#
+# Source the script in a clean subshell with PORT set, then run
+# check_api_health with a curl mock that records the URL it is called with.
+# Asserts that:
+#   (a) no WARNING line is printed (the localhost branch is taken), and
+#   (b) curl is called with http://localhost:<PORT>/api/healthz.
+# ---------------------------------------------------------------------------
+PORT_SET_URL_FILE=$(mktemp)
+PORT_SET_OUTPUT=$(env PORT=53421 REPLIT_DEV_DOMAIN="mock-domain.test" \
+  URL_FILE="$PORT_SET_URL_FILE" bash -c '
+    source "'"$SCRIPT_DIR"'/post-merge.sh"
+    curl() { echo "$@" | grep -oE "https?://[^ ]+" >> "$URL_FILE"; echo "{\"status\":\"ok\"}"; }
+    sleep() { :; }
+    check_api_health "port-set-test"
+  ' 2>&1)
+PORT_SET_URL=$(cat "$PORT_SET_URL_FILE")
+rm -f "$PORT_SET_URL_FILE"
+
+assert_contains "PORT set — curl uses localhost URL with PORT" \
+  "http://localhost:53421/api/healthz" "$PORT_SET_URL"
+if echo "$PORT_SET_OUTPUT" | grep -q "WARNING: PORT is not set"; then
+  fail "PORT set — no fallback WARNING should be printed"
+else
+  pass "PORT set — no fallback WARNING printed"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
