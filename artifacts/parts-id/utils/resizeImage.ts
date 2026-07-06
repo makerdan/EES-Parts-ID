@@ -1,5 +1,6 @@
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
+import { Platform } from "react-native";
 
 const MAX_WIDTH = 1920;
 const JPEG_QUALITY = 0.7;
@@ -30,6 +31,28 @@ function base64ByteSize(b64OrDataUri: string): number {
 }
 
 /**
+ * Read a URI as a base64-encoded JPEG data URI, working on both native and web.
+ *
+ * On native, expo-file-system reads file:// URIs directly (fast, preserves
+ * original bytes as-is).
+ * On web, expo-image-picker returns blob:// URIs that expo-file-system cannot
+ * read. ImageManipulator uses the HTML canvas API and handles blob/data URIs
+ * correctly on all browsers.
+ */
+async function readAsBase64(uri: string): Promise<string> {
+  if (Platform.OS === "web") {
+    const result = await ImageManipulator.manipulateAsync(
+      uri,
+      [],
+      { compress: JPEG_QUALITY, format: ImageManipulator.SaveFormat.JPEG, base64: true },
+    );
+    return `data:image/jpeg;base64,${result.base64 ?? ""}`;
+  }
+  const raw = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
+  return `data:image/jpeg;base64,${raw}`;
+}
+
+/**
  * Compression ladder used by downscaleToFit.
  * Each entry is [maxWidth (0 = no resize), jpegQuality].
  * Steps are tried in order until the image fits within the byte budget.
@@ -48,7 +71,7 @@ const COMPRESSION_LADDER: Array<[number, number]> = [
  * Walks a compression ladder of progressively lower quality / smaller dimensions.
  * If the image fits at the last step, returns that result regardless (best effort).
  *
- * @param uri      Local image URI (file://)
+ * @param uri      Local image URI (file:// on native, blob:// on web)
  * @param maxBytes Maximum allowed decoded byte size for this single image
  */
 export async function downscaleToFit(
@@ -81,10 +104,12 @@ export async function downscaleToFit(
     }
   }
 
-  // Best effort: return whatever is at the end of the ladder
+  // Best effort: return the result of the final ladder step.
+  // Use readAsBase64 so this path works on both native (file://) and
+  // web (blob:// or data: URI produced by ImageManipulator above).
   try {
-    const raw = await FileSystem.readAsStringAsync(currentUri, { encoding: "base64" });
-    return { uri: currentUri, base64: `data:image/jpeg;base64,${raw}` };
+    const base64 = await readAsBase64(currentUri);
+    return { uri: currentUri, base64 };
   } catch (err) {
     throw new ImageReadError(
       "Could not read compressed image data.",
@@ -105,17 +130,21 @@ export async function resizeImage(
   width: number
 ): Promise<ResizedImage> {
   // Only downscale when the image exceeds MAX_WIDTH. All other cases — unknown
-  // width (0 or negative), already within range, or narrower than MIN_WIDTH —
-  // are passed through unchanged. Upscaling small images increases token cost
-  // and payload size with no quality benefit.
+  // width (0 or negative), already within range, or narrower than MAX_WIDTH —
+  // are passed through. Upscaling small images increases token cost and payload
+  // size with no quality benefit.
+  //
+  // On native, expo-file-system reads file:// URIs directly.
+  // On web, expo-image-picker returns blob:// URIs which expo-file-system
+  // cannot read — readAsBase64 routes those through ImageManipulator (canvas).
   if (width <= 0 || width <= MAX_WIDTH) {
     try {
-      const raw = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
-      return { uri, base64: `data:image/jpeg;base64,${raw}` };
+      const base64 = await readAsBase64(uri);
+      return { uri, base64 };
     } catch (err) {
       throw new ImageReadError(
         "Could not read the image file — it may be corrupt, deleted, or inaccessible.",
-        err
+        err,
       );
     }
   }
