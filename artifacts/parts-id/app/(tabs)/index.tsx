@@ -41,7 +41,7 @@ import { useMapPinHandlers } from "@/hooks/useMapPinHandlers";
 import { secondaryBtnBase } from "@/styles/shared";
 import { API_BASE } from "@/utils/apiBase";
 import { fetchWithAuth } from "@/utils/appAuth";
-import { FUSE_CACHE_KEY, FUSE_SOFT_STALE_MS, FUSE_SYNC_MAX_AGE_MS, getFuseCacheSyncedAt, replaceBarcodeCacheWithServerItems } from "@/utils/offlineBarcode";
+import { FUSE_CACHE_KEY, FUSE_SOFT_STALE_MS, FUSE_SYNC_MAX_AGE_MS, getFuseCacheSyncedAt, parseFuseCacheItems, replaceBarcodeCacheWithServerItems } from "@/utils/offlineBarcode";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 import { retryAsync } from "@/utils/retryAsync";
 import type { QueryCache } from "@/utils/searchHelpers";
@@ -407,7 +407,10 @@ export default function SearchScreen() {
     if (pruned.length === fuseItemsRef.current.length) return;
     buildFuseIndex(pruned);
     if (Platform.OS !== "web") {
-      AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(pruned)).catch(err => {
+      AsyncStorage.setItem(
+        FUSE_CACHE_KEY,
+        JSON.stringify({ items: pruned, syncedAt: fuseSyncedAtRef.current }),
+      ).catch(err => {
         reportStorageError("Could not save offline inventory cache", err);
       });
     }
@@ -515,14 +518,20 @@ export default function SearchScreen() {
 
   // Cancel pending auto-retry timer on unmount to prevent state updates
   // after the component is destroyed (e.g. user logs out mid-countdown).
-  // Also flip isMountedRef so any in-flight async work that outlives the
-  // component (e.g. the retry callback) becomes a no-op.
+  // Also cancel the slow-connection fallback timer (searchTimeoutRef) so its
+  // callback never calls setOfflineResults / setIsOffline on an unmounted
+  // component. Finally, flip isMountedRef so any in-flight async work that
+  // outlives the component (e.g. the retry callback) becomes a no-op.
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
       if (syncRetryTimerRef.current !== null) {
         clearTimeout(syncRetryTimerRef.current);
         syncRetryTimerRef.current = null;
+      }
+      if (searchTimeoutRef.current !== null) {
+        clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = null;
       }
     };
   }, []);
@@ -566,14 +575,9 @@ export default function SearchScreen() {
           syncAllInventory();
           return;
         }
-        let items: Array<InventoryItem>;
-        try {
-          const parsed: unknown = JSON.parse(raw);
-          if (!Array.isArray(parsed) || !parsed.every((i: unknown) => typeof (i as { id?: unknown })?.id === 'number')) {
-            throw new SyntaxError('invalid shape');
-          }
-          items = parsed as Array<InventoryItem>;
-        } catch {
+        // Parse both plain-array (legacy) and envelope ({ items, syncedAt }) formats.
+        const items = parseFuseCacheItems(raw);
+        if (!items) {
           // Corrupt cache — clear it and re-sync
           AsyncStorage.removeItem(FUSE_CACHE_KEY).catch(err => {
             reportStorageError("Could not clear corrupt offline cache", err);
@@ -720,7 +724,10 @@ export default function SearchScreen() {
           }
           buildFuseIndex(merged);
           if (Platform.OS !== "web") {
-            AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(merged)).catch(err => {
+            AsyncStorage.setItem(
+              FUSE_CACHE_KEY,
+              JSON.stringify({ items: merged, syncedAt: fuseSyncedAtRef.current }),
+            ).catch(err => {
               reportStorageError("Could not save offline inventory cache", err);
             });
           }
@@ -1035,7 +1042,10 @@ export default function SearchScreen() {
       );
       buildFuseIndex(updated);
       if (Platform.OS !== "web") {
-        AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(updated)).catch(err => {
+        AsyncStorage.setItem(
+          FUSE_CACHE_KEY,
+          JSON.stringify({ items: updated, syncedAt: fuseSyncedAtRef.current }),
+        ).catch(err => {
           reportStorageError("Could not save offline inventory cache", err);
         });
       }
