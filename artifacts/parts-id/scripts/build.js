@@ -103,6 +103,32 @@ function resolveClerkProxyUrl(domain) {
   return "";
 }
 
+// Guard against shipping a production build with a broken Clerk auth config.
+// A production Clerk instance (pk_live_…) requires the Frontend API to be
+// proxied through the app's own domain; if EXPO_PUBLIC_CLERK_PROXY_URL ends up
+// empty, ClerkLoaded never resolves and the web app renders a permanent blank
+// screen with no error. This inspects the ACTUAL values baked into the env
+// passed to Metro/web export (not the raw process.env) and returns an error
+// message when the combination is unsafe, or null when it is fine. Kept pure
+// (returns a string/null instead of exiting) so it can be unit-tested.
+function getClerkAuthConfigError(publishableKey, proxyUrl) {
+  const key = publishableKey || "";
+  const proxy = proxyUrl || "";
+
+  if (key.startsWith("pk_live_") && !proxy) {
+    return (
+      "[Build Guard] Production Clerk auth config is broken: a live publishable " +
+      "key (pk_live_…) is baked into the build but EXPO_PUBLIC_CLERK_PROXY_URL is " +
+      "empty. Clerk requires production Frontend API traffic to be proxied through " +
+      "the app's own domain, so ClerkLoaded will never resolve and the app will " +
+      "render a blank screen. Ensure a deployment domain is available (so the proxy " +
+      "URL can be auto-derived) or set EXPO_PUBLIC_CLERK_PROXY_URL explicitly."
+    );
+  }
+
+  return null;
+}
+
 function prepareDirectories(timestamp) {
   console.log("Preparing build directories...");
 
@@ -174,6 +200,14 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
     EXPO_PUBLIC_CLERK_PROXY_URL: resolveClerkProxyUrl(expoPublicDomain),
     NODE_OPTIONS: "--max-old-space-size=4096",
   };
+
+  const clerkError = getClerkAuthConfigError(
+    env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY,
+    env.EXPO_PUBLIC_CLERK_PROXY_URL,
+  );
+  if (clerkError) {
+    exitWithError(clerkError);
+  }
 
   if (expoPublicReplId) {
     console.log(`Setting EXPO_PUBLIC_REPL_ID=${expoPublicReplId}`);
@@ -661,6 +695,14 @@ async function buildWeb(domain, expoPublicReplId) {
     NODE_OPTIONS: "--max-old-space-size=4096",
   };
 
+  const clerkError = getClerkAuthConfigError(
+    env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY,
+    env.EXPO_PUBLIC_CLERK_PROXY_URL,
+  );
+  if (clerkError) {
+    exitWithError(clerkError);
+  }
+
   return new Promise((resolve, reject) => {
     const proc = spawn(
       "pnpm",
@@ -695,10 +737,18 @@ async function buildWeb(domain, expoPublicReplId) {
   });
 }
 
-main().catch((error) => {
-  console.error("Build failed:", error.message);
-  if (metroProcess) {
-    metroProcess.kill();
-  }
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error("Build failed:", error.message);
+    if (metroProcess) {
+      metroProcess.kill();
+    }
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  stripProtocol,
+  resolveClerkProxyUrl,
+  getClerkAuthConfigError,
+};
