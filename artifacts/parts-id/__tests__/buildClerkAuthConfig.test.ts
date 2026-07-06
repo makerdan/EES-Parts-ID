@@ -129,9 +129,29 @@ describe("getClerkAuthConfigError", () => {
     expect(getClerkAuthConfigError("pk_test_abc123", "")).toBeNull();
   });
 
-  it("passes when no key is set", () => {
-    expect(getClerkAuthConfigError("", "")).toBeNull();
-    expect(getClerkAuthConfigError(undefined, undefined)).toBeNull();
+  it("fails when the publishable key is an empty string", () => {
+    const error = getClerkAuthConfigError("", "");
+    expect(error).toContain("[Build Guard]");
+    expect(error).toContain("blank screen");
+  });
+
+  it("fails when the publishable key is undefined", () => {
+    const error = getClerkAuthConfigError(undefined, undefined);
+    expect(error).toContain("[Build Guard]");
+    expect(error).toContain("blank screen");
+  });
+
+  it("passes for a valid test key with no proxy URL", () => {
+    expect(getClerkAuthConfigError("pk_test_abc123", "")).toBeNull();
+  });
+
+  it("passes for a valid live key with a proxy URL", () => {
+    expect(
+      getClerkAuthConfigError(
+        "pk_live_abc123",
+        "https://app.example.com/api/__clerk",
+      ),
+    ).toBeNull();
   });
 });
 
