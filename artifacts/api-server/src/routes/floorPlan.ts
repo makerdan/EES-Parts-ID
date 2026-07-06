@@ -109,9 +109,14 @@ function tileCachePath(svgHash: string, z: number, x: number, y: number): string
  * numbers in the viewBox), independent of any non-zero origin offset.
  */
 function parseSvgViewBox(svgBuffer: Buffer): { w: number; h: number } | null {
-  const match = svgBuffer.toString("utf8").match(/viewBox="([^"]+)"/);
+  // Match both double- and single-quoted viewBox attributes.  Some export tools
+  // (e.g. certain CAD/vector editors) emit single-quoted attributes; a
+  // double-quote-only regex would silently fall through to SVG_ASPECT_FALLBACK
+  // and misalign the tile pyramid.  The captured quote char is back-referenced
+  // so the opening and closing quotes must match.
+  const match = svgBuffer.toString("utf8").match(/viewBox=(["'])([^"']+)\1/);
   if (!match) return null;
-  const parts = match[1].trim().split(/[\s,]+/).map(Number);
+  const parts = match[2].trim().split(/[\s,]+/).map(Number);
   if (parts.length !== 4 || parts.some((n) => !isFinite(n))) return null;
   const [, , w, h] = parts;
   if (!w || !h) return null;
@@ -131,14 +136,15 @@ function parseSvgViewBox(svgBuffer: Buffer): { w: number; h: number } | null {
  */
 function normalizeViewBoxOrigin(svgBuffer: Buffer): Buffer {
   const svgStr = svgBuffer.toString("utf8");
-  const match = svgStr.match(/viewBox="([^"]+)"/);
+  // Match both double- and single-quoted viewBox attributes (see parseSvgViewBox).
+  const match = svgStr.match(/viewBox=(["'])([^"']+)\1/);
   if (!match) return svgBuffer;
-  const parts = match[1].trim().split(/[\s,]+/).map(Number);
+  const parts = match[2].trim().split(/[\s,]+/).map(Number);
   if (parts.length !== 4 || parts.some((n) => !isFinite(n))) return svgBuffer;
   const [ox, oy, w, h] = parts;
   if (ox === 0 && oy === 0) return svgBuffer; // already correct — skip allocation
   return Buffer.from(
-    svgStr.replace(/viewBox="[^"]*"/, `viewBox="0 0 ${w} ${h}"`),
+    svgStr.replace(/viewBox=(["'])[^"']*\1/, `viewBox="0 0 ${w} ${h}"`),
     "utf8",
   );
 }
@@ -160,6 +166,24 @@ async function generateTile(
   x: number,
   y: number,
 ): Promise<Buffer> {
+  // Stale-cache guard: the disk cache is keyed by svgHash, but the caller passes
+  // the svgBuffer and svgHash separately.  A race between an in-flight tile
+  // warmup (holding an old SVG buffer) and a fresh upload could otherwise write
+  // a tile generated from a superseded SVG under a hash that no longer matches
+  // its content.  Verify the buffer actually hashes to the claimed svgHash so a
+  // tile from a superseded floor plan can never be generated or served — the
+  // mismatch is loudly rejected instead of silently producing misaligned tiles.
+  const actualHash = crypto.createHash("sha256").update(svgBuffer).digest("hex");
+  if (actualHash !== svgHash) {
+    logger.error(
+      { expectedHash: svgHash, actualHash, z, x, y },
+      "[floor-plan/tiles] SVG content hash mismatch — refusing to serve/generate a tile for a superseded floor plan",
+    );
+    throw new Error(
+      "SVG content hash does not match the requested floor-plan hash — refusing to serve a stale tile",
+    );
+  }
+
   const cachePath = tileCachePath(svgHash, z, x, y);
 
   try {

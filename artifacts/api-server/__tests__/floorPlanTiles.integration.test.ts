@@ -36,16 +36,16 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 }));
 
 // ── Mock objectStorage — no real GCS calls in tests ───────────────────────────
+// The stored SVG string is defined here (name begins with `mock` so Jest's
+// hoisted factory may reference it) and re-used below to derive TEST_HASH.  The
+// tile route's generateTile() now verifies sha256(svgBuffer) === svgHash before
+// serving, so the seeded floor-plan hash MUST equal the hash of these bytes.
+const mockFloorPlanSvg =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">' +
+  '<rect width="100" height="100" fill="blue"/></svg>';
+
 jest.mock("../src/lib/objectStorage", () => ({
-  readFloorPlanSvg: jest.fn(() =>
-    Promise.resolve(
-      Buffer.from(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">' +
-          '<rect width="100" height="100" fill="blue"/></svg>',
-        "utf8",
-      ),
-    ),
-  ),
+  readFloorPlanSvg: jest.fn(() => Promise.resolve(Buffer.from(mockFloorPlanSvg, "utf8"))),
   uploadFloorPlanSvg: jest.fn(),
   uploadCatalogImage: jest.fn(),
 }));
@@ -66,13 +66,18 @@ jest.mock("sharp", () => {
 });
 
 // ── Imports ───────────────────────────────────────────────────────────────────
+import crypto from "node:crypto";
+
 import supertest from "supertest";
 import app from "../src/app";
 import { db, floorPlanMetaTable, pool } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 // ── Test fixture constants ────────────────────────────────────────────────────
-const TEST_HASH = "jest-tile-test-hash-0000000000000000000000000000000000000000";
+// TEST_HASH must equal the sha256 of the SVG bytes returned by the mocked
+// readFloorPlanSvg — generateTile() now rejects tiles whose buffer hash does not
+// match the requested floor-plan hash.
+const TEST_HASH = crypto.createHash("sha256").update(mockFloorPlanSvg).digest("hex");
 const TEST_OBJECT_PATH = "/objects/jest-test/floor-plan/warehouse-map.svg";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
