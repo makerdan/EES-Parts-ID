@@ -1,4 +1,4 @@
-import { useOAuth } from "@clerk/expo";
+import { useOAuth, useSignIn, useSignUp } from "@clerk/expo";
 import { useRouter } from "expo-router";
 import React, { useCallback, useState } from "react";
 import {
@@ -17,8 +17,12 @@ import { useColors } from "@/hooks/useColors";
 // Dashboard → User & Authentication → Social Connections → Enable Google / Apple
 // For Apple: also configure your Apple Developer team ID, key ID, and private key.
 //
-// WebBrowser.maybeCompleteAuthSession() is called at app startup in _layout.tsx —
-// no need to call it again here.
+// On web, Google OAuth uses a full-page redirect (authenticateWithRedirect) to
+// avoid the popup flow that expo-web-browser opens. The redirect lands back at
+// window.location.origin and Clerk's useAuth processes the token params
+// automatically, so AuthGate in _layout.tsx routes the user correctly.
+//
+// On native, the existing useOAuth / startOAuthFlow in-app browser flow is used.
 
 interface OAuthButtonsProps {
   mode: "sign-in" | "sign-up";
@@ -40,6 +44,8 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
 
   const { startOAuthFlow: startGoogle } = useOAuth({ strategy: "oauth_google" });
   const { startOAuthFlow: startApple } = useOAuth({ strategy: "oauth_apple" });
+  const { signIn } = useSignIn();
+  const { signUp } = useSignUp();
 
   const [googleLoading, setGoogleLoading] = useState(false);
   const [appleLoading, setAppleLoading] = useState(false);
@@ -50,10 +56,29 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
     setOauthError(null);
     setGoogleLoading(true);
     try {
-      const { createdSessionId, setActive } = await startGoogle();
-      if (createdSessionId) {
-        await setActive!({ session: createdSessionId });
-        router.replace("/(tabs)");
+      if (Platform.OS === "web") {
+        const redirectUrl =
+          typeof window !== "undefined" ? window.location.origin : "/";
+        if (mode === "sign-in") {
+          await signIn!.sso({
+            strategy: "oauth_google",
+            redirectUrl,
+            redirectCallbackUrl: redirectUrl,
+          });
+        } else {
+          await signUp!.sso({
+            strategy: "oauth_google",
+            redirectUrl,
+            redirectCallbackUrl: redirectUrl,
+          });
+        }
+        // Full-page redirect is in progress; no further code runs here.
+      } else {
+        const { createdSessionId, setActive } = await startGoogle();
+        if (createdSessionId) {
+          await setActive!({ session: createdSessionId });
+          router.replace("/(tabs)");
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : null;
@@ -63,7 +88,7 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
     } finally {
       setGoogleLoading(false);
     }
-  }, [googleLoading, startGoogle, router]);
+  }, [googleLoading, startGoogle, router, mode, signIn, signUp]);
 
   const handleApple = useCallback(async () => {
     if (appleLoading) return;
