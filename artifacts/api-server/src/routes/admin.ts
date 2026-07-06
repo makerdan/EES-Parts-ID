@@ -372,4 +372,39 @@ router.post("/users/:clerkUserId/demote", requireAdminAuth, async (req, res) => 
   }
 });
 
+// DELETE /admin/users/:clerkUserId — hard-delete a user row from the DB
+router.delete("/users/:clerkUserId", requireAdminAuth, async (req, res) => {
+  const rawParam = req.params.clerkUserId;
+  const clerkUserId = Array.isArray(rawParam) ? rawParam[0] : rawParam;
+  if (typeof clerkUserId !== "string" || !clerkUserId) {
+    return res.status(400).json({ error: "Missing clerkUserId" });
+  }
+
+  // The bootstrap admin cannot be deleted — it would immediately re-appear on
+  // next sign-in via requireAppAuth.
+  if (clerkUserId === process.env.ADMIN_CLERK_USER_ID) {
+    return res.status(400).json({ error: "The bootstrap admin cannot be deleted" });
+  }
+
+  // An admin cannot delete their own account while authenticated.
+  const requestingUser = res.locals.appUser as { clerkUserId?: string } | undefined;
+  if (requestingUser?.clerkUserId === clerkUserId) {
+    return res.status(400).json({ error: "You cannot delete your own account" });
+  }
+
+  try {
+    const deleted = await db
+      .delete(usersTable)
+      .where(eq(usersTable.clerkUserId, clerkUserId))
+      .returning();
+
+    if (deleted.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    return res.json({ deleted: true });
+  } catch {
+    return res.status(500).json({ error: "Failed to delete user" });
+  }
+});
+
 export default router;

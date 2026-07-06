@@ -3,9 +3,10 @@
  *
  * Separated so it can be unit-tested without mounting the full screen.
  *
- * fetchAdminUsers   — GET  /admin/users, populates the user list.
- * handleUserAction  — POST /admin/users/:clerkUserId/approve|ban|promote|demote,
+ * fetchAdminUsers   — GET    /admin/users, populates the user list.
+ * handleUserAction  — POST   /admin/users/:clerkUserId/approve|ban|promote|demote,
  *                     then refreshes the list on success.
+ * deleteAdminUser   — DELETE /admin/users/:clerkUserId, hard-deletes the DB row.
  */
 
 export type UserRole = "admin" | "user";
@@ -35,6 +36,14 @@ export type HandleUserActionDeps = {
   setUserActionPending: (v: string | null) => void;
   showToast: (message: string, type: "error") => void;
   fetchUsers: () => Promise<void>;
+};
+
+export type DeleteAdminUserDeps = {
+  apiBase: string;
+  adminToken: string;
+  setUserActionPending: (v: string | null) => void;
+  showToast: (message: string, type: "error") => void;
+  removeUser: (clerkUserId: string) => void;
 };
 
 /**
@@ -96,6 +105,40 @@ export async function handleUserAction(
   } catch (err) {
     showToast(
       err instanceof Error ? err.message : `Failed to ${action} user`,
+      "error",
+    );
+  } finally {
+    setUserActionPending(null);
+  }
+}
+
+/**
+ * Sends DELETE /admin/users/:clerkUserId to hard-delete the DB row.
+ *
+ * Sets userActionPending while in flight to disable other action buttons.
+ * On success calls deps.removeUser() to remove the user from local state.
+ * On failure shows a toast via deps.showToast().
+ */
+export async function deleteAdminUser(
+  clerkUserId: string,
+  deps: DeleteAdminUserDeps,
+): Promise<void> {
+  const { apiBase, adminToken, setUserActionPending, showToast, removeUser } = deps;
+
+  setUserActionPending(clerkUserId);
+  try {
+    const resp = await fetch(`${apiBase}/admin/users/${clerkUserId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({})) as { error?: string };
+      throw new Error(body.error ?? `HTTP ${resp.status}`);
+    }
+    removeUser(clerkUserId);
+  } catch (err) {
+    showToast(
+      err instanceof Error ? err.message : "Failed to delete user",
       "error",
     );
   } finally {
