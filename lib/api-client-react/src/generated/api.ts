@@ -24,6 +24,8 @@ import type {
   AiReferenceBody,
   CategoryTreeResponse,
   CreateWarehouseZoneBody,
+  DeleteUserMe400,
+  DeleteUserMe502,
   DeleteWarehouseZone200,
   DictionaryLookupResponse,
   EnrichInventoryBody,
@@ -2209,4 +2211,87 @@ export const useAiReference = <
   TContext
 > => {
   return useMutation(getAiReferenceMutationOptions(options));
+};
+
+/**
+ * Deletes the caller's local DB row and Clerk identity. Returns 204 on success. If the DB delete succeeds but Clerk deletion fails, a 502 is returned with an error body so the caller knows the Clerk identity is still live.
+
+ * @summary Delete the authenticated user's own account
+ */
+export const getDeleteUserMeUrl = () => {
+  return `/api/user/me`;
+};
+
+export const deleteUserMe = async (options?: RequestInit): Promise<void> => {
+  return customFetch<void>(getDeleteUserMeUrl(), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteUserMeMutationOptions = <
+  TError = ErrorType<DeleteUserMe400 | void | DeleteUserMe502>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteUserMe>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteUserMe>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["deleteUserMe"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteUserMe>>,
+    void
+  > = () => {
+    return deleteUserMe(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteUserMeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteUserMe>>
+>;
+
+export type DeleteUserMeMutationError = ErrorType<
+  DeleteUserMe400 | void | DeleteUserMe502
+>;
+
+/**
+ * @summary Delete the authenticated user's own account
+ */
+export const useDeleteUserMe = <
+  TError = ErrorType<DeleteUserMe400 | void | DeleteUserMe502>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteUserMe>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteUserMe>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getDeleteUserMeMutationOptions(options));
 };

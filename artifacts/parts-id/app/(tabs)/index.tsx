@@ -8,6 +8,7 @@ import Fuse from "fuse.js";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   type AppStateStatus,
   FlatList,
@@ -1481,6 +1482,53 @@ export default function SearchScreen() {
                 style={[styles.secondaryBtn, styles.logoutModalCancel, { borderColor: colors.destructive + "66", backgroundColor: colors.destructive + "11" }]}
               >
                 <Text style={[styles.logoutModalCancelText, { color: colors.destructive }]}>Sign Out</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  Alert.alert(
+                    "Delete Account",
+                    "This will permanently delete your account and all associated data. This cannot be undone.",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Delete Account",
+                        style: "destructive",
+                        onPress: () => {
+                          Alert.alert(
+                            "Are you sure?",
+                            "Your account will be permanently removed. You will be signed out immediately.",
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              {
+                                text: "Yes, delete my account",
+                                style: "destructive",
+                                onPress: async () => {
+                                  try {
+                                    const resp = await fetchWithAuth(`${API_BASE}/user/me`, { method: "DELETE" });
+                                    if (!resp.ok) {
+                                      const body = await resp.json().catch(() => ({})) as { error?: string };
+                                      Alert.alert("Error", body.error ?? `Failed to delete account (${resp.status})`);
+                                      return;
+                                    }
+                                    setShowLogoutModal(false);
+                                    setCacheClearedMsg(null);
+                                    setCacheAge(null);
+                                    logout();
+                                  } catch {
+                                    Alert.alert("Error", "Could not reach the server. Please check your connection and try again.");
+                                  }
+                                },
+                              },
+                            ],
+                          );
+                        },
+                      },
+                    ],
+                  );
+                }}
+                style={[styles.secondaryBtn, styles.logoutModalCancel, { borderColor: colors.destructive + "66", backgroundColor: colors.destructive + "11", marginTop: 4 }]}
+              >
+                <Text style={[styles.logoutModalCancelText, { color: colors.destructive }]}>Delete Account</Text>
               </Pressable>
             </View>
           </View>
