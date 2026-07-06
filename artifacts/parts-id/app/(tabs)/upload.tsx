@@ -44,6 +44,7 @@ import { useApiStatus } from "@/hooks/useApiStatus";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
 import {
+  deleteAdminUser,
   fetchAdminUsers,
   handleUserAction as runUserAction,
 } from "@/utils/adminUserActions";
@@ -711,6 +712,11 @@ export default function UploadScreen() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [userActionPending, setUserActionPending] = useState<string | null>(null);
+  const [userSectionsExpanded, setUserSectionsExpanded] = useState<Record<string, boolean>>({
+    admins: true,
+    users: true,
+    requests: true,
+  });
 
   // Bin diff / replace-warning state
   const [exportPending, setExportPending] = useState(false);
@@ -1694,6 +1700,31 @@ export default function UploadScreen() {
       showToast,
       fetchUsers,
     });
+  };
+
+  const handleDeleteUser = (clerkUserId: string, email: string) => {
+    if (!adminToken) return;
+    Alert.alert(
+      "Delete User",
+      `Are you sure you want to delete ${email || clerkUserId}? This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            void deleteAdminUser(clerkUserId, {
+              apiBase: API_BASE,
+              adminToken,
+              setUserActionPending,
+              showToast,
+              removeUser: (id) =>
+                setUsersData((prev) => prev.filter((u) => u.clerkUserId !== id)),
+            });
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -3299,8 +3330,12 @@ export default function UploadScreen() {
                   <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 16, textAlign: "center" }}>
                     No users yet. Tap Refresh to load.
                   </Text>
-                ) : (
-                  usersData.map((user) => {
+                ) : (() => {
+                  const adminUsers = usersData.filter((u) => u.role === "admin");
+                  const regularUsers = usersData.filter((u) => u.role !== "admin" && u.status !== "pending");
+                  const requestUsers = usersData.filter((u) => u.status === "pending");
+
+                  const renderUserCard = (user: import("@/utils/adminUserActions").UserRow) => {
                     const statusColor =
                       user.status === "approved" ? "#10b981" :
                       user.status === "banned"   ? colors.destructive :
@@ -3313,7 +3348,7 @@ export default function UploadScreen() {
                       <View
                         key={user.clerkUserId}
                         style={{
-                          marginTop: 10,
+                          marginTop: 8,
                           borderRadius: 8,
                           borderWidth: 1,
                           borderColor: colors.border,
@@ -3321,29 +3356,22 @@ export default function UploadScreen() {
                           gap: 6,
                         }}
                       >
-                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                          <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: colors.foreground, flexShrink: 1, marginRight: 8 }}>
-                            {user.email || "(no email)"}
-                          </Text>
-                          <View style={{ flexDirection: "row", gap: 6, flexShrink: 0 }}>
-                            <View style={{ backgroundColor: roleColor + "22", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: roleColor + "44" }}>
-                              <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: roleColor }}>{roleLabel}</Text>
-                            </View>
-                            <View style={{ backgroundColor: statusColor + "22", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: statusColor + "44" }}>
-                              <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: statusColor, textTransform: "capitalize" }}>
-                                {user.status}
-                              </Text>
-                            </View>
-                          </View>
-                        </View>
+                        <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: colors.foreground }}>
+                          {user.email || "(no email)"}
+                        </Text>
                         <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: colors.mutedForeground }}>
                           ID: {user.clerkUserId}
                         </Text>
-                        {user.role === "admin" ? (
-                          <View style={{ alignSelf: "flex-start", backgroundColor: colors.primary + "22", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: colors.primary + "44" }}>
-                            <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.primary }}>Admin</Text>
+                        <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                          <View style={{ backgroundColor: roleColor + "22", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: roleColor + "44" }}>
+                            <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: roleColor }}>{roleLabel}</Text>
                           </View>
-                        ) : null}
+                          <View style={{ backgroundColor: statusColor + "22", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: statusColor + "44" }}>
+                            <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: statusColor, textTransform: "capitalize" }}>
+                              {user.status}
+                            </Text>
+                          </View>
+                        </View>
                         <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
                           {user.status !== "approved" ? (
                             <Pressable
@@ -3379,6 +3407,21 @@ export default function UploadScreen() {
                               )}
                             </Pressable>
                           ) : null}
+                          <Pressable
+                            onPress={() => handleDeleteUser(user.clerkUserId, user.email)}
+                            disabled={!!userActionPending}
+                            style={{
+                              flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
+                              backgroundColor: colors.destructive + "15", borderWidth: 1, borderColor: colors.destructive + "44",
+                              opacity: userActionPending ? 0.6 : 1,
+                            }}
+                          >
+                            {isPending ? (
+                              <ActivityIndicator size="small" color={colors.destructive} />
+                            ) : (
+                              <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.destructive }}>🗑 Delete</Text>
+                            )}
+                          </Pressable>
                         </View>
                         <UserAdminButtonRow
                           user={user}
@@ -3388,8 +3431,48 @@ export default function UploadScreen() {
                         />
                       </View>
                     );
-                  })
-                )}
+                  };
+
+                  const renderSection = (key: string, title: string, items: Array<import("@/utils/adminUserActions").UserRow>) => {
+                    if (items.length === 0) return null;
+                    const expanded = userSectionsExpanded[key] !== false;
+                    return (
+                      <View key={key} style={{ marginTop: 12 }}>
+                        <Pressable
+                          onPress={() =>
+                            setUserSectionsExpanded((prev) => ({ ...prev, [key]: !expanded }))
+                          }
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            paddingVertical: 8,
+                            paddingHorizontal: 4,
+                            borderBottomWidth: 1,
+                            borderBottomColor: colors.border,
+                          }}
+                        >
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                            <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 13, color: colors.foreground }}>{title}</Text>
+                            <View style={{ backgroundColor: colors.muted, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 }}>
+                              <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.mutedForeground }}>{items.length}</Text>
+                            </View>
+                          </View>
+                          <Text style={{ fontSize: 14, color: colors.mutedForeground }}>{expanded ? "▾" : "▸"}</Text>
+                        </Pressable>
+                        {expanded ? items.map(renderUserCard) : null}
+                      </View>
+                    );
+                  };
+
+                  return (
+                    <>
+                      {renderSection("admins", "Admins", adminUsers)}
+                      {renderSection("users", "Users", regularUsers)}
+                      {renderSection("requests", "Requests", requestUsers)}
+                    </>
+                  );
+                })()}
               </View>
             </ScrollView>
           )}
