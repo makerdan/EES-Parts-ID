@@ -8,6 +8,8 @@
     "dev": "fuser -k -KILL ${PORT}/tcp 2>/dev/null || true; while fuser ${PORT}/tcp 2>/dev/null >/dev/null 2>&1; do sleep 0.2; done && CI=1 EXPO_PACKAGER_PROXY_URL=https://$REPLIT_EXPO_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_REPL_ID=$REPL_ID REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=$CLERK_PUBLISHABLE_KEY pnpm exec expo start --clear --localhost --port $PORT",
     "build": "node --max-old-space-size=4096 scripts/build.js",
     "serve": "fuser -k -KILL ${PORT}/tcp 2>/dev/null || true && node server/serve.js",
+    "pretest": "node scripts/generate-router-types.mjs",
+    "pretypecheck": "node scripts/generate-router-types.mjs",
     "typecheck": "pnpm -w run typecheck:libs && tsc -p tsconfig.json --noEmit",
     "test": "node scripts/run-tests.mjs",
     "lint": "eslint . --ext .ts,.tsx"
