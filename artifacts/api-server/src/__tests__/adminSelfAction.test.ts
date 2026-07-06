@@ -232,6 +232,97 @@ describe("POST /api/admin/users/:id/approve — self-action guard", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DELETE /admin/users/:id — self-delete guard and bootstrap-admin guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("DELETE /api/admin/users/:id — delete guards", () => {
+  // A dedicated user that each success-path test can safely delete.
+  const DELETABLE_USER = "jest-selfaction-deletable";
+
+  beforeEach(async () => {
+    // Re-seed before every test so the success case always finds a row.
+    await db
+      .insert(usersTable)
+      .values({
+        clerkUserId: DELETABLE_USER,
+        email: "deletable@test.example",
+        status: "approved",
+        role: "user",
+      })
+      .onConflictDoUpdate({
+        target: usersTable.clerkUserId,
+        set: { status: "approved", updatedAt: new Date() },
+      });
+  });
+
+  afterEach(async () => {
+    // Clean up the deletable user in case a test did NOT delete it.
+    await db
+      .delete(usersTable)
+      .where(like(usersTable.clerkUserId, "jest-selfaction-deletable%"));
+  });
+
+  it("returns 400 when a promoted admin tries to delete themselves", async () => {
+    const res = await supertest(app)
+      .delete(`/api/admin/users/${PROMOTED_ADMIN}`)
+      .set("Authorization", promotedAdminBearer())
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/cannot delete your own account/i);
+  });
+
+  it("returns 400 when the bootstrap admin tries to delete themselves", async () => {
+    const res = await supertest(app)
+      .delete(`/api/admin/users/${ADMIN_TEST_USER_ID}`)
+      .set("Authorization", bootstrapBearer())
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    // bootstrap admin hits the ADMIN_CLERK_USER_ID guard first
+    expect(res.body.error).toMatch(/bootstrap admin cannot be deleted/i);
+  });
+
+  it("returns 400 when any admin targets the bootstrap admin", async () => {
+    const res = await supertest(app)
+      .delete(`/api/admin/users/${ADMIN_TEST_USER_ID}`)
+      .set("Authorization", promotedAdminBearer())
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/bootstrap admin cannot be deleted/i);
+  });
+
+  it("returns 404 when the target user does not exist", async () => {
+    const res = await supertest(app)
+      .delete("/api/admin/users/jest-selfaction-nonexistent")
+      .set("Authorization", promotedAdminBearer())
+      .expect(404);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/user not found/i);
+  });
+
+  it("returns 200 with deleted:true when a promoted admin deletes another user", async () => {
+    const res = await supertest(app)
+      .delete(`/api/admin/users/${DELETABLE_USER}`)
+      .set("Authorization", promotedAdminBearer())
+      .expect(200);
+
+    expect(res.body).toEqual({ deleted: true });
+  });
+
+  it("returns 200 with deleted:true when the bootstrap admin deletes another user", async () => {
+    const res = await supertest(app)
+      .delete(`/api/admin/users/${DELETABLE_USER}`)
+      .set("Authorization", bootstrapBearer())
+      .expect(200);
+
+    expect(res.body).toEqual({ deleted: true });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap admin flag — isBootstrapAdmin is set on the bootstrap admin path
 // ─────────────────────────────────────────────────────────────────────────────
 
