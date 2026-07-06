@@ -1434,28 +1434,47 @@ export const DeleteWarehouseZoneResponse = zod.object({
 });
 
 /**
- * Returns privileged admin actions (approve, ban, promote, demote) in reverse-chronological order. Admin access required.
+ * Returns privileged admin actions (approve, ban, promote, demote) in reverse-chronological order with cursor-based pagination. Admin access required.
  * @summary List admin action audit log entries (admin)
  */
-export const getAdminAuditLogQueryLimitDefault = 100;
-export const getAdminAuditLogQueryLimitMax = 500;
+export const getAdminAuditLogQueryLimitDefault = 50;
+export const getAdminAuditLogQueryLimitMax = 200;
 
 export const GetAdminAuditLogQueryParams = zod.object({
   limit: zod.coerce
     .number()
     .max(getAdminAuditLogQueryLimitMax)
     .default(getAdminAuditLogQueryLimitDefault)
-    .describe("Maximum number of entries to return (default 100, max 500)"),
+    .describe("Maximum number of entries to return (default 50, max 200)"),
+  before_id: zod.coerce
+    .number()
+    .optional()
+    .describe(
+      "Cursor — return only rows with id strictly less than this value (use nextCursor from the previous page)",
+    ),
 });
 
-export const GetAdminAuditLogResponseItem = zod.object({
-  id: zod.number(),
-  adminClerkUserId: zod.string(),
-  targetClerkUserId: zod.string(),
-  action: zod.enum(["approve", "ban", "promote", "demote"]),
-  createdAt: zod.coerce.date(),
-});
-export const GetAdminAuditLogResponse = zod.array(GetAdminAuditLogResponseItem);
+export const GetAdminAuditLogResponse = zod
+  .object({
+    rows: zod.array(
+      zod.object({
+        id: zod.number(),
+        adminClerkUserId: zod.string(),
+        targetClerkUserId: zod.string(),
+        action: zod.enum(["approve", "ban", "promote", "demote"]),
+        createdAt: zod.coerce.date(),
+      }),
+    ),
+    nextCursor: zod
+      .number()
+      .nullable()
+      .describe(
+        "Pass as before_id to fetch the next page. Null when there are no more rows.",
+      ),
+  })
+  .describe(
+    "A single page of audit log entries with a cursor for the next page.",
+  );
 
 /**
  * @deprecated

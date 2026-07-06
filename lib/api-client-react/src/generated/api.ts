@@ -17,7 +17,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
-  AdminAuditLogEntry,
+  AdminAuditLogPage,
   AdminRestartResponse,
   AiIdentifyBody,
   AiIdentifyResponse,
@@ -1947,7 +1947,7 @@ export const useDeleteWarehouseZone = <
 };
 
 /**
- * Returns privileged admin actions (approve, ban, promote, demote) in reverse-chronological order. Admin access required.
+ * Returns privileged admin actions (approve, ban, promote, demote) in reverse-chronological order with cursor-based pagination. Admin access required.
  * @summary List admin action audit log entries (admin)
  */
 export const getGetAdminAuditLogUrl = (params?: GetAdminAuditLogParams) => {
@@ -1969,8 +1969,8 @@ export const getGetAdminAuditLogUrl = (params?: GetAdminAuditLogParams) => {
 export const getAdminAuditLog = async (
   params?: GetAdminAuditLogParams,
   options?: RequestInit,
-): Promise<AdminAuditLogEntry[]> => {
-  return customFetch<AdminAuditLogEntry[]>(getGetAdminAuditLogUrl(params), {
+): Promise<AdminAuditLogPage> => {
+  return customFetch<AdminAuditLogPage>(getGetAdminAuditLogUrl(params), {
     ...options,
     method: "GET",
   });
