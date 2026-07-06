@@ -19,13 +19,25 @@
  *   (j) Network failure — showToast is called; fetchUsers is NOT called
  *   (k) Concurrent guard — returns early without calling fetch when userActionPending is set
  *   (l) setUserActionPending is set to clerkUserId while in flight, then null after
+ *
+ *   deleteAdminUser:
+ *   (m) Success — DELETEs /admin/users/:id and calls removeUser with the user's ID
+ *   (n) Success — does NOT call showToast on success
+ *   (o) Non-ok HTTP — calls showToast and does NOT call removeUser
+ *   (p) API error message from response body is forwarded to the toast
+ *   (q) Fallback when body has no error field — toast includes the HTTP status
+ *   (r) Network failure (fetch throws) — showToast is called; removeUser is NOT called
+ *   (s) setUserActionPending is set to clerkUserId on start and null after (success)
+ *   (t) setUserActionPending is cleared to null even when the request fails
  */
 
 import {
   fetchAdminUsers,
   handleUserAction,
+  deleteAdminUser,
   type FetchAdminUsersDeps,
   type HandleUserActionDeps,
+  type DeleteAdminUserDeps,
   type UserRow,
 } from "../utils/adminUserActions";
 
@@ -115,6 +127,30 @@ function makeHandleUserActionDeps(overrides: Partial<HandleUserActionDeps> = {})
       apiBase: API_BASE,
       adminToken: ADMIN_TOKEN,
       userActionPending: null,
+      ...mocks,
+      ...overrides,
+    },
+    mocks,
+  };
+}
+
+function makeDeleteAdminUserDeps(overrides: Partial<DeleteAdminUserDeps> = {}): {
+  deps: DeleteAdminUserDeps;
+  mocks: {
+    setUserActionPending: jest.Mock;
+    showToast: jest.Mock;
+    removeUser: jest.Mock;
+  };
+} {
+  const mocks = {
+    setUserActionPending: jest.fn(),
+    showToast: jest.fn(),
+    removeUser: jest.fn(),
+  };
+  return {
+    deps: {
+      apiBase: API_BASE,
+      adminToken: ADMIN_TOKEN,
       ...mocks,
       ...overrides,
     },
@@ -409,6 +445,148 @@ describe("handleUserAction — concurrency and pending state", () => {
     const { deps, mocks } = makeHandleUserActionDeps();
 
     await handleUserAction("user_a", "ban", deps);
+
+    expect(mocks.setUserActionPending).toHaveBeenNthCalledWith(1, "user_a");
+    expect(mocks.setUserActionPending).toHaveBeenNthCalledWith(2, null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// deleteAdminUser
+// ─────────────────────────────────────────────────────────────────────────────
+
+function makeOkDeleteResponse(): Response {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ success: true }),
+  } as unknown as Response;
+}
+
+function makeErrorDeleteResponse(status: number, errorMsg?: string): Response {
+  return {
+    ok: false,
+    status,
+    json: async () => (errorMsg ? { error: errorMsg } : {}),
+  } as unknown as Response;
+}
+
+describe("deleteAdminUser — success path", () => {
+  it("(m) sends DELETE to /admin/users/:id and calls removeUser with the clerkUserId", async () => {
+    mockFetch.mockResolvedValueOnce(makeOkDeleteResponse());
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/admin/users/user_a");
+    expect(options?.method).toBe("DELETE");
+    expect(mocks.removeUser).toHaveBeenCalledWith("user_a");
+    expect(mocks.removeUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("(n) does NOT call showToast on success", async () => {
+    mockFetch.mockResolvedValueOnce(makeOkDeleteResponse());
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.showToast).not.toHaveBeenCalled();
+  });
+
+  it("passes the admin token in the Authorization header", async () => {
+    mockFetch.mockResolvedValueOnce(makeOkDeleteResponse());
+    const { deps } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = options?.headers as Record<string, string>;
+    expect(headers?.["Authorization"]).toBe(`Bearer ${ADMIN_TOKEN}`);
+  });
+});
+
+describe("deleteAdminUser — error paths", () => {
+  it("(o) non-ok HTTP calls showToast and does NOT call removeUser", async () => {
+    mockFetch.mockResolvedValueOnce(makeErrorDeleteResponse(500, "Internal Server Error"));
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.showToast).toHaveBeenCalledWith(expect.any(String), "error");
+    expect(mocks.removeUser).not.toHaveBeenCalled();
+  });
+
+  it("(p) API error message from response body is forwarded verbatim to the toast", async () => {
+    mockFetch.mockResolvedValueOnce(makeErrorDeleteResponse(400, "Cannot delete bootstrap admin"));
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.showToast).toHaveBeenCalledWith("Cannot delete bootstrap admin", "error");
+    expect(mocks.removeUser).not.toHaveBeenCalled();
+  });
+
+  it("(q) falls back to HTTP status in toast when response body has no error field", async () => {
+    mockFetch.mockResolvedValueOnce(makeErrorDeleteResponse(404));
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      expect.stringContaining("404"),
+      "error",
+    );
+    expect(mocks.removeUser).not.toHaveBeenCalled();
+  });
+
+  it("(r) network failure (fetch throws) calls showToast and does NOT call removeUser", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("Network unreachable"));
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.showToast).toHaveBeenCalledWith("Network unreachable", "error");
+    expect(mocks.removeUser).not.toHaveBeenCalled();
+  });
+
+  it("non-Error thrown value shows a generic fallback toast", async () => {
+    mockFetch.mockRejectedValueOnce("unexpected string throw");
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.showToast).toHaveBeenCalledWith("Failed to delete user", "error");
+    expect(mocks.removeUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteAdminUser — pending state", () => {
+  it("(s) setUserActionPending is set to clerkUserId on start and null after success", async () => {
+    mockFetch.mockResolvedValueOnce(makeOkDeleteResponse());
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.setUserActionPending).toHaveBeenNthCalledWith(1, "user_a");
+    expect(mocks.setUserActionPending).toHaveBeenNthCalledWith(2, null);
+  });
+
+  it("(t) setUserActionPending is cleared to null even when the request fails", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("boom"));
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.setUserActionPending).toHaveBeenNthCalledWith(1, "user_a");
+    expect(mocks.setUserActionPending).toHaveBeenNthCalledWith(2, null);
+  });
+
+  it("(t) setUserActionPending is cleared to null on non-ok HTTP error", async () => {
+    mockFetch.mockResolvedValueOnce(makeErrorDeleteResponse(403, "Forbidden"));
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
 
     expect(mocks.setUserActionPending).toHaveBeenNthCalledWith(1, "user_a");
     expect(mocks.setUserActionPending).toHaveBeenNthCalledWith(2, null);
