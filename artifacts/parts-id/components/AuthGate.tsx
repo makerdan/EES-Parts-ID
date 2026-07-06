@@ -1,0 +1,54 @@
+import { useAuth } from "@clerk/expo";
+import { useRouter, useSegments } from "expo-router";
+import { useEffect } from "react";
+
+import { useApp } from "@/contexts/AppContext";
+
+/**
+ * Handles all post-auth navigation decisions.
+ *
+ * Exempt routes (never redirected away from):
+ *   - /login, /sign-up  — unauthenticated entry points
+ *   - /sso-callback     — Clerk is still processing the OAuth token; redirecting
+ *                         here would cause a double-redirect bug
+ *
+ * Once isSignedIn flips to true, the user is sent to the appropriate screen
+ * based on their approvalStatus.
+ */
+export function AuthGate() {
+  const { isSignedIn, isLoaded: clerkLoaded } = useAuth();
+  const { approvalStatus } = useApp();
+  const segments = useSegments();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!clerkLoaded) return;
+
+    const seg0 = segments[0] as string | undefined;
+    const inTabs = seg0 === "(tabs)";
+    const atLogin = seg0 === "login";
+    const atSignUp = seg0 === "sign-up";
+    const atPending = seg0 === "pending";
+    const atBanned = seg0 === "banned";
+    // Leave this route alone — Clerk is still processing the OAuth token params.
+    const atSsoCallback = seg0 === "sso-callback";
+
+    if (!isSignedIn) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (!atLogin && !atSignUp && !atSsoCallback) router.replace("/login" as any);
+    } else {
+      if (approvalStatus === "loading" || approvalStatus === "idle") return;
+      if (approvalStatus === "pending" && !atPending) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        router.replace("/pending" as any);
+      } else if (approvalStatus === "banned" && !atBanned) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        router.replace("/banned" as any);
+      } else if (approvalStatus === "approved" && !inTabs) {
+        router.replace("/(tabs)");
+      }
+    }
+  }, [isSignedIn, clerkLoaded, approvalStatus, segments, router]);
+
+  return null;
+}
