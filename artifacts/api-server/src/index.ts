@@ -1,7 +1,6 @@
-import { createRequire } from "module";
-
 import { adminAuditLogTable, catalogPdfJobTable, db } from "@workspace/db";
 import { eq, lt, sql } from "drizzle-orm";
+import { createRequire } from "module";
 
 import app from "./app";
 import { initProvider, probePoeBotsOnStartup } from "./lib/aiProvider";
