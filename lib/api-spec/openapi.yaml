@@ -517,6 +517,34 @@ paths:
         "404":
           description: Zone not found
 
+  /admin/audit-log:
+    get:
+      operationId: getAdminAuditLog
+      tags: [admin]
+      summary: List admin action audit log entries (admin)
+      description: Returns privileged admin actions (approve, ban, promote, demote) in reverse-chronological order. Admin access required.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+          description: Maximum number of entries to return (default 100, max 500)
+      responses:
+        "200":
+          description: Audit log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminAuditLogEntry"
+        "401":
+          description: Authentication required
+        "403":
+          description: Admin access required
+
   /admin/restart:
     post:
       operationId: adminRestart
@@ -550,6 +578,23 @@ paths:
 
 components:
   schemas:
+    AdminAuditLogEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        adminClerkUserId:
+          type: string
+        targetClerkUserId:
+          type: string
+        action:
+          type: string
+          enum: [approve, ban, promote, demote]
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, adminClerkUserId, targetClerkUserId, action, createdAt]
+
     HealthStatus:
       type: object
       properties:

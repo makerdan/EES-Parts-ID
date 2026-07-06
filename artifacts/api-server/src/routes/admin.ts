@@ -1,10 +1,11 @@
 import { getAuth } from "@clerk/express";
 import { AdminProfilePayloadSchema, ShelfPreferencesPayloadSchema } from "@workspace/api-zod";
-import { adminPreferencesTable, db, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { adminAuditLogTable, adminPreferencesTable, db, usersTable } from "@workspace/db";
+import { desc, eq } from "drizzle-orm";
 import { Router } from "express";
 
 import { type AIProvider,getProvider, setProvider } from "../lib/aiProvider";
+import { logger } from "../lib/logger";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
@@ -259,6 +260,12 @@ router.post("/users/:clerkUserId/approve", requireAdminAuth, async (req, res) =>
     if (updated.length === 0) {
       return res.status(404).json({ error: "User not found" });
     }
+
+    const adminClerkUserId = requestingUser?.clerkUserId ?? (getAuth(req)?.userId ?? "unknown");
+    db.insert(adminAuditLogTable)
+      .values({ adminClerkUserId, targetClerkUserId: clerkUserId, action: "approve" })
+      .catch((err: unknown) => logger.error({ err }, "Failed to write audit log for approve"));
+
     return res.json({ user: updated[0] });
   } catch {
     return res.status(500).json({ error: "Failed to approve user" });
@@ -295,6 +302,12 @@ router.post("/users/:clerkUserId/ban", requireAdminAuth, async (req, res) => {
     if (updated.length === 0) {
       return res.status(404).json({ error: "User not found" });
     }
+
+    const adminClerkUserId = requestingUser?.clerkUserId ?? (getAuth(req)?.userId ?? "unknown");
+    db.insert(adminAuditLogTable)
+      .values({ adminClerkUserId, targetClerkUserId: clerkUserId, action: "ban" })
+      .catch((err: unknown) => logger.error({ err }, "Failed to write audit log for ban"));
+
     return res.json({ user: updated[0] });
   } catch {
     return res.status(500).json({ error: "Failed to ban user" });
@@ -328,6 +341,16 @@ router.post("/users/:clerkUserId/promote", requireAdminAuth, async (req, res) =>
       .set({ role: "admin", updatedAt: new Date() })
       .where(eq(usersTable.clerkUserId, clerkUserId))
       .returning();
+
+    if (updated.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const requestingUser = res.locals.appUser as { clerkUserId?: string } | undefined;
+    const adminClerkUserId = requestingUser?.clerkUserId ?? (getAuth(req)?.userId ?? "unknown");
+    db.insert(adminAuditLogTable)
+      .values({ adminClerkUserId, targetClerkUserId: clerkUserId, action: "promote" })
+      .catch((err: unknown) => logger.error({ err }, "Failed to write audit log for promote"));
 
     return res.json({ user: updated[0] });
   } catch {
@@ -366,6 +389,12 @@ router.post("/users/:clerkUserId/demote", requireAdminAuth, async (req, res) => 
     if (updated.length === 0) {
       return res.status(404).json({ error: "User not found" });
     }
+
+    const adminClerkUserId = requestingUser?.clerkUserId ?? (getAuth(req)?.userId ?? "unknown");
+    db.insert(adminAuditLogTable)
+      .values({ adminClerkUserId, targetClerkUserId: clerkUserId, action: "demote" })
+      .catch((err: unknown) => logger.error({ err }, "Failed to write audit log for demote"));
+
     return res.json({ user: updated[0] });
   } catch {
     return res.status(500).json({ error: "Failed to demote user" });
@@ -404,6 +433,28 @@ router.delete("/users/:clerkUserId", requireAdminAuth, async (req, res) => {
     return res.json({ deleted: true });
   } catch {
     return res.status(500).json({ error: "Failed to delete user" });
+  }
+});
+
+// ── GET /admin/audit-log ──────────────────────────────────────────────────────
+// Returns admin action audit log entries in reverse-chronological order.
+// Optional query param: limit (default 100, max 500).
+router.get("/audit-log", requireAdminAuth, async (req, res) => {
+  const rawLimit = Number(req.query.limit ?? 100);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0
+    ? Math.min(rawLimit, 500)
+    : 100;
+
+  try {
+    const rows = await db
+      .select()
+      .from(adminAuditLogTable)
+      .orderBy(desc(adminAuditLogTable.createdAt))
+      .limit(limit);
+
+    return res.json(rows); // spec:ignore-unguarded
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch audit log" });
   }
 });
 
