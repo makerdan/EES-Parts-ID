@@ -453,30 +453,33 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
   onSave,
   onDiscard,
   onTextBlur,
+  onRetry,
 }: {
   result: ExpandDescResult;
   onSave: (id: number, text: string) => void;
   onDiscard: (id: number) => void;
   onTextBlur: (id: number, text: string) => void;
+  onRetry: (id: number) => void;
 }) {
   const colors = useColors();
   const [localText, setLocalText] = useState(result.editedText);
-  const isFinalised = result.savedStatus === "saved" || result.savedStatus === "discarded";
+  const isAiError = result.savedStatus === "discarded" && !!result.error;
+  const isFinalised = (result.savedStatus === "saved" || result.savedStatus === "discarded") && !isAiError;
   const cardBg =
     result.savedStatus === "saved"
       ? colors.success + "11"
-      : result.savedStatus === "discarded"
-        ? colors.muted
-        : result.savedStatus === "error"
-          ? colors.destructive + "0d"
+      : isAiError || result.savedStatus === "error"
+        ? colors.destructive + "0d"
+        : result.savedStatus === "discarded"
+          ? colors.muted
           : colors.background;
   const cardBorder =
     result.savedStatus === "saved"
       ? colors.success + "44"
-      : result.savedStatus === "discarded"
-        ? colors.border
-        : result.savedStatus === "error"
-          ? colors.destructive + "55"
+      : isAiError || result.savedStatus === "error"
+        ? colors.destructive + "55"
+        : result.savedStatus === "discarded"
+          ? colors.border
           : colors.primary + "33";
   return (
     <View style={{ borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 0, marginTop: 10, backgroundColor: cardBg, borderColor: cardBorder }}>
@@ -486,7 +489,7 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
       <Text style={{ fontSize: 12, color: colors.mutedForeground, fontFamily: "Inter_400Regular" }}>
         Original: {result.originalDescription}
       </Text>
-      {result.error ? (
+      {result.error && !isAiError ? null : result.error ? (
         <Text style={{ fontSize: 12, color: colors.destructive, fontFamily: "Inter_400Regular" }}>
           ⚠ AI error — skipped
         </Text>
@@ -514,7 +517,24 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
           }}
         />
       )}
-      {!isFinalised ? (
+      {isAiError ? (
+        <Pressable
+          onPress={() => onRetry(result.id)}
+          disabled={result.savedStatus === "retrying"}
+          style={{
+            borderRadius: 8,
+            paddingVertical: 8,
+            alignItems: "center",
+            backgroundColor: result.savedStatus === "retrying" ? colors.muted : colors.primary,
+          }}
+        >
+          {result.savedStatus === "retrying" ? (
+            <ActivityIndicator size="small" color={colors.primaryForeground} />
+          ) : (
+            <Text style={{ color: colors.primaryForeground, fontSize: 13, fontFamily: "Inter_700Bold" }}>Retry</Text>
+          )}
+        </Pressable>
+      ) : !isFinalised ? (
         <View style={{ gap: 6 }}>
           {result.savedStatus === "error" ? (
             <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: colors.destructive }}>
@@ -1271,6 +1291,53 @@ export default function UploadScreen() {
       prev.map(r => r.id === id ? { ...r, savedStatus: "discarded" } : r),
     );
   }, []);
+
+  const handleRetryExpandResult = useCallback(async (id: number) => {
+    setExpandDescResults(prev =>
+      prev.map(r => r.id === id ? { ...r, savedStatus: "retrying" as const } : r),
+    );
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${id}/expand-description`, {
+        method: "POST",
+        headers: { ...adminHeaders },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+        const errMsg = typeof body["error"] === "string" ? body["error"] : `HTTP ${res.status}`;
+        setExpandDescResults(prev =>
+          prev.map(r => r.id === id ? { ...r, savedStatus: "discarded" as const, error: errMsg } : r),
+        );
+        return;
+      }
+      const data = await res.json() as {
+        id: number;
+        partNumber: string;
+        originalDescription: string;
+        expandedDescription: string;
+      };
+      setExpandDescResults(prev =>
+        prev.map(r =>
+          r.id === id
+            ? {
+                ...r,
+                expandedDescription: data.expandedDescription,
+                editedText: data.expandedDescription,
+                savedStatus: "pending" as const,
+                error: undefined,
+              }
+            : r,
+        ),
+      );
+    } catch {
+      setExpandDescResults(prev =>
+        prev.map(r =>
+          r.id === id
+            ? { ...r, savedStatus: "discarded" as const, error: "Network error — retry failed" }
+            : r,
+        ),
+      );
+    }
+  }, [adminHeaders]);
 
   const handleTextBlur = useCallback((id: number, text: string) => {
     setExpandDescResults(prev =>
@@ -2873,6 +2940,7 @@ export default function UploadScreen() {
                             onSave={handleSaveExpandResult}
                             onDiscard={handleDiscardExpandResult}
                             onTextBlur={handleTextBlur}
+                            onRetry={handleRetryExpandResult}
                           />
                         )}
                       />

@@ -1801,6 +1801,79 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
   }
 });
 
+// ── POST /inventory/:id/expand-description ────────────────────────────────────
+// Single-item expand: calls AI for one part and returns JSON (not SSE).
+// Used by the client to retry an item that failed during the batch SSE stream.
+router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
+  try {
+    const id = parseInt(String(req.params["id"] ?? "0"), 10);
+    if (!id || isNaN(id)) {
+      return void res.status(400).json({ error: "Invalid item id" });
+    }
+
+    const [item] = await db
+      .select({
+        id: inventoryTable.id,
+        vendor: inventoryTable.vendor,
+        catalog: inventoryTable.catalog,
+        description: inventoryTable.description,
+      })
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, id));
+
+    if (!item) {
+      return void res.status(404).json({ error: "Item not found" });
+    }
+
+    const enrichSystemPrompt =
+      "You are an electrical supplies identifier with a degree in English language specializing in keyword and abbreviation expansion. Convert a single catalog description line into one clear, inventory-friendly sentence. Requirements:\n" +
+      "- Use imperial units where applicable (inches, feet, pounds, \u00b0F).\n" +
+      "- Fix spacing errors (add missing spaces after commas and around units).\n" +
+      "- Expand all abbreviations and jargon into plain language (e.g., kVA, XFMR \u2192 transformer; 3PH \u2192 three-phase; V \u2192 volts; Y \u2192 wye; FPT/MPT \u2192 female/male pipe thread; AWG \u2192 American Wire Gauge).\n" +
+      "- Include essential keywords where present: capacity, phase, primary voltage, secondary voltage, connection (delta/wye), efficiency standard, temperature rise (report both \u00b0C and \u00b0F), enclosure/venting if stated, and any ratings (A, kVA, etc.).\n" +
+      "- Do not add unsupported technical specs or assumptions. If you must infer a missing spec, put the inference in parentheses.\n" +
+      "- Do not include the phrase 'inventory item' or any meta commentary.\n" +
+      "- Output exactly one concise sentence per input line.\n\n" +
+      "Example\n" +
+      "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
+      "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.";
+
+    const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
+    const userPrompt = `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`;
+
+    const expandedDescription = (
+      useOpenAiFallback
+        ? await (async () => {
+            const resp = await getOpenAIFallbackClient().chat.completions.create({
+              model: getOpenAIModelForFeature("enrich"),
+              max_completion_tokens: 512,
+              messages: [
+                { role: "system", content: enrichSystemPrompt },
+                { role: "user", content: userPrompt },
+              ],
+            });
+            return resp.choices[0]?.message?.content?.trim() ?? "";
+          })()
+        : await callPoeBotWithChain("enrich", enrichSystemPrompt, userPrompt)
+    ) || item.description;
+
+    res.json({
+      id: item.id,
+      partNumber: item.catalog,
+      originalDescription: item.description,
+      expandedDescription,
+      model: getEnrichModel(),
+    });
+  } catch (err) {
+    if (err instanceof PoeBotChainExhaustedError) {
+      return void res.status(503).json({ error: "poe_chain_exhausted" });
+    }
+    reqLogger.error({ err }, "[expand-description single] failed");
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // ── PATCH /inventory/:id/expanded-description ─────────────────────────────────
 router.patch("/:id/expanded-description", requireAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);
