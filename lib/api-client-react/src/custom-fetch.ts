@@ -59,6 +59,29 @@ function combineSignals(
 }
 
 // ---------------------------------------------------------------------------
+// Request ID generation
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates a UUID v4 string for use as a request ID.
+ * Uses `crypto.randomUUID()` when available (modern browsers and React Native
+ * via Hermes/JSC ≥ Expo SDK 49), falling back to a pure-JS implementation for
+ * older runtimes.
+ */
+function generateRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  // RFC 4122 §4.4 compliant UUID v4 fallback
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Module-level configuration
 // ---------------------------------------------------------------------------
 
@@ -241,11 +264,13 @@ export class ApiError<T = unknown> extends Error {
   readonly response: Response;
   readonly method: string;
   readonly url: string;
+  /** The X-Request-Id echoed back by the server, or the client-generated ID if the server did not echo it. Useful for correlating error reports with server logs. */
+  readonly requestId: string | null;
 
   constructor(
     response: Response,
     data: T | null,
-    requestInfo: { method: string; url: string },
+    requestInfo: { method: string; url: string; requestId: string | null },
   ) {
     super(buildErrorMessage(response, data));
     Object.setPrototypeOf(this, new.target.prototype);
@@ -257,6 +282,7 @@ export class ApiError<T = unknown> extends Error {
     this.response = response;
     this.method = requestInfo.method;
     this.url = response.url || requestInfo.url;
+    this.requestId = response.headers.get("x-request-id") ?? requestInfo.requestId;
   }
 }
 
@@ -419,7 +445,15 @@ export async function customFetch<T = unknown>(
     }
   }
 
-  const requestInfo = { method, url: resolveUrl(input) };
+  // Generate a unique request ID for tracing. Each call (including retries)
+  // gets a fresh ID so retry attempts are distinguishable in server logs.
+  // Callers may supply their own ID by pre-setting the X-Request-Id header.
+  if (!headers.has("x-request-id")) {
+    headers.set("x-request-id", generateRequestId());
+  }
+  const sentRequestId = headers.get("x-request-id");
+
+  const requestInfo = { method, url: resolveUrl(input), requestId: sentRequestId };
 
   // Build a combined abort signal that respects both the caller-supplied
   // signal and an optional per-request timeout.
