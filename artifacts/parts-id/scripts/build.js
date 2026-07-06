@@ -74,6 +74,35 @@ function getDeploymentDomain() {
   process.exit(1);
 }
 
+// Resolve the Clerk Frontend API proxy URL that gets baked into the build.
+// A production Clerk instance (pk_live_…) requires Frontend API traffic to be
+// routed through the app's own domain via the API server's /api/__clerk proxy.
+// When a live key is in use and no explicit proxy URL is set, default it to
+// https://<deployment-domain>/api/__clerk so production builds are not shipped
+// with a broken auth config. Test keys (pk_test_…) and local dev are left
+// untouched — Clerk proxying only applies to production instances.
+function resolveClerkProxyUrl(domain) {
+  const explicit = process.env.EXPO_PUBLIC_CLERK_PROXY_URL;
+  if (explicit) {
+    return explicit;
+  }
+
+  const publishableKey =
+    process.env.CLERK_PUBLISHABLE_KEY ||
+    process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+    "";
+
+  if (publishableKey.startsWith("pk_live_") && domain) {
+    const derived = `https://${stripProtocol(domain)}/api/__clerk`;
+    console.log(
+      `Deriving EXPO_PUBLIC_CLERK_PROXY_URL=${derived} (production Clerk key detected)`,
+    );
+    return derived;
+  }
+
+  return "";
+}
+
 function prepareDirectories(timestamp) {
   console.log("Preparing build directories...");
 
@@ -142,7 +171,7 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
     EXPO_PUBLIC_DOMAIN: expoPublicDomain,
     EXPO_PUBLIC_REPL_ID: expoPublicReplId,
     EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.CLERK_PUBLISHABLE_KEY || process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || "",
-    EXPO_PUBLIC_CLERK_PROXY_URL: process.env.EXPO_PUBLIC_CLERK_PROXY_URL || "",
+    EXPO_PUBLIC_CLERK_PROXY_URL: resolveClerkProxyUrl(expoPublicDomain),
     NODE_OPTIONS: "--max-old-space-size=4096",
   };
 
@@ -628,7 +657,7 @@ async function buildWeb(domain, expoPublicReplId) {
     EXPO_PUBLIC_DOMAIN: domain,
     EXPO_PUBLIC_REPL_ID: expoPublicReplId || "",
     EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.CLERK_PUBLISHABLE_KEY || process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || "",
-    EXPO_PUBLIC_CLERK_PROXY_URL: process.env.EXPO_PUBLIC_CLERK_PROXY_URL || "",
+    EXPO_PUBLIC_CLERK_PROXY_URL: resolveClerkProxyUrl(domain),
     NODE_OPTIONS: "--max-old-space-size=4096",
   };
 
