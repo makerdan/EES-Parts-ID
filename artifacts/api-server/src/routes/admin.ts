@@ -1,7 +1,7 @@
 import { clerkClient, getAuth } from "@clerk/express";
 import { AdminProfilePayloadSchema, ShelfPreferencesPayloadSchema } from "@workspace/api-zod";
 import { adminAuditLogTable, adminPreferencesTable, db, usersTable } from "@workspace/db";
-import { and, desc, eq, lt, sql } from "drizzle-orm";
+import { desc, eq, lt } from "drizzle-orm";
 import { Router } from "express";
 
 import { type AIProvider,getProvider, setProvider } from "../lib/aiProvider";
