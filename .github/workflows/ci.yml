@@ -88,6 +88,49 @@ jobs:
       - name: Check codegen output is up to date
         run: pnpm --filter @workspace/api-spec run codegen:check
 
+  # .audit-exceptions
+  # Baseline captured 2026-07-06: pnpm audit returned zero advisories across
+  # all severity levels (info/low/moderate/high/critical) with 2050 total
+  # dependencies. The overrides block in package.json already pins several
+  # transitive deps (fast-uri, lodash, path-to-regexp, picomatch,
+  # brace-expansion, esbuild, form-data, js-yaml, linkify-it, markdown-it,
+  # postcss, qs, shell-quote, tar, tmp, undici, uuid, vite, ws, yaml) to
+  # non-vulnerable versions. If a future advisory surfaces here that cannot be
+  # immediately fixed, document it below with the advisory ID, affected package,
+  # severity, and the reason it is deferred.
+  # (No exceptions as of baseline date.)
+  audit:
+    name: Security audit (high/critical)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit dependencies (fail on high/critical)
+        run: pnpm audit --audit-level=high --json
+
   typecheck:
     name: Typecheck (codegen:check → libs → artifacts)
     runs-on: ubuntu-latest

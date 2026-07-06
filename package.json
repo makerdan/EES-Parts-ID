@@ -8,7 +8,9 @@
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run codegen:check && pnpm --filter @workspace/db run schema:check && pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "codegen:check": "pnpm --filter @workspace/api-spec run codegen:check",
-    "test": "bash scripts/test-all.sh"
+    "test": "bash scripts/test-all.sh",
+    "audit": "pnpm audit",
+    "audit:fix": "pnpm audit --fix"
   },
   "private": true,
   "devDependencies": {
