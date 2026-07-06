@@ -1,0 +1,29 @@
+#366 - Tile cache, viewBox parsing, and mapViewport mock hardening
+What & Why
+Three related gaps in the floor-plan tile pipeline and test infrastructure, all of which cause silent failures:
+
+Stale tile cache after SVG replacement — invalidateTileCache deletes tiles by old hash, but a race between pre-warm and upload can leave tiles on disk that were generated for a superseded SVG. There is no guard that rejects serving a cached tile whose svgHash no longer matches the current SVG.
+
+Single-quoted viewBox attributes — parseSvgViewBox and normalizeViewBoxOrigin in floorPlan.ts use a regex that only matches double-quoted viewBox attributes. SVGs from some tools use single quotes, causing a silent fallback to SVG_ASPECT_FALLBACK and misaligned tiles.
+
+Stale createMapViewportMock — createMapViewportMock() in mapMocks.ts hardcodes a fixed set of stubs. When a new function is added to mapViewport.ts but omitted from the mock, tests throw a confusing "X is not a function" deep in an unrelated file. The jest.requireActual smoke-test pattern used for other mocks is missing here.
+
+Done looks like
+A test or runtime guard ensures tiles served from disk were generated with the current svgHash; serving a tile from a superseded hash is impossible or loudly rejected
+parseSvgViewBox and normalizeViewBoxOrigin match both double- and single-quoted viewBox attributes; a unit test covers single-quoted SVG input
+A smoke test in mapMocks.smoke.test.ts uses jest.requireActual("@/utils/mapViewport") to enumerate every function-typed export and asserts each one is present in createMapViewportMock(); the test fails clearly when a new function is added but not mocked
+Out of scope
+Changes to tile-generation logic beyond hash validation
+Broader SVG attribute parsing beyond viewBox
+Steps
+Fix viewBox regex — Update parseSvgViewBox and normalizeViewBoxOrigin in floorPlan.ts to match both single- and double-quoted viewBox attributes. Add a unit test covering single-quoted input.
+
+Guard stale tile cache — Add a hash-validation check in the tile-serving path (or a test exercising upload→invalidate→warmup) so tiles from a superseded svgHash cannot be served.
+
+Add mapViewport mock smoke test — Create a smoke test block in mapMocks.smoke.test.ts that enumerates all function-typed exports from mapViewport.ts via jest.requireActual and asserts each is present in createMapViewportMock().
+
+Relevant files
+artifacts/api-server/src/routes/floorPlan.ts
+artifacts/parts-id/__tests__/helpers/mapMocks.ts
+artifacts/parts-id/__tests__/helpers/mapMocks.smoke.test.ts
+artifacts/parts-id/utils/mapViewport.ts
