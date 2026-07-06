@@ -1946,7 +1946,7 @@ export default function UploadScreen() {
                 >
                   <Text style={hubStyles.sectionCardIcon}>📥</Text>
                   <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>Data Import</Text>
-                  <Text style={[hubStyles.sectionCardSub, { color: colors.mutedForeground }]}>CSV, Excel, PDF catalogs, floor plan</Text>
+                  <Text style={[hubStyles.sectionCardSub, { color: colors.mutedForeground }]}>CSV, Excel, floor plan</Text>
                 </Pressable>
 
                 <Pressable
@@ -1955,7 +1955,7 @@ export default function UploadScreen() {
                 >
                   <Text style={hubStyles.sectionCardIcon}>🤖</Text>
                   <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>AI & Enrichment</Text>
-                  <Text style={[hubStyles.sectionCardSub, { color: colors.mutedForeground }]}>Keywords, descriptions, measurements</Text>
+                  <Text style={[hubStyles.sectionCardSub, { color: colors.mutedForeground }]}>Keywords, descriptions, catalog import</Text>
                   {enrichSummary && enrichSummary.total > 0 ? (
                     <View style={[hubStyles.statBadge, { backgroundColor: colors.primary + "18" }]}>
                       <Text style={[hubStyles.statBadgeText, { color: colors.primary }]}>
@@ -2434,15 +2434,6 @@ export default function UploadScreen() {
                 </View>
               ) : null}
 
-              {/* PDF Catalog Import — moved from AI & Enrichment */}
-              <CatalogPdfUpload
-                adminToken={adminToken}
-                onSessionExpired={() => {
-                  logoutAdmin();
-                  setUploadError("Admin session expired. Please unlock again.");
-                }}
-              />
-
               {/* Floor Plan Upload — moved from AI & Enrichment */}
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>🗺 Floor Plan</Text>
@@ -2487,6 +2478,15 @@ export default function UploadScreen() {
           ) : activeSection === "enrichment" ? (
             /* ── AI & Enrichment section ─────────────────────────────── */
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+                    {/* PDF Catalog Import */}
+                    <CatalogPdfUpload
+                      adminToken={adminToken}
+                      onSessionExpired={() => {
+                        logoutAdmin();
+                        setUploadError("Admin session expired. Please unlock again.");
+                      }}
+                    />
+
                     {/* Bulk Enrichment Coverage */}
                     <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                       <Text style={[styles.cardTitle, { color: colors.foreground }]}>📊 Enrichment Coverage</Text>
