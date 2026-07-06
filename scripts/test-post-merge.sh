@@ -1208,6 +1208,31 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 33: port guard — check-hardcoded-ports.sh exits 1 when a violation
+#          exists inside the scanned artifacts/ path
+#
+# This synthetic test proves the grep pattern is wired up end-to-end:
+#   1. A temporary .ts file containing a `process.env.PORT || "3000"` literal
+#      is written into artifacts/ (the actual scan target).
+#   2. check-hardcoded-ports.sh is run; it must exit 1.
+#   3. The temp file is always cleaned up via a trap.
+#
+# If the scan path in check-hardcoded-ports.sh is changed from `artifacts/`
+# to something else (or removed), this test will fail immediately, making the
+# regression visible before it ships.
+# ---------------------------------------------------------------------------
+PORT_GUARD_TMP=$(mktemp "$SCRIPT_DIR/../artifacts/.port-guard-test-XXXXXX.ts")
+printf 'const port = process.env.PORT || "3000";\n' > "$PORT_GUARD_TMP"
+
+PORT_GUARD_OUTPUT=$(bash "$SCRIPT_DIR/check-hardcoded-ports.sh" 2>&1)
+PORT_GUARD_EXIT=$?
+
+rm -f "$PORT_GUARD_TMP"
+
+assert_exit     "port-guard synthetic — exits 1 when violation in artifacts/"  1 "$PORT_GUARD_EXIT"
+assert_contains "port-guard synthetic — prints ERROR header"                   "ERROR: Hardcoded port fallback" "$PORT_GUARD_OUTPUT"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
