@@ -82,10 +82,12 @@ function AuthGate() {
     const atSignUp = seg0 === "sign-up";
     const atPending = seg0 === "pending";
     const atBanned = seg0 === "banned";
+    // Leave this route alone — Clerk is still processing the OAuth token params.
+    const atSsoCallback = seg0 === "sso-callback";
 
     if (!isSignedIn) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (!atLogin && !atSignUp) router.replace("/login" as any);
+      if (!atLogin && !atSignUp && !atSsoCallback) router.replace("/login" as any);
     } else {
       if (approvalStatus === "loading" || approvalStatus === "idle") return;
       if (approvalStatus === "pending" && !atPending) {
@@ -145,6 +147,7 @@ export default function RootLayout() {
                       <Stack.Screen name="ai-log" options={{ headerShown: false }} />
                       <Stack.Screen name="admin-inbox" options={{ headerShown: false }} />
                       <Stack.Screen name="admin" options={{ headerShown: false }} />
+                      <Stack.Screen name="sso-callback" options={{ headerShown: false }} />
                     </Stack>
                     <AuthGate />
                   </DismissKeyboard>
