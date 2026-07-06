@@ -40,8 +40,8 @@ import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { ShelfCatalogEntry } from "@/components/ShelfCatalogEntry";
 import { UserAdminButtonRow } from "@/components/UserAdminButtonRow";
+import { useApiHealth } from "@/contexts/ApiHealthContext";
 import { useApp } from "@/contexts/AppContext";
-import { useApiStatus } from "@/hooks/useApiStatus";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
 import {
@@ -568,10 +568,7 @@ export default function UploadScreen() {
   const router = useRouter();
   const { userId: currentClerkUserId } = useAuth();
   const { isAdmin, logoutAdmin, adminToken, showToast } = useApp();
-  const { status: apiStatus, restarting: apiRestarting, triggerRestart, checkStatus, bots: apiBots, probeSingleBot } = useApiStatus({
-    apiBase: API_BASE,
-    adminToken: isAdmin ? adminToken : null,
-  });
+  const { status: apiStatus, restarting: apiRestarting, triggerRestart, checkStatus, bots: apiBots, probeSingleBot } = useApiHealth();
   const apiCheckAnim = useRef(new Animated.Value(1)).current;
   const [apiChecking, setApiChecking] = useState(false);
   const [activeBadge, setActiveBadge] = useState<string | null>(null);

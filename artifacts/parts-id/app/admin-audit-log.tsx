@@ -20,6 +20,7 @@ import {
   View,
 } from "react-native";
 
+import { useApiHealth } from "@/contexts/ApiHealthContext";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
@@ -34,8 +35,9 @@ type AuditRow = {
   createdAt: string;
 };
 
+
 type AuditLogPage = {
-  rows: AuditRow[];
+  rows: Array<AuditRow>;
   nextCursor: number | null;
 };
 
@@ -95,8 +97,9 @@ export default function AdminAuditLogScreen() {
   const colors = useColors();
   const router = useRouter();
   const { isAdmin, adminToken, isLoading } = useApp();
+  const { reportNetworkFailure } = useApiHealth();
 
-  const [rows, setRows] = useState<AuditRow[]>([]);
+  const [rows, setRows] = useState<Array<AuditRow>>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -126,12 +129,13 @@ export default function AdminAuditLogScreen() {
       nextCursorRef.current = page.nextCursor;
       hasMoreRef.current = page.nextCursor !== null;
     } catch (err) {
+      if (err instanceof TypeError) reportNetworkFailure();
       setError(err instanceof Error ? err.message : "Failed to load audit log");
     } finally {
       if (isRefresh) setRefreshing(false);
       else setLoading(false);
     }
-  }, [adminToken, fetchPage]);
+  }, [adminToken, fetchPage, reportNetworkFailure]);
 
   const loadMore = useCallback(async () => {
     if (!adminToken || loadingMore || !hasMoreRef.current || nextCursorRef.current === null) return;
@@ -142,11 +146,12 @@ export default function AdminAuditLogScreen() {
       nextCursorRef.current = page.nextCursor;
       hasMoreRef.current = page.nextCursor !== null;
     } catch (err) {
+      if (err instanceof TypeError) reportNetworkFailure();
       setError(err instanceof Error ? err.message : "Failed to load more");
     } finally {
       setLoadingMore(false);
     }
-  }, [adminToken, loadingMore, fetchPage]);
+  }, [adminToken, loadingMore, fetchPage, reportNetworkFailure]);
 
   useEffect(() => {
     if (shouldRedirectNonAdmin(isLoading, isAdmin)) {

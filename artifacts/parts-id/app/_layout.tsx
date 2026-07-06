@@ -22,6 +22,7 @@ import { AuthGate } from "@/components/AuthGate";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { prefetchSvgAsset } from "@/components/WarehouseMapView";
+import { ApiHealthProvider } from "@/contexts/ApiHealthContext";
 import { AppProvider } from "@/contexts/AppContext";
 
 SplashScreen.preventAutoHideAsync();
@@ -99,6 +100,7 @@ export default function RootLayout() {
             <QueryClientProvider client={queryClient}>
               <GestureHandlerRootView style={{ flex: 1 }}>
                 <AppProvider>
+                  <ApiHealthProvider>
                   <DismissKeyboard>
                     <Stack screenOptions={{ headerShown: false }}>
                       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -115,6 +117,7 @@ export default function RootLayout() {
                     </Stack>
                     <AuthGate />
                   </DismissKeyboard>
+                  </ApiHealthProvider>
                 </AppProvider>
               </GestureHandlerRootView>
             </QueryClientProvider>

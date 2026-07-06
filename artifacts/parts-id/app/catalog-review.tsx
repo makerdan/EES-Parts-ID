@@ -34,6 +34,7 @@ import {
 import { InfoDialog } from "@/components/ConfirmDialog";
 import { FailedJobsSection } from "@/components/FailedJobsSection";
 import { RetryImage } from "@/components/RetryImage";
+import { useApiHealth } from "@/contexts/ApiHealthContext";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import type { ResumeProgress } from "@/types/catalogPdf";
@@ -105,6 +106,7 @@ export default function CatalogReviewScreen() {
   const router = useRouter();
   const { jobId } = useLocalSearchParams<{ jobId?: string }>();
   const { adminToken, logoutAdmin, resumeProgress, setResumeProgress, setPendingInventorySearch } = useApp();
+  const { reportNetworkFailure } = useApiHealth();
 
   type JobSummary = {
     vendor: string;
@@ -270,14 +272,15 @@ export default function CatalogReviewScreen() {
           }
         }
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof TypeError) reportNetworkFailure();
       setError("Could not load review data. Check your connection.");
     } finally {
       if (isRefresh) setRefreshing(false);
       else setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adminToken, jobId]);
+  }, [adminToken, jobId, reportNetworkFailure]);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
 

@@ -13,6 +13,7 @@ export interface ApiStatusResult {
   checkStatus: () => Promise<void>;
   bots: Record<string, BotProbeStatus>;
   probeSingleBot: (botName: string) => Promise<void>;
+  reportNetworkFailure: () => void;
 }
 
 interface UseApiStatusOptions {
@@ -215,5 +216,10 @@ export function useApiStatus({
     restartTimerIdsRef.current.push(tid);
   }, [adminToken, apiBase, restartPostTimeoutMs, resumePollTimeoutMs, startPolling, stopPolling]);
 
-  return { status, restarting, triggerRestart, checkStatus: poll, bots, probeSingleBot };
+  const reportNetworkFailure = useCallback(() => {
+    setStatus("error");
+    setBots({});
+  }, []);
+
+  return { status, restarting, triggerRestart, checkStatus: poll, bots, probeSingleBot, reportNetworkFailure };
 }
