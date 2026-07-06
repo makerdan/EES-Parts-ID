@@ -19,8 +19,10 @@ import { useColors } from "@/hooks/useColors";
 //
 // On web, Google OAuth uses a full-page redirect (authenticateWithRedirect) to
 // avoid the popup flow that expo-web-browser opens. The redirect lands back at
-// window.location.origin and Clerk's useAuth processes the token params
-// automatically, so AuthGate in _layout.tsx routes the user correctly.
+// /sso-callback where Clerk's JS SDK processes the OAuth token params, then
+// AuthGate in _layout.tsx routes the user to the correct screen. AuthGate
+// exempts /sso-callback from the redirect-to-login guard so Clerk has time to
+// process the token before any navigation fires.
 //
 // On native, the existing useOAuth / startOAuthFlow in-app browser flow is used.
 
@@ -57,19 +59,23 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
     setGoogleLoading(true);
     try {
       if (Platform.OS === "web") {
-        const redirectUrl =
-          typeof window !== "undefined" ? window.location.origin : "/";
+        const origin =
+          typeof window !== "undefined" ? window.location.origin : "";
+        // /sso-callback is a dedicated route that is exempt from AuthGate's
+        // redirect-to-login guard, giving Clerk time to process the OAuth
+        // token params before any navigation fires.
+        const callbackUrl = `${origin}/sso-callback`;
         if (mode === "sign-in") {
           await signIn!.sso({
             strategy: "oauth_google",
-            redirectUrl,
-            redirectCallbackUrl: redirectUrl,
+            redirectUrl: callbackUrl,
+            redirectCallbackUrl: callbackUrl,
           });
         } else {
           await signUp!.sso({
             strategy: "oauth_google",
-            redirectUrl,
-            redirectCallbackUrl: redirectUrl,
+            redirectUrl: callbackUrl,
+            redirectCallbackUrl: callbackUrl,
           });
         }
         // Full-page redirect is in progress; no further code runs here.
