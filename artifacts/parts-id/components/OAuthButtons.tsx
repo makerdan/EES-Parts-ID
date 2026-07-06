@@ -25,6 +25,14 @@ import { useColors } from "@/hooks/useColors";
 // process the token before any navigation fires.
 //
 // On native, the existing useOAuth / startOAuthFlow in-app browser flow is used.
+//
+// REDIRECT URL CONFIGURATION:
+// The web OAuth callback URL is built from EXPO_PUBLIC_APP_URL (set this env var
+// in production to the canonical app origin, e.g. https://your-app.replit.app).
+// It falls back to window.location.origin for local dev where the origin is stable.
+// In Clerk Dashboard → Paths → "Allowed redirect URLs", add:
+//   https://your-app.replit.app/sso-callback
+// Without this entry, Google will reject the redirect and the user sees a blank page.
 
 interface OAuthButtonsProps {
   mode: "sign-in" | "sign-up";
@@ -59,8 +67,14 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
     setGoogleLoading(true);
     try {
       if (Platform.OS === "web") {
+        // Prefer EXPO_PUBLIC_APP_URL (set in production to the canonical origin
+        // registered in Clerk's "Allowed redirect URLs" list) so the callback
+        // URL is predictable regardless of which proxy domain Replit assigns.
+        // Falls back to window.location.origin for local dev where the origin
+        // is stable and no env var is needed.
         const origin =
-          typeof window !== "undefined" ? window.location.origin : "";
+          process.env.EXPO_PUBLIC_APP_URL ||
+          (typeof window !== "undefined" ? window.location.origin : "");
         // /sso-callback is a dedicated route that is exempt from AuthGate's
         // redirect-to-login guard, giving Clerk time to process the OAuth
         // token params before any navigation fires.
