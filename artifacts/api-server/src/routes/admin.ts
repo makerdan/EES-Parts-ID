@@ -1,4 +1,4 @@
-import { getAuth } from "@clerk/express";
+import { clerkClient, getAuth } from "@clerk/express";
 import { AdminProfilePayloadSchema, ShelfPreferencesPayloadSchema } from "@workspace/api-zod";
 import { adminAuditLogTable, adminPreferencesTable, db, usersTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
@@ -430,6 +430,18 @@ router.delete("/users/:clerkUserId", requireAdminAuth, async (req, res) => {
     if (deleted.length === 0) {
       return res.status(404).json({ error: "User not found" });
     }
+
+    // Best-effort: remove the user from Clerk so they cannot sign in again and
+    // recreate a pending DB row. If Clerk deletion fails the DB row is already
+    // gone, so we still return success, but we log a warning so operators know
+    // the Clerk account may still be active.
+    try {
+      await clerkClient.users.deleteUser(clerkUserId);
+    } catch (clerkErr) {
+      const msg = clerkErr instanceof Error ? clerkErr.message : String(clerkErr);
+      console.warn(`[admin] DB row deleted but Clerk deletion failed for ${clerkUserId}: ${msg}`);
+    }
+
     return res.json({ deleted: true });
   } catch {
     return res.status(500).json({ error: "Failed to delete user" });
