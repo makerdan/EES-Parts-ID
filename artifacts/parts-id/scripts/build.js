@@ -124,6 +124,15 @@ function getClerkAuthConfigError(publishableKey, proxyUrl) {
     );
   }
 
+  if (!key.startsWith("pk_test_") && !key.startsWith("pk_live_")) {
+    return (
+      "[Build Guard] Clerk publishable key is malformed: the key does not start with " +
+      '"pk_test_" or "pk_live_". A placeholder, typo, or wrong environment variable was ' +
+      "baked into the build. ClerkLoaded will never resolve and the app will render a " +
+      "blank screen. Set a valid pk_test_… or pk_live_… key before building."
+    );
+  }
+
   if (key.startsWith("pk_live_") && !proxy) {
     return (
       "[Build Guard] Production Clerk auth config is broken: a live publishable " +
