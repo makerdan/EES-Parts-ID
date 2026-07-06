@@ -153,6 +153,36 @@ describe("getClerkAuthConfigError", () => {
       ),
     ).toBeNull();
   });
+
+  it("fails when the key is a placeholder string", () => {
+    const error = getClerkAuthConfigError("YOUR_KEY_HERE", "");
+    expect(error).toContain("[Build Guard]");
+    expect(error).toContain("blank screen");
+  });
+
+  it("fails when the key looks like a copy-paste typo (no valid prefix)", () => {
+    const error = getClerkAuthConfigError("pk_staging_abc123", "");
+    expect(error).toContain("[Build Guard]");
+    expect(error).toContain("blank screen");
+  });
+
+  it("fails when the key is a generic non-Clerk string", () => {
+    const error = getClerkAuthConfigError("some-random-string", "");
+    expect(error).toContain("[Build Guard]");
+    expect(error).toContain("blank screen");
+  });
+
+  it("fails when the key starts with pk_ but is not pk_test_ or pk_live_", () => {
+    const error = getClerkAuthConfigError("pk_dev_abc123", "");
+    expect(error).toContain("[Build Guard]");
+    expect(error).toContain("blank screen");
+  });
+
+  it("malformed key error message mentions the valid key formats", () => {
+    const error = getClerkAuthConfigError("YOUR_KEY_HERE", "");
+    expect(error).toContain("pk_test_");
+    expect(error).toContain("pk_live_");
+  });
 });
 
 describe("resolveClerkProxyUrl + getClerkAuthConfigError (baked-in config)", () => {
