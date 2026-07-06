@@ -41,6 +41,7 @@ import { pool } from "@workspace/db";
 import ExcelJS from "exceljs";
 import { Router } from "express";
 
+import { getLogger } from "../lib/logger";
 import { adminQueryLimiter } from "../lib/rateLimiter";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
@@ -248,6 +249,7 @@ function buildCSV(
 }
 
 router.post("/query", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   const rlKey = getAuth(req)?.userId ?? String(req.ip ?? "unknown");
   const rateCheck = await adminQueryLimiter.check(rlKey, res.locals.requestId as string | undefined);
   if (!rateCheck.allowed) {
@@ -354,7 +356,7 @@ router.post("/query", requireAdminAuth, async (req, res) => {
       .replace(/\$\d+/g, "?")
       .replace(/'(?:[^'\\]|\\.)*'/g, "?")
       .slice(0, 120);
-    console.error(`[adminQuery] error="${message}" query_prefix="${redactedSql}"`);
+    reqLogger.error({ queryPrefix: redactedSql }, `[adminQuery] error="${message}"`);
     const isTimeout =
       err instanceof Error &&
       (message.includes("canceling statement due to statement timeout") ||
