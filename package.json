@@ -13,7 +13,6 @@
     "audit:fix": "pnpm audit --fix"
   },
   "private": true,
-  "packageManager": "pnpm@9.15.4",
   "engines": {
     "node": "24.13.0"
   },
@@ -45,7 +44,16 @@
       "vite": ">=7.3.5",
       "ws": ">=8.21.0",
       "yaml": ">=2.8.3"
-    }
+    },
+    "onlyBuiltDependencies": [
+      "@pnpm/exe",
+      "@swc/core",
+      "canvas",
+      "esbuild",
+      "msw",
+      "sharp",
+      "unrs-resolver"
+    ]
   },
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.1"
