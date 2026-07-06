@@ -1128,6 +1128,86 @@ fi
 assert_contains "viewbox-sync failure — prints SVG_VIEWBOX_W/H mismatch error" "SVG_VIEWBOX_W/H" "$VIEWBOX_FAIL_OUTPUT"
 
 # ---------------------------------------------------------------------------
+# Test 32: run_viewbox_sync_check TIMEOUT path — post-merge exits non-zero and
+#          prints the timeout-specific message when the viewBox check times out
+#
+# Test 26 only asserts the timeout guard *text* is present in the script, and
+# Test 31 covers the generic failure path (jest exits non-zero → the
+# SVG_VIEWBOX_W/H mismatch message).  Neither proves the exit-124 (timeout)
+# branch actually fails the merge with its distinct message.  A regression that
+# treated exit 124 as success (returning 0) or folded it into the generic
+# branch would leave a silent CI hang indistinguishable from a real viewBox
+# mismatch, and both existing tests would still pass.
+#
+# Spawns post-merge.sh with a mock `timeout` that:
+#   - exits 124 for the svgViewBoxApiSync jest call (simulating the guard firing
+#     on a hung jest run, e.g. the API server is unreachable)
+#   - exits 0 for every other timeout-wrapped call (codegen:fix, etc.) so the
+#     run reaches the viewBox check
+# Asserts:
+#   (a) post-merge exits non-zero (the failure propagates through set -e)
+#   (b) the timeout-specific message ("timed out after 30s") is printed
+#   (c) the generic SVG_VIEWBOX_W/H mismatch message is NOT printed, so the two
+#       failure modes remain distinguishable
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR32=$(mktemp -d)
+
+cat > "$MOCK_BIN_DIR32/git" << 'MOCKEOF'
+#!/bin/bash
+echo "artifacts/parts-id/components/PartCard.tsx"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR32/git"
+
+# timeout: return 124 (guard fired) for the viewBox jest call; exit 0 for every
+# other timeout-wrapped step (codegen:fix, etc.) so the run reaches the check.
+cat > "$MOCK_BIN_DIR32/timeout" << 'MOCKEOF'
+#!/bin/bash
+# Drop the duration argument, then inspect the wrapped command.
+shift
+if echo "$*" | grep -q 'svgViewBoxApiSync'; then
+  # Simulate the `timeout 30` guard firing on a hung jest run.
+  echo "jest run hung"
+  exit 124
+fi
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR32/timeout"
+
+# pnpm: exit 0 for any call not routed through timeout (e.g. verify-fts).
+cat > "$MOCK_BIN_DIR32/pnpm" << 'MOCKEOF'
+#!/bin/bash
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR32/pnpm"
+
+cat > "$MOCK_BIN_DIR32/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR32/curl"
+
+VIEWBOX_TIMEOUT_OUTPUT=$(PATH="$MOCK_BIN_DIR32:$PATH" PORT=8080 REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+VIEWBOX_TIMEOUT_EXIT=$?
+rm -rf "$MOCK_BIN_DIR32"
+
+if [[ "$VIEWBOX_TIMEOUT_EXIT" -ne 0 ]]; then
+  pass "viewbox-sync timeout — post-merge exits non-zero when viewBox check times out (exit ${VIEWBOX_TIMEOUT_EXIT})"
+else
+  fail "viewbox-sync timeout — post-merge exited 0 despite the viewBox check timing out; the timeout was swallowed"
+  echo "  post-merge output (last 20 lines):"
+  echo "$VIEWBOX_TIMEOUT_OUTPUT" | tail -20 | sed 's/^/    /'
+fi
+
+assert_contains "viewbox-sync timeout — prints timeout-specific message" "timed out after 30s" "$VIEWBOX_TIMEOUT_OUTPUT"
+
+# The timeout path must remain distinct from the generic mismatch failure.
+if echo "$VIEWBOX_TIMEOUT_OUTPUT" | grep -q 'SVG_VIEWBOX_W/H'; then
+  fail "viewbox-sync timeout — printed the generic SVG_VIEWBOX_W/H mismatch message; the timeout path must be distinct"
+else
+  pass "viewbox-sync timeout — did NOT print the generic mismatch message (timeout path is distinct)"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
