@@ -4,6 +4,7 @@ import {
   AddPartResponse,
   EstimateDimensionsResponse,
   LookupByBarcodeResponse,
+  PatchExpandedDescriptionBody,
   ReenrichItemResponse,
   SearchInventoryBody as SearchInventoryBodySchema,
   UpdateItemBarcodesResponse,
@@ -1809,7 +1810,11 @@ router.patch("/:id/expanded-description", requireAdminAuth, async (req, res) => 
       return void res.status(400).json({ error: "Invalid item id" });
     }
 
-    const { expandedDescription } = req.body as { expandedDescription: string | null };
+    const parsed = PatchExpandedDescriptionBody.safeParse(req.body);
+    if (!parsed.success) {
+      return void res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid request body" });
+    }
+    const { expandedDescription } = parsed.data;
 
     const [updated] = await db
       .update(inventoryTable)
