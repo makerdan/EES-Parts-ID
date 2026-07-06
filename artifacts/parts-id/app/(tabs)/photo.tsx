@@ -29,6 +29,7 @@ import { ReferenceModal } from "@/components/ReferenceModal";
 import { ResultCard } from "@/components/ResultCard";
 import { type PinnedPart,useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
+import { useMapPinHandlers } from "@/hooks/useMapPinHandlers";
 import { useScanHistory } from "@/hooks/useScanHistory";
 import { parseBin } from "@/lib/aisleHierarchy";
 import { secondaryBtnBase } from "@/styles/shared";
@@ -71,63 +72,11 @@ export default function PhotoScreen() {
   /** Item opened in the full detail/edit sheet — shows the "Map it!" button. */
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
 
-  /**
-   * Called when the worker explicitly taps "Show on Map" on a specific result
-   * card to override the auto-pinned top result and navigate to that part.
-   */
-  const handleShowOnMap = React.useCallback((item: InventoryItem) => {
-    const bins = item.binLocations ?? [];
-    if (bins.length === 0) {
-      showToast("No bin location assigned — add a bin to this item first.");
-      return;
-    }
-    const newPins: Array<PinnedPart> = [];
-    let firstParsed: ReturnType<typeof parseBin> | null = null;
-    for (const bin of bins) {
-      const parsed = parseBin(bin);
-      if (parsed) {
-        if (!firstParsed) firstParsed = parsed;
-        newPins.push({ binCode: bin, label: item.catalog, aisleNum: parsed.aisle });
-      }
-    }
-    if (!firstParsed) {
-      showToast(`No map zone found for "${bins[0]}" — bin format not recognised.`);
-      return;
-    }
-    setPinnedParts(newPins);
-    setPendingMapFocus({
-      aisleNum: firstParsed.aisle,
-      sectionNum: firstParsed.section,
-      label: `Aisle ${String(firstParsed.aisle).padStart(2, "0")} · Section ${firstParsed.section}`,
-    });
-    router.navigate("/(tabs)/map");
-  }, [setPendingMapFocus, setPinnedParts, showToast]);
-
-  /**
-   * Stable callback passed directly to ResultCard. Accepts (item, variantItems, isOpen)
-   * so a single reference is reused across renders instead of allocating one per card.
-   * Scopes variant pin removal to this item via groupId (item.id) so multiple
-   * expanded cards can coexist without interfering.
-   */
-  const handleVariantsToggle = React.useCallback((item: InventoryItem, variantItems: Array<InventoryItem>, isOpen: boolean) => {
-    if (!isOpen) {
-      setPinnedParts((prev) => prev.filter(p => !(p.variant && p.groupId === item.id)));
-      return;
-    }
-    const variantPins: Array<PinnedPart> = [];
-    for (const v of variantItems) {
-      for (const bin of (v.binLocations ?? [])) {
-        const parsed = parseBin(bin);
-        if (parsed && v.id !== item.id) {
-          variantPins.push({ binCode: bin, label: v.catalog, aisleNum: parsed.aisle, variant: true, groupId: item.id });
-        }
-      }
-    }
-    setPinnedParts((prev) => [
-      ...prev.filter(p => !(p.variant && p.groupId === item.id)),
-      ...variantPins,
-    ]);
-  }, [setPinnedParts]);
+  const { handleShowOnMap, handleVariantsToggle } = useMapPinHandlers({
+    setPinnedParts,
+    setPendingMapFocus,
+    showToast,
+  });
 
   const handleMeasureSearchConfirm = React.useCallback((dims: PartDimensions) => {
     setMeasureSearchVisible(false);
