@@ -34,7 +34,7 @@ import { useColors } from "@/hooks/useColors";
 import { type ApiWarehouseZone,useWarehouseZones } from "@/hooks/useWarehouseZones";
 import type { WarehouseZone } from "@/lib/aisleHierarchy";
 import { parseBin } from "@/lib/aisleHierarchy";
-import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
+import { FUSE_CACHE_KEY, parseFuseCacheItems } from "@/utils/offlineBarcode";
 import { swallowOrientationNotAvailable } from "@/utils/orientationLock";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
@@ -279,18 +279,20 @@ export default function MapScreen() {
     AsyncStorage.getItem(FUSE_CACHE_KEY)
       .then(raw => {
         if (!alive || !raw) return;
-        try {
-          const parsed = JSON.parse(raw);
-          if (!Array.isArray(parsed)) {
-            console.warn('[map] FUSE_CACHE_KEY: expected array, got', typeof parsed);
-            return;
-          }
-          const items = parsed as Array<InventoryItem>;
-          inventoryRef.current = items;
-          setInventory(items);
-        } catch (err) {
-          console.error('[map] parse fuse cache', err);
+        // parseFuseCacheItems handles both the new envelope format
+        // { items, syncedAt } and the legacy plain-array format.
+        const items = parseFuseCacheItems(raw);
+        if (!items) {
+          let gotType: string;
+          try { gotType = typeof JSON.parse(raw); } catch { gotType = 'invalid-json'; }
+          console.warn('[map] FUSE_CACHE_KEY: expected array, got', gotType);
+          return;
         }
+        inventoryRef.current = items;
+        setInventory(items);
+      })
+      .catch((err: unknown) => {
+        console.error('[map] parse fuse cache', err);
       });
     return () => { alive = false; };
   }, []);
