@@ -1067,6 +1067,67 @@ assert_exit     "post-flight assertion — exits 1 when sentinels still missing"
 assert_contains "post-flight assertion — prints clear error about missing files"       "Generated files still missing after codegen:fix" "$POSTFLIGHT_OUTPUT"
 
 # ---------------------------------------------------------------------------
+# Test 31: run_viewbox_sync_check FAILURE path — post-merge exits non-zero and
+#          prints the SVG_VIEWBOX_W/H mismatch error when the viewBox check fails
+#
+# Test 27 only covers the happy path (the check runs and EXPO_PUBLIC_API_BASE is
+# set).  This test covers the failure path: when the svgViewBoxApiSync jest test
+# exits non-zero (e.g. SVG_VIEWBOX_W/H in mapViewport.ts no longer matches the
+# server viewBox), post-merge must fail loudly rather than swallowing the error.
+#
+# Spawns post-merge.sh with a mock pnpm that:
+#   - exits 1 when invoked with svgViewBoxApiSync (simulating a viewBox mismatch)
+#   - exits 0 (emitting "drift auto-committed") for codegen:fix and everything
+#     else so the run reaches the viewBox check
+# Asserts:
+#   (a) post-merge exits non-zero (the failure propagates through set -e)
+#   (b) the SVG_VIEWBOX_W/H mismatch error message is printed
+#
+# This guards against a regression where run_viewbox_sync_check swallows errors
+# (e.g. returns 0 unconditionally), which would pass Test 27 but silently let a
+# viewBox drift ship.
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR31=$(mktemp -d)
+
+cat > "$MOCK_BIN_DIR31/git" << 'MOCKEOF'
+#!/bin/bash
+echo "artifacts/parts-id/components/PartCard.tsx"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR31/git"
+
+cat > "$MOCK_BIN_DIR31/pnpm" << 'MOCKEOF'
+#!/bin/bash
+if echo "$*" | grep -q 'svgViewBoxApiSync'; then
+  # Simulate a viewBox mismatch — the jest test exits non-zero.
+  echo "SVG viewBox mismatch"
+  exit 1
+fi
+echo "drift auto-committed"
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR31/pnpm"
+
+cat > "$MOCK_BIN_DIR31/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR31/curl"
+
+VIEWBOX_FAIL_OUTPUT=$(PATH="$MOCK_BIN_DIR31:$PATH" PORT=8080 REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+VIEWBOX_FAIL_EXIT=$?
+rm -rf "$MOCK_BIN_DIR31"
+
+if [[ "$VIEWBOX_FAIL_EXIT" -ne 0 ]]; then
+  pass "viewbox-sync failure — post-merge exits non-zero when viewBox check fails (exit ${VIEWBOX_FAIL_EXIT})"
+else
+  fail "viewbox-sync failure — post-merge exited 0 despite viewBox check failing; the error was swallowed"
+  echo "  post-merge output (last 20 lines):"
+  echo "$VIEWBOX_FAIL_OUTPUT" | tail -20 | sed 's/^/    /'
+fi
+
+assert_contains "viewbox-sync failure — prints SVG_VIEWBOX_W/H mismatch error" "SVG_VIEWBOX_W/H" "$VIEWBOX_FAIL_OUTPUT"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
