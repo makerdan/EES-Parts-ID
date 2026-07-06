@@ -10,7 +10,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Appearance, AppState, Platform, StyleSheet, Text, useColorScheme,View } from "react-native";
+import { Alert, Appearance, AppState, Platform, StyleSheet, Text, useColorScheme,View } from "react-native";
 
 import colorTokens from "@/constants/colors";
 import type { ResumeProgress } from "@/types/catalogPdf";
@@ -291,7 +291,10 @@ async function secureDelete(key: string): Promise<void> {
 export function AppProvider({ children }: { children: React.ReactNode }) {
   // ── Clerk auth state ─────────────────────────────────────────────────────
   const { isSignedIn, getToken, userId, isLoaded: clerkLoaded } = useAuth();
-  const { signOut } = useClerk();
+  const clerk = useClerk();
+  const { signOut } = clerk;
+  const clerkRef = useRef(clerk);
+  useEffect(() => { clerkRef.current = clerk; }, [clerk]);
 
   // ── Local state ───────────────────────────────────────────────────────────
   const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>("idle");
@@ -372,6 +375,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setIsAdmin,
       setAdminToken,
       onDemotion: () => showToastRef.current("Your admin access has been revoked.", "error"),
+      onMfaRequired: () => {
+        Alert.alert(
+          "Two-Factor Authentication Required",
+          "Admin access requires two-factor authentication (2FA). Enable it in your account settings under Security → Two-step verification.",
+          [
+            { text: "Dismiss", style: "cancel" },
+            {
+              text: "Open Account Settings",
+              onPress: () => { clerkRef.current?.openUserProfile(); },
+            },
+          ],
+        );
+      },
     });
   }, []);
 
