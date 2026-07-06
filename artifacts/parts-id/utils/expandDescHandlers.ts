@@ -68,7 +68,7 @@ export async function runSaveAll(
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       onUpdate(result.id, "saved");
     } catch {
-      onUpdate(result.id, "pending");
+      onUpdate(result.id, "error");
     }
   }
 }

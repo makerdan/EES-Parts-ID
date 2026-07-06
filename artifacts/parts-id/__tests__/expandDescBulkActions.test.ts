@@ -148,7 +148,7 @@ describe("runSaveAll", () => {
     expect(onUpdate).not.toHaveBeenCalled();
   });
 
-  it("reverts a result back to pending when the PATCH request fails", async () => {
+  it("marks a result as error when the PATCH request fails", async () => {
     const fetchFn = jest.fn().mockResolvedValue({ ok: false, status: 500 } as Response);
     const updates: Array<{ id: number; status: ExpandDescResult["savedStatus"] }> = [];
 
@@ -167,7 +167,30 @@ describe("runSaveAll", () => {
 
     expect(updates).toEqual([
       { id: 40, status: "saving" },
-      { id: 40, status: "pending" }, // rolled back
+      { id: 40, status: "error" }, // surface the failure, not a silent rollback
+    ]);
+  });
+
+  it("marks a result as error when the fetch itself throws (network failure)", async () => {
+    const fetchFn = jest.fn().mockRejectedValue(new Error("Network error"));
+    const updates: Array<{ id: number; status: ExpandDescResult["savedStatus"] }> = [];
+
+    const results: ExpandDescResult[] = [
+      makeResult({ id: 41, savedStatus: "pending", editedText: "Desc" }),
+    ];
+
+    await runSaveAll(
+      results,
+      false,
+      (id, status) => updates.push({ id, status }),
+      API_BASE,
+      ADMIN_HEADERS,
+      fetchFn,
+    );
+
+    expect(updates).toEqual([
+      { id: 41, status: "saving" },
+      { id: 41, status: "error" },
     ]);
   });
 
