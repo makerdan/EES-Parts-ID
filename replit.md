@@ -22,6 +22,7 @@ pnpm workspace monorepo using TypeScript. **Parts ID** — Expo (React Native) e
 
 ### parts-id (Expo mobile app)
 - Password-only login (server-side: APP_PASSWORD secret validates via POST /api/auth/app-login and returns a signed session token; password never ships in the JS bundle)
+- **Google OAuth redirect URL**: set `EXPO_PUBLIC_APP_URL` to the canonical production origin (e.g. `https://your-app.replit.app`). The web OAuth callback is built from this value so the redirect URL is predictable. In Clerk Dashboard → Paths → "Allowed redirect URLs" add `https://your-app.replit.app/sso-callback`. Without this entry Google rejects the redirect and the user sees a blank page. Omit the env var in local dev — it falls back to `window.location.origin`.
 - 3 tabs: Search, Photo ID, Upload/Inventory
 - Dark industrial amber theme (primary: #f59e0b, dark bg: #0d1117)
 - Fuse.js offline fuzzy search fallback
