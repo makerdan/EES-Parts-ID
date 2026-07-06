@@ -576,6 +576,46 @@ paths:
         "308":
           description: Redirect to /reference/ask
 
+  /user/me:
+    delete:
+      operationId: deleteUserMe
+      tags: [auth]
+      summary: Delete the authenticated user's own account
+      description: >
+        Deletes the caller's local DB row and Clerk identity.
+        Returns 204 on success. If the DB delete succeeds but Clerk deletion
+        fails, a 502 is returned with an error body so the caller knows the
+        Clerk identity is still live.
+      responses:
+        "204":
+          description: Account deleted successfully
+        "400":
+          description: Account cannot be deleted (e.g. bootstrap admin)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+        "401":
+          description: Authentication required
+        "404":
+          description: User record not found
+        "502":
+          description: DB deleted but Clerk deletion failed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+
 components:
   schemas:
     AdminAuditLogEntry:

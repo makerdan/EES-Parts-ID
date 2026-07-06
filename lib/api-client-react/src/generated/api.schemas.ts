@@ -447,3 +447,11 @@ export type GetAdminAuditLogParams = {
    */
   limit?: number;
 };
+
+export type DeleteUserMe400 = {
+  error: string;
+};
+
+export type DeleteUserMe502 = {
+  error: string;
+};

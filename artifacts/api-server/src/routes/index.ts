@@ -16,6 +16,7 @@ import inventoryRouter from "./inventory";
 import inventoryCategoriesRouter from "./inventoryCategories";
 import referenceRouter from "./reference";
 import trackRouter from "./track";
+import userRouter from "./user";
 import warehouseZonesRouter from "./warehouseZones";
 
 const router: IRouter = Router();
@@ -35,6 +36,7 @@ router.use("/admin", adminDashboardRouter);
 router.use("/admin", adminAiStatusRouter);
 router.use("/warehouse-zones", warehouseZonesRouter);
 router.use(floorPlanRouter);
+router.use("/user", userRouter);
 router.use("/contact", contactRouter);
 router.use("/track", trackRouter);
 
