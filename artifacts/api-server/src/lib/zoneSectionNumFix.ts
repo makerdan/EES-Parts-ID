@@ -7,8 +7,8 @@ import { logger } from "./logger";
 export type ZoneSentinel = { id: number; expectedSectionNum: number };
 
 const ZONE_SECTION_SENTINELS: Array<ZoneSentinel> = [
-  { id: 431, expectedSectionNum: 3 },
-  { id: 555, expectedSectionNum: 1 },
+  { id: 431, expectedSectionNum: 1 },
+  { id: 555, expectedSectionNum: 64 },
   { id: 840, expectedSectionNum: 1 },
 ];
 
