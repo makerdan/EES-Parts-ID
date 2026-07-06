@@ -259,26 +259,27 @@ describe("createReanimatedMock() smoke — every Reanimated value import in Ware
  *
  * WHY THIS EXISTS
  * ---------------
- * createUseColorsMock() returns a hardcoded set of color tokens. If a new
- * token is added to the real useColors hook (via constants/colors.ts) but
- * omitted from the mock, components that destructure it get `undefined`
- * silently — the test passes but the component renders incorrectly.
+ * createUseColorsMock() must return the same color tokens as the real
+ * useColors hook. If the mock ever drifts from constants/colors.ts,
+ * components that destructure a token get `undefined` silently — the test
+ * passes but the component renders incorrectly.
  *
  * HOW IT WORKS
  * ------------
  * The real useColors() returns { ...palette, radius } where palette is
- * colors.light or colors.dark from constants/colors.ts. This test derives
- * the expected key set from the actual module (via jest.requireActual) so it
- * never drifts independently of the source. When a new token is added to
- * colors.ts, this test fails immediately at the mock layer with a clear
- * message.
+ * colors.light or colors.dark from constants/colors.ts. Both this test AND
+ * createUseColorsMock() itself derive their palette from the actual module
+ * (via jest.requireActual), so the mock can no longer drift independently of
+ * the source. This test is a belt-and-suspenders guard that the mock's key
+ * set still matches the real hook's key set.
  *
  * HOW TO FIX A FAILURE
  * --------------------
  * If this test fails with "Missing keys in createUseColorsMock(): [X, ...]":
- *   1. Add X to the object returned by createUseColorsMock().useColors() in
- *      mapMocks.ts.
- * That's it. The test itself never needs updating.
+ *   1. Confirm createUseColorsMock() in mapMocks.ts still spreads the real
+ *      colors.light palette via jest.requireActual("@/constants/colors").
+ * A failure here means that derivation was broken — the mock should never
+ * need a manually maintained token list.
  */
 describe("createUseColorsMock() smoke — every key from the real useColors hook is present in the mock", () => {
   let mockColors: Record<string, unknown>;

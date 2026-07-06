@@ -116,40 +116,27 @@ export function createVectorIconsMock(): object {
   return { Feather: () => null, MaterialCommunityIcons: () => null };
 }
 
-/** @/hooks/useColors */
+/**
+ * @/hooks/useColors — mock factory that derives its palette from the real
+ * constants/colors.ts via jest.requireActual so it can never drift.
+ *
+ * Previously this returned a hardcoded copy of the light palette.  If a new
+ * color key was added to constants/colors.ts, the shared mock would silently
+ * return `undefined` for that key in every test that calls it.  By spreading
+ * the real `colors.light` palette (plus the scheme-independent `radius`, exactly
+ * as the real useColors() hook does), any added/removed key is reflected
+ * automatically and a drift causes a test failure rather than a silent pass.
+ */
 export function createUseColorsMock(): object {
+  const colors = jest.requireActual<{
+    default: {
+      light: Record<string, unknown>;
+      dark: Record<string, unknown>;
+      radius: number;
+    };
+  }>("@/constants/colors").default;
   return {
-    useColors: () => ({
-      text:                  "#1a1a1a",
-      tint:                  "#f59e0b",
-      background:            "#f5f5f0",
-      foreground:            "#1a1a1a",
-      card:                  "#ffffff",
-      cardForeground:        "#1a1a1a",
-      primary:               "#f59e0b",
-      primaryForeground:     "#ffffff",
-      secondary:             "#e5e7eb",
-      secondaryForeground:   "#374151",
-      muted:                 "#e5e7eb",
-      mutedForeground:       "#6b7280",
-      accent:                "#fef3c7",
-      accentForeground:      "#92400e",
-      destructive:           "#ef4444",
-      destructiveForeground: "#ffffff",
-      success:               "#10b981",
-      successForeground:     "#ffffff",
-      warning:               "#f59e0b",
-      warningForeground:     "#ffffff",
-      border:                "#d1d5db",
-      input:                 "#d1d5db",
-      steel:                 "#374151",
-      steelLight:            "#6b7280",
-      amber:                 "#f59e0b",
-      amberDark:             "#d97706",
-      surface:               "#f9fafb",
-      overlay:               "rgba(0,0,0,0.5)",
-      radius:                8,
-    }),
+    useColors: () => ({ ...colors.light, radius: colors.radius }),
   };
 }
 
