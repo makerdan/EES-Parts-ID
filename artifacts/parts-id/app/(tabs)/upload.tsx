@@ -1,3 +1,4 @@
+import { useAuth } from "@clerk/expo";
 import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { InventoryItem } from "@workspace/api-client-react";
@@ -565,6 +566,7 @@ export default function UploadScreen() {
   const isNarrow = screenWidth <= 320;
   const colors = useColors();
   const router = useRouter();
+  const { userId: currentClerkUserId } = useAuth();
   const { isAdmin, logoutAdmin, adminToken, showToast } = useApp();
   const { status: apiStatus, restarting: apiRestarting, triggerRestart, checkStatus, bots: apiBots, probeSingleBot } = useApiStatus({
     apiBase: API_BASE,
@@ -3343,6 +3345,7 @@ export default function UploadScreen() {
                   const requestUsers = usersData.filter((u) => u.status === "pending");
 
                   const renderUserCard = (user: import("@/utils/adminUserActions").UserRow) => {
+                    const isSelf = user.clerkUserId === currentClerkUserId;
                     const statusColor =
                       user.status === "approved" ? "#10b981" :
                       user.status === "banned"   ? colors.destructive :
@@ -3358,14 +3361,21 @@ export default function UploadScreen() {
                           marginTop: 8,
                           borderRadius: 8,
                           borderWidth: 1,
-                          borderColor: colors.border,
+                          borderColor: isSelf ? colors.primary + "55" : colors.border,
                           padding: 12,
                           gap: 6,
                         }}
                       >
-                        <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: colors.foreground }}>
-                          {user.email || "(no email)"}
-                        </Text>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: colors.foreground, flex: 1 }}>
+                            {user.email || "(no email)"}
+                          </Text>
+                          {isSelf ? (
+                            <View style={{ backgroundColor: colors.primary + "22", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1, borderColor: colors.primary + "44" }}>
+                              <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.primary }}>You</Text>
+                            </View>
+                          ) : null}
+                        </View>
                         <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: colors.mutedForeground }}>
                           ID: {user.clerkUserId}
                         </Text>
@@ -3379,63 +3389,73 @@ export default function UploadScreen() {
                             </Text>
                           </View>
                         </View>
-                        <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
-                          {user.status !== "approved" ? (
-                            <Pressable
-                              onPress={() => handleUserAction(user.clerkUserId, "approve")}
-                              disabled={!!userActionPending}
-                              style={{
-                                flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
-                                backgroundColor: "#10b98115", borderWidth: 1, borderColor: "#10b98144",
-                                opacity: userActionPending ? 0.6 : 1,
-                              }}
-                            >
-                              {isPending ? (
-                                <ActivityIndicator size="small" color="#10b981" />
-                              ) : (
-                                <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#10b981" }}>✓ Approve</Text>
-                              )}
-                            </Pressable>
-                          ) : null}
-                          {user.status !== "banned" ? (
-                            <Pressable
-                              onPress={() => handleUserAction(user.clerkUserId, "ban")}
-                              disabled={!!userActionPending}
-                              style={{
-                                flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
-                                backgroundColor: colors.destructive + "15", borderWidth: 1, borderColor: colors.destructive + "44",
-                                opacity: userActionPending ? 0.6 : 1,
-                              }}
-                            >
-                              {isPending ? (
-                                <ActivityIndicator size="small" color={colors.destructive} />
-                              ) : (
-                                <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.destructive }}>✕ Ban</Text>
-                              )}
-                            </Pressable>
-                          ) : null}
-                          <Pressable
-                            onPress={() => handleDeleteUser(user.clerkUserId, user.email)}
-                            disabled={!!userActionPending}
-                            style={{
-                              flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
-                              backgroundColor: colors.destructive + "15", borderWidth: 1, borderColor: colors.destructive + "44",
-                              opacity: userActionPending ? 0.6 : 1,
-                            }}
-                          >
-                            {isPending ? (
-                              <ActivityIndicator size="small" color={colors.destructive} />
-                            ) : (
-                              <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.destructive }}>🗑 Delete</Text>
-                            )}
-                          </Pressable>
-                        </View>
-                        <UserAdminButtonRow
-                          user={user}
-                          userActionPending={userActionPending}
-                          onPromote={() => handleUserAction(user.clerkUserId, "promote")}
-                          onDemote={() => handleUserAction(user.clerkUserId, "demote")}
-                        />
+                        {isSelf ? (
+                          <View style={{ backgroundColor: colors.primary + "11", borderRadius: 6, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: colors.primary + "33", marginTop: 4 }}>
+                            <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: colors.primary }}>
+                              ⚠ Cannot act on your own account.
+                            </Text>
+                          </View>
+                        ) : (
+                          <>
+                            <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                              {user.status !== "approved" ? (
+                                <Pressable
+                                  onPress={() => handleUserAction(user.clerkUserId, "approve")}
+                                  disabled={!!userActionPending}
+                                  style={{
+                                    flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
+                                    backgroundColor: "#10b98115", borderWidth: 1, borderColor: "#10b98144",
+                                    opacity: userActionPending ? 0.6 : 1,
+                                  }}
+                                >
+                                  {isPending ? (
+                                    <ActivityIndicator size="small" color="#10b981" />
+                                  ) : (
+                                    <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#10b981" }}>✓ Approve</Text>
+                                  )}
+                                </Pressable>
+                              ) : null}
+                              {user.status !== "banned" ? (
+                                <Pressable
+                                  onPress={() => handleUserAction(user.clerkUserId, "ban")}
+                                  disabled={!!userActionPending}
+                                  style={{
+                                    flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
+                                    backgroundColor: colors.destructive + "15", borderWidth: 1, borderColor: colors.destructive + "44",
+                                    opacity: userActionPending ? 0.6 : 1,
+                                  }}
+                                >
+                                  {isPending ? (
+                                    <ActivityIndicator size="small" color={colors.destructive} />
+                                  ) : (
+                                    <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.destructive }}>✕ Ban</Text>
+                                  )}
+                                </Pressable>
+                              ) : null}
+                              <Pressable
+                                onPress={() => handleDeleteUser(user.clerkUserId, user.email)}
+                                disabled={!!userActionPending}
+                                style={{
+                                  flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
+                                  backgroundColor: colors.destructive + "15", borderWidth: 1, borderColor: colors.destructive + "44",
+                                  opacity: userActionPending ? 0.6 : 1,
+                                }}
+                              >
+                                {isPending ? (
+                                  <ActivityIndicator size="small" color={colors.destructive} />
+                                ) : (
+                                  <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: colors.destructive }}>🗑 Delete</Text>
+                                )}
+                              </Pressable>
+                            </View>
+                            <UserAdminButtonRow
+                              user={user}
+                              userActionPending={userActionPending}
+                              onPromote={() => handleUserAction(user.clerkUserId, "promote")}
+                              onDemote={() => handleUserAction(user.clerkUserId, "demote")}
+                            />
+                          </>
+                        )}
                       </View>
                     );
                   };
