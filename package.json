@@ -13,6 +13,9 @@
     "audit:fix": "pnpm audit --fix"
   },
   "private": true,
+  "engines": {
+    "node": "24.13.0"
+  },
   "devDependencies": {
     "prettier": "^3.8.1",
     "typescript": "~5.9.2"
