@@ -21,6 +21,7 @@ import {
   View,
 } from "react-native";
 
+import { useApiHealth } from "@/contexts/ApiHealthContext";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
@@ -86,6 +87,7 @@ export default function AiLogScreen() {
   const colors = useColors();
   const router = useRouter();
   const { isAdmin, adminToken, isLoading } = useApp();
+  const { reportNetworkFailure } = useApiHealth();
 
   const [rows, setRows] = useState<Array<LogRow>>([]);
   const [loading, setLoading] = useState(true);
@@ -105,12 +107,13 @@ export default function AiLogScreen() {
       const data = (await res.json()) as Array<LogRow>;
       setRows(data);
     } catch (err) {
+      if (err instanceof TypeError) reportNetworkFailure();
       setError(err instanceof Error ? err.message : "Failed to load log");
     } finally {
       if (isRefresh) setRefreshing(false);
       else setLoading(false);
     }
-  }, [adminToken]);
+  }, [adminToken, reportNetworkFailure]);
 
   useEffect(() => {
     if (shouldRedirectNonAdmin(isLoading, isAdmin)) {

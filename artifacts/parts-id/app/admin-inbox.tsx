@@ -21,6 +21,7 @@ import {
   View,
 } from "react-native";
 
+import { useApiHealth } from "@/contexts/ApiHealthContext";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
@@ -127,6 +128,7 @@ export default function AdminInboxScreen() {
   const { isAdmin, adminToken, isLoading } = useApp();
 
   const [rows, setRows] = useState<Array<MessageRow>>([]);
+  const { reportNetworkFailure } = useApiHealth();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,12 +148,13 @@ export default function AdminInboxScreen() {
       const data = (await res.json()) as Array<MessageRow>;
       setRows(data);
     } catch (err) {
+      if (err instanceof TypeError) reportNetworkFailure();
       setError(err instanceof Error ? err.message : "Failed to load inbox");
     } finally {
       if (isRefresh) setRefreshing(false);
       else setLoading(false);
     }
-  }, [adminToken]);
+  }, [adminToken, reportNetworkFailure]);
 
   useEffect(() => {
     if (shouldRedirectNonAdmin(isLoading, isAdmin)) {

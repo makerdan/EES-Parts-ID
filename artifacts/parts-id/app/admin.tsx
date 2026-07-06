@@ -25,6 +25,7 @@ import {
 } from "react-native";
 import Svg, { Rect, Text as SvgText } from "react-native-svg";
 
+import { useApiHealth } from "@/contexts/ApiHealthContext";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { API_BASE } from "@/utils/apiBase";
@@ -165,6 +166,7 @@ export default function AdminDashboardScreen() {
   "use no memo";
   const colors = useColors();
   const { isLoading, adminToken } = useApp();
+  const { reportNetworkFailure } = useApiHealth();
   const router = useRouter();
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -223,12 +225,13 @@ export default function AdminDashboardScreen() {
       const data = (await res.json()) as DashboardStats;
       setStats(data);
     } catch (err) {
+      if (err instanceof TypeError) reportNetworkFailure();
       setError(err instanceof Error ? err.message : "Failed to load stats");
     } finally {
       if (isRefresh) setRefreshing(false);
       else setLoading(false);
     }
-  }, [adminToken]);
+  }, [adminToken, reportNetworkFailure]);
 
   useEffect(() => {
     if (!isLoading && adminToken) {
