@@ -32,6 +32,12 @@ export function AuthGate() {
     const atBanned = seg0 === "banned";
     // Leave this route alone — Clerk is still processing the OAuth token params.
     const atSsoCallback = seg0 === "sso-callback";
+    // Stack-level screens that are valid destinations for approved users.
+    const atAdmin = seg0 === "admin";
+    const atAdminInbox = seg0 === "admin-inbox";
+    const atAiLog = seg0 === "ai-log";
+    const atCatalogReview = seg0 === "catalog-review";
+    const atEditItem = seg0 === "edit-item";
 
     if (!isSignedIn) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -44,7 +50,15 @@ export function AuthGate() {
       } else if (approvalStatus === "banned" && !atBanned) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         router.replace("/banned" as any);
-      } else if (approvalStatus === "approved" && !inTabs) {
+      } else if (
+        approvalStatus === "approved" &&
+        !inTabs &&
+        !atAdmin &&
+        !atAdminInbox &&
+        !atAiLog &&
+        !atCatalogReview &&
+        !atEditItem
+      ) {
         router.replace("/(tabs)");
       }
     }
