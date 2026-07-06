@@ -89,6 +89,7 @@ async function cropOrSelectImage(
   page: PageCtx,
   imageRegion: ImageRegion | null,
   imageIndex: number,
+  log: typeof logger = logger,
 ): Promise<Buffer | null> {
   if (page.isRendered) {
     const srcImg = page.images[0];
@@ -106,7 +107,7 @@ async function cropOrSelectImage(
         .png()
         .toBuffer();
     } catch (cropErr) {
-      logger.warn({ err: cropErr }, "[catalog-pdf] Crop failed, skipping image");
+      log.warn({ err: cropErr }, "[catalog-pdf] Crop failed, skipping image");
       return null;
     }
   } else {
@@ -120,7 +121,7 @@ async function cropOrSelectImage(
 // also terminal. If so, mark the parent as done or failed using a single
 // conditional UPDATE so that two chunks finishing simultaneously cannot both
 // (or neither) trigger the parent transition.
-async function finalizeParentIfComplete(parentId: number): Promise<void> {
+async function finalizeParentIfComplete(parentId: number, log: typeof logger = logger): Promise<void> {
   try {
     await db.execute(sql`
       WITH child_agg AS (
@@ -160,7 +161,7 @@ async function finalizeParentIfComplete(parentId: number): Promise<void> {
         AND catalog_pdf_job.status NOT IN ('done', 'done_with_errors', 'failed')
     `);
   } catch (err) {
-    logger.error({ err, parentId }, "[catalog-pdf] finalizeParentIfComplete failed");
+    log.error({ err, parentId }, "[catalog-pdf] finalizeParentIfComplete failed");
   }
 }
 
@@ -173,7 +174,7 @@ const CANCEL_CHECK_INTERVAL = 10;
 // previous description and clears all pdf-extraction fields (imageUrl, imageSource,
 // imageConfidence, catalogPdfJobId).  Called when a job fails or is cancelled
 // mid-run so partial writes never remain visible to clients.
-async function revertSessionItems(jobId: number): Promise<void> {
+async function revertSessionItems(jobId: number, log: typeof logger = logger): Promise<void> {
   try {
     await db
       .update(inventoryTable)
@@ -194,7 +195,7 @@ async function revertSessionItems(jobId: number): Promise<void> {
         ),
       );
   } catch (revertErr) {
-    logger.error({ err: revertErr, jobId }, "[catalog-pdf] Failed to revert session items on job failure");
+    log.error({ err: revertErr, jobId }, "[catalog-pdf] Failed to revert session items on job failure");
   }
 }
 
@@ -209,6 +210,7 @@ async function processPdfPages(
   pageOffset: number,
   useOpenAiFallback = false,
   processedPagesBase?: number,
+  log: typeof logger = logger,
 ): Promise<void> {
   let processedPages = processedPagesBase ?? startPage;
   let partsFound = 0;
@@ -257,7 +259,7 @@ async function processPdfPages(
     }
 
     const textPreview = page.text.slice(0, 200).replace(/\n/g, " ");
-    logger.info(
+    log.info(
       { jobId, page: page.pageNum + pageOffset, textChars: page.text.length, images: page.images.length, preview: textPreview },
       "[catalog-pdf] processing page",
     );
@@ -273,7 +275,7 @@ async function processPdfPages(
           .update(catalogPdfJobTable)
           .set({ status: "failed", errorMessage: "poe_chain_exhausted", finishedAt: new Date() })
           .where(eq(catalogPdfJobTable.id, jobId));
-        await revertSessionItems(jobId);
+        await revertSessionItems(jobId, log);
         if (parentJobId !== null) {
           await db.execute(sql`
             UPDATE catalog_pdf_job
@@ -284,14 +286,14 @@ async function processPdfPages(
               AND status NOT IN ('done', 'failed')
           `);
         }
-        logger.warn({ jobId, page: page.pageNum + pageOffset }, "[catalog-pdf] poe_chain_exhausted");
+        log.warn({ jobId, page: page.pageNum + pageOffset }, "[catalog-pdf] poe_chain_exhausted");
         return;
       }
       // Payload-too-large: re-throw to fail the entire job (image size won't
       // change on other pages, so all would fail anyway).
       // Transient AI error: log and skip this page so the rest of the job continues.
       if (err instanceof CatalogAiError && err.code !== "ai_payload_too_large") {
-        logger.warn({ jobId, page: page.pageNum + pageOffset, originalMessage: err.originalMessage }, "[catalog-pdf] transient ai_error — skipping page");
+        log.warn({ jobId, page: page.pageNum + pageOffset, originalMessage: err.originalMessage }, "[catalog-pdf] transient ai_error — skipping page");
         processedPages++;
         await db.update(catalogPdfJobTable).set({ processedPages }).where(eq(catalogPdfJobTable.id, jobId));
         continue;
@@ -332,26 +334,26 @@ async function processPdfPages(
       let imageUrl: string | null = null;
       let imageUrl2: string | null = null;
       if (entry.hasPartImage && page.images.length > 0) {
-        const buf1 = await cropOrSelectImage(page, entry.imageRegion, entry.imageIndex);
+        const buf1 = await cropOrSelectImage(page, entry.imageRegion, entry.imageIndex, log);
         if (buf1) {
           try { imageUrl = await uploadCatalogImage(buf1, "image/png"); }
           catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             hadImageUploadFailure = true;
-            logger.warn({ err, jobId }, "[catalog-pdf] Image 1 upload failed");
+            log.warn({ err, jobId }, "[catalog-pdf] Image 1 upload failed");
             await db
               .update(catalogPdfJobTable)
               .set({ errorMessage: `image_upload_failed: ${msg}` })
               .where(eq(catalogPdfJobTable.id, jobId));
           }
         }
-        const buf2 = await cropOrSelectImage(page, entry.imageRegion2, entry.imageIndex2);
+        const buf2 = await cropOrSelectImage(page, entry.imageRegion2, entry.imageIndex2, log);
         if (buf2) {
           try { imageUrl2 = await uploadCatalogImage(buf2, "image/png"); }
           catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             hadImageUploadFailure = true;
-            logger.warn({ err, jobId }, "[catalog-pdf] Image 2 upload failed");
+            log.warn({ err, jobId }, "[catalog-pdf] Image 2 upload failed");
             await db
               .update(catalogPdfJobTable)
               .set({ errorMessage: `image_upload_failed: ${msg}` })
@@ -401,12 +403,12 @@ async function processPdfPages(
   }
 
   if (wasCancelled) {
-    await revertSessionItems(jobId);
+    await revertSessionItems(jobId, log);
     await db
       .update(catalogPdfJobTable)
       .set({ finishedAt: new Date() })
       .where(eq(catalogPdfJobTable.id, jobId));
-    logger.info({ jobId, processedPages, pageOffset }, "[catalog-pdf] job cancelled — session items reverted");
+    log.info({ jobId, processedPages, pageOffset }, "[catalog-pdf] job cancelled — session items reverted");
     return;
   }
 
@@ -424,13 +426,13 @@ async function processPdfPages(
     })
     .where(eq(catalogPdfJobTable.id, jobId));
 
-  logger.info(
+  log.info(
     { jobId, status: finalStatus, pages: processedPages, found: partsFound, matched: matchedParts, images: imagesMatched, unmatched: unmatchedPartsList.length, pageOffset },
     "[catalog-pdf] job complete",
   );
 
   if (parentJobId !== null) {
-    await finalizeParentIfComplete(parentJobId);
+    await finalizeParentIfComplete(parentJobId, log);
   }
 }
 
@@ -702,6 +704,8 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
         resolvedParentJobId,
         pageOffset,
         useOpenAiFallback,
+        undefined,
+        reqLogger,
       );
     } catch (err) {
       // Translate raw provider payload-too-large errors to the canonical job
@@ -719,12 +723,12 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
         .set({ status: "failed", errorMessage: errorCode, finishedAt: new Date() })
         .where(eq(catalogPdfJobTable.id, jobRow.id));
 
-      await revertSessionItems(jobRow.id);
+      await revertSessionItems(jobRow.id, reqLogger);
 
       if (!isCatalogAiError && isProviderPayloadTooLargeError(err)) {
-        logger.warn({ jobId }, "[catalog-pdf] provider rejected payload as too large");
+        reqLogger.warn({ jobId }, "[catalog-pdf] provider rejected payload as too large");
       } else {
-        logger.error({ err, jobId }, "[catalog-pdf] background processing failed");
+        reqLogger.error({ err, jobId }, "[catalog-pdf] background processing failed");
       }
 
       if (resolvedParentJobId !== null) {
@@ -740,7 +744,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
     } finally {
       activePdfJobs--;
       if (activePdfJobs < 0) {
-        logger.error({ activePdfJobs }, "[catalog-pdf] activePdfJobs went negative — counter drift detected");
+        reqLogger.error({ activePdfJobs }, "[catalog-pdf] activePdfJobs went negative — counter drift detected");
       }
     }
   });
@@ -752,7 +756,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
     if (!backgroundLaunched) {
       activePdfJobs--;
       if (activePdfJobs < 0) {
-        logger.error({ activePdfJobs }, "[catalog-pdf] activePdfJobs went negative — counter drift detected");
+        reqLogger.error({ activePdfJobs }, "[catalog-pdf] activePdfJobs went negative — counter drift detected");
       }
     }
   }
@@ -1113,6 +1117,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
         .set({ totalPages: pages.length })
         .where(eq(catalogPdfJobTable.id, jobId));
 
+      const resumeLogger = getLogger(res);
       await processPdfPages(
         jobId,
         pages,
@@ -1122,15 +1127,17 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
         pageOffset,
         useOpenAiFallbackResume,
         resumeFromPage,
+        resumeLogger,
       );
     } catch (err) {
+      const resumeLogger = getLogger(res);
       const msg = err instanceof Error ? err.message : String(err);
       await db
         .update(catalogPdfJobTable)
         .set({ status: "failed", errorMessage: msg, finishedAt: new Date() })
         .where(eq(catalogPdfJobTable.id, jobId));
-      await revertSessionItems(jobId);
-      logger.error({ err, jobId }, "[catalog-pdf] resume failed");
+      await revertSessionItems(jobId, resumeLogger);
+      resumeLogger.error({ err, jobId }, "[catalog-pdf] resume failed");
     } finally {
       activePdfJobs--;
     }

@@ -1577,7 +1577,7 @@ async function enrichItemWithRetry(item: {
   throw lastErr;
 }
 
-async function runBulkEnrich(force = false) {
+async function runBulkEnrich(force = false, log: typeof logger = logger) {
   const modeLabel = force ? "all items (force re-enrich)" : "unenriched items";
 
   const [countRow] = force
@@ -1588,14 +1588,14 @@ async function runBulkEnrich(force = false) {
   bulkEnrichJob.total = countRow!.total;
   const activeModel = getEnrichModel();
   bulkEnrichJob.model = activeModel;
-  logger.info({ total: countRow!.total, mode: modeLabel, model: activeModel }, `[bulk-enrich] Starting`);
+  log.info({ total: countRow!.total, mode: modeLabel, model: activeModel }, `[bulk-enrich] Starting`);
 
   let cursorId = 0;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
     if (bulkEnrichJob.stopRequested) {
-      logger.info("[bulk-enrich] Stop requested – halting after current batch");
+      log.info("[bulk-enrich] Stop requested – halting after current batch");
       break;
     }
 
@@ -1648,7 +1648,7 @@ async function runBulkEnrich(force = false) {
           // Leave enrichedAt NULL so the item remains retryable on next run
           bulkEnrichJob.errors++;
           bulkEnrichJob.lastError = String(r.reason);
-          logger.error({ err: r.reason, id: item.id, vendor: item.vendor, catalog: item.catalog }, "[bulk-enrich] Error enriching item");
+          log.error({ err: r.reason, id: item.id, vendor: item.vendor, catalog: item.catalog }, "[bulk-enrich] Error enriching item");
         }
       }
     }
@@ -1662,7 +1662,7 @@ async function runBulkEnrich(force = false) {
 
   bulkEnrichJob.running = false;
   bulkEnrichJob.finishedAt = new Date();
-  logger.info({ processed: bulkEnrichJob.processed, errors: bulkEnrichJob.errors }, "[bulk-enrich] Done");
+  log.info({ processed: bulkEnrichJob.processed, errors: bulkEnrichJob.errors }, "[bulk-enrich] Done");
   if (bulkEnrichJob.processed > 0) {
     invalidateReferenceAnswerCache().catch(() => {});
   }
@@ -1925,11 +1925,12 @@ router.post("/bulk-enrich", requireAdminAuth, (req, res, next) => {
     bulkEnrichJob.total = null;
     bulkEnrichJob.finishedAt = null;
     bulkEnrichJob.lastError = null;
-    runBulkEnrich(force).catch((err) => {
+    const reqLogger = getLogger(res);
+    runBulkEnrich(force, reqLogger).catch((err) => {
       bulkEnrichJob.running = false;
       bulkEnrichJob.finishedAt = new Date();
       bulkEnrichJob.lastError = String(err);
-      logger.error({ err }, "[bulk-enrich] Fatal error");
+      reqLogger.error({ err }, "[bulk-enrich] Fatal error");
     });
 
     const message = force ? "Force re-enrichment started (all items)" : "Bulk enrichment started";
@@ -1985,7 +1986,7 @@ const MEASURE_ENRICH_DELAY_MS = 50;
  * item's aiKeywords array.  Items that already contain all the generated terms
  * are skipped so the job can be re-run safely without overwriting data.
  */
-async function runMeasureEnrich(): Promise<void> {
+async function runMeasureEnrich(log: typeof logger = logger): Promise<void> {
   // Persist job start to DB so failure state survives a server restart.
   try {
     const [dbRow] = await db
@@ -1994,7 +1995,7 @@ async function runMeasureEnrich(): Promise<void> {
       .returning({ id: measureEnrichJobTable.id });
     measureEnrichJob.dbJobId = dbRow?.id ?? null;
   } catch (dbErr) {
-    logger.warn({ err: dbErr }, "[measure-enrich] Failed to create DB job row; state will be in-memory only");
+    log.warn({ err: dbErr }, "[measure-enrich] Failed to create DB job row; state will be in-memory only");
   }
 
   const [countRow] = await db
@@ -2002,7 +2003,7 @@ async function runMeasureEnrich(): Promise<void> {
     .from(inventoryTable);
 
   measureEnrichJob.total = countRow?.total ?? 0;
-  logger.info({ total: measureEnrichJob.total }, "[measure-enrich] Starting");
+  log.info({ total: measureEnrichJob.total }, "[measure-enrich] Starting");
 
   let lastId = 0;
 
@@ -2040,7 +2041,7 @@ async function runMeasureEnrich(): Promise<void> {
             measureEnrichJob.updated++;
           } catch (err) {
             measureEnrichJob.lastError = String(err);
-            logger.error({ err, id: item.id }, "[measure-enrich] Error updating item");
+            log.error({ err, id: item.id }, "[measure-enrich] Error updating item");
           }
         }
       }
@@ -2054,12 +2055,12 @@ async function runMeasureEnrich(): Promise<void> {
 
   measureEnrichJob.running = false;
   measureEnrichJob.finishedAt = new Date();
-  logger.info({ processed: measureEnrichJob.processed, updated: measureEnrichJob.updated }, "[measure-enrich] Done");
+  log.info({ processed: measureEnrichJob.processed, updated: measureEnrichJob.updated }, "[measure-enrich] Done");
   if (measureEnrichJob.dbJobId !== null) {
     db.update(measureEnrichJobTable)
       .set({ status: "done", finishedAt: new Date(), processed: measureEnrichJob.processed, updated: measureEnrichJob.updated })
       .where(eq(measureEnrichJobTable.id, measureEnrichJob.dbJobId))
-      .catch(err => logger.warn({ err }, "[measure-enrich] Failed to update DB job row on success"));
+      .catch(err => log.warn({ err }, "[measure-enrich] Failed to update DB job row on success"));
   }
   if (measureEnrichJob.updated > 0) {
     invalidateReferenceAnswerCache().catch(() => {});
@@ -2085,16 +2086,17 @@ router.post("/enrich-measurements", requireAdminAuth, (_req, res, next) => {
     measureEnrichJob.lastError  = null;
     measureEnrichJob.dbJobId    = null;
 
-    runMeasureEnrich().catch(err => {
+    const reqLogger = getLogger(res);
+    runMeasureEnrich(reqLogger).catch(err => {
       measureEnrichJob.running    = false;
       measureEnrichJob.finishedAt = new Date();
       measureEnrichJob.lastError  = String(err);
-      logger.error({ err, processed: measureEnrichJob.processed, updated: measureEnrichJob.updated }, "[measure-enrich] Fatal error");
+      reqLogger.error({ err, processed: measureEnrichJob.processed, updated: measureEnrichJob.updated }, "[measure-enrich] Fatal error");
       if (measureEnrichJob.dbJobId !== null) {
         db.update(measureEnrichJobTable)
           .set({ status: "failed", finishedAt: new Date(), errorMessage: String(err), processed: measureEnrichJob.processed, updated: measureEnrichJob.updated })
           .where(eq(measureEnrichJobTable.id, measureEnrichJob.dbJobId))
-          .catch(dbErr => logger.warn({ err: dbErr }, "[measure-enrich] Failed to persist failure to DB"));
+          .catch(dbErr => reqLogger.warn({ err: dbErr }, "[measure-enrich] Failed to persist failure to DB"));
       }
     });
 
