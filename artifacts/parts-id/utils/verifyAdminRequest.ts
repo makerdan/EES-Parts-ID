@@ -8,6 +8,7 @@
  * ──────────────────
  * • ok response  { isAdmin: true }  → setIsAdmin(true),  setAdminToken(token)
  * • ok response  { isAdmin: false } → if wasAdmin, onDemotion(); setIsAdmin(false), setAdminToken(null)
+ * • 403 { code: "MFA_REQUIRED" }   → onMfaRequired?.(); setIsAdmin(false), setAdminToken(null)
  * • non-ok HTTP response            → if wasAdmin, onDemotion(); setIsAdmin(false), setAdminToken(null)
  * • network error (fetch throws)    → admin state LEFT UNCHANGED
  *   Rationale: a transient network blip or rolling deploy restart should not
@@ -27,6 +28,13 @@ export type VerifyAdminRequestDeps = {
   setAdminToken: (v: string | null) => void;
   /** Called when a demotion transition is detected (wasAdmin=true → isAdmin=false). */
   onDemotion?: () => void;
+  /**
+   * Called when the server rejects the admin request because the session lacks
+   * a completed MFA factor (403 { code: "MFA_REQUIRED" }).
+   * The caller (AppContext) should prompt the user to enable two-factor
+   * authentication via their Clerk account settings.
+   */
+  onMfaRequired?: () => void;
 };
 
 export async function verifyAdminRequest({
@@ -37,6 +45,7 @@ export async function verifyAdminRequest({
   setIsAdmin,
   setAdminToken,
   onDemotion,
+  onMfaRequired,
 }: VerifyAdminRequestDeps): Promise<void> {
   try {
     const resp = await fetch(`${apiBase}/admin/me`, {
@@ -52,6 +61,27 @@ export async function verifyAdminRequest({
       }
       setIsAdmin(admin);
       setAdminToken(admin ? token : null);
+    } else if (resp.status === 403) {
+      let code: string | undefined;
+      try {
+        const body = (await resp.json()) as { code?: string };
+        code = body.code;
+      } catch {
+        // ignore parse errors — treat as a generic 403
+      }
+
+      if (code === "MFA_REQUIRED") {
+        onMfaRequired?.();
+        setIsAdmin(false);
+        setAdminToken(null);
+        return;
+      }
+
+      if (shouldNotifyDemotion(wasAdmin, false)) {
+        onDemotion?.();
+      }
+      setIsAdmin(false);
+      setAdminToken(null);
     } else {
       if (shouldNotifyDemotion(wasAdmin, false)) {
         onDemotion?.();

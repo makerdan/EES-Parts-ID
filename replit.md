@@ -63,6 +63,20 @@ Seed: `node --import tsx/esm --no-warnings src/seed/run.ts` from `artifacts/api-
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
 
+## Admin MFA Enforcement
+
+Admin endpoints enforce multi-factor authentication when `ENFORCE_ADMIN_MFA=true` is set on the API server. When enabled, any admin session that lacks a completed second factor (`totp`, `phone_code`, or hardware key) in the Clerk `amr` session claim receives:
+
+```
+403 { error: "MFA required for admin access", code: "MFA_REQUIRED" }
+```
+
+**Enabling:** Set `ENFORCE_ADMIN_MFA=true` in the API server environment (Replit Secrets → api-server). Leave unset (or set to anything other than `"true"`) to disable — the default is backward-compatible and MFA is not required.
+
+**Admin enrollment:** Admins enable two-factor authentication through the Clerk account portal (Settings → Security → Two-step verification). The mobile app surfaces an Alert with a button to open the portal when MFA is required.
+
+Relevant file: `artifacts/api-server/src/middlewares/requireAdminAuth.ts`
+
 ## User preferences
 
 - **Tasks must never silently wait for user input.** If a task agent (or any
