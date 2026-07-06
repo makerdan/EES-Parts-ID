@@ -35,6 +35,7 @@ export function AuthGate() {
     // Stack-level screens that are valid destinations for approved users.
     const atAdmin = seg0 === "admin";
     const atAdminInbox = seg0 === "admin-inbox";
+    const atAdminAuditLog = seg0 === "admin-audit-log";
     const atAiLog = seg0 === "ai-log";
     const atCatalogReview = seg0 === "catalog-review";
     const atEditItem = seg0 === "edit-item";
@@ -55,6 +56,7 @@ export function AuthGate() {
         !inTabs &&
         !atAdmin &&
         !atAdminInbox &&
+        !atAdminAuditLog &&
         !atAiLog &&
         !atCatalogReview &&
         !atEditItem
