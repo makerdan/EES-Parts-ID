@@ -24,7 +24,7 @@ import { catalogPdfJobTable,db,inventoryTable } from "@workspace/db";
 import { and, desc, eq, inArray, isNull,lt, or, sql } from "drizzle-orm";
 import { Router } from "express";
 
-import { logger } from "../lib/logger";
+import { getLogger, logger } from "../lib/logger";
 import { uploadCatalogImage } from "../lib/objectStorage";
 import { PoeBotChainExhaustedError } from "../lib/poeBot";
 import { catalogPdfUploadLimiter } from "../lib/rateLimiter";
@@ -436,12 +436,13 @@ async function processPdfPages(
 
 // ── POST /admin/catalog-pdf ───────────────────────────────────────────────────
 router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   // Per-admin upload rate limit: prevents a compromised admin account from
   // flooding the background processing queue with many rapid uploads.
   const adminUserId = (res.locals.appUser as { clerkUserId: string } | undefined)?.clerkUserId
     ?? getAuth(req)?.userId
     ?? String(req.ip ?? "unknown");
-  const uploadRateCheck = await catalogPdfUploadLimiter.check(adminUserId);
+  const uploadRateCheck = await catalogPdfUploadLimiter.check(adminUserId, res.locals.requestId as string | undefined);
   if (!uploadRateCheck.allowed) {
     res.set("Retry-After", String(Math.ceil(uploadRateCheck.retryAfterMs / 1000)));
     return void res.status(429).json({ error: "Too many catalog upload requests. Please slow down." });
@@ -523,7 +524,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
     validatePdf(pdfBuffer);
   } catch (preErr) {
     const msg = preErr instanceof Error ? preErr.message : String(preErr);
-    logger.warn({ msg }, "[catalog-pdf] PDF pre-validation failed");
+    reqLogger.warn({ msg }, "[catalog-pdf] PDF pre-validation failed");
     return void res.status(400).json({ error: msg });
   }
 
@@ -759,6 +760,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
 
 // ── POST /admin/catalog-pdf/:jobId/cancel ─────────────────────────────────────
 router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   const jobId = Number(req.params["jobId"]);
   if (!Number.isFinite(jobId)) {
     res.status(400).json({ error: "Invalid jobId" });
@@ -795,7 +797,7 @@ router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => 
       AND status IN ('pending', 'processing')
   `);
 
-  logger.info({ jobId }, "[catalog-pdf] cancel requested");
+  reqLogger.info({ jobId }, "[catalog-pdf] cancel requested");
   res.json({ ok: true, jobId: String(jobId) });
 });
 
@@ -948,6 +950,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
 // Returns jobs in `failed` or `cancelled` status that are not dismissed and not child jobs
 // (child jobs are hidden — only the parent appears in admin-facing lists).
 router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const rows = await db
       .select({
@@ -972,7 +975,7 @@ router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
 
     res.json({ jobs: rows });
   } catch (err) {
-    logger.error({ err }, "[catalog-pdf] Failed to fetch failed jobs");
+    reqLogger.error({ err }, "[catalog-pdf] Failed to fetch failed jobs");
     res.status(500).json({ error: "Failed to fetch failed jobs" });
   }
 });
@@ -1142,6 +1145,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
 // Marks a failed or cancelled job as dismissed so it no longer appears in the
 // failed-jobs list.
 router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   const jobId = Number(req.params["jobId"]);
   if (!Number.isFinite(jobId)) {
     res.status(400).json({ error: "Invalid jobId" });
@@ -1163,13 +1167,14 @@ router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) =>
     }
     res.json({ ok: true });
   } catch (err) {
-    logger.error({ err }, "[catalog-pdf] Failed to dismiss job");
+    reqLogger.error({ err }, "[catalog-pdf] Failed to dismiss job");
     res.status(500).json({ error: "Failed to dismiss job" });
   }
 });
 
 // ── GET /admin/catalog-pdf/reviews ────────────────────────────────────────────
 router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const jobIdFilter = req.query["jobId"] ? Number(req.query["jobId"]) : null;
 
@@ -1280,7 +1285,7 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
       total: rows.length,
     });
   } catch (err) {
-    logger.error({ err }, "[catalog-pdf] Failed to fetch reviews");
+    reqLogger.error({ err }, "[catalog-pdf] Failed to fetch reviews");
     res.status(500).json({ error: "Failed to fetch reviews" });
   }
 });

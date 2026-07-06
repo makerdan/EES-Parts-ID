@@ -21,6 +21,19 @@ const app: Express = express();
 // than the proxy's address, without allowing clients to spoof arbitrary IPs.
 app.set("trust proxy", 1);
 
+// ── Request ID ────────────────────────────────────────────────────────────────
+// Assign a unique identifier to every request so logs and error responses can
+// be correlated. The client may supply X-Request-Id (e.g. on a mobile retry);
+// if present, that value is reused unchanged so the ID flows end-to-end.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const incoming = req.headers["x-request-id"];
+  const requestId = (Array.isArray(incoming) ? incoming[0] : incoming) ?? crypto.randomUUID();
+  res.locals.requestId = requestId;
+  res.setHeader("X-Request-Id", requestId);
+  res.locals.logger = logger.child({ requestId });
+  next();
+});
+
 // ── Security headers ───────────────────────────────────────────────────────────
 // Mount helmet before CORS and body parsers so security headers are applied to
 // every response including error responses from upstream middleware.
@@ -52,6 +65,10 @@ app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 app.use(
   pinoHttp({
     logger,
+    customProps(_req, res) {
+      const requestId = (res as Response).locals?.requestId as string | undefined;
+      return requestId ? { requestId } : {};
+    },
     serializers: {
       req(req) {
         return {
@@ -194,7 +211,8 @@ app.use("/api", router);
 // The 4-argument signature is required for Express to treat this as an error
 // handler rather than a normal middleware.
 app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
-  logger.error({ err }, "Unhandled error reached the global error handler");
+  const requestId = res.locals.requestId as string | undefined;
+  logger.error({ err, requestId }, "Unhandled error reached the global error handler");
   // If the response has already started, we cannot rewrite the status/body;
   // hand off to Express's default handler so the connection is torn down
   // correctly rather than left hanging.
@@ -202,7 +220,7 @@ app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
     next(err);
     return;
   }
-  res.status(500).json({ error: "Internal server error" });
+  res.status(500).json({ error: "Internal server error", requestId });
 });
 
 export default app;
