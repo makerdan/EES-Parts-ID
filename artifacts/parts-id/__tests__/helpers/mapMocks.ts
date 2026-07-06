@@ -189,6 +189,7 @@ export function createMapViewportMock(): object {
     computeFitTarget:    jest.fn().mockReturnValue({ scale: actual.ZOOM_STOPS[0].scale, tx: 0, ty: 0 }),
     makeTileViewBox:     jest.fn().mockReturnValue("0 0 100 100"),
     computeFocusPan:     jest.fn().mockReturnValue({ tx: 0, ty: 0 }),
+    runFocusAisleEffect: jest.fn().mockReturnValue(null),
     tileGridSize:        jest.fn().mockReturnValue(1),
     zoomStopForScale:    jest.fn().mockReturnValue(0),
     visibleTileRange:    jest.fn().mockReturnValue({ c0: 0, c1: 0, r0: 0, r1: 0 }),
