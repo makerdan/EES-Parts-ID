@@ -3296,9 +3296,16 @@ export default function UploadScreen() {
                 </Pressable>
                 <Pressable
                   onPress={() => router.push("/ai-log")}
-                  style={[hubStyles.navRow, { borderColor: colors.border, borderBottomWidth: 0 }]}
+                  style={[hubStyles.navRow, { borderColor: colors.border }]}
                 >
                   <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>🤖 AI Log</Text>
+                  <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+                </Pressable>
+                <Pressable
+                  onPress={() => router.push("/admin-audit-log")}
+                  style={[hubStyles.navRow, { borderColor: colors.border, borderBottomWidth: 0 }]}
+                >
+                  <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>🔍 Audit Log</Text>
                   <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
                 </Pressable>
               </View>

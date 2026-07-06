@@ -5,6 +5,24 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export type AdminAuditLogEntryAction =
+  (typeof AdminAuditLogEntryAction)[keyof typeof AdminAuditLogEntryAction];
+
+export const AdminAuditLogEntryAction = {
+  approve: "approve",
+  ban: "ban",
+  promote: "promote",
+  demote: "demote",
+} as const;
+
+export interface AdminAuditLogEntry {
+  id: number;
+  adminClerkUserId: string;
+  targetClerkUserId: string;
+  action: AdminAuditLogEntryAction;
+  createdAt: string;
+}
+
 export type HealthStatusStatus =
   (typeof HealthStatusStatus)[keyof typeof HealthStatusStatus];
 
@@ -420,4 +438,12 @@ export type LookupDictionaryParams = {
 
 export type DeleteWarehouseZone200 = {
   deleted: boolean;
+};
+
+export type GetAdminAuditLogParams = {
+  /**
+   * Maximum number of entries to return (default 100, max 500)
+   * @maximum 500
+   */
+  limit?: number;
 };

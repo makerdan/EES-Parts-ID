@@ -1434,6 +1434,30 @@ export const DeleteWarehouseZoneResponse = zod.object({
 });
 
 /**
+ * Returns privileged admin actions (approve, ban, promote, demote) in reverse-chronological order. Admin access required.
+ * @summary List admin action audit log entries (admin)
+ */
+export const getAdminAuditLogQueryLimitDefault = 100;
+export const getAdminAuditLogQueryLimitMax = 500;
+
+export const GetAdminAuditLogQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .max(getAdminAuditLogQueryLimitMax)
+    .default(getAdminAuditLogQueryLimitDefault)
+    .describe("Maximum number of entries to return (default 100, max 500)"),
+});
+
+export const GetAdminAuditLogResponseItem = zod.object({
+  id: zod.number(),
+  adminClerkUserId: zod.string(),
+  targetClerkUserId: zod.string(),
+  action: zod.enum(["approve", "ban", "promote", "demote"]),
+  createdAt: zod.coerce.date(),
+});
+export const GetAdminAuditLogResponse = zod.array(GetAdminAuditLogResponseItem);
+
+/**
  * @deprecated
  * @summary [Deprecated] Use /reference/ask instead
  */
