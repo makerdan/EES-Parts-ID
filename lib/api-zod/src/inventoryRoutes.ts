@@ -79,6 +79,11 @@ const BinDiffRowSchema = z.object({
   incomingBins: z.array(z.string()),
 });
 
+/** Request body for PATCH /inventory/:id/expanded-description */
+export const PatchExpandedDescriptionBody = z.object({
+  expandedDescription: z.string().max(2000).nullable(),
+});
+
 /** 200 response for POST /inventory/upsert-batch/preview */
 export const UpsertBatchPreviewResponse = z.object({
   willReplaceBins: z.number().int().nonnegative(),
