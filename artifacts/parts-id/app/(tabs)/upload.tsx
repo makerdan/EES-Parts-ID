@@ -1720,6 +1720,8 @@ export default function UploadScreen() {
               adminToken,
               setUserActionPending,
               showToast,
+              showWarning: (message) =>
+                Alert.alert("Partial Deletion", message),
               removeUser: (id) =>
                 setUsersData((prev) => prev.filter((u) => u.clerkUserId !== id)),
             });

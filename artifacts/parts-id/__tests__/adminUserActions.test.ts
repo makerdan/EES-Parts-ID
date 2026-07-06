@@ -139,12 +139,14 @@ function makeDeleteAdminUserDeps(overrides: Partial<DeleteAdminUserDeps> = {}): 
   mocks: {
     setUserActionPending: jest.Mock;
     showToast: jest.Mock;
+    showWarning: jest.Mock;
     removeUser: jest.Mock;
   };
 } {
   const mocks = {
     setUserActionPending: jest.fn(),
     showToast: jest.fn(),
+    showWarning: jest.fn(),
     removeUser: jest.fn(),
   };
   return {
@@ -455,11 +457,23 @@ describe("handleUserAction — concurrency and pending state", () => {
 // deleteAdminUser
 // ─────────────────────────────────────────────────────────────────────────────
 
-function makeOkDeleteResponse(): Response {
+function makeOkDeleteResponse(clerkDeleted = true): Response {
   return {
     ok: true,
     status: 200,
-    json: async () => ({ success: true }),
+    json: async () => ({ deleted: true, clerkDeleted }),
+  } as unknown as Response;
+}
+
+function makePartialDeleteResponse(clerkError?: string): Response {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({
+      deleted: true,
+      clerkDeleted: false,
+      ...(clerkError ? { clerkError } : {}),
+    }),
   } as unknown as Response;
 }
 
@@ -494,6 +508,15 @@ describe("deleteAdminUser — success path", () => {
     expect(mocks.showToast).not.toHaveBeenCalled();
   });
 
+  it("(n2) does NOT call showWarning when clerkDeleted is true", async () => {
+    mockFetch.mockResolvedValueOnce(makeOkDeleteResponse(true));
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.showWarning).not.toHaveBeenCalled();
+  });
+
   it("passes the admin token in the Authorization header", async () => {
     mockFetch.mockResolvedValueOnce(makeOkDeleteResponse());
     const { deps } = makeDeleteAdminUserDeps();
@@ -503,6 +526,63 @@ describe("deleteAdminUser — success path", () => {
     const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
     const headers = options?.headers as Record<string, string>;
     expect(headers?.["Authorization"]).toBe(`Bearer ${ADMIN_TOKEN}`);
+  });
+});
+
+describe("deleteAdminUser — partial success (clerkDeleted: false)", () => {
+  it("calls removeUser and showWarning when clerkDeleted is false", async () => {
+    mockFetch.mockResolvedValueOnce(makePartialDeleteResponse("Clerk API error"));
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.removeUser).toHaveBeenCalledWith("user_a");
+    expect(mocks.showWarning).toHaveBeenCalledWith(
+      expect.stringContaining("Clerk API error"),
+    );
+    expect(mocks.showToast).not.toHaveBeenCalled();
+  });
+
+  it("includes the clerkError message in the warning", async () => {
+    mockFetch.mockResolvedValueOnce(makePartialDeleteResponse("Resource not found"));
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.showWarning).toHaveBeenCalledWith(
+      expect.stringContaining("Resource not found"),
+    );
+  });
+
+  it("shows a fallback warning message when clerkError is absent", async () => {
+    mockFetch.mockResolvedValueOnce(makePartialDeleteResponse());
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.removeUser).toHaveBeenCalledWith("user_a");
+    expect(mocks.showWarning).toHaveBeenCalledWith(
+      expect.stringContaining("Clerk"),
+    );
+  });
+
+  it("does NOT call showToast on partial success", async () => {
+    mockFetch.mockResolvedValueOnce(makePartialDeleteResponse("something failed"));
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.showToast).not.toHaveBeenCalled();
+  });
+
+  it("clears userActionPending after partial success", async () => {
+    mockFetch.mockResolvedValueOnce(makePartialDeleteResponse("err"));
+    const { deps, mocks } = makeDeleteAdminUserDeps();
+
+    await deleteAdminUser("user_a", deps);
+
+    expect(mocks.setUserActionPending).toHaveBeenNthCalledWith(1, "user_a");
+    expect(mocks.setUserActionPending).toHaveBeenNthCalledWith(2, null);
   });
 });
 

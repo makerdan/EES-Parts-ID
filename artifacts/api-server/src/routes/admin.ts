@@ -432,17 +432,25 @@ router.delete("/users/:clerkUserId", requireAdminAuth, async (req, res) => {
     }
 
     // Best-effort: remove the user from Clerk so they cannot sign in again and
-    // recreate a pending DB row. If Clerk deletion fails the DB row is already
-    // gone, so we still return success, but we log a warning so operators know
-    // the Clerk account may still be active.
-    try {
-      await clerkClient.users.deleteUser(clerkUserId);
-    } catch (clerkErr) {
-      const msg = clerkErr instanceof Error ? clerkErr.message : String(clerkErr);
-      console.warn(`[admin] DB row deleted but Clerk deletion failed for ${clerkUserId}: ${msg}`);
+    // recreate a pending DB row. If CLERK_SECRET_KEY is absent or the call
+    // fails, the DB row is already gone so we still return deleted:true — but
+    // we set clerkDeleted:false so the UI can surface a clear warning.
+    if (!process.env.CLERK_SECRET_KEY) {
+      return res.json({
+        deleted: true,
+        clerkDeleted: false,
+        clerkError: "No CLERK_SECRET_KEY configured — Clerk account may still be active",
+      });
     }
 
-    return res.json({ deleted: true });
+    try {
+      await clerkClient.users.deleteUser(clerkUserId);
+      return res.json({ deleted: true, clerkDeleted: true });
+    } catch (clerkErr) {
+      const msg = clerkErr instanceof Error ? clerkErr.message : String(clerkErr);
+      logger.warn({ clerkUserId, msg }, "[admin] DB row deleted but Clerk deletion failed");
+      return res.json({ deleted: true, clerkDeleted: false, clerkError: msg });
+    }
   } catch {
     return res.status(500).json({ error: "Failed to delete user" });
   }
