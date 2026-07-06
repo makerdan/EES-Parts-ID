@@ -35,34 +35,129 @@ const WAREHOUSE_MAP_VIEW_PATH = path.resolve(
   "../../components/WarehouseMapView.tsx",
 );
 
-/**
- * Parse every named, non-type import that WarehouseMapView.tsx pulls from
- * "react-native-reanimated".
- *
- * Handles:
- *   import Animated, { foo, type Bar, baz } from "react-native-reanimated";
- *   import { foo, type Bar, baz } from "react-native-reanimated";
- *   import { foo as f, bar } from "react-native-reanimated";
- *
- * Returns only runtime value names (type-only imports are excluded).
- */
-function parseReanimatedValueImports(source: string): string[] {
-  // Match the named-import brace group from the reanimated import statement.
-  // The default export (Animated) is optional and excluded automatically.
-  const match = source.match(
-    /import\s+(?:Animated\s*,\s*)?\{\s*([^}]+)\s*\}\s*from\s*["']react-native-reanimated["']/,
-  );
-  if (!match) return [];
+/** Root of the parts-id artifact (this file lives at __tests__/helpers/). */
+const ARTIFACT_ROOT = path.resolve(__dirname, "../..");
 
-  return match[1]
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0 && !s.startsWith("type "))
-    .map((s) => {
-      // "cancelAnimation as ca" → "cancelAnimation"
-      const aliasIdx = s.search(/\s+as\s+/);
-      return aliasIdx >= 0 ? s.slice(0, aliasIdx).trim() : s;
-    });
+/** Directories that never contain shipped, test-consumed component source. */
+const SCAN_IGNORE_DIRS = new Set([
+  "node_modules", "__tests__", "__mocks__",
+  ".expo", "dist", "build", "coverage",
+]);
+
+/**
+ * Recursively collect every .ts/.tsx source file under `dir`, skipping test,
+ * mock, and build directories.  Used to find *all* components that import
+ * react-native-reanimated — not just WarehouseMapView — so the shared mock is
+ * validated against the entire real usage surface.
+ */
+function collectSourceFiles(dir: string, acc: string[] = []): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return acc;
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    if (entry.isDirectory()) {
+      if (SCAN_IGNORE_DIRS.has(entry.name)) continue;
+      collectSourceFiles(path.join(dir, entry.name), acc);
+    } else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith(".d.ts")) {
+      acc.push(path.join(dir, entry.name));
+    }
+  }
+  return acc;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+interface ReanimatedUsage {
+  /** Exported names of named value imports (aliases resolved to exported name). */
+  namedValueExports: Set<string>;
+  /** Exported name → members accessed on it as a namespace (e.g. Easing.bezier). */
+  namespaceMembers: Map<string, Set<string>>;
+  /** Members accessed on the default import binding (e.g. Animated.View). */
+  defaultMembers: Set<string>;
+  /** Number of source files found importing react-native-reanimated. */
+  fileCount: number;
+}
+
+/**
+ * Parse the full react-native-reanimated usage surface across every source
+ * file: named value imports, members accessed on named imports used as
+ * namespace objects (Easing.bezier, …), and members accessed on the default
+ * `Animated` import (Animated.View, Animated.createAnimatedComponent, …).
+ *
+ * Handles aliased imports (`foo as f`) by scanning usage under the *local*
+ * binding while keying the mock lookup off the *exported* name.
+ */
+function collectReanimatedUsage(files: string[]): ReanimatedUsage {
+  const usage: ReanimatedUsage = {
+    namedValueExports: new Set(),
+    namespaceMembers: new Map(),
+    defaultMembers: new Set(),
+    fileCount: 0,
+  };
+
+  // Optional default binding, optional named brace group. `[^}]` spans newlines
+  // so multiline import statements are matched.
+  const importRe =
+    /import\s+(?:([A-Za-z_$][\w$]*)\s*,\s*)?(?:\{([^}]*)\})?\s*from\s*["']react-native-reanimated["']/;
+
+  for (const file of files) {
+    const source = fs.readFileSync(file, "utf-8");
+    const m = source.match(importRe);
+    if (!m) continue;
+    usage.fileCount++;
+
+    const defaultLocal = m[1] ?? null;
+    const namedRaw = m[2] ?? "";
+
+    const named: { local: string; exported: string }[] = namedRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && !s.startsWith("type "))
+      .map((s) => {
+        const aliasIdx = s.search(/\s+as\s+/);
+        if (aliasIdx >= 0) {
+          return {
+            exported: s.slice(0, aliasIdx).trim(),
+            local: s.slice(aliasIdx).replace(/^\s+as\s+/, "").trim(),
+          };
+        }
+        return { exported: s, local: s };
+      });
+
+    for (const { local, exported } of named) {
+      usage.namedValueExports.add(exported);
+      const memberRe = new RegExp(
+        `\\b${escapeRegExp(local)}\\.([A-Za-z_$][\\w$]*)`,
+        "g",
+      );
+      let mm: RegExpExecArray | null;
+      while ((mm = memberRe.exec(source)) !== null) {
+        if (!usage.namespaceMembers.has(exported)) {
+          usage.namespaceMembers.set(exported, new Set());
+        }
+        usage.namespaceMembers.get(exported)!.add(mm[1]);
+      }
+    }
+
+    if (defaultLocal) {
+      const memberRe = new RegExp(
+        `\\b${escapeRegExp(defaultLocal)}\\.([A-Za-z_$][\\w$]*)`,
+        "g",
+      );
+      let mm: RegExpExecArray | null;
+      while ((mm = memberRe.exec(source)) !== null) {
+        usage.defaultMembers.add(mm[1]);
+      }
+    }
+  }
+
+  return usage;
 }
 
 /**
@@ -217,18 +312,54 @@ describe("createGestureHandlerMock() smoke — every gesture chain method used i
   });
 });
 
-describe("createReanimatedMock() smoke — every Reanimated value import in WarehouseMapView is mocked", () => {
+/**
+ * Smoke test for createReanimatedMock().
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * createReanimatedMock() in mapMocks.ts hardcodes its full export surface: the
+ * named value hooks (useSharedValue, withTiming, …), the default `Animated`
+ * object (View, ScrollView, createAnimatedComponent), and the `Easing`
+ * sub-object.  An earlier smoke test only checked the *named value imports of
+ * WarehouseMapView.tsx* — it could not catch drift in the default object's
+ * members (Animated.View, …) or a differently-shaped `Easing` sub-object, and
+ * it was blind to any other component that consumes reanimated.
+ *
+ * HOW IT WORKS
+ * ------------
+ * This test scans EVERY .ts/.tsx source file under the artifact (excluding
+ * tests, mocks, and build output) for react-native-reanimated usage and builds
+ * the real usage surface:
+ *   • named value imports        → must be a function on the mock
+ *   • namespace members (X.foo)  → mock[X] must be an object exposing `foo`
+ *                                  (this is what guards the Easing sub-object)
+ *   • default members (Animated.foo) → mock.default.foo must be a function
+ * When any component adds a new hook, a new Animated.* member, or an Easing.*
+ * call that the mock doesn't provide, this test fails immediately with a clear
+ * message — no manual list to maintain.
+ *
+ * HOW TO FIX A FAILURE
+ * --------------------
+ * Add the reported export/member to createReanimatedMock() in mapMocks.ts.
+ * The test itself never needs updating.
+ */
+describe("createReanimatedMock() smoke — reanimated export surface matches real usage across all source files", () => {
   let mock: Record<string, unknown>;
-  let importedNames: string[];
+  let usage: ReanimatedUsage;
 
   beforeAll(() => {
-    const source = fs.readFileSync(WAREHOUSE_MAP_VIEW_PATH, "utf-8");
-    importedNames = parseReanimatedValueImports(source);
+    usage = collectReanimatedUsage(collectSourceFiles(ARTIFACT_ROOT));
     mock = createReanimatedMock() as Record<string, unknown>;
   });
 
-  it("WarehouseMapView.tsx has at least one react-native-reanimated import (sanity check)", () => {
-    expect(importedNames.length).toBeGreaterThan(0);
+  it("at least one source file imports react-native-reanimated (sanity check)", () => {
+    expect(usage.fileCount).toBeGreaterThan(0);
+  });
+
+  it("uses at least one member of the default Animated export (sanity check)", () => {
+    // Guards against a future refactor silently disabling the default-export
+    // assertion below (which would make the mock's default object untested).
+    expect(usage.defaultMembers.size).toBeGreaterThan(0);
   });
 
   it("returns an object (mock was called successfully)", () => {
@@ -236,21 +367,72 @@ describe("createReanimatedMock() smoke — every Reanimated value import in Ware
     expect(mock).not.toBeNull();
   });
 
-  it("mock exports a function for every named Reanimated import used in WarehouseMapView", () => {
-    const notMocked = importedNames.filter(
-      (name) => typeof mock[name] !== "function",
-    );
+  it("mock provides every named reanimated import used across source files, correctly shaped", () => {
+    const failures: string[] = [];
 
-    if (notMocked.length > 0) {
+    for (const name of [...usage.namedValueExports].sort()) {
+      const members = usage.namespaceMembers.get(name);
+      const val = mock[name];
+
+      if (members && members.size > 0) {
+        // Used as a namespace object (e.g. Easing.bezier, Easing.inOut).
+        if (val === null || typeof val !== "object") {
+          failures.push(
+            `  • ${name} — accessed as a namespace object (${name}.${[...members][0]}) ` +
+              `but the mock exports ${val === null ? "null" : typeof val}`,
+          );
+          continue;
+        }
+        for (const member of [...members].sort()) {
+          if ((val as Record<string, unknown>)[member] === undefined) {
+            failures.push(
+              `  • ${name}.${member} — missing from the ${name} sub-object in the mock`,
+            );
+          }
+        }
+      } else if (typeof val !== "function") {
+        // Used as a plain value/hook — must be a callable function.
+        failures.push(`  • ${name} — missing or not a function (got: ${typeof val})`);
+      }
+    }
+
+    if (failures.length > 0) {
       throw new Error(
-        `The following react-native-reanimated exports are used by WarehouseMapView.tsx ` +
-          `but are missing or not a function in createReanimatedMock():\n` +
-          notMocked.map((n) => `  • ${n} (got: ${typeof mock[n]})`).join("\n") +
-          `\n\nFix: add each missing export to createReanimatedMock() in mapMocks.ts.`,
+        `The following react-native-reanimated exports are used by the app ` +
+          `but are missing or wrongly shaped in createReanimatedMock():\n` +
+          failures.join("\n") +
+          `\n\nFix: add/repair each entry in createReanimatedMock() in mapMocks.ts.`,
       );
     }
 
-    expect(notMocked).toEqual([]);
+    expect(failures).toEqual([]);
+  });
+
+  it("mock's default (Animated) export provides every member accessed across source files", () => {
+    const def = mock.default as Record<string, unknown> | undefined;
+    expect(def).toBeDefined();
+    expect(typeof def).toBe("object");
+
+    const failures: string[] = [];
+    for (const member of [...usage.defaultMembers].sort()) {
+      const val = def![member];
+      if (typeof val !== "function") {
+        failures.push(
+          `  • Animated.${member} — missing or not a function on the default export (got: ${typeof val})`,
+        );
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(
+        `The following members of the default Animated export are used by the app ` +
+          `but are missing or wrongly shaped in createReanimatedMock().default:\n` +
+          failures.join("\n") +
+          `\n\nFix: add each member to the \`default\` object in createReanimatedMock() in mapMocks.ts.`,
+      );
+    }
+
+    expect(failures).toEqual([]);
   });
 });
 
