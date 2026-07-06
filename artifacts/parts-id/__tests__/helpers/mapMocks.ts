@@ -89,15 +89,20 @@ export function createSvgMock(): object {
     Rect:     make("svg-rect"),
     G:        make("g"),
     Text:     make("svg-text"),
-    SvgUri:   noop,
-    SvgXml:   noop,
-    Path:     noop,
-    Ellipse:  noop,
-    Circle:   noop,
+    // NOTE: elements that WarehouseMapView actually renders must FORWARD their
+    // tag (via make()), never return noop.  A noop stub renders nothing, so the
+    // component's floor plan / pins / zone shapes silently vanish in tests while
+    // the test still passes.  The createSvgMock() smoke test in
+    // mapMocks.smoke.test.ts enforces this for every element the component uses.
+    SvgUri:   make("svg-uri"),
+    SvgXml:   make("svg-xml"),
+    Path:     make("svg-path"),
+    Ellipse:  make("svg-ellipse"),
+    Circle:   make("svg-circle"),
     Defs:     make("defs"),
     ClipPath: make("clip-path"),
-    Use:      noop,
-    Symbol:   noop,
+    Use:      make("svg-use"),
+    Symbol:   make("svg-symbol"),
   };
 }
 

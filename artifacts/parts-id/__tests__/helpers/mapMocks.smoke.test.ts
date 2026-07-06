@@ -28,7 +28,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { createFloorPlanCacheMock, createGestureHandlerMock, createMapViewportMock, createReanimatedMock, createUseColorsMock } from "./mapMocks";
+import { createExpoAssetMock, createFloorPlanCacheMock, createGestureHandlerMock, createMapViewportMock, createReanimatedMock, createSvgMock, createUseColorsMock } from "./mapMocks";
 
 const WAREHOUSE_MAP_VIEW_PATH = path.resolve(
   __dirname,
@@ -158,6 +158,50 @@ function collectReanimatedUsage(files: string[]): ReanimatedUsage {
   }
 
   return usage;
+}
+
+/**
+ * Parse every named, non-type import that WarehouseMapView.tsx pulls from
+ * "react-native-svg".  Returns the ORIGINAL export names (the left-hand side of
+ * any "as" alias), since those are the keys createSvgMock() must expose.
+ *
+ * Handles:
+ *   import { Path, Rect, Text as SvgText, type NumberProp } from "react-native-svg";
+ *   import Svg, { G, Path } from "react-native-svg";
+ *
+ * Type-only imports (`type Foo`) are excluded — they never reach the runtime
+ * mock.
+ */
+function parseSvgElementImports(source: string): string[] {
+  const match = source.match(
+    /import\s+(?:\w+\s*,\s*)?\{\s*([^}]+)\s*\}\s*from\s*["']react-native-svg["']/,
+  );
+  if (!match) return [];
+
+  return match[1]
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && !s.startsWith("type "))
+    .map((s) => {
+      // "Text as SvgText" → "Text" (mock is keyed by the real export name).
+      const aliasIdx = s.search(/\s+as\s+/);
+      return aliasIdx >= 0 ? s.slice(0, aliasIdx).trim() : s;
+    });
+}
+
+/**
+ * Parse every `Asset.<method>(` call site in WarehouseMapView.tsx.  Returns the
+ * sorted, deduplicated set of method names invoked on the expo-asset `Asset`
+ * object.  These are the methods createExpoAssetMock().Asset must expose.
+ */
+function parseExpoAssetMethods(source: string): string[] {
+  const methods = new Set<string>();
+  const re = /\bAsset\.(\w+)\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source)) !== null) {
+    methods.add(m[1]);
+  }
+  return [...methods].sort();
 }
 
 /**
@@ -633,6 +677,167 @@ describe("createMapViewportMock() smoke — every function export of mapViewport
           missing.map((n) => `  • ${n} (got: ${typeof mock[n]})`).join("\n") +
           `\n\nFix: add each missing export as a jest.fn() stub to ` +
           `createMapViewportMock() in mapMocks.ts.`,
+      );
+    }
+
+    expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * Smoke test for createSvgMock().
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * createSvgMock() in mapMocks.ts stubs each react-native-svg element with one
+ * of two things:
+ *   - a tag-forwarding component (make("svg-…")) that renders into the tree, or
+ *   - a `noop` stub (() => null) that renders NOTHING.
+ *
+ * A `noop` for an element WarehouseMapView actually renders is a silent bug:
+ * the floor plan / pins / zone shapes vanish from the rendered tree, yet the
+ * test still passes because nothing threw.  Likewise, if the component starts
+ * using an element the mock does not expose at all, that element resolves to
+ * `undefined` and renders nothing (or throws deep inside an unrelated test).
+ *
+ * HOW IT WORKS
+ * ------------
+ * This test reads the actual source of WarehouseMapView.tsx at runtime, parses
+ * every named (non-type) react-native-svg import, and asserts that
+ * createSvgMock() exposes each one as a component that RENDERS — i.e. calling
+ * it returns a non-null React element, not the null a `noop` produces.  When a
+ * developer adds a new SVG element to the component, this test fails
+ * immediately at the mock layer — no manual update to this test is required.
+ *
+ * HOW TO FIX A FAILURE
+ * --------------------
+ * If this test fails with "missing from createSvgMock()" or "renders nothing":
+ *   1. Add (or change) X in createSvgMock() in mapMocks.ts so it forwards a
+ *      tag, e.g. `Path: make("svg-path")` — never `Path: noop`.
+ * That's it.  The test itself never needs updating.
+ */
+describe("createSvgMock() smoke — every react-native-svg element used in WarehouseMapView renders (not missing, not noop)", () => {
+  let mock: Record<string, unknown>;
+  let usedElements: string[];
+
+  beforeAll(() => {
+    const source = fs.readFileSync(WAREHOUSE_MAP_VIEW_PATH, "utf-8");
+    usedElements = parseSvgElementImports(source);
+    mock = createSvgMock() as Record<string, unknown>;
+  });
+
+  it("WarehouseMapView.tsx imports at least one react-native-svg element (sanity check)", () => {
+    expect(usedElements.length).toBeGreaterThan(0);
+  });
+
+  it("createSvgMock() returns an object (sanity check)", () => {
+    expect(typeof mock).toBe("object");
+    expect(mock).not.toBeNull();
+  });
+
+  it("mock exposes a rendering component for every react-native-svg element used in WarehouseMapView", () => {
+    const failures: string[] = [];
+
+    for (const name of usedElements) {
+      const comp = mock[name];
+
+      if (typeof comp !== "function") {
+        failures.push(
+          `  • ${name} — missing from createSvgMock() (got: ${typeof comp})`,
+        );
+        continue;
+      }
+
+      let rendered: unknown;
+      try {
+        rendered = (comp as (props: Record<string, unknown>) => unknown)({});
+      } catch (err) {
+        failures.push(
+          `  • ${name} — threw when rendered: ${(err as Error).message}`,
+        );
+        continue;
+      }
+
+      if (rendered == null) {
+        failures.push(
+          `  • ${name} — renders nothing (noop stub); it must forward its tag ` +
+            `so the element appears in the rendered tree`,
+        );
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(
+        `The following react-native-svg elements are used by WarehouseMapView.tsx ` +
+          `but are missing or render nothing in createSvgMock():\n` +
+          failures.join("\n") +
+          `\n\nFix: add each element to createSvgMock() in mapMocks.ts as a ` +
+          `tag-forwarding component (e.g. Path: make("svg-path")), never as a noop.`,
+      );
+    }
+
+    expect(failures).toEqual([]);
+  });
+});
+
+/**
+ * Smoke test for createExpoAssetMock().
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * createExpoAssetMock() in mapMocks.ts exposes a fixed set of methods on the
+ * `Asset` object (loadAsync, fromModule, …).  WarehouseMapView loads its floor
+ * plan through `Asset.loadAsync(...)`.  If the component starts calling a new
+ * Asset API that the mock does not stub, that call resolves to `undefined` and
+ * either throws ("undefined is not a function") deep inside an unrelated test
+ * or silently skips asset loading — the exact silent-failure class the other
+ * smoke tests prevent.
+ *
+ * HOW IT WORKS
+ * ------------
+ * This test reads WarehouseMapView.tsx at runtime, extracts every
+ * `Asset.<method>(` call site, and asserts createExpoAssetMock().Asset exposes
+ * a function for each one.  A new Asset call causes this test to fail
+ * immediately at the mock layer — no manual update to this test is required.
+ *
+ * HOW TO FIX A FAILURE
+ * --------------------
+ * If this test fails with "missing from createExpoAssetMock().Asset":
+ *   1. Add X as a stub function to the Asset object in createExpoAssetMock()
+ *      in mapMocks.ts.
+ * That's it.  The test itself never needs updating.
+ */
+describe("createExpoAssetMock() smoke — every Asset method used in WarehouseMapView is mocked", () => {
+  let asset: Record<string, unknown>;
+  let usedMethods: string[];
+
+  beforeAll(() => {
+    const source = fs.readFileSync(WAREHOUSE_MAP_VIEW_PATH, "utf-8");
+    usedMethods = parseExpoAssetMethods(source);
+    asset = (createExpoAssetMock() as { Asset: Record<string, unknown> }).Asset;
+  });
+
+  it("WarehouseMapView.tsx calls at least one Asset method (sanity check)", () => {
+    expect(usedMethods.length).toBeGreaterThan(0);
+  });
+
+  it("createExpoAssetMock() exposes an Asset object (sanity check)", () => {
+    expect(typeof asset).toBe("object");
+    expect(asset).not.toBeNull();
+  });
+
+  it("mock exposes a function for every Asset method called in WarehouseMapView", () => {
+    const missing = usedMethods.filter(
+      (name) => typeof asset[name] !== "function",
+    );
+
+    if (missing.length > 0) {
+      throw new Error(
+        `The following expo-asset Asset methods are called by WarehouseMapView.tsx ` +
+          `but are missing or not a function in createExpoAssetMock().Asset:\n` +
+          missing.map((n) => `  • ${n} (got: ${typeof asset[n]})`).join("\n") +
+          `\n\nFix: add each missing method as a stub function to the Asset ` +
+          `object in createExpoAssetMock() in mapMocks.ts.`,
       );
     }
 
