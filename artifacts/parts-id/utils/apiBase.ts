@@ -1,11 +1,13 @@
 import { Platform } from "react-native";
 
+import { NATIVE_API_DEV_PORT } from "./devPorts";
+
 export const API_BASE: string =
   process.env.EXPO_PUBLIC_API_BASE ??
   (process.env.EXPO_PUBLIC_DOMAIN
     ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
     : Platform.OS !== "web"
-      ? "http://localhost:8080/api"
+      ? `http://localhost:${NATIVE_API_DEV_PORT}/api`
       : "");
 
 /**
@@ -26,7 +28,7 @@ function deriveApiOrigin(): string {
     return `https://${process.env.EXPO_PUBLIC_DOMAIN}`;
   }
   if (Platform.OS !== "web") {
-    return "http://localhost:8080";
+    return `http://localhost:${NATIVE_API_DEV_PORT}`;
   }
   return "";
 }

@@ -1,3 +1,5 @@
+import { createRequire } from "module";
+
 import { adminAuditLogTable, catalogPdfJobTable, db } from "@workspace/db";
 import { eq, lt, sql } from "drizzle-orm";
 
@@ -7,6 +9,11 @@ import { logger } from "./lib/logger";
 import { MAX_RETRIES, startServer } from "./lib/startServer";
 import { validateEnv } from "./lib/validateEnv";
 import { applyZoneSectionNumFix } from "./lib/zoneSectionNumFix";
+
+const _require = createRequire(import.meta.url);
+const { API_SERVER_PORT: DEV_FALLBACK_PORT } = _require("../../../scripts/dev-ports.json") as {
+  API_SERVER_PORT: number;
+};
 
 process.on("uncaughtException", (err) => {
   logger.error({ err }, "Uncaught exception — exiting");
@@ -22,10 +29,13 @@ const rawPort = process.env["PORT"];
 const isDev = process.env["NODE_ENV"] !== "production";
 
 if (!rawPort && isDev) {
-  logger.warn("PORT env var not set — falling back to 3001 in development");
+  logger.warn(
+    { fallbackPort: DEV_FALLBACK_PORT },
+    "PORT env var not set — falling back to dev default in development",
+  );
 }
 
-const port = rawPort ? Number(rawPort) : isDev ? 3001 : NaN;
+const port = rawPort ? Number(rawPort) : isDev ? DEV_FALLBACK_PORT : NaN;
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(
