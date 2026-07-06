@@ -1,5 +1,5 @@
-import { catalogPdfJobTable, db } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { adminAuditLogTable, catalogPdfJobTable, db } from "@workspace/db";
+import { eq, lt, sql } from "drizzle-orm";
 
 import app from "./app";
 import { initProvider, probePoeBotsOnStartup } from "./lib/aiProvider";
@@ -215,6 +215,33 @@ function withStartupTimeout<T>(promise: Promise<T>, timeoutMs: number, label: st
   ]);
 }
 
+// ── Audit log retention ───────────────────────────────────────────────────────
+// Deletes admin_audit_log rows older than AUDIT_LOG_RETENTION_DAYS (default 90).
+// Runs once at startup and then every 24 hours.
+const AUDIT_LOG_RETENTION_DAYS = Math.max(
+  1,
+  Number(process.env["AUDIT_LOG_RETENTION_DAYS"] ?? 90) || 90,
+);
+const AUDIT_LOG_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+async function pruneAuditLog(): Promise<void> {
+  try {
+    const cutoff = new Date(Date.now() - AUDIT_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const deleted = await db
+      .delete(adminAuditLogTable)
+      .where(lt(adminAuditLogTable.createdAt, cutoff))
+      .returning({ id: adminAuditLogTable.id });
+    if (deleted.length > 0) {
+      logger.info(
+        { count: deleted.length, retentionDays: AUDIT_LOG_RETENTION_DAYS },
+        "Pruned old audit log rows",
+      );
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to prune audit log");
+  }
+}
+
 Promise.race([
   Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), applyZoneSectionNumFix(), migrateUsersTable()]),
   migrationsTimeout,
@@ -236,6 +263,10 @@ Promise.race([
     probePoeBotsOnStartup().catch((err) => {
       logger.error({ err }, "Poe bot startup probe failed");
     });
+
+    // Schedule audit log retention cleanup.
+    pruneAuditLog();
+    setInterval(pruneAuditLog, AUDIT_LOG_RETENTION_INTERVAL_MS).unref();
   })
   .catch((err) => {
     logger.error({ err }, "Fatal error during server startup — exiting");

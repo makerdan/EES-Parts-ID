@@ -1,7 +1,7 @@
 import { clerkClient, getAuth } from "@clerk/express";
 import { AdminProfilePayloadSchema, ShelfPreferencesPayloadSchema } from "@workspace/api-zod";
 import { adminAuditLogTable, adminPreferencesTable, db, usersTable } from "@workspace/db";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { Router } from "express";
 
 import { type AIProvider,getProvider, setProvider } from "../lib/aiProvider";
@@ -450,21 +450,39 @@ router.delete("/users/:clerkUserId", requireAdminAuth, async (req, res) => {
 
 // ── GET /admin/audit-log ──────────────────────────────────────────────────────
 // Returns admin action audit log entries in reverse-chronological order.
-// Optional query param: limit (default 100, max 500).
+// Supports cursor-based pagination via before_id.
+// Query params:
+//   limit    — max rows to return (default 50, max 200)
+//   before_id — return only rows with id < before_id (cursor for next page)
 router.get("/audit-log", requireAdminAuth, async (req, res) => {
-  const rawLimit = Number(req.query.limit ?? 100);
+  const rawLimit = Number(req.query.limit ?? 50);
   const limit = Number.isFinite(rawLimit) && rawLimit > 0
-    ? Math.min(rawLimit, 500)
-    : 100;
+    ? Math.min(rawLimit, 200)
+    : 50;
+
+  const rawBeforeId = req.query.before_id;
+  const beforeId = rawBeforeId !== undefined ? Number(rawBeforeId) : null;
+  if (beforeId !== null && (!Number.isFinite(beforeId) || beforeId <= 0)) {
+    return res.status(400).json({ error: "before_id must be a positive integer" });
+  }
 
   try {
+    const whereClause = beforeId !== null
+      ? lt(adminAuditLogTable.id, beforeId)
+      : undefined;
+
     const rows = await db
       .select()
       .from(adminAuditLogTable)
-      .orderBy(desc(adminAuditLogTable.createdAt))
-      .limit(limit);
+      .where(whereClause)
+      .orderBy(desc(adminAuditLogTable.id))
+      .limit(limit + 1);
 
-    return res.json(rows); // spec:ignore-unguarded
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore ? pageRows[pageRows.length - 1]!.id : null;
+
+    return res.json({ rows: pageRows, nextCursor }); // spec:ignore-unguarded
   } catch {
     return res.status(500).json({ error: "Failed to fetch audit log" });
   }
