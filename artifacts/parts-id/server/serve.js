@@ -153,7 +153,8 @@ const server = http.createServer((req, res) => {
   serveWebOrFallback(pathname, req, res, landingPageTemplate, appName);
 });
 
-const port = parseInt(process.env.PORT || "3000", 10);
+const devPorts = require("../../../scripts/dev-ports.json");
+const port = parseInt(process.env.PORT || String(devPorts.STATIC_SERVER_PORT), 10);
 
 server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {
