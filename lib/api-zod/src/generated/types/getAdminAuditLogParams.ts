@@ -8,8 +8,12 @@
 
 export type GetAdminAuditLogParams = {
   /**
-   * Maximum number of entries to return (default 100, max 500)
-   * @maximum 500
+   * Maximum number of entries to return (default 50, max 200)
+   * @maximum 200
    */
   limit?: number;
+  /**
+   * Cursor — return only rows with id strictly less than this value (use nextCursor from the previous page)
+   */
+  before_id?: number;
 };

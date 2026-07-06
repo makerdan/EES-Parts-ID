@@ -23,6 +23,15 @@ export interface AdminAuditLogEntry {
   createdAt: string;
 }
 
+/**
+ * A single page of audit log entries with a cursor for the next page.
+ */
+export interface AdminAuditLogPage {
+  rows: AdminAuditLogEntry[];
+  /** Pass as before_id to fetch the next page. Null when there are no more rows. */
+  nextCursor: number | null;
+}
+
 export type HealthStatusStatus =
   (typeof HealthStatusStatus)[keyof typeof HealthStatusStatus];
 
@@ -442,10 +451,14 @@ export type DeleteWarehouseZone200 = {
 
 export type GetAdminAuditLogParams = {
   /**
-   * Maximum number of entries to return (default 100, max 500)
-   * @maximum 500
+   * Maximum number of entries to return (default 50, max 200)
+   * @maximum 200
    */
   limit?: number;
+  /**
+   * Cursor — return only rows with id strictly less than this value (use nextCursor from the previous page)
+   */
+  before_id?: number;
 };
 
 export type DeleteUserMe400 = {
