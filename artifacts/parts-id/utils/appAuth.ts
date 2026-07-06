@@ -56,6 +56,7 @@ let _onUnauthorized: (() => void) | null = null;
  * instead of reading the stale _appToken string.
  */
 let _appTokenGetter: (() => Promise<string | null>) | null = null;
+let _hasLoggedTokenGetterError = false;
 
 const _tokenAvailableListeners = new Set<() => void>();
 
@@ -142,7 +143,15 @@ export async function fetchWithAuth(
 ): Promise<Response> {
   let token: string | null;
   if (_appTokenGetter) {
-    token = await _appTokenGetter();
+    try {
+      token = await _appTokenGetter();
+    } catch (err) {
+      if (!_hasLoggedTokenGetterError) {
+        console.warn("[fetchWithAuth] Clerk token getter threw — falling back to cached token:", err);
+        _hasLoggedTokenGetterError = true;
+      }
+      token = _appToken;
+    }
   } else {
     token = _appToken;
   }

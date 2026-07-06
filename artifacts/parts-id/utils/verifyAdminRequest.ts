@@ -9,10 +9,13 @@
  * • ok response  { isAdmin: true }  → setIsAdmin(true),  setAdminToken(token)
  * • ok response  { isAdmin: false } → if wasAdmin, onDemotion(); setIsAdmin(false), setAdminToken(null)
  * • 403 { code: "MFA_REQUIRED" }   → onMfaRequired?.(); setIsAdmin(false), setAdminToken(null)
- * • non-ok HTTP response            → if wasAdmin, onDemotion(); setIsAdmin(false), setAdminToken(null)
+ * • 401 HTTP response               → if wasAdmin, onDemotion(); setIsAdmin(false), setAdminToken(null)
+ * • 5xx HTTP response               → admin state LEFT UNCHANGED (transient server error)
+ * • other non-ok HTTP (4xx etc.)   → admin state LEFT UNCHANGED (non-authoritative)
  * • network error (fetch throws)    → admin state LEFT UNCHANGED
- *   Rationale: a transient network blip or rolling deploy restart should not
- *   revoke an admin's session.  Only an explicit server rejection does.
+ *   Rationale: a transient network blip, rolling deploy restart, rate-limit,
+ *   or unexpected 4xx from a proxy should not revoke an admin's session.
+ *   Only an explicit server rejection (200 isAdmin:false, 401, 403) does.
  * • signal aborted                  → returns early, no state change
  */
 
@@ -82,12 +85,16 @@ export async function verifyAdminRequest({
       }
       setIsAdmin(false);
       setAdminToken(null);
-    } else {
+    } else if (resp.status === 401) {
       if (shouldNotifyDemotion(wasAdmin, false)) {
         onDemotion?.();
       }
       setIsAdmin(false);
       setAdminToken(null);
+    } else {
+      // All other non-ok statuses (5xx server errors, 429 rate-limit, 400,
+      // 404, proxy errors, etc.) are treated as non-authoritative transient
+      // conditions — leave admin state unchanged.
     }
   } catch {
     // Transient network errors (blips, rolling deploys) — leave admin state
