@@ -8,7 +8,7 @@ import { Router } from "express";
 import OpenAI from "openai";
 
 import { getAiClient, getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
-import { logger } from "../lib/logger";
+import { getLogger } from "../lib/logger";
 import { PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET } from "../lib/poeModelLimits";
 import { identifyLimiter, partCardLimiter,translateLimiter } from "../lib/rateLimiter";
@@ -23,8 +23,9 @@ const router = Router();
 
 // POST /ai/identify
 router.post("/identify", async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
-    const rateCheck = await identifyLimiter.check(rateLimitKey(req));
+    const rateCheck = await identifyLimiter.check(rateLimitKey(req), res.locals.requestId as string | undefined);
     if (!rateCheck.allowed) {
       res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
       return void res.status(429).json({ error: "Too many identify requests. Please slow down." });
@@ -144,38 +145,38 @@ router.post("/identify", async (req, res) => {
         await db.insert(aiRequestLogTable).values({ feature: "identify" });
         await db.delete(aiRequestLogTable).where(lt(aiRequestLogTable.createdAt, ninetyDaysAgo));
       } catch (err) {
-        logger.warn({ err }, "ai_request_log insert failed");
+        reqLogger.warn({ err }, "ai_request_log insert failed");
       }
     });
   } catch (err) {
     if (err instanceof PoeBotChainExhaustedError) {
-      logger.warn("Poe chain exhausted in POST /ai/identify");
+      reqLogger.warn("Poe chain exhausted in POST /ai/identify");
       return void res.status(503).json({ status: "poe_chain_exhausted" });
     }
     if (isPoeAuthError(err)) {
-      logger.error({ err }, "AI auth error in POST /ai/identify");
+      reqLogger.error({ err }, "AI auth error in POST /ai/identify");
       return void res.status(401).json({ error: poeErrorMessage(err) });
     }
     if (err instanceof OpenAI.RateLimitError) {
-      logger.error({ err }, "AI rate-limit/quota error in POST /ai/identify");
+      reqLogger.error({ err }, "AI rate-limit/quota error in POST /ai/identify");
       return void res.status(429).json({ error: poeErrorMessage(err) });
     }
     if (isProviderPayloadTooLargeError(err)) {
-      logger.warn({ err }, "Provider payload-too-large error in POST /ai/identify");
+      reqLogger.warn({ err }, "Provider payload-too-large error in POST /ai/identify");
       return void res.status(413).json({
         error: "Image payload too large — the AI provider rejected the request. Please use smaller or fewer images.",
       });
     }
     if (isPoeTransientError(err)) {
-      logger.error({ err }, "AI transient error in POST /ai/identify");
+      reqLogger.error({ err }, "AI transient error in POST /ai/identify");
       return void res.status(503).json({ error: poeErrorMessage(err) });
     }
     const aiMsg = poeErrorMessage(err);
     if (aiMsg) {
-      logger.error({ err }, "AI API error in POST /ai/identify");
+      reqLogger.error({ err }, "AI API error in POST /ai/identify");
       return void res.status(502).json({ error: aiMsg });
     }
-    logger.error({ err }, "Unexpected error in POST /ai/identify");
+    reqLogger.error({ err }, "Unexpected error in POST /ai/identify");
     res.status(500).json({ error: "AI identification failed" });
   }
 });
@@ -184,8 +185,9 @@ router.post("/identify", async (req, res) => {
 // Translates a plain-language parts query into catalog vocabulary.
 // When zeroResults=true, also identifies the part and finds substitute inventory matches.
 router.post("/translate-query", async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
-    const rateCheck = await translateLimiter.check(rateLimitKey(req));
+    const rateCheck = await translateLimiter.check(rateLimitKey(req), res.locals.requestId as string | undefined);
     if (!rateCheck.allowed) {
       res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
       return void res.status(429).json({ error: "Too many translate-query requests. Please slow down." });
@@ -282,7 +284,7 @@ router.post("/translate-query", async (req, res) => {
           variants: [],
         }));
       } catch (subErr) {
-        logger.warn({ err: subErr }, "translate-query: substitute inventory search failed");
+        reqLogger.warn({ err: subErr }, "translate-query: substitute inventory search failed");
       }
     }
 
@@ -298,23 +300,23 @@ router.post("/translate-query", async (req, res) => {
     });
   } catch (err) {
     if (isPoeAuthError(err)) {
-      logger.error({ err }, "AI auth error in POST /ai/translate-query");
+      reqLogger.error({ err }, "AI auth error in POST /ai/translate-query");
       return void res.status(401).json({ error: poeErrorMessage(err) });
     }
     if (err instanceof OpenAI.RateLimitError) {
-      logger.error({ err }, "AI rate-limit error in POST /ai/translate-query");
+      reqLogger.error({ err }, "AI rate-limit error in POST /ai/translate-query");
       return void res.status(429).json({ error: poeErrorMessage(err) });
     }
     if (isPoeTransientError(err)) {
-      logger.error({ err }, "AI transient error in POST /ai/translate-query");
+      reqLogger.error({ err }, "AI transient error in POST /ai/translate-query");
       return void res.status(503).json({ error: poeErrorMessage(err) });
     }
     const aiMsg = poeErrorMessage(err);
     if (aiMsg) {
-      logger.error({ err }, "AI API error in POST /ai/translate-query");
+      reqLogger.error({ err }, "AI API error in POST /ai/translate-query");
       return void res.status(502).json({ error: aiMsg });
     }
-    logger.error({ err }, "Unexpected error in POST /ai/translate-query");
+    reqLogger.error({ err }, "Unexpected error in POST /ai/translate-query");
     res.status(500).json({ error: "Query translation failed" });
   }
 });
@@ -329,8 +331,9 @@ const PART_CARD_DB_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days (DB persistent 
 // Results are cached: L1 in-memory (24h) → L2 database (30-day TTL) → AI call.
 // Pass force: true to bypass all cache layers and re-fetch from AI.
 router.post("/part-card", async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
-    const rateCheck = await partCardLimiter.check(rateLimitKey(req));
+    const rateCheck = await partCardLimiter.check(rateLimitKey(req), res.locals.requestId as string | undefined);
     if (!rateCheck.allowed) {
       res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
       return void res.status(429).json({ error: "Too many part-card requests. Please slow down." });
@@ -379,7 +382,7 @@ router.post("/part-card", async (req, res) => {
           return void res.json({ ...data, cachedAt: dbCachedAt });
         }
       } catch (dbErr) {
-        logger.warn({ err: dbErr }, "part-card: DB cache read failed, proceeding to AI");
+        reqLogger.warn({ err: dbErr }, "part-card: DB cache read failed, proceeding to AI");
       }
     } else {
       // Force refresh: evict L1 so stale data isn't served while the AI call is in flight
@@ -459,7 +462,7 @@ router.post("/part-card", async (req, res) => {
               set: { data, cachedAt: new Date() },
             });
         } catch (dbErr) {
-          logger.warn({ err: dbErr }, "part-card: DB cache write failed");
+          reqLogger.warn({ err: dbErr }, "part-card: DB cache write failed");
         }
       });
     }
@@ -467,23 +470,23 @@ router.post("/part-card", async (req, res) => {
     return void res.json({ ...data, cachedAt: null });
   } catch (err) {
     if (isPoeAuthError(err)) {
-      logger.error({ err }, "AI auth error in POST /ai/part-card");
+      reqLogger.error({ err }, "AI auth error in POST /ai/part-card");
       return void res.status(401).json({ error: poeErrorMessage(err) });
     }
     if (err instanceof OpenAI.RateLimitError) {
-      logger.error({ err }, "AI rate-limit error in POST /ai/part-card");
+      reqLogger.error({ err }, "AI rate-limit error in POST /ai/part-card");
       return void res.status(429).json({ error: poeErrorMessage(err) });
     }
     if (isPoeTransientError(err)) {
-      logger.error({ err }, "AI transient error in POST /ai/part-card");
+      reqLogger.error({ err }, "AI transient error in POST /ai/part-card");
       return void res.status(503).json({ error: poeErrorMessage(err) });
     }
     const aiMsg = poeErrorMessage(err);
     if (aiMsg) {
-      logger.error({ err }, "AI API error in POST /ai/part-card");
+      reqLogger.error({ err }, "AI API error in POST /ai/part-card");
       return void res.status(502).json({ error: aiMsg });
     }
-    logger.error({ err }, "Unexpected error in POST /ai/part-card");
+    reqLogger.error({ err }, "Unexpected error in POST /ai/part-card");
     res.status(500).json({ error: "Part card lookup failed" });
   }
 });

@@ -74,7 +74,7 @@ class SlidingWindowRateLimiter {
    * Falls back to allowing the request if the database is unavailable so that
    * a DB outage does not take down the API.
    */
-  async check(key: string): Promise<{ allowed: true } | { allowed: false; retryAfterMs: number }> {
+  async check(key: string, requestId?: string): Promise<{ allowed: true } | { allowed: false; retryAfterMs: number }> {
     const dbKey = `${this.namespace}:${key}`;
     const now = Date.now();
     const cutoff = now - this.windowMs;
@@ -156,7 +156,7 @@ class SlidingWindowRateLimiter {
 
       return { allowed: true };
     } catch (err) {
-      logger.error({ err, namespace: this.namespace }, "rate_limiter: DB check failed — allowing request");
+      logger.error({ err, namespace: this.namespace, requestId }, "rate_limiter: DB check failed — allowing request");
       return { allowed: true };
     }
   }

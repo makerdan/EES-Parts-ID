@@ -32,7 +32,7 @@ import Fuse from "fuse.js";
 
 import { getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
-import { logger } from "../lib/logger";
+import { getLogger, logger } from "../lib/logger";
 import { uploadCatalogImage } from "../lib/objectStorage";
 import { callPoeBotWithChain, PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/poeModelLimits";
@@ -126,6 +126,7 @@ async function loadDictionaries(): Promise<DictionaryCache> {
 
 // ── GET /inventory ────────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const page = Math.max(1, parseInt(req.query["page"] as string) || 1);
     const limit = Math.min(500, Math.max(1, parseInt(req.query["limit"] as string) || 50));
@@ -196,7 +197,7 @@ router.get("/", async (req, res) => {
       limit,
     });
   } catch (err) {
-    logger.error({ err }, "[inventory/list] Failed to list inventory");
+    reqLogger.error({ err }, "[inventory/list] Failed to list inventory");
     res.status(500).json({ error: "Failed to list inventory" });
   }
 });
@@ -223,9 +224,10 @@ const CHIP_DIMS_SERVER = [
 ] as const;
 
 router.post("/search", async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const rlKey = getAuth(req)?.userId ?? String(req.ip ?? "unknown");
-    const rateCheck = await inventorySearchLimiter.check(rlKey);
+    const rateCheck = await inventorySearchLimiter.check(rlKey, res.locals.requestId as string | undefined);
     if (!rateCheck.allowed) {
       res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
       return void res.status(429).json({ error: "Too many search requests. Please slow down." });
@@ -815,7 +817,7 @@ router.post("/search", async (req, res) => {
         const rawRows = (pgQueryResult as { rows: Array<unknown> }).rows;
         pgResults = rawRows.filter((r): r is RawRow => {
           if (!r || typeof r !== "object") {
-            logger.warn({ row: r }, "[inventory/search] Unexpected non-object row from raw SQL");
+            reqLogger.warn({ row: r }, "[inventory/search] Unexpected non-object row from raw SQL");
             return false;
           }
           const row = r as Record<string, unknown>;
@@ -828,13 +830,13 @@ router.post("/search", async (req, res) => {
             typeof row.trgm_sim === "number"
           );
           if (!valid) {
-            logger.warn({ row }, "[inventory/search] Row has unexpected shape (possible schema drift)");
+            reqLogger.warn({ row }, "[inventory/search] Row has unexpected shape (possible schema drift)");
           }
           return valid;
         });
       }
     } catch (pgErr) {
-      logger.warn({ err: pgErr }, "PG search error, falling back to Fuse");
+      reqLogger.warn({ err: pgErr }, "PG search error, falling back to Fuse");
     }
 
     // Map PG results into scored items
@@ -1094,7 +1096,7 @@ router.post("/search", async (req, res) => {
       sizeUnknownCount: sizeUnknownItems.length,
     });
   } catch (err) {
-    logger.error({ err }, "[inventory/search] Search failed");
+    reqLogger.error({ err }, "[inventory/search] Search failed");
     res.status(500).json({ error: "Search failed" });
   }
 });
@@ -1103,6 +1105,7 @@ router.post("/search", async (req, res) => {
 // Quick single-part entry. Admin-protected. Returns 409 if the vendor+catalog
 // combination already exists in the database.
 router.post("/add-part", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const { vendor, catalog, description, binLocation, imageBase64 } = req.body as {
       vendor?: string;
@@ -1176,7 +1179,7 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
         if (withPhoto) finalItem = withPhoto;
       } catch (uploadErr) {
         await db.delete(inventoryTable).where(eq(inventoryTable.id, created.id)).catch(() => {});
-        logger.error({ err: uploadErr }, "[inventory/add-part] Photo upload failed — rolling back inserted row");
+        reqLogger.error({ err: uploadErr }, "[inventory/add-part] Photo upload failed — rolling back inserted row");
         return void res.status(500).json({ error: "Failed to upload photo — part was not saved." });
       }
     }
@@ -1184,7 +1187,7 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.status(201).json(AddPartResponse.parse({ item: finalItem }));
   } catch (err) {
-    logger.error({ err }, "[inventory/add-part] Failed to add part");
+    reqLogger.error({ err }, "[inventory/add-part] Failed to add part");
     res.status(500).json({ error: "Failed to add part" });
   }
 });
@@ -1195,6 +1198,7 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
 // per-row details so the UI can warn admins before committing destructive bin
 // replacements. Nothing is written to the database.
 router.post("/upsert-batch/preview", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const contentLength = Number(req.headers["content-length"] ?? 0);
     if (contentLength > UPSERT_BATCH_MAX_BYTES) {
@@ -1300,7 +1304,7 @@ router.post("/upsert-batch/preview", requireAdminAuth, async (req, res) => {
 
     res.json(UpsertBatchPreviewResponse.parse({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows }));
   } catch (err) {
-    logger.error({ err }, "[inventory/upsert-batch/preview] Preview failed");
+    reqLogger.error({ err }, "[inventory/upsert-batch/preview] Preview failed");
     res.status(500).json({ error: "Preview failed" });
   }
 });
@@ -1317,6 +1321,7 @@ const UPSERT_BATCH_MAX_ITEMS = 5000;
 const UPSERT_BATCH_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
 router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const contentLength = Number(req.headers["content-length"] ?? 0);
     if (contentLength > UPSERT_BATCH_MAX_BYTES) {
@@ -1421,18 +1426,19 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
     // Fire-and-forget: ANALYZE can take a few seconds on large tables and must
     // not block the HTTP response.
     db.execute(sql`ANALYZE inventory`).catch((err) => {
-      logger.warn({ err }, "ANALYZE inventory failed after upsert-batch");
+      reqLogger.warn({ err }, "ANALYZE inventory failed after upsert-batch");
     });
 
     res.json({ inserted, updated, total: items.length });
   } catch (err) {
-    logger.error({ err }, "[inventory/upsert-batch] Upsert failed");
+    reqLogger.error({ err }, "[inventory/upsert-batch] Upsert failed");
     res.status(500).json({ error: "Upsert failed" });
   }
 });
 
 // ── POST /inventory/enrich ────────────────────────────────────────────────────
 router.post("/enrich", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const { ids } = req.body as { ids?: Array<number> };
 
@@ -1510,7 +1516,7 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
     res.end();
     invalidateReferenceAnswerCache().catch(() => {});
   } catch (err) {
-    logger.error({ err }, "[inventory/enrich-sse] SSE enrichment failed");
+    reqLogger.error({ err }, "[inventory/enrich-sse] SSE enrichment failed");
     res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
     res.end();
   }
@@ -1682,6 +1688,7 @@ router.get("/enrich-summary", requireAdminAuth, async (_req, res) => {
 // Does NOT write to the DB — the client saves each result individually via
 // PATCH /:id/expanded-description once the admin approves the expansion.
 router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -1787,7 +1794,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
     send({ done: true, processed, total, remaining });
     res.end();
   } catch (err) {
-    logger.error({ err }, "[expand-descriptions] failed");
+    reqLogger.error({ err }, "[expand-descriptions] failed");
     send({ error: String(err) });
     res.end();
   }
@@ -1795,6 +1802,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
 
 // ── PATCH /inventory/:id/expanded-description ─────────────────────────────────
 router.patch("/:id/expanded-description", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const id = parseInt(String(req.params["id"] ?? "0"), 10);
     if (!id || isNaN(id)) {
@@ -1816,7 +1824,7 @@ router.patch("/:id/expanded-description", requireAdminAuth, async (req, res) => 
     invalidateReferenceAnswerCache().catch(() => {});
     res.json({ success: true });
   } catch (err) {
-    logger.error({ err }, "[expanded-description PATCH] failed");
+    reqLogger.error({ err }, "[expanded-description PATCH] failed");
     res.status(500).json({ error: "Failed to update expanded description" });
   }
 });
@@ -2062,6 +2070,7 @@ router.get("/enrich-measurements/status", requireAdminAuth, async (_req, res) =>
 // Capture group 1 holds the raw encoded segment; decodeURIComponent decodes it.
 // Returns the first item whose barcodes array contains the code (case-sensitive).
 router.get(/^\/barcode\/(.+)$/, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const raw = (req.params as unknown as Record<string, string>)["0"] ?? "";
     const code = decodeURIComponent(raw).trim();
@@ -2076,7 +2085,7 @@ router.get(/^\/barcode\/(.+)$/, async (req, res) => {
     if (!item) return void res.status(404).json({ error: "No item found for that barcode" });
     res.json(LookupByBarcodeResponse.parse(item));
   } catch (err) {
-    logger.error({ err }, "[inventory/barcode-lookup] Barcode lookup failed");
+    reqLogger.error({ err }, "[inventory/barcode-lookup] Barcode lookup failed");
     res.status(500).json({ error: "Barcode lookup failed" });
   }
 });
@@ -2084,6 +2093,7 @@ router.get(/^\/barcode\/(.+)$/, async (req, res) => {
 // ── PATCH /inventory/:id/barcodes ─────────────────────────────────────────────
 // Admin-only: replace the barcodes array on a single part.
 router.patch("/:id/barcodes", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const id = parseInt(String(req.params["id"] ?? "0"));
     const { barcodes } = req.body as { barcodes: unknown };
@@ -2111,7 +2121,7 @@ router.patch("/:id/barcodes", requireAdminAuth, async (req, res) => {
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     res.json(UpdateItemBarcodesResponse.parse(updated));
   } catch (err) {
-    logger.error({ err }, "[inventory/barcodes] Failed to update barcodes");
+    reqLogger.error({ err }, "[inventory/barcodes] Failed to update barcodes");
     res.status(500).json({ error: "Failed to update barcodes" });
   }
 });
@@ -2120,6 +2130,7 @@ router.patch("/:id/barcodes", requireAdminAuth, async (req, res) => {
 // Admin-only: replace the bin-locations array on a single part. Lets warehouse
 // staff fix bins in place without re-uploading the whole spreadsheet (Task #454).
 router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const id = parseInt(String(req.params["id"] ?? "0"));
     const { binLocations } = req.body as { binLocations: unknown };
@@ -2150,7 +2161,7 @@ router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     res.json(UpdateItemBinsResponse.parse(updated));
   } catch (err) {
-    logger.error({ err }, "[inventory/bins] Failed to update bins");
+    reqLogger.error({ err }, "[inventory/bins] Failed to update bins");
     res.status(500).json({ error: "Failed to update bins" });
   }
 });
@@ -2159,6 +2170,7 @@ router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
 // Admin-only: update the free-text description on a single part. Lets admins
 // enrich a part's description after quick-add without re-uploading the sheet.
 router.patch("/:id/description", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const id = parseInt(String(req.params["id"] ?? "0"));
     const { description } = req.body as { description?: unknown };
@@ -2177,7 +2189,7 @@ router.patch("/:id/description", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.json(UpdateItemDescriptionResponse.parse(updated));
   } catch (err) {
-    logger.error({ err }, "[inventory/description] Failed to update description");
+    reqLogger.error({ err }, "[inventory/description] Failed to update description");
     res.status(500).json({ error: "Failed to update description" });
   }
 });
@@ -2188,6 +2200,7 @@ router.patch("/:id/description", requireAdminAuth, async (req, res) => {
 // admins can refresh one item after editing its description without running a
 // full catalog pass.
 router.patch("/:id/enrich", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const id = parseInt(String(req.params["id"] ?? "0"));
     if (!id) return void res.status(400).json({ error: "Invalid item id" });
@@ -2217,13 +2230,14 @@ router.patch("/:id/enrich", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.json(ReenrichItemResponse.parse(updated));
   } catch (err) {
-    logger.error({ err }, "[inventory/enrich] Failed to enrich item");
+    reqLogger.error({ err }, "[inventory/enrich] Failed to enrich item");
     res.status(500).json({ error: "Failed to enrich item" });
   }
 });
 
 // ── PATCH /inventory/:id/keywords ─────────────────────────────────────────────
 router.patch("/:id/keywords", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const id = parseInt(req.params["id"] as string ?? "0");
     const { keywords } = req.body as { keywords: Array<string> };
@@ -2242,7 +2256,7 @@ router.patch("/:id/keywords", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.json(UpdateItemKeywordsResponse.parse(updated));
   } catch (err) {
-    logger.error({ err }, "[inventory/keywords] Failed to update keywords");
+    reqLogger.error({ err }, "[inventory/keywords] Failed to update keywords");
     res.status(500).json({ error: "Failed to update keywords" });
   }
 });
@@ -2252,6 +2266,7 @@ router.patch("/:id/keywords", requireAdminAuth, async (req, res) => {
 // the existing object storage helper, and persist the resulting URL on the item.
 // Used by the ShelfCatalogEntry rapid-entry flow.
 router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const id = parseInt(String(req.params["id"] ?? "0"));
     if (!id) return void res.status(400).json({ error: "Invalid item id" });
@@ -2325,7 +2340,7 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
     });
   } catch (err) {
     const id = req.params["id"] ?? "unknown";
-    logger.error({ err, id }, "[inventory/photo] Photo upload failed");
+    reqLogger.error({ err, id }, "[inventory/photo] Photo upload failed");
     res.status(500).json({ error: "Failed to upload photo — please try again later." });
   }
 });
@@ -2335,6 +2350,7 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
 // Only fields present in the body are updated (partial merge); omitted fields
 // are preserved from the existing value.  Pass null to clear a specific field.
 router.patch("/:id/dimensions", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const id = parseInt(String(req.params["id"] ?? "0"));
     if (!id) return void res.status(400).json({ error: "Invalid item id" });
@@ -2374,7 +2390,7 @@ router.patch("/:id/dimensions", requireAdminAuth, async (req, res) => {
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     res.json(UpdateItemDimensionsResponse.parse(updated));
   } catch (err) {
-    logger.error({ err }, "[inventory/dimensions] Failed to update dimensions");
+    reqLogger.error({ err }, "[inventory/dimensions] Failed to update dimensions");
     res.status(500).json({ error: "Failed to update dimensions" });
   }
 });
@@ -2602,6 +2618,7 @@ function parseDimensionResponse(raw: string): { length: number | null; width: nu
 // Results are NOT persisted — the estimates are returned so the client can run
 // a dimension-filter search.  Identical AI prompt to the admin endpoint.
 router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const { imageBase64, mimeType = "image/jpeg" } = req.body as {
       imageBase64: string;
@@ -2636,7 +2653,7 @@ router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req
     if (err instanceof PoeBotChainExhaustedError) {
       return void res.status(503).json({ status: "poe_chain_exhausted" });
     }
-    logger.error({ err }, "[estimate-dimensions/search] Dimension estimation failed");
+    reqLogger.error({ err }, "[estimate-dimensions/search] Dimension estimation failed");
     res.status(500).json({ error: "Dimension estimation failed" });
   }
 });
@@ -2646,6 +2663,7 @@ router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req
 // OpenAI Vision to estimate its physical dimensions (length, width, height,
 // diameter) in millimetres.  The admin confirms / adjusts values before saving.
 router.post("/estimate-dimensions", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const { imageBase64, mimeType = "image/jpeg" } = req.body as {
       imageBase64: string;
@@ -2681,7 +2699,7 @@ router.post("/estimate-dimensions", requireAdminAuth, async (req, res) => {
     if (err instanceof PoeBotChainExhaustedError) {
       return void res.status(503).json({ status: "poe_chain_exhausted" });
     }
-    logger.error({ err }, "[estimate-dimensions] Dimension estimation failed");
+    reqLogger.error({ err }, "[estimate-dimensions] Dimension estimation failed");
     res.status(500).json({ error: "Dimension estimation failed" });
   }
 });
@@ -2691,6 +2709,7 @@ router.post("/estimate-dimensions", requireAdminAuth, async (req, res) => {
 // Used by the client as an atomic rollback when a multi-step add (create then
 // PATCH dimensions) fails partway through, preventing dimension-less orphans.
 router.delete("/:id", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const id = parseInt(String(req.params["id"] ?? "0"));
     if (!id) return void res.status(400).json({ error: "Invalid item id" });
@@ -2705,7 +2724,7 @@ router.delete("/:id", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.status(200).json({ deleted: true });
   } catch (err) {
-    logger.error({ err }, "[inventory/delete] Failed to delete item");
+    reqLogger.error({ err }, "[inventory/delete] Failed to delete item");
     res.status(500).json({ error: "Failed to delete item" });
   }
 });

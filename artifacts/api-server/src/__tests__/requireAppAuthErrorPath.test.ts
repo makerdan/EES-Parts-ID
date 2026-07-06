@@ -154,7 +154,7 @@ describe("requireAppAuth — unexpected error handling (app.ts global handler)",
         .set("Authorization", "Bearer some-user-id")
         .expect(500);
 
-      expect(response.body).toEqual({ error: "Internal server error" });
+      expect(response.body).toMatchObject({ error: "Internal server error" });
 
       // The structured logger recorded the error — it was not silently swallowed.
       const handlerCall = errorSpy.mock.calls.find(

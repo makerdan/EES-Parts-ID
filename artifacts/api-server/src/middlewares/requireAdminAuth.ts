@@ -76,6 +76,7 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
           path: req.path,
           method: req.method,
           clerkUserId: appUser.clerkUserId,
+          requestId: res.locals.requestId as string | undefined,
         }, "Bootstrap admin request");
       }
 

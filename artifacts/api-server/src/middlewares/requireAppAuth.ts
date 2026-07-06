@@ -84,7 +84,8 @@ export async function requireAppAuth(req: Request, res: Response, next: NextFunc
         }
         email = clerkUser.emailAddresses[0]?.emailAddress ?? "";
       } catch (clerkErr) {
-        logger.error({ err: clerkErr, userId }, "requireAppAuth: Clerk email fetch failed");
+        const requestId = res.locals.requestId as string | undefined;
+        logger.error({ err: clerkErr, userId, requestId }, "requireAppAuth: Clerk email fetch failed");
         res.status(500).json({ error: "Failed to retrieve user profile. Please try again." });
         return;
       }

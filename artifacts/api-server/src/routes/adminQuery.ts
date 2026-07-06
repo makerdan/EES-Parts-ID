@@ -249,7 +249,7 @@ function buildCSV(
 
 router.post("/query", requireAdminAuth, async (req, res) => {
   const rlKey = getAuth(req)?.userId ?? String(req.ip ?? "unknown");
-  const rateCheck = await adminQueryLimiter.check(rlKey);
+  const rateCheck = await adminQueryLimiter.check(rlKey, res.locals.requestId as string | undefined);
   if (!rateCheck.allowed) {
     res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
     return void res.status(429).json({ error: "Too many admin query requests. Please slow down." });

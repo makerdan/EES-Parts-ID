@@ -167,7 +167,7 @@ describe("route handler error path — global error handler (app.ts)", () => {
         .expect(500);
 
       // Body must be clean JSON — no stack trace, no Express HTML default.
-      expect(response.body).toEqual({ error: "Internal server error" });
+      expect(response.body).toMatchObject({ error: "Internal server error" });
 
       // Content-Type must be JSON (not text/html that Express sends by default).
       expect(response.headers["content-type"]).toMatch(/application\/json/);

@@ -10,7 +10,7 @@ import {
   normalizeQuestion,
   setCachedAnswer,
 } from "../lib/answerCache";
-import { logger } from "../lib/logger";
+import { getLogger, logger } from "../lib/logger";
 import { referenceAskLimiter } from "../lib/rateLimiter";
 import { callGemini, callGeminiWithHistory } from "../lib/webSearch";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
@@ -108,7 +108,7 @@ function buildSystemPrompt(inventoryContext: string, isAdmin: boolean): string {
  * Search the inventory for items relevant to the question.
  * Returns the formatted context string AND the matched row count.
  */
-async function buildInventoryContext(question: string): Promise<{ context: string; count: number }> {
+async function buildInventoryContext(question: string, log = logger): Promise<{ context: string; count: number }> {
   try {
     const tokens = question
       .toLowerCase()
@@ -145,33 +145,33 @@ async function buildInventoryContext(question: string): Promise<{ context: strin
       count: rows.length,
     };
   } catch (err) {
-    logger.warn({ err }, "inventory context lookup failed — skipping enrichment");
+    log.warn({ err }, "inventory context lookup failed — skipping enrichment");
     return { context: "", count: 0 };
   }
 }
 
 /** Fire-and-forget: log an AI request and prune entries older than 90 days. */
-function writeAiRequestLog(feature: "reference"): void {
+function writeAiRequestLog(feature: "reference", log = logger): void {
   setImmediate(async () => {
     try {
       const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
       await db.insert(aiRequestLogTable).values({ feature });
       await db.delete(aiRequestLogTable).where(lt(aiRequestLogTable.createdAt, ninetyDaysAgo));
     } catch (err) {
-      logger.warn({ err }, "ai_request_log write failed");
+      log.warn({ err }, "ai_request_log write failed");
     }
   });
 }
 
 /** Fire-and-forget: write a Q&A log row and prune entries older than 30 days. */
-function writeReferenceLog(question: string, answer: string, matchedItemCount: number): void {
+function writeReferenceLog(question: string, answer: string, matchedItemCount: number, log = logger): void {
   setImmediate(async () => {
     try {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       await db.insert(referenceLogTable).values({ question, answer, matchedItemCount });
       await db.delete(referenceLogTable).where(lt(referenceLogTable.createdAt, thirtyDaysAgo));
     } catch (err) {
-      logger.warn({ err }, "reference log write failed");
+      log.warn({ err }, "reference log write failed");
     }
   });
 }
@@ -196,8 +196,9 @@ async function callGeminiReference(
 async function collectAnswer(
   question: string,
   isAdmin: boolean,
+  log = logger,
 ): Promise<{ answer: string; matchedItemCount: number; usedWebSearch: boolean }> {
-  const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question);
+  const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question, log);
   const systemContent = buildSystemPrompt(inventoryContext, isAdmin);
   const { answer, usedWebSearch } = await callGeminiReference(systemContent, question);
   return { answer, matchedItemCount, usedWebSearch };
@@ -211,8 +212,9 @@ async function collectAnswerWithHistory(
   question: string,
   history: Array<{ q: string; a: string }>,
   isAdmin: boolean,
+  log = logger,
 ): Promise<{ answer: string; matchedItemCount: number; usedWebSearch: boolean }> {
-  const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question);
+  const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question, log);
   const systemContent = buildSystemPrompt(inventoryContext, isAdmin);
   const answer = await callGeminiWithHistory(systemContent, history, question);
   const usedWebSearch = answer.trimStart().startsWith("*(web)*");
@@ -225,9 +227,10 @@ const REFERENCE_ASK_MAX_HISTORY_ITEMS = 20;
 const REFERENCE_ASK_MAX_HISTORY_ITEM_LENGTH = 2000;
 
 router.post("/ask", async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const rateLimitKey = getAuth(req)?.userId ?? String(req.ip ?? "unknown");
-    const rateCheck = await referenceAskLimiter.check(rateLimitKey);
+    const rateCheck = await referenceAskLimiter.check(rateLimitKey, res.locals.requestId as string | undefined);
     if (!rateCheck.allowed) {
       res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
       return void res.status(429).json({ error: "Too many requests. Please slow down." });
@@ -289,25 +292,25 @@ router.post("/ask", async (req, res) => {
       if (!hasHistory) {
         const cached = await getCachedAnswer(questionHash);
         if (cached !== null) {
-          logger.debug({ questionHash }, "reference.ask cache hit (json)");
-          writeAiRequestLog("reference");
+          reqLogger.debug({ questionHash }, "reference.ask cache hit (json)");
+          writeAiRequestLog("reference", reqLogger);
           return void res.json({ answer: cached });
         }
       }
 
       const { answer, matchedItemCount, usedWebSearch } = hasHistory
-        ? await collectAnswerWithHistory(question.trim(), history!, isAdmin)
-        : await collectAnswer(question.trim(), isAdmin);
-      writeReferenceLog(question.trim(), answer, matchedItemCount);
+        ? await collectAnswerWithHistory(question.trim(), history!, isAdmin, reqLogger)
+        : await collectAnswer(question.trim(), isAdmin, reqLogger);
+      writeReferenceLog(question.trim(), answer, matchedItemCount, reqLogger);
       // Secondary guard: skip the DB write entirely for history-path answers
       // (they are context-dependent and not worth storing). The primary safety
       // layer is the hash itself — history hashes and cold-start hashes are
       // disjoint (see hashQuestion), so even if this guard were removed,
       // a history answer could never be served as a cold-start answer.
       if (!hasHistory) {
-        setCachedAnswer(questionHash, normalized, answer, usedWebSearch).catch((err) => logger.warn({ err }, "cache write failed"));
+        setCachedAnswer(questionHash, normalized, answer, usedWebSearch).catch((err) => reqLogger.warn({ err }, "cache write failed"));
       }
-      writeAiRequestLog("reference");
+      writeAiRequestLog("reference", reqLogger);
       return void res.json({ answer });
     }
 
@@ -320,8 +323,8 @@ router.post("/ask", async (req, res) => {
     res.flushHeaders?.();
 
     if (cached !== null) {
-      logger.debug({ questionHash }, "reference.ask cache hit (sse)");
-      writeAiRequestLog("reference");
+      reqLogger.debug({ questionHash }, "reference.ask cache hit (sse)");
+      writeAiRequestLog("reference", reqLogger);
       res.write(`data: ${JSON.stringify({ content: cached })}\n\n`);
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();
@@ -330,8 +333,8 @@ router.post("/ask", async (req, res) => {
 
     // Gemini-2.5-Flash call (non-streaming internally; pseudo-stream to client).
     const { answer: fullAnswer, matchedItemCount, usedWebSearch } = hasHistory
-      ? await collectAnswerWithHistory(question.trim(), history!, isAdmin)
-      : await collectAnswer(question.trim(), isAdmin);
+      ? await collectAnswerWithHistory(question.trim(), history!, isAdmin, reqLogger)
+      : await collectAnswer(question.trim(), isAdmin, reqLogger);
 
     // Emit the answer word-by-word for a live-typing effect.
     const words = fullAnswer.split(" ");
@@ -343,16 +346,16 @@ router.post("/ask", async (req, res) => {
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     res.end();
 
-    writeReferenceLog(question.trim(), fullAnswer, matchedItemCount);
-    writeAiRequestLog("reference");
+    writeReferenceLog(question.trim(), fullAnswer, matchedItemCount, reqLogger);
+    writeAiRequestLog("reference", reqLogger);
     // Secondary guard: same reasoning as the JSON path above — skip the DB
     // write for history-path answers. The primary safety layer is the hash
     // itself (history hashes and cold-start hashes are disjoint via hashQuestion).
     if (fullAnswer && !hasHistory) {
-      setCachedAnswer(questionHash, normalized, fullAnswer, usedWebSearch).catch((err) => logger.warn({ err }, "cache write failed"));
+      setCachedAnswer(questionHash, normalized, fullAnswer, usedWebSearch).catch((err) => reqLogger.warn({ err }, "cache write failed"));
     }
   } catch (err) {
-    logger.error({ err }, "reference.ask failed");
+    reqLogger.error({ err }, "reference.ask failed");
     if (res.headersSent) {
       try {
         res.write(
@@ -370,6 +373,7 @@ router.post("/ask", async (req, res) => {
 
 // GET /reference/ask-log — admin-only list of recent Q&A log rows
 router.get("/ask-log", requireAdminAuth, async (_req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const rows = await db
       .select()
@@ -378,13 +382,14 @@ router.get("/ask-log", requireAdminAuth, async (_req, res) => {
       .limit(100);
     res.json(rows);
   } catch (err) {
-    logger.error({ err }, "reference.ask-log list failed");
+    reqLogger.error({ err }, "reference.ask-log list failed");
     res.status(500).json({ error: "Failed to load AI log" });
   }
 });
 
 // GET /reference/quick-lookups — return all cached rows (includes updatedAt for client-side TTL)
 router.get("/quick-lookups", async (_req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const rows = await db
       .select({
@@ -395,13 +400,14 @@ router.get("/quick-lookups", async (_req, res) => {
       .from(quickLookupCacheTable);
     res.json(rows);
   } catch (err) {
-    logger.error({ err }, "reference.quick-lookups list failed");
+    reqLogger.error({ err }, "reference.quick-lookups list failed");
     res.status(500).json({ error: "Failed to load quick lookups" });
   }
 });
 
 // GET /reference/quick-lookups/:label — single row or 404
 router.get("/quick-lookups/:label", async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const { label } = req.params;
     const rows = await db
@@ -415,7 +421,7 @@ router.get("/quick-lookups/:label", async (req, res) => {
     }
     res.json({ answer: rows[0]!.answer });
   } catch (err) {
-    logger.error({ err }, "reference.quick-lookups get failed");
+    reqLogger.error({ err }, "reference.quick-lookups get failed");
     res.status(500).json({ error: "Failed to load quick lookup" });
   }
 });
@@ -423,6 +429,7 @@ router.get("/quick-lookups/:label", async (req, res) => {
 // POST /reference/quick-lookups/:label — AI fallback + DB write-back
 // Called internally by the mobile client when cache misses at all layers.
 router.post("/quick-lookups/:label", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const label = req.params["label"] as string;
     const { question } = req.body as { question: string };
@@ -444,7 +451,7 @@ router.post("/quick-lookups/:label", requireAdminAuth, async (req, res) => {
 
     res.json({ answer });
   } catch (err) {
-    logger.error({ err }, "reference.quick-lookups post failed");
+    reqLogger.error({ err }, "reference.quick-lookups post failed");
     res.status(500).json({ error: GENERIC_ERROR_MESSAGE });
   }
 });
