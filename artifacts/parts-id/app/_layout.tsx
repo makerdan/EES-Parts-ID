@@ -1,4 +1,4 @@
-import { ClerkLoaded, ClerkProvider, useAuth } from "@clerk/expo";
+import { ClerkLoaded, ClerkProvider } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
 import {
   Inter_400Regular,
@@ -9,7 +9,7 @@ import {
 } from "@expo-google-fonts/inter";
 import NetInfo from "@react-native-community/netinfo";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import * as WebBrowser from "expo-web-browser";
 import React, { useEffect } from "react";
@@ -18,10 +18,11 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { FEATHER_FONT_B64 } from "@/assets/fonts/featherBase64";
+import { AuthGate } from "@/components/AuthGate";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { prefetchSvgAsset } from "@/components/WarehouseMapView";
-import { AppProvider, useApp } from "@/contexts/AppContext";
+import { AppProvider } from "@/contexts/AppContext";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -67,43 +68,6 @@ const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 // instances (pk_live_…) and the API server skips the proxy in non-production.
 const proxyUrl = process.env.EXPO_PUBLIC_CLERK_PROXY_URL || undefined;
 
-function AuthGate() {
-  const { isSignedIn, isLoaded: clerkLoaded } = useAuth();
-  const { approvalStatus } = useApp();
-  const segments = useSegments();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!clerkLoaded) return;
-
-    const seg0 = segments[0] as string | undefined;
-    const inTabs = seg0 === "(tabs)";
-    const atLogin = seg0 === "login";
-    const atSignUp = seg0 === "sign-up";
-    const atPending = seg0 === "pending";
-    const atBanned = seg0 === "banned";
-    // Leave this route alone — Clerk is still processing the OAuth token params.
-    const atSsoCallback = seg0 === "sso-callback";
-
-    if (!isSignedIn) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (!atLogin && !atSignUp && !atSsoCallback) router.replace("/login" as any);
-    } else {
-      if (approvalStatus === "loading" || approvalStatus === "idle") return;
-      if (approvalStatus === "pending" && !atPending) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        router.replace("/pending" as any);
-      } else if (approvalStatus === "banned" && !atBanned) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        router.replace("/banned" as any);
-      } else if (approvalStatus === "approved" && !inTabs) {
-        router.replace("/(tabs)");
-      }
-    }
-  }, [isSignedIn, clerkLoaded, approvalStatus, segments, router]);
-
-  return null;
-}
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
