@@ -2,13 +2,13 @@
  * Admin Audit Log Screen
  *
  * Displays a reverse-chronological list of privileged admin actions
- * (approve, ban, promote, demote). Admin-only.
+ * (approve, ban, promote, demote). Admin-only. Supports paginated load-more.
  *
  * Route: /admin-audit-log
  */
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -33,6 +33,13 @@ type AuditRow = {
   action: "approve" | "ban" | "promote" | "demote";
   createdAt: string;
 };
+
+type AuditLogPage = {
+  rows: AuditRow[];
+  nextCursor: number | null;
+};
+
+const PAGE_SIZE = 50;
 
 const ACTION_CONFIG: Record<AuditRow["action"], { label: string; bg: string; fg: string }> = {
   approve: { label: "Approved", bg: "#10b98120", fg: "#10b981" },
@@ -89,10 +96,24 @@ export default function AdminAuditLogScreen() {
   const router = useRouter();
   const { isAdmin, adminToken, isLoading } = useApp();
 
-  const [rows, setRows] = useState<Array<AuditRow>>([]);
+  const [rows, setRows] = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const nextCursorRef = useRef<number | null>(null);
+  const hasMoreRef = useRef(true);
+
+  const fetchPage = useCallback(async (beforeId: number | null, token: string): Promise<AuditLogPage> => {
+    const url = beforeId !== null
+      ? `${API_BASE}/admin/audit-log?limit=${PAGE_SIZE}&before_id=${beforeId}`
+      : `${API_BASE}/admin/audit-log?limit=${PAGE_SIZE}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(`Server error ${res.status}`);
+    return res.json() as Promise<AuditLogPage>;
+  }, []);
 
   const fetchLog = useCallback(async (isRefresh = false) => {
     if (!adminToken) return;
@@ -100,19 +121,32 @@ export default function AdminAuditLogScreen() {
     else setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/admin/audit-log`, {
-        headers: { Authorization: `Bearer ${adminToken}` },
-      });
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const data = (await res.json()) as Array<AuditRow>;
-      setRows(data);
+      const page = await fetchPage(null, adminToken);
+      setRows(page.rows);
+      nextCursorRef.current = page.nextCursor;
+      hasMoreRef.current = page.nextCursor !== null;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load audit log");
     } finally {
       if (isRefresh) setRefreshing(false);
       else setLoading(false);
     }
-  }, [adminToken]);
+  }, [adminToken, fetchPage]);
+
+  const loadMore = useCallback(async () => {
+    if (!adminToken || loadingMore || !hasMoreRef.current || nextCursorRef.current === null) return;
+    setLoadingMore(true);
+    try {
+      const page = await fetchPage(nextCursorRef.current, adminToken);
+      setRows((prev) => [...prev, ...page.rows]);
+      nextCursorRef.current = page.nextCursor;
+      hasMoreRef.current = page.nextCursor !== null;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load more");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [adminToken, loadingMore, fetchPage]);
 
   useEffect(() => {
     if (shouldRedirectNonAdmin(isLoading, isAdmin)) {
@@ -125,6 +159,20 @@ export default function AdminAuditLogScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, adminToken, isAdmin, fetchLog, router]);
 
+  const ListFooter = loadingMore ? (
+    <View style={styles.footerLoader}>
+      <ActivityIndicator size="small" color={colors.primary} />
+    </View>
+  ) : hasMoreRef.current && rows.length > 0 ? (
+    <Pressable
+      onPress={loadMore}
+      style={[styles.loadMoreBtn, { borderColor: colors.border }]}
+      accessibilityLabel="Load more audit log entries"
+    >
+      <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load more</Text>
+    </Pressable>
+  ) : null;
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
@@ -134,7 +182,7 @@ export default function AdminAuditLogScreen() {
         <View style={styles.headerCenter}>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>Audit Log</Text>
           <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
-            {rows.length} event{rows.length !== 1 ? "s" : ""}
+            {rows.length} event{rows.length !== 1 ? "s" : ""}{hasMoreRef.current ? "+" : ""}
           </Text>
         </View>
         <Pressable onPress={() => fetchLog()} style={styles.refreshBtn} accessibilityLabel="Refresh">
@@ -161,6 +209,8 @@ export default function AdminAuditLogScreen() {
           removeClippedSubviews={true}
           maxToRenderPerBatch={20}
           windowSize={10}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.3}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -170,6 +220,7 @@ export default function AdminAuditLogScreen() {
             />
           }
           renderItem={({ item }) => <AuditItem row={item} colors={colors} />}
+          ListFooterComponent={ListFooter}
           ListEmptyComponent={
             <View style={styles.centered}>
               <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
@@ -225,4 +276,14 @@ const styles = StyleSheet.create({
   label: { fontSize: 10, fontFamily: "Inter_600SemiBold", width: 38 },
   idText: { fontSize: 12, fontFamily: "Inter_400Regular", flex: 1 },
   time: { fontSize: 11, fontFamily: "Inter_400Regular", flexShrink: 0 },
+  footerLoader: { paddingVertical: 16, alignItems: "center" },
+  loadMoreBtn: {
+    marginHorizontal: 12,
+    marginVertical: 8,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  loadMoreText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
 });

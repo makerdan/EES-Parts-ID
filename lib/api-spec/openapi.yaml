@@ -522,24 +522,29 @@ paths:
       operationId: getAdminAuditLog
       tags: [admin]
       summary: List admin action audit log entries (admin)
-      description: Returns privileged admin actions (approve, ban, promote, demote) in reverse-chronological order. Admin access required.
+      description: Returns privileged admin actions (approve, ban, promote, demote) in reverse-chronological order with cursor-based pagination. Admin access required.
       parameters:
         - name: limit
           in: query
           schema:
             type: integer
-            default: 100
-            maximum: 500
-          description: Maximum number of entries to return (default 100, max 500)
+            default: 50
+            maximum: 200
+          description: Maximum number of entries to return (default 50, max 200)
+        - name: before_id
+          in: query
+          schema:
+            type: integer
+          description: Cursor — return only rows with id strictly less than this value (use nextCursor from the previous page)
       responses:
         "200":
-          description: Audit log entries
+          description: Paginated audit log entries
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/AdminAuditLogEntry"
+                $ref: "#/components/schemas/AdminAuditLogPage"
+        "400":
+          description: Invalid query parameters
         "401":
           description: Authentication required
         "403":
@@ -634,6 +639,20 @@ components:
           type: string
           format: date-time
       required: [id, adminClerkUserId, targetClerkUserId, action, createdAt]
+
+    AdminAuditLogPage:
+      type: object
+      description: A single page of audit log entries with a cursor for the next page.
+      properties:
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminAuditLogEntry"
+        nextCursor:
+          type: integer
+          nullable: true
+          description: Pass as before_id to fetch the next page. Null when there are no more rows.
+      required: [rows, nextCursor]
 
     HealthStatus:
       type: object
