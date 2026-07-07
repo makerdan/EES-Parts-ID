@@ -26,8 +26,8 @@
     },
     "web": {
       "favicon": "./assets/images/icon.png",
-      "name": "RDC34 Parts ID",
-      "shortName": "RDC34 Parts ID",
+      "name": "EES Parts ID",
+      "shortName": "EES Parts ID",
       "themeColor": "#f59e0b",
       "backgroundColor": "#ffffff",
       "display": "standalone",
