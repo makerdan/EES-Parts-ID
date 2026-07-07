@@ -2269,7 +2269,9 @@ export function WarehouseMapView({
                         FORCE_BODY: false,
                       }),
                     },
-                    style: { filter: "invert(1) brightness(0.88)" },
+                    style: {
+                      filter: isDark ? "invert(1) brightness(0.88)" : "none",
+                    },
                   },
                 )
               : null}
