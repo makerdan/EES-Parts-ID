@@ -517,6 +517,39 @@ paths:
         "404":
           description: Zone not found
 
+  /warehouse-zones/alignment:
+    get:
+      operationId: getZoneAlignment
+      tags: [inventory]
+      summary: Get the global zone-layer alignment offset
+      description: Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Readable by all approved users. Defaults to identity (0, 0, 1) when never calibrated.
+      responses:
+        "200":
+          description: Current zone-layer alignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZoneAlignment"
+    put:
+      operationId: updateZoneAlignment
+      tags: [inventory]
+      summary: Update the global zone-layer alignment offset (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ZoneAlignment"
+      responses:
+        "200":
+          description: Updated zone-layer alignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZoneAlignment"
+        "401":
+          description: Admin token required
+
   /admin/audit-log:
     get:
       operationId: getAdminAuditLog
@@ -1374,6 +1407,22 @@ components:
           type: number
         sortOrder:
           type: integer
+
+    ZoneAlignment:
+      type: object
+      description: Global zone-layer calibration offset applied uniformly to every zone overlay (translate in SVG units + uniform scale about the SVG origin).
+      properties:
+        translateX:
+          type: number
+        translateY:
+          type: number
+        scale:
+          type: number
+          exclusiveMinimum: 0
+      required:
+        - translateX
+        - translateY
+        - scale
 
     AdminRestartResponse:
       type: object

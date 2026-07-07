@@ -613,6 +613,12 @@ function FadeOutTileLayer({
 
 export interface WarehouseMapViewProps {
   zones: Array<ApiWarehouseZone>;
+  /**
+   * Global zone-layer calibration offset applied uniformly to every zone
+   * overlay (translate in SVG units + uniform scale about the SVG origin),
+   * on top of the shared pan/zoom viewport. Defaults to identity when omitted.
+   */
+  zoneAlignment?: { translateX: number; translateY: number; scale: number };
   zonesLoading: boolean;
   zonesError: boolean;
   onZonesRetry: () => void;
@@ -815,6 +821,7 @@ export function MapPinEmoji({
 
 export function WarehouseMapView({
   zones,
+  zoneAlignment,
   zonesLoading,
   zonesError,
   onZonesRetry,
@@ -2275,7 +2282,9 @@ export function WarehouseMapView({
                   },
                 )
               : null}
-            {zoneOverlays}
+            <G transform={`translate(${zoneAlignment?.translateX ?? 0}, ${zoneAlignment?.translateY ?? 0}) scale(${zoneAlignment?.scale ?? 1})`}>
+              {zoneOverlays}
+            </G>
           </Svg>
         </Animated.View>
       </GestureDetector>

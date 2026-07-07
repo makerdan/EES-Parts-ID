@@ -1434,6 +1434,49 @@ export const DeleteWarehouseZoneResponse = zod.object({
 });
 
 /**
+ * Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Readable by all approved users. Defaults to identity (0, 0, 1) when never calibrated.
+ * @summary Get the global zone-layer alignment offset
+ */
+export const getZoneAlignmentResponseScaleExclusiveMin = 0;
+
+export const GetZoneAlignmentResponse = zod
+  .object({
+    translateX: zod.number(),
+    translateY: zod.number(),
+    scale: zod.number().gt(getZoneAlignmentResponseScaleExclusiveMin),
+  })
+  .describe(
+    "Global zone-layer calibration offset applied uniformly to every zone overlay (translate in SVG units + uniform scale about the SVG origin).",
+  );
+
+/**
+ * @summary Update the global zone-layer alignment offset (admin)
+ */
+export const updateZoneAlignmentBodyScaleExclusiveMin = 0;
+
+export const UpdateZoneAlignmentBody = zod
+  .object({
+    translateX: zod.number(),
+    translateY: zod.number(),
+    scale: zod.number().gt(updateZoneAlignmentBodyScaleExclusiveMin),
+  })
+  .describe(
+    "Global zone-layer calibration offset applied uniformly to every zone overlay (translate in SVG units + uniform scale about the SVG origin).",
+  );
+
+export const updateZoneAlignmentResponseScaleExclusiveMin = 0;
+
+export const UpdateZoneAlignmentResponse = zod
+  .object({
+    translateX: zod.number(),
+    translateY: zod.number(),
+    scale: zod.number().gt(updateZoneAlignmentResponseScaleExclusiveMin),
+  })
+  .describe(
+    "Global zone-layer calibration offset applied uniformly to every zone overlay (translate in SVG units + uniform scale about the SVG origin).",
+  );
+
+/**
  * Returns privileged admin actions (approve, ban, promote, demote) in reverse-chronological order with cursor-based pagination. Admin access required.
  * @summary List admin action audit log entries (admin)
  */

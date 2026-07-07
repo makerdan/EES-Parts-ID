@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, integer, boolean, bigint } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, integer, boolean, bigint, doublePrecision } from "drizzle-orm/pg-core";
 
 export const adminPreferencesTable = pgTable("admin_preferences", {
   id: integer("id").primaryKey().default(1),
@@ -10,6 +10,11 @@ export const adminPreferencesTable = pgTable("admin_preferences", {
   shelfPrefix: text("shelf_prefix"),
   shelfStep: integer("shelf_step"),
   aiProvider: text("ai_provider"),
+  // Global zone-layer alignment calibration applied uniformly to every zone on
+  // the Map tab (translate in SVG units + uniform scale). Defaults to identity.
+  zoneAlignX: doublePrecision("zone_align_x").notNull().default(0),
+  zoneAlignY: doublePrecision("zone_align_y").notNull().default(0),
+  zoneAlignScale: doublePrecision("zone_align_scale").notNull().default(1),
   revokedBefore: bigint("revoked_before", { mode: "number" }).notNull().default(0),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

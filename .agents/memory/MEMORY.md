@@ -27,3 +27,4 @@
 - [Stuck task in AWAITING_INPUT with no question](awaiting-input-stuck-task.md) — agent crash at state-transition moment; fix is clicking "Update from main" in the Replit UI (cannot be automated).
 - [Silent task failure recovery](silent-task-failure-recovery.md) — FAILED/ERROR with no error message; distinct from AWAITING_INPUT; fix is Retry/re-run in the Replit UI (cannot be automated).
 - [api-zod codegen dev-boot clean race](codegen-dev-boot-race.md) — dev predev must use locked idempotent `codegen:ensure`, not raw `orval` clean, or concurrent api-server boot dies ERR_MODULE_NOT_FOUND.
+- [drizzle generate broken — hand-write SQL migrations](drizzle-generate-broken-handwrite-migrations.md) — lib/db generate fails (partial meta); add columns via hand-written drizzle/NNNN.sql + push; schema:check scans quoted column names in .sql.

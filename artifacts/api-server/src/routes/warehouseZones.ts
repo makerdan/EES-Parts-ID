@@ -3,9 +3,10 @@ import {
   ListWarehouseZonesResponse,
   UpdateWarehouseZoneBody,
   UpdateWarehouseZoneResponse,
+  UpdateZoneAlignmentBody,
 } from "@workspace/api-zod";
 import { db } from "@workspace/db";
-import { inventoryTable, warehouseZoneTable } from "@workspace/db";
+import { adminPreferencesTable, inventoryTable, warehouseZoneTable } from "@workspace/db";
 import { asc, eq, sql } from "drizzle-orm";
 import { Router } from "express";
 
@@ -95,6 +96,68 @@ router.get("/coverage", async (_req, res) => {
     });
   } catch {
     res.status(500).json({ error: "Failed to compute coverage" });
+  }
+});
+
+// GET /warehouse-zones/alignment
+// Returns the global zone-layer calibration offset (translate + uniform scale)
+// applied uniformly to every zone overlay on the Map tab. Readable by all
+// approved users (no admin guard). Defaults to identity (0, 0, 1) when the
+// admin_preferences row is absent or the columns were never set.
+router.get("/alignment", async (_req, res) => {
+  try {
+    const rows = await db
+      .select({
+        x: adminPreferencesTable.zoneAlignX,
+        y: adminPreferencesTable.zoneAlignY,
+        s: adminPreferencesTable.zoneAlignScale,
+      })
+      .from(adminPreferencesTable)
+      .where(eq(adminPreferencesTable.id, 1))
+      .limit(1);
+    const row = rows[0];
+    res.json({
+      translateX: row?.x ?? 0,
+      translateY: row?.y ?? 0,
+      scale: row?.s ?? 1,
+    });
+  } catch {
+    res.status(500).json({ error: "Failed to fetch zone alignment" });
+  }
+});
+
+// PUT /warehouse-zones/alignment (admin)
+// Upserts the global zone-layer calibration offset onto the singleton
+// admin_preferences row (id = 1).
+router.put("/alignment", requireAdminAuth, async (req, res) => {
+  const parsed = UpdateZoneAlignmentBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+    return;
+  }
+  const { translateX, translateY, scale } = parsed.data;
+  try {
+    await db
+      .insert(adminPreferencesTable)
+      .values({
+        id: 1,
+        zoneAlignX: translateX,
+        zoneAlignY: translateY,
+        zoneAlignScale: scale,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: adminPreferencesTable.id,
+        set: {
+          zoneAlignX: translateX,
+          zoneAlignY: translateY,
+          zoneAlignScale: scale,
+          updatedAt: new Date(),
+        },
+      });
+    res.json({ translateX, translateY, scale });
+  } catch {
+    res.status(500).json({ error: "Failed to update zone alignment" });
   }
 });
 

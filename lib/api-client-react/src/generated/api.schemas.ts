@@ -417,6 +417,16 @@ export interface UpdateWarehouseZoneBody {
   sortOrder?: number;
 }
 
+/**
+ * Global zone-layer calibration offset applied uniformly to every zone overlay (translate in SVG units + uniform scale about the SVG origin).
+ */
+export interface ZoneAlignment {
+  translateX: number;
+  translateY: number;
+  /** @exclusiveMinimum 0 */
+  scale: number;
+}
+
 export interface AdminRestartResponse {
   restarting: boolean;
 }

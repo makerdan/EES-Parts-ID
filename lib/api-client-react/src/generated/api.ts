@@ -51,6 +51,7 @@ import type {
   UpsertInventoryResponse,
   WarehouseZoneListResponse,
   WarehouseZoneResponse,
+  ZoneAlignment,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1944,6 +1945,168 @@ export const useDeleteWarehouseZone = <
   TContext
 > => {
   return useMutation(getDeleteWarehouseZoneMutationOptions(options));
+};
+
+/**
+ * Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Readable by all approved users. Defaults to identity (0, 0, 1) when never calibrated.
+ * @summary Get the global zone-layer alignment offset
+ */
+export const getGetZoneAlignmentUrl = () => {
+  return `/api/warehouse-zones/alignment`;
+};
+
+export const getZoneAlignment = async (
+  options?: RequestInit,
+): Promise<ZoneAlignment> => {
+  return customFetch<ZoneAlignment>(getGetZoneAlignmentUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetZoneAlignmentQueryKey = () => {
+  return [`/api/warehouse-zones/alignment`] as const;
+};
+
+export const getGetZoneAlignmentQueryOptions = <
+  TData = Awaited<ReturnType<typeof getZoneAlignment>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getZoneAlignment>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetZoneAlignmentQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getZoneAlignment>>
+  > = ({ signal }) => getZoneAlignment({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getZoneAlignment>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetZoneAlignmentQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getZoneAlignment>>
+>;
+export type GetZoneAlignmentQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the global zone-layer alignment offset
+ */
+
+export function useGetZoneAlignment<
+  TData = Awaited<ReturnType<typeof getZoneAlignment>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getZoneAlignment>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetZoneAlignmentQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update the global zone-layer alignment offset (admin)
+ */
+export const getUpdateZoneAlignmentUrl = () => {
+  return `/api/warehouse-zones/alignment`;
+};
+
+export const updateZoneAlignment = async (
+  zoneAlignment: ZoneAlignment,
+  options?: RequestInit,
+): Promise<ZoneAlignment> => {
+  return customFetch<ZoneAlignment>(getUpdateZoneAlignmentUrl(), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(zoneAlignment),
+  });
+};
+
+export const getUpdateZoneAlignmentMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateZoneAlignment>>,
+    TError,
+    { data: BodyType<ZoneAlignment> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateZoneAlignment>>,
+  TError,
+  { data: BodyType<ZoneAlignment> },
+  TContext
+> => {
+  const mutationKey = ["updateZoneAlignment"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateZoneAlignment>>,
+    { data: BodyType<ZoneAlignment> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateZoneAlignment(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateZoneAlignmentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateZoneAlignment>>
+>;
+export type UpdateZoneAlignmentMutationBody = BodyType<ZoneAlignment>;
+export type UpdateZoneAlignmentMutationError = ErrorType<void>;
+
+/**
+ * @summary Update the global zone-layer alignment offset (admin)
+ */
+export const useUpdateZoneAlignment = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateZoneAlignment>>,
+    TError,
+    { data: BodyType<ZoneAlignment> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateZoneAlignment>>,
+  TError,
+  { data: BodyType<ZoneAlignment> },
+  TContext
+> => {
+  return useMutation(getUpdateZoneAlignmentMutationOptions(options));
 };
 
 /**
