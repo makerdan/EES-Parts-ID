@@ -16,6 +16,21 @@ const PUBLIC_PATHS = new Set(["/healthz", "/floor-plan/svg", "/floor-plan/meta"]
 const PUBLIC_PREFIXES = ["/floor-plan/tiles/"];
 
 /**
+ * Resolve a Clerk user's *primary* email address rather than blindly taking the
+ * first entry in the list. Clerk designates one address as primary via
+ * `primaryEmailAddressId`; when the user changes their primary email this is the
+ * value that should follow. Falls back to the first address if no primary is
+ * designated (e.g. single-email accounts).
+ */
+function resolvePrimaryEmail(clerkUser: {
+  primaryEmailAddressId?: string | null;
+  emailAddresses: { id: string; emailAddress: string }[];
+}): string {
+  const primary = clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId);
+  return primary?.emailAddress ?? clerkUser.emailAddresses[0]?.emailAddress ?? "";
+}
+
+/**
  * Middleware that validates a Clerk session token on all /api/* routes except
  * the public whitelist above.
  *
@@ -57,7 +72,7 @@ export async function requireAppAuth(req: Request, res: Response, next: NextFunc
       let email = "";
       try {
         const clerkUser = await clerkClient.users.getUser(userId);
-        email = clerkUser.emailAddresses[0]?.emailAddress ?? "";
+        email = resolvePrimaryEmail(clerkUser);
       } catch (clerkErr) {
         const requestId = res.locals.requestId as string | undefined;
         logger.error(
@@ -101,7 +116,7 @@ export async function requireAppAuth(req: Request, res: Response, next: NextFunc
           res.status(401).json({ error: "No email address associated with this account." });
           return;
         }
-        email = clerkUser.emailAddresses[0]?.emailAddress ?? "";
+        email = resolvePrimaryEmail(clerkUser);
       } catch (clerkErr) {
         const requestId = res.locals.requestId as string | undefined;
         logger.error({ err: clerkErr, userId, requestId }, "requireAppAuth: Clerk email fetch failed");
