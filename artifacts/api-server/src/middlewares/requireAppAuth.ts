@@ -51,12 +51,31 @@ export async function requireAppAuth(req: Request, res: Response, next: NextFunc
 
     // Bootstrap admin: force status=approved AND role=admin on every request.
     if (adminClerkUserId && userId === adminClerkUserId) {
+      // Resolve the real email from Clerk the same way the standard new-user
+      // flow does. Failing to fetch the email must never block the admin from
+      // authenticating, so fall back to preserving whatever is already stored.
+      let email = "";
+      try {
+        const clerkUser = await clerkClient.users.getUser(userId);
+        email = clerkUser.emailAddresses[0]?.emailAddress ?? "";
+      } catch (clerkErr) {
+        const requestId = res.locals.requestId as string | undefined;
+        logger.error(
+          { err: clerkErr, userId, requestId },
+          "requireAppAuth: Clerk email fetch failed for bootstrap admin",
+        );
+      }
+
+      // Only write the email when we actually resolved one; if the fetch
+      // failed, leave the existing stored email untouched. When resolved, this
+      // backfills an existing bootstrap admin row whose email is empty.
+      const emailUpdate = email ? { email } : {};
       await db
         .insert(usersTable)
-        .values({ clerkUserId: userId, email: "", status: "approved", role: "admin" })
+        .values({ clerkUserId: userId, email, status: "approved", role: "admin" })
         .onConflictDoUpdate({
           target: usersTable.clerkUserId,
-          set: { status: "approved", role: "admin", updatedAt: new Date() },
+          set: { ...emailUpdate, status: "approved", role: "admin", updatedAt: new Date() },
         });
       res.locals.appUser = { clerkUserId: userId, status: "approved", role: "admin" };
       res.locals.isBootstrapAdmin = true;
