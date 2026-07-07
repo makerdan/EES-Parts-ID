@@ -1,25 +1,65 @@
-import React from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { useClerk } from "@clerk/expo";
+import { useRouter } from "expo-router";
+import React, { useEffect } from "react";
+import { ActivityIndicator, Platform, StyleSheet, Text, View } from "react-native";
 
 import { useColors } from "@/hooks/useColors";
 
 /**
  * Dedicated OAuth callback page for web.
  *
- * After the full-page Google/Apple redirect flow, Clerk redirects the browser
- * back to this route with OAuth token params in the URL.  @clerk/clerk-js
- * (which backs @clerk/expo on web) automatically detects and processes those
- * params as soon as ClerkProvider mounts.  We simply show a loading spinner
- * while that happens.  AuthGate in _layout.tsx is configured to leave this
- * route alone so the redirect-to-login logic doesn't fire before Clerk has
- * finished processing the token.
+ * After the full-page Google/Apple redirect flow (signIn.authenticateWithRedirect
+ * in OAuthButtons), Clerk redirects the browser back to this route with the OAuth
+ * token params in the URL. We call clerk.handleRedirectCallback() to read those
+ * params and finalize the session (it also transfers a first-time OAuth user into
+ * a sign-up automatically). While that runs we show the "Completing sign-in…"
+ * spinner.
  *
- * Once isSignedIn flips to true, AuthGate handles routing the user to the
- * correct screen (tabs, pending, or banned) — it is the single source of
- * truth for post-sign-in navigation.
+ * AuthGate in _layout.tsx exempts this route from the redirect-to-login guard, so
+ * the redirect-to-login logic doesn't fire before Clerk has finished processing
+ * the token. Once the session is active (isSignedIn flips to true), AuthGate is
+ * the single source of truth for routing the user to the correct screen (tabs,
+ * pending, or banned) — we hand navigation back to it via the customNavigate
+ * callback below.
+ *
+ * On native this route is never reached: the native useSSO flow resolves the
+ * session in-place, so the effect is a no-op there.
  */
 export default function SsoCallback() {
   const colors = useColors();
+  const clerk = useClerk();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+
+    let cancelled = false;
+    clerk
+      .handleRedirectCallback(
+        {
+          // Fallbacks if Clerk cannot infer where to go; AuthGate takes over
+          // from here and routes based on approval status.
+          signInFallbackRedirectUrl: "/",
+          signUpFallbackRedirectUrl: "/",
+        },
+        // Keep navigation inside the expo-router SPA rather than doing a hard
+        // page load, then let AuthGate correct the destination.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (to: string) => {
+          if (!cancelled) router.replace(to as any);
+          return Promise.resolve();
+        },
+      )
+      .catch(() => {
+        // Token missing/expired or the user cancelled — send them back to login.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (!cancelled) router.replace("/login" as any);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clerk, router]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>

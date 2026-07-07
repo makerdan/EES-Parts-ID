@@ -46,12 +46,16 @@ jest.mock("expo-router", () => ({
   },
 }));
 
-// ── @clerk/expo (useSSO needed for OAuthButtons) ──────────────────────────────
+// ── @clerk/expo (OAuthButtons is platform-split) ──────────────────────────────
 //
-// OAuthButtons uses the canonical useSSO()/startSSOFlow() flow for BOTH web and
-// native. startSSOFlow is a single function that receives { strategy, redirectUrl }
-// and resolves with { createdSessionId, setActive }. The default implementation
-// routes by strategy so Google and Apple presses return distinct session IDs.
+// OAuthButtons splits by platform:
+//   • Native (this test env — Platform.OS is "ios"): useSSO()/startSSOFlow(),
+//     which receives { strategy, redirectUrl } and resolves with
+//     { createdSessionId, setActive }. The default implementation routes by
+//     strategy so Google and Apple presses return distinct session IDs.
+//   • Web: useClerk().client.signIn.authenticateWithRedirect() (full-page
+//     redirect). Mocked below so the hook can be called unconditionally; it is
+//     never exercised in the native test path (Platform.OS is "ios").
 
 const mockSetActive = jest.fn(() => Promise.resolve());
 const mockStartSSO = jest.fn((opts: { strategy: string }) => {
@@ -59,11 +63,16 @@ const mockStartSSO = jest.fn((opts: { strategy: string }) => {
     return Promise.resolve({ createdSessionId: "session-456", setActive: mockSetActive });
   return Promise.resolve({ createdSessionId: "session-123", setActive: mockSetActive });
 });
+const mockAuthenticateWithRedirect = jest.fn(() => Promise.resolve());
 
 jest.mock("@clerk/expo", () => ({
   useSSO: jest.fn(() => ({ startSSOFlow: mockStartSSO })),
   useAuth: jest.fn(() => ({ isSignedIn: false })),
-  useClerk: jest.fn(() => ({ signOut: jest.fn() })),
+  useClerk: jest.fn(() => ({
+    signOut: jest.fn(),
+    handleRedirectCallback: jest.fn(),
+    client: { signIn: { authenticateWithRedirect: mockAuthenticateWithRedirect } },
+  })),
   ClerkProvider: ({ children }: { children: React.ReactNode }) =>
     React.createElement(React.Fragment, null, children),
   ClerkLoaded: ({ children }: { children: React.ReactNode }) =>
@@ -436,13 +445,13 @@ describe("OAuthButtons — source inspection", () => {
   });
 
   it("calls setActive before router.replace (session must be active before navigation)", () => {
-    // Both Google and Apple presses funnel through the shared runSSO helper,
-    // which must await setActive before navigating. Confirm the pattern:
-    // await setActive!(...) precedes router.replace inside runSSO.
-    const runSSOMatch = source.match(/runSSO[\s\S]*?}\s*,\s*\[/);
-    expect(runSSOMatch).not.toBeNull();
+    // Both Google and Apple presses funnel through the shared runOAuth helper.
+    // On the native path it must await setActive before navigating. Confirm the
+    // pattern: await setActive!(...) precedes router.replace inside runOAuth.
+    const runOAuthMatch = source.match(/runOAuth[\s\S]*?}\s*,\s*\[/);
+    expect(runOAuthMatch).not.toBeNull();
 
-    const body = runSSOMatch![0];
+    const body = runOAuthMatch![0];
 
     const setActiveIdx = body.indexOf("setActive");
     const replaceIdx   = body.indexOf('router.replace("/(tabs)")');
