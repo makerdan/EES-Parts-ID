@@ -163,7 +163,7 @@ export default function MapScreen() {
   const [focusSectionNum, setFocusSectionNum] = useState<number | null>(null);
 
   // Zone data — owned at this level so useFocusEffect can trigger refetch
-  const { zones, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
+  const { zones, alignment: zoneAlignment, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
 
   /**
    * Zone IDs for primary pins — highlights every zone whose aisle contains
@@ -527,6 +527,7 @@ export default function MapScreen() {
       <View style={styles.mapWrapper}>
         <WarehouseMapView
           zones={zones}
+          zoneAlignment={zoneAlignment}
           zonesLoading={zonesLoading}
           zonesError={zonesError}
           onZonesRetry={refetchZones}

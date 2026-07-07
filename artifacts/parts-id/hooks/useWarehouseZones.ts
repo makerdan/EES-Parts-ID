@@ -40,12 +40,33 @@ export type ApiWarehouseZone = {
   updatedAt: string;
 };
 
+/** Global zone-layer calibration offset applied uniformly to every zone. */
+export type ZoneAlignment = {
+  translateX: number;
+  translateY: number;
+  scale: number;
+};
+
+/** Identity offset — no shift, no scale — used until a value is loaded. */
+export const IDENTITY_ALIGNMENT: ZoneAlignment = { translateX: 0, translateY: 0, scale: 1 };
+
+/** Coerces an unknown API/cache value into a safe ZoneAlignment (falls back to identity). */
+function normalizeAlignment(v: unknown): ZoneAlignment {
+  const o = (v ?? {}) as Partial<ZoneAlignment>;
+  const tx = typeof o.translateX === "number" && Number.isFinite(o.translateX) ? o.translateX : 0;
+  const ty = typeof o.translateY === "number" && Number.isFinite(o.translateY) ? o.translateY : 0;
+  const s = typeof o.scale === "number" && Number.isFinite(o.scale) && o.scale > 0 ? o.scale : 1;
+  return { translateX: tx, translateY: ty, scale: s };
+}
+
 type ZoneCache = {
   zones: Array<ApiWarehouseZone>;
+  alignment?: ZoneAlignment;
 };
 
 export function useWarehouseZones() {
   const [zones, setZones] = useState<Array<ApiWarehouseZone>>([]);
+  const [alignment, setAlignment] = useState<ZoneAlignment>(IDENTITY_ALIGNMENT);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const mountedRef = useRef(true);
@@ -80,20 +101,35 @@ export function useWarehouseZones() {
     //     and the error badge should appear.
     const hadToken = getAuthToken() !== null;
     try {
-      const data: { zones: Array<ApiWarehouseZone> } = await retryAsync(async () => {
-        const res = await fetchWithAuth(`${API_BASE}/warehouse-zones`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      });
+      // Fetch zones and the global alignment offset in parallel. Zones are the
+      // critical payload (retried); the alignment is best-effort and falls back
+      // to identity if it fails, so a missing offset never breaks the map.
+      const [data, alignmentData] = await Promise.all([
+        retryAsync(async () => {
+          const res = await fetchWithAuth(`${API_BASE}/warehouse-zones`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json() as Promise<{ zones: Array<ApiWarehouseZone> }>;
+        }),
+        (async (): Promise<ZoneAlignment> => {
+          try {
+            const res = await fetchWithAuth(`${API_BASE}/warehouse-zones/alignment`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return normalizeAlignment(await res.json());
+          } catch {
+            return IDENTITY_ALIGNMENT;
+          }
+        })(),
+      ]);
       if (mountedRef.current) {
         setZones(data.zones);
+        setAlignment(alignmentData);
         setError(false);
         setLoading(false);
         hasDataRef.current = true;
         tokenExpiredMidSessionRef.current = false;
         lastFetchedAtRef.current = Date.now();
       }
-      const entry: ZoneCache = { zones: data.zones };
+      const entry: ZoneCache = { zones: data.zones, alignment: alignmentData };
       await AsyncStorage.setItem(ZONES_CACHE_KEY, JSON.stringify(entry)).catch(() => {});
     } catch (err) {
       if (mountedRef.current) {
@@ -134,6 +170,7 @@ export function useWarehouseZones() {
           const cached: ZoneCache = JSON.parse(raw);
           if (mountedRef.current) {
             setZones(cached.zones);
+            setAlignment(normalizeAlignment(cached.alignment));
             setLoading(false);
             hasDataRef.current = true;
           }
@@ -183,5 +220,5 @@ export function useWarehouseZones() {
     return () => unsubscribeFromTokenAvailable(handleTokenAvailable);
   }, [refetch]);
 
-  return { zones, loading, error, refetch };
+  return { zones, alignment, loading, error, refetch };
 }

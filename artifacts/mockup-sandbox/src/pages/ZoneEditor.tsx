@@ -197,6 +197,17 @@ const MIN_ZONE_PX = 8; // minimum zone size in screen pixels before it's discard
 const API_BASE = `${window.location.origin}/api`;
 const INITIAL_SCALE = 0.18; // start zoomed out to show whole floor plan
 
+// Zone-layer alignment calibration increments. Translate is in SVG viewBox
+// units (the floor plan viewBox is ~3600×2460, so a few units is a fine nudge);
+// scale is a uniform multiplier clamped to a sane range.
+const ALIGN_NUDGE_SMALL = 5;
+const ALIGN_NUDGE_LARGE = 50;
+const ALIGN_SCALE_SMALL = 0.01;
+const ALIGN_SCALE_LARGE = 0.05;
+const ALIGN_SCALE_MIN = 0.1;
+const ALIGN_SCALE_MAX = 5;
+const IDENTITY_ALIGN = { x: 0, y: 0, s: 1 };
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Zone {
   id: number;
@@ -213,7 +224,7 @@ interface Zone {
 interface Tf { x: number; y: number; s: number }
 interface Pt { x: number; y: number }
 type Handle = "nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w";
-type Mode = "pan" | "draw" | "fill";
+type Mode = "pan" | "draw" | "fill" | "calibrate";
 
 // ── Undo / Redo types ──────────────────────────────────────────────────────
 const UNDO_LIMIT = 50;
@@ -247,7 +258,9 @@ type IxState =
   | { t: "rubber"; x1: number; y1: number; x2: number; y2: number; shift: boolean }
   | { t: "multiMove"; startX: number; startY: number }
   // Fill: waits for mouseup with < 5 px movement before triggering the async fill.
-  | { t: "fillPending"; sx: number; sy: number };
+  | { t: "fillPending"; sx: number; sy: number }
+  // Calibrate: drag the whole zone layer. ax/ay = align translate at drag start.
+  | { t: "alignPan"; sx: number; sy: number; ax: number; ay: number };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -574,6 +587,13 @@ export function ZoneEditor() {
   const [svgDims, setSvgDims] = useState<{ w: number; h: number }>(svgFallbackDims);
   const [tf, setTf] = useState<Tf>({ x: 0, y: 0, s: INITIAL_SCALE });
   const [mode, setMode] = useState<Mode>("pan");
+  // ── Global zone-layer alignment calibration ───────────────────────────────
+  // `align` is the working offset shown live in calibrate mode; `savedAlign` is
+  // the last value persisted to the server (used to detect unsaved changes).
+  // translate x/y are in SVG viewBox units; s is a uniform scale about origin.
+  const [align, setAlign] = useState<{ x: number; y: number; s: number }>(IDENTITY_ALIGN);
+  const [savedAlign, setSavedAlign] = useState<{ x: number; y: number; s: number }>(IDENTITY_ALIGN);
+  const [savingAlign, setSavingAlign] = useState(false);
   // True while the async rasterize+fill operation is in progress.
   const [fillLoading, setFillLoading] = useState(false);
   // Fill sensitivity: slider position 0-100, persisted to localStorage.
@@ -720,6 +740,7 @@ export function ZoneEditor() {
   const svgDimsRef = useRef(svgDims);
   const fillLoadingRef = useRef(false);
   const fillSensitivityRef = useRef(fillSensitivity);
+  const alignRef = useRef(align);
 
   // Mutex: prevents concurrent undo/redo from corrupting the stack when the
   // user holds Cmd+Z or fires repeated keypresses during an async operation.
@@ -736,6 +757,7 @@ export function ZoneEditor() {
   useEffect(() => { svgInnerRef.current = svgInner; }, [svgInner]);
   useEffect(() => { svgDimsRef.current = svgDims; }, [svgDims]);
   useEffect(() => { fillLoadingRef.current = fillLoading; }, [fillLoading]);
+  useEffect(() => { alignRef.current = align; }, [align]);
   useEffect(() => {
     fillSensitivityRef.current = fillSensitivity;
     try { localStorage.setItem("zoneEditorFillSensitivity", String(fillSensitivity)); } catch {}
@@ -890,6 +912,60 @@ export function ZoneEditor() {
   }, []);
 
   useEffect(() => { void fetchZones(); }, [fetchZones]);
+
+  // Load the saved global zone-layer alignment on mount so calibrate mode opens
+  // with the current live offset (and the map preview matches production).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/warehouse-zones/alignment`);
+        if (!res.ok) return;
+        const d = await res.json();
+        if (cancelled) return;
+        const next = {
+          x: Number.isFinite(d?.translateX) ? d.translateX : 0,
+          y: Number.isFinite(d?.translateY) ? d.translateY : 0,
+          s: Number.isFinite(d?.scale) && d.scale > 0 ? d.scale : 1,
+        };
+        setAlign(next);
+        setSavedAlign(next);
+      } catch { /* leave identity offset in place */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Persist the working alignment offset globally (admin-only PUT).
+  const saveAlignment = useCallback(async () => {
+    setSavingAlign(true);
+    try {
+      const res = await fetch(`${API_BASE}/warehouse-zones/alignment`, {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify({ translateX: align.x, translateY: align.y, scale: align.s }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setSavedAlign({ ...align });
+      toast.success("Alignment saved for all users");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingAlign(false);
+    }
+  }, [align, headers]);
+
+  // Nudge the working offset by a translate delta (SVG viewBox units).
+  const nudgeAlign = useCallback((dx: number, dy: number) => {
+    setAlign((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+  }, []);
+
+  // Adjust the working uniform scale, clamped to a sane range.
+  const scaleAlign = useCallback((delta: number) => {
+    setAlign((prev) => ({
+      ...prev,
+      s: Math.min(ALIGN_SCALE_MAX, Math.max(ALIGN_SCALE_MIN, +(prev.s + delta).toFixed(4))),
+    }));
+  }, []);
 
   // ── Keyboard undo / redo shortcuts (Cmd+Z / Ctrl+Z, Cmd+Shift+Z / Ctrl+Shift+Z) ──
   useEffect(() => {
@@ -1877,6 +1953,17 @@ export function ZoneEditor() {
         return;
       }
 
+      if (state.t === "alignPan") {
+        // Screen delta → SVG-unit delta (align lives inside the tf transform).
+        const s = tfRef.current.s || 1;
+        setAlign((prev) => ({
+          ...prev,
+          x: state.ax + (e.clientX - state.sx) / s,
+          y: state.ay + (e.clientY - state.sy) / s,
+        }));
+        return;
+      }
+
       const p = getSvgPt(e.clientX, e.clientY);
 
       if (state.t === "draw") {
@@ -2069,6 +2156,14 @@ export function ZoneEditor() {
       // Do NOT clear pendingRect here — a failed fill (wall click) should leave
       // any previously drawn pending rect visible.
       ixRef.current = { t: "fillPending", sx: e.clientX, sy: e.clientY };
+    } else if (modeRef.current === "calibrate") {
+      // Drag the whole zone layer. Delta is applied in SVG units (screen / tf.s)
+      // in the move handler; capture the align translate at drag start here.
+      ixRef.current = {
+        t: "alignPan",
+        sx: e.clientX, sy: e.clientY,
+        ax: alignRef.current.x, ay: alignRef.current.y,
+      };
     } else {
       const p = getSvgPt(e.clientX, e.clientY);
       ixRef.current = { t: "draw", x1: p.x, y1: p.y, x2: p.x, y2: p.y };
@@ -2080,7 +2175,9 @@ export function ZoneEditor() {
   const onZoneMouseDown = (e: React.MouseEvent, zone: Zone) => {
     // In Fill mode, don't intercept — let the event reach onSvgMouseDown
     // so the flood-fill triggers normally even when clicking over a zone.
-    if (modeRef.current === "fill") return;
+    // In Calibrate mode, individual zones are not editable — let the event
+    // reach onSvgMouseDown so dragging starts a whole-layer pan instead.
+    if (modeRef.current === "fill" || modeRef.current === "calibrate") return;
     e.stopPropagation();
     if (e.button !== 0) return;
 
@@ -2287,6 +2384,9 @@ export function ZoneEditor() {
           <ModeBtn active={mode === "fill"} onClick={() => { setMode("fill"); setSelectedIds(new Set()); setSelectionOrder([]); setPendingRect(null); }}>
             ⬛ Fill
           </ModeBtn>
+          <ModeBtn active={mode === "calibrate"} onClick={() => { setMode("calibrate"); setSelectedIds(new Set()); setSelectionOrder([]); setPendingRect(null); setDraftRect(null); }}>
+            ✛ Calibrate
+          </ModeBtn>
           <div style={{ width: 1, background: "rgba(255,255,255,0.3)", margin: "0 2px" }} />
           <button
             title={undoCount > 0 ? `Undo (${undoCount})` : "Nothing to undo"}
@@ -2443,6 +2543,81 @@ export function ZoneEditor() {
             </span>
           </div>
         )}
+        {mode === "calibrate" && (() => {
+          const dirty =
+            align.x !== savedAlign.x || align.y !== savedAlign.y || align.s !== savedAlign.s;
+          const nudgeBtn = (label: string, dx: number, dy: number, title: string) => (
+            <button
+              key={title}
+              title={title}
+              onClick={() => nudgeAlign(dx, dy)}
+              style={{
+                width: 28, height: 24, padding: 0, fontSize: 13, lineHeight: 1,
+                background: "#334155", color: "#fff", border: "1px solid #475569",
+                borderRadius: 4, cursor: "pointer",
+              }}
+            >
+              {label}
+            </button>
+          );
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 8, flexWrap: "wrap" }}>
+              {/* Nudge — small step */}
+              <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                <span style={{ fontSize: 10, color: "#94a3b8", marginRight: 2 }}>Nudge</span>
+                {nudgeBtn("←", -ALIGN_NUDGE_SMALL, 0, `Left ${ALIGN_NUDGE_SMALL}`)}
+                {nudgeBtn("→", ALIGN_NUDGE_SMALL, 0, `Right ${ALIGN_NUDGE_SMALL}`)}
+                {nudgeBtn("↑", 0, -ALIGN_NUDGE_SMALL, `Up ${ALIGN_NUDGE_SMALL}`)}
+                {nudgeBtn("↓", 0, ALIGN_NUDGE_SMALL, `Down ${ALIGN_NUDGE_SMALL}`)}
+              </div>
+              {/* Nudge — large step */}
+              <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                <span style={{ fontSize: 10, color: "#94a3b8", marginRight: 2 }}>Big</span>
+                {nudgeBtn("«", -ALIGN_NUDGE_LARGE, 0, `Left ${ALIGN_NUDGE_LARGE}`)}
+                {nudgeBtn("»", ALIGN_NUDGE_LARGE, 0, `Right ${ALIGN_NUDGE_LARGE}`)}
+                {nudgeBtn("⤒", 0, -ALIGN_NUDGE_LARGE, `Up ${ALIGN_NUDGE_LARGE}`)}
+                {nudgeBtn("⤓", 0, ALIGN_NUDGE_LARGE, `Down ${ALIGN_NUDGE_LARGE}`)}
+              </div>
+              {/* Uniform scale */}
+              <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                <span style={{ fontSize: 10, color: "#94a3b8", marginRight: 2 }}>Scale</span>
+                <button title={`− ${ALIGN_SCALE_LARGE}`} onClick={() => scaleAlign(-ALIGN_SCALE_LARGE)} style={{ width: 28, height: 24, padding: 0, fontSize: 12, background: "#334155", color: "#fff", border: "1px solid #475569", borderRadius: 4, cursor: "pointer" }}>−−</button>
+                <button title={`− ${ALIGN_SCALE_SMALL}`} onClick={() => scaleAlign(-ALIGN_SCALE_SMALL)} style={{ width: 24, height: 24, padding: 0, fontSize: 13, background: "#334155", color: "#fff", border: "1px solid #475569", borderRadius: 4, cursor: "pointer" }}>−</button>
+                <span style={{ fontSize: 11, color: "#f59e0b", minWidth: 42, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{(align.s * 100).toFixed(0)}%</span>
+                <button title={`+ ${ALIGN_SCALE_SMALL}`} onClick={() => scaleAlign(ALIGN_SCALE_SMALL)} style={{ width: 24, height: 24, padding: 0, fontSize: 13, background: "#334155", color: "#fff", border: "1px solid #475569", borderRadius: 4, cursor: "pointer" }}>+</button>
+                <button title={`+ ${ALIGN_SCALE_LARGE}`} onClick={() => scaleAlign(ALIGN_SCALE_LARGE)} style={{ width: 28, height: 24, padding: 0, fontSize: 12, background: "#334155", color: "#fff", border: "1px solid #475569", borderRadius: 4, cursor: "pointer" }}>++</button>
+              </div>
+              {/* Offset readout */}
+              <span style={{ fontSize: 10, color: "#94a3b8", fontVariantNumeric: "tabular-nums" }}>
+                x {align.x.toFixed(1)} · y {align.y.toFixed(1)}
+              </span>
+              {/* Actions */}
+              <button
+                title="Reset the offset to zero (no shift, 100% scale). Save to apply for all users."
+                onClick={() => setAlign({ ...IDENTITY_ALIGN })}
+                style={{ height: 24, padding: "0 8px", fontSize: 11, background: "#334155", color: "#fff", border: "1px solid #475569", borderRadius: 4, cursor: "pointer" }}
+              >
+                Reset to zero
+              </button>
+              <button
+                title="Discard unsaved changes and revert to the last saved offset"
+                disabled={!dirty || savingAlign}
+                onClick={() => setAlign({ ...savedAlign })}
+                style={{ height: 24, padding: "0 8px", fontSize: 11, background: "transparent", color: dirty ? "#cbd5e1" : "#64748b", border: "1px solid #475569", borderRadius: 4, cursor: dirty && !savingAlign ? "pointer" : "default" }}
+              >
+                Revert
+              </button>
+              <button
+                title="Save this alignment globally — applies to every user's Map tab"
+                disabled={savingAlign}
+                onClick={() => { void saveAlignment(); }}
+                style={{ height: 24, padding: "0 12px", fontSize: 11, fontWeight: 600, background: dirty ? "#16a34a" : "#334155", color: "#fff", border: "none", borderRadius: 4, cursor: savingAlign ? "default" : "pointer" }}
+              >
+                {savingAlign ? "Saving…" : dirty ? "Save ●" : "Saved"}
+              </button>
+            </div>
+          );
+        })()}
         <span style={styles.hint}>
           scroll-zoom · {mode === "pan"
             ? "drag to pan · Shift+drag to select · Shift+click to multi-select · drag selected to move all"
@@ -2468,8 +2643,10 @@ export function ZoneEditor() {
                   ? ixRef.current.t === "pan"
                     ? "grabbing"
                     : "grab"
-                  : mode === "fill"
-                    ? "crosshair"
+                  : mode === "calibrate"
+                    ? ixRef.current.t === "alignPan"
+                      ? "grabbing"
+                      : "grab"
                     : "crosshair",
             }}
             onMouseDown={onSvgMouseDown}
@@ -2480,7 +2657,13 @@ export function ZoneEditor() {
                   perfectly crisp at any zoom level (no rasterisation). */}
               <g ref={floorPlanRef} pointerEvents="none" />
 
-              {/* Zone overlays */}
+              {/* Zone overlays.
+                  In calibrate mode the whole zone layer is shifted/scaled by the
+                  working alignment offset so the admin sees a live preview of how
+                  every zone lands on the floor plan. In all other modes zones
+                  render at their raw stored coordinates so per-zone editing math
+                  (pointer ↔ zone) stays exact — the offset never mutates coords. */}
+              <g transform={mode === "calibrate" ? `translate(${align.x},${align.y}) scale(${align.s})` : undefined}>
               {displayZones.map((zone) => {
                 const sel = selectedIds.has(zone.id);
                 const fill = zone.isInventory
@@ -2580,6 +2763,7 @@ export function ZoneEditor() {
                   </g>
                 );
               })}
+              </g>
 
               {/* Live drawing preview (draw mode — amber dashed) */}
               {draftRect && draftRect.w > 0 && draftRect.h > 0 && (
