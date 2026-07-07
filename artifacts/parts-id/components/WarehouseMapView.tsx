@@ -611,6 +611,33 @@ function FadeOutTileLayer({
   );
 }
 
+const ALIGN_SCALE_MIN = 0.1;
+const ALIGN_SCALE_MAX = 5;
+const ALIGN_TRANSLATE_MAX = 10000;
+
+const IDENTITY_ALIGNMENT = { translateX: 0, translateY: 0, scale: 1 };
+
+function safeZoneAlignment(
+  a: { translateX: number; translateY: number; scale: number } | null | undefined,
+): { translateX: number; translateY: number; scale: number } {
+  if (
+    a == null ||
+    typeof a.translateX !== "number" ||
+    typeof a.translateY !== "number" ||
+    typeof a.scale !== "number" ||
+    !isFinite(a.translateX) ||
+    !isFinite(a.translateY) ||
+    !isFinite(a.scale) ||
+    Math.abs(a.translateX) > ALIGN_TRANSLATE_MAX ||
+    Math.abs(a.translateY) > ALIGN_TRANSLATE_MAX ||
+    a.scale < ALIGN_SCALE_MIN ||
+    a.scale > ALIGN_SCALE_MAX
+  ) {
+    return IDENTITY_ALIGNMENT;
+  }
+  return { translateX: a.translateX, translateY: a.translateY, scale: a.scale };
+}
+
 export interface WarehouseMapViewProps {
   zones: Array<ApiWarehouseZone>;
   /**
@@ -2282,7 +2309,7 @@ export function WarehouseMapView({
                   },
                 )
               : null}
-            <G transform={`translate(${zoneAlignment?.translateX ?? 0}, ${zoneAlignment?.translateY ?? 0}) scale(${zoneAlignment?.scale ?? 1})`}>
+            <G transform={(() => { const a = safeZoneAlignment(zoneAlignment); return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`; })()}>
               {zoneOverlays}
             </G>
           </Svg>

@@ -1437,13 +1437,29 @@ export const DeleteWarehouseZoneResponse = zod.object({
  * Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Readable by all approved users. Defaults to identity (0, 0, 1) when never calibrated.
  * @summary Get the global zone-layer alignment offset
  */
-export const getZoneAlignmentResponseScaleExclusiveMin = 0;
+export const getZoneAlignmentResponseTranslateXMin = -10000;
+export const getZoneAlignmentResponseTranslateXMax = 10000;
+
+export const getZoneAlignmentResponseTranslateYMin = -10000;
+export const getZoneAlignmentResponseTranslateYMax = 10000;
+
+export const getZoneAlignmentResponseScaleMin = 0.1;
+export const getZoneAlignmentResponseScaleMax = 5;
 
 export const GetZoneAlignmentResponse = zod
   .object({
-    translateX: zod.number(),
-    translateY: zod.number(),
-    scale: zod.number().gt(getZoneAlignmentResponseScaleExclusiveMin),
+    translateX: zod
+      .number()
+      .min(getZoneAlignmentResponseTranslateXMin)
+      .max(getZoneAlignmentResponseTranslateXMax),
+    translateY: zod
+      .number()
+      .min(getZoneAlignmentResponseTranslateYMin)
+      .max(getZoneAlignmentResponseTranslateYMax),
+    scale: zod
+      .number()
+      .min(getZoneAlignmentResponseScaleMin)
+      .max(getZoneAlignmentResponseScaleMax),
   })
   .describe(
     "Global zone-layer calibration offset applied uniformly to every zone overlay (translate in SVG units + uniform scale about the SVG origin).",
@@ -1452,25 +1468,57 @@ export const GetZoneAlignmentResponse = zod
 /**
  * @summary Update the global zone-layer alignment offset (admin)
  */
-export const updateZoneAlignmentBodyScaleExclusiveMin = 0;
+export const updateZoneAlignmentBodyTranslateXMin = -10000;
+export const updateZoneAlignmentBodyTranslateXMax = 10000;
+
+export const updateZoneAlignmentBodyTranslateYMin = -10000;
+export const updateZoneAlignmentBodyTranslateYMax = 10000;
+
+export const updateZoneAlignmentBodyScaleMin = 0.1;
+export const updateZoneAlignmentBodyScaleMax = 5;
 
 export const UpdateZoneAlignmentBody = zod
   .object({
-    translateX: zod.number(),
-    translateY: zod.number(),
-    scale: zod.number().gt(updateZoneAlignmentBodyScaleExclusiveMin),
+    translateX: zod
+      .number()
+      .min(updateZoneAlignmentBodyTranslateXMin)
+      .max(updateZoneAlignmentBodyTranslateXMax),
+    translateY: zod
+      .number()
+      .min(updateZoneAlignmentBodyTranslateYMin)
+      .max(updateZoneAlignmentBodyTranslateYMax),
+    scale: zod
+      .number()
+      .min(updateZoneAlignmentBodyScaleMin)
+      .max(updateZoneAlignmentBodyScaleMax),
   })
   .describe(
     "Global zone-layer calibration offset applied uniformly to every zone overlay (translate in SVG units + uniform scale about the SVG origin).",
   );
 
-export const updateZoneAlignmentResponseScaleExclusiveMin = 0;
+export const updateZoneAlignmentResponseTranslateXMin = -10000;
+export const updateZoneAlignmentResponseTranslateXMax = 10000;
+
+export const updateZoneAlignmentResponseTranslateYMin = -10000;
+export const updateZoneAlignmentResponseTranslateYMax = 10000;
+
+export const updateZoneAlignmentResponseScaleMin = 0.1;
+export const updateZoneAlignmentResponseScaleMax = 5;
 
 export const UpdateZoneAlignmentResponse = zod
   .object({
-    translateX: zod.number(),
-    translateY: zod.number(),
-    scale: zod.number().gt(updateZoneAlignmentResponseScaleExclusiveMin),
+    translateX: zod
+      .number()
+      .min(updateZoneAlignmentResponseTranslateXMin)
+      .max(updateZoneAlignmentResponseTranslateXMax),
+    translateY: zod
+      .number()
+      .min(updateZoneAlignmentResponseTranslateYMin)
+      .max(updateZoneAlignmentResponseTranslateYMax),
+    scale: zod
+      .number()
+      .min(updateZoneAlignmentResponseScaleMin)
+      .max(updateZoneAlignmentResponseScaleMax),
   })
   .describe(
     "Global zone-layer calibration offset applied uniformly to every zone overlay (translate in SVG units + uniform scale about the SVG origin).",

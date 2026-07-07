@@ -10,8 +10,19 @@
  * Global zone-layer calibration offset applied uniformly to every zone overlay (translate in SVG units + uniform scale about the SVG origin).
  */
 export interface ZoneAlignment {
+  /**
+   * @minimum -10000
+   * @maximum 10000
+   */
   translateX: number;
+  /**
+   * @minimum -10000
+   * @maximum 10000
+   */
   translateY: number;
-  /** @exclusiveMinimum 0 */
+  /**
+   * @minimum 0.1
+   * @maximum 5
+   */
   scale: number;
 }

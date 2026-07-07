@@ -1414,11 +1414,16 @@ components:
       properties:
         translateX:
           type: number
+          minimum: -10000
+          maximum: 10000
         translateY:
           type: number
+          minimum: -10000
+          maximum: 10000
         scale:
           type: number
-          exclusiveMinimum: 0
+          minimum: 0.1
+          maximum: 5
       required:
         - translateX
         - translateY
