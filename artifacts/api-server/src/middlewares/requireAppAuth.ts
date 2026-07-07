@@ -1,7 +1,7 @@
 import { clerkClient,getAuth } from "@clerk/express";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { type NextFunction,type Request, type Response } from "express";
 
 import { logger } from "../lib/logger";
@@ -81,17 +81,54 @@ export async function requireAppAuth(req: Request, res: Response, next: NextFunc
         );
       }
 
-      // Only write the email when we actually resolved one; if the fetch
-      // failed, leave the existing stored email untouched. When resolved, this
-      // backfills an existing bootstrap admin row whose email is empty.
-      const emailUpdate = email ? { email } : {};
-      await db
-        .insert(usersTable)
-        .values({ clerkUserId: userId, email, status: "approved", role: "admin" })
-        .onConflictDoUpdate({
-          target: usersTable.clerkUserId,
-          set: { ...emailUpdate, status: "approved", role: "admin", updatedAt: new Date() },
-        });
+      // Persist the admin row. When we resolved an email it must be written
+      // through, but the `users` table enforces a partial unique index on
+      // non-empty email — a *different* row may already hold this same email
+      // (e.g. the admin previously authenticated under a different Clerk id, or
+      // a stale duplicate). A plain upsert only handles conflicts on
+      // clerk_user_id, so an email collision would surface as an unhandled
+      // uniqueness violation and 500 every authenticated admin request.
+      //
+      // To stay collision-safe we consolidate inside a single transaction:
+      // delete any *other* row holding this email, then upsert the canonical
+      // admin row keyed by the bootstrap admin's clerk_user_id. The net result
+      // is exactly one row for the admin, carrying the real email with
+      // role=admin/status=approved.
+      //
+      // A write failure here (for any reason) must never lock the admin out, so
+      // it is caught and logged while access is still granted below.
+      try {
+        if (email) {
+          await db.transaction(async (tx) => {
+            await tx
+              .delete(usersTable)
+              .where(and(eq(usersTable.email, email), ne(usersTable.clerkUserId, userId)));
+            await tx
+              .insert(usersTable)
+              .values({ clerkUserId: userId, email, status: "approved", role: "admin" })
+              .onConflictDoUpdate({
+                target: usersTable.clerkUserId,
+                set: { email, status: "approved", role: "admin", updatedAt: new Date() },
+              });
+          });
+        } else {
+          // No email resolved (Clerk fetch failed) — leave any stored email
+          // untouched and just force approved+admin so the admin keeps access.
+          await db
+            .insert(usersTable)
+            .values({ clerkUserId: userId, email, status: "approved", role: "admin" })
+            .onConflictDoUpdate({
+              target: usersTable.clerkUserId,
+              set: { status: "approved", role: "admin", updatedAt: new Date() },
+            });
+        }
+      } catch (writeErr) {
+        const requestId = res.locals.requestId as string | undefined;
+        logger.error(
+          { err: writeErr, userId, requestId },
+          "requireAppAuth: bootstrap admin row write failed; preserving admin access",
+        );
+      }
       res.locals.appUser = { clerkUserId: userId, status: "approved", role: "admin" };
       res.locals.isBootstrapAdmin = true;
       next();
