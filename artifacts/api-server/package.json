@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "predev": "pnpm --filter @workspace/api-spec run codegen:ensure",
+    "pretypecheck": "pnpm --filter @workspace/api-spec run codegen:ensure",
     "dev": "fuser -k -KILL ${PORT}/tcp 2>/dev/null || true; while fuser ${PORT}/tcp 2>/dev/null >/dev/null 2>&1; do sleep 0.2; done && NODE_ENV=development exec tsx src/index.ts",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",

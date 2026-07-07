@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "codegen": "orval --config ./orval.config.ts && pnpm -w run typecheck:libs",
+    "codegen": "orval --config ./orval.config.ts && CODEGEN_ENSURE_SKIP=1 pnpm -w run typecheck:libs",
     "codegen:ensure": "node ./scripts/ensure-codegen.mjs",
     "codegen:check": "pnpm run codegen && git diff --exit-code -- ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated && pnpm run spec:check && pnpm run barrel:check && pnpm run dist:check",
     "codegen:fix": "pnpm run codegen && if git status --porcelain -- ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated | grep -q .; then git add ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated && git commit -m 'chore: regenerate api clients [post-merge]'; fi && pnpm run spec:check",
