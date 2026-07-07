@@ -375,6 +375,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
 
     const ops: Array<SaveOp> = [];
 
+    // ?? "" handles newly-added items where description is null — null becomes ""
+    // so a first-time description edit is correctly detected as a change.
     if (description.trim() !== (current.description ?? "").trim()) {
       ops.push({
         field: "description",
@@ -569,49 +571,41 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       setFieldSaveErrors(newFieldErrors);
       setSaveStatus("error");
     } else {
-      if (capturedImageUrl !== undefined || capturedImageUrl2 !== undefined) {
-        const patchedImageUrl = capturedImageUrl;
-        const patchedImageUrl2 = capturedImageUrl2;
-        queryClient.setQueriesData<InventoryListResponse>(
-          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-          (old) => {
-            if (!old) return old;
-            return {
-              ...old,
-              items: old.items.map((i) => {
-                if (i.id !== current.id) return i;
-                return {
-                  ...i,
-                  ...(patchedImageUrl !== undefined ? { imageUrl: patchedImageUrl } : {}),
-                  ...(patchedImageUrl2 !== undefined ? { imageUrl2: patchedImageUrl2 } : {}),
-                };
-              }),
-            };
-          },
-        );
-        queryClient.setQueriesData<SearchInventoryResponse>(
-          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-          (old) => {
-            if (!old) return old;
-            const patchResult = (r: SearchInventoryResponse["results"][number]) => {
-              if (r.item.id !== current.id) return r;
-              return {
-                ...r,
-                item: {
-                  ...r.item,
-                  ...(patchedImageUrl !== undefined ? { imageUrl: patchedImageUrl } : {}),
-                  ...(patchedImageUrl2 !== undefined ? { imageUrl2: patchedImageUrl2 } : {}),
-                },
-              };
-            };
-            return {
-              ...old,
-              results: old.results.map(patchResult),
-              sizeUnknownResults: old.sizeUnknownResults?.map(patchResult),
-            };
-          },
-        );
-      }
+      // Synchronously patch every changed field into both caches so the list /
+      // search view reflects the new values immediately, without waiting for the
+      // background invalidation refetch to complete.
+      const patchItem = (i: InventoryItem): InventoryItem => {
+        if (i.id !== current.id) return i;
+        return {
+          ...i,
+          description: description.trim(),
+          binLocations: bins,
+          aiKeywords: keywords,
+          dimensions: newDims,
+          ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl } : {}),
+          ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2 } : {}),
+        };
+      };
+      queryClient.setQueriesData<InventoryListResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+        (old) => {
+          if (!old) return old;
+          return { ...old, items: old.items.map(patchItem) };
+        },
+      );
+      queryClient.setQueriesData<SearchInventoryResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+        (old) => {
+          if (!old) return old;
+          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+            r.item.id === current.id ? { ...r, item: patchItem(r.item) } : r;
+          return {
+            ...old,
+            results: old.results.map(patchResult),
+            sizeUnknownResults: old.sizeUnknownResults?.map(patchResult),
+          };
+        },
+      );
 
       // Evict stale search result cache entries for this item from AsyncStorage
       // so the next query returns fresh data rather than serving old field values.
