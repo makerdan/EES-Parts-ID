@@ -24,7 +24,7 @@ const PUBLIC_PREFIXES = ["/floor-plan/tiles/"];
  */
 function resolvePrimaryEmail(clerkUser: {
   primaryEmailAddressId?: string | null;
-  emailAddresses: { id: string; emailAddress: string }[];
+  emailAddresses: Array<{ id: string; emailAddress: string }>;
 }): string {
   const primary = clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId);
   return primary?.emailAddress ?? clerkUser.emailAddresses[0]?.emailAddress ?? "";
