@@ -283,6 +283,8 @@ export default function EditItemScreen() {
     try {
       const saves: Array<Promise<unknown>> = [];
 
+      // ?? "" handles newly-added items where description is null — null becomes ""
+      // so a first-time description edit is correctly detected as a change.
       if (description.trim() !== (current.description ?? "").trim()) {
         saves.push(
           fetch(`${API_BASE}/inventory/${current.id}/description`, {
