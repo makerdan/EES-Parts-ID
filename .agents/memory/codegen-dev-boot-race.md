@@ -12,6 +12,20 @@ barrel during that clean window it dies with ERR_MODULE_NOT_FOUND (no watch/retr
 **Rule:** dev `predev` for every artifact that imports the generated clients must go
 through the shared idempotent guard (`codegen:ensure`), never raw `codegen`.
 
+**Same rule for typecheck:** every tsc entry point must run `codegen:ensure` first,
+or a cold env / concurrent orval-clean leaves generated files missing and tsc goes
+red (TS2307 "Cannot find module './generated/api'"). Wired via `pretypecheck:libs`
+at root (covers `typecheck`, `tsc`, `typecheck:libs`, and parts-id which calls
+`pnpm -w run typecheck:libs` first) plus a `pretypecheck` on api-server (its tsc
+imports api-zod but never touches typecheck:libs).
+
+**Re-entrancy trap (must keep):** `codegen` ends with `pnpm -w run typecheck:libs`,
+which now fires the `pretypecheck:libs` guard. A guard-triggered regen would spawn
+`codegen` → nested `typecheck:libs` → guard again → deadlock on the lock the outer
+guard holds. Fix: `codegen` sets `CODEGEN_ENSURE_SKIP=1` for its nested typecheck,
+and `ensure-codegen.mjs main()` returns immediately when that env is set. Do NOT
+remove either half.
+
 **Guard invariants (the durable design decisions):**
 - Serialize codegen across processes with a file lock so a destructive clean can
   never overlap another process' import.
