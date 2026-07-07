@@ -1,4 +1,5 @@
-import { useOAuth, useSignIn, useSignUp } from "@clerk/expo";
+import { useSSO } from "@clerk/expo";
+import * as AuthSession from "expo-auth-session";
 import { useRouter } from "expo-router";
 import React, { useCallback, useState } from "react";
 import {
@@ -52,54 +53,57 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
   const colors = useColors();
   const router = useRouter();
 
-  const { startOAuthFlow: startGoogle } = useOAuth({ strategy: "oauth_google" });
-  const { startOAuthFlow: startApple } = useOAuth({ strategy: "oauth_apple" });
-  const { signIn } = useSignIn();
-  const { signUp } = useSignUp();
+  // useSSO()/startSSOFlow() is the canonical Clerk Core v3 flow and works on
+  // BOTH web and native. On web it performs a full-page redirect to the OAuth
+  // provider and back to redirectUrl (/sso-callback), where Clerk's JS SDK
+  // processes the token params and AuthGate routes the user. On native it opens
+  // the in-app browser and resolves with createdSessionId in the same JS
+  // context, which we activate below.
+  const { startSSOFlow } = useSSO();
 
   const [googleLoading, setGoogleLoading] = useState(false);
   const [appleLoading, setAppleLoading] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
+
+  const runSSO = useCallback(
+    async (strategy: "oauth_google" | "oauth_apple") => {
+      // On web, redirect back to the dedicated /sso-callback route, which is
+      // exempt from AuthGate's redirect-to-login guard so Clerk has time to
+      // process the OAuth token params before any navigation fires. Prefer
+      // EXPO_PUBLIC_APP_URL (the canonical origin registered in Clerk's
+      // "Allowed redirect URLs") so the callback URL is predictable regardless
+      // of which proxy domain Replit assigns; fall back to the current origin.
+      // On native, AuthSession.makeRedirectUri() builds the app-scheme deep link.
+      const redirectUrl =
+        Platform.OS === "web"
+          ? `${
+              process.env.EXPO_PUBLIC_APP_URL ||
+              (typeof window !== "undefined" ? window.location.origin : "")
+            }/sso-callback`
+          : AuthSession.makeRedirectUri();
+
+      const { createdSessionId, setActive } = await startSSOFlow({
+        strategy,
+        redirectUrl,
+      });
+
+      // Native only — on web the full-page redirect above navigates away, so no
+      // further code in this promise runs. If a session was created, activate it
+      // and let AuthGate route the user.
+      if (createdSessionId) {
+        await setActive!({ session: createdSessionId });
+        router.replace("/(tabs)");
+      }
+    },
+    [startSSOFlow, router],
+  );
 
   const handleGoogle = useCallback(async () => {
     if (googleLoading) return;
     setOauthError(null);
     setGoogleLoading(true);
     try {
-      if (Platform.OS === "web") {
-        // Prefer EXPO_PUBLIC_APP_URL (set in production to the canonical origin
-        // registered in Clerk's "Allowed redirect URLs" list) so the callback
-        // URL is predictable regardless of which proxy domain Replit assigns.
-        // Falls back to window.location.origin for local dev where the origin
-        // is stable and no env var is needed.
-        const origin =
-          process.env.EXPO_PUBLIC_APP_URL ||
-          (typeof window !== "undefined" ? window.location.origin : "");
-        // /sso-callback is a dedicated route that is exempt from AuthGate's
-        // redirect-to-login guard, giving Clerk time to process the OAuth
-        // token params before any navigation fires.
-        const callbackUrl = `${origin}/sso-callback`;
-        if (mode === "sign-in") {
-          await signIn!.sso({
-            strategy: "oauth_google",
-            redirectUrl: callbackUrl,
-            redirectCallbackUrl: callbackUrl,
-          });
-        } else {
-          await signUp!.sso({
-            strategy: "oauth_google",
-            redirectUrl: callbackUrl,
-            redirectCallbackUrl: callbackUrl,
-          });
-        }
-        // Full-page redirect is in progress; no further code runs here.
-      } else {
-        const { createdSessionId, setActive } = await startGoogle();
-        if (createdSessionId) {
-          await setActive!({ session: createdSessionId });
-          router.replace("/(tabs)");
-        }
-      }
+      await runSSO("oauth_google");
     } catch (err) {
       const msg = err instanceof Error ? err.message : null;
       if (msg && !msg.toLowerCase().includes("cancel")) {
@@ -108,18 +112,14 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
     } finally {
       setGoogleLoading(false);
     }
-  }, [googleLoading, startGoogle, router, mode, signIn, signUp]);
+  }, [googleLoading, runSSO]);
 
   const handleApple = useCallback(async () => {
     if (appleLoading) return;
     setOauthError(null);
     setAppleLoading(true);
     try {
-      const { createdSessionId, setActive } = await startApple();
-      if (createdSessionId) {
-        await setActive!({ session: createdSessionId });
-        router.replace("/(tabs)");
-      }
+      await runSSO("oauth_apple");
     } catch (err) {
       const msg = err instanceof Error ? err.message : null;
       if (msg && !msg.toLowerCase().includes("cancel")) {
@@ -128,7 +128,7 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
     } finally {
       setAppleLoading(false);
     }
-  }, [appleLoading, startApple, router]);
+  }, [appleLoading, runSSO]);
 
   const s = StyleSheet.create({
     dividerRow: {

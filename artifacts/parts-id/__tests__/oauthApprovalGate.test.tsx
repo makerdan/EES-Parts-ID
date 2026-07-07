@@ -30,6 +30,7 @@ import renderer, { act } from "react-test-renderer";
 // ── Source paths ──────────────────────────────────────────────────────────────
 
 const LAYOUT_PATH      = path.resolve(__dirname, "../app/_layout.tsx");
+const AUTHGATE_PATH    = path.resolve(__dirname, "../components/AuthGate.tsx");
 const TABS_LAYOUT_PATH = path.resolve(__dirname, "../app/(tabs)/_layout.tsx");
 const OAUTH_PATH       = path.resolve(__dirname, "../components/OAuthButtons.tsx");
 
@@ -45,22 +46,22 @@ jest.mock("expo-router", () => ({
   },
 }));
 
-// ── @clerk/expo (useOAuth needed for OAuthButtons) ────────────────────────────
+// ── @clerk/expo (useSSO needed for OAuthButtons) ──────────────────────────────
+//
+// OAuthButtons uses the canonical useSSO()/startSSOFlow() flow for BOTH web and
+// native. startSSOFlow is a single function that receives { strategy, redirectUrl }
+// and resolves with { createdSessionId, setActive }. The default implementation
+// routes by strategy so Google and Apple presses return distinct session IDs.
 
 const mockSetActive = jest.fn(() => Promise.resolve());
-const mockStartGoogle = jest.fn(() =>
-  Promise.resolve({ createdSessionId: "session-123", setActive: mockSetActive })
-);
-const mockStartApple = jest.fn(() =>
-  Promise.resolve({ createdSessionId: "session-456", setActive: mockSetActive })
-);
+const mockStartSSO = jest.fn((opts: { strategy: string }) => {
+  if (opts.strategy === "oauth_apple")
+    return Promise.resolve({ createdSessionId: "session-456", setActive: mockSetActive });
+  return Promise.resolve({ createdSessionId: "session-123", setActive: mockSetActive });
+});
 
 jest.mock("@clerk/expo", () => ({
-  useOAuth: jest.fn((opts: { strategy: string }) => {
-    if (opts.strategy === "oauth_google") return { startOAuthFlow: mockStartGoogle };
-    if (opts.strategy === "oauth_apple")  return { startOAuthFlow: mockStartApple };
-    return { startOAuthFlow: jest.fn() };
-  }),
+  useSSO: jest.fn(() => ({ startSSOFlow: mockStartSSO })),
   useAuth: jest.fn(() => ({ isSignedIn: false })),
   useClerk: jest.fn(() => ({ signOut: jest.fn() })),
   ClerkProvider: ({ children }: { children: React.ReactNode }) =>
@@ -68,6 +69,12 @@ jest.mock("@clerk/expo", () => ({
   ClerkLoaded: ({ children }: { children: React.ReactNode }) =>
     React.createElement(React.Fragment, null, children),
   tokenCache: null,
+}));
+
+// ── expo-auth-session (native redirect URI builder) ───────────────────────────
+
+jest.mock("expo-auth-session", () => ({
+  makeRedirectUri: jest.fn(() => "partsid://sso-callback"),
 }));
 
 // ── useColors ─────────────────────────────────────────────────────────────────
@@ -79,13 +86,14 @@ jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColo
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("AuthGate — source inspection", () => {
+  // AuthGate lives in components/AuthGate.tsx; _layout.tsx only renders <AuthGate />.
   let source: string;
 
   beforeAll(() => {
-    source = fs.readFileSync(LAYOUT_PATH, "utf8");
+    source = fs.readFileSync(AUTHGATE_PATH, "utf8");
   });
 
-  it("defines an AuthGate function in _layout.tsx", () => {
+  it("defines an AuthGate function in components/AuthGate.tsx", () => {
     expect(source).toContain("function AuthGate(");
   });
 
@@ -126,8 +134,10 @@ describe("AuthGate — source inspection", () => {
 
   it("AuthGate is rendered inside RootLayout (not conditionally gated)", () => {
     // AuthGate must always be in the tree so it can react to state changes from
-    // any sign-in path — email/password or OAuth.
-    expect(source).toContain("<AuthGate />");
+    // any sign-in path — email/password or OAuth. This assertion targets
+    // _layout.tsx (where <AuthGate /> is mounted), not AuthGate.tsx.
+    const layoutSource = fs.readFileSync(LAYOUT_PATH, "utf8");
+    expect(layoutSource).toContain("<AuthGate />");
   });
 });
 
@@ -308,8 +318,8 @@ describe("OAuthButtons — Google sign-in success path", () => {
   beforeEach(() => {
     mockReplace.mockClear();
     mockSetActive.mockClear();
-    mockStartGoogle.mockClear();
-    mockStartGoogle.mockResolvedValue({
+    mockStartSSO.mockClear();
+    mockStartSSO.mockResolvedValue({
       createdSessionId: "session-google",
       setActive: mockSetActive,
     });
@@ -349,7 +359,7 @@ describe("OAuthButtons — Google sign-in success path", () => {
 
   it("does NOT call router.replace when OAuth returns no session (cancelled)", async () => {
     // @ts-ignore — deliberately passing a falsy sessionId to simulate a cancelled OAuth flow
-    mockStartGoogle.mockResolvedValueOnce({ createdSessionId: null, setActive: mockSetActive });
+    mockStartSSO.mockResolvedValueOnce({ createdSessionId: null, setActive: mockSetActive });
 
     let root: renderer.ReactTestRenderer;
     await act(async () => {
@@ -370,8 +380,8 @@ describe("OAuthButtons — Apple sign-in success path", () => {
   beforeEach(() => {
     mockReplace.mockClear();
     mockSetActive.mockClear();
-    mockStartApple.mockClear();
-    mockStartApple.mockResolvedValue({
+    mockStartSSO.mockClear();
+    mockStartSSO.mockResolvedValue({
       createdSessionId: "session-apple",
       setActive: mockSetActive,
     });
@@ -426,28 +436,19 @@ describe("OAuthButtons — source inspection", () => {
   });
 
   it("calls setActive before router.replace (session must be active before navigation)", () => {
-    // Both handleGoogle and handleApple must await setActive before navigating.
-    // Confirm the pattern: await setActive!(...) precedes router.replace in both handlers.
-    const googleHandlerMatch = source.match(/handleGoogle[\s\S]*?}\s*,\s*\[/);
-    const appleHandlerMatch  = source.match(/handleApple[\s\S]*?}\s*,\s*\[/);
+    // Both Google and Apple presses funnel through the shared runSSO helper,
+    // which must await setActive before navigating. Confirm the pattern:
+    // await setActive!(...) precedes router.replace inside runSSO.
+    const runSSOMatch = source.match(/runSSO[\s\S]*?}\s*,\s*\[/);
+    expect(runSSOMatch).not.toBeNull();
 
-    expect(googleHandlerMatch).not.toBeNull();
-    expect(appleHandlerMatch).not.toBeNull();
+    const body = runSSOMatch![0];
 
-    const googleBody = googleHandlerMatch![0];
-    const appleBody  = appleHandlerMatch![0];
-
-    const setActiveIdxGoogle  = googleBody.indexOf("setActive");
-    const replaceIdxGoogle    = googleBody.indexOf('router.replace("/(tabs)")');
-    expect(setActiveIdxGoogle).toBeGreaterThan(-1);
-    expect(replaceIdxGoogle).toBeGreaterThan(-1);
-    expect(setActiveIdxGoogle).toBeLessThan(replaceIdxGoogle);
-
-    const setActiveIdxApple = appleBody.indexOf("setActive");
-    const replaceIdxApple   = appleBody.indexOf('router.replace("/(tabs)")');
-    expect(setActiveIdxApple).toBeGreaterThan(-1);
-    expect(replaceIdxApple).toBeGreaterThan(-1);
-    expect(setActiveIdxApple).toBeLessThan(replaceIdxApple);
+    const setActiveIdx = body.indexOf("setActive");
+    const replaceIdx   = body.indexOf('router.replace("/(tabs)")');
+    expect(setActiveIdx).toBeGreaterThan(-1);
+    expect(replaceIdx).toBeGreaterThan(-1);
+    expect(setActiveIdx).toBeLessThan(replaceIdx);
   });
 
   it("guards the success path with a createdSessionId check (no navigation on cancel)", () => {
@@ -480,8 +481,8 @@ describe("OAuthButtons — Google sign-up flow (new account)", () => {
   beforeEach(() => {
     mockReplace.mockClear();
     mockSetActive.mockClear();
-    mockStartGoogle.mockClear();
-    mockStartGoogle.mockResolvedValue({
+    mockStartSSO.mockClear();
+    mockStartSSO.mockResolvedValue({
       createdSessionId: "session-new-user",
       setActive: mockSetActive,
     });
@@ -519,7 +520,7 @@ describe("OAuthButtons — Google sign-up flow (new account)", () => {
 
   it("does NOT call router.replace when OAuth returns no session in sign-up mode (cancelled)", async () => {
     // @ts-ignore — deliberately falsy sessionId to simulate a cancelled OAuth flow
-    mockStartGoogle.mockResolvedValueOnce({ createdSessionId: null, setActive: mockSetActive });
+    mockStartSSO.mockResolvedValueOnce({ createdSessionId: null, setActive: mockSetActive });
 
     let root: renderer.ReactTestRenderer;
     await act(async () => {
