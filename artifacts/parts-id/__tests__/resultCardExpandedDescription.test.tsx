@@ -1,12 +1,12 @@
 /**
  * @jest-environment node
  *
- * Regression tests: ResultCard must render expandedDescription as the primary
- * text block for all users when present, and must also show the original
- * abbreviated description in a muted secondary role.
+ * Regression tests: ResultCard must render `description` as the primary text
+ * block for all users when present, and must fall back to `expandedDescription`
+ * only when `description` is absent or empty.
  *
- * A second case without expandedDescription confirms the component falls back
- * to the plain description field without breaking.
+ * A second case without expandedDescription confirms the component renders
+ * the plain description without breaking.
  *
  * Pattern mirrors resultCardPhotoSlots.test.tsx — all native/expo deps mocked
  * inline; component imported from its real source file.
@@ -96,6 +96,14 @@ jest.mock("@/components/PinIcon", () => {
   };
 });
 
+// ─── @/components/PartCard ───────────────────────────────────────────────────
+// PartCard fetches from the API and imports apiBase at module load (which
+// throws in the test environment). Mock it out as a no-op.
+
+jest.mock("@/components/PartCard", () => ({
+  PartCard: () => null,
+}));
+
 // ─── @/hooks/useColors ───────────────────────────────────────────────────────
 
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
@@ -151,18 +159,18 @@ function allTextStrings(root: renderer.ReactTestInstance): string[] {
 }
 
 // =============================================================================
-// ResultCard — expandedDescription rendering
+// ResultCard — description display priority
 // =============================================================================
 
-describe("ResultCard — expandedDescription rendering", () => {
-  it("renders expandedDescription as the primary text when the field is present", async () => {
+describe("ResultCard — description display priority", () => {
+  it("renders description as the primary text when both description and expandedDescription are present", async () => {
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
         <ResultCard
           result={makeResult({
-            description: "Short desc",
-            expandedDescription: "A much longer expanded description of the part",
+            description: "Primary description text",
+            expandedDescription: "Expanded description that is a fallback only",
           })}
           rank={0}
         />,
@@ -170,50 +178,35 @@ describe("ResultCard — expandedDescription rendering", () => {
     });
 
     const texts = allTextStrings(tree.root);
-    expect(texts).toContain("A much longer expanded description of the part");
+    // description must appear in the card
+    expect(texts).toContain("Primary description text");
+    // expandedDescription must NOT be rendered when description is present
+    expect(texts).not.toContain("Expanded description that is a fallback only");
 
     await act(async () => { tree.unmount(); });
   });
 
-  it("also renders the original abbreviated description in a muted role when expandedDescription is present", async () => {
+  it("SITG6: shows the full description text, not the shorter expandedDescription, when description is the longer field", async () => {
+    // Reproduces the original bug: item.description holds the full/long text,
+    // item.expandedDescription holds a shorter snippet — the card must display
+    // the full description, not the snippet.
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
         <ResultCard
           result={makeResult({
-            description: "Short desc",
-            expandedDescription: "A much longer expanded description of the part",
+            description: "Full detailed description of the relay with all specifications included",
+            expandedDescription: "Relay",
           })}
           rank={0}
         />,
       );
     });
 
-    // Both texts must appear in the tree.
     const texts = allTextStrings(tree.root);
-    expect(texts).toContain("A much longer expanded description of the part");
-    expect(texts).toContain("Short desc");
-
-    // The abbreviated description node must carry the muted foreground color,
-    // confirming it renders in the secondary/muted role (descriptionAbbrev style).
-    // The style prop is an array [cardStyles.descriptionAbbrev, { color, fontSize }],
-    // so we search the array members for the colour entry.
-    const abbrevNode = tree.root.findAll(
-      (n) => {
-        if ((n.type as string) !== "rn-text") return false;
-        if (n.props.children !== "Short desc") return false;
-        const style = n.props.style;
-        const styleArr: unknown[] = Array.isArray(style) ? style : [style];
-        return styleArr.some(
-          (s) =>
-            s !== null &&
-            typeof s === "object" &&
-            (s as Record<string, unknown>).color === "#64748b",
-        );
-      },
-      { deep: true },
-    );
-    expect(abbrevNode).toHaveLength(1);
+    expect(texts).toContain("Full detailed description of the relay with all specifications included");
+    // The short snippet must not appear as the primary description text
+    expect(texts).not.toContain("Relay");
 
     await act(async () => { tree.unmount(); });
   });
@@ -232,8 +225,26 @@ describe("ResultCard — expandedDescription rendering", () => {
     const texts = allTextStrings(tree.root);
     expect(texts).toContain("Plain description only");
 
-    // No expanded-description text present.
-    expect(texts).not.toContain("A much longer expanded description of the part");
+    await act(async () => { tree.unmount(); });
+  });
+
+  it("falls back to expandedDescription when description is absent, instead of showing 'No description'", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <ResultCard
+          result={makeResult({
+            description: "",
+            expandedDescription: "Fallback expanded text shown when description is empty",
+          })}
+          rank={0}
+        />,
+      );
+    });
+
+    const texts = allTextStrings(tree.root);
+    expect(texts).toContain("Fallback expanded text shown when description is empty");
+    expect(texts).not.toContain("No description");
 
     await act(async () => { tree.unmount(); });
   });
