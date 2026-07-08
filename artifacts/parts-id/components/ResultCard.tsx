@@ -238,7 +238,11 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
         </View>
 
         {/* Description */}
-        {item.expandedDescription ? (
+        {item.description ? (
+          <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
+            {item.description}
+          </Text>
+        ) : item.expandedDescription ? (
           <View style={cardStyles.descriptionBlock}>
             <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
               {item.expandedDescription}
@@ -246,7 +250,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
           </View>
         ) : (
           <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
-            {item.description || "No description"}
+            {"No description"}
           </Text>
         )}
 
@@ -466,7 +470,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
         <PartCard
           catalog={item.catalog}
           vendor={item.vendor ?? ""}
-          description={item.expandedDescription ?? item.description ?? ""}
+          description={item.description ?? item.expandedDescription ?? ""}
           autoExpand={autoExpandPartCard}
         />
 
