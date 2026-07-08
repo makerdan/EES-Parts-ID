@@ -835,6 +835,10 @@ export function ZoneEditor() {
   const lastSavedFormRef = useRef<FormState | null>(null);
   const prevSelectedIdRef = useRef<number | null>(null);
   const zoneFormRef = useRef<ZoneFormHandle>(null);
+  // Tracks the selectedIds set from the previous render while in multi-select
+  // so the selection-change flush effect can target the zones being edited, not
+  // the newly selected zone(s).
+  const prevMultiSelectedIdsRef = useRef<ReadonlySet<number>>(new Set());
 
   // Non-blocking duplicate warning: another zone already claims this aisle+parity.
   const duplicateConflict = useMemo(() => {
@@ -1510,8 +1514,11 @@ export function ZoneEditor() {
   };
 
   // Auto-save multi-select aisle data on blur (no confirm dialog)
-  const handleMultiAutoSave = async () => {
-    if (multiSaving || selectedIds.size === 0) return;
+  // idsOverride lets the selection-change effect pass the *previous* multi-selection
+  // so the save targets the zones the user was actually editing, not the new selection.
+  const handleMultiAutoSave = async (idsOverride?: ReadonlySet<number>) => {
+    const ids = idsOverride ?? selectedIds;
+    if (multiSaving || ids.size === 0) return;
     const updates: Partial<Zone> = {};
     const trimmedAisle = multiAisleId.trim();
     if (trimmedAisle && trimmedAisle !== lastMultiAisleIdRef.current) {
@@ -1525,7 +1532,7 @@ export function ZoneEditor() {
     }
     if (Object.keys(updates).length === 0) return;
     // Build per-zone patch bodies, resolving any (aisleId, sectionNum) conflicts.
-    const jobs = buildBulkAislePatchJobs([...selectedIds], zonesRef.current, updates);
+    const jobs = buildBulkAislePatchJobs([...ids], zonesRef.current, updates);
     const undoChanges = jobs.map(({ id, before, after }) => ({ id, before, after }));
     setMultiSaving(true);
     try {
@@ -1537,7 +1544,7 @@ export function ZoneEditor() {
       } else if (jobs.some((j) => j.body.sectionNum !== undefined)) {
         lastMultiSectionNumRef.current = "";
       }
-      const n = selectedIds.size;
+      const n = ids.size;
       toast.success(`Saved ${n} zone${n !== 1 ? "s" : ""}`);
       await fetchZones();
     } catch (e) {
@@ -1681,7 +1688,7 @@ export function ZoneEditor() {
     if (!selectedId) {
       // Zone was deselected — flush unsaved changes for the previous zone.
       if (prevId !== null) {
-        const pending = formRef.current;
+        const pending = zoneFormRef.current?.getCommittedForm() ?? formRef.current;
         if (lastSavedFormRef.current && JSON.stringify(pending) !== JSON.stringify(lastSavedFormRef.current)) {
           void flushSave(pending, prevId);
         }
@@ -1695,8 +1702,10 @@ export function ZoneEditor() {
     if (!z) return;
 
     // Switching to a different zone — flush unsaved changes for previous zone.
+    // Use getCommittedForm() so that a section-number value typed but not yet
+    // committed to React state (field focused, not yet blurred) is captured.
     if (prevId !== null && prevId !== selectedId) {
-      const pending = formRef.current;
+      const pending = zoneFormRef.current?.getCommittedForm() ?? formRef.current;
       if (lastSavedFormRef.current && JSON.stringify(pending) !== JSON.stringify(lastSavedFormRef.current)) {
         void flushSave(pending, prevId);
       }
@@ -1728,6 +1737,21 @@ export function ZoneEditor() {
     () => new Set(selectedZoneList.map((z) => z.sectionNum)),
     [selectedZoneList],
   );
+
+  // Flush pending multi-select edits whenever the selection leaves multi-select
+  // (or switches to a different multi-selection). This runs BEFORE the sync
+  // effect below so multiAisleId/multiSectionNum still hold the edited values.
+  // idsOverride passes the previous selection so the patch targets the correct zones.
+  useEffect(() => {
+    const prevIds = prevMultiSelectedIdsRef.current;
+    prevMultiSelectedIdsRef.current = isMulti ? selectedIds : new Set();
+    if (prevIds.size < 2) return; // wasn't in multi-select before
+    // Still in multi-select with the exact same set? (zones change re-fires deps) — skip.
+    if (isMulti && prevIds.size === selectedIds.size && [...prevIds].every((id) => selectedIds.has(id))) return;
+    // Leaving multi-select or changing the multi-selection — flush pending edits.
+    void handleMultiAutoSave(prevIds);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds, isMulti]);
 
   // Sync multi-select form fields when selection or zones change
   useEffect(() => {
