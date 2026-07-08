@@ -206,6 +206,7 @@ const ALIGN_SCALE_SMALL = 0.01;
 const ALIGN_SCALE_LARGE = 0.05;
 const ALIGN_SCALE_MIN = 0.1;
 const ALIGN_SCALE_MAX = 5;
+const ALIGN_TRANSLATE_MAX = 10000;
 const IDENTITY_ALIGN = { x: 0, y: 0, s: 1 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -2546,6 +2547,10 @@ export function ZoneEditor() {
         {mode === "calibrate" && (() => {
           const dirty =
             align.x !== savedAlign.x || align.y !== savedAlign.y || align.s !== savedAlign.s;
+          const xOutOfRange = align.x < -ALIGN_TRANSLATE_MAX || align.x > ALIGN_TRANSLATE_MAX;
+          const yOutOfRange = align.y < -ALIGN_TRANSLATE_MAX || align.y > ALIGN_TRANSLATE_MAX;
+          const sOutOfRange = align.s < ALIGN_SCALE_MIN || align.s > ALIGN_SCALE_MAX;
+          const anyOutOfRange = xOutOfRange || yOutOfRange || sOutOfRange;
           const nudgeBtn = (label: string, dx: number, dy: number, title: string) => (
             <button
               key={title}
@@ -2588,9 +2593,28 @@ export function ZoneEditor() {
                 <button title={`+ ${ALIGN_SCALE_LARGE}`} onClick={() => scaleAlign(ALIGN_SCALE_LARGE)} style={{ width: 28, height: 24, padding: 0, fontSize: 12, background: "#334155", color: "#fff", border: "1px solid #475569", borderRadius: 4, cursor: "pointer" }}>++</button>
               </div>
               {/* Offset readout */}
-              <span style={{ fontSize: 10, color: "#94a3b8", fontVariantNumeric: "tabular-nums" }}>
-                x {align.x.toFixed(1)} · y {align.y.toFixed(1)}
+              <span style={{ fontSize: 10, fontVariantNumeric: "tabular-nums", display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ color: xOutOfRange ? "#f87171" : "#94a3b8" }}
+                  title={xOutOfRange ? `X must be between −${ALIGN_TRANSLATE_MAX} and ${ALIGN_TRANSLATE_MAX}` : undefined}>
+                  x {align.x.toFixed(1)}{xOutOfRange ? " ⚠" : ""}
+                </span>
+                <span style={{ color: "#475569" }}>·</span>
+                <span style={{ color: yOutOfRange ? "#f87171" : "#94a3b8" }}
+                  title={yOutOfRange ? `Y must be between −${ALIGN_TRANSLATE_MAX} and ${ALIGN_TRANSLATE_MAX}` : undefined}>
+                  y {align.y.toFixed(1)}{yOutOfRange ? " ⚠" : ""}
+                </span>
               </span>
+              {/* Out-of-range warning banner */}
+              {anyOutOfRange && (
+                <span style={{ fontSize: 10, color: "#fbbf24", background: "#451a03", border: "1px solid #92400e", borderRadius: 4, padding: "2px 6px" }}>
+                  {xOutOfRange && `X out of range (±${ALIGN_TRANSLATE_MAX})`}
+                  {xOutOfRange && yOutOfRange && " · "}
+                  {yOutOfRange && `Y out of range (±${ALIGN_TRANSLATE_MAX})`}
+                  {(xOutOfRange || yOutOfRange) && sOutOfRange && " · "}
+                  {sOutOfRange && `Scale out of range (${ALIGN_SCALE_MIN}–${ALIGN_SCALE_MAX})`}
+                  {" — server will reject"}
+                </span>
+              )}
               {/* Actions */}
               <button
                 title="Reset the offset to zero (no shift, 100% scale). Save to apply for all users."
@@ -2608,12 +2632,12 @@ export function ZoneEditor() {
                 Revert
               </button>
               <button
-                title="Save this alignment globally — applies to every user's Map tab"
-                disabled={savingAlign}
+                title={anyOutOfRange ? `Values out of allowed bounds — fix before saving` : "Save this alignment globally — applies to every user's Map tab"}
+                disabled={savingAlign || anyOutOfRange}
                 onClick={() => { void saveAlignment(); }}
-                style={{ height: 24, padding: "0 12px", fontSize: 11, fontWeight: 600, background: dirty ? "#16a34a" : "#334155", color: "#fff", border: "none", borderRadius: 4, cursor: savingAlign ? "default" : "pointer" }}
+                style={{ height: 24, padding: "0 12px", fontSize: 11, fontWeight: 600, background: anyOutOfRange ? "#7f1d1d" : dirty ? "#16a34a" : "#334155", color: anyOutOfRange ? "#fca5a5" : "#fff", border: anyOutOfRange ? "1px solid #991b1b" : "none", borderRadius: 4, cursor: savingAlign || anyOutOfRange ? "default" : "pointer" }}
               >
-                {savingAlign ? "Saving…" : dirty ? "Save ●" : "Saved"}
+                {savingAlign ? "Saving…" : anyOutOfRange ? "Out of range" : dirty ? "Save ●" : "Saved"}
               </button>
             </div>
           );
