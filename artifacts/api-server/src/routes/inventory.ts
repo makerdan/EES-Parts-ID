@@ -2258,6 +2258,9 @@ router.patch("/:id/description", requireAdminAuth, async (req, res) => {
     if (typeof description !== "string") {
       return void res.status(400).json({ error: "description must be a string" });
     }
+    if (description.trim().length > 500) {
+      return void res.status(400).json({ error: "description must be 500 characters or fewer" });
+    }
 
     const [updated] = await db
       .update(inventoryTable)
