@@ -163,7 +163,7 @@ export default function MapScreen() {
   const [focusSectionNum, setFocusSectionNum] = useState<number | null>(null);
 
   // Zone data — owned at this level so useFocusEffect can trigger refetch
-  const { zones, alignment: zoneAlignment, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
+  const { zones, alignment: zoneAlignment, alignmentStale, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
 
   /**
    * Zone IDs for primary pins — highlights every zone whose aisle contains
@@ -451,6 +451,15 @@ export default function MapScreen() {
         </View>
       </View>
 
+      {isAdmin && alignmentStale && (
+        <View style={[styles.alignmentStaleBanner, { backgroundColor: "#fff3cd", borderBottomColor: "#ffc107" }]}>
+          <Feather name="alert-triangle" size={14} color="#856404" />
+          <Text style={[styles.alignmentStaleBannerText, { color: "#856404" }]}>
+            Saved calibration is out of range — zone overlay is using identity. Re-save in the Zone Editor to fix.
+          </Text>
+        </View>
+      )}
+
       {pinnedParts.length > 0 && (
         <View style={[styles.pinBanner, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
           <View style={styles.pinBannerLeft}>
@@ -701,6 +710,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderBottomWidth: 1,
+  },
+  alignmentStaleBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+  },
+  alignmentStaleBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    lineHeight: 17,
   },
   focusFailBannerText: {
     fontSize: 13,

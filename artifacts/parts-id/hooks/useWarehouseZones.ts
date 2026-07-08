@@ -67,6 +67,7 @@ type ZoneCache = {
 export function useWarehouseZones() {
   const [zones, setZones] = useState<Array<ApiWarehouseZone>>([]);
   const [alignment, setAlignment] = useState<ZoneAlignment>(IDENTITY_ALIGNMENT);
+  const [alignmentStale, setAlignmentStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const mountedRef = useRef(true);
@@ -110,26 +111,28 @@ export function useWarehouseZones() {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.json() as Promise<{ zones: Array<ApiWarehouseZone> }>;
         }),
-        (async (): Promise<ZoneAlignment> => {
+        (async (): Promise<{ alignment: ZoneAlignment; stale: boolean }> => {
           try {
             const res = await fetchWithAuth(`${API_BASE}/warehouse-zones/alignment`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return normalizeAlignment(await res.json());
+            const stale = res.headers.get("X-Alignment-Warning") === "stored-out-of-range";
+            return { alignment: normalizeAlignment(await res.json()), stale };
           } catch {
-            return IDENTITY_ALIGNMENT;
+            return { alignment: IDENTITY_ALIGNMENT, stale: false };
           }
         })(),
       ]);
       if (mountedRef.current) {
         setZones(data.zones);
-        setAlignment(alignmentData);
+        setAlignment(alignmentData.alignment);
+        setAlignmentStale(alignmentData.stale);
         setError(false);
         setLoading(false);
         hasDataRef.current = true;
         tokenExpiredMidSessionRef.current = false;
         lastFetchedAtRef.current = Date.now();
       }
-      const entry: ZoneCache = { zones: data.zones, alignment: alignmentData };
+      const entry: ZoneCache = { zones: data.zones, alignment: alignmentData.alignment };
       await AsyncStorage.setItem(ZONES_CACHE_KEY, JSON.stringify(entry)).catch(() => {});
     } catch (err) {
       if (mountedRef.current) {
@@ -220,5 +223,5 @@ export function useWarehouseZones() {
     return () => unsubscribeFromTokenAvailable(handleTokenAvailable);
   }, [refetch]);
 
-  return { zones, alignment, loading, error, refetch };
+  return { zones, alignment, alignmentStale, loading, error, refetch };
 }
