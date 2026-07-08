@@ -692,4 +692,47 @@ describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
     // No partial cache patch should have been applied.
     expect(mockSetQueriesData).not.toHaveBeenCalled();
   });
+
+  it("clears the session-expired error after the user re-saves successfully", async () => {
+    mockBinsMutateAsync.mockRejectedValue(new Error("401 Unauthorized"));
+    autoConfirmAlert();
+
+    const item = makeItem({ binLocations: ["AISLE-01"] });
+    const tree = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = tree;
+
+    // Remove the bin so the bins op is enqueued.
+    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    expect(removeBinBtn).not.toBeNull();
+    await act(async () => { removeBinBtn!.props.onPress(); });
+
+    // First save — mutation rejects with 401.
+    const saveBtn = findPressable(tree.root, "Save Details");
+    expect(saveBtn).not.toBeNull();
+    await act(async () => { saveBtn!.props.onPress(); });
+
+    // Confirm the session-expired message is visible.
+    const textsAfterFailure = tree.root
+      .findAll(n => (n.type as string) === "rn-text", { deep: true })
+      .map(n => instText(n));
+    const errorVisible = textsAfterFailure.find(t =>
+      t.includes("Session expired") && t.includes("re-unlock admin access")
+    );
+    expect(errorVisible).toBeDefined();
+
+    // Re-mock the mutation to succeed, then save again.
+    mockBinsMutateAsync.mockResolvedValue(undefined);
+    await act(async () => { saveBtn!.props.onPress(); });
+
+    // The session-expired Text node must be gone after a successful save.
+    const textsAfterSuccess = tree.root
+      .findAll(n => (n.type as string) === "rn-text", { deep: true })
+      .map(n => instText(n));
+    const errorStillVisible = textsAfterSuccess.find(t =>
+      t.includes("Session expired") && t.includes("re-unlock admin access")
+    );
+    expect(errorStillVisible).toBeUndefined();
+  });
 });
