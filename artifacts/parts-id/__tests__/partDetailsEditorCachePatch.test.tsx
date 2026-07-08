@@ -581,3 +581,41 @@ describe("PartDetailsEditor – handleSave partial-failure path: no partial writ
     expect(restoredData.items[0].binLocations).toEqual(["AISLE-01"]);
   });
 });
+
+// =============================================================================
+// 401 SESSION-EXPIRED PATH — bins mutation rejects with a 401 error
+// =============================================================================
+
+describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
+  it("shows the session-expired message in the bins field error when the mutation rejects with a 401 error", async () => {
+    mockBinsMutateAsync.mockRejectedValue(new Error("401 Unauthorized"));
+    autoConfirmAlert();
+
+    const item = makeItem({ binLocations: ["AISLE-01"] });
+    const tree = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = tree;
+
+    // Remove the bin so the bins op is enqueued.
+    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    expect(removeBinBtn).not.toBeNull();
+    await act(async () => { removeBinBtn!.props.onPress(); });
+
+    const saveBtn = findPressable(tree.root, "Save Details");
+    expect(saveBtn).not.toBeNull();
+    await act(async () => { saveBtn!.props.onPress(); });
+
+    // The rendered tree must contain a Text node with the session-expired copy.
+    const allTexts = tree.root
+      .findAll(n => (n.type as string) === "rn-text", { deep: true })
+      .map(n => instText(n));
+    const sessionExpiredNode = allTexts.find(t =>
+      t.includes("Session expired") && t.includes("re-unlock admin access")
+    );
+    expect(sessionExpiredNode).toBeDefined();
+
+    // The synchronous cache patch must NOT have run.
+    expect(mockSetQueriesData).not.toHaveBeenCalled();
+  });
+});
