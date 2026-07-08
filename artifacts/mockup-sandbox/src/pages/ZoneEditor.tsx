@@ -1860,10 +1860,20 @@ export function ZoneEditor() {
   }, []);
 
   // ── SVG coordinate utility ──────────────────────────────────────────────────
+  // Returns a point in zone coordinate space (raw svgX/svgY space used by all
+  // stored zone coordinates).  Two transforms are inverted in sequence:
+  //   1. tf    — the pan/zoom canvas transform
+  //   2. align — the zone-layer calibration offset
+  // Both are read from refs so the callback stays stable across renders.
   const getSvgPt = useCallback((clientX: number, clientY: number): Pt => {
     if (!svgRef.current) return { x: 0, y: 0 };
     const rect = svgRef.current.getBoundingClientRect();
-    return screenToSvg(clientX, clientY, rect, tfRef.current);
+    const svgPt = screenToSvg(clientX, clientY, rect, tfRef.current);
+    const a = alignRef.current;
+    return {
+      x: (svgPt.x - a.x) / a.s,
+      y: (svgPt.y - a.y) / a.s,
+    };
   }, []);
 
   // ── Rubber-band selection (Shift+drag) ─────────────────────────────────────
@@ -1901,7 +1911,11 @@ export function ZoneEditor() {
     fillLoadingRef.current = true;
     setFillLoading(true);
     try {
-      const pt = getSvgPt(clientX, clientY);
+      // Seed point must be in floor-plan SVG space (what rasterizeSvg/floodFillBounds
+      // operate on), so invert only tf — do NOT invert align here.
+      const pt = svgRef.current
+        ? screenToSvg(clientX, clientY, svgRef.current.getBoundingClientRect(), tfRef.current)
+        : { x: 0, y: 0 };
       const dims = svgDimsRef.current;
 
       // Compute raster pixel coordinates from SVG user-unit click position.
@@ -1925,14 +1939,23 @@ export function ZoneEditor() {
         return;
       }
 
-      // Convert pixel bounding box back to SVG user units.
+      // Convert pixel bounding box to zone coordinate space (raw svgX/svgY).
+      // Step 1: pixel → SVG user units
       const scaleX = dims.w / cw;
       const scaleY = dims.h / ch;
-      const rect = {
+      const svgRect = {
         x: bounds.x * scaleX,
         y: bounds.y * scaleY,
         w: bounds.w * scaleX,
         h: bounds.h * scaleY,
+      };
+      // Step 2: SVG user units → zone coords (invert align transform)
+      const a = alignRef.current;
+      const rect = {
+        x: (svgRect.x - a.x) / a.s,
+        y: (svgRect.y - a.y) / a.s,
+        w: svgRect.w / a.s,
+        h: svgRect.h / a.s,
       };
 
       // Flash the detected rectangle as a fillFlashRect (~300 ms) for visual feedback.
@@ -1956,7 +1979,7 @@ export function ZoneEditor() {
       fillLoadingRef.current = false;
       setFillLoading(false);
     }
-  }, [getSvgPt]);
+  }, []);
 
   // Keep the ref in sync so onSvgMouseDown always calls the latest version.
   useEffect(() => { handleFillClickRef.current = handleFillClick; }, [handleFillClick]);
@@ -2114,7 +2137,9 @@ export function ZoneEditor() {
         const currentDelta = (() => {
           if (!svgRef.current) return null;
           const rect = svgRef.current.getBoundingClientRect();
-          const p = screenToSvg(e.clientX, e.clientY, rect, tfRef.current);
+          const svgPt = screenToSvg(e.clientX, e.clientY, rect, tfRef.current);
+          const a = alignRef.current;
+          const p = { x: (svgPt.x - a.x) / a.s, y: (svgPt.y - a.y) / a.s };
           return { x: p.x - state.startX, y: p.y - state.startY };
         })();
         setMultiDragDelta(null);
@@ -2706,12 +2731,10 @@ export function ZoneEditor() {
               <g ref={floorPlanRef} pointerEvents="none" />
 
               {/* Zone overlays.
-                  In calibrate mode the whole zone layer is shifted/scaled by the
-                  working alignment offset so the admin sees a live preview of how
-                  every zone lands on the floor plan. In all other modes zones
-                  render at their raw stored coordinates so per-zone editing math
-                  (pointer ↔ zone) stays exact — the offset never mutates coords. */}
-              <g transform={mode === "calibrate" ? `translate(${align.x},${align.y}) scale(${align.s})` : undefined}>
+                  The whole zone layer is shifted/scaled by the saved alignment offset
+                  so zones always land on the floor plan at their calibrated position.
+                  getSvgPt inverts both tf and align, keeping pointer↔zone math exact. */}
+              <g transform={`translate(${align.x},${align.y}) scale(${align.s})`}>
               {displayZones.map((zone) => {
                 const sel = selectedIds.has(zone.id);
                 const fill = zone.isInventory
@@ -2811,7 +2834,11 @@ export function ZoneEditor() {
                   </g>
                 );
               })}
-              </g>
+
+              {/* All overlay rects are rendered inside the align <g> because their
+                  coordinates are in zone space (raw svgX/svgY), matching the zones
+                  in this same group. strokeWidth is divided by align.s so strokes
+                  appear at the same screen thickness regardless of calibration scale. */}
 
               {/* Live drawing preview (draw mode — amber dashed) */}
               {draftRect && draftRect.w > 0 && draftRect.h > 0 && (
@@ -2822,8 +2849,8 @@ export function ZoneEditor() {
                   height={draftRect.h}
                   fill="rgba(234,179,8,0.12)"
                   stroke="#eab308"
-                  strokeWidth={sw}
-                  strokeDasharray={`${14 / tf.s} ${7 / tf.s}`}
+                  strokeWidth={sw / align.s}
+                  strokeDasharray={`${14 / tf.s / align.s} ${7 / tf.s / align.s}`}
                   style={{ pointerEvents: "none" }}
                 />
               )}
@@ -2837,8 +2864,8 @@ export function ZoneEditor() {
                   height={fillFlashRect.h}
                   fill="rgba(0,112,255,0.15)"
                   stroke="#0070ff"
-                  strokeWidth={sw}
-                  strokeDasharray={`${14 / tf.s} ${7 / tf.s}`}
+                  strokeWidth={sw / align.s}
+                  strokeDasharray={`${14 / tf.s / align.s} ${7 / tf.s / align.s}`}
                   style={{ pointerEvents: "none" }}
                 />
               )}
@@ -2852,8 +2879,8 @@ export function ZoneEditor() {
                   height={pendingRect.h}
                   fill="rgba(0,112,255,0.15)"
                   stroke="#0070ff"
-                  strokeWidth={sw}
-                  strokeDasharray={`${14 / tf.s} ${7 / tf.s}`}
+                  strokeWidth={sw / align.s}
+                  strokeDasharray={`${14 / tf.s / align.s} ${7 / tf.s / align.s}`}
                   style={{ pointerEvents: "none" }}
                 />
               )}
@@ -2867,11 +2894,12 @@ export function ZoneEditor() {
                   height={rubberRect.h}
                   fill="rgba(59,130,246,0.08)"
                   stroke="#3b82f6"
-                  strokeWidth={sw}
-                  strokeDasharray={`${10 / tf.s} ${5 / tf.s}`}
+                  strokeWidth={sw / align.s}
+                  strokeDasharray={`${10 / tf.s / align.s} ${5 / tf.s / align.s}`}
                   style={{ pointerEvents: "none" }}
                 />
               )}
+              </g>
             </g>
           </svg>
 
