@@ -5,7 +5,7 @@ import type { InventoryItem, InventoryListResponse, SearchInventoryResponse, Sea
 import { useUpdateItemBins, useUpdateItemKeywords } from "@workspace/api-client-react";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import * as Clipboard from "expo-clipboard";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { isLiDARSupported } from "lidar-measure";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -210,6 +210,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     if (bins.some((b) => b.toLowerCase() === trimmed.toLowerCase())) { setNewBin(""); return; }
     setBins([...bins, trimmed]);
     setNewBin("");
+    setSaveStatus("idle");
   };
 
   const removeBin = (bin: string) => {
@@ -218,7 +219,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       `Remove bin location "${bin}"?`,
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Remove", style: "destructive", onPress: () => setBins(bins.filter((b) => b !== bin)) },
+        { text: "Remove", style: "destructive", onPress: () => { setBins(bins.filter((b) => b !== bin)); setSaveStatus("idle"); } },
       ],
     );
   };
@@ -228,6 +229,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     if (!trimmed || keywords.includes(trimmed)) { setNewKeyword(""); return; }
     setKeywords([...keywords, trimmed]);
     setNewKeyword("");
+    setSaveStatus("idle");
   };
 
   const removeKeyword = (kw: string) => {
@@ -236,7 +238,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       `Remove keyword "${kw}"?`,
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Remove", style: "destructive", onPress: () => setKeywords(keywords.filter((k) => k !== kw)) },
+        { text: "Remove", style: "destructive", onPress: () => { setKeywords(keywords.filter((k) => k !== kw)); setSaveStatus("idle"); } },
       ],
     );
   };
@@ -268,7 +270,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      invalidateListCache({ queryClient });
       setExpandedDescSaving("saved");
     } catch (err) {
       setExpandedDescError(err instanceof Error ? err.message : "Save failed");
@@ -296,7 +298,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      invalidateListCache({ queryClient });
       setExpandedDescSaving("saved");
     } catch (err) {
       setExpandedDescText(previousText);
@@ -350,7 +352,11 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
 
   const handleSave = async () => {
     const current = itemRef.current;
-    if (!current || !adminToken) return;
+    if (!current || !adminToken) {
+      setErrorMsg("Admin session expired. Re-unlock and try again.");
+      setSaveStatus("error");
+      return;
+    }
     setSaveStatus("saving");
     setErrorMsg(null);
     setFieldSaveErrors({});
@@ -397,21 +403,43 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       });
     }
 
-    const binsChanged = JSON.stringify(bins) !== JSON.stringify(current.binLocations ?? []);
+    // Auto-add any pending bin text before saving
+    const pendingBin = newBin.trim();
+    const finalBins =
+      pendingBin && !bins.some((b) => b.toLowerCase() === pendingBin.toLowerCase())
+        ? [...bins, pendingBin]
+        : bins;
+    if (finalBins !== bins) {
+      setBins(finalBins);
+      setNewBin("");
+    }
+
+    // Auto-add any pending keyword text before saving
+    const pendingKeyword = newKeyword.trim().toLowerCase();
+    const finalKeywords =
+      pendingKeyword && !keywords.includes(pendingKeyword)
+        ? [...keywords, pendingKeyword]
+        : keywords;
+    if (finalKeywords !== keywords) {
+      setKeywords(finalKeywords);
+      setNewKeyword("");
+    }
+
+    const binsChanged = JSON.stringify(finalBins) !== JSON.stringify(current.binLocations ?? []);
     if (binsChanged) {
       ops.push({
         field: "bins",
         restoreFn: () => setBins(current.binLocations ?? []),
-        promise: updateBinsMutation.mutateAsync({ id: current.id, data: { binLocations: bins } }),
+        promise: updateBinsMutation.mutateAsync({ id: current.id, data: { binLocations: finalBins } }),
       });
     }
 
-    const kwChanged = JSON.stringify(keywords) !== JSON.stringify(current.aiKeywords ?? []);
+    const kwChanged = JSON.stringify(finalKeywords) !== JSON.stringify(current.aiKeywords ?? []);
     if (kwChanged) {
       ops.push({
         field: "keywords",
         restoreFn: () => setKeywords(current.aiKeywords ?? []),
-        promise: updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords } }),
+        promise: updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords: finalKeywords } }),
       });
     }
 
@@ -579,8 +607,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         return {
           ...i,
           description: description.trim(),
-          binLocations: bins,
-          aiKeywords: keywords,
+          binLocations: finalBins,
+          aiKeywords: finalKeywords,
           dimensions: newDims,
           ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl } : {}),
           ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2 } : {}),
@@ -885,7 +913,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                   </Pressable>
                   <Pressable
                     onPress={() => removeBin(b)}
-                    style={styles.chipRemoveBtn}
+                    disabled={isSaving}
+                    style={[styles.chipRemoveBtn, isSaving && { opacity: 0.4 }]}
                     accessibilityLabel={`Remove bin ${b}`}
                   >
                     <Text style={[styles.chipRemove, { color: colors.mutedForeground }]}>✕</Text>

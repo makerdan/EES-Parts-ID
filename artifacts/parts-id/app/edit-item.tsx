@@ -9,7 +9,7 @@ import {
   useUpdateItemKeywords,
 } from "@workspace/api-client-react";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { isLiDARSupported } from "lidar-measure";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -266,6 +266,28 @@ export default function EditItemScreen() {
       setNewBarcode("");
     }
 
+    // Auto-add any pending bin text before saving
+    const pendingBin = newBin.trim();
+    const finalBins =
+      pendingBin && !bins.some((b) => b.toLowerCase() === pendingBin.toLowerCase())
+        ? [...bins, pendingBin]
+        : bins;
+    if (finalBins !== bins) {
+      setBins(finalBins);
+      setNewBin("");
+    }
+
+    // Auto-add any pending keyword text before saving
+    const pendingKeyword = newKeyword.trim().toLowerCase();
+    const finalKeywords =
+      pendingKeyword && !keywords.includes(pendingKeyword)
+        ? [...keywords, pendingKeyword]
+        : keywords;
+    if (finalKeywords !== keywords) {
+      setKeywords(finalKeywords);
+      setNewKeyword("");
+    }
+
     // Build current dimensions object for comparison
     const newDims: PartDimensions = {
       length: parseDimField(dimLength),
@@ -300,16 +322,16 @@ export default function EditItemScreen() {
         );
       }
 
-      if (JSON.stringify(bins) !== JSON.stringify(current.binLocations ?? [])) {
-        saves.push(updateBinsMutation.mutateAsync({ id: current.id, data: { binLocations: bins } }));
+      if (JSON.stringify(finalBins) !== JSON.stringify(current.binLocations ?? [])) {
+        saves.push(updateBinsMutation.mutateAsync({ id: current.id, data: { binLocations: finalBins } }));
       }
 
       if (JSON.stringify(finalBarcodes) !== JSON.stringify(current.barcodes ?? [])) {
         saves.push(updateBarcodesMutation.mutateAsync({ id: current.id, data: { barcodes: finalBarcodes } }));
       }
 
-      if (JSON.stringify(keywords) !== JSON.stringify(current.aiKeywords ?? [])) {
-        saves.push(updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords } }));
+      if (JSON.stringify(finalKeywords) !== JSON.stringify(current.aiKeywords ?? [])) {
+        saves.push(updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords: finalKeywords } }));
       }
 
       if (dimsChanged) {
@@ -420,8 +442,8 @@ export default function EditItemScreen() {
           return {
             ...i,
             description: description.trim(),
-            aiKeywords: keywords,
-            binLocations: bins,
+            aiKeywords: finalKeywords,
+            binLocations: finalBins,
             barcodes: finalBarcodes,
             dimensions: newDims,
             ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl } : {}),
