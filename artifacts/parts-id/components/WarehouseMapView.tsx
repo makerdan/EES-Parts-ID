@@ -296,6 +296,10 @@ export function ZoneOverlayItem({
     fontSize: baseFontSize / scale.value,
   }));
 
+  const sectionLabelAnimatedProps = useAnimatedProps(() => ({
+    fontSize: baseFontSize * 0.65 / scale.value,
+  }));
+
   // Track whether this zone was already pinned when it first rendered so we
   // can distinguish "newly placed" (animate) from "restored on load" (no animation).
   const isPinnedNow = !!(isPinned || isVariantPinned);
@@ -388,7 +392,7 @@ export function ZoneOverlayItem({
         />
         <AnimatedSvgText
           x={zone.svgX + zone.svgWidth / 2}
-          y={zone.svgY + zone.svgHeight / 2}
+          y={zone.svgY + zone.svgHeight / 2 - (zone.sectionNum > 0 ? baseFontSize * 0.4 : 0)}
           fontWeight="bold"
           fill={labelColor}
           textAnchor="middle"
@@ -397,6 +401,18 @@ export function ZoneOverlayItem({
         >
           {zone.aisleId}
         </AnimatedSvgText>
+        {zone.sectionNum > 0 && (
+          <AnimatedSvgText
+            x={zone.svgX + zone.svgWidth / 2}
+            y={zone.svgY + zone.svgHeight / 2 + baseFontSize * 0.4}
+            fill={labelColor}
+            textAnchor="middle"
+            alignmentBaseline="middle"
+            animatedProps={sectionLabelAnimatedProps}
+          >
+            {String(zone.sectionNum)}
+          </AnimatedSvgText>
+        )}
       </G>
     );
   }
@@ -490,17 +506,41 @@ export function ZoneOverlayItem({
           </AnimatedSvgText>
         </G>
       ) : null}
-      <AnimatedSvgText
-        x={zone.svgX + zone.svgWidth / 2}
-        y={(isPinned || isVariantPinned) ? zone.svgY + zone.svgHeight / 2 + 20 : zone.svgY + zone.svgHeight / 2}
-        fontWeight="bold"
-        fill={isPinned ? "#b45309" : isVariantPinned ? "#6d28d9" : labelColor}
-        textAnchor="middle"
-        alignmentBaseline="middle"
-        animatedProps={textAnimatedProps}
-      >
-        {zone.aisleId}
-      </AnimatedSvgText>
+      {(() => {
+        const yCenter = (isPinned || isVariantPinned)
+          ? zone.svgY + zone.svgHeight / 2 + 20
+          : zone.svgY + zone.svgHeight / 2;
+        const aisleY = zone.sectionNum > 0 ? yCenter - baseFontSize * 0.4 : yCenter;
+        const sectionY = yCenter + baseFontSize * 0.4;
+        const textFill = isPinned ? "#b45309" : isVariantPinned ? "#6d28d9" : labelColor;
+        return (
+          <>
+            <AnimatedSvgText
+              x={zone.svgX + zone.svgWidth / 2}
+              y={aisleY}
+              fontWeight="bold"
+              fill={textFill}
+              textAnchor="middle"
+              alignmentBaseline="middle"
+              animatedProps={textAnimatedProps}
+            >
+              {zone.aisleId}
+            </AnimatedSvgText>
+            {zone.sectionNum > 0 && (
+              <AnimatedSvgText
+                x={zone.svgX + zone.svgWidth / 2}
+                y={sectionY}
+                fill={textFill}
+                textAnchor="middle"
+                alignmentBaseline="middle"
+                animatedProps={sectionLabelAnimatedProps}
+              >
+                {String(zone.sectionNum)}
+              </AnimatedSvgText>
+            )}
+          </>
+        );
+      })()}
     </G>
   );
 }
