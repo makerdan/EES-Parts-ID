@@ -35,7 +35,7 @@ import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 import { API_BASE } from "@/utils/apiBase";
-import { evictDeletedItemFromAllCaches, invalidateAllCachesAfterSave } from "@/utils/editItemCache";
+import { evictDeletedItemFromAllCaches, invalidateAllCachesAfterSave, invalidateListCache } from "@/utils/editItemCache";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
 function fmtDim(v: number | null | undefined): string {
@@ -82,6 +82,10 @@ export default function EditItemScreen() {
   }, [isLoading, isAdmin, saveStatus]);
 
   const [description, setDescription] = useState(item?.description ?? "");
+  const [expandedDescription, setExpandedDescription] = useState(item?.expandedDescription ?? "");
+  const savedExpandedDescRef = useRef<string>(item?.expandedDescription ?? "");
+  const [expandedDescSaving, setExpandedDescSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [expandedDescError, setExpandedDescError] = useState<string | null>(null);
   const [bins, setBins] = useState<Array<string>>(item?.binLocations ?? []);
   const [newBin, setNewBin] = useState("");
   const [barcodes, setBarcodes] = useState<Array<string>>(item?.barcodes ?? []);
@@ -189,6 +193,57 @@ export default function EditItemScreen() {
     setKeywords([...keywords, t]);
     setNewKeyword("");
     setSaveStatus("idle");
+  };
+
+  const handleSaveExpandedDesc = async () => {
+    const current = itemRef.current;
+    if (!current || !adminToken) return;
+    setExpandedDescSaving("saving");
+    setExpandedDescError(null);
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${current.id}/expanded-description`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ expandedDescription: expandedDescription.trim() || null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      savedExpandedDescRef.current = expandedDescription.trim();
+      invalidateListCache({ queryClient });
+      setExpandedDescSaving("saved");
+    } catch (err) {
+      setExpandedDescError(err instanceof Error ? err.message : "Save failed");
+      setExpandedDescSaving("error");
+    }
+  };
+
+  const handleClearExpandedDesc = async () => {
+    const current = itemRef.current;
+    if (!current || !adminToken) return;
+    const previousText = expandedDescription;
+    setExpandedDescription("");
+    setExpandedDescSaving("saving");
+    setExpandedDescError(null);
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${current.id}/expanded-description`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ expandedDescription: null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      savedExpandedDescRef.current = "";
+      invalidateListCache({ queryClient });
+      setExpandedDescSaving("saved");
+    } catch (err) {
+      setExpandedDescription(previousText);
+      setExpandedDescError(err instanceof Error ? err.message : "Clear failed");
+      setExpandedDescSaving("error");
+    }
   };
 
   const handleDeleteItem = useCallback(() => {
@@ -523,6 +578,7 @@ export default function EditItemScreen() {
 
   const hasChanges =
     description.trim() !== (item.description ?? "").trim() ||
+    expandedDescription.trim() !== savedExpandedDescRef.current ||
     JSON.stringify(bins) !== JSON.stringify(item.binLocations ?? []) ||
     JSON.stringify(barcodes) !== JSON.stringify(item.barcodes ?? []) ||
     JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []) ||
@@ -605,6 +661,84 @@ export default function EditItemScreen() {
             autoCorrect
             autoCapitalize="sentences"
           />
+
+          {/* Expanded Description */}
+          <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>EXPANDED DESCRIPTION</Text>
+          <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
+            AI-expanded plain-English version. Edit, then tap Save. Tap the trash icon to clear.
+          </Text>
+          <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 4 }}>
+            <KeyboardDoneInput
+              value={expandedDescription}
+              onChangeText={(v) => { setExpandedDescription(v); if (expandedDescSaving !== "idle") setExpandedDescSaving("idle"); }}
+              placeholder="No expanded description yet…"
+              placeholderTextColor={colors.mutedForeground}
+              multiline
+              numberOfLines={3}
+              maxLength={1000}
+              style={[
+                s.descInput,
+                { flex: 1, backgroundColor: colors.muted, borderColor: expandedDescSaving === "error" ? colors.destructive : colors.border, color: colors.foreground },
+              ]}
+              autoCorrect
+              autoCapitalize="sentences"
+            />
+            <Pressable
+              onPress={handleClearExpandedDesc}
+              disabled={expandedDescSaving === "saving" || (!expandedDescription && !(item as unknown as { expandedDescription?: string | null })?.expandedDescription)}
+              style={{
+                padding: 10,
+                borderRadius: 6,
+                backgroundColor: colors.muted,
+                borderWidth: 1,
+                borderColor: colors.border,
+                marginTop: 2,
+                opacity: (expandedDescSaving === "saving" || (!expandedDescription && !(item as unknown as { expandedDescription?: string | null })?.expandedDescription)) ? 0.4 : 1,
+              }}
+              accessibilityLabel="Clear expanded description"
+            >
+              <Feather name="trash-2" size={16} color={colors.destructive} />
+            </Pressable>
+          </View>
+          {expandedDescSaving === "error" && expandedDescError ? (
+            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{expandedDescError}</Text>
+          ) : null}
+          {expandedDescSaving === "saved" ? (
+            <Text style={{ color: colors.success, fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 4 }}>✓ Saved</Text>
+          ) : expandedDescSaving === "saving" ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
+              <ActivityIndicator size="small" color={colors.mutedForeground} />
+              <Text style={{ color: colors.mutedForeground, fontSize: 12, fontFamily: "Inter_500Medium" }}>Saving…</Text>
+            </View>
+          ) : null}
+          <Pressable
+            onPress={handleSaveExpandedDesc}
+            disabled={expandedDescSaving === "saving" || expandedDescription.trim() === ((item as unknown as { expandedDescription?: string | null })?.expandedDescription ?? "")}
+            style={[
+              s.saveBtn,
+              {
+                marginTop: 8, marginBottom: 4,
+                backgroundColor:
+                  (expandedDescSaving === "saving" || expandedDescription.trim() === ((item as unknown as { expandedDescription?: string | null })?.expandedDescription ?? ""))
+                    ? colors.muted
+                    : colors.primary,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                s.saveBtnText,
+                {
+                  color:
+                    (expandedDescSaving === "saving" || expandedDescription.trim() === ((item as unknown as { expandedDescription?: string | null })?.expandedDescription ?? ""))
+                      ? colors.mutedForeground
+                      : colors.primaryForeground,
+                },
+              ]}
+            >
+              Save Expanded Description
+            </Text>
+          </Pressable>
 
           {/* Bins */}
           <View onLayout={(e) => { sectionYRef.current.bins = e.nativeEvent.layout.y; }}>
