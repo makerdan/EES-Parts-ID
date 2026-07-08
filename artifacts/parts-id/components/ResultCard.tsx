@@ -243,11 +243,6 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
             <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
               {item.expandedDescription}
             </Text>
-            {item.description ? (
-              <Text style={[cardStyles.descriptionAbbrev, { color: colors.mutedForeground, fontSize: fs(11) }]} numberOfLines={expanded ? undefined : 1}>
-                {item.description}
-              </Text>
-            ) : null}
           </View>
         ) : (
           <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
