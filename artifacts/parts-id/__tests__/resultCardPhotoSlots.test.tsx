@@ -86,6 +86,12 @@ jest.mock("@/components/RetryImage", () => {
   };
 });
 
+// ─── @/components/PartCard ───────────────────────────────────────────────────
+// PartCard imports apiBase.ts at module load, which throws in Jest/Node when
+// EXPO_PUBLIC_API_BASE is not set. Mock it out before ResultCard is imported.
+
+jest.mock("@/components/PartCard", () => ({ PartCard: () => null }));
+
 // ─── @/components/PinIcon ────────────────────────────────────────────────────
 
 jest.mock("@/components/PinIcon", () => {
