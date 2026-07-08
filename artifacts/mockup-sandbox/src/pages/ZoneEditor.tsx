@@ -959,9 +959,13 @@ export function ZoneEditor() {
     }
   }, [align, headers]);
 
-  // Nudge the working offset by a translate delta (SVG viewBox units).
+  // Nudge the working offset by a translate delta (SVG viewBox units), clamped to ±ALIGN_TRANSLATE_MAX.
   const nudgeAlign = useCallback((dx: number, dy: number) => {
-    setAlign((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+    setAlign((prev) => ({
+      ...prev,
+      x: Math.min(ALIGN_TRANSLATE_MAX, Math.max(-ALIGN_TRANSLATE_MAX, prev.x + dx)),
+      y: Math.min(ALIGN_TRANSLATE_MAX, Math.max(-ALIGN_TRANSLATE_MAX, prev.y + dy)),
+    }));
   }, []);
 
   // Adjust the working uniform scale, clamped to a sane range.
@@ -2600,20 +2604,31 @@ export function ZoneEditor() {
           const yOutOfRange = align.y < -ALIGN_TRANSLATE_MAX || align.y > ALIGN_TRANSLATE_MAX;
           const sOutOfRange = align.s < ALIGN_SCALE_MIN || align.s > ALIGN_SCALE_MAX;
           const anyOutOfRange = xOutOfRange || yOutOfRange || sOutOfRange;
-          const nudgeBtn = (label: string, dx: number, dy: number, title: string) => (
-            <button
-              key={title}
-              title={title}
-              onClick={() => nudgeAlign(dx, dy)}
-              style={{
-                width: 28, height: 24, padding: 0, fontSize: 13, lineHeight: 1,
-                background: "#334155", color: "#fff", border: "1px solid #475569",
-                borderRadius: 4, cursor: "pointer",
-              }}
-            >
-              {label}
-            </button>
-          );
+          const nudgeBtn = (label: string, dx: number, dy: number, title: string) => {
+            const atLimit =
+              (dx < 0 && align.x <= -ALIGN_TRANSLATE_MAX) ||
+              (dx > 0 && align.x >= ALIGN_TRANSLATE_MAX) ||
+              (dy < 0 && align.y <= -ALIGN_TRANSLATE_MAX) ||
+              (dy > 0 && align.y >= ALIGN_TRANSLATE_MAX);
+            return (
+              <button
+                key={title}
+                title={atLimit ? `Already at limit (±${ALIGN_TRANSLATE_MAX})` : title}
+                disabled={atLimit}
+                onClick={() => nudgeAlign(dx, dy)}
+                style={{
+                  width: 28, height: 24, padding: 0, fontSize: 13, lineHeight: 1,
+                  background: atLimit ? "#1e293b" : "#334155",
+                  color: atLimit ? "#475569" : "#fff",
+                  border: "1px solid #475569",
+                  borderRadius: 4, cursor: atLimit ? "not-allowed" : "pointer",
+                  opacity: atLimit ? 0.5 : 1,
+                }}
+              >
+                {label}
+              </button>
+            );
+          };
           return (
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 8, flexWrap: "wrap" }}>
               {/* Nudge — small step */}
