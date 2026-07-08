@@ -99,11 +99,31 @@ router.get("/coverage", async (_req, res) => {
   }
 });
 
+// Bounds that the PUT handler enforces; the GET handler applies the same check
+// so a value stored before bounds enforcement was added is caught on read.
+const ALIGN_SCALE_MIN = 0.1;
+const ALIGN_SCALE_MAX = 5;
+const ALIGN_TRANSLATE_MAX = 10000;
+
+function isAlignmentInRange(x: number, y: number, s: number): boolean {
+  return (
+    Math.abs(x) <= ALIGN_TRANSLATE_MAX &&
+    Math.abs(y) <= ALIGN_TRANSLATE_MAX &&
+    s >= ALIGN_SCALE_MIN &&
+    s <= ALIGN_SCALE_MAX
+  );
+}
+
 // GET /warehouse-zones/alignment
 // Returns the global zone-layer calibration offset (translate + uniform scale)
 // applied uniformly to every zone overlay on the Map tab. Readable by all
 // approved users (no admin guard). Defaults to identity (0, 0, 1) when the
 // admin_preferences row is absent or the columns were never set.
+//
+// If the stored value is out of the allowed range (scale 0.1–5, translate ±10000)
+// — possible for rows saved before bounds enforcement was added — identity is
+// returned instead and an X-Alignment-Warning response header is set so the
+// client can surface a notice to admins.
 router.get("/alignment", async (_req, res) => {
   try {
     const rows = await db
@@ -116,11 +136,23 @@ router.get("/alignment", async (_req, res) => {
       .where(eq(adminPreferencesTable.id, 1))
       .limit(1);
     const row = rows[0];
-    res.json({
-      translateX: row?.x ?? 0,
-      translateY: row?.y ?? 0,
-      scale: row?.s ?? 1,
-    });
+    const x = row?.x ?? 0;
+    const y = row?.y ?? 0;
+    const s = row?.s ?? 1;
+
+    if (!isAlignmentInRange(x, y, s)) {
+      console.warn(
+        `[warehouseZones] Stored alignment is out of range — returning identity. ` +
+        `Stored: translateX=${x}, translateY=${y}, scale=${s}. ` +
+        `Allowed: translateX/Y ±${ALIGN_TRANSLATE_MAX}, scale ${ALIGN_SCALE_MIN}–${ALIGN_SCALE_MAX}. ` +
+        `Re-save the calibration in the Zone Editor to fix this.`,
+      );
+      res.set("X-Alignment-Warning", "stored-out-of-range");
+      res.json({ translateX: 0, translateY: 0, scale: 1 });
+      return;
+    }
+
+    res.json({ translateX: x, translateY: y, scale: s });
   } catch {
     res.status(500).json({ error: "Failed to fetch zone alignment" });
   }
