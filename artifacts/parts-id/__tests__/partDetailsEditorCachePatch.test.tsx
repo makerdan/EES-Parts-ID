@@ -618,4 +618,78 @@ describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
     // The synchronous cache patch must NOT have run.
     expect(mockSetQueriesData).not.toHaveBeenCalled();
   });
+
+  it("shows the session-expired message in the description field error when the description PATCH returns 401", async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: jest.fn().mockResolvedValue({}),
+    });
+
+    const item = makeItem({ description: "Old description" });
+    const tree = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = tree;
+
+    // Change only the description — no bins/dims change, so description is the sole op.
+    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    expect(descInput).not.toBeNull();
+    await act(async () => { descInput!.props.onChangeText("New description"); });
+
+    const saveBtn = findPressable(tree.root, "Save Details");
+    expect(saveBtn).not.toBeNull();
+    await act(async () => { saveBtn!.props.onPress(); });
+
+    // The rendered tree must contain the session-expired copy (not the generic
+    // "check connection" message) because the server returned 401.
+    const allTexts = tree.root
+      .findAll(n => (n.type as string) === "rn-text", { deep: true })
+      .map(n => instText(n));
+    const sessionExpiredNode = allTexts.find(t =>
+      t.includes("Session expired") && t.includes("re-unlock admin access")
+    );
+    expect(sessionExpiredNode).toBeDefined();
+
+    // No partial cache patch should have been applied.
+    expect(mockSetQueriesData).not.toHaveBeenCalled();
+  });
+
+  it("shows the session-expired message in the dimensions field error when the dimensions PATCH returns 401", async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: jest.fn().mockResolvedValue({}),
+    });
+
+    // Item with no existing dimensions so any typed value is a change.
+    const item = makeItem({ description: "Old description" });
+    const tree = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = tree;
+
+    // Type a length value — all dim inputs share placeholder "–"; find() returns
+    // the first one (Length), which is enough to mark dimsChanged = true.
+    const lengthInput = findTextInput(tree.root, "\u2013");
+    expect(lengthInput).not.toBeNull();
+    await act(async () => { lengthInput!.props.onChangeText("50"); });
+
+    const saveBtn = findPressable(tree.root, "Save Details");
+    expect(saveBtn).not.toBeNull();
+    await act(async () => { saveBtn!.props.onPress(); });
+
+    // Session-expired text must be present for the dimensions op (not the
+    // generic "check connection" fallback).
+    const allTexts = tree.root
+      .findAll(n => (n.type as string) === "rn-text", { deep: true })
+      .map(n => instText(n));
+    const sessionExpiredNode = allTexts.find(t =>
+      t.includes("Session expired") && t.includes("re-unlock admin access")
+    );
+    expect(sessionExpiredNode).toBeDefined();
+
+    // No partial cache patch should have been applied.
+    expect(mockSetQueriesData).not.toHaveBeenCalled();
+  });
 });
