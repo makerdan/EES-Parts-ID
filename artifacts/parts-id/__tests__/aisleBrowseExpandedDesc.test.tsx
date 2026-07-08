@@ -2,14 +2,15 @@
  * @jest-environment node
  *
  * Regression guard: the aisle-browse shelf card (ResultCard rendered by
- * BrowseByAisle when a bin is selected) must surface `expandedDescription`
- * when the field is set on the item, just as the main search ResultCard does.
+ * BrowseByAisle when a bin is selected) must surface `description` as the
+ * primary text block, and must fall back to `expandedDescription` only when
+ * `description` is absent or empty — exactly as the main search ResultCard does.
  *
  * This mirrors `resultCardExpandedDescription.test.tsx` but uses the exact
  * prop shape that BrowseByAisle passes to ResultCard:
  *   { item, confidence: 1, matchReason: "", seriesLabel: undefined, variants: [] }
  *
- * Without this guard a refactor that strips expandedDescription rendering from
+ * Without this guard a refactor that changes description display priority in
  * ResultCard would break both the search view and the aisle-browse shelf card,
  * but only the search case had a dedicated test.
  */
@@ -88,6 +89,14 @@ jest.mock("@/components/PinIcon", () => {
   };
 });
 
+// ─── @/components/PartCard ───────────────────────────────────────────────────
+// PartCard fetches from the API and imports apiBase at module load (which
+// throws in the test environment). Mock it out as a no-op.
+
+jest.mock("@/components/PartCard", () => ({
+  PartCard: () => null,
+}));
+
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
 let origConsoleError: typeof console.error;
@@ -136,15 +145,15 @@ function allTextStrings(root: renderer.ReactTestInstance): string[] {
     .filter(Boolean);
 }
 
-describe("Aisle-browse shelf card — expandedDescription rendering", () => {
-  it("renders expandedDescription as primary text when the field is set (aisle-browse props: confidence=1, matchReason='')", async () => {
+describe("Aisle-browse shelf card — description display priority", () => {
+  it("renders description as primary text when both fields are present (aisle-browse props: confidence=1, matchReason='')", async () => {
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
         <ResultCard
           result={makeAisleBrowseResult({
-            description: "Short desc",
-            expandedDescription: "Full technical spec from the expanded description field",
+            description: "Primary description from description field",
+            expandedDescription: "Expanded fallback text",
           })}
           rank={0}
         />,
@@ -152,19 +161,25 @@ describe("Aisle-browse shelf card — expandedDescription rendering", () => {
     });
 
     const texts = allTextStrings(tree.root);
-    expect(texts).toContain("Full technical spec from the expanded description field");
+    // description must appear as the primary text
+    expect(texts).toContain("Primary description from description field");
+    // expandedDescription must NOT be rendered when description is present
+    expect(texts).not.toContain("Expanded fallback text");
 
     await act(async () => { tree.unmount(); });
   });
 
-  it("also renders the abbreviated description in a muted role alongside expandedDescription", async () => {
+  it("SITG6: shows full description, not the shorter expandedDescription, when description is the longer field (aisle-browse props)", async () => {
+    // Reproduces the original bug: item.description holds the full/long text,
+    // item.expandedDescription holds a shorter snippet — the card must display
+    // the full description, not the snippet.
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
         <ResultCard
           result={makeAisleBrowseResult({
-            description: "Short desc",
-            expandedDescription: "Full technical spec from the expanded description field",
+            description: "Full technical specification for the EATON relay including all ratings and dimensions",
+            expandedDescription: "EATON relay",
           })}
           rank={0}
         />,
@@ -172,13 +187,35 @@ describe("Aisle-browse shelf card — expandedDescription rendering", () => {
     });
 
     const texts = allTextStrings(tree.root);
-    expect(texts).toContain("Full technical spec from the expanded description field");
-    expect(texts).toContain("Short desc");
+    expect(texts).toContain("Full technical specification for the EATON relay including all ratings and dimensions");
+    // The short snippet must not appear as the primary description text
+    expect(texts).not.toContain("EATON relay");
 
     await act(async () => { tree.unmount(); });
   });
 
-  it("falls back to the plain description when expandedDescription is absent (aisle-browse props)", async () => {
+  it("falls back to expandedDescription when description is absent, instead of showing 'No description' (aisle-browse props)", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <ResultCard
+          result={makeAisleBrowseResult({
+            description: "",
+            expandedDescription: "Fallback expanded text used when description is empty",
+          })}
+          rank={0}
+        />,
+      );
+    });
+
+    const texts = allTextStrings(tree.root);
+    expect(texts).toContain("Fallback expanded text used when description is empty");
+    expect(texts).not.toContain("No description");
+
+    await act(async () => { tree.unmount(); });
+  });
+
+  it("renders the plain description when expandedDescription is absent (aisle-browse props)", async () => {
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
