@@ -48,6 +48,7 @@ import app from "../app";
 import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
 import { closePool } from "../../__tests__/helpers/testDb";
 import { db, usersTable } from "@workspace/db";
+import { logger } from "../lib/logger";
 
 // An existing email stored on the bootstrap-admin row before the request.
 // After a failed Clerk fetch this value must still be present — it must not
@@ -131,5 +132,36 @@ describe("requireAppAuth — bootstrap admin Clerk fetch failure", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.role).toBe("admin");
     expect(rows[0]!.status).toBe("approved");
+  });
+
+  it("grants access and logs the error when BOTH Clerk fetch AND db write fail", async () => {
+    // Simulate a broken DB connection on top of the already-failing Clerk fetch.
+    // The outer catch in requireAppAuth must absorb the write error and still
+    // call next() so the admin keeps access (returns 200 with isAdmin=true).
+    const dbInsertSpy = jest
+      .spyOn(db, "insert")
+      .mockImplementationOnce(() => {
+        throw new Error("DB connection lost");
+      });
+
+    const loggerErrorSpy = jest.spyOn(logger, "error");
+
+    try {
+      const res = await supertest(app)
+        .get("/api/admin/me")
+        .set("Authorization", adminBearer())
+        .expect(200);
+
+      expect(res.body).toHaveProperty("isAdmin", true);
+
+      // The write failure must be logged — not silently swallowed.
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ err: expect.any(Error) }),
+        expect.stringContaining("bootstrap admin row write failed"),
+      );
+    } finally {
+      dbInsertSpy.mockRestore();
+      loggerErrorSpy.mockRestore();
+    }
   });
 });
