@@ -61,7 +61,19 @@ function getDeploymentDomain() {
   }
 
   if (process.env.REPLIT_DEV_DOMAIN) {
-    return stripProtocol(process.env.REPLIT_DEV_DOMAIN);
+    const devDomain = stripProtocol(process.env.REPLIT_DEV_DOMAIN);
+    const warning =
+      `[Build Guard] WARNING: Baking a dev domain into the build.\n` +
+      `  Domain: ${devDomain}\n` +
+      `  REPLIT_INTERNAL_APP_DOMAIN was not set, so the preview-only *.replit.dev\n` +
+      `  domain is being used instead. This domain is access-controlled and will\n` +
+      `  reject API calls from the deployed app — users will see auth and API failures.\n` +
+      `  To fix: ensure REPLIT_INTERNAL_APP_DOMAIN is set before building for production.`;
+    if (process.env.NODE_ENV === "production") {
+      exitWithError(warning);
+    }
+    console.warn(warning);
+    return devDomain;
   }
 
   if (process.env.EXPO_PUBLIC_DOMAIN) {
@@ -745,6 +757,12 @@ async function buildWeb(domain, expoPublicReplId) {
     proc.on("close", (code) => {
       if (code === 0) {
         console.log("Web build complete");
+        try {
+          verifyBundleDomain(domain, webOutDir);
+        } catch (err) {
+          reject(err);
+          return;
+        }
         resolve();
       } else {
         reject(new Error(`Web build failed with code ${code}`));
@@ -753,6 +771,68 @@ async function buildWeb(domain, expoPublicReplId) {
 
     proc.on("error", reject);
   });
+}
+
+// Scan the JS entry files in the web bundle output directory and assert that
+// the baked-in domain matches what was intended and does NOT contain a
+// .replit.dev dev-preview domain. Throws with a clear message if a violation
+// is found. Exported so it can be unit-tested independently.
+function verifyBundleDomain(domain, webOutDir) {
+  const jsDir = path.join(webOutDir, "_expo", "static", "js", "web");
+
+  if (!fs.existsSync(jsDir)) {
+    console.warn(`[Build Guard] verifyBundleDomain: JS output dir not found (${jsDir}), skipping scan.`);
+    return;
+  }
+
+  const jsFiles = fs.readdirSync(jsDir).filter((f) => f.endsWith(".js"));
+
+  if (jsFiles.length === 0) {
+    console.warn(`[Build Guard] verifyBundleDomain: No JS files found in ${jsDir}, skipping scan.`);
+    return;
+  }
+
+  const devDomainPattern = /[a-z0-9-]+\.replit\.dev/g;
+  const violations = [];
+  let domainFound = false;
+
+  for (const file of jsFiles) {
+    const filePath = path.join(jsDir, file);
+    const content = fs.readFileSync(filePath, "utf-8");
+
+    if (content.includes(domain)) {
+      domainFound = true;
+    }
+
+    const matches = [...content.matchAll(devDomainPattern)];
+    for (const m of matches) {
+      violations.push({ file, match: m[0] });
+    }
+  }
+
+  if (violations.length > 0) {
+    const lines = violations.map((v) => `  ${v.file}: "${v.match}"`).join("\n");
+    throw new Error(
+      `[Build Guard] Dev domain found in web bundle — build aborted.\n` +
+      `  A *.replit.dev URL was baked into the finished JS bundle. This domain is\n` +
+      `  access-controlled and will fail for users of the deployed app.\n` +
+      `  Ensure REPLIT_INTERNAL_APP_DOMAIN is set so the correct production domain\n` +
+      `  is used instead of the dev preview URL.\n\n` +
+      `  Matches found:\n${lines}`
+    );
+  }
+
+  if (!domainFound) {
+    throw new Error(
+      `[Build Guard] Expected domain not found in web bundle — build aborted.\n` +
+      `  The intended domain "${domain}" does not appear anywhere in the finished\n` +
+      `  JS bundle. This suggests the domain was not successfully baked into the\n` +
+      `  build, which would cause API calls to fail at runtime.\n` +
+      `  Check that EXPO_PUBLIC_DOMAIN was correctly set during the Expo web export.`
+    );
+  }
+
+  console.log(`[Build Guard] Bundle domain check passed — domain "${domain}" present, no .replit.dev URLs found.`);
 }
 
 if (require.main === module) {
@@ -769,4 +849,5 @@ module.exports = {
   stripProtocol,
   resolveClerkProxyUrl,
   getClerkAuthConfigError,
+  verifyBundleDomain,
 };
