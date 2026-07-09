@@ -693,6 +693,8 @@ async function main() {
     updateBundleUrls(timestamp, baseUrl);
   }
 
+  verifyNativeBundleDomain(domain, timestamp);
+
   console.log("Updating manifests and creating landing page...");
   updateManifests(manifests, timestamp, baseUrl, assetsByHash);
 
@@ -835,6 +837,77 @@ function verifyBundleDomain(domain, webOutDir) {
   console.log(`[Build Guard] Bundle domain check passed — domain "${domain}" present, no .replit.dev URLs found.`);
 }
 
+// Scan the native (iOS and Android) bundles for stale *.replit.dev occurrences.
+// Called after downloadBundlesAndManifests() (and after updateBundleUrls(), if
+// assets were present) so the bundles are fully written to disk. Throws with a
+// clear message if a violation is found. Exported so it can be unit-tested.
+function verifyNativeBundleDomain(domain, timestamp) {
+  const platforms = ["ios", "android"];
+  const staticBuild = path.join(projectRoot, "static-build");
+  const devDomainPattern = /[a-z0-9-]+\.replit\.dev/g;
+  const violations = [];
+  let domainFound = false;
+
+  for (const platform of platforms) {
+    const bundlePath = path.join(
+      staticBuild,
+      timestamp,
+      "_expo",
+      "static",
+      "js",
+      platform,
+      "bundle.js",
+    );
+
+    if (!fs.existsSync(bundlePath)) {
+      console.warn(
+        `[Build Guard] verifyNativeBundleDomain: bundle not found for ${platform} ` +
+          `(${bundlePath}), skipping.`,
+      );
+      continue;
+    }
+
+    const content = fs.readFileSync(bundlePath, "utf-8");
+
+    if (content.includes(domain)) {
+      domainFound = true;
+    }
+
+    const matches = [...content.matchAll(devDomainPattern)];
+    for (const m of matches) {
+      violations.push({ platform, match: m[0] });
+    }
+  }
+
+  if (violations.length > 0) {
+    const lines = violations
+      .map((v) => `  ${v.platform}/bundle.js: "${v.match}"`)
+      .join("\n");
+    throw new Error(
+      `[Build Guard] Dev domain found in native bundle — build aborted.\n` +
+        `  A *.replit.dev URL was baked into a native (iOS/Android) bundle. This domain\n` +
+        `  is access-controlled and will fail for users of the deployed app.\n` +
+        `  Ensure REPLIT_INTERNAL_APP_DOMAIN is set so the correct production domain\n` +
+        `  is used instead of the dev preview URL.\n\n` +
+        `  Matches found:\n${lines}`,
+    );
+  }
+
+  if (!domainFound) {
+    throw new Error(
+      `[Build Guard] Expected domain not found in native bundles — build aborted.\n` +
+        `  The intended domain "${domain}" does not appear in either the iOS or Android\n` +
+        `  bundle. This suggests the domain was not successfully baked into the build,\n` +
+        `  which would cause API calls to fail at runtime.\n` +
+        `  Check that EXPO_PUBLIC_DOMAIN was correctly set when Metro started.`,
+    );
+  }
+
+  console.log(
+    `[Build Guard] Native bundle domain check passed — domain "${domain}" present, no .replit.dev URLs found.`,
+  );
+}
+
 if (require.main === module) {
   main().catch((error) => {
     console.error("Build failed:", error.message);
@@ -850,4 +923,5 @@ module.exports = {
   resolveClerkProxyUrl,
   getClerkAuthConfigError,
   verifyBundleDomain,
+  verifyNativeBundleDomain,
 };
