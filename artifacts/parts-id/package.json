@@ -12,7 +12,8 @@
     "pretypecheck": "node scripts/generate-router-types.mjs",
     "typecheck": "pnpm -w run typecheck:libs && tsc -p tsconfig.json --noEmit",
     "test": "node scripts/run-tests.mjs",
-    "lint": "eslint . --ext .ts,.tsx"
+    "lint": "eslint . --ext .ts,.tsx",
+    "check:bundle-domain": "node scripts/check-bundle-domain.js"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

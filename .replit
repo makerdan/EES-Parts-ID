@@ -165,6 +165,10 @@ args = "security-audit"
 task = "workflow.run"
 args = "port-guard"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "bundle:domain-check"
+
 [[workflows.workflow]]
 name = "post-merge-health-test"
 author = "agent"
@@ -337,6 +341,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "bash scripts/check-hardcoded-ports.sh"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "bundle:domain-check"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/parts-id run check:bundle-domain"
 
 [workflows.workflow.metadata]
 isValidation = true
