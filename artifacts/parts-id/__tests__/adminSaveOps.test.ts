@@ -14,8 +14,8 @@ import {
   checkDimsChanged,
   executeSaveOps,
   parseDimField,
-} from "../../../parts-id/utils/adminSaveUtils";
-import type { PartDimensions, SaveOp } from "../../../parts-id/utils/adminSaveUtils";
+} from "../utils/adminSaveUtils";
+import type { PartDimensions, SaveOp } from "../utils/adminSaveUtils";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

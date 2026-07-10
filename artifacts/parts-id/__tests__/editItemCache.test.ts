@@ -6,12 +6,6 @@
  *   • QueryClientLike / QueryClientLikeWithSetQueries — plain objects with
  *     jest.fn() implementations; no TanStack Query import required.
  *   • AsyncStorageLike — an in-memory key-value store.
- *
- * The module mappers in jest.config.cjs resolve:
- *   @workspace/api-client-react  → __mocks__/api-client-react.cjs
- *   @/utils/searchHelpers        → artifacts/parts-id/utils/searchHelpers.ts
- * so that the runtime symbols (getListInventoryQueryKey, QUERY_CACHE_KEY,
- * evictItemFromQueryCache) are available without pulling in React Native.
  */
 
 import {
@@ -19,15 +13,21 @@ import {
   invalidateAllCachesAfterSave,
   invalidateListCache,
   invalidateSearchAndEvictItem,
-} from "../../../parts-id/utils/editItemCache";
+} from "../utils/editItemCache";
 import type {
   AsyncStorageLike,
   QueryClientLike,
   QueryClientLikeWithSetQueries,
-} from "../../../parts-id/utils/editItemCache";
+} from "../utils/editItemCache";
 
-import { QUERY_CACHE_KEY } from "../../../parts-id/utils/searchHelpers";
-import type { QueryCache } from "../../../parts-id/utils/searchHelpers";
+import { getListInventoryQueryKey } from "@workspace/api-client-react";
+
+import { QUERY_CACHE_KEY } from "../utils/searchHelpers";
+import type { QueryCache } from "../utils/searchHelpers";
+
+// Derive the expected list-key prefix from the real library so the predicate
+// tests stay in sync if the generated key shape ever changes.
+const LIST_KEY_PREFIX = getListInventoryQueryKey()[0];
 
 // ── In-memory helpers ─────────────────────────────────────────────────────────
 
@@ -75,8 +75,8 @@ describe("invalidateListCache", () => {
     const { predicate } = qc.invalidateQueries.mock.calls[0][0] as {
       predicate: (q: { queryKey: unknown }) => boolean;
     };
-    expect(predicate({ queryKey: ["/inventory"] })).toBe(true);
-    expect(predicate({ queryKey: ["/inventory", { page: 1 }] })).toBe(true);
+    expect(predicate({ queryKey: [LIST_KEY_PREFIX] })).toBe(true);
+    expect(predicate({ queryKey: [LIST_KEY_PREFIX, { page: 1 }] })).toBe(true);
   });
 
   it("predicate does not match searchInventory or other keys", async () => {
