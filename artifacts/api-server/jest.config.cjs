@@ -13,6 +13,13 @@ module.exports = {
     "^.+\\.tsx?$": [
       "ts-jest",
       {
+        // isolatedModules erases `import type` statements without needing to
+        // resolve their target modules.  This allows test files to import
+        // parts-id utilities (e.g. editItemCache.ts, searchHelpers.ts) whose
+        // type-only imports reference React Native components that are
+        // unavailable in the Node.js Jest environment.  Runtime correctness is
+        // unaffected; separate typecheck CI catches actual type errors.
+        isolatedModules: true,
         tsconfig: {
           module: "commonjs",
           moduleResolution: "node",
@@ -69,6 +76,18 @@ module.exports = {
     "^@google-cloud/storage$": "<rootDir>/__mocks__/google-cloud-storage.cjs",
     "^@workspace/integrations-poe-server$":
       "<rootDir>/../../lib/integrations-poe-server/src/index.ts",
+    // Stub @workspace/api-client-react so editItemCache.ts can be imported in
+    // the Node.js Jest environment without pulling in React Native / TanStack
+    // Query bundles.  Only the runtime export (getListInventoryQueryKey) is
+    // needed; all other exports are type-only and are erased by isolatedModules.
+    "^@workspace/api-client-react$":
+      "<rootDir>/__mocks__/api-client-react.cjs",
+    // Map @/ aliases used inside parts-id utility files (searchHelpers.ts,
+    // editItemCache.ts) to their real source so ts-jest can transform them.
+    // The `import type` references inside these files (e.g. FilterPanel) are
+    // erased by isolatedModules without needing the RN module to be resolved.
+    "^@/utils/searchHelpers$":
+      "<rootDir>/../../artifacts/parts-id/utils/searchHelpers.ts",
   },
   // Allow ts-jest to transform the workspace library source files even though
   // they live inside (or are symlinked from) node_modules.

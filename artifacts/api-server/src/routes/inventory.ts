@@ -12,6 +12,7 @@ import {
   UpdateItemDescriptionResponse,
   UpdateItemDimensionsResponse,
   UpdateItemKeywordsResponse,
+  UploadItemPhotoResponse,
   UpsertBatchPreviewResponse,
 } from "@workspace/api-zod";
 import { db } from "@workspace/db";
@@ -2386,11 +2387,12 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
         .returning();
       if (!updated) return void res.status(404).json({ error: "Item not found" });
       invalidateReferenceAnswerCache().catch(() => {});
+      const parsedRemove = UploadItemPhotoResponse.parse(updated);
       return void res.json({
-        imageUrl: updated.imageUrl ?? null,
-        thumbnailUrl: updated.thumbnailUrl ?? null,
-        imageUrl2: updated.imageUrl2 ?? null,
-        thumbnailUrl2: updated.thumbnailUrl2 ?? null,
+        imageUrl: parsedRemove.imageUrl ?? null,
+        thumbnailUrl: parsedRemove.thumbnailUrl ?? null,
+        imageUrl2: parsedRemove.imageUrl2 ?? null,
+        thumbnailUrl2: parsedRemove.thumbnailUrl2 ?? null,
       });
     }
 
@@ -2427,11 +2429,12 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     invalidateReferenceAnswerCache().catch(() => {});
+    const parsed = UploadItemPhotoResponse.parse(updated);
     res.json({
-      imageUrl: updated.imageUrl ?? null,
-      thumbnailUrl: updated.thumbnailUrl ?? null,
-      imageUrl2: updated.imageUrl2 ?? null,
-      thumbnailUrl2: updated.thumbnailUrl2 ?? null,
+      imageUrl: parsed.imageUrl ?? null,
+      thumbnailUrl: parsed.thumbnailUrl ?? null,
+      imageUrl2: parsed.imageUrl2 ?? null,
+      thumbnailUrl2: parsed.thumbnailUrl2 ?? null,
     });
   } catch (err) {
     const id = req.params["id"] ?? "unknown";
