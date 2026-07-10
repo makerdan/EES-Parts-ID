@@ -105,6 +105,16 @@ async function loadDictionaries(): Promise<DictionaryCache> {
     for (const v of primaryVendors) {
       for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
     }
+    // Explicit priority overrides: these codes appear in real inventory data and
+    // must win over any shared aliases regardless of DB row order (last-write
+    // in the loop above depends on SELECT order, which is non-deterministic).
+    const PRIORITY_CODES = ["CRS"];
+    for (const code of PRIORITY_CODES) {
+      const entry = primaryVendors.find(v => v.code === code);
+      if (entry) {
+        for (const name of entry.names) reverseVendorMap.set(name.toLowerCase(), code);
+      }
+    }
 
     return {
       correctionMap,
@@ -655,7 +665,9 @@ router.post("/search", async (req, res) => {
     // so that e.g. "10mm conduit" surfaces parts described as "3/8 inch conduit"
     for (const mt of expandMeasurements(normalized)) expandedTerms.add(mt);
 
-    const vendorFilter = vendorInput.trim().toUpperCase();
+    const rawVendorInput = vendorInput.trim();
+    const resolvedVendorCode = reverseVendorMap.get(rawVendorInput.toLowerCase());
+    const vendorFilter = resolvedVendorCode ?? rawVendorInput.toUpperCase();
     const allTermsArr = Array.from(expandedTerms).filter(t => t.length >= 2);
     // Build a websearch_to_tsquery input string. websearch_to_tsquery is the
     // hardened parser that never raises on stray operator characters and
