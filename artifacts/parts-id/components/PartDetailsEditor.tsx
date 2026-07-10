@@ -609,7 +609,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           description: description.trim(),
           binLocations: finalBins,
           aiKeywords: finalKeywords,
-          dimensions: newDims,
+          ...(dimsChanged ? { dimensions: newDims } : {}),
           ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl } : {}),
           ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2 } : {}),
         };
@@ -647,6 +647,10 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       } catch {
         // Non-fatal — worst case the search cache TTL will expire naturally
       }
+      setNewPhotoData(null);
+      setNewPhotoData2(null);
+      setRemoveCurrentPhoto(false);
+      setRemoveCurrentPhoto2(false);
       setSaveStatus("saved");
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
       closeTimerRef.current = setTimeout(() => { closeTimerRef.current = null; onClose(); }, 500);

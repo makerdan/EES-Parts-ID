@@ -12,5 +12,12 @@
     "allowImportingTsExtensions": true
   },
   "include": ["src", "__tests__"],
-  "exclude": []
+  // These two test files import parts-id utilities that in turn import
+  // React Native / DOM code incompatible with the api-server tsconfig.
+  // They are still compiled and run by Jest via ts-jest (isolatedModules:true),
+  // which erases import-type references before the RN/TSX chain is followed.
+  "exclude": [
+    "src/__tests__/editItemCache.test.ts",
+    "src/__tests__/adminSaveOps.test.ts"
+  ]
 }

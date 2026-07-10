@@ -500,7 +500,7 @@ export default function EditItemScreen() {
             aiKeywords: finalKeywords,
             binLocations: finalBins,
             barcodes: finalBarcodes,
-            dimensions: newDims,
+            ...(dimsChanged ? { dimensions: newDims } : {}),
             ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl } : {}),
             ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2 } : {}),
           };
@@ -525,6 +525,9 @@ export default function EditItemScreen() {
             };
           },
         );
+
+        if (capturedImageUrl !== undefined) setPhotoUri1(capturedImageUrl);
+        if (capturedImageUrl2 !== undefined) setPhotoUri2(capturedImageUrl2);
 
         await invalidateAllCachesAfterSave({
           queryClient,
