@@ -22,7 +22,7 @@ export function parseDimField(s: string): number | null {
  * If the pending text (trimmed) already exists case-insensitively, it is NOT
  * added again. Returns the same array reference when nothing changes.
  */
-export function buildFinalBins(bins: string[], newBin: string): string[] {
+export function buildFinalBins(bins: Array<string>, newBin: string): Array<string> {
   const pending = newBin.trim();
   if (pending && !bins.some((b) => b.toLowerCase() === pending.toLowerCase())) {
     return [...bins, pending];
@@ -35,7 +35,7 @@ export function buildFinalBins(bins: string[], newBin: string): string[] {
  * Keywords are lowercased before comparison; duplicates are silently dropped.
  * Returns the same array reference when nothing changes.
  */
-export function buildFinalKeywords(keywords: string[], newKeyword: string): string[] {
+export function buildFinalKeywords(keywords: Array<string>, newKeyword: string): Array<string> {
   const pending = newKeyword.trim().toLowerCase();
   if (pending && !keywords.includes(pending)) {
     return [...keywords, pending];
@@ -73,8 +73,8 @@ export function checkDimsChanged(
 export interface CachePatchOptions {
   targetId: number;
   description: string;
-  binLocations: string[];
-  aiKeywords: string[];
+  binLocations: Array<string>;
+  aiKeywords: Array<string>;
   dimsChanged: boolean;
   newDims: PartDimensions;
   capturedImageUrl?: string | null;
@@ -93,8 +93,8 @@ export function buildPatchedItem<
   T extends {
     id: number;
     description: string | null;
-    binLocations: string[];
-    aiKeywords: string[];
+    binLocations: Array<string>;
+    aiKeywords: Array<string>;
     dimensions?: PartDimensions | null;
     imageUrl?: string | null;
     imageUrl2?: string | null;
@@ -138,7 +138,7 @@ export type ExecuteSaveOpsResult = {
  * Returns `{ anyFailed, fieldErrors }` so callers can apply cache rollbacks and
  * display per-field error messages without knowing about the individual ops.
  */
-export async function executeSaveOps(ops: SaveOp[]): Promise<ExecuteSaveOpsResult> {
+export async function executeSaveOps(ops: Array<SaveOp>): Promise<ExecuteSaveOpsResult> {
   const results = await Promise.allSettled(ops.map((o) => o.promise));
   const fieldErrors: Partial<Record<SaveOpField, string>> = {};
   let anyFailed = false;
