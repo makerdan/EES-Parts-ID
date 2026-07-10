@@ -150,6 +150,9 @@ function makeWellFormedRow(overrides: Record<string, unknown> = {}) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Global beforeEach: restore all mock chains that clearAllMocks() wipes.
+// mockInsertReturning is explicitly reset (not just cleared) so that any
+// unconsumed mockResolvedValueOnce values left by a previous test cannot bleed
+// into the next one via the once-queue.
 // ─────────────────────────────────────────────────────────────────────────────
 beforeEach(() => {
   jest.clearAllMocks();
@@ -158,6 +161,9 @@ beforeEach(() => {
   mockInsert.mockReturnValue({ values: mockInsertValues });
   mockInsertValues.mockReturnValue({ onConflictDoUpdate: mockInsertOnConflictDoUpdate });
   mockInsertOnConflictDoUpdate.mockReturnValue({ returning: mockInsertReturning });
+  // mockReset() clears both the once-queue AND the default return value; the
+  // mockResolvedValue call immediately after re-establishes the default.
+  mockInsertReturning.mockReset();
   mockInsertReturning.mockResolvedValue([{ isNew: false }]);
 
   // Restore update chain
@@ -809,10 +815,9 @@ describe("POST /api/inventory/upsert-batch — RETURNING empty array (silent gap
 
 describe("POST /api/inventory/upsert-batch — happy path returns correct counts", () => {
   it("returns 200 with inserted+updated counts when all rows succeed", async () => {
-    // Two inserts: first is new, second is an update.
-    mockInsertReturning
-      .mockResolvedValueOnce([{ isNew: true }])
-      .mockResolvedValueOnce([{ isNew: false }]);
+    // Both items go into a single batch insert (chunk size 500 > 2).
+    // The RETURNING clause yields one row per item in the batch call.
+    mockInsertReturning.mockResolvedValueOnce([{ isNew: true }, { isNew: false }]);
 
     const res = await supertest(app)
       .post("/api/inventory/upsert-batch")
