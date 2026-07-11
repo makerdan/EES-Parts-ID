@@ -106,16 +106,6 @@ async function loadDictionaries(): Promise<DictionaryCache> {
     for (const v of primaryVendors) {
       for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
     }
-    // Explicit priority overrides: these codes appear in real inventory data and
-    // must win over any shared aliases regardless of DB row order (last-write
-    // in the loop above depends on SELECT order, which is non-deterministic).
-    const PRIORITY_CODES = ["CRS"];
-    for (const code of PRIORITY_CODES) {
-      const entry = primaryVendors.find(v => v.code === code);
-      if (entry) {
-        for (const name of entry.names) reverseVendorMap.set(name.toLowerCase(), code);
-      }
-    }
 
     return {
       correctionMap,
