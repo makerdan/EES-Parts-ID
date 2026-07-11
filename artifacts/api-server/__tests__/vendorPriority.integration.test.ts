@@ -56,6 +56,16 @@ async function buildReverseVendorMap(): Promise<Map<string, string>> {
   for (const v of primary) {
     for (const name of v.names) map.set(name.toLowerCase(), v.code);
   }
+  // Explicit priority overrides: mirror the PRIORITY_CODES step in inventory.ts
+  // so that shared aliases always resolve to the priority code, regardless of
+  // DB row order (non-deterministic SELECT order).
+  const PRIORITY_CODES = ["CRS"];
+  for (const code of PRIORITY_CODES) {
+    const entry = primary.find((v) => v.code === code);
+    if (entry) {
+      for (const name of entry.names) map.set(name.toLowerCase(), code);
+    }
+  }
   return map;
 }
 

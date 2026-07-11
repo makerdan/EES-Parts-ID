@@ -9,7 +9,7 @@
  */
 
 const getListInventoryQueryKey = (params) => {
-  return ["/inventory", ...(params ? [params] : [])];
+  return ["/api/inventory", ...(params ? [params] : [])];
 };
 
 module.exports = {
