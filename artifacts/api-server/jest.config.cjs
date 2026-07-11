@@ -1,14 +1,31 @@
 /** @type {import('jest').Config} */
-module.exports = {
+
+/**
+ * Shared configuration inherited by both Jest projects below.
+ *
+ * Split rationale:
+ *   db-serial  — tests that call seedVendors() or mutate canonical table rows
+ *                (vendorPriority, vendorNameResolutionMap).  They must run
+ *                sequentially because they flip isPrimary flags on live rows
+ *                and read them back; concurrent execution produces race-driven
+ *                false failures.
+ *
+ *   parallel   — every other test file.  Pure-unit tests have no DB at all;
+ *                integration tests that do touch the DB use JEST-ITG- prefixed
+ *                fixture rows that are isolated per suite, so concurrent
+ *                execution is safe.
+ *
+ * closePool() in testDb.ts is guarded with a flag so that the second (or
+ * later) test file running in the same Jest worker process does not crash when
+ * it tries to close a pool that was already ended by the previous file.
+ * Jest's forceExit:true (below) is the ultimate backstop — it terminates
+ * lingering handles without needing every suite to close the pool itself.
+ */
+const sharedConfig = {
   preset: "ts-jest",
   testEnvironment: "node",
   testTimeout: 10_000,
-  globalSetup: "./jest.globalSetup.cjs",
-  setupFilesAfterEnv: ["./jest.integrationSetup.cjs"],
-  // Force-exit after all tests complete.  Background async operations (e.g.
-  // the bulk-enrich job's invalidateReferenceAnswerCache cleanup) can keep the
-  // pg-pool open slightly past closePool(), preventing a clean exit.
-  forceExit: true,
+  setupFilesAfterEnv: ["<rootDir>/jest.integrationSetup.cjs"],
   transform: {
     "^.+\\.tsx?$": [
       "ts-jest",
@@ -46,7 +63,6 @@ module.exports = {
       },
     ],
   },
-  testMatch: ["**/__tests__/**/*.test.ts"],
   // Resolve workspace packages to their TypeScript source so ts-jest can
   // transform them without relying on package.json "exports" field support
   // (which "moduleResolution: node" does not honour).
@@ -96,5 +112,42 @@ module.exports = {
     // everything else in node_modules. The `(?:\.pnpm/)?` prefix matches the
     // pnpm virtual-store layout (node_modules/.pnpm/uuid@x.y.z/...).
     "/node_modules/(?!(?:\\.pnpm/)?(?:@workspace|uuid)[@/])",
+  ],
+};
+
+module.exports = {
+  // globalSetup runs once before all projects — keeps DB preflight + schema
+  // sync to a single execution regardless of how many projects are defined.
+  globalSetup: "./jest.globalSetup.cjs",
+  // Terminate lingering handles (open pg-pool connections, background jobs)
+  // after all tests complete so Jest does not hang waiting for them.
+  forceExit: true,
+
+  projects: [
+    {
+      ...sharedConfig,
+      displayName: "db-serial",
+      // Only the two test files that mutate canonical (non-prefixed) rows.
+      // maxWorkers:1 keeps them sequential so isPrimary flips in one test
+      // do not race with reads in another.
+      testMatch: [
+        "<rootDir>/__tests__/vendorPriority.integration.test.ts",
+        "<rootDir>/__tests__/vendorNameResolutionMap.integration.test.ts",
+      ],
+      maxWorkers: 1,
+    },
+    {
+      ...sharedConfig,
+      displayName: "parallel",
+      // Mirror the original flat testMatch — "**/__tests__/**/*.test.ts"
+      // matches both <rootDir>/__tests__/ and <rootDir>/src/__tests__/ so all
+      // test files are covered regardless of which subdirectory they live in.
+      testMatch: ["**/__tests__/**/*.test.ts"],
+      testPathIgnorePatterns: [
+        "/node_modules/",
+        "/vendorPriority\\.integration\\.test\\.ts$",
+        "/vendorNameResolutionMap\\.integration\\.test\\.ts$",
+      ],
+    },
   ],
 };

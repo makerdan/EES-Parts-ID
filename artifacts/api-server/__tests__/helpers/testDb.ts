@@ -56,9 +56,15 @@ export async function cleanupFixtures() {
 
 /**
  * Close the shared PostgreSQL pool so Jest can exit cleanly.
- * Call once in the outermost `afterAll` of each integration test file.
+ * Idempotent — safe to call from multiple test files in the same worker
+ * process (pool.end() throws if called twice; this guard prevents that).
+ * Jest's `forceExit: true` ensures the process terminates even if the pool
+ * lingers, so callers do not need to guarantee this runs at all.
  */
+let _poolEnded = false;
 export async function closePool() {
+  if (_poolEnded) return;
+  _poolEnded = true;
   await pool.end();
 }
 
