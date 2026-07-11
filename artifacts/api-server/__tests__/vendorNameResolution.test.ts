@@ -13,19 +13,10 @@ import { PRIMARY_VENDORS } from "../src/seed/dictionaries";
 
 // ── Resolution algorithm (mirrors inventory.ts) ───────────────────────────────
 
-/** Codes that must win over any conflicting primary entry (mirrors inventory.ts). */
-const PRIORITY_CODES = ["CRS"];
-
 function buildSyntheticReverseVendorMap(): Map<string, string> {
   const map = new Map<string, string>();
   for (const v of PRIMARY_VENDORS) {
     for (const name of v.names) map.set(name.toLowerCase(), v.code);
-  }
-  for (const code of PRIORITY_CODES) {
-    const entry = PRIMARY_VENDORS.find((v) => v.code === code);
-    if (entry) {
-      for (const name of entry.names) map.set(name.toLowerCase(), code);
-    }
   }
   return map;
 }
@@ -47,30 +38,22 @@ function resolveVendorCode(input: string, map: Map<string, string>): string {
 //      wins (last-write semantics).
 //
 // Declare every such conflict winner explicitly so the test is not circular.
-// If someone re-orders PRIMARY_VENDORS or changes PRIORITY_CODES, these
-// declarations catch the regression.
+// If someone re-orders PRIMARY_VENDORS, these declarations catch the regression.
 
 /**
  * Names that appear in more than one PRIMARY_VENDORS entry.
- * Value = the code that WINS in the synthetic map (based on array order + PRIORITY_CODES).
+ * Value = the code that WINS in the synthetic map (based on array order).
  *
  * Derivation:
- *   - "crouse-hinds" / "crouse hinds" / "cooper crouse-hinds" / "eaton crouse-hinds":
- *       CHC (early) and CRS (next) share all four; CRS is in PRIORITY_CODES → CRS wins.
  *   - "eaton" / "cutler hammer" / "cutler-hammer" / "c-h" / "eaton electrical":
  *       CHD (earlier in array) and ETN (later) share these → ETN wins (last-write).
  *   - "eaton electrical" is also in EAT (between CHD and ETN) — ETN still wins (latest).
  *   - "eaton corporation": EAT (earlier) and ETN (later) → ETN wins.
  *   - "thomas betts" / "thomas & betts" / "t&b": ABB (early) and TAB (latest) → TAB wins.
  *   - "edison fuse": BUS (earlier) and EDN (later) → EDN wins.
+ *   - CHC and CRS no longer share any names; each owns its names uniquely.
  */
 const CONFLICT_WINNERS = new Map<string, string>([
-  // CRS wins via PRIORITY_CODES (beats CHC for all shared crouse-hinds variants)
-  ["crouse-hinds",        "CRS"],
-  ["crouse hinds",        "CRS"],
-  ["cooper crouse-hinds", "CRS"],
-  ["eaton crouse-hinds",  "CRS"],
-
   // ETN wins for eaton-family names (ETN is later in PRIMARY_VENDORS than CHD and EAT)
   ["eaton",               "ETN"],
   ["cutler hammer",       "ETN"],
@@ -117,12 +100,12 @@ describe("vendorNameResolution — every PRIMARY_VENDORS name resolves to the de
   }
 });
 
-// ── Tests: PRIORITY_CODES override (CRS beats CHC) ───────────────────────────
+// ── Tests: CRS and CHC each own their own names ───────────────────────────────
 
-describe("vendorNameResolution — PRIORITY_CODES: CRS wins over CHC for all shared names", () => {
+describe("vendorNameResolution — CRS owns all crouse-hinds names; CHC owns its cooper names", () => {
   const map = buildSyntheticReverseVendorMap();
 
-  it("'crouse-hinds' → CRS (not CHC)", () => {
+  it("'crouse-hinds' → CRS (unique to CRS)", () => {
     expect(resolveVendorCode("crouse-hinds", map)).toBe("CRS");
   });
 
@@ -138,9 +121,24 @@ describe("vendorNameResolution — PRIORITY_CODES: CRS wins over CHC for all sha
     expect(resolveVendorCode("eaton crouse-hinds", map)).toBe("CRS");
   });
 
-  it("CHC owns no names in the map (all overridden by CRS)", () => {
-    for (const name of PRIMARY_VENDORS.find((v) => v.code === "CHC")!.names) {
-      expect(map.get(name.toLowerCase())).toBe("CRS");
+  it("'cooper industries' → CHC (unique to CHC in PRIMARY_VENDORS)", () => {
+    expect(resolveVendorCode("cooper industries", map)).toBe("CHC");
+  });
+
+  it("'cooper electric' → CHC", () => {
+    expect(resolveVendorCode("cooper electric", map)).toBe("CHC");
+  });
+
+  it("'eaton cooper' → CHC", () => {
+    expect(resolveVendorCode("eaton cooper", map)).toBe("CHC");
+  });
+
+  it("CHC owns all of its names in the map", () => {
+    const chc = PRIMARY_VENDORS.find((v) => v.code === "CHC")!;
+    for (const name of chc.names) {
+      expect({ name, resolved: map.get(name.toLowerCase()) }).toEqual({
+        name, resolved: "CHC",
+      });
     }
   });
 });

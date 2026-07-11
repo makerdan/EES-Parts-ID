@@ -32,8 +32,6 @@ import { PRIMARY_VENDORS, seedVendors } from "../src/seed/dictionaries";
 
 // ── Resolution algorithm (mirrors inventory.ts) ───────────────────────────────
 
-const PRIORITY_CODES = ["CRS"];
-
 async function buildReverseVendorMap(): Promise<Map<string, string>> {
   const vendors = await db.select().from(vendorMapTable);
   const map = new Map<string, string>();
@@ -48,13 +46,6 @@ async function buildReverseVendorMap(): Promise<Map<string, string>> {
     for (const name of v.names) map.set(name.toLowerCase(), v.code);
   }
 
-  for (const code of PRIORITY_CODES) {
-    const entry = primary.find((v) => v.code === code);
-    if (entry) {
-      for (const name of entry.names) map.set(name.toLowerCase(), code);
-    }
-  }
-
   return map;
 }
 
@@ -62,8 +53,7 @@ async function buildReverseVendorMap(): Promise<Map<string, string>> {
 //
 // When multiple PRIMARY_VENDORS entries share a name, exactly one code wins in
 // the live map.  The winner depends on which primary DB row SELECT returns last
-// (last-write-wins semantics in buildReverseVendorMap), plus the PRIORITY_CODES
-// override that runs after.
+// (last-write-wins semantics in buildReverseVendorMap).
 //
 // These declarations were verified against the live DB using the seeded data:
 //
@@ -71,16 +61,13 @@ async function buildReverseVendorMap(): Promise<Map<string, string>> {
 //   "thomas & betts"    [ABB, TAB]          => TAB
 //   "t&b"               [ABB, TAB]          => TAB
 //   "edison fuse"       [BUS, EDN]          => EDN   (EDN DB row returned later)
-//   "crouse-hinds"      [CHC, CRS]          => CRS   (PRIORITY_CODES override)
-//   "crouse hinds"      [CHC, CRS]          => CRS
-//   "cooper crouse-hinds" [CHC, CRS]        => CRS
-//   "eaton crouse-hinds"  [CHC, CRS]        => CRS
 //   "eaton"             [CHD, ETN]          => CHD   (CHD DB row returned later)
 //   "cutler hammer"     [CHD, ETN]          => CHD
 //   "cutler-hammer"     [CHD, ETN]          => CHD
 //   "c-h"               [CHD, ETN]          => CHD
 //   "eaton electrical"  [CHD, EAT, ETN]     => CHD   (CHD DB row returned last)
 //   "eaton corporation" [EAT, ETN]          => ETN   (ETN DB row returned later)
+//   CHC and CRS no longer share names; each wins its own aliases uniquely.
 //
 const DB_CONFLICT_WINNERS = new Map<string, string>([
   // TAB wins for thomas-betts names
@@ -89,11 +76,6 @@ const DB_CONFLICT_WINNERS = new Map<string, string>([
   ["t&b",                 "TAB"],
   // EDN wins for "edison fuse"
   ["edison fuse",         "EDN"],
-  // CRS wins via PRIORITY_CODES (beats CHC)
-  ["crouse-hinds",        "CRS"],
-  ["crouse hinds",        "CRS"],
-  ["cooper crouse-hinds", "CRS"],
-  ["eaton crouse-hinds",  "CRS"],
   // CHD wins for eaton/cutler-hammer family names (CHD DB row returned later)
   ["eaton",               "CHD"],
   ["cutler hammer",       "CHD"],
@@ -103,12 +85,6 @@ const DB_CONFLICT_WINNERS = new Map<string, string>([
   // ETN wins for "eaton corporation" (ETN DB row returned later than EAT)
   ["eaton corporation",   "ETN"],
 ]);
-
-// ── CHC is entirely shadowed by CRS ──────────────────────────────────────────
-// All of CHC's names are in DB_CONFLICT_WINNERS → CRS.
-// CHC therefore owns zero names in the final map — verified in the dedicated
-// conflict-winner test below.
-const INTENTIONALLY_SHADOWED = new Set(["CHC"]);
 
 // ── Shared map (built once) ───────────────────────────────────────────────────
 let map: Map<string, string>;
@@ -150,15 +126,13 @@ describe("live reverseVendorMap — every PRIMARY_VENDORS name resolves to the d
   );
 });
 
-// ── Test: every PRIMARY_VENDORS entry (except CHC) owns at least one name ─────
+// ── Test: every PRIMARY_VENDORS entry owns at least one name ──────────────────
 
 describe("live reverseVendorMap — every PRIMARY_VENDORS entry owns at least one name", () => {
   it(
-    "every primary vendor code (except CHC) resolves to itself for at least one of its names",
+    "every primary vendor code resolves to itself for at least one of its names",
     () => {
       for (const entry of PRIMARY_VENDORS) {
-        if (INTENTIONALLY_SHADOWED.has(entry.code)) continue;
-
         const ownsAtLeastOne = entry.names.some(
           (n) => map.get(n.toLowerCase()) === entry.code,
         );
@@ -172,10 +146,10 @@ describe("live reverseVendorMap — every PRIMARY_VENDORS entry owns at least on
   );
 });
 
-// ── Test: PRIORITY_CODES conflict winners ─────────────────────────────────────
+// ── Test: CRS and CHC each own their own names ────────────────────────────────
 
-describe("live reverseVendorMap — PRIORITY_CODES: CRS beats CHC for all shared names", () => {
-  it("'crouse-hinds' → CRS (not CHC)", () => {
+describe("live reverseVendorMap — CRS owns all crouse-hinds names; CHC owns its cooper names", () => {
+  it("'crouse-hinds' → CRS (unique to CRS)", () => {
     expect(map.get("crouse-hinds")).toBe("CRS");
   });
 
@@ -191,11 +165,11 @@ describe("live reverseVendorMap — PRIORITY_CODES: CRS beats CHC for all shared
     expect(map.get("cooper crouse-hinds")).toBe("CRS");
   });
 
-  it("CHC owns zero names (all overridden by CRS via PRIORITY_CODES)", () => {
+  it("CHC owns all of its names in the map (no longer shadowed)", () => {
     const chc = PRIMARY_VENDORS.find((v) => v.code === "CHC")!;
     for (const name of chc.names) {
       expect({ name, resolved: map.get(name.toLowerCase()) }).toEqual({
-        name, resolved: "CRS",
+        name, resolved: "CHC",
       });
     }
   });
@@ -350,6 +324,12 @@ describe("live reverseVendorMap — non-conflicting name spot-checks", () => {
     ["powerware", "EPQ"],
     ["metalux", "ETL"],
     ["eaton corp", "EAT"],
+    ["crescent", "CRE"],
+    ["crescent tools", "CRE"],
+    ["crescent wrench", "CRE"],
+    ["cooper industries", "CHC"],
+    ["cooper electric", "CHC"],
+    ["eaton cooper", "CHC"],
   ];
 
   for (const [name, code] of checks) {
