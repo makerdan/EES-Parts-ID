@@ -58,7 +58,7 @@ if (existsSync(RESULTS_FILE)) {
 
 const result = spawnSync(
   jestBin,
-  ["--runInBand", "--json", `--outputFile=${RESULTS_FILE}`, ...process.argv.slice(2)],
+  ["--json", `--outputFile=${RESULTS_FILE}`, ...process.argv.slice(2)],
   { stdio: "inherit", cwd: ROOT }
 );
 
