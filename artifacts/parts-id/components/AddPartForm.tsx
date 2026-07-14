@@ -45,6 +45,11 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
   const [binLocation, setBinLocation] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isMountedRef = React.useRef(true);
+  React.useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
   const [fieldErrors, setFieldErrors] = useState<{ catalog?: string; vendor?: string; bin?: string }>({});
   const [createdItem, setCreatedItem] = useState<InventoryItem | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -144,15 +149,18 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
 
       if (res.status === 409) {
         const data = await res.json() as { error?: string };
+        if (!isMountedRef.current) return;
         setError(data.error ?? "A part with this vendor and catalog number already exists.");
         return;
       }
       if (res.status === 401) {
+        if (!isMountedRef.current) return;
         setError("Admin session expired. Please unlock admin access again.");
         return;
       }
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
+        if (!isMountedRef.current) return;
         setError(data.error ?? "Failed to add part. Please try again.");
         return;
       }
@@ -189,6 +197,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
           } catch {
             // Best-effort cleanup — ignore if it also fails.
           }
+          if (!isMountedRef.current) return;
           setError(dimErr.error ?? "Could not save dimensions. The part was not created. Please try again.");
           return;
         }
@@ -206,7 +215,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
       if (photoUploads.length > 0) {
         const results = await Promise.allSettled(photoUploads.map(fn => fn()));
         const anyFailed = results.some(r => r.status === "rejected");
-        if (anyFailed) {
+        if (anyFailed && isMountedRef.current) {
           Alert.alert(
             "Photo upload failed",
             "The part was saved but one or more photos could not be uploaded. Check your connection and try again.",
@@ -215,12 +224,14 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
         }
       }
 
+      if (!isMountedRef.current) return;
       setCreatedItem(newItem);
       onSuccess(newItem);
     } catch {
+      if (!isMountedRef.current) return;
       setError("Network error. Check your connection and try again.");
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
   };
 
