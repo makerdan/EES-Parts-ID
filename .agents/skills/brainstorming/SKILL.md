@@ -28,8 +28,9 @@ You MUST create a task for each of these items and complete them in order:
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
 6. **Write design doc** — save to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
 7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
-8. **User reviews written spec** — ask user to review the spec file before proceeding
-9. **Transition to implementation** — invoke writing-plans skill to create implementation plan
+8. **Regression hardening check** — confirm the plan contains at least one test, assertion, or CI check whose purpose is to prove the specific problem cannot recur undetected; if absent, add it before continuing
+9. **User reviews written spec** — ask user to review the spec file before proceeding
+10. **Transition to implementation** — invoke writing-plans skill to create implementation plan
 
 ## Process Flow
 
@@ -88,7 +89,7 @@ digraph brainstorming {
 - Once you believe you understand what you're building, present the design
 - Scale each section to its complexity: a few sentences if straightforward, up to 200-300 words if nuanced
 - Ask after each section whether it looks right so far
-- Cover: architecture, components, data flow, error handling, testing
+- Cover: architecture, components, data flow, error handling, testing, and **regression hardening** (tests, assertions, or CI checks whose sole purpose is to prove the specific bug or gap cannot recur undetected)
 - Be ready to go back and clarify if something doesn't make sense
 
 **Design for isolation and clarity:**
@@ -120,6 +121,7 @@ After writing the spec document, look at it with fresh eyes:
 2. **Internal consistency:** Do any sections contradict each other? Does the architecture match the feature descriptions?
 3. **Scope check:** Is this focused enough for a single implementation plan, or does it need decomposition?
 4. **Ambiguity check:** Could any requirement be interpreted two different ways? If so, pick one and make it explicit.
+5. **Regression hardening:** Does the plan include at least one test, assertion, or CI check whose purpose is to prove the specific problem cannot recur undetected? If not, add one before moving on.
 
 Fix any issues inline. No need to re-review — just fix and move on.
 
