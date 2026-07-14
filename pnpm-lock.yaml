@@ -106,12 +106,6 @@ importers:
         specifier: ~5.9.2
         version: 5.9.3
 
-  .local/share/pnpm/.tools/pnpm/9.15.4_tmp_22583:
-    dependencies:
-      pnpm:
-        specifier: 9.15.4
-        version: 9.15.4
-
   artifacts/api-server:
     dependencies:
       '@clerk/express':
@@ -8655,11 +8649,6 @@ packages:
   pngjs@5.0.0:
     resolution: {integrity: sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw==}
     engines: {node: '>=10.13.0'}
-
-  pnpm@9.15.4:
-    resolution: {integrity: sha512-stwg4vxys+GISEWbNzWaMgZGY+VielHkx0ssKd2OjgSRSDw6u0B4nP1Xi/Ni+2uoJhsF8Dh9dnku1uI+o7G2oA==}
-    engines: {node: '>=18.12'}
-    hasBin: true
 
   possible-typed-array-names@1.1.0:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
@@ -20157,8 +20146,6 @@ snapshots:
   pngjs@3.4.0: {}
 
   pngjs@5.0.0: {}
-
-  pnpm@9.15.4: {}
 
   possible-typed-array-names@1.1.0: {}
 
