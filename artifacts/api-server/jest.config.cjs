@@ -30,19 +30,17 @@ const sharedConfig = {
     "^.+\\.tsx?$": [
       "ts-jest",
       {
+        // isolatedModules is set in tsconfig.jest.json (via tsconfig.base.json
+        // which carries "isolatedModules": true).  Using a file path instead of
+        // an inline object keeps the setting compatible with ts-jest v30, which
+        // removed the deprecated inline `isolatedModules` transform option.
         // isolatedModules erases `import type` statements without needing to
         // resolve their target modules.  This allows test files to import
         // parts-id utilities (e.g. editItemCache.ts, searchHelpers.ts) whose
         // type-only imports reference React Native components that are
         // unavailable in the Node.js Jest environment.  Runtime correctness is
         // unaffected; separate typecheck CI catches actual type errors.
-        isolatedModules: true,
-        tsconfig: {
-          module: "commonjs",
-          moduleResolution: "node",
-          strict: true,
-          esModuleInterop: true,
-        },
+        tsconfig: "./tsconfig.jest.json",
       },
     ],
     // Transpile the ESM-only `uuid` package (pulled in transitively by exceljs
@@ -53,13 +51,9 @@ const sharedConfig = {
     "^.+\\.jsx?$": [
       "ts-jest",
       {
-        isolatedModules: true,
-        tsconfig: {
-          allowJs: true,
-          module: "commonjs",
-          moduleResolution: "node",
-          esModuleInterop: true,
-        },
+        // isolatedModules inherited from tsconfig.base.json via
+        // tsconfig.jest.js.json — see comment on the tsx transform above.
+        tsconfig: "./tsconfig.jest.js.json",
       },
     ],
   },
