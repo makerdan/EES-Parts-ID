@@ -23,6 +23,7 @@ Task tool (general-purpose):
     | Clarity | Requirements ambiguous enough to cause someone to build the wrong thing |
     | Scope | Focused enough for a single plan — not covering multiple independent subsystems |
     | YAGNI | Unrequested features, over-engineering |
+    | Regression hardening | At least one test, assertion, or CI check whose explicit purpose is to prove the specific problem cannot recur undetected (framework-agnostic — unit test, integration test, script, lint rule, etc. all count) |
 
     ## Calibration
 
@@ -31,7 +32,10 @@ Task tool (general-purpose):
     interpreted two different ways — those are issues. Minor wording improvements,
     stylistic preferences, and "sections less detailed than others" are not.
 
-    Approve unless there are serious gaps that would lead to a flawed plan.
+    **Regression hardening is a hard block.** If the spec contains no item whose
+    explicit purpose is to prevent the targeted problem from recurring undetected,
+    set Status to "Issues Found" and require one to be added before approval —
+    regardless of how complete the rest of the spec is.
 
     ## Output Format
 
