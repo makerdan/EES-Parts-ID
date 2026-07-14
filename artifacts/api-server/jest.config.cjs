@@ -18,8 +18,11 @@
  * closePool() in testDb.ts is guarded with a flag so that the second (or
  * later) test file running in the same Jest worker process does not crash when
  * it tries to close a pool that was already ended by the previous file.
- * Jest's forceExit:true (below) is the ultimate backstop — it terminates
- * lingering handles without needing every suite to close the pool itself.
+ * jest.integrationSetup.cjs registers a global afterAll that calls closePool()
+ * after every test file, ensuring the pool is closed even in test files that
+ * never explicitly import closePool().  This allows Jest to exit cleanly
+ * without forceExit, and surfaces any genuine resource-leak bugs rather than
+ * masking them.
  */
 const sharedConfig = {
   preset: "ts-jest",
@@ -113,9 +116,9 @@ module.exports = {
   // globalSetup runs once before all projects — keeps DB preflight + schema
   // sync to a single execution regardless of how many projects are defined.
   globalSetup: "./jest.globalSetup.cjs",
-  // Terminate lingering handles (open pg-pool connections, background jobs)
-  // after all tests complete so Jest does not hang waiting for them.
-  forceExit: true,
+  // forceExit was removed: jest.integrationSetup.cjs now registers a global
+  // afterAll that closes the pg pool after every test file, so handles are
+  // cleaned up organically and Jest exits without the "Force exiting" warning.
 
   projects: [
     {
