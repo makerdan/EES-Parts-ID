@@ -366,7 +366,7 @@ const ABBREVIATIONS: Array<{ abbreviation: string; expansions: Array<string>; ca
 ];
 
 // ── VENDOR MAP (~300 entries) ─────────────────────────────────────────────────
-const VENDORS: Array<{ code: string; names: Array<string>; notes: string }> = [
+export const VENDORS: Array<{ code: string; names: Array<string>; notes: string }> = [
   { code: "ETN", names: ["eaton", "cutler hammer", "cutler-hammer", "c-h", "ch", "westinghouse", "eaton electrical", "eaton corporation"], notes: "Major manufacturer" },
   { code: "SQD", names: ["square d", "schneider", "schneider electric", "squared", "sq d", "squaed d"], notes: "Schneider brand" },
   { code: "HUB", names: ["hubbell", "hubbell wiring", "hubbell incorporated", "hubbell lighting", "habirshaw"], notes: "Hubbell brands" },
