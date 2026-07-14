@@ -1540,7 +1540,9 @@ export function ZoneEditor() {
     const undoChanges = jobs.map(({ id, before, after }) => ({ id, before, after }));
     setMultiSaving(true);
     try {
-      await Promise.all(jobs.map(({ id, body }) => patchZone(id, body)));
+      for (const { id, body } of jobs) {
+        await patchZone(id, body);
+      }
       pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
       if (updates.sectionNum !== undefined) {
@@ -1636,6 +1638,7 @@ export function ZoneEditor() {
       // Best-effort sentinel rollback: if Phase 1 ran but Phase 2 threw, some zones
       // may be stuck at their negative sentinel values. Restore them to their originals.
       if (phase1Done) {
+        const stuckIds: number[] = [];
         try {
           const res = await fetch(`${API_BASE}/warehouse-zones`);
           if (res.ok) {
@@ -1650,18 +1653,34 @@ export function ZoneEditor() {
               for (const z of stillAtSentinel) {
                 const orig = originals.get(z.id);
                 if (orig !== undefined) {
-                  await patchZone(z.id, { sectionNum: orig }).catch(() => {});
+                  const rollbackOk = await patchZone(z.id, { sectionNum: orig }).then(() => true).catch(() => false);
+                  if (!rollbackOk) stuckIds.push(z.id);
                 }
               }
               await fetchZones().catch(() => {});
-              toast.error(
-                `Auto-numbering failed and was rolled back. ${e instanceof Error ? e.message : String(e)}`,
-              );
+              if (stuckIds.length > 0) {
+                // Rollback PATCHes failed for some zones — surface actionable error.
+                console.error("[ZoneEditor] sentinel rollback failed for zone IDs:", stuckIds);
+                toast.error(
+                  `Auto-numbering failed and zones ${stuckIds.join(", ")} are stuck at temporary values. Please correct them manually.`,
+                );
+              } else {
+                toast.error(
+                  `Auto-numbering failed and was rolled back. ${e instanceof Error ? e.message : String(e)}`,
+                );
+              }
               return;
             }
           }
-        } catch {
-          // Rollback attempt itself failed — fall through to show the original error.
+        } catch (rollbackErr) {
+          // The rollback fetch itself failed — zones may be stuck at sentinel values.
+          const affectedIds = sentinelMap.map(({ id }) => id);
+          console.error("[ZoneEditor] sentinel rollback network failure for zone IDs:", affectedIds, rollbackErr);
+          toast.error(
+            `Auto-numbering failed and the rollback also failed. Zones ${affectedIds.join(", ")} may need manual correction.`,
+          );
+          await fetchZones().catch(() => {});
+          return;
         }
       }
 

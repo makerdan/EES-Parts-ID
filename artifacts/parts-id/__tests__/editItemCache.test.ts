@@ -262,4 +262,52 @@ describe("evictDeletedItemFromAllCaches", () => {
 
     expect(qc.invalidateQueries).toHaveBeenCalledTimes(2);
   });
+
+  it("setQueriesData list updater decrements total by 1 when the item is found", () => {
+    const qc = makeQueryClientFull();
+    const storage = makeStorage();
+
+    void evictDeletedItemFromAllCaches({ queryClient: qc, asyncStorage: storage, itemId: 7 });
+
+    const [, listUpdater] = qc.setQueriesData.mock.calls[0] as [
+      unknown,
+      (old: { items: Array<{ id: number }>; total: number } | undefined) => { items: Array<{ id: number }>; total: number } | undefined,
+    ];
+
+    const result = listUpdater({ items: [{ id: 7 }, { id: 8 }], total: 2 });
+    expect(result?.items).toEqual([{ id: 8 }]);
+    expect(result?.total).toBe(1);
+  });
+
+  it("setQueriesData list updater does not decrement total when item is not found", () => {
+    const qc = makeQueryClientFull();
+    const storage = makeStorage();
+
+    void evictDeletedItemFromAllCaches({ queryClient: qc, asyncStorage: storage, itemId: 99 });
+
+    const [, listUpdater] = qc.setQueriesData.mock.calls[0] as [
+      unknown,
+      (old: { items: Array<{ id: number }>; total: number } | undefined) => { items: Array<{ id: number }>; total: number } | undefined,
+    ];
+
+    const result = listUpdater({ items: [{ id: 7 }, { id: 8 }], total: 2 });
+    expect(result?.items).toEqual([{ id: 7 }, { id: 8 }]);
+    expect(result?.total).toBe(2);
+  });
+
+  it("setQueriesData list updater clamps total to 0 and never goes negative", () => {
+    const qc = makeQueryClientFull();
+    const storage = makeStorage();
+
+    void evictDeletedItemFromAllCaches({ queryClient: qc, asyncStorage: storage, itemId: 7 });
+
+    const [, listUpdater] = qc.setQueriesData.mock.calls[0] as [
+      unknown,
+      (old: { items: Array<{ id: number }>; total: number } | undefined) => { items: Array<{ id: number }>; total: number } | undefined,
+    ];
+
+    const result = listUpdater({ items: [{ id: 7 }], total: 0 });
+    expect(result?.items).toEqual([]);
+    expect(result?.total).toBe(0);
+  });
 });

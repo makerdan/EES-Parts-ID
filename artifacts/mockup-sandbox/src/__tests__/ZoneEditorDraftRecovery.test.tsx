@@ -127,6 +127,37 @@ async function selectZone1(container: HTMLElement) {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
+describe("ZoneEditor — draft identity check (stale draft equals server state)", () => {
+  beforeEach(() => { localStorage.clear(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
+
+  it("does not show the restore-draft prompt when the localStorage draft exactly matches the server-fetched zones", async () => {
+    // Seed a draft whose form is IDENTICAL to the server zone (aisleId "12", same sectionNum/isInventory/sortOrder).
+    const identicalDraft = {
+      aisleId: ZONE_1.aisleId,       // "12" — same as server
+      sectionNum: ZONE_1.sectionNum, // 1 — same as server
+      isInventory: ZONE_1.isInventory,
+      sortOrder: ZONE_1.sortOrder,
+    };
+    localStorage.setItem(
+      DRAFT_KEY_1,
+      JSON.stringify({ form: identicalDraft, savedAt: Date.now() - 60_000 }),
+    );
+
+    const fetchMock = makeSuccessFetchMock();
+    const { container } = await setupEditor(fetchMock);
+
+    await selectZone1(container);
+
+    // Draft matches server state exactly — restore prompt must never appear.
+    await new Promise((r) => setTimeout(r, 500));
+    expect(container.textContent).not.toMatch(/Unsaved edits from/);
+
+    // The draft must have been silently discarded.
+    expect(localStorage.getItem(DRAFT_KEY_1)).toBeNull();
+  });
+});
+
 describe("ZoneEditor — draft recovery", () => {
   beforeEach(() => {
     localStorage.clear();

@@ -121,7 +121,9 @@ export async function evictDeletedItemFromAllCaches(opts: {
     { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
     (old) => {
       if (!old) return old;
-      return { ...old, items: old.items.filter(i => i.id !== itemId) };
+      const items = old.items.filter(i => i.id !== itemId);
+      const total = Math.max(0, (old.total ?? 0) - (items.length < old.items.length ? 1 : 0));
+      return { ...old, items, total };
     },
   );
 

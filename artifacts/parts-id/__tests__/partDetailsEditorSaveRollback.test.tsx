@@ -284,6 +284,89 @@ describe("PartDetailsEditor – handleSave rollback on mutation failure", () => 
 });
 
 // =============================================================================
+// C. Partial failure: succeeded fields preserved, only failed fields reverted
+// =============================================================================
+
+describe("PartDetailsEditor – selective cache rollback on partial failure", () => {
+  it("calls setQueriesData to re-apply succeeded fields when some ops fail and some succeed", async () => {
+    // Mock fetch: description PATCH succeeds, dimensions PATCH fails.
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn((url: string, opts?: RequestInit) => {
+      const method = (opts?.method ?? "GET").toUpperCase();
+      if (method === "PATCH" && String(url).includes("/description")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({}) } as Response);
+      }
+      if (method === "PATCH" && String(url).includes("/dimensions")) {
+        return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: "DB error" }) } as Response);
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) } as Response);
+    }) as jest.Mock;
+
+    const item = makeItem({ description: "Original", dimensions: undefined });
+    const tree = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = tree;
+
+    // Find description input by its placeholder (works regardless of type string).
+    const descInput = tree.root.findAll(
+      (n) => n.props?.placeholder === "Brief description of the part…",
+      { deep: true },
+    )[0];
+    expect(descInput).toBeDefined();
+    await act(async () => { descInput.props.onChangeText("New description"); });
+
+    // Find first dimension TextInput (numeric keyboard) and change it.
+    const dimInput = tree.root.findAll(
+      (n) => n.props?.keyboardType === "numeric" && typeof n.props?.onChangeText === "function",
+      { deep: true },
+    )[0];
+    expect(dimInput).toBeDefined();
+    await act(async () => { dimInput.props.onChangeText("5"); });
+
+    // Press Save.
+    const saveBtn = findPressable(tree.root, "Save Details");
+    expect(saveBtn).not.toBeNull();
+    await act(async () => { saveBtn!.props.onPress(); });
+
+    // setQueriesData MUST be called at least once in the failure path to
+    // re-apply the succeeded description. Before the fix, setQueriesData was
+    // only called in the success path (anyFailed=false) and was never called
+    // here.
+    expect(mockSetQueriesData).toHaveBeenCalled();
+  });
+
+  it("does NOT call setQueriesData in the failure path when all ops fail (no succeeded fields to preserve)", async () => {
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(() => {
+      return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: "DB error" }) } as Response);
+    }) as jest.Mock;
+
+    mockBinsMutateAsync.mockRejectedValue(new Error("Bins mutation failed"));
+    autoConfirmAlert();
+
+    const item = makeItem({ binLocations: ["AISLE-01"] });
+    const tree = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = tree;
+
+    // Only remove the bin (triggers bins mutation) — no description change,
+    // so no fetch PATCH is attempted. Bins mutation rejects → only op is bins
+    // → no succeeded fields → setQueriesData should NOT be called.
+    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    await act(async () => { removeBinBtn!.props.onPress(); });
+
+    mockSetQueriesData.mockClear();
+
+    const saveBtn = findPressable(tree.root, "Save Details");
+    await act(async () => { saveBtn!.props.onPress(); });
+
+    // All ops failed — setQueriesData should NOT be called in the failure path
+    // (no succeeded fields to re-apply).
+    expect(mockSetQueriesData).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
 // B. Mutation success → invalidateQueries still called (onSettled safety-net)
 // =============================================================================
 
