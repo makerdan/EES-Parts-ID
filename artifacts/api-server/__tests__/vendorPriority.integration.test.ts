@@ -146,6 +146,10 @@ describe("reverseVendorMap — primary vendors win over extended on name conflic
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("seedVendors — preserves is_primary = true on all primary entries", () => {
+  beforeAll(async () => {
+    await seedVendors();
+  });
+
   it("all PRIMARY_VENDORS entries exist in the DB with isPrimary = true", async () => {
     const rows = await db
       .select()
