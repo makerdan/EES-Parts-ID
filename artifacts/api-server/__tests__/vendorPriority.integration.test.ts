@@ -87,6 +87,10 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("reverseVendorMap — primary vendors win over extended on name conflicts", () => {
+  beforeAll(async () => {
+    await seedVendors();
+  }, 15_000);
+
   it("resolves to primary code when a synthetic name appears in both tiers", async () => {
     const sharedName = "jest conflict vendor name";
 
