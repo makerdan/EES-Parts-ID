@@ -211,7 +211,25 @@ export default function EditItemScreen() {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
       savedExpandedDescRef.current = expandedDescription.trim();
-      invalidateListCache({ queryClient });
+      const savedText = expandedDescription.trim() || null;
+      const listKeyPrefixSave = getListInventoryQueryKey()[0];
+      const patchExpandedSave = (i: InventoryItem): InventoryItem =>
+        i.id === current.id ? { ...i, expandedDescription: savedText } : i;
+      queryClient.setQueriesData<InventoryListResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefixSave },
+        (old) => old ? { ...old, items: old.items.map(patchExpandedSave) } : old,
+      );
+      queryClient.setQueriesData<SearchInventoryResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+        (old) => {
+          if (!old) return old;
+          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+            r.item.id === current.id ? { ...r, item: patchExpandedSave(r.item) } : r;
+          return { ...old, results: old.results.map(patchResult), sizeUnknownResults: old.sizeUnknownResults?.map(patchResult) };
+        },
+      );
+      await invalidateListCache({ queryClient });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       setExpandedDescSaving("saved");
     } catch (err) {
       setExpandedDescError(err instanceof Error ? err.message : "Save failed");
@@ -237,7 +255,24 @@ export default function EditItemScreen() {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
       savedExpandedDescRef.current = "";
-      invalidateListCache({ queryClient });
+      const listKeyPrefixClear = getListInventoryQueryKey()[0];
+      const patchExpandedClear = (i: InventoryItem): InventoryItem =>
+        i.id === current.id ? { ...i, expandedDescription: null } : i;
+      queryClient.setQueriesData<InventoryListResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefixClear },
+        (old) => old ? { ...old, items: old.items.map(patchExpandedClear) } : old,
+      );
+      queryClient.setQueriesData<SearchInventoryResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+        (old) => {
+          if (!old) return old;
+          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+            r.item.id === current.id ? { ...r, item: patchExpandedClear(r.item) } : r;
+          return { ...old, results: old.results.map(patchResult), sizeUnknownResults: old.sizeUnknownResults?.map(patchResult) };
+        },
+      );
+      await invalidateListCache({ queryClient });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       setExpandedDescSaving("saved");
     } catch (err) {
       setExpandedDescription(previousText);
@@ -501,8 +536,8 @@ export default function EditItemScreen() {
             binLocations: finalBins,
             barcodes: finalBarcodes,
             ...(dimsChanged ? { dimensions: newDims } : {}),
-            ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl } : {}),
-            ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2 } : {}),
+            ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+            ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
           };
         };
         queryClient.setQueriesData<InventoryListResponse>(
