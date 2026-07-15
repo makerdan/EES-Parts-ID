@@ -308,13 +308,11 @@ describe("vendorNameResolution — mixed-case inputs resolve identically to lowe
 //   Names: hoffman enclosures, nvent hoffman.
 //
 // Group N — VENDORS-only internal duplicates (both entries non-primary).
-//   "phoenix contact" / "phoenix contact inc": PHO and PHX are both in VENDORS.
 //   "click plc": ATE and CLK are both in VENDORS.
 //   "gould": SIE and GLD are both in VENDORS.
 //   "ite": SIE and ITE are both in VENDORS.
 //   "marathon motors": RED and MAR are both in VENDORS.
 //   "vertiv liebert": LIE and VER are both in VENDORS.
-//   "abb inc": ABB appears twice in VENDORS (separate row + primary).
 //
 // Group O — edison fuse (PRIMARY_VENDORS only: BUS and EDN both claim it;
 //   both entries are PRIMARY_VENDORS, EDN is later so EDN wins).
@@ -436,8 +434,6 @@ const KNOWN_DUPLICATE_ALIASES = new Set<string>([
   "nvent hoffman",
 
   // Group N — VENDORS-only internal duplicates (non-primary; documented for awareness)
-  "phoenix contact",     // PHO and PHX are separate VENDORS entries — both non-primary
-  "phoenix contact inc", // same pair
   "click plc",           // ATE and CLK both in VENDORS
   "gould",               // SIE and GLD both in VENDORS
   "ite",                 // SIE and ITE both in VENDORS
