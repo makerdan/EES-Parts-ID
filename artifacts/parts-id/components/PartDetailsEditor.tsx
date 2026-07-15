@@ -243,14 +243,35 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     );
   };
 
-  const handleMeasureConfirm = useCallback((dims: PartDimensions) => {
+  const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
+    const current = itemRef.current;
     setMeasureOpen(false);
     setDimLength(fmtDim(dims.length));
     setDimWidth(fmtDim(dims.width));
     setDimHeight(fmtDim(dims.height));
     setDimDiameter(fmtDim(dims.diameter));
     setSaveStatus("idle");
-  }, []);
+    setFieldSaveErrors(prev => ({ ...prev, dimensions: undefined }));
+    if (!current || !adminToken) return;
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify(dims),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      await invalidateListCache({ queryClient });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+    } catch {
+      setFieldSaveErrors(prev => ({ ...prev, dimensions: "Could not save dimensions" }));
+    }
+  }, [adminToken, queryClient]);
 
   const handleSaveExpandedDesc = async () => {
     const current = itemRef.current;
@@ -270,7 +291,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      invalidateListCache({ queryClient });
+      await queryClient.invalidateQueries({ queryKey: getListInventoryQueryKey() });
       setExpandedDescSaving("saved");
     } catch (err) {
       setExpandedDescError(err instanceof Error ? err.message : "Save failed");
@@ -298,7 +319,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      invalidateListCache({ queryClient });
+      await queryClient.invalidateQueries({ queryKey: getListInventoryQueryKey() });
       setExpandedDescSaving("saved");
     } catch (err) {
       setExpandedDescText(previousText);

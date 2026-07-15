@@ -40,6 +40,13 @@ let mockMeasureOnConfirm: ((dims: { length: number | null; width: number | null;
 // Spy for the shared invalidateListCache utility.
 const mockInvalidateListCache = jest.fn().mockResolvedValue(undefined);
 
+// ─── @/utils/apiBase ─────────────────────────────────────────────────────────
+
+jest.mock("@/utils/apiBase", () => ({
+  API_BASE:   "http://localhost:8080/api",
+  API_ORIGIN: "http://localhost:8080",
+}));
+
 // ─── @/components/PartPhotoPicker ────────────────────────────────────────────
 
 jest.mock("@/components/PartPhotoPicker", () => ({
