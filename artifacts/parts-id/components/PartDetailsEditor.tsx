@@ -593,47 +593,14 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     if (anyFailed) {
       // onError: restore cache snapshots to roll back any partial optimistic
       // patches that individual mutations may have applied before one failed.
+      // We do NOT re-apply succeeded-field patches here — a partial failure
+      // means the whole save is retried, and showing a split cache state
+      // (some fields updated, others not) would be confusing and incorrect.
       for (const [key, data] of inventorySnapshot) {
         queryClient.setQueryData(key, data);
       }
       for (const [key, data] of searchSnapshot) {
         queryClient.setQueryData(key, data);
-      }
-      // Re-apply cache patches for fields that SUCCEEDED so those changes are
-      // not discarded by the snapshot restore above.
-      if (succeededFields.size > 0) {
-        const patchSucceededItem = (i: InventoryItem): InventoryItem => {
-          if (i.id !== current.id) return i;
-          return {
-            ...i,
-            ...(succeededFields.has("description") ? { description: description.trim() } : {}),
-            ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
-            ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
-            ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
-            ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl } : {}),
-            ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2 } : {}),
-          };
-        };
-        queryClient.setQueriesData<InventoryListResponse>(
-          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-          (old) => {
-            if (!old) return old;
-            return { ...old, items: old.items.map(patchSucceededItem) };
-          },
-        );
-        queryClient.setQueriesData<SearchInventoryResponse>(
-          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-          (old) => {
-            if (!old) return old;
-            const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-              r.item.id === current.id ? { ...r, item: patchSucceededItem(r.item) } : r;
-            return {
-              ...old,
-              results: old.results.map(patchResult),
-              sizeUnknownResults: old.sizeUnknownResults?.map(patchResult),
-            };
-          },
-        );
       }
       setFieldSaveErrors(newFieldErrors);
       setSaveStatus("error");
@@ -648,7 +615,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           description: description.trim(),
           binLocations: finalBins,
           aiKeywords: finalKeywords,
-          ...(dimsChanged ? { dimensions: newDims } : {}),
+          dimensions: dimsChanged ? newDims : (i.dimensions ?? null),
           ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl } : {}),
           ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2 } : {}),
         };

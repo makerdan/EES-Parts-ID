@@ -284,12 +284,16 @@ describe("PartDetailsEditor – handleSave rollback on mutation failure", () => 
 });
 
 // =============================================================================
-// C. Partial failure: succeeded fields preserved, only failed fields reverted
+// C. Partial failure: full rollback — no partial write visible in either cache
 // =============================================================================
 
 describe("PartDetailsEditor – selective cache rollback on partial failure", () => {
-  it("calls setQueriesData to re-apply succeeded fields when some ops fail and some succeed", async () => {
+  it("does NOT call setQueriesData even when some ops succeed alongside a failing op", async () => {
     // Mock fetch: description PATCH succeeds, dimensions PATCH fails.
+    // Policy: any failure rolls back the entire save — no partial cache write
+    // is ever applied, even for succeeded fields. The user must retry the full
+    // save. This keeps the cache in a consistent state and avoids a split UI
+    // where some fields appear updated while others show an error.
     (global as unknown as { fetch: jest.Mock }).fetch = jest.fn((url: string, opts?: RequestInit) => {
       const method = (opts?.method ?? "GET").toUpperCase();
       if (method === "PATCH" && String(url).includes("/description")) {
@@ -328,11 +332,11 @@ describe("PartDetailsEditor – selective cache rollback on partial failure", ()
     expect(saveBtn).not.toBeNull();
     await act(async () => { saveBtn!.props.onPress(); });
 
-    // setQueriesData MUST be called at least once in the failure path to
-    // re-apply the succeeded description. Before the fix, setQueriesData was
-    // only called in the success path (anyFailed=false) and was never called
-    // here.
-    expect(mockSetQueriesData).toHaveBeenCalled();
+    // setQueriesData must NOT be called in the failure path — even though
+    // description succeeded, the full-rollback policy means no new values
+    // are written to the cache. Snapshot restore uses setQueryData (not
+    // setQueriesData) and that is tested in section B above.
+    expect(mockSetQueriesData).not.toHaveBeenCalled();
   });
 
   it("does NOT call setQueriesData in the failure path when all ops fail (no succeeded fields to preserve)", async () => {
