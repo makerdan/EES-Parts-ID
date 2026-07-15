@@ -390,29 +390,37 @@ export function ZoneOverlayItem({
           stroke={strokeColor}
           animatedProps={rectAnimatedProps}
         />
-        <AnimatedSvgText
-          x={zone.svgX + zone.svgWidth / 2}
-          y={zone.svgY + zone.svgHeight / 2 - (zone.sectionNum > 0 ? baseFontSize * 0.4 : 0)}
-          fontWeight="bold"
-          fill={labelColor}
-          textAnchor="middle"
-          alignmentBaseline="middle"
-          animatedProps={textAnimatedProps}
-        >
-          {zone.aisleId}
-        </AnimatedSvgText>
-        {zone.sectionNum > 0 && (
-          <AnimatedSvgText
-            x={zone.svgX + zone.svgWidth / 2}
-            y={zone.svgY + zone.svgHeight / 2 + baseFontSize * 0.4}
-            fill={labelColor}
-            textAnchor="middle"
-            alignmentBaseline="middle"
-            animatedProps={sectionLabelAnimatedProps}
-          >
-            {String(zone.sectionNum)}
-          </AnimatedSvgText>
-        )}
+        {(() => {
+          const lineSpacing = baseFontSize * 0.9;
+          const cycleLabelYCenter = zone.svgY + zone.svgHeight / 2;
+          return (
+            <>
+              <AnimatedSvgText
+                x={zone.svgX + zone.svgWidth / 2}
+                y={zone.sectionNum > 0 ? cycleLabelYCenter - lineSpacing / 2 : cycleLabelYCenter}
+                fontWeight="bold"
+                fill={labelColor}
+                textAnchor="middle"
+                alignmentBaseline="middle"
+                animatedProps={textAnimatedProps}
+              >
+                {zone.aisleId}
+              </AnimatedSvgText>
+              {zone.sectionNum > 0 && (
+                <AnimatedSvgText
+                  x={zone.svgX + zone.svgWidth / 2}
+                  y={cycleLabelYCenter + lineSpacing / 2}
+                  fill={labelColor}
+                  textAnchor="middle"
+                  alignmentBaseline="middle"
+                  animatedProps={sectionLabelAnimatedProps}
+                >
+                  {String(zone.sectionNum)}
+                </AnimatedSvgText>
+              )}
+            </>
+          );
+        })()}
       </G>
     );
   }
@@ -510,8 +518,9 @@ export function ZoneOverlayItem({
         const yCenter = (isPinned || isVariantPinned)
           ? zone.svgY + zone.svgHeight / 2 + 20
           : zone.svgY + zone.svgHeight / 2;
-        const aisleY = zone.sectionNum > 0 ? yCenter - baseFontSize * 0.4 : yCenter;
-        const sectionY = yCenter + baseFontSize * 0.4;
+        const lineSpacing = baseFontSize * 0.9;
+        const aisleY = zone.sectionNum > 0 ? yCenter - lineSpacing / 2 : yCenter;
+        const sectionY = yCenter + lineSpacing / 2;
         const textFill = isPinned ? "#b45309" : isVariantPinned ? "#6d28d9" : labelColor;
         return (
           <>

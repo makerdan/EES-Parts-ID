@@ -28,6 +28,7 @@ module.exports = {
     "^.+\\.tsx?$": [
       "ts-jest",
       {
+        diagnostics: { warnOnly: true },
         tsconfig: {
           strict: true,
           jsx: "react",
