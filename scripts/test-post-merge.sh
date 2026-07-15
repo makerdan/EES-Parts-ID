@@ -1233,6 +1233,63 @@ assert_exit     "port-guard synthetic — exits 1 when violation in artifacts/" 
 assert_contains "port-guard synthetic — prints ERROR header"                   "ERROR: Hardcoded port fallback" "$PORT_GUARD_OUTPUT"
 
 # ---------------------------------------------------------------------------
+# Test 34: security-audit is wired into the required CI gate
+#
+# Verifies two structural invariants in .replit:
+#   (a) A workflow named "security-audit" exists AND carries isValidation=true,
+#       proving it is a recognised quality gate and not just an ad-hoc script.
+#   (b) The "Project" workflow (the runButton CI gate) lists "security-audit"
+#       as one of its tasks, proving a future vulnerable lockfile entry will
+#       fail the build automatically on every merge rather than only when the
+#       workflow is run manually.
+#
+# Both checks read .replit directly and require no network access.  If either
+# invariant breaks — e.g. someone removes security-audit from the Project task
+# list, renames the workflow, or drops isValidation — this test fails before
+# the change ships.
+# ---------------------------------------------------------------------------
+REPLIT_CFG="$SCRIPT_DIR/../.replit"
+
+if grep -q 'name = "security-audit"' "$REPLIT_CFG"; then
+  pass "security-audit — workflow declared in .replit"
+else
+  fail "security-audit — workflow NOT found in .replit (add a [[workflows.workflow]] block named 'security-audit')"
+fi
+
+# Check that the security-audit block carries isValidation = true.
+# Strategy: extract the line number of 'name = "security-audit"' and then
+# scan the following lines until the next [[workflows.workflow]] header,
+# confirming isValidation appears in that window.
+AUDIT_LINE=$(grep -n 'name = "security-audit"' "$REPLIT_CFG" | head -1 | cut -d: -f1)
+NEXT_WORKFLOW_LINE=$(awk -v start="$AUDIT_LINE" 'NR > start && /^\[\[workflows\.workflow\]\]/ { print NR; exit }' "$REPLIT_CFG")
+if [[ -z "$NEXT_WORKFLOW_LINE" ]]; then
+  NEXT_WORKFLOW_LINE=$(wc -l < "$REPLIT_CFG")
+fi
+
+AUDIT_BLOCK=$(sed -n "${AUDIT_LINE},${NEXT_WORKFLOW_LINE}p" "$REPLIT_CFG")
+if echo "$AUDIT_BLOCK" | grep -q 'isValidation = true'; then
+  pass "security-audit — isValidation = true set on the workflow"
+else
+  fail "security-audit — isValidation = true NOT found in the security-audit workflow block"
+fi
+
+# Check that the Project workflow lists security-audit as a task.
+# The Project workflow tasks are the 'args = "..."' lines that appear between
+# 'name = "Project"' and the next [[workflows.workflow]] header.
+PROJECT_LINE=$(grep -n 'name = "Project"' "$REPLIT_CFG" | head -1 | cut -d: -f1)
+NEXT_AFTER_PROJECT=$(awk -v start="$PROJECT_LINE" 'NR > start && /^\[\[workflows\.workflow\]\]/ { print NR; exit }' "$REPLIT_CFG")
+if [[ -z "$NEXT_AFTER_PROJECT" ]]; then
+  NEXT_AFTER_PROJECT=$(wc -l < "$REPLIT_CFG")
+fi
+
+PROJECT_BLOCK=$(sed -n "${PROJECT_LINE},${NEXT_AFTER_PROJECT}p" "$REPLIT_CFG")
+if echo "$PROJECT_BLOCK" | grep -q 'args = "security-audit"'; then
+  pass "security-audit — listed as a task in the Project CI gate"
+else
+  fail "security-audit — NOT listed as a task in the Project CI gate (add a [[workflows.workflow.tasks]] entry with args = \"security-audit\")"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
