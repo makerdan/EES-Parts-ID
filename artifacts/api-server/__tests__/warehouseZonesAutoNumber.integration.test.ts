@@ -40,7 +40,6 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { db, warehouseZoneTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
 
@@ -56,7 +55,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await cleanupZones();
-  await closePool();
 }, 15_000);
 
 afterEach(async () => {

@@ -31,7 +31,6 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { db, inventoryTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
@@ -57,7 +56,6 @@ afterAll(async () => {
   // NOTE: do NOT call cleanupFixtures() here — it deletes JEST-ITG-% rows
   // that belong to inventory.integration.test.ts and would cause flakiness
   // when jest runs test files in parallel.
-  await closePool();
 }, 30_000);
 
 afterEach(async () => {

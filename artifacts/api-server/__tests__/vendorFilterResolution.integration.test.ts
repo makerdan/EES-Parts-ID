@@ -37,7 +37,6 @@ import { sql } from "drizzle-orm";
 import { db, inventoryTable } from "@workspace/db";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -122,7 +121,6 @@ beforeAll(async () => {
 afterAll(async () => {
   delete process.env.TEST_DEFAULT_AUTH_USER;
   await cleanupVnrRows();
-  await closePool();
 }, 10_000);
 
 // ── Per-vendor HTTP tests ─────────────────────────────────────────────────────

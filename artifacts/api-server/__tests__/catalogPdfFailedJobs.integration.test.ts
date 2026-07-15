@@ -27,7 +27,6 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { inArray } from "drizzle-orm";
 
@@ -75,7 +74,6 @@ afterAll(async () => {
       .delete(catalogPdfJobTable)
       .where(inArray(catalogPdfJobTable.id, seededIds));
   }
-  await closePool();
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

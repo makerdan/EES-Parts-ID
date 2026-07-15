@@ -60,7 +60,6 @@ import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import {
   cleanupEditableItem,
-  closePool,
   seedEditableItem,
 } from "./helpers/testDb";
 import type { EditableItem } from "./helpers/testDb";
@@ -117,7 +116,6 @@ afterAll(async () => {
   } catch {
     // pool already closed — no-op
   }
-  await closePool();
 }, 30_000);
 
 function withAuth(req: supertest.Test, token?: string): supertest.Test {

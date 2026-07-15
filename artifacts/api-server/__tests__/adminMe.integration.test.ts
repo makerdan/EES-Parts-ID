@@ -41,12 +41,8 @@ jest.mock("openai", () =>
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { db, usersTable } from "@workspace/db";
 
-afterAll(async () => {
-  await closePool();
-}, 15_000);
 
 describe("GET /api/admin/me", () => {
   it("returns { isAdmin: true } for the bootstrap admin (ADMIN_CLERK_USER_ID)", async () => {

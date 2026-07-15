@@ -52,7 +52,6 @@ jest.mock("../src/lib/objectStorage", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
@@ -105,7 +104,6 @@ afterAll(async () => {
       .where(inArray(catalogPdfJobTable.id, seededJobIds))
       .catch(() => null);
   }
-  await closePool();
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

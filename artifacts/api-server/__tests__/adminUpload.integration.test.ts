@@ -25,7 +25,6 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { db, inventoryTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
@@ -53,7 +52,6 @@ afterAll(async () => {
   // files in parallel workers, that cleanup races with inventory's
   // seedFixtures and silently wipes its fixtures, producing flaky failures
   // ("seeded item not in search results") in the parallel run only.
-  await closePool();
 }, 30_000);
 
 afterEach(async () => {

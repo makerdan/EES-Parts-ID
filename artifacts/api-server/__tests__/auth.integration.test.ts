@@ -40,7 +40,6 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { db, usersTable } from "@workspace/db";
 import { like } from "drizzle-orm";
 
@@ -68,7 +67,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await db.delete(usersTable).where(like(usersTable.clerkUserId, "jest-auth-%"));
-  await closePool();
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

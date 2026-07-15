@@ -24,7 +24,6 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import { db } from "@workspace/db";
 import { vendorMapTable } from "@workspace/db";
 import { eq, like } from "drizzle-orm";
-import { closePool } from "./helpers/testDb";
 import {
   PRIMARY_VENDORS,
   seedVendors,
@@ -77,7 +76,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await cleanupTestVendors();
-  await closePool();
 }, 15_000);
 
 afterEach(async () => {

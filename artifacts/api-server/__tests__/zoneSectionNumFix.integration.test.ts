@@ -18,7 +18,6 @@
 import { db, warehouseZoneTable } from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
 import { applyZoneSectionNumFix } from "../src/lib/zoneSectionNumFix";
-import { closePool } from "./helpers/testDb";
 
 // ── Shared constants ──────────────────────────────────────────────────────────
 
@@ -29,7 +28,6 @@ const TEST_AISLE = "JEST-ZSNF";
 
 afterAll(async () => {
   await cleanupTestZones();
-  await closePool();
 }, 15_000);
 
 afterEach(async () => {

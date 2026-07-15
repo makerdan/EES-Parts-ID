@@ -27,7 +27,6 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import { db } from "@workspace/db";
 import { vendorMapTable } from "@workspace/db";
-import { closePool } from "./helpers/testDb";
 import { PRIMARY_VENDORS, seedVendors } from "../src/seed/dictionaries";
 
 // ── Resolution algorithm (mirrors inventory.ts) ───────────────────────────────
@@ -96,9 +95,6 @@ beforeAll(async () => {
   map = await buildReverseVendorMap();
 }, 30_000);
 
-afterAll(async () => {
-  await closePool();
-}, 15_000);
 
 // ── Test: every PRIMARY_VENDORS name resolves to the declared winner code ─────
 

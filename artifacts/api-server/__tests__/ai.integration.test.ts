@@ -94,7 +94,6 @@ jest.mock("../src/lib/poeBot", () => {
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { closePool } from "./helpers/testDb";
 import { identifyLimiter } from "../src/lib/rateLimiter";
 
 // Minimal valid base64 string (1×1 white pixel JPEG)
@@ -109,7 +108,6 @@ beforeAll(() => {
 afterAll(async () => {
   delete process.env.TEST_DEFAULT_AUTH_USER;
   delete process.env.ADMIN_CLERK_USER_ID;
-  await closePool();
 });
 
 beforeEach(async () => {

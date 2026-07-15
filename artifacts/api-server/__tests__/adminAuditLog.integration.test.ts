@@ -63,7 +63,6 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { type AdminAuditAction, adminAuditLogTable, db, usersTable } from "@workspace/db";
 import { and, eq, gte, like } from "drizzle-orm";
 
@@ -130,9 +129,6 @@ afterEach(async () => {
   await cleanupAuditRows();
 });
 
-afterAll(async () => {
-  await closePool();
-}, 15_000);
 
 // ── Audit row creation per action ──────────────────────────────────────────
 
