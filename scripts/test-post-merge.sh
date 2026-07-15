@@ -1289,6 +1289,14 @@ else
   fail "security-audit — NOT listed as a task in the Project CI gate (add a [[workflows.workflow.tasks]] entry with args = \"security-audit\")"
 fi
 
+# Check that the security-audit workflow command includes the prod moderate pass.
+# This ensures the two-tier gate (high for all, moderate for prod-only) is intact.
+if echo "$AUDIT_BLOCK" | grep -q 'pnpm audit --prod --audit-level=moderate'; then
+  pass "security-audit — prod moderate-level pass present in workflow command"
+else
+  fail "security-audit — prod moderate-level pass MISSING from security-audit workflow (add 'pnpm audit --prod --audit-level=moderate' to the command)"
+fi
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
