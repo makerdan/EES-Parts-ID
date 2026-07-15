@@ -9,7 +9,7 @@
     "build": "node --max-old-space-size=4096 scripts/build.js",
     "serve": "fuser -k -KILL ${PORT}/tcp 2>/dev/null || true && node server/serve.js",
     "pretest": "node scripts/generate-router-types.mjs",
-    "pretypecheck": "node scripts/generate-router-types.mjs",
+    "pretypecheck": "node scripts/generate-router-types.mjs && node scripts/check-shim-compat-versions.mjs",
     "typecheck": "pnpm -w run typecheck:libs && tsc -p tsconfig.json --noEmit",
     "test": "node scripts/run-tests.mjs",
     "lint": "eslint . --ext .ts,.tsx",

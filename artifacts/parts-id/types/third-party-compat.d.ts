@@ -10,6 +10,73 @@
  *
  * This file has NO top-level import or export statements, making it an ambient script.
  * `declare module` blocks in ambient scripts REPLACE (not augment) the module types.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SHIM VERSION BASELINE
+ * Update this block (and re-validate internal paths) whenever any of these
+ * libraries is upgraded.  The companion script
+ * scripts/check-shim-compat-versions.mjs compares installed versions against
+ * these baselines and warns on drift before the TypeScript compiler runs.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * react-native-svg  15.12.1
+ *   Internal subpaths relied upon by this shim:
+ *     lib/typescript/elements/Circle
+ *     lib/typescript/elements/ClipPath
+ *     lib/typescript/elements/Defs
+ *     lib/typescript/elements/Ellipse
+ *     lib/typescript/elements/ForeignObject
+ *     lib/typescript/elements/G
+ *     lib/typescript/elements/Image
+ *     lib/typescript/elements/Line
+ *     lib/typescript/elements/LinearGradient
+ *     lib/typescript/elements/Marker
+ *     lib/typescript/elements/Mask
+ *     lib/typescript/elements/Path
+ *     lib/typescript/elements/Pattern
+ *     lib/typescript/elements/Polygon
+ *     lib/typescript/elements/Polyline
+ *     lib/typescript/elements/RadialGradient
+ *     lib/typescript/elements/Rect
+ *     lib/typescript/elements/Shape
+ *     lib/typescript/elements/Stop
+ *     lib/typescript/elements/Svg
+ *     lib/typescript/elements/Symbol
+ *     lib/typescript/elements/Text
+ *     lib/typescript/elements/TextPath
+ *     lib/typescript/elements/TSpan
+ *     lib/typescript/elements/Use
+ *     lib/typescript/elements/filters/FeBlend
+ *     lib/typescript/elements/filters/FeColorMatrix
+ *     lib/typescript/elements/filters/FeComposite
+ *     lib/typescript/elements/filters/FeGaussianBlur
+ *     lib/typescript/elements/filters/FeMerge
+ *     lib/typescript/elements/filters/FeMergeNode
+ *     lib/typescript/elements/filters/FeOffset
+ *     lib/typescript/elements/filters/Filter
+ *     lib/typescript/elements/filters/FilterPrimitive
+ *     lib/typescript/fabric
+ *     lib/typescript/lib/extract/types
+ *     lib/typescript/xml
+ *     lib/typescript/deprecated
+ *
+ * expo-camera  17.0.10
+ *   Internal subpaths relied upon by this shim:
+ *     build/Camera.types
+ *   (PictureRef, CameraView, useCameraPermissions, useMicrophonePermissions
+ *    and standalone permission functions are declared inline because the
+ *    Camera.types subpath does not export them.)
+ *
+ * expo-blur  15.0.8
+ *   Internal subpaths relied upon by this shim: none
+ *   (BlurView, BlurViewProps, BlurTint, and ExperimentalBlurMethod are
+ *    declared entirely inline because expo-blur exposes no stable subpaths.)
+ *
+ * react-native-gesture-handler  2.28.0
+ *   Internal subpaths relied upon by this shim:
+ *     lib/typescript/index
+ *   (GestureHandlerRootView is also re-declared inline to fix TS2322.)
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
