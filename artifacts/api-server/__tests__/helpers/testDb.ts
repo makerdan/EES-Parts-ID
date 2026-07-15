@@ -4,7 +4,7 @@
  */
 
 import { db, pool, inventoryTable } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { eq, like, sql } from "drizzle-orm";
 
 /** All fixture catalog numbers inserted by this helper (for cleanup). */
 const FIXTURE_CATALOG_PREFIX = "JEST-ITG-";
@@ -68,6 +68,71 @@ export async function closePool() {
   if (_poolEnded) return;
   _poolEnded = true;
   await pool.end();
+}
+
+export interface EditableItem {
+  id: number;
+  vendor: string;
+  catalog: string;
+  description: string;
+  binLocations: string[];
+  aiKeywords: string[];
+  barcodes: string[];
+  dimensions: {
+    length: number | null;
+    width: number | null;
+    height: number | null;
+    diameter: number | null;
+  } | null;
+  expandedDescription: string | null;
+}
+
+const EDITABLE_CATALOG = "JEST-EDIT-ITEM-001";
+
+/**
+ * Insert a single item with a full set of mutable fields for edit integration
+ * tests. Returns the row with its generated `id`.
+ *
+ * The item is cleaned up by calling `cleanupEditableItem()`.
+ */
+export async function seedEditableItem(): Promise<EditableItem> {
+  await db.delete(inventoryTable).where(eq(inventoryTable.catalog, EDITABLE_CATALOG));
+
+  const [row] = await db
+    .insert(inventoryTable)
+    .values({
+      vendor: "JEST-EDIT-VENDOR",
+      catalog: EDITABLE_CATALOG,
+      description: "Original editable description",
+      binLocations: ["EDIT-BIN-01", "EDIT-BIN-02"],
+      aiKeywords: ["relay", "motor"],
+      barcodes: ["012345678901"],
+      dimensions: { length: 100, width: 50, height: 25, diameter: null },
+      expandedDescription: "Original expanded description text for testing.",
+    })
+    .returning();
+
+  if (!row) throw new Error("seedEditableItem: insert returned no rows");
+
+  return {
+    id: row.id,
+    vendor: row.vendor,
+    catalog: row.catalog,
+    description: row.description,
+    binLocations: row.binLocations,
+    aiKeywords: row.aiKeywords,
+    barcodes: (row as unknown as { barcodes?: string[] }).barcodes ?? [],
+    dimensions: row.dimensions as EditableItem["dimensions"],
+    expandedDescription: row.expandedDescription ?? null,
+  };
+}
+
+/** Remove the editable item seeded by seedEditableItem. Idempotent. */
+export async function cleanupEditableItem(): Promise<void> {
+  // Guard: if the pool was already closed (e.g. by the db-serial project's
+  // global teardown before the parallel project's afterAll runs), skip silently.
+  if (_poolEnded) return;
+  await pool.query("DELETE FROM inventory WHERE catalog = $1", [EDITABLE_CATALOG]);
 }
 
 /** Convenience: standard fixtures used across multiple suites. */
