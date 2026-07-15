@@ -291,7 +291,25 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      await queryClient.invalidateQueries({ queryKey: getListInventoryQueryKey() });
+      const savedText = expandedDescText.trim() || null;
+      const listKeyPrefix = getListInventoryQueryKey()[0];
+      const patchExpandedSave = (i: InventoryItem): InventoryItem =>
+        i.id === current.id ? { ...i, expandedDescription: savedText } : i;
+      queryClient.setQueriesData<InventoryListResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+        (old) => old ? { ...old, items: old.items.map(patchExpandedSave) } : old,
+      );
+      queryClient.setQueriesData<SearchInventoryResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+        (old) => {
+          if (!old) return old;
+          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+            r.item.id === current.id ? { ...r, item: patchExpandedSave(r.item) } : r;
+          return { ...old, results: old.results.map(patchResult), sizeUnknownResults: old.sizeUnknownResults?.map(patchResult) };
+        },
+      );
+      await invalidateListCache({ queryClient });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       setExpandedDescSaving("saved");
     } catch (err) {
       setExpandedDescError(err instanceof Error ? err.message : "Save failed");
@@ -319,7 +337,24 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      await queryClient.invalidateQueries({ queryKey: getListInventoryQueryKey() });
+      const listKeyPrefixClear = getListInventoryQueryKey()[0];
+      const patchExpandedClear = (i: InventoryItem): InventoryItem =>
+        i.id === current.id ? { ...i, expandedDescription: null } : i;
+      queryClient.setQueriesData<InventoryListResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefixClear },
+        (old) => old ? { ...old, items: old.items.map(patchExpandedClear) } : old,
+      );
+      queryClient.setQueriesData<SearchInventoryResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+        (old) => {
+          if (!old) return old;
+          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+            r.item.id === current.id ? { ...r, item: patchExpandedClear(r.item) } : r;
+          return { ...old, results: old.results.map(patchResult), sizeUnknownResults: old.sizeUnknownResults?.map(patchResult) };
+        },
+      );
+      await invalidateListCache({ queryClient });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       setExpandedDescSaving("saved");
     } catch (err) {
       setExpandedDescText(previousText);
@@ -637,8 +672,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           binLocations: finalBins,
           aiKeywords: finalKeywords,
           dimensions: dimsChanged ? newDims : (i.dimensions ?? null),
-          ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl } : {}),
-          ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2 } : {}),
+          ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+          ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
         };
       };
       queryClient.setQueriesData<InventoryListResponse>(
