@@ -63,7 +63,6 @@ jest.mock("../src/lib/webSearch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
@@ -189,7 +188,6 @@ afterAll(async () => {
       .delete(catalogPdfJobTable)
       .where(inArray(catalogPdfJobTable.id, seededJobIds));
   }
-  await closePool();
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

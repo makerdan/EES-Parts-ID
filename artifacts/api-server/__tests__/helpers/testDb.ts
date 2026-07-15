@@ -60,8 +60,9 @@ export async function cleanupFixtures() {
  * process (pool.end() throws if called twice; this guard prevents that).
  *
  * jest.integrationSetup.cjs registers a global afterAll that calls this
- * function after every test file, so individual test files do not need to
- * import or call closePool() themselves (though doing so is still safe).
+ * function after every test file, so individual test files rarely need to
+ * import or call closePool() directly. Only use it in special cases where
+ * the global teardown order is insufficient.
  */
 let _poolEnded = false;
 export async function closePool() {

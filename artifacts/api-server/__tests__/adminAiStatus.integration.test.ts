@@ -39,7 +39,6 @@ jest.mock("openai", () =>
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { getAllPoeModelNames } from "../src/lib/aiProvider";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -55,9 +54,6 @@ beforeEach(() => {
   mockCreate.mockReset();
 });
 
-afterAll(async () => {
-  await closePool();
-}, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/admin/ai-status

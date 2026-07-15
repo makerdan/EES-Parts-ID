@@ -67,7 +67,6 @@ jest.mock("../src/lib/objectStorage", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
@@ -131,7 +130,6 @@ afterAll(async () => {
   if (seededIds.length > 0) {
     await db.delete(catalogPdfJobTable).where(inArray(catalogPdfJobTable.id, seededIds));
   }
-  await closePool();
 }, 15_000);
 
 beforeEach(() => {

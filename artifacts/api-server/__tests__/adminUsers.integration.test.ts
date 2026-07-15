@@ -78,7 +78,6 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { db, usersTable } from "@workspace/db";
 import { eq, like } from "drizzle-orm";
 
@@ -124,9 +123,6 @@ afterEach(async () => {
   await cleanupUsers();
 });
 
-afterAll(async () => {
-  await closePool();
-}, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth guard — GET /api/admin/users

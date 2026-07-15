@@ -70,7 +70,6 @@ jest.mock("../src/lib/aiProvider", () => ({
 
 import supertest from "supertest";
 import app from "../src/app";
-import { closePool } from "./helpers/testDb";
 
 // ── Shared constants ──────────────────────────────────────────────────────────
 
@@ -120,9 +119,6 @@ beforeEach(() => {
   });
 });
 
-afterAll(async () => {
-  await closePool();
-});
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 

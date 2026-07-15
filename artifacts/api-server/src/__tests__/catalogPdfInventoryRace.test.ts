@@ -13,14 +13,12 @@ import { and, eq, isNull, lt, or } from "drizzle-orm";
 import { db, inventoryTable } from "@workspace/db";
 import {
   cleanupFixtures,
-  closePool,
   seedFixtures,
 } from "../../__tests__/helpers/testDb";
 
 // ── Teardown ──────────────────────────────────────────────────────────────────
 afterAll(async () => {
   await cleanupFixtures();
-  await closePool();
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

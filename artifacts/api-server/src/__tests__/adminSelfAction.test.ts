@@ -68,7 +68,6 @@ import { like } from "drizzle-orm";
 
 import app from "../app";
 import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
-import { closePool } from "../../__tests__/helpers/testDb";
 import { db, usersTable } from "@workspace/db";
 
 // ── Fixed test Clerk user ids ─────────────────────────────────────────────────
@@ -115,7 +114,6 @@ afterAll(async () => {
   await db
     .delete(usersTable)
     .where(like(usersTable.clerkUserId, "jest-selfaction-%"));
-  await closePool();
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

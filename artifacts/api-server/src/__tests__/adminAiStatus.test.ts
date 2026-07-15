@@ -75,7 +75,6 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../app";
 import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
-import { closePool } from "../../__tests__/helpers/testDb";
 import {
   setProvider,
   getProbeSummary,
@@ -109,7 +108,6 @@ afterAll(async () => {
   // Restore provider to "poe" so module state is clean for any subsequent suites
   setProvider("poe");
   await db.delete(usersTable).where(like(usersTable.clerkUserId, "jest-aistatus-%"));
-  await closePool();
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

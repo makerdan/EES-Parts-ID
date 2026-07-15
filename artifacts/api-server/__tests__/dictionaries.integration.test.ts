@@ -24,7 +24,6 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { closePool } from "./helpers/testDb";
 
 beforeAll(() => {
   process.env.ADMIN_CLERK_USER_ID = "jest-admin-user";
@@ -33,7 +32,6 @@ beforeAll(() => {
 afterAll(async () => {
   delete process.env.TEST_DEFAULT_AUTH_USER;
   delete process.env.ADMIN_CLERK_USER_ID;
-  await closePool();
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

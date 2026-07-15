@@ -58,7 +58,7 @@ import { eq, isNull } from "drizzle-orm";
 import app from "../app";
 import { signAdminToken } from "../../__tests__/helpers/adminAuth";
 import { db, inventoryTable } from "@workspace/db";
-import { cleanupFixtures, closePool } from "../../__tests__/helpers/testDb";
+import { cleanupFixtures } from "../../__tests__/helpers/testDb";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PINNED = ["Cutler-Hammer", "BAB breaker", "CH-series"];
@@ -121,7 +121,6 @@ async function triggerBulkEnrichAndWait(
 // ── Teardown ──────────────────────────────────────────────────────────────────
 afterAll(async () => {
   await cleanupFixtures();
-  await closePool();
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

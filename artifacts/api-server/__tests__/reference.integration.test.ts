@@ -65,7 +65,6 @@ process.env.LOG_LEVEL = "silent";
 
 import supertest from "supertest";
 import app from "../src/app";
-import { closePool } from "./helpers/testDb";
 import { db } from "@workspace/db";
 import { quickLookupCacheTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
@@ -113,7 +112,6 @@ afterAll(async () => {
   delete process.env.TEST_DEFAULT_AUTH_USER;
   delete process.env.ADMIN_CLERK_USER_ID;
   await cleanupTestLabel();
-  await closePool();
 });
 
 beforeEach(() => {

@@ -34,7 +34,6 @@ import { ADMIN_TEST_USER_ID, signAdminToken } from "./helpers/adminAuth";
 import {
   seedFixtures,
   cleanupFixtures,
-  closePool,
   STANDARD_FIXTURES,
 } from "./helpers/testDb";
 import { SearchInventoryResponse } from "@workspace/api-zod";
@@ -53,7 +52,6 @@ beforeAll(async () => {
 afterAll(async () => {
   delete process.env.TEST_DEFAULT_AUTH_USER;
   await cleanupFixtures();
-  await closePool();
 }, 30_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

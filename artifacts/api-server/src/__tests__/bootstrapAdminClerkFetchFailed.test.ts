@@ -46,7 +46,6 @@ import { clerkClient } from "@clerk/express";
 
 import app from "../app";
 import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
-import { closePool } from "../../__tests__/helpers/testDb";
 import { db, usersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 
@@ -83,7 +82,6 @@ afterEach(() => {
 
 afterAll(async () => {
   await db.delete(usersTable).where(eq(usersTable.clerkUserId, ADMIN_TEST_USER_ID));
-  await closePool();
 }, 15_000);
 
 describe("requireAppAuth — bootstrap admin Clerk fetch failure", () => {

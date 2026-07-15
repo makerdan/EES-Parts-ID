@@ -45,7 +45,6 @@ jest.mock("../src/lib/answerCache", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { closePool } from "./helpers/testDb";
 import { db, inventoryTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { callPoeBotWithChain } from "../src/lib/poeBot";
@@ -73,7 +72,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await cleanup();
-  await closePool();
 }, 30_000);
 
 beforeEach(() => {

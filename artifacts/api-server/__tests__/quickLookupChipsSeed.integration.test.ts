@@ -25,7 +25,6 @@ process.env.LOG_LEVEL = "silent";
 import { db } from "@workspace/db";
 import { quickLookupCacheTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { closePool } from "./helpers/testDb";
 import { seedQuickLookupChips } from "../src/seed/quickLookupChips";
 
 /** The exact 12 labels defined in quickLookupChips.ts */
@@ -78,7 +77,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await deleteChipRows();
-  await closePool();
 });
 
 beforeEach(() => {

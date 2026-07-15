@@ -50,7 +50,6 @@ import { eq, like } from "drizzle-orm";
 
 import app from "../app";
 import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
-import { closePool } from "../../__tests__/helpers/testDb";
 import { db, usersTable } from "@workspace/db";
 
 // The email the Clerk mock resolves for the bootstrap admin.
@@ -92,7 +91,6 @@ afterAll(async () => {
   await db.delete(usersTable).where(like(usersTable.clerkUserId, "jest-collision-%"));
   await db.delete(usersTable).where(eq(usersTable.clerkUserId, ADMIN_TEST_USER_ID));
   await db.delete(usersTable).where(eq(usersTable.email, ADMIN_EMAIL));
-  await closePool();
 }, 15_000);
 
 describe("requireAppAuth — bootstrap admin email collision", () => {
