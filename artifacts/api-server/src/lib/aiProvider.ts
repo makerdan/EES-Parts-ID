@@ -294,6 +294,22 @@ export function getOpenAIFallbackClient(): OpenAI {
   return buildOpenAIClient();
 }
 
+/**
+ * Like getOpenAIFallbackClient() but returns null instead of throwing when
+ * AI_INTEGRATIONS_OPENAI_BASE_URL / AI_INTEGRATIONS_OPENAI_API_KEY are not
+ * configured.  Use this when the Replit AI fallback is optional — callers
+ * should re-throw the original error when null is returned.
+ */
+export function tryGetOpenAIFallbackClient(): OpenAI | null {
+  if (
+    !process.env.AI_INTEGRATIONS_OPENAI_BASE_URL ||
+    !process.env.AI_INTEGRATIONS_OPENAI_API_KEY
+  ) {
+    return null;
+  }
+  return buildOpenAIClient();
+}
+
 // ── Per-bot probe results ─────────────────────────────────────────────────────
 
 /** Result status for a single Poe bot startup probe. */
