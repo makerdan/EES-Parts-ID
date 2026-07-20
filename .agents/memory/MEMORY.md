@@ -31,3 +31,4 @@
 - [drizzle generate broken — hand-write SQL migrations](drizzle-generate-broken-handwrite-migrations.md) — lib/db generate fails (partial meta); add columns via hand-written drizzle/NNNN.sql + push; schema:check scans quoted column names in .sql.
 - [pipefail echo|grep -q flake](pipefail-echo-grep-flake.md) — `echo "$VAR" | grep -q` under pipefail fails spuriously via SIGPIPE under load; grep the file directly in bash test suites.
 - [React 19 + TS 5.9 class-JSX compat shim](react19-ts59-class-jsx-compat.md) — ambient declare module (script-mode .d.ts) replaces rn-svg/expo-camera/expo-blur types; class components → ComponentType; module augmentation of submodule interfaces breaks extends chain in TS 5.9.
+- [Validation workflow wiring](validation-workflow-wiring.md) — setValidationCommand auto-creates isValidation workflow AND wires it into the Project gate; removeWorkflow also unwires it.
