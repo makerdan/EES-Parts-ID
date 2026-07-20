@@ -72,8 +72,8 @@ async function insertTestZones(
     .returning({ id: warehouseZoneTable.id, sectionNum: warehouseZoneTable.sectionNum });
 
   return [
-    { id: rows[0].id, sectionNum: rows[0].sectionNum as number },
-    { id: rows[1].id, sectionNum: rows[1].sectionNum as number },
+    { id: rows[0]!.id, sectionNum: rows[0]!.sectionNum as number },
+    { id: rows[1]!.id, sectionNum: rows[1]!.sectionNum as number },
   ];
 }
 

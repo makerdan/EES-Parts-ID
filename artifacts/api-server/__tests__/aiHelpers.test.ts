@@ -124,13 +124,13 @@ describe("MAX_IMAGE_PAYLOAD_BYTES", () => {
 describe("buildImageContent", () => {
   it("wraps bare base64 strings with the JPEG data URI prefix", () => {
     const result = buildImageContent(["abc123"]);
-    expect(result[0].image_url.url).toBe("data:image/jpeg;base64,abc123");
+    expect(result[0]!.image_url.url).toBe("data:image/jpeg;base64,abc123");
   });
 
   it("leaves an existing data: URI unchanged", () => {
     const uri = "data:image/png;base64,abc123";
     const result = buildImageContent([uri]);
-    expect(result[0].image_url.url).toBe(uri);
+    expect(result[0]!.image_url.url).toBe(uri);
   });
 
   it("returns type 'image_url' for every entry", () => {
@@ -147,8 +147,8 @@ describe("buildImageContent", () => {
     const images = ["img1", "img2", "img3", "img4"];
     const result = buildImageContent(images);
     expect(result).toHaveLength(4);
-    expect(result[2].image_url.url).toBe("data:image/jpeg;base64,img3");
-    expect(result[3].image_url.url).toBe("data:image/jpeg;base64,img4");
+    expect(result[2]!.image_url.url).toBe("data:image/jpeg;base64,img3");
+    expect(result[3]!.image_url.url).toBe("data:image/jpeg;base64,img4");
   });
 
   it("handles an empty array", () => {
@@ -158,14 +158,14 @@ describe("buildImageContent", () => {
   it("handles a single image", () => {
     const result = buildImageContent(["only"]);
     expect(result).toHaveLength(1);
-    expect(result[0].image_url.url).toBe("data:image/jpeg;base64,only");
+    expect(result[0]!.image_url.url).toBe("data:image/jpeg;base64,only");
   });
 
   it("preserves existing data:image/jpeg;base64, prefix without doubling it", () => {
     const uri = "data:image/jpeg;base64,abc";
     const result = buildImageContent([uri]);
-    expect(result[0].image_url.url).toBe(uri);
-    expect(result[0].image_url.url).not.toContain("data:image/jpeg;base64,data:");
+    expect(result[0]!.image_url.url).toBe(uri);
+    expect(result[0]!.image_url.url).not.toContain("data:image/jpeg;base64,data:");
   });
 });
 

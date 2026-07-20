@@ -176,7 +176,7 @@ function getPreviewPath(): string | null {
       ? pathname.slice(basePath.length) || "/"
       : pathname;
   const match = local.match(/^\/preview\/(.+)$/);
-  return match ? match[1] : null;
+  return match ? (match[1] ?? null) : null;
 }
 
 function ZoneEditorRoute() {
@@ -207,6 +207,7 @@ function AdminRoutes() {
     <ClerkProvider
       publishableKey={clerkPubKey}
       proxyUrl={clerkProxyUrl}
+      // @ts-expect-error exactOptionalPropertyTypes + Clerk prebuilt theme type incompatibility
       appearance={clerkAppearance}
       signInUrl={`${basePath}/sign-in`}
       signUpUrl={`${basePath}/sign-up`}

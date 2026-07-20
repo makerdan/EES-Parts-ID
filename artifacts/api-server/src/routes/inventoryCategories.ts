@@ -124,8 +124,8 @@ router.get("/categories", async (req, res) => {
     for (const chip of chips) {
       // Item-type counts (each item can match multiple types)
       for (let i = 0; i < itemEntries.length; i++) {
-        const { re } = itemEntries[i];
-        if (re && re.test(chip)) itemCounts[i]++;
+        const { re } = itemEntries[i]!;
+        if (re && re.test(chip)) itemCounts[i] = itemCounts[i]! + 1;
       }
       // Per-node unique counts via node's own keyword union
       for (const [slug, re] of catRegexMap) {
@@ -141,7 +141,7 @@ router.get("/categories", async (req, res) => {
 
     // ── Step 5: build item-type count map ────────────────────────────────────
     const itemCountMap = new Map<string, number>();
-    itemEntries.forEach((e, i) => itemCountMap.set(e.slug, itemCounts[i]));
+    itemEntries.forEach((e, i) => itemCountMap.set(e.slug, itemCounts[i]!));
 
     // ── Step 6: assemble response ─────────────────────────────────────────────
     const categories = mainCategories.map(cat => {

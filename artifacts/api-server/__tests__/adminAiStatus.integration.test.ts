@@ -97,7 +97,7 @@ describe("POST /api/admin/ai-status/probe/:botName", () => {
   it("returns 401 without an auth token", async () => {
     const [firstBot] = getAllPoeModelNames();
     const res = await supertest(app)
-      .post(`/api/admin/ai-status/probe/${encodeURIComponent(firstBot)}`)
+      .post(`/api/admin/ai-status/probe/${encodeURIComponent(firstBot!)}`)
       .expect(401);
     expect(res.body).toHaveProperty("error");
   });
@@ -116,13 +116,13 @@ describe("POST /api/admin/ai-status/probe/:botName", () => {
     const [firstBot] = getAllPoeModelNames();
 
     const res = await supertest(app)
-      .post(`/api/admin/ai-status/probe/${encodeURIComponent(firstBot)}`)
+      .post(`/api/admin/ai-status/probe/${encodeURIComponent(firstBot!)}`)
       .set("Authorization", `Bearer ${adminToken}`)
       .expect(200);
 
     expect(res.body).toHaveProperty("bots");
     expect(typeof res.body.bots).toBe("object");
-    expect(res.body.bots[firstBot]).toBe("ok");
+    expect(res.body.bots[firstBot!]).toBe("ok");
   });
 
   it("returns 200 with bots map showing 'error' when probe fails with a generic error", async () => {
@@ -130,19 +130,19 @@ describe("POST /api/admin/ai-status/probe/:botName", () => {
     const [firstBot] = getAllPoeModelNames();
 
     const res = await supertest(app)
-      .post(`/api/admin/ai-status/probe/${encodeURIComponent(firstBot)}`)
+      .post(`/api/admin/ai-status/probe/${encodeURIComponent(firstBot!)}`)
       .set("Authorization", `Bearer ${adminToken}`)
       .expect(200);
 
     expect(res.body).toHaveProperty("bots");
-    expect(res.body.bots[firstBot]).toBe("error");
+    expect(res.body.bots[firstBot!]).toBe("error");
   });
 
   it("returns 200 with bots map showing '404' when probe fails with status 404", async () => {
     mockCreate.mockRejectedValue({ status: 404 });
     const knownBots = getAllPoeModelNames();
     // Use a non-catalog bot to avoid the fallback probe path
-    const nonCatalogBot = knownBots.find((n) => n !== "Gemini-3.1-Pro") ?? knownBots[0];
+    const nonCatalogBot = (knownBots.find((n) => n !== "Gemini-3.1-Pro") ?? knownBots[0])!;
 
     const res = await supertest(app)
       .post(`/api/admin/ai-status/probe/${encodeURIComponent(nonCatalogBot)}`)
@@ -158,7 +158,7 @@ describe("POST /api/admin/ai-status/probe/:botName", () => {
     const [firstBot] = getAllPoeModelNames();
 
     await supertest(app)
-      .post(`/api/admin/ai-status/probe/${encodeURIComponent(firstBot)}`)
+      .post(`/api/admin/ai-status/probe/${encodeURIComponent(firstBot!)}`)
       .set("Authorization", `Bearer ${adminToken}`)
       .expect(200);
 

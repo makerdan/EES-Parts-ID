@@ -118,7 +118,7 @@ describe("floor-plan tiles — single-quoted viewBox parsing & origin normalisat
 
   it("normalises a non-zero, single-quoted viewBox origin to '0 0 W H' before rasterising", () => {
     expect(mockSharpFn).toHaveBeenCalled();
-    const inputBuf = mockSharpFn.mock.calls[0][0] as unknown as Buffer;
+    const inputBuf = mockSharpFn.mock.calls[0]![0] as unknown as Buffer;
     const svgStr = inputBuf.toString("utf8");
     expect(svgStr).toContain('viewBox="0 0 800 400"');
     // The original single-quoted, non-zero-origin viewBox must be gone.

@@ -552,7 +552,7 @@ describe("handleMultiAutoSave — cyclic swap within same aisle (buildBulkAisleP
     const jobs = buildBulkAislePatchJobs([1], zones, { aisleId: "6" });
     expect(jobs).toHaveLength(1);
     // §1 in aisle 6 is taken — job must carry a negative sentinel sectionNum.
-    expect(jobs[0].body.sectionNum).toBeLessThan(0);
+    expect(jobs[0]!.body.sectionNum).toBeLessThan(0);
   });
 
   it("two zones moving to a new aisle: intra-batch collision produces distinct sentinels, all negative", () => {
@@ -585,7 +585,7 @@ describe("handleMultiAutoSave — cyclic swap within same aisle (buildBulkAisleP
     const jobs = buildBulkAislePatchJobs([1], zones, { aisleId: "6" });
 
     // Simulate applying the job: zone 1 gets a negative sentinel temporarily.
-    const sentinel = jobs[0].body.sectionNum as number;
+    const sentinel = jobs[0]!.body.sectionNum as number;
     expect(sentinel).toBeLessThan(0);
 
     // After the serial PATCH, in the real flow the zone is re-patched to its

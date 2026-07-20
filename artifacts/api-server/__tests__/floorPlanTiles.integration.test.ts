@@ -167,14 +167,14 @@ describe("GET /api/floor-plan/tiles — floor plan present", () => {
       .expect(200);
     expect(res.headers["etag"]).toBeDefined();
     expect(typeof res.headers["etag"]).toBe("string");
-    expect(res.headers["etag"].length).toBeGreaterThan(0);
+    expect((res.headers["etag"] as string).length).toBeGreaterThan(0);
   });
 
   it("ETag encodes the hash and tile coordinates", async () => {
     const res = await supertest(app)
       .get("/api/floor-plan/tiles/2/3/1")
       .expect(200);
-    const etag: string = res.headers["etag"];
+    const etag = res.headers["etag"] as string;
     expect(etag).toContain(TEST_HASH);
     expect(etag).toContain("2");
     expect(etag).toContain("3");
@@ -185,7 +185,7 @@ describe("GET /api/floor-plan/tiles — floor plan present", () => {
     const first = await supertest(app)
       .get("/api/floor-plan/tiles/0/0/0")
       .expect(200);
-    const etag: string = first.headers["etag"];
+    const etag = first.headers["etag"] as string;
 
     await supertest(app)
       .get("/api/floor-plan/tiles/0/0/0")

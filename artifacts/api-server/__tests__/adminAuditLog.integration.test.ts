@@ -417,7 +417,7 @@ describe("GET /api/admin/audit-log — authenticated", () => {
 
     const dates = filtered.map((r) => new Date(r.createdAt as string).getTime());
     for (let i = 1; i < dates.length; i++) {
-      expect(dates[i - 1]).toBeGreaterThanOrEqual(dates[i]);
+      expect(dates[i - 1]!).toBeGreaterThanOrEqual(dates[i]!);
     }
   });
 });

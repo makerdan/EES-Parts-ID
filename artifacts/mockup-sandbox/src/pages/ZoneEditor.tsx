@@ -42,15 +42,15 @@ function extractSvgInner(svgRaw: string): string {
 function extractSvgDims(svgRaw: string): { w: number; h: number } {
   const vbMatch = svgRaw.match(/viewBox\s*=\s*["']([^"']+)["']/);
   if (vbMatch) {
-    const parts = vbMatch[1].trim().split(/[\s,]+/).map(Number);
-    if (parts.length >= 4 && parts[2] > 0 && parts[3] > 0) {
-      return { w: parts[2], h: parts[3] };
+    const parts = vbMatch[1]!.trim().split(/[\s,]+/).map(Number);
+    if (parts.length >= 4 && parts[2]! > 0 && parts[3]! > 0) {
+      return { w: parts[2]!, h: parts[3]! };
     }
   }
   const wMatch = svgRaw.match(/\bwidth\s*=\s*["']?(\d+(?:\.\d+)?)["']?/);
   const hMatch = svgRaw.match(/\bheight\s*=\s*["']?(\d+(?:\.\d+)?)["']?/);
-  const w = wMatch ? parseFloat(wMatch[1]) : 2000;
-  const h = hMatch ? parseFloat(hMatch[1]) : 1000;
+  const w = wMatch ? parseFloat(wMatch[1]!) : 2000;
+  const h = hMatch ? parseFloat(hMatch[1]!) : 1000;
   return { w, h };
 }
 
@@ -119,9 +119,9 @@ export function floodFillBounds(
   const isLight = (x: number, y: number): boolean => {
     if (x < 0 || x >= width || y < 0 || y >= height) return false;
     const i = (y * width + x) * 4;
-    const a = data[i + 3];
+    const a = data[i + 3]!;
     if (a < 128) return false; // transparent pixels treated as walls (background outside floor plan)
-    const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    const lum = 0.299 * data[i]! + 0.587 * data[i + 1]! + 0.114 * data[i + 2]!;
     return lum >= darkThreshold;
   };
 
@@ -184,14 +184,14 @@ const FILL_PRESETS = [
 function sliderToThreshold(v: number): number {
   const clamped = Math.max(0, Math.min(100, v));
   for (let i = 0; i < FILL_PRESETS.length - 1; i++) {
-    const a = FILL_PRESETS[i];
-    const b = FILL_PRESETS[i + 1];
+    const a = FILL_PRESETS[i]!;
+    const b = FILL_PRESETS[i + 1]!;
     if (clamped <= b.pos) {
       const t = (clamped - a.pos) / (b.pos - a.pos);
       return Math.round(a.threshold + t * (b.threshold - a.threshold));
     }
   }
-  return FILL_PRESETS[FILL_PRESETS.length - 1].threshold;
+  return FILL_PRESETS[FILL_PRESETS.length - 1]!.threshold;
 }
 const MIN_ZONE_PX = 8; // minimum zone size in screen pixels before it's discarded
 const API_BASE = `${window.location.origin}/api`;
@@ -360,8 +360,8 @@ export function buildBulkAislePatchJobs(
     return ids.map((id) => {
       const zone = allZones.find((z) => z.id === id);
       const before: MetaSnap = {};
-      if (updates.aisleId !== undefined) before.aisleId = zone?.aisleId;
-      if (updates.sectionNum !== undefined) before.sectionNum = zone?.sectionNum;
+      if (updates.aisleId !== undefined && zone?.aisleId !== undefined) before.aisleId = zone.aisleId;
+      if (updates.sectionNum !== undefined) before.sectionNum = zone?.sectionNum ?? null;
       return { id, body: updates, before, after: updates as MetaSnap };
     });
   }
@@ -390,7 +390,7 @@ export function buildBulkAislePatchJobs(
     const zone = allZones.find((z) => z.id === id);
     const existingSectionNum = zone?.sectionNum ?? null;
     const before: MetaSnap = {
-      aisleId: zone?.aisleId,
+      ...(zone?.aisleId !== undefined ? { aisleId: zone.aisleId } : {}),
       sectionNum: existingSectionNum,
     };
 
@@ -1839,7 +1839,7 @@ export function ZoneEditor() {
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       const ids = [...selectedIdsRef.current];
-      const currentSelectedId = ids.length === 1 ? ids[0] : null;
+      const currentSelectedId = ids.length === 1 ? ids[0]! : null;
       const hasPendingTimer = autoSaveTimerRef.current !== null;
       const formIsDirty =
         currentSelectedId !== null &&

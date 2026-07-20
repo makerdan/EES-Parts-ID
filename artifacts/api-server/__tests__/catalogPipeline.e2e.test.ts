@@ -118,8 +118,8 @@ describe("extractPdfPages (pdfjs-dist fallback)", () => {
     const pages = await extractPdfPages(Buffer.alloc(16));
 
     expect(pages).toHaveLength(2);
-    expect(pages[0].pageNum).toBe(1);
-    expect(pages[1].pageNum).toBe(2);
+    expect(pages[0]!.pageNum).toBe(1);
+    expect(pages[1]!.pageNum).toBe(2);
   });
 
   it("joins text items into a single string for each page", async () => {
@@ -129,8 +129,8 @@ describe("extractPdfPages (pdfjs-dist fallback)", () => {
 
     const pages = await extractPdfPages(Buffer.alloc(16));
 
-    expect(pages[0].text).toContain("BR120");
-    expect(pages[0].text).toContain("20A Breaker");
+    expect(pages[0]!.text).toContain("BR120");
+    expect(pages[0]!.text).toContain("20A Breaker");
   });
 
   it("sets isRendered to false on the fallback path", async () => {
@@ -138,7 +138,7 @@ describe("extractPdfPages (pdfjs-dist fallback)", () => {
 
     const pages = await extractPdfPages(Buffer.alloc(16));
 
-    expect(pages[0].isRendered).toBe(false);
+    expect(pages[0]!.isRendered).toBe(false);
   });
 
   it("sets pageWidth and pageHeight to 0 on the fallback path", async () => {
@@ -146,8 +146,8 @@ describe("extractPdfPages (pdfjs-dist fallback)", () => {
 
     const pages = await extractPdfPages(Buffer.alloc(16));
 
-    expect(pages[0].pageWidth).toBe(0);
-    expect(pages[0].pageHeight).toBe(0);
+    expect(pages[0]!.pageWidth).toBe(0);
+    expect(pages[0]!.pageHeight).toBe(0);
   });
 
   it("returns an empty images array when the page has no embedded images", async () => {
@@ -155,7 +155,7 @@ describe("extractPdfPages (pdfjs-dist fallback)", () => {
 
     const pages = await extractPdfPages(Buffer.alloc(16));
 
-    expect(pages[0].images).toEqual([]);
+    expect(pages[0]!.images).toEqual([]);
   });
 });
 
@@ -189,7 +189,7 @@ describe("full pipeline: PDF → extractPdfPages → extractCatalogPage", () => 
     const pages = await extractPdfPages(Buffer.alloc(64));
     expect(pages).toHaveLength(1);
 
-    const { entries } = await extractCatalogPage(pages[0].text, pages[0].images, "Eaton");
+    const { entries } = await extractCatalogPage(pages[0]!.text, pages[0]!.images, "Eaton");
 
     expect(entries).toHaveLength(2);
     expect(entries.map((e) => e.catalogNumber)).toContain("BR120");
@@ -207,7 +207,7 @@ describe("full pipeline: PDF → extractPdfPages → extractCatalogPage", () => 
     setupPdfjsDoc([[{ str: "" }]]);
 
     const pages = await extractPdfPages(Buffer.alloc(64));
-    const { entries } = await extractCatalogPage(pages[0].text, pages[0].images, "Eaton");
+    const { entries } = await extractCatalogPage(pages[0]!.text, pages[0]!.images, "Eaton");
 
     // Both text and images are empty – no AI call should be made
     expect(entries).toEqual([]);
@@ -226,16 +226,16 @@ describe("full pipeline: PDF → extractPdfPages → extractCatalogPage", () => 
     ));
 
     const pages = await extractPdfPages(Buffer.alloc(64));
-    expect(pages[0].pageNum).toBe(1);
-    expect(pages[1].pageNum).toBe(2);
+    expect(pages[0]!.pageNum).toBe(1);
+    expect(pages[1]!.pageNum).toBe(2);
 
     // Process each page independently (as the catalog job would)
-    const { entries: page1Entries } = await extractCatalogPage(pages[0].text, pages[0].images, "Eaton");
-    const { entries: page2Entries } = await extractCatalogPage(pages[1].text, pages[1].images, "Eaton");
+    const { entries: page1Entries } = await extractCatalogPage(pages[0]!.text, pages[0]!.images, "Eaton");
+    const { entries: page2Entries } = await extractCatalogPage(pages[1]!.text, pages[1]!.images, "Eaton");
 
     expect(page1Entries).toEqual([]);
     expect(page2Entries).toHaveLength(1);
-    expect(page2Entries[0].catalogNumber).toBe("BR120");
+    expect(page2Entries[0]!.catalogNumber).toBe("BR120");
   });
 });
 
@@ -257,12 +257,12 @@ describe("full pipeline: scanned page (text empty, page image provided)", () => 
       JSON.stringify([{ catalogNumber: "HBL5262I", description: "20A Receptacle", confidence: 0.88, hasPartImage: true, imageRegion: { x: 0.05, y: 0.1, width: 0.4, height: 0.3 } }]),
     ));
 
-    const { entries } = await extractCatalogPage(pages[0].text, [fakeRenderedImage], "Hubbell");
+    const { entries } = await extractCatalogPage(pages[0]!.text, [fakeRenderedImage], "Hubbell");
 
     expect(entries).toHaveLength(1);
-    expect(entries[0].catalogNumber).toBe("HBL5262I");
-    expect(entries[0].hasPartImage).toBe(true);
-    expect(entries[0].imageRegion).not.toBeNull();
+    expect(entries[0]!.catalogNumber).toBe("HBL5262I");
+    expect(entries[0]!.hasPartImage).toBe(true);
+    expect(entries[0]!.imageRegion).not.toBeNull();
 
     // Verify the image was sent to the AI as a base64 data URI
     const callArg = mockCreate.mock.calls[0][0];
@@ -280,7 +280,7 @@ describe("full pipeline: scanned page (text empty, page image provided)", () => 
 
     const pages = await extractPdfPages(Buffer.alloc(64));
 
-    expect(pages[0].text).toContain("BR120");
-    expect(pages[1].text.trim()).toBe("");
+    expect(pages[0]!.text).toContain("BR120");
+    expect(pages[1]!.text.trim()).toBe("");
   });
 });

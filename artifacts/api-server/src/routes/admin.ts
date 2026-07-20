@@ -48,7 +48,7 @@ router.get("/profile", requireAdminAuth, async (_req, res) => {
       });
     }
 
-    const row = rows[0];
+    const row = rows[0]!;
     return res.json({
       dimensionUnit: row.dimensionUnit,
       textSize: row.textSize,
@@ -115,7 +115,7 @@ router.get("/shelf-preferences", requireAdminAuth, async (_req, res) => {
       return res.json({ shelfPrefix: null, shelfStep: null });
     }
 
-    const row = rows[0];
+    const row = rows[0]!;
     return res.json({ shelfPrefix: row.shelfPrefix ?? null, shelfStep: row.shelfStep ?? null });
   } catch {
     return res.status(500).json({ error: "Failed to fetch shelf preferences" });

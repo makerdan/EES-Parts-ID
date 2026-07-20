@@ -41,9 +41,9 @@ export function parseCatalogNumber(catalog: string): Array<string> {
   // (BR/QO/CH/HOM/… are the common load-center series across manufacturers).
   const breaker = c.match(/^(BR|QO|CH|HOM|THQL|MP|SWD|FH|HH|Q1)(\d{1,2})?(\d{2,3})/i);
   if (breaker) {
-    const series = breaker[1];
-    const poles = breaker[2] ? parseInt(breaker[2]) : null;
-    const amps = breaker[3] ? parseInt(breaker[3]) : null;
+    const series = breaker[1]!;
+    const poles = breaker[2] ? parseInt(breaker[2]!) : null;
+    const amps = breaker[3] ? parseInt(breaker[3]!) : null;
     terms.push(series, `${series} series`);
     if (poles) terms.push(`${poles}p`, `${poles} pole`, poles === 1 ? "single pole" : poles === 2 ? "double pole two pole" : "three pole");
     if (amps) terms.push(`${amps}a`, `${amps}amp`, `${amps} ampere`, `${amps}A breaker`);
@@ -63,15 +63,15 @@ export function parseCatalogNumber(catalog: string): Array<string> {
   // number is a thinner wire — and tops out around 750 MCM for the largest
   // cables, so cap at 750 to avoid treating arbitrary big numbers as a gauge.
   const awg = c.match(/^(\d+)\s*(AWG|GA)?/);
-  if (awg && parseInt(awg[1]) <= 750) {
-    terms.push(`${awg[1]} awg`, `${awg[1]} gauge`, `#${awg[1]}`);
+  if (awg && parseInt(awg[1]!) <= 750) {
+    terms.push(`${awg[1]!} awg`, `${awg[1]!} gauge`, `#${awg[1]!}`);
   }
 
   // "Aught" notation for gauges below 1 AWG: the count of zeros is the aught
   // size, written N/0. So "0"=1/0 (one aught), "00"=2/0, "000"=3/0, "0000"=4/0.
   const aught = c.match(/^(0{1,4})$/);
   if (aught) {
-    const n = aught[1].length;
+    const n = aught[1]!.length;
     terms.push(`${n}/0`, `${n} aught`, `${n}/0 awg`);
   }
 
@@ -81,7 +81,7 @@ export function parseCatalogNumber(catalog: string): Array<string> {
   // we translate to the plain color word (WHI→white, IVY→ivory, …).
   const recep = c.match(/^(DR|CR|TR|GF|WR)(\d{2})(\w{2,5})?/i);
   if (recep) {
-    const amps = parseInt(recep[2]);
+    const amps = parseInt(recep[2]!);
     terms.push(`${amps}a`, `${amps}amp`, "receptacle", "outlet");
     if (recep[3]) {
       const colorMap: Record<string, string> = {
@@ -106,7 +106,7 @@ export function parseCatalogNumber(catalog: string): Array<string> {
   // material/type code.
   const conduitSize = c.match(/^(\d+)\s*(EMT|IMC|RMC|PVC|ENT)/i);
   if (conduitSize) {
-    terms.push(`${conduitSize[1]} inch`, conduitSize[2].toLowerCase(), "conduit");
+    terms.push(`${conduitSize[1]!} inch`, conduitSize[2]!.toLowerCase(), "conduit");
   }
 
   return terms.filter(Boolean);
@@ -128,25 +128,25 @@ export function extractSizeValue(item: { catalog: string; description: string })
   const text = `${item.catalog} ${item.description}`.toUpperCase();
   // Amperage
   const amp = text.match(/(\d+)\s*A\b/);
-  if (amp) return parseInt(amp[1]);
+  if (amp) return parseInt(amp[1]!);
   // Wire gauge (inverted - thicker wire sorts larger: #14=74, #12=76...)
   const awg = text.match(/(\d+)\s*AWG/);
-  if (awg) return 88 - parseInt(awg[1]);
+  if (awg) return 88 - parseInt(awg[1]!);
   // Mixed fractions
   const mixed = text.match(/(\d+)-(\d+)\/(\d+)/);
-  if (mixed) return parseInt(mixed[1]) + parseInt(mixed[2]) / parseInt(mixed[3]);
+  if (mixed) return parseInt(mixed[1]!) + parseInt(mixed[2]!) / parseInt(mixed[3]!);
   // Simple fractions
   const frac = text.match(/(\d+)\/(\d+)/);
-  if (frac) return parseInt(frac[1]) / parseInt(frac[2]);
+  if (frac) return parseInt(frac[1]!) / parseInt(frac[2]!);
   // Decimal
   const dec = text.match(/(\d+\.\d+)/);
-  if (dec) return parseFloat(dec[1]);
+  if (dec) return parseFloat(dec[1]!);
   // Length
   const ft = text.match(/(\d+)\s*FT/);
-  if (ft) return parseInt(ft[1]);
+  if (ft) return parseInt(ft[1]!);
   // Wattage
   const watt = text.match(/(\d+)\s*W\b/);
-  if (watt) return parseInt(watt[1]);
+  if (watt) return parseInt(watt[1]!);
   return null;
 }
 

@@ -244,7 +244,7 @@ async function processPdfPages(
   let cancelledCached = false;
 
   for (let pageIndex = 0; pageIndex < remainingPages.length; pageIndex++) {
-    const page = remainingPages[pageIndex];
+    const page = remainingPages[pageIndex]!;
     if (pageIndex % CANCEL_CHECK_INTERVAL === 0) {
       const [currentRow] = await db
         .select({ status: catalogPdfJobTable.status })

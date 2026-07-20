@@ -116,7 +116,7 @@ function parseSvgViewBox(svgBuffer: Buffer): { w: number; h: number } | null {
   // so the opening and closing quotes must match.
   const match = svgBuffer.toString("utf8").match(/viewBox=(["'])([^"']+)\1/);
   if (!match) return null;
-  const parts = match[2].trim().split(/[\s,]+/).map(Number);
+  const parts = match[2]!.trim().split(/[\s,]+/).map(Number);
   if (parts.length !== 4 || parts.some((n) => !isFinite(n))) return null;
   const [, , w, h] = parts;
   if (!w || !h) return null;
@@ -139,7 +139,7 @@ function normalizeViewBoxOrigin(svgBuffer: Buffer): Buffer {
   // Match both double- and single-quoted viewBox attributes (see parseSvgViewBox).
   const match = svgStr.match(/viewBox=(["'])([^"']+)\1/);
   if (!match) return svgBuffer;
-  const parts = match[2].trim().split(/[\s,]+/).map(Number);
+  const parts = match[2]!.trim().split(/[\s,]+/).map(Number);
   if (parts.length !== 4 || parts.some((n) => !isFinite(n))) return svgBuffer;
   const [ox, oy, w, h] = parts;
   if (ox === 0 && oy === 0) return svgBuffer; // already correct — skip allocation
