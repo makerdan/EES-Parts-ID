@@ -71,7 +71,53 @@ sleep() { :; }
 #   total          — number of pre-programmed responses
 # ---------------------------------------------------------------------------
 MOCK_DIR=$(mktemp -d)
-trap 'rm -rf "$MOCK_DIR"' EXIT
+
+# ---------------------------------------------------------------------------
+# Process cleanup (Port-Authority pattern).
+#
+# This suite spawns post-merge.sh subprocesses, which in turn may start
+# background installs (`... pnpm install ... &`).  If this test run is killed
+# or times out, those children would be orphaned and keep running, loading
+# the machine and making later CI runs slow or nondeterministic.  The trap
+# below kills the entire descendant tree on EXIT/TERM/INT: SIGTERM first,
+# a short grace period, then SIGKILL survivors.
+# ---------------------------------------------------------------------------
+list_descendants() {
+  # Echo all descendant PIDs of $1 (depth-first), excluding $1 itself.
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    list_descendants "$child"
+    echo "$child"
+  done
+}
+
+cleanup() {
+  local ec=$?
+  trap - EXIT TERM INT
+  local pids
+  pids=$(list_descendants $$)
+  if [[ -n "$pids" ]]; then
+    # shellcheck disable=SC2086
+    kill -TERM $pids 2>/dev/null || true
+    # `sleep` is overridden to a no-op below; bypass the function.
+    command sleep 1
+    local survivors=""
+    local p
+    for p in $pids; do
+      if kill -0 "$p" 2>/dev/null; then
+        survivors="$survivors $p"
+      fi
+    done
+    if [[ -n "$survivors" ]]; then
+      echo "[test-post-merge] WARNING: force-killing surviving subprocesses:$survivors" >&2
+      # shellcheck disable=SC2086
+      kill -KILL $survivors 2>/dev/null || true
+    fi
+  fi
+  rm -rf "$MOCK_DIR"
+  exit "$ec"
+}
+trap cleanup EXIT TERM INT
 
 reset_mock() {
   echo 0 > "$MOCK_DIR/count"
@@ -1331,6 +1377,94 @@ if echo "$PROJECT_BLOCK" | grep -q 'args = "canvas-typecheck"'; then
 else
   fail "canvas-typecheck — NOT listed as a task in the Project CI gate (add a [[workflows.workflow.tasks]] entry with args = \"canvas-typecheck\")"
 fi
+
+# ---------------------------------------------------------------------------
+# Test 36: process-cleanup traps are present (Port-Authority hygiene)
+#
+# Structural guards so the orphan-process cleanup cannot be silently removed:
+#   (a) this test runner installs a cleanup trap on EXIT/TERM/INT that kills
+#       its spawned descendant tree
+#   (b) post-merge.sh installs a trap that terminates the background install
+#       (INSTALL_PID) so an aborted run never leaves pnpm install running
+# ---------------------------------------------------------------------------
+SELF="$SCRIPT_DIR/test-post-merge.sh"
+
+if grep -q 'trap cleanup EXIT TERM INT' "$SELF" && grep -q 'list_descendants' "$SELF"; then
+  pass "cleanup-trap — test runner kills its descendant tree on EXIT/TERM/INT"
+else
+  fail "cleanup-trap — test runner is missing the EXIT/TERM/INT descendant-cleanup trap"
+fi
+
+if grep -q 'trap cleanup_background_install EXIT TERM INT' "$SCRIPT_DIR/post-merge.sh"; then
+  pass "cleanup-trap — post-merge.sh cleans up background install on exit"
+else
+  fail "cleanup-trap — post-merge.sh is missing the background-install cleanup trap"
+fi
+
+# Behavioral check: an aborted post-merge.sh must not leave its background
+# install running.  Mocks: git reports the lockfile changed (install branch
+# taken), the mocked `timeout` starts a long-lived sleep for the install call
+# but fails the codegen:fix call, so post-merge takes its early-abort exit-1
+# path while the fake install is still running.  The EXIT trap must kill it.
+MOCK_BIN_DIR36=$(mktemp -d)
+BG_MARKER36="$MOCK_BIN_DIR36/bg_running"
+# Distinctive duration so pgrep cannot match unrelated sleeps.
+BG_SLEEP36="59.37"
+
+# git: report lockfile changed so the background-install branch is taken.
+cat > "$MOCK_BIN_DIR36/git" << 'MOCKEOF'
+#!/bin/bash
+echo "pnpm-lock.yaml"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR36/git"
+
+# timeout: long-lived fake install for the `pnpm install` call; hard failure
+# for codegen:fix so post-merge aborts (exit 1) while the install runs.
+cat > "$MOCK_BIN_DIR36/timeout" << MOCKEOF
+#!/bin/bash
+shift
+if echo "\$*" | grep -q 'install'; then
+  touch "$BG_MARKER36"
+  exec /bin/sleep $BG_SLEEP36
+fi
+exit 1
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR36/timeout"
+
+cat > "$MOCK_BIN_DIR36/pnpm" << 'MOCKEOF'
+#!/bin/bash
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR36/pnpm"
+
+cat > "$MOCK_BIN_DIR36/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR36/curl"
+
+CLEANUP36_OUTPUT=$(PATH="$MOCK_BIN_DIR36:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" \
+  bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+CLEANUP36_EXIT=$?
+
+assert_exit "cleanup-trap behavioral — post-merge aborts (exit 1) on codegen failure" 1 "$CLEANUP36_EXIT"
+
+if [[ ! -f "$BG_MARKER36" ]]; then
+  fail "cleanup-trap behavioral — background install never started (mock setup problem)"
+else
+  command sleep 1
+  SURVIVOR36=$(pgrep -f "sleep $BG_SLEEP36" || true)
+  if [[ -n "$SURVIVOR36" ]]; then
+    fail "cleanup-trap behavioral — background install (PID $SURVIVOR36) survived post-merge abort"
+    # shellcheck disable=SC2086
+    kill -KILL $SURVIVOR36 2>/dev/null || true
+  else
+    pass "cleanup-trap behavioral — aborted post-merge.sh leaves no background install running"
+  fi
+fi
+
+assert_contains "cleanup-trap behavioral — prints cleanup message" "Cleaning up background install" "$CLEANUP36_OUTPUT"
+rm -rf "$MOCK_BIN_DIR36"
 
 # ---------------------------------------------------------------------------
 # Summary

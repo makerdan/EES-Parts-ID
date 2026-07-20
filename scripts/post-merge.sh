@@ -174,6 +174,20 @@ run_viewbox_sync_check() {
 # This guard allows test scripts to source and unit-test the functions above.
 # ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  # Cleanup: never leave the background install running as an orphan.  On a
+  # normal successful run the install has already been wait-ed on before this
+  # fires (kill -0 fails, no-op).  On an early abort (exit 1 paths) or an
+  # external SIGTERM/SIGINT, the still-running backgrounded install child is
+  # terminated so it cannot keep loading the machine after this script is
+  # gone.  The `timeout` wrapper forwards the signal to its child process.
+  cleanup_background_install() {
+    if [[ -n "${INSTALL_PID:-}" ]] && kill -0 "$INSTALL_PID" 2>/dev/null; then
+      echo "[post-merge] Cleaning up background install (PID ${INSTALL_PID}) before exit..."
+      kill -TERM "$INSTALL_PID" 2>/dev/null || true
+    fi
+  }
+  trap cleanup_background_install EXIT TERM INT
+
   # Only run pnpm install if the lockfile changed in the merge.
   # Run in the background so it does not block the health check within the
   # 20s platform budget — the API server does not need a reinstall to stay
