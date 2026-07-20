@@ -172,7 +172,7 @@ describe("seedVendors — preserves is_primary = true on all primary entries", (
 
   it("re-running seedVendors restores isPrimary = true after a row was corrupted", async () => {
     // Pick any primary vendor and corrupt its flag
-    const target = PRIMARY_VENDORS[0];
+    const target = PRIMARY_VENDORS[0]!;
     await db
       .update(vendorMapTable)
       .set({ isPrimary: false })

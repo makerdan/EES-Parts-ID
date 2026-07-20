@@ -113,8 +113,8 @@ describe("extractCatalogPage – output shape", () => {
       hasPartImage: false,
       imageRegion: null,
     });
-    expect(typeof result.entries[0].confidence).toBe("number");
-    expect(result.entries[1].catalogNumber).toBe("BR220");
+    expect(typeof result.entries[0]!.confidence).toBe("number");
+    expect(result.entries[1]!.catalogNumber).toBe("BR220");
   });
 
   it("returns [] immediately when both pageText and pageImages are empty (no AI call)", async () => {
@@ -167,7 +167,7 @@ describe("extractCatalogPage – output shape", () => {
     const result = await extractCatalogPage("text", [], "Eaton");
 
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0].catalogNumber).toBe("BR120");
+    expect(result.entries[0]!.catalogNumber).toBe("BR120");
   });
 
   it("filters out entries missing a confidence value", async () => {
@@ -180,7 +180,7 @@ describe("extractCatalogPage – output shape", () => {
     const result = await extractCatalogPage("text", [], "Eaton");
 
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0].catalogNumber).toBe("BR120");
+    expect(result.entries[0]!.catalogNumber).toBe("BR120");
   });
 
   it("filters out entries with empty catalog numbers after trimming", async () => {
@@ -193,7 +193,7 @@ describe("extractCatalogPage – output shape", () => {
     const result = await extractCatalogPage("text", [], "Eaton");
 
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0].catalogNumber).toBe("BR130");
+    expect(result.entries[0]!.catalogNumber).toBe("BR130");
   });
 });
 
@@ -214,8 +214,8 @@ describe("extractCatalogPage – field normalisation", () => {
 
     const result = await extractCatalogPage("text", [], "Eaton");
 
-    expect(result.entries[0].catalogNumber).toBe("BR120");
-    expect(result.entries[0].description).toBe("20A Breaker");
+    expect(result.entries[0]!.catalogNumber).toBe("BR120");
+    expect(result.entries[0]!.description).toBe("20A Breaker");
   });
 
   it("clamps confidence above 1.0 down to 1.0", async () => {
@@ -227,7 +227,7 @@ describe("extractCatalogPage – field normalisation", () => {
 
     const result = await extractCatalogPage("text", [], "Eaton");
 
-    expect(result.entries[0].confidence).toBe(1.0);
+    expect(result.entries[0]!.confidence).toBe(1.0);
   });
 
   it("clamps confidence below 0.0 up to 0.0", async () => {
@@ -239,7 +239,7 @@ describe("extractCatalogPage – field normalisation", () => {
 
     const result = await extractCatalogPage("text", [], "Eaton");
 
-    expect(result.entries[0].confidence).toBe(0.0);
+    expect(result.entries[0]!.confidence).toBe(0.0);
   });
 
   it("truncates description to 200 characters", async () => {
@@ -254,7 +254,7 @@ describe("extractCatalogPage – field normalisation", () => {
 
     const result = await extractCatalogPage("text", [], "Eaton");
 
-    expect(result.entries[0].description.length).toBe(200);
+    expect(result.entries[0]!.description.length).toBe(200);
   });
 
   it("populates imageRegion when hasPartImage is true and region has valid numeric fields", async () => {
@@ -269,8 +269,8 @@ describe("extractCatalogPage – field normalisation", () => {
 
     const result = await extractCatalogPage("text", [], "Eaton");
 
-    expect(result.entries[0].hasPartImage).toBe(true);
-    expect(result.entries[0].imageRegion).toEqual({ x: 0.1, y: 0.2, width: 0.4, height: 0.3 });
+    expect(result.entries[0]!.hasPartImage).toBe(true);
+    expect(result.entries[0]!.imageRegion).toEqual({ x: 0.1, y: 0.2, width: 0.4, height: 0.3 });
   });
 
   it("clamps imageRegion coordinates that fall outside [0, 1]", async () => {
@@ -285,7 +285,7 @@ describe("extractCatalogPage – field normalisation", () => {
 
     const result = await extractCatalogPage("text", [], "Eaton");
 
-    const region = result.entries[0].imageRegion!;
+    const region = result.entries[0]!.imageRegion!;
     expect(region.x).toBe(0);
     expect(region.y).toBe(1);
     expect(region.width).toBe(1);
@@ -304,7 +304,7 @@ describe("extractCatalogPage – field normalisation", () => {
 
     const result = await extractCatalogPage("text", [], "Eaton");
 
-    expect(result.entries[0].imageRegion).toBeNull();
+    expect(result.entries[0]!.imageRegion).toBeNull();
   });
 
   it("sets imageRegion to null when the region object has non-numeric fields", async () => {
@@ -319,7 +319,7 @@ describe("extractCatalogPage – field normalisation", () => {
 
     const result = await extractCatalogPage("text", [], "Eaton");
 
-    expect(result.entries[0].imageRegion).toBeNull();
+    expect(result.entries[0]!.imageRegion).toBeNull();
   });
 });
 
@@ -436,7 +436,7 @@ describe("extractCatalogPage – end-to-end fixture (Eaton BR series)", () => {
     const result = await extractCatalogPage(EATON_BR_PAGE_TEXT, [], "Eaton");
 
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0].catalogNumber).toBe("BR150");
+    expect(result.entries[0]!.catalogNumber).toBe("BR150");
   });
 
   it("handles a multi-entry response mixing parts that have images and parts that do not", async () => {
@@ -461,10 +461,10 @@ describe("extractCatalogPage – end-to-end fixture (Eaton BR series)", () => {
     const result = await extractCatalogPage(EATON_BR_PAGE_TEXT, [], "Eaton");
 
     expect(result.entries).toHaveLength(2);
-    expect(result.entries[0].hasPartImage).toBe(true);
-    expect(result.entries[0].imageRegion).not.toBeNull();
-    expect(result.entries[1].hasPartImage).toBe(false);
-    expect(result.entries[1].imageRegion).toBeNull();
+    expect(result.entries[0]!.hasPartImage).toBe(true);
+    expect(result.entries[0]!.imageRegion).not.toBeNull();
+    expect(result.entries[1]!.hasPartImage).toBe(false);
+    expect(result.entries[1]!.imageRegion).toBeNull();
   });
 
   it("truncates page text sent to the AI at 3000 characters when the page is very long", async () => {

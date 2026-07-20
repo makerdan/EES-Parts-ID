@@ -85,9 +85,9 @@ function floodFillBounds(
   const isLight = (x: number, y: number): boolean => {
     if (x < 0 || x >= width || y < 0 || y >= height) return false;
     const i = (y * width + x) * 4;
-    const a = data[i + 3];
+    const a = data[i + 3]!;
     if (a < 128) return false;
-    const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    const lum = 0.299 * data[i]! + 0.587 * data[i + 1]! + 0.114 * data[i + 2]!;
     return lum >= darkThreshold;
   };
 

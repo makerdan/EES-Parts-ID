@@ -111,7 +111,7 @@ function exportedClassNames(filePath: string): string[] {
   const re = /\bexport\s+(?:abstract\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src)) !== null) {
-    names.push(m[1]);
+    names.push(m[1]!);
   }
   return names;
 }
@@ -181,7 +181,7 @@ function parseMockCalls(src: string): MockCall[] {
     // Extract the first string argument (the module path).
     const pathMatch = callText.match(/jest\.mock\(\s*(['"`])(.+?)\1/);
     if (!pathMatch) continue;
-    const modulePath = pathMatch[2];
+    const modulePath = pathMatch[2]!;
 
     // Determine whether a factory (second argument) is present.
     // Look for a comma after the closing quote, then a `(` or `=>`

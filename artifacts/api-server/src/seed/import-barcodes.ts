@@ -77,7 +77,7 @@ function detectColumn(
   variants: Array<string>,
 ): number | null {
   for (let i = 0; i < headers.length; i++) {
-    const normalized = normalizeHeader(headers[i]);
+    const normalized = normalizeHeader(headers[i]!);
     if (variants.some((v) => normalized === v || normalized.includes(v))) {
       return i;
     }
@@ -86,7 +86,7 @@ function detectColumn(
 }
 
 async function importBarcodes() {
-  const absolutePath = resolve(process.cwd(), filePath);
+  const absolutePath = resolve(process.cwd(), filePath as string);
   console.log("Reading file:", absolutePath);
 
   const workbook = new ExcelJS.Workbook();
@@ -170,11 +170,11 @@ async function importBarcodes() {
   for (const row of rawRows) {
     processed++;
 
-    const catalogRaw = (row[headers[catalogIdx]] ?? "").trim();
-    const barcodeRaw = (row[headers[barcodeIdx]] ?? "").trim();
+    const catalogRaw = (row[headers[catalogIdx]!] ?? "").trim();
+    const barcodeRaw = (row[headers[barcodeIdx]!] ?? "").trim();
     const vendorRaw =
       vendorIdx !== null
-        ? (row[headers[vendorIdx]] ?? "").trim().toUpperCase()
+        ? (row[headers[vendorIdx]!] ?? "").trim().toUpperCase()
         : null;
 
     if (!catalogRaw || !barcodeRaw) {
@@ -216,7 +216,7 @@ async function importBarcodes() {
     matched++;
 
     // Use first match (catalog is unique per vendor; if no vendor filter, take first)
-    const inv = rows[0];
+    const inv = rows[0]!;
     const existing: Array<string> = inv.barcodes ?? [];
 
     if (existing.includes(barcodeRaw)) {

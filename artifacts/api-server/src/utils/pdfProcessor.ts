@@ -101,7 +101,7 @@ function reconstructText(items: Array<RawItem>): string {
 
   const buckets: Array<Array<PositionedItem>> = [];
   for (const item of positioned) {
-    const existing = buckets.find((b) => Math.abs(b[0].y - item.y) <= 4);
+    const existing = buckets.find((b) => Math.abs(b[0]!.y - item.y) <= 4);
     if (existing) {
       existing.push(item);
     } else {
@@ -110,7 +110,7 @@ function reconstructText(items: Array<RawItem>): string {
   }
 
   // Sort buckets top-to-bottom (PDF y=0 is bottom, so higher y = higher on page)
-  buckets.sort((a, b) => b[0].y - a[0].y);
+  buckets.sort((a, b) => b[0]!.y - a[0]!.y);
 
   for (const bucket of buckets) {
     bucket.sort((a, b) => a.x - b.x);
@@ -186,7 +186,7 @@ function buildPageContext(
 
   for (const fig of figures) {
     if (!fig.bbox || fig.bbox.length < 4) continue;
-    const figBottom = fig.bbox[1]; // y_min (bottom of figure in PDF space)
+    const figBottom = fig.bbox[1]!; // y_min (bottom of figure in PDF space)
     const captionBand = figBottom - 40;
 
     const below = positioned

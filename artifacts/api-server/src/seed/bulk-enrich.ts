@@ -77,10 +77,11 @@ async function enrichWithRetry(item: {
 }
 
 async function bulkEnrich() {
-  const [{ total }] = await db
+  const [totalRow] = await db
     .select({ total: sql<number>`count(*)::int` })
     .from(inventoryTable)
     .where(sql`${inventoryTable.enrichedAt} IS NULL`);
+  const total = totalRow!.total;
 
   console.log(`\nItems needing enrichment: ${total}`);
   console.log(`Model: ${MODEL}  batch=${BATCH_SIZE}  concurrency=${CONCURRENCY}  retries=${MAX_RETRIES}\n`);

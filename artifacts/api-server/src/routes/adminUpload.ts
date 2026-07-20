@@ -95,7 +95,7 @@ export function parseCsv(csvText: string): Array<ParsedRow> | null {
   const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
   if (lines.length < 2) return null; // header-only or empty
 
-  const header = parseCsvLine(lines[0]).map(h => h.toLowerCase().replace(/\s+/g, ""));
+  const header = parseCsvLine(lines[0]!).map(h => h.toLowerCase().replace(/\s+/g, ""));
   const vendorIdx = header.findIndex(h => h === "vendor");
   const catalogIdx = header.findIndex(h => h === "catalog" || h === "catalog#" || h === "catalognumber");
   if (vendorIdx === -1 || catalogIdx === -1) return null;
@@ -106,7 +106,7 @@ export function parseCsv(csvText: string): Array<ParsedRow> | null {
 
   const rows: Array<ParsedRow> = [];
   for (let i = 1; i < lines.length; i++) {
-    const fields = parseCsvLine(lines[i]);
+    const fields = parseCsvLine(lines[i]!);
     const vendor = fields[vendorIdx]?.trim() ?? "";
     const catalog = fields[catalogIdx]?.trim() ?? "";
     if (!vendor || !catalog) continue; // skip blank/invalid rows
@@ -334,7 +334,7 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
         }
       }
 
-      diffRows.push({ vendor: row.vendor, catalog: row.catalog, status, existingBins, incomingBins, barcodeStatus: barcodeStatus!, existingBarcodes, conflictingItem });
+      diffRows.push({ vendor: row.vendor, catalog: row.catalog, status, existingBins, incomingBins, barcodeStatus: barcodeStatus!, existingBarcodes, ...(conflictingItem !== undefined ? { conflictingItem } : {}) });
     }
 
     res.json({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows: diffRows, willReplaceBarcodes, willAddBarcodes, willPreserveBarcodes, willBarcodeConflicts });

@@ -89,7 +89,7 @@ function collectExampleVars(content: string): Set<string> {
     if (trimmed.startsWith("#") || trimmed === "") continue;
     const match = trimmed.match(EXAMPLE_KEY_PATTERN);
     if (match) {
-      vars.add(match[1]);
+      vars.add(match[1]!);
     }
   }
   return vars;

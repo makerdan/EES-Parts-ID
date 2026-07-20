@@ -961,7 +961,7 @@ router.post("/search", async (req, res) => {
         ? results.filter(r => matchesChipFilters(r.item, otherFilters))
         : results;
       for (const opt of dim.options) {
-        dimensionCounts[dim.key][opt] = baseResults.filter(r =>
+        dimensionCounts[dim.key]![opt] = baseResults.filter(r =>
           tokenMatch(itemFullText(r.item), opt)
         ).length;
       }
@@ -1674,13 +1674,15 @@ async function runBulkEnrich(force = false, log: typeof logger = logger) {
 // ── GET /inventory/enrich-summary ─────────────────────────────────────────────
 router.get("/enrich-summary", requireAdminAuth, async (_req, res) => {
   try {
-    const [{ total }] = await db
+    const [totalRow] = await db
       .select({ total: sql<number>`count(*)::int` })
       .from(inventoryTable);
-    const [{ enriched }] = await db
+    const [enrichedRow] = await db
       .select({ enriched: sql<number>`count(*)::int` })
       .from(inventoryTable)
       .where(sql`${inventoryTable.enrichedAt} IS NOT NULL`);
+    const total = totalRow!.total;
+    const enriched = enrichedRow!.enriched;
     res.json({ total, enriched, unenriched: total - enriched });
   } catch (_err) {
     res.status(500).json({ error: "Failed to fetch enrichment summary" });
@@ -1790,10 +1792,11 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
       }
     }
 
-    const [{ remaining }] = await db
+    const [remainingRow] = await db
       .select({ remaining: sql<number>`count(*)::int` })
       .from(inventoryTable)
       .where(sql`${inventoryTable.expandedDescription} IS NULL`);
+    const remaining = remainingRow!.remaining;
 
     send({ done: true, processed, total, remaining });
     res.end();
@@ -2555,7 +2558,7 @@ const estimateSearchHits = new Map<string, Array<number>>();
 setInterval(() => {
   const cutoff = Date.now() - ESTIMATE_SEARCH_WINDOW_MS;
   for (const [key, hits] of estimateSearchHits) {
-    if (hits.length === 0 || hits[hits.length - 1] < cutoff) {
+    if (hits.length === 0 || hits[hits.length - 1]! < cutoff) {
       estimateSearchHits.delete(key);
     }
   }

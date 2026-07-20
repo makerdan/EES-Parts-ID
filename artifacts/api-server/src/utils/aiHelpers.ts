@@ -31,7 +31,7 @@ export function checkPerImageSize(
   limitBytes: number,
 ): { ok: true } | { ok: false; message: string; imageIndex: number; byteSize: number } {
   for (let i = 0; i < images.length; i++) {
-    const byteSize = estimateImageBytes(images[i]);
+    const byteSize = estimateImageBytes(images[i]!);
     if (byteSize > limitBytes) {
       const mb = (byteSize / (1024 * 1024)).toFixed(1);
       const limitMb = (limitBytes / (1024 * 1024)).toFixed(0);

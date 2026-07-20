@@ -30,7 +30,7 @@ function makeOtherError(): NodeJS.ErrnoException {
 }
 
 type FakeServer = {
-  close: jest.Mock<void, [cb?: () => void]>;
+  close: jest.Mock<void, [cb?: (() => void) | undefined]>;
   on: jest.Mock;
   triggerError: (err: NodeJS.ErrnoException) => void;
 };

@@ -177,7 +177,7 @@ function mergeHeaders(...sources: Array<HeadersInit | undefined>): Headers {
 
 function getMediaType(headers: Headers): string | null {
   const value = headers.get("content-type");
-  return value ? value.split(";", 1)[0].trim().toLowerCase() : null;
+  return value ? value.split(";", 1)[0]!.trim().toLowerCase() : null;
 }
 
 function isJsonMediaType(mediaType: string | null): boolean {
@@ -469,7 +469,7 @@ export async function customFetch<T = unknown>(
   }
 
   try {
-    const response = await fetch(input, { ...init, method, headers, signal: effectiveSignal });
+    const response = await fetch(input, { ...init, method, headers, signal: effectiveSignal ?? null });
 
     if (!response.ok) {
       if (response.status === 401 && _unauthorizedHandler) {

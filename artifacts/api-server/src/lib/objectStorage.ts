@@ -48,7 +48,7 @@ const sidecarCredential: ExternalAccountCredential = {
 const gcs = new Storage({
   credentials: sidecarCredential as StorageOptions["credentials"],
   projectId: "",
-});
+} as StorageOptions);
 
 /**
  * Upload an image buffer to GCS and return the public-serving object path.
