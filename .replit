@@ -96,10 +96,6 @@ args = "verify-fts"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "typecheck"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
 args = "spec:check"
 
 [[workflows.workflow.tasks]]
@@ -158,6 +154,10 @@ args = "security-audit"
 task = "workflow.run"
 args = "lint"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "api-server-coverage"
+
 [[workflows.workflow]]
 name = "post-merge-health-test"
 author = "agent"
@@ -179,17 +179,6 @@ args = "pnpm --filter @workspace/db run verify-fts"
 
 [workflows.workflow.metadata]
 isValidation = true
-
-[[workflows.workflow]]
-name = "typecheck"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm -w run typecheck:libs && pnpm --filter @workspace/parts-id exec tsc --noEmit"
-
-[workflows.workflow.metadata]
-outputType = "console"
 
 [[workflows.workflow]]
 name = "spec:check"
@@ -352,6 +341,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "node scripts/check-db-reachability.mjs && pnpm --filter @workspace/parts-id run lint && pnpm --filter @workspace/api-server run lint && pnpm --filter @workspace/mockup-sandbox run lint && pnpm run lint:libs"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "api-server-coverage"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server run test:coverage"
 
 [workflows.workflow.metadata]
 isValidation = true
