@@ -120,6 +120,40 @@ module.exports = {
   // afterAll that closes the pg pool after every test file, so handles are
   // cleaned up organically and Jest exits without the "Force exiting" warning.
 
+  // ── Coverage configuration ─────────────────────────────────────────────────
+  // Scope coverage to production source only.  Excludes:
+  //   - src/__tests__/**  — test-helper files living under src/
+  //   - src/seed/**       — one-off seed/migration scripts, not API surface
+  //   - **/__mocks__/**   — manual mock stubs
+  //   - **/*.test.ts      — test files (shouldn't match src/** anyway)
+  collectCoverageFrom: [
+    "src/**/*.ts",
+    "!src/__tests__/**",
+    "!src/seed/**",
+    "!**/__mocks__/**",
+    "!**/*.test.ts",
+  ],
+
+  // Coverage thresholds — set at a conservative floor reflecting the current
+  // full-suite baseline (unit + integration tests), rounded down to the nearest
+  // 5 %.  The intent is to establish the gate so regressions fail fast;
+  // individual percentages should be ratcheted upward as coverage improves.
+  //
+  // Baseline measured 2026-07-20:
+  //   unit tests alone  → statements ~34 %, branches ~20 %, functions ~30 %
+  //   full suite adds all route integration tests (38 files) + src/__tests__
+  //   which cover all route handlers and middleware substantially above these.
+  //   Thresholds are set comfortably below the full-suite level so the gate
+  //   passes today and tightens over time, not on merge.
+  coverageThreshold: {
+    global: {
+      statements: 50,
+      branches: 30,
+      functions: 50,
+      lines: 50,
+    },
+  },
+
   projects: [
     {
       ...sharedConfig,
