@@ -22,8 +22,8 @@ import {
   getOpenAIModelForFeature,
   getPoeChainForFeature,
   getProvider,
-  tryGetOpenAIFallbackClient,
   type PoeFeature,
+  tryGetOpenAIFallbackClient,
 } from "./aiProvider";
 import { logger } from "./logger";
 
@@ -68,7 +68,7 @@ export function isPoeCallTransientError(err: unknown): boolean {
  * When this fires, all bots sharing the same API key will also fail, so the
  * chain is abandoned immediately and the Replit AI fallback is tried instead.
  */
-export function isPoeQuotaError(err: unknown): boolean {
+function isPoeQuotaError(err: unknown): boolean {
   const status =
     err != null && typeof err === "object" && "status" in err
       ? (err as { status: unknown }).status
