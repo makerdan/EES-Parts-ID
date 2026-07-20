@@ -11,6 +11,7 @@
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "node scripts/run-tests.mjs",
+    "test:coverage": "node scripts/run-tests.mjs --coverage",
     "seed": "tsx src/seed/run.ts",
     "seed:reference": "tsx src/seed/runQuickLookupChips.ts",
     "seed:barcodes": "tsx src/seed/import-barcodes.ts",
