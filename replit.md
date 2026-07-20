@@ -78,6 +78,17 @@ Admin endpoints enforce multi-factor authentication when `ENFORCE_ADMIN_MFA=true
 
 Relevant file: `artifacts/api-server/src/middlewares/requireAdminAuth.ts`
 
+## shadcn/ui update runbook
+
+The Canvas artifact (`artifacts/mockup-sandbox`) uses shadcn/ui scaffold files in `src/components/ui/`. These files are auto-generated and are **not** audited automatically when `shadcn add` is run or when a dependency (e.g. `recharts`, `input-otp`) is bumped.
+
+**After any `shadcn add` or package bump that touches a shadcn dependency:**
+
+1. Run `pnpm --filter mockup-sandbox run typecheck` and confirm it exits 0.
+2. Fix any type errors before committing — scaffold files frequently use APIs that shift between package versions (e.g. recharts chart prop types, input-otp slot render props).
+
+The `canvas-typecheck` validation step enforces this automatically on every merge (it is wired into the Project CI gate). Running it locally before committing avoids a failed merge gate.
+
 ## User preferences
 
 - **Tasks must never silently wait for user input.** If a task agent (or any

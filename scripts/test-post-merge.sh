@@ -1298,6 +1298,49 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 35: canvas-typecheck is wired into the required CI gate
+#
+# Verifies two structural invariants in .replit:
+#   (a) A workflow named "canvas-typecheck" exists AND carries isValidation=true,
+#       proving it is a recognised quality gate and not just an ad-hoc script.
+#   (b) The "Project" workflow (the runButton CI gate) lists "canvas-typecheck"
+#       as one of its tasks, proving that a future shadcn/ui scaffold update or
+#       package bump that re-introduces type errors will fail the build
+#       automatically on every merge rather than silently accumulating again.
+#
+# Background: recharts and input-otp changed their exported types after the
+# shadcn/ui scaffold was generated; the 11 resulting TS errors were not caught
+# until a manual audit because canvas-typecheck was not in the CI gate.
+# ---------------------------------------------------------------------------
+CANVAS_TC_LINE=$(grep -n 'name = "canvas-typecheck"' "$REPLIT_CFG" | head -1 | cut -d: -f1)
+if [[ -n "$CANVAS_TC_LINE" ]]; then
+  pass "canvas-typecheck — workflow declared in .replit"
+else
+  fail "canvas-typecheck — workflow NOT found in .replit (add a [[workflows.workflow]] block named 'canvas-typecheck')"
+fi
+
+if [[ -n "$CANVAS_TC_LINE" ]]; then
+  NEXT_CANVAS_WORKFLOW_LINE=$(awk -v start="$CANVAS_TC_LINE" 'NR > start && /^\[\[workflows\.workflow\]\]/ { print NR; exit }' "$REPLIT_CFG")
+  if [[ -z "$NEXT_CANVAS_WORKFLOW_LINE" ]]; then
+    NEXT_CANVAS_WORKFLOW_LINE=$(wc -l < "$REPLIT_CFG")
+  fi
+  CANVAS_TC_BLOCK=$(sed -n "${CANVAS_TC_LINE},${NEXT_CANVAS_WORKFLOW_LINE}p" "$REPLIT_CFG")
+
+  if echo "$CANVAS_TC_BLOCK" | grep -q 'isValidation = true'; then
+    pass "canvas-typecheck — isValidation = true set on the workflow"
+  else
+    fail "canvas-typecheck — isValidation = true NOT found in the canvas-typecheck workflow block"
+  fi
+fi
+
+# Reuse PROJECT_BLOCK extracted in Test 34 (same variable, same scope).
+if echo "$PROJECT_BLOCK" | grep -q 'args = "canvas-typecheck"'; then
+  pass "canvas-typecheck — listed as a task in the Project CI gate"
+else
+  fail "canvas-typecheck — NOT listed as a task in the Project CI gate (add a [[workflows.workflow.tasks]] entry with args = \"canvas-typecheck\")"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
