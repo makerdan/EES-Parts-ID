@@ -9,7 +9,7 @@
     "dev": "fuser -k -KILL ${PORT}/tcp 2>/dev/null || true; while fuser ${PORT}/tcp 2>/dev/null >/dev/null 2>&1; do sleep 0.2; done && NODE_ENV=development exec tsx src/index.ts",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck.tsbuildinfo && tsc -p tsconfig.test.json --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck-test.tsbuildinfo",
     "test": "node scripts/run-tests.mjs",
     "test:coverage": "node scripts/run-tests.mjs --coverage",
     "seed": "tsx src/seed/run.ts",

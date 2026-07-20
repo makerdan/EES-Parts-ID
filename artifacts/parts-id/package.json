@@ -10,7 +10,7 @@
     "serve": "fuser -k -KILL ${PORT}/tcp 2>/dev/null || true && node server/serve.js",
     "pretest": "node scripts/generate-router-types.mjs",
     "pretypecheck": "node scripts/generate-router-types.mjs && node scripts/check-shim-compat-versions.mjs",
-    "typecheck": "pnpm -w run typecheck:libs && tsc -p tsconfig.json --noEmit",
+    "typecheck": "pnpm -w run typecheck:libs && tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck.tsbuildinfo",
     "test": "node scripts/run-tests.mjs",
     "lint": "eslint . --ext .ts,.tsx",
     "check:bundle-domain": "node scripts/check-bundle-domain.js"
