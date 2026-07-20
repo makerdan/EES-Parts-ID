@@ -6,10 +6,10 @@
  * API layers. The fast path (res.locals.appUser already set by requireAppAuth)
  * is used so no database round-trip is needed.
  *
- * Three cases per the task spec:
- *   (a) Admin session WITH a recognised MFA amr claim + ENFORCE_ADMIN_MFA=true → passes (next() called)
- *   (b) Admin session WITHOUT MFA amr claim      + ENFORCE_ADMIN_MFA=true → 403 MFA_REQUIRED
- *   (c) ENFORCE_ADMIN_MFA unset                  → passes regardless of amr (backward-compat default)
+ * MFA is enforced by default. Three cases:
+ *   (a) Admin session WITH a recognised MFA amr claim (default) → passes (next() called)
+ *   (b) Admin session WITHOUT MFA amr claim (default)           → 403 MFA_REQUIRED
+ *   (c) SKIP_ADMIN_MFA=true                                     → passes regardless of amr
  */
 
 import { type NextFunction, type Request, type Response } from "express";
@@ -69,20 +69,20 @@ function buildMocks(role: "admin" | "user" | undefined = "admin") {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("requireAdminAuth — MFA enforcement", () => {
-  const ORIGINAL_ENFORCE = process.env.ENFORCE_ADMIN_MFA;
+  const ORIGINAL_SKIP = process.env.SKIP_ADMIN_MFA;
 
   afterEach(() => {
     // Restore env between tests.
-    if (ORIGINAL_ENFORCE === undefined) {
-      delete process.env.ENFORCE_ADMIN_MFA;
+    if (ORIGINAL_SKIP === undefined) {
+      delete process.env.SKIP_ADMIN_MFA;
     } else {
-      process.env.ENFORCE_ADMIN_MFA = ORIGINAL_ENFORCE;
+      process.env.SKIP_ADMIN_MFA = ORIGINAL_SKIP;
     }
     mockSessionClaims = null;
   });
 
-  it("(a) passes when admin session includes totp amr claim and ENFORCE_ADMIN_MFA=true", () => {
-    process.env.ENFORCE_ADMIN_MFA = "true";
+  it("(a) passes when admin session includes totp amr claim (MFA enforced by default)", () => {
+    delete process.env.SKIP_ADMIN_MFA;
     mockSessionClaims = { amr: ["pwd", "totp"] };
 
     const { req, res, next } = buildMocks("admin");
@@ -92,8 +92,8 @@ describe("requireAdminAuth — MFA enforcement", () => {
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it("(a) passes when admin session includes phone_code amr claim and ENFORCE_ADMIN_MFA=true", () => {
-    process.env.ENFORCE_ADMIN_MFA = "true";
+  it("(a) passes when admin session includes phone_code amr claim (MFA enforced by default)", () => {
+    delete process.env.SKIP_ADMIN_MFA;
     mockSessionClaims = { amr: ["pwd", "phone_code"] };
 
     const { req, res, next } = buildMocks("admin");
@@ -103,8 +103,8 @@ describe("requireAdminAuth — MFA enforcement", () => {
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it("(b) returns 403 MFA_REQUIRED when amr is absent and ENFORCE_ADMIN_MFA=true", () => {
-    process.env.ENFORCE_ADMIN_MFA = "true";
+  it("(b) returns 403 MFA_REQUIRED when amr is absent (MFA enforced by default)", () => {
+    delete process.env.SKIP_ADMIN_MFA;
     mockSessionClaims = { amr: ["pwd"] };
 
     const { req, res, next } = buildMocks("admin");
@@ -118,8 +118,8 @@ describe("requireAdminAuth — MFA enforcement", () => {
     );
   });
 
-  it("(b) returns 403 MFA_REQUIRED when sessionClaims is null and ENFORCE_ADMIN_MFA=true", () => {
-    process.env.ENFORCE_ADMIN_MFA = "true";
+  it("(b) returns 403 MFA_REQUIRED when sessionClaims is null (MFA enforced by default)", () => {
+    delete process.env.SKIP_ADMIN_MFA;
     mockSessionClaims = null;
 
     const { req, res, next } = buildMocks("admin");
@@ -133,8 +133,8 @@ describe("requireAdminAuth — MFA enforcement", () => {
     );
   });
 
-  it("(c) passes without MFA when ENFORCE_ADMIN_MFA is unset (backward-compatible default)", () => {
-    delete process.env.ENFORCE_ADMIN_MFA;
+  it("(c) passes without MFA when SKIP_ADMIN_MFA=true", () => {
+    process.env.SKIP_ADMIN_MFA = "true";
     mockSessionClaims = { amr: ["pwd"] };
 
     const { req, res, next } = buildMocks("admin");
@@ -144,8 +144,8 @@ describe("requireAdminAuth — MFA enforcement", () => {
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it("(c) passes without MFA when ENFORCE_ADMIN_MFA=false", () => {
-    process.env.ENFORCE_ADMIN_MFA = "false";
+  it("(c) passes without MFA when SKIP_ADMIN_MFA=true and sessionClaims is null", () => {
+    process.env.SKIP_ADMIN_MFA = "true";
     mockSessionClaims = null;
 
     const { req, res, next } = buildMocks("admin");
@@ -156,7 +156,7 @@ describe("requireAdminAuth — MFA enforcement", () => {
   });
 
   it("non-admin users are rejected with 403 regardless of MFA settings", () => {
-    process.env.ENFORCE_ADMIN_MFA = "true";
+    delete process.env.SKIP_ADMIN_MFA;
     mockSessionClaims = { amr: ["pwd", "totp"] };
 
     const { req, res, next } = buildMocks("user");
