@@ -13,6 +13,14 @@ module.exports = {
     '@typescript-eslint/array-type': ['error', { default: 'generic' }],
     'simple-import-sort/imports': 'error',
     'simple-import-sort/exports': 'error',
+    'no-restricted-imports': ['error', {
+      patterns: [
+        {
+          group: ['@workspace/api-client-react', '@workspace/api-client-react/*'],
+          message: 'Do not import @workspace/api-client-react in the API server. React Query is a client-side concern; use @workspace/db or @workspace/api-zod instead.',
+        },
+      ],
+    }],
     // Disable the built-in rule in favour of the unused-imports version,
     // which also auto-removes entire import statements when all named imports
     // from that statement are unused.
