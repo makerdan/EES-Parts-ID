@@ -66,13 +66,15 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 
 ## Admin MFA Enforcement
 
-Admin endpoints enforce multi-factor authentication when `ENFORCE_ADMIN_MFA=true` is set on the API server. When enabled, any admin session that lacks a completed second factor (`totp`, `phone_code`, or hardware key) in the Clerk `amr` session claim receives:
+Admin endpoints enforce multi-factor authentication **by default**. Any admin session that lacks a completed second factor (`totp`, `phone_code`, or hardware key) in the Clerk `amr` session claim receives:
 
 ```
 403 { error: "MFA required for admin access", code: "MFA_REQUIRED" }
 ```
 
-**Enabling:** Set `ENFORCE_ADMIN_MFA=true` in the API server environment (Replit Secrets → api-server). Leave unset (or set to anything other than `"true"`) to disable — the default is backward-compatible and MFA is not required.
+**Disabling (not recommended):** Set `SKIP_ADMIN_MFA=true` in the API server environment (Replit Secrets → api-server). The server emits a startup warning whenever this flag is set. Do not set it in production deployments.
+
+> **Migration from the old opt-in flag:** If your deployment previously set `ENFORCE_ADMIN_MFA=true`, you can safely remove that variable — MFA is now on by default and that variable is no longer read.
 
 **Admin enrollment:** Admins enable two-factor authentication through the Clerk account portal (Settings → Security → Two-step verification). The mobile app surfaces an Alert with a button to open the portal when MFA is required.
 

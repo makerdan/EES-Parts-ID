@@ -17,12 +17,13 @@ import { logger } from "../lib/logger";
  * an admin, matching the guarantee enforced in `requireAppAuth`.
  *
  * MFA enforcement:
- *   When the environment variable ENFORCE_ADMIN_MFA=true is set, admin users
- *   must have completed a second authentication factor (TOTP, phone code, or
- *   hardware key) as evidenced by the `amr` claim in their Clerk session token.
+ *   MFA is enforced by default. Admin users must have completed a second
+ *   authentication factor (TOTP, phone code, or hardware key) as evidenced by
+ *   the `amr` claim in their Clerk session token.
  *   Sessions that only contain password authentication (`pwd`) receive:
  *     403 { error: "MFA required for admin access", code: "MFA_REQUIRED" }
- *   To enable: set ENFORCE_ADMIN_MFA=true in the API server's environment.
+ *   To disable (not recommended): set SKIP_ADMIN_MFA=true in the API server's
+ *   environment. The server will emit a startup warning when this flag is set.
  *   Admins enroll via the Clerk account portal (Settings → Security → Two-step
  *   verification), or in-app via the Clerk user profile component.
  *
@@ -47,12 +48,13 @@ function sessionHasMfa(req: Request): boolean {
 }
 
 /**
- * When ENFORCE_ADMIN_MFA=true, returns 403 { code: "MFA_REQUIRED" } if the
- * session does not include a second factor. Returns false when the check is
- * disabled or when MFA is satisfied (caller should call next()).
+ * Returns 403 { code: "MFA_REQUIRED" } if the session does not include a
+ * second factor, unless SKIP_ADMIN_MFA=true explicitly disables enforcement.
+ * Returns false when MFA is satisfied or enforcement is disabled (caller
+ * should call next()).
  */
 function rejectIfMfaMissing(req: Request, res: Response): boolean {
-  if (process.env.ENFORCE_ADMIN_MFA !== "true") return false;
+  if (process.env.SKIP_ADMIN_MFA === "true") return false;
   if (sessionHasMfa(req)) return false;
   res.status(403).json({
     error: "MFA required for admin access",

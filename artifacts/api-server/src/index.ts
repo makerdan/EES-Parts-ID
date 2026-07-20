@@ -46,10 +46,10 @@ if (Number.isNaN(port) || port <= 0) {
 
 validateEnv();
 
-if (process.env["ENFORCE_ADMIN_MFA"] !== "true") {
+if (process.env["SKIP_ADMIN_MFA"] === "true") {
   logger.warn(
-    { ENFORCE_ADMIN_MFA: process.env["ENFORCE_ADMIN_MFA"] ?? "(unset)" },
-    "Admin MFA enforcement is disabled (ENFORCE_ADMIN_MFA is not set to 'true')",
+    { SKIP_ADMIN_MFA: "true" },
+    "Admin MFA enforcement is DISABLED (SKIP_ADMIN_MFA=true) — admin accounts are not protected by MFA",
   );
 }
 
