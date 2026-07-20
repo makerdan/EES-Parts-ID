@@ -154,9 +154,7 @@ assert_exit "extra JSON fields accepted — exit 0" 0 $?
 # Ensures the codegen command is present in the script and appears before
 # the first health check so generated files are always fresh after a merge.
 # ---------------------------------------------------------------------------
-SCRIPT_CONTENT=$(cat "$SCRIPT_DIR/post-merge.sh")
-
-if echo "$SCRIPT_CONTENT" | grep -qE 'api-spec (run codegen|exec orval)'; then
+if grep -qE 'api-spec (run codegen|exec orval)' "$SCRIPT_DIR/post-merge.sh"; then
   pass "codegen — command present in post-merge.sh"
 else
   fail "codegen — command missing from post-merge.sh"
@@ -235,9 +233,7 @@ fi
 # Ensures install cannot hang indefinitely and does not block the health check
 # within the 20s platform budget.
 # ---------------------------------------------------------------------------
-SCRIPT_CONTENT=$(cat "$SCRIPT_DIR/post-merge.sh")
-
-if echo "$SCRIPT_CONTENT" | grep -qP 'timeout\s+[0-9]+\s+.*pnpm install'; then
+if grep -qP 'timeout\s+[0-9]+\s+.*pnpm install' "$SCRIPT_DIR/post-merge.sh"; then
   pass "pnpm install — wrapped with timeout guard"
 else
   fail "pnpm install — must be wrapped with 'timeout <N> ... pnpm install'"
@@ -253,7 +249,7 @@ fi
 
 # Install must run in the background (trailing &) so it does not block the
 # health check within the 20s platform post-merge budget.
-if echo "$SCRIPT_CONTENT" | grep -qP 'pnpm install.*&\s*$'; then
+if grep -qP 'pnpm install.*&\s*$' "$SCRIPT_DIR/post-merge.sh"; then
   pass "pnpm install — runs in background (non-blocking)"
 else
   fail "pnpm install — must run in background with trailing & to avoid blocking health check"
@@ -297,9 +293,7 @@ assert_contains "install timeout — prints timeout message" "background" "$INST
 # Ensures the FTS index check is wired into the deploy flow and cannot
 # be accidentally removed without the test suite catching it.
 # ---------------------------------------------------------------------------
-SCRIPT_CONTENT=$(cat "$SCRIPT_DIR/post-merge.sh")
-
-if echo "$SCRIPT_CONTENT" | grep -q 'verify-fts'; then
+if grep -q 'verify-fts' "$SCRIPT_DIR/post-merge.sh"; then
   pass "verify-fts — command present in post-merge.sh"
 else
   fail "verify-fts — command missing from post-merge.sh"
@@ -846,15 +840,13 @@ fi
 #   (c) wrap the test with `timeout 30` (so a slow server boot cannot produce
 #       a silent CI hang)
 # ---------------------------------------------------------------------------
-SCRIPT_CONTENT=$(cat "$SCRIPT_DIR/post-merge.sh")
-
-if echo "$SCRIPT_CONTENT" | grep -q 'svgViewBoxApiSync'; then
+if grep -q 'svgViewBoxApiSync' "$SCRIPT_DIR/post-merge.sh"; then
   pass "viewbox-sync — svgViewBoxApiSync test invocation present in post-merge.sh"
 else
   fail "viewbox-sync — svgViewBoxApiSync test invocation MISSING from post-merge.sh"
 fi
 
-if echo "$SCRIPT_CONTENT" | grep -q 'EXPO_PUBLIC_API_BASE'; then
+if grep -q 'EXPO_PUBLIC_API_BASE' "$SCRIPT_DIR/post-merge.sh"; then
   pass "viewbox-sync — EXPO_PUBLIC_API_BASE is set in post-merge.sh (check cannot be silently skipped)"
 else
   fail "viewbox-sync — EXPO_PUBLIC_API_BASE is not set in post-merge.sh; the check would be silently skipped"
