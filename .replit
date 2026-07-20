@@ -20,7 +20,7 @@ isValidation = true
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/parts-id run lint && pnpm --filter @workspace/api-server run lint && pnpm run lint:libs"
+args = "node scripts/check-db-reachability.mjs && pnpm --filter @workspace/parts-id run lint && pnpm --filter @workspace/api-server run lint && pnpm run lint:libs"
 
 [[workflows.workflow]]
 name = "codegen:check"
