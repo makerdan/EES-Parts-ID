@@ -33,7 +33,9 @@ assert_exit() {
 
 assert_contains() {
   local name="$1" needle="$2" haystack="$3"
-  if echo "$haystack" | grep -q "$needle"; then
+  # Pure-bash substring match: `echo | grep -q` under `set -o pipefail` fails
+  # spuriously when grep exits at first match and echo takes a SIGPIPE (141).
+  if [[ "$haystack" == *"$needle"* ]]; then
     pass "$name"
   else
     fail "$name (expected to find: $needle)"
@@ -58,6 +60,31 @@ set +e
 sleep() { :; }
 
 # ---------------------------------------------------------------------------
+# Fast environment for full-run subprocess spawns of post-merge.sh.
+#
+# The sleep() override above only applies to functions sourced into THIS
+# shell; a spawned `bash post-merge.sh` gets the real /bin/sleep.  Without
+# this, every spawn pays the 2s codegen-settle floor (~11 spawns ≈ 22s), and
+# sync-github.sh performs a real network push whenever GITHUB_TOKEN is set.
+#
+#   CODEGEN_SETTLE_* = 0  — wait_for_codegen_settle returns immediately
+#                           (sleep 0 + empty poll window); the settle
+#                           behaviour itself is unit-tested via the sourced
+#                           function in Tests 23/24 with mocked sleep.
+#   GITHUB_TOKEN=""       — sync-github.sh's -z guard fires and it exits 0
+#                           without any network call.
+#
+# Every subprocess spawn below is prefixed with:
+#   env "${FAST_SPAWN_ENV[@]}" ...
+# ---------------------------------------------------------------------------
+FAST_SPAWN_ENV=(
+  CODEGEN_SETTLE_FLOOR_SECS=0
+  CODEGEN_SETTLE_MAX_SECS=0
+  CODEGEN_SETTLE_POLL_SECS=1
+  GITHUB_TOKEN=
+)
+
+# ---------------------------------------------------------------------------
 # File-backed mock for curl.
 #
 # check_api_health calls curl inside a $(...) command substitution, which
@@ -71,6 +98,7 @@ sleep() { :; }
 #   total          — number of pre-programmed responses
 # ---------------------------------------------------------------------------
 MOCK_DIR=$(mktemp -d)
+HEAVY_DIR=$(mktemp -d)
 
 # ---------------------------------------------------------------------------
 # Process cleanup (Port-Authority pattern).
@@ -114,10 +142,75 @@ cleanup() {
       kill -KILL $survivors 2>/dev/null || true
     fi
   fi
-  rm -rf "$MOCK_DIR"
+  rm -rf "$MOCK_DIR" "$HEAVY_DIR"
   exit "$ec"
 }
 trap cleanup EXIT TERM INT
+
+# ---------------------------------------------------------------------------
+# Heavy real checks run as background jobs launched up front.
+#
+# The five real quality-gate commands (parts-id typecheck, api-server
+# typecheck, eslint, knip, env:check) dominate the wall-clock time of this
+# suite when run serially (~50s).  They are independent of every mocked test,
+# so we launch them all here and only collect their results at the original
+# test positions below.  Each job writes <name>.out and <name>.exit into
+# HEAVY_DIR; heavy_wait blocks (with a real sleep, bypassing the no-op mock)
+# until the exit file appears.
+#
+# typecheck:libs runs ONCE in the foreground first (with the original 3-retry
+# loop) so both typecheck jobs read stable compiled lib declarations and the
+# two concurrent jobs never race each other inside tsc --build.
+# ---------------------------------------------------------------------------
+run_heavy() {
+  local name="$1"; shift
+  (
+    local out exit_code
+    out=$("$@" 2>&1); exit_code=$?
+    printf '%s' "$out" > "$HEAVY_DIR/${name}.out"
+    echo "$exit_code" > "$HEAVY_DIR/${name}.exit"
+  ) &
+}
+
+heavy_wait() {
+  local name="$1"
+  while [[ ! -f "$HEAVY_DIR/${name}.exit" ]]; do command sleep 0.2; done
+  HEAVY_OUTPUT=$(cat "$HEAVY_DIR/${name}.out")
+  HEAVY_EXIT=$(cat "$HEAVY_DIR/${name}.exit")
+}
+
+# eslint, knip and env:check do not read the compiled lib declarations, so
+# they can start before typecheck:libs completes — overlapping their runtime
+# with the foreground lib build below.
+run_heavy api_eslint      bash -c 'cd "$1/../artifacts/api-server" && pnpm exec eslint . --ext .ts' _ "$SCRIPT_DIR"
+run_heavy api_knip        pnpm --filter @workspace/api-server dead-exports
+run_heavy env_check       pnpm --filter @workspace/scripts env:check
+
+# Build workspace lib declarations once, with retries to survive a concurrent
+# codegen:check run deleting src/generated/ mid-build (TS6307).
+TYPECHECK_LIBS_EXIT=1
+TYPECHECK_LIBS_OUTPUT=""
+for _attempt in 1 2 3; do
+  TYPECHECK_LIBS_OUTPUT=$(pnpm -w run typecheck:libs 2>&1)
+  TYPECHECK_LIBS_EXIT=$?
+  if [[ "$TYPECHECK_LIBS_EXIT" -eq 0 ]]; then
+    break
+  fi
+  command sleep 2
+done
+
+# The typecheck jobs invoke tsc directly with the same flags as the package
+# "typecheck" scripts, but skip the scripts' pre-steps (typecheck:libs and
+# codegen:ensure) because this suite already ran typecheck:libs — which itself
+# runs codegen:ensure — in the foreground above.  parts-id's pretypecheck
+# (router-type generation + shim check) is still run since tsc depends on the
+# generated router.d.ts being current.
+#
+# knip runs ONCE (api_knip): the api-server "lint" script is `eslint && knip`,
+# so the eslint-only job plus the knip job together cover the combined lint
+# gate without paying for a duplicate knip run.
+run_heavy parts_typecheck bash -c 'cd "$1/../artifacts/parts-id" && node scripts/generate-router-types.mjs && node scripts/check-shim-compat-versions.mjs && pnpm exec tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck.tsbuildinfo' _ "$SCRIPT_DIR"
+run_heavy api_typecheck   bash -c 'cd "$1/../artifacts/api-server" && pnpm exec tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck.tsbuildinfo && pnpm exec tsc -p tsconfig.test.json --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck-test.tsbuildinfo' _ "$SCRIPT_DIR"
 
 reset_mock() {
   echo 0 > "$MOCK_DIR/count"
@@ -249,13 +342,13 @@ PARTS_TOML="$SCRIPT_DIR/../artifacts/parts-id/.replit-artifact/artifact.toml"
 if [[ -f "$PARTS_PKG" ]]; then
   DEV_SCRIPT=$(grep -E '"dev"\s*:' "$PARTS_PKG" || true)
 
-  if echo "$DEV_SCRIPT" | grep -q -- '--port \$PORT'; then
+  if [[ "$DEV_SCRIPT" == *'--port $PORT'* ]]; then
     pass "metro-port-guard — --port \$PORT present in parts-id dev script"
   else
     fail "metro-port-guard — --port \$PORT MISSING from parts-id dev script"
   fi
 
-  if echo "$DEV_SCRIPT" | grep -qE 'CI=1|--non-interactive'; then
+  if [[ "$DEV_SCRIPT" == *'CI=1'* || "$DEV_SCRIPT" == *'--non-interactive'* ]]; then
     pass "metro-port-guard — non-interactive flag (CI=1 or --non-interactive) present in parts-id dev script"
   else
     fail "metro-port-guard — non-interactive flag (CI=1 or --non-interactive) MISSING from parts-id dev script"
@@ -327,8 +420,17 @@ echo '{"status":"ok"}'
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR/curl"
 
-INSTALL_BG_OUTPUT=$(PATH="$MOCK_BIN_DIR:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
-INSTALL_BG_EXIT=$?
+# Retry up to 3 times: under full CPU load from the concurrent heavy jobs a
+# mock-binary fork/exec can transiently fail, making post-merge.sh take the
+# "lockfile unchanged" branch.  A genuine regression fails all attempts.
+for _attempt in 1 2 3; do
+  INSTALL_BG_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+  INSTALL_BG_EXIT=$?
+  if [[ "$INSTALL_BG_EXIT" -eq 0 && "$INSTALL_BG_OUTPUT" == *background* ]]; then
+    break
+  fi
+  command sleep 0.5
+done
 rm -rf "$MOCK_BIN_DIR"
 
 assert_exit     "install timeout — exits non-zero"         0 "$INSTALL_BG_EXIT"
@@ -386,7 +488,7 @@ echo '{"status":"ok"}'
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR2/curl"
 
-SKIP_DB_OUTPUT=$(PATH="$MOCK_BIN_DIR2:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+SKIP_DB_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR2:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
 SKIP_DB_EXIT=$?
 rm -rf "$MOCK_BIN_DIR2"
 
@@ -431,7 +533,7 @@ echo '{"status":"ok"}'
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR3/curl"
 
-SCHEMA_DB_OUTPUT=$(PATH="$MOCK_BIN_DIR3:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+SCHEMA_DB_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR3:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
 SCHEMA_DB_EXIT=$?
 rm -rf "$MOCK_BIN_DIR3"
 
@@ -501,31 +603,21 @@ fi
 # stable compiled .d.ts files rather than the volatile generated TS source
 # files that codegen:check may clean concurrently in the validation framework.
 #
-# Retry up to 3 times: if codegen:check is running concurrently and orval
-# deletes src/generated/ mid-run, tsc --build can hit TS6307.  Retrying
-# waits for orval to finish writing so the second attempt always succeeds.
+# typecheck:libs ran once (with 3 retries) at the top of this suite before
+# the background typecheck jobs were launched; assert its stored result here.
+# The parts-id typecheck itself runs as a background job launched up front;
+# heavy_wait collects its result.
 # ---------------------------------------------------------------------------
-TYPECHECK_LIBS_EXIT=1
-TYPECHECK_LIBS_OUTPUT=""
-for _attempt in 1 2 3; do
-  TYPECHECK_LIBS_OUTPUT=$(pnpm -w run typecheck:libs 2>&1)
-  TYPECHECK_LIBS_EXIT=$?
-  if [[ "$TYPECHECK_LIBS_EXIT" -eq 0 ]]; then
-    break
-  fi
-  sleep 2
-done
 assert_exit "typecheck:libs — workspace libraries tsc --build exits 0 (before parts-id check)" 0 "$TYPECHECK_LIBS_EXIT"
 if [[ "$TYPECHECK_LIBS_EXIT" -ne 0 ]]; then
   echo "  typecheck:libs output (first 20 lines):"
   echo "$TYPECHECK_LIBS_OUTPUT" | head -20 | sed 's/^/    /'
 fi
-TYPECHECK_OUTPUT=$(pnpm --filter @workspace/parts-id run typecheck 2>&1)
-TYPECHECK_EXIT=$?
-assert_exit "typecheck — parts-id tsc --noEmit exits 0" 0 "$TYPECHECK_EXIT"
-if [[ "$TYPECHECK_EXIT" -ne 0 ]]; then
+heavy_wait parts_typecheck
+assert_exit "typecheck — parts-id tsc --noEmit exits 0" 0 "$HEAVY_EXIT"
+if [[ "$HEAVY_EXIT" -ne 0 ]]; then
   echo "  typecheck output (first 20 lines):"
-  echo "$TYPECHECK_OUTPUT" | head -20 | sed 's/^/    /'
+  echo "$HEAVY_OUTPUT" | head -20 | sed 's/^/    /'
 fi
 
 # ---------------------------------------------------------------------------
@@ -564,7 +656,7 @@ echo '{"status":"ok"}'
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR16/curl"
 
-CODEGEN_NO_DRIFT_OUTPUT=$(PATH="$MOCK_BIN_DIR16:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+CODEGEN_NO_DRIFT_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR16:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
 CODEGEN_NO_DRIFT_EXIT=$?
 
 if [[ -f "$CODEGEN_CHECK_CALLED_FILE16" ]]; then
@@ -613,7 +705,7 @@ echo '{"status":"ok"}'
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR17/curl"
 
-CODEGEN_FAIL_OUTPUT=$(PATH="$MOCK_BIN_DIR17:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+CODEGEN_FAIL_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR17:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
 CODEGEN_FAIL_EXIT=$?
 rm -rf "$MOCK_BIN_DIR17"
 
@@ -670,7 +762,7 @@ echo '{"status":"ok"}'
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR18/curl"
 
-INSTALL_FAIL_OUTPUT=$(PATH="$MOCK_BIN_DIR18:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+INSTALL_FAIL_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR18:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
 INSTALL_FAIL_EXIT=$?
 rm -rf "$MOCK_BIN_DIR18"
 
@@ -685,12 +777,11 @@ assert_contains "install fail — proceeds to health check after install wait"  
 # added to server code without a matching .env.example entry will fail here,
 # catching the omission at the health-gate before it reaches a reviewer.
 # ---------------------------------------------------------------------------
-ENV_CHECK_OUTPUT=$(pnpm --filter @workspace/scripts env:check 2>&1)
-ENV_CHECK_EXIT=$?
-assert_exit "env:check — exits 0 (all vars documented)" 0 "$ENV_CHECK_EXIT"
-if [[ "$ENV_CHECK_EXIT" -ne 0 ]]; then
+heavy_wait env_check
+assert_exit "env:check — exits 0 (all vars documented)" 0 "$HEAVY_EXIT"
+if [[ "$HEAVY_EXIT" -ne 0 ]]; then
   echo "  env:check output:"
-  echo "$ENV_CHECK_OUTPUT" | sed 's/^/    /'
+  echo "$HEAVY_OUTPUT" | sed 's/^/    /'
 fi
 
 # ---------------------------------------------------------------------------
@@ -699,24 +790,30 @@ fi
 # The api-server "lint" script is `eslint . --ext .ts && knip`.  Because the
 # two checks are joined with `&&`, a failing eslint step short-circuits before
 # knip ever runs, so a green "lint" result on its own does NOT prove that the
-# knip (unused exports/imports) portion passed.  We therefore assert eslint and
-# knip independently below so a knip config drift (e.g. a new entrypoint added
-# without updating knip.json) is caught here at the health-gate before merge,
-# not silently masked by the combined lint script.
+# knip (unused exports/imports) portion passed.  This suite therefore runs
+# eslint and knip as SEPARATE background jobs (knip runs exactly once) and
+# asserts each independently; the combined lint gate passes iff both pass, so
+# a knip config drift (e.g. a new entrypoint added without updating knip.json)
+# is caught here at the health-gate before merge, not silently masked by the
+# combined lint script.
 # ---------------------------------------------------------------------------
-LINT_OUTPUT=$(pnpm --filter @workspace/api-server lint 2>&1)
-LINT_EXIT=$?
-assert_exit "api-server lint — exits 0 (eslint + knip combined)" 0 "$LINT_EXIT"
-if [[ "$LINT_EXIT" -ne 0 ]]; then
-  echo "  lint output (first 20 lines):"
-  echo "$LINT_OUTPUT" | head -20 | sed 's/^/    /'
+heavy_wait api_eslint
+ESLINT_EXIT=$HEAVY_EXIT
+ESLINT_OUTPUT=$HEAVY_OUTPUT
+heavy_wait api_knip
+KNIP_EXIT=$HEAVY_EXIT
+KNIP_OUTPUT=$HEAVY_OUTPUT
+
+LINT_COMBINED_EXIT=0
+if [[ "$ESLINT_EXIT" -ne 0 || "$KNIP_EXIT" -ne 0 ]]; then
+  LINT_COMBINED_EXIT=1
+fi
+assert_exit "api-server lint — exits 0 (eslint + knip combined)" 0 "$LINT_COMBINED_EXIT"
+if [[ "$ESLINT_EXIT" -ne 0 ]]; then
+  echo "  eslint output (first 20 lines):"
+  echo "$ESLINT_OUTPUT" | head -20 | sed 's/^/    /'
 fi
 
-# Independently verify the knip (dead-exports) portion exits 0.  This runs knip
-# on its own via the `dead-exports` script so it is checked even if a future
-# eslint failure would otherwise short-circuit the combined `lint` script.
-KNIP_OUTPUT=$(pnpm --filter @workspace/api-server dead-exports 2>&1)
-KNIP_EXIT=$?
 assert_exit "api-server knip — exits 0 (no unused exports/imports; config not drifted)" 0 "$KNIP_EXIT"
 if [[ "$KNIP_EXIT" -ne 0 ]]; then
   echo "  knip output (first 20 lines):"
@@ -734,32 +831,21 @@ fi
 # health-gate rather than slipping through unnoticed until a developer runs
 # the check manually.
 #
-# Build workspace lib declarations first so tsc reads stable compiled .d.ts
-# files.  Retry up to 3 times to survive a concurrent codegen:check run that
-# may delete src/generated/ mid-build (TS6307), mirroring the parts-id
-# typecheck guard above.
+# Workspace lib declarations were built once (with 3 retries) at the top of
+# this suite before the background typecheck jobs were launched; assert the
+# stored result here.  The api-server typecheck itself runs as a background
+# job launched up front; heavy_wait collects its result.
 # ---------------------------------------------------------------------------
-TYPECHECK_LIBS_EXIT2=1
-TYPECHECK_LIBS_OUTPUT2=""
-for _attempt in 1 2 3; do
-  TYPECHECK_LIBS_OUTPUT2=$(pnpm -w run typecheck:libs 2>&1)
-  TYPECHECK_LIBS_EXIT2=$?
-  if [[ "$TYPECHECK_LIBS_EXIT2" -eq 0 ]]; then
-    break
-  fi
-  sleep 2
-done
-assert_exit "typecheck:libs — workspace libraries tsc --build exits 0 (before api-server check)" 0 "$TYPECHECK_LIBS_EXIT2"
-if [[ "$TYPECHECK_LIBS_EXIT2" -ne 0 ]]; then
+assert_exit "typecheck:libs — workspace libraries tsc --build exits 0 (before api-server check)" 0 "$TYPECHECK_LIBS_EXIT"
+if [[ "$TYPECHECK_LIBS_EXIT" -ne 0 ]]; then
   echo "  typecheck:libs output (first 20 lines):"
-  echo "$TYPECHECK_LIBS_OUTPUT2" | head -20 | sed 's/^/    /'
+  echo "$TYPECHECK_LIBS_OUTPUT" | head -20 | sed 's/^/    /'
 fi
-API_TYPECHECK_OUTPUT=$(pnpm --filter @workspace/api-server run typecheck 2>&1)
-API_TYPECHECK_EXIT=$?
-assert_exit "api-server typecheck — full tsc (incl. tsconfig.test.json) exits 0" 0 "$API_TYPECHECK_EXIT"
-if [[ "$API_TYPECHECK_EXIT" -ne 0 ]]; then
+heavy_wait api_typecheck
+assert_exit "api-server typecheck — full tsc (incl. tsconfig.test.json) exits 0" 0 "$HEAVY_EXIT"
+if [[ "$HEAVY_EXIT" -ne 0 ]]; then
   echo "  api-server typecheck output (first 20 lines):"
-  echo "$API_TYPECHECK_OUTPUT" | head -20 | sed 's/^/    /'
+  echo "$HEAVY_OUTPUT" | head -20 | sed 's/^/    /'
 fi
 
 # ---------------------------------------------------------------------------
@@ -947,7 +1033,7 @@ echo '{"status":"ok"}'
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR27/curl"
 
-VIEWBOX_OUTPUT=$(PATH="$MOCK_BIN_DIR27:$PATH" PORT=8080 REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+VIEWBOX_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR27:$PATH" PORT=8080 REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
 VIEWBOX_EXIT=$?
 rm -rf "$MOCK_BIN_DIR27"
 
@@ -1044,7 +1130,7 @@ MOCKEOF
 chmod +x "$MOCK_BIN_DIR29/curl"
 
 PREFLIGHT_OUTPUT=$(
-  PATH="$MOCK_BIN_DIR29:$PATH" \
+  env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR29:$PATH" \
   REPLIT_DEV_DOMAIN="mock-domain.test" \
   bash -c "cd '$MOCK_WORKSPACE29' && bash '$SCRIPT_DIR/post-merge.sh'" 2>&1
 )
@@ -1094,7 +1180,7 @@ MOCKEOF
 chmod +x "$MOCK_BIN_DIR30/curl"
 
 POSTFLIGHT_OUTPUT=$(
-  PATH="$MOCK_BIN_DIR30:$PATH" \
+  env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR30:$PATH" \
   REPLIT_DEV_DOMAIN="mock-domain.test" \
   bash -c "cd '$MOCK_WORKSPACE30' && bash '$SCRIPT_DIR/post-merge.sh'" 2>&1
 )
@@ -1151,7 +1237,7 @@ echo '{"status":"ok"}'
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR31/curl"
 
-VIEWBOX_FAIL_OUTPUT=$(PATH="$MOCK_BIN_DIR31:$PATH" PORT=8080 REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+VIEWBOX_FAIL_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR31:$PATH" PORT=8080 REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
 VIEWBOX_FAIL_EXIT=$?
 rm -rf "$MOCK_BIN_DIR31"
 
@@ -1224,7 +1310,7 @@ echo '{"status":"ok"}'
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR32/curl"
 
-VIEWBOX_TIMEOUT_OUTPUT=$(PATH="$MOCK_BIN_DIR32:$PATH" PORT=8080 REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+VIEWBOX_TIMEOUT_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR32:$PATH" PORT=8080 REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
 VIEWBOX_TIMEOUT_EXIT=$?
 rm -rf "$MOCK_BIN_DIR32"
 
