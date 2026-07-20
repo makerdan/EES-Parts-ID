@@ -250,3 +250,18 @@ export const adminQueryLimiter = new SlidingWindowRateLimiter({
   windowMs: WINDOW_MS,
   namespace: "admin_query",
 });
+
+const CONTACT_MAX = Number(process.env.RATE_LIMIT_CONTACT_PER_10MIN ?? 5);
+const CONTACT_WINDOW_MS = 10 * 60_000;
+
+export const contactLimiter = new SlidingWindowRateLimiter({
+  maxRequests: CONTACT_MAX,
+  windowMs: CONTACT_WINDOW_MS,
+  namespace: "contact",
+});
+
+export const screenViewLimiter = new SlidingWindowRateLimiter({
+  maxRequests: CONTACT_MAX,
+  windowMs: CONTACT_WINDOW_MS,
+  namespace: "screen_view",
+});

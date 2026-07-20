@@ -46,6 +46,13 @@ if (Number.isNaN(port) || port <= 0) {
 
 validateEnv();
 
+if (process.env["ENFORCE_ADMIN_MFA"] !== "true") {
+  logger.warn(
+    { ENFORCE_ADMIN_MFA: process.env["ENFORCE_ADMIN_MFA"] ?? "(unset)" },
+    "Admin MFA enforcement is disabled (ENFORCE_ADMIN_MFA is not set to 'true')",
+  );
+}
+
 async function recoverOrphanedJobs(): Promise<void> {
   try {
     const result = await db

@@ -4,12 +4,21 @@ import { desc, eq } from "drizzle-orm";
 import { Router } from "express";
 
 import { logger } from "../lib/logger";
+import { contactLimiter } from "../lib/rateLimiter";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
 
 // POST /contact — submit a message (no auth required)
 router.post("/", async (req, res) => {
+  const ip = req.ip ?? "unknown";
+  const limitResult = await contactLimiter.check(ip);
+  if (!limitResult.allowed) {
+    return void res.status(429).json({
+      error: "Too many requests. Please try again later.",
+      retryAfterMs: limitResult.retryAfterMs,
+    });
+  }
   try {
     const { subject, body, senderToken } = req.body as {
       subject?: string;
