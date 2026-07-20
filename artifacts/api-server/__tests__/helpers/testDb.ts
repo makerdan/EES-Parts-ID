@@ -68,7 +68,20 @@ let _poolEnded = false;
 export async function closePool() {
   if (_poolEnded) return;
   _poolEnded = true;
-  await pool.end();
+  // Suites that jest.mock("@workspace/db") get a mocked module where `pool`
+  // is undefined (or a mock without end()); there is no real pool to close.
+  if (!pool || typeof pool.end !== "function") return;
+  // pg's Pool.end() throws if called twice. The _poolEnded flag guards the
+  // common case, but a second module instance (e.g. after jest.resetModules)
+  // can still race a pool that was already ended elsewhere — swallow that.
+  const p = pool as unknown as { ended?: boolean; ending?: boolean };
+  if (p.ended || p.ending) return;
+  try {
+    await pool.end();
+  } catch (err) {
+    if (err instanceof Error && /end.*(twice|more than once)/i.test(err.message)) return;
+    throw err;
+  }
 }
 
 export interface EditableItem {
