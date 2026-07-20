@@ -1,19 +1,18 @@
+import { sql } from "drizzle-orm";
 import {
+  boolean,
+  index,
+  integer,
+  jsonb,
   pgTable,
-  text,
+  real,
   serial,
+  text,
   timestamp,
   uniqueIndex,
-  index,
-  boolean,
-  real,
-  integer,
-  check,
-  jsonb,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
-import { sql } from "drizzle-orm";
 
 /**
  * Canonical tsvector expression for full-text search over the inventory table.

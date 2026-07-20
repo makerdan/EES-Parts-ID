@@ -1,6 +1,6 @@
 export {
+  type BatchOptions,
   batchProcess,
   batchProcessWithSSE,
   isRateLimitError,
-  type BatchOptions,
 } from "./utils";

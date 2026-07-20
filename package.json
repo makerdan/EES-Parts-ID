@@ -9,6 +9,7 @@
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run codegen:check && pnpm --filter @workspace/db run schema:check && pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "codegen:check": "pnpm --filter @workspace/api-spec run codegen:check",
+    "lint:libs": "eslint lib/ --ext .ts",
     "test": "bash scripts/test-all.sh",
     "audit": "pnpm audit",
     "audit:fix": "pnpm audit --fix"
@@ -18,6 +19,11 @@
     "node": "24.13.0"
   },
   "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.60.1",
+    "@typescript-eslint/parser": "^8.60.1",
+    "eslint": "^8.57.1",
+    "eslint-plugin-simple-import-sort": "^13.0.0",
+    "eslint-plugin-unused-imports": "^4.4.1",
     "prettier": "^3.8.1",
     "typescript": "~5.9.2"
   },

@@ -27,17 +27,18 @@
  */
 
 import { readFileSync } from "fs";
-import { resolve, dirname } from "path";
+import { dirname,resolve } from "path";
 import { fileURLToPath } from "url";
 import { parse as parseYaml } from "yaml";
+
 import {
-  buildSpecOperations,
-  parsePrefixMap,
   analyzeFile,
-  collectUnguardedJsonCalls,
-  checkSpecRouteCoverage,
+  buildSpecOperations,
   checkHandcraftedZodTypes,
+  checkSpecRouteCoverage,
+  collectUnguardedJsonCalls,
   type OpenApiSpec,
+  parsePrefixMap,
   type Violation,
 } from "./check-route-drift-helpers.js";
 
@@ -60,7 +61,7 @@ function main(): void {
 
   const prefixMap = parsePrefixMap(ROUTES_INDEX);
 
-  const allViolations: Violation[] = [];
+  const allViolations: Array<Violation> = [];
   for (const [filename, prefix] of prefixMap) {
     const filePath = resolve(ROUTES_DIR, filename);
     const violations = analyzeFile(filePath, prefix, specOps);
@@ -90,7 +91,7 @@ function main(): void {
   }
 
   // Group violations by file for readable output
-  const byFile = new Map<string, Violation[]>();
+  const byFile = new Map<string, Array<Violation>>();
   for (const v of allViolations) {
     const list = byFile.get(v.file) ?? [];
     list.push(v);

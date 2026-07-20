@@ -1,22 +1,22 @@
 export interface TaxonomyItemType {
   slug: string;
   label: string;
-  keywords: string[];
+  keywords: Array<string>;
 }
 
 export interface TaxonomySubcategory {
   slug: string;
   label: string;
-  keywords: string[];
-  itemTypes: TaxonomyItemType[];
+  keywords: Array<string>;
+  itemTypes: Array<TaxonomyItemType>;
 }
 
 export interface TaxonomyCategory {
   slug: string;
   label: string;
   color: string;
-  keywords: string[];
-  subcategories: TaxonomySubcategory[];
+  keywords: Array<string>;
+  subcategories: Array<TaxonomySubcategory>;
 }
 
 /**
@@ -25,7 +25,7 @@ export interface TaxonomyCategory {
  * Does NOT include the "Uncategorized" catch-all — that is handled separately
  * so it does not interfere with getAllTaxonomyKeywords() inverse matching.
  */
-export const TAXONOMY: TaxonomyCategory[] = [
+export const TAXONOMY: Array<TaxonomyCategory> = [
   // ── 1. Anchors & Connectors ──────────────────────────────────────────────
   {
     slug: "anchors-connectors",
@@ -1548,7 +1548,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
 ];
 
 export function findNodeBySlug(
-  taxonomy: TaxonomyCategory[],
+  taxonomy: Array<TaxonomyCategory>,
   slug: string,
 ): TaxonomyCategory | TaxonomySubcategory | TaxonomyItemType | null {
   for (const cat of taxonomy) {
@@ -1565,7 +1565,7 @@ export function findNodeBySlug(
 
 export function collectKeywords(
   node: TaxonomyCategory | TaxonomySubcategory | TaxonomyItemType,
-): string[] {
+): Array<string> {
   const kws = new Set<string>();
   const add = (n: TaxonomyCategory | TaxonomySubcategory | TaxonomyItemType) => {
     if ("keywords" in n) for (const k of n.keywords) kws.add(k.toLowerCase());
@@ -1577,7 +1577,7 @@ export function collectKeywords(
 }
 
 /** Returns all keywords from the full taxonomy (uncategorized excluded). */
-export function getAllTaxonomyKeywords(taxonomy: TaxonomyCategory[]): string[] {
+export function getAllTaxonomyKeywords(taxonomy: Array<TaxonomyCategory>): Array<string> {
   const all = new Set<string>();
   for (const cat of taxonomy) {
     if (cat.slug === "uncategorized") continue;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+
 import { useAudioPlayback } from "./useAudioPlayback";
 
 interface StreamCallbacks {
@@ -84,7 +85,7 @@ function parseVoiceStreamEvent(raw: string): VoiceStreamEvent {
 
 function readSseDataFromBlock(block: string): string | null {
   const normalizedBlock = block.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const dataLines: string[] = [];
+  const dataLines: Array<string> = [];
 
   for (const line of normalizedBlock.split("\n")) {
     if (!line.startsWith("data:")) {
@@ -103,10 +104,10 @@ function readSseDataFromBlock(block: string): string | null {
 }
 
 function extractCompleteSseBlocks(buffer: string): {
-  blocks: string[];
+  blocks: Array<string>;
   remaining: string;
 } {
-  const blocks: string[] = [];
+  const blocks: Array<string> = [];
   let lastIndex = 0;
 
   SSE_EVENT_DELIMITER.lastIndex = 0;
@@ -264,7 +265,7 @@ export function useVoiceStream({ workletPath, ...callbacks }: StreamCallbacks) {
         }
       };
 
-      const processBlocks = (blocks: string[], state: StreamState) => {
+      const processBlocks = (blocks: Array<string>, state: StreamState) => {
         for (const block of blocks) {
           throwIfNotCurrent();
 
@@ -326,6 +327,7 @@ export function useVoiceStream({ workletPath, ...callbacks }: StreamCallbacks) {
         let buffer = "";
 
         try {
+          // eslint-disable-next-line no-constant-condition
           while (true) {
             const { done, value } = await reader.read();
             throwIfNotCurrent();

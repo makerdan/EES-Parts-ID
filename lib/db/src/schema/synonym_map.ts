@@ -1,7 +1,7 @@
-import { pgTable, text, serial } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, serial,text } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
-import { sql } from "drizzle-orm";
 
 export const synonymMapTable = pgTable("synonym_map", {
   id: serial("id").primaryKey(),

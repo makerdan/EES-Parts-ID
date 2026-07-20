@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     // prior_count is derived from the locked, pre-update row:
     //   prior_count < maxRequests  → allowed (we appended now)
     //   prior_count >= maxRequests → denied  (window full, no append)
-    async function runCheck(key: string, ts: number): Promise<{ prior_count: number; timestamps: Array<number> }> {
+    const runCheck = async (key: string, ts: number): Promise<{ prior_count: number; timestamps: Array<number> }> => {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
     // Fire two concurrent requests at a brand-new key with maxRequests=1
     const maxOne = 1;
     const concurrentCutoff = now - windowMs;
-    async function concurrentCheck(key: string, ts: number): Promise<{ prior_count: number }> {
+    const concurrentCheck = async (key: string, ts: number): Promise<{ prior_count: number }> => {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");

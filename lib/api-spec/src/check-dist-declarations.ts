@@ -18,15 +18,15 @@
 
 import { execSync } from "child_process";
 import {
-  readFileSync,
-  writeFileSync,
-  mkdtempSync,
-  rmSync,
   existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
 } from "fs";
-import { resolve, dirname, join } from "path";
-import { fileURLToPath } from "url";
 import { tmpdir } from "os";
+import { dirname, join,resolve } from "path";
+import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const API_CLIENT_ROOT = resolve(__dirname, "../../../lib/api-client-react");
@@ -115,7 +115,7 @@ try {
     process.exit(1);
   }
 
-  const failures: string[] = [];
+  const failures: Array<string> = [];
 
   for (const relPath of DTS_FILES) {
     const committedPath = join(DIST_DIR, relPath);
