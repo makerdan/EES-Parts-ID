@@ -1827,7 +1827,7 @@ export function ZoneEditor() {
       }
     }, 600);
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
-  }, [form, selectedId, pendingRect]);
+  }, [form, selectedId, pendingRect, fetchZones, patchZone, pushUndo]);
 
   // ── beforeunload guard: flush unsaved form changes on tab close / navigation ──
   // Covers two scenarios:
@@ -2002,7 +2002,7 @@ export function ZoneEditor() {
       fillLoadingRef.current = false;
       setFillLoading(false);
     }
-  }, []);
+  }, [setForm]);
 
   // Keep the ref in sync so onSvgMouseDown always calls the latest version.
   useEffect(() => { handleFillClickRef.current = handleFillClick; }, [handleFillClick]);
@@ -2206,7 +2206,7 @@ export function ZoneEditor() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp as EventListener);
     };
-  }, [getSvgPt, patchZone, pushUndo]);
+  }, [getSvgPt, patchZone, pushUndo, setForm]);
 
   // ── React event handlers (attached to SVG element) ──────────────────────────
   const onSvgMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
