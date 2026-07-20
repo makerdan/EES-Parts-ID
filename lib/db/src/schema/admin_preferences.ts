@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, integer, boolean, bigint, doublePrecision } from "drizzle-orm/pg-core";
+import { bigint, boolean, doublePrecision,integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 export const adminPreferencesTable = pgTable("admin_preferences", {
   id: integer("id").primaryKey().default(1),

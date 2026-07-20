@@ -13,10 +13,10 @@
  * snapshot mechanism entirely, which is important because this project's meta
  * snapshot pre-dates many manually-written migrations.
  */
-import { readdirSync, readFileSync, statSync, existsSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
 import { getTableColumns } from "drizzle-orm";
+import { existsSync,readdirSync, readFileSync, statSync } from "fs";
+import { dirname,join } from "path";
+import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_DIR = join(__dirname, "..");
@@ -38,8 +38,8 @@ interface ColumnEntry {
   columnName: string;
 }
 
-const tableNames: string[] = [];
-const columns: ColumnEntry[] = [];
+const tableNames: Array<string> = [];
+const columns: Array<ColumnEntry> = [];
 
 for (const value of Object.values(schemaModule)) {
   if (value === null || typeof value !== "object") continue;
@@ -73,7 +73,7 @@ if (tableNames.length === 0) {
 // ---------------------------------------------------------------------------
 // 2. Concatenate all committed SQL migration files.
 // ---------------------------------------------------------------------------
-let sqlFiles: string[];
+let sqlFiles: Array<string>;
 try {
   sqlFiles = readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))
@@ -100,7 +100,7 @@ const allSQL = sqlFiles
 // ---------------------------------------------------------------------------
 // 3. Check each table exists in migrations.
 // ---------------------------------------------------------------------------
-const missingTables: string[] = [];
+const missingTables: Array<string> = [];
 
 for (const tableName of tableNames) {
   // A table must appear as a quoted identifier in at least one migration.
@@ -112,7 +112,7 @@ for (const tableName of tableNames) {
 // ---------------------------------------------------------------------------
 // 4. Check each column exists in migrations (skip columns of missing tables).
 // ---------------------------------------------------------------------------
-const missingColumns: ColumnEntry[] = [];
+const missingColumns: Array<ColumnEntry> = [];
 
 for (const entry of columns) {
   if (missingTables.includes(entry.tableName)) continue;
@@ -168,7 +168,7 @@ for (const match of topIndexSource.matchAll(
   topExportedSpecifiers.add(match[1]);
 }
 
-const missingFromTaxonomy: string[] = [];
+const missingFromTaxonomy: Array<string> = [];
 let taxonomyTopLevelMissing = false;
 
 const taxonomyIsDir =

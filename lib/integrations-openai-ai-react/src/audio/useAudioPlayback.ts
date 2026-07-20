@@ -3,7 +3,8 @@
  * Supports real-time PCM16 audio streaming from SSE responses.
  * Includes sequence buffer for reordering out-of-order chunks.
  */
-import { useRef, useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+
 import { decodePCM16ToFloat32 } from "./audio-utils";
 
 export type PlaybackState = "idle" | "playing" | "ended";
@@ -18,11 +19,11 @@ export type PlaybackState = "idle" | "playing" | "ended";
  * - seq 1 arrives → played immediately (seq 0 done), seq 2 now plays
  */
 class SequenceBuffer {
-  private pending = new Map<number, string[]>();
+  private pending = new Map<number, Array<string>>();
   private nextSeq = 0;
 
   /** Add chunk with sequence number, returns chunks ready to play in order */
-  push(seq: number, data: string): string[] {
+  push(seq: number, data: string): Array<string> {
     // Store the chunk under its sequence number
     if (!this.pending.has(seq)) {
       this.pending.set(seq, []);
@@ -30,7 +31,7 @@ class SequenceBuffer {
     this.pending.get(seq)!.push(data);
 
     // Drain consecutive ready sequences
-    const ready: string[] = [];
+    const ready: Array<string> = [];
     while (this.pending.has(this.nextSeq)) {
       ready.push(...this.pending.get(this.nextSeq)!);
       this.pending.delete(this.nextSeq);

@@ -1,11 +1,18 @@
-import { toFile } from "openai";
 import { Buffer } from "node:buffer";
+
 import { spawn } from "child_process";
-import { writeFile, unlink, readFile } from "fs/promises";
 import { randomUUID } from "crypto";
+import { readFile, unlink, writeFile } from "fs/promises";
+import { toFile } from "openai";
 import { tmpdir } from "os";
 import { join } from "path";
+
 import { getOpenAIClient } from "../client";
+
+interface AudioMessageShape {
+  audio?: { transcript?: string; data?: string };
+  content?: string;
+}
 
 export type AudioFormat = "wav" | "mp3" | "webm" | "mp4" | "ogg" | "unknown";
 
@@ -111,7 +118,7 @@ export async function voiceChat(
       ],
     }],
   });
-  const message = response.choices[0]?.message as any;
+  const message = response.choices[0]?.message as AudioMessageShape;
   const transcript = message?.audio?.transcript || message?.content || "";
   const audioData = message?.audio?.data ?? "";
   return {
@@ -142,7 +149,7 @@ export async function voiceChatStream(
 
   return (async function* () {
     for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta as any;
+      const delta = chunk.choices?.[0]?.delta as AudioMessageShape;
       if (!delta) continue;
       if (delta?.audio?.transcript) {
         yield { type: "transcript", data: delta.audio.transcript };
@@ -169,7 +176,7 @@ export async function textToSpeech(
       { role: "user", content: `Repeat the following text verbatim: ${text}` },
     ],
   });
-  const audioData = (response.choices[0]?.message as any)?.audio?.data ?? "";
+  const audioData = (response.choices[0]?.message as AudioMessageShape)?.audio?.data ?? "";
   return Buffer.from(audioData, "base64");
 }
 
@@ -191,7 +198,7 @@ export async function textToSpeechStream(
 
   return (async function* () {
     for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta as any;
+      const delta = chunk.choices?.[0]?.delta as AudioMessageShape;
       if (!delta) continue;
       if (delta?.audio?.data) {
         yield delta.audio.data;

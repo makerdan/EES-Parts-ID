@@ -1,6 +1,8 @@
-import fs from "node:fs";
-import { toFile } from "openai";
 import { Buffer } from "node:buffer";
+import fs from "node:fs";
+
+import { toFile } from "openai";
+
 import { getOpenAIClient } from "../client";
 
 export async function generateImageBuffer(
@@ -17,7 +19,7 @@ export async function generateImageBuffer(
 }
 
 export async function editImages(
-  imageFiles: string[],
+  imageFiles: Array<string>,
   prompt: string,
   outputPath?: string
 ): Promise<Buffer> {

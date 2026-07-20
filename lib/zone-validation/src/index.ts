@@ -42,7 +42,7 @@ export function isValidAisleId(v: string): boolean {
  * "08" and "8" (or " 8 ") are detected as the same aisle.
  */
 export function findDuplicateConflict<T extends ZoneLike>(
-  zones: T[],
+  zones: Array<T>,
   excludeId: number | null,
   aisleId: string,
   sectionNum: number | null,

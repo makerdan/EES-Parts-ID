@@ -46,10 +46,10 @@ export function isRateLimitError(error: unknown): boolean {
 }
 
 export async function batchProcess<T, R>(
-  items: T[],
+  items: Array<T>,
   processor: (item: T, index: number) => Promise<R>,
   options: BatchOptions = {}
-): Promise<R[]> {
+): Promise<Array<R>> {
   const {
     concurrency = 2,
     retries = 7,
@@ -88,16 +88,16 @@ export async function batchProcess<T, R>(
 }
 
 export async function batchProcessWithSSE<T, R>(
-  items: T[],
+  items: Array<T>,
   processor: (item: T, index: number) => Promise<R>,
   sendEvent: (event: { type: string; [key: string]: unknown }) => void,
   options: Omit<BatchOptions, "concurrency" | "onProgress"> = {}
-): Promise<R[]> {
+): Promise<Array<R>> {
   const { retries = 5, minTimeout = 1000, maxTimeout = 15000 } = options;
 
   sendEvent({ type: "started", total: items.length });
 
-  const results: R[] = [];
+  const results: Array<R> = [];
   let errors = 0;
 
   for (let index = 0; index < items.length; index++) {

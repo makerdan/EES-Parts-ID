@@ -6,7 +6,7 @@
  * import.meta.url / process.exit() side-effects that live only in the script.
  */
 
-import { readFileSync, existsSync } from "fs";
+import { existsSync,readFileSync } from "fs";
 import { resolve } from "path";
 import ts from "typescript";
 
@@ -45,10 +45,10 @@ export interface SchemaObject {
   properties?: Record<string, SchemaRef>;
   $ref?: string;
   items?: SchemaRef;
-  required?: string[];
-  allOf?: SchemaRef[];
-  oneOf?: SchemaRef[];
-  anyOf?: SchemaRef[];
+  required?: Array<string>;
+  allOf?: Array<SchemaRef>;
+  oneOf?: Array<SchemaRef>;
+  anyOf?: Array<SchemaRef>;
   additionalProperties?: SchemaRef | boolean;
 }
 
@@ -60,7 +60,7 @@ export interface Violation {
   method: string;
   specPath: string;
   kind: "response" | "requestBody" | "missingHandler" | "unguardedResponse" | "typeMismatch";
-  undeclaredFields: string[];
+  undeclaredFields: Array<string>;
   note?: string;
 }
 
@@ -223,7 +223,7 @@ export function stripCast(expr: ts.Expression): ts.Expression {
   return expr;
 }
 
-export function typeLiteralFields(typeNode: ts.TypeNode): string[] {
+export function typeLiteralFields(typeNode: ts.TypeNode): Array<string> {
   if (!ts.isTypeLiteralNode(typeNode)) return [];
   return typeNode.members
     .filter(ts.isPropertySignature)
@@ -236,8 +236,8 @@ export function typeLiteralFields(typeNode: ts.TypeNode): string[] {
 }
 
 /** Extract string keys from an ObjectLiteralExpression (non-spread only). */
-export function objectLiteralKeys(node: ts.ObjectLiteralExpression): string[] {
-  const keys: string[] = [];
+export function objectLiteralKeys(node: ts.ObjectLiteralExpression): Array<string> {
+  const keys: Array<string> = [];
   for (const prop of node.properties) {
     if (
       ts.isPropertyAssignment(prop) ||
@@ -295,16 +295,16 @@ function hasStatusCall(expr: ts.Expression): boolean {
   return false;
 }
 
-export function collectResJsonLiterals(root: ts.Node): {
+export function collectResJsonLiterals(root: ts.Node): Array<{
   literal: ts.ObjectLiteralExpression;
   hasSpread: boolean;
   isErrorResponse: boolean;
-}[] {
-  const results: {
+}> {
+  const results: Array<{
     literal: ts.ObjectLiteralExpression;
     hasSpread: boolean;
     isErrorResponse: boolean;
-  }[] = [];
+  }> = [];
 
   function walk(node: ts.Node) {
     if (
@@ -387,7 +387,7 @@ export function collectUnguardedJsonCalls(
     string,
     { requestFields: Set<string>; responseFields: Set<string> }
   >,
-): Violation[] {
+): Array<Violation> {
   if (!existsSync(filePath)) return [];
 
   const src = readFileSync(filePath, "utf-8");
@@ -400,7 +400,7 @@ export function collectUnguardedJsonCalls(
     ts.ScriptKind.TS,
   );
 
-  const violations: Violation[] = [];
+  const violations: Array<Violation> = [];
 
   /**
    * Collect the names of all variables within `scope` that are directly
@@ -529,8 +529,8 @@ export function collectUnguardedJsonCalls(
 
 // ── req.body field detection ──────────────────────────────────────────────────
 
-export function collectReqBodyFieldAccesses(root: ts.Node): string[][] {
-  const results: string[][] = [];
+export function collectReqBodyFieldAccesses(root: ts.Node): Array<Array<string>> {
+  const results: Array<Array<string>> = [];
 
   function walk(node: ts.Node) {
     if (ts.isAsExpression(node) && isReqBody(node.expression)) {
@@ -550,7 +550,7 @@ export function collectReqBodyFieldAccesses(root: ts.Node): string[][] {
       const init = node.initializer;
       if (init && isReqBody(stripCast(init))) {
         if (ts.isObjectBindingPattern(node.name)) {
-          const fields: string[] = [];
+          const fields: Array<string> = [];
           for (const el of node.name.elements) {
             const propName = el.propertyName ?? el.name;
             if (ts.isIdentifier(propName)) fields.push(propName.text);
@@ -592,7 +592,7 @@ export function analyzeFile(
     string,
     { requestFields: Set<string>; responseFields: Set<string> }
   >,
-): Violation[] {
+): Array<Violation> {
   if (!existsSync(filePath)) return [];
 
   const src = readFileSync(filePath, "utf-8");
@@ -604,7 +604,7 @@ export function analyzeFile(
     ts.ScriptKind.TS,
   );
 
-  const violations: Violation[] = [];
+  const violations: Array<Violation> = [];
 
   function walk(node: ts.Node) {
     if (ts.isCallExpression(node)) {
@@ -820,7 +820,7 @@ export function checkSpecRouteCoverage(
   >,
   prefixMap: Map<string, string>,
   routesDir: string,
-): Violation[] {
+): Array<Violation> {
   // Build the set of normalised "METHOD normalised-path" keys from all handlers
   const normalizedRegistered = new Set<string>();
   for (const [filename, prefix] of prefixMap) {
@@ -833,7 +833,7 @@ export function checkSpecRouteCoverage(
     });
   }
 
-  const violations: Violation[] = [];
+  const violations: Array<Violation> = [];
   for (const key of specOps.keys()) {
     const spaceIdx = key.indexOf(" ");
     const normalizedKey =
@@ -866,7 +866,7 @@ export function checkSpecRouteCoverage(
 function extractZodInfo(
   expr: ts.Expression,
 ): { zodType: string; isOptional: boolean } | null {
-  const methodsInChain: string[] = [];
+  const methodsInChain: Array<string> = [];
   let current: ts.Expression = expr;
 
   while (ts.isCallExpression(current)) {
@@ -919,10 +919,10 @@ function extractZodInfo(
  */
 function buildSpecFieldTypeMap(
   spec: OpenApiSpec,
-): Map<string, { specType: string; requiredIn: string[]; optionalInAny: boolean }> {
+): Map<string, { specType: string; requiredIn: Array<string>; optionalInAny: boolean }> {
   const fieldMap = new Map<
     string,
-    { specType: string; requiredIn: string[]; optionalInAny: boolean }
+    { specType: string; requiredIn: Array<string>; optionalInAny: boolean }
   >();
   const schemas = spec.components?.schemas ?? {};
 
@@ -1056,7 +1056,7 @@ export function checkHandcraftedZodTypes(
   spec: OpenApiSpec,
   inventoryRoutesSource: string,
   inventoryRoutesPath: string,
-): Violation[] {
+): Array<Violation> {
   const fieldTypeMap = buildSpecFieldTypeMap(spec);
 
   const sf = ts.createSourceFile(
@@ -1067,7 +1067,7 @@ export function checkHandcraftedZodTypes(
     ts.ScriptKind.TS,
   );
 
-  const violations: Violation[] = [];
+  const violations: Array<Violation> = [];
 
   function walk(node: ts.Node) {
     // Find z.object({...}) calls
@@ -1114,7 +1114,7 @@ export function checkHandcraftedZodTypes(
 
         if (!typeMismatch && !requiredMismatch) continue;
 
-        const notes: string[] = [];
+        const notes: Array<string> = [];
         if (typeMismatch) {
           notes.push(
             `field "${fieldName}": spec declares type "${specField.specType}" but Zod uses z.${zodInfo.zodType}()`,

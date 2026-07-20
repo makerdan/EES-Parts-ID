@@ -1,4 +1,5 @@
 import { Modality } from "@google/genai";
+
 import { getAiClient } from "../client";
 
 export async function generateImage(

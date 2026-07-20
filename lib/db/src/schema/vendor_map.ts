@@ -1,7 +1,7 @@
-import { pgTable, text, serial, boolean } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean,pgTable, serial, text } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
-import { sql } from "drizzle-orm";
 
 export const vendorMapTable = pgTable("vendor_map", {
   id: serial("id").primaryKey(),

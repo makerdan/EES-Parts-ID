@@ -1,6 +1,6 @@
-import { Pool } from "pg";
 import { readFileSync } from "fs";
-import { join, dirname } from "path";
+import { dirname,join } from "path";
+import { Pool } from "pg";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
