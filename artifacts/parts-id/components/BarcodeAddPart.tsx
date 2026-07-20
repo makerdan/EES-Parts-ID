@@ -94,6 +94,39 @@ async function playChime(): Promise<void> {
 }
 
 // ── Session persistence ────────────────────────────────────────────────────
+const BULK_QUEUE_STATUSES: ReadonlySet<string> = new Set(["pending", "assigned", "skipped"]);
+
+function isValidAssignmentEntry(entry: unknown): entry is AssignmentEntry {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    typeof e.barcode === 'string' &&
+    typeof e.item === 'object' && e.item !== null &&
+    typeof (e.item as Record<string, unknown>).id === 'number'
+  );
+}
+
+function isValidBulkQueueEntry(entry: unknown): entry is BulkQueueEntry {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    typeof e.barcode === 'string' &&
+    typeof e.status === 'string' && BULK_QUEUE_STATUSES.has(e.status) &&
+    (e.skippedAt === undefined || (typeof e.skippedAt === 'number' && Number.isFinite(e.skippedAt)))
+  );
+}
+
+function isValidShelfSession(value: unknown): value is ShelfSession {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.shelfPrefix === 'string' &&
+    Array.isArray(v.assignments) && v.assignments.every(isValidAssignmentEntry) &&
+    Array.isArray(v.bulkQueue) && v.bulkQueue.every(isValidBulkQueueEntry) &&
+    typeof v.bulkMode === 'boolean'
+  );
+}
+
 async function saveShelfSession(session: ShelfSession): Promise<void> {
   try {
     await AsyncStorage.setItem(SHELF_SESSION_KEY, JSON.stringify(session));
@@ -104,7 +137,8 @@ async function loadShelfSession(): Promise<ShelfSession | null> {
   try {
     const raw = await AsyncStorage.getItem(SHELF_SESSION_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as ShelfSession;
+    const parsed: unknown = JSON.parse(raw);
+    return isValidShelfSession(parsed) ? parsed : null;
   } catch {
     return null;
   }
