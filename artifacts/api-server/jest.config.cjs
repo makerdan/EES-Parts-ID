@@ -138,23 +138,19 @@ module.exports = {
     "!**/*.test.ts",
   ],
 
-  // Coverage thresholds — set at a conservative floor reflecting the current
-  // full-suite baseline (unit + integration tests), rounded down to the nearest
-  // 5 %.  The intent is to establish the gate so regressions fail fast;
-  // individual percentages should be ratcheted upward as coverage improves.
+  // Coverage thresholds — set ~5 % below the measured full-suite baseline,
+  // rounded down to the nearest 5 %, so the gate is meaningfully tight while
+  // leaving a small buffer for normal churn.  Ratchet upward as coverage
+  // improves.
   //
-  // Baseline measured 2026-07-20:
-  //   unit tests alone  → statements ~34 %, branches ~20 %, functions ~30 %
-  //   full suite adds all route integration tests (38 files) + src/__tests__
-  //   which cover all route handlers and middleware substantially above these.
-  //   Thresholds are set comfortably below the full-suite level so the gate
-  //   passes today and tightens over time, not on merge.
+  // Full-suite baseline measured 2026-07-21 (all 84 suites, 1425 tests):
+  //   statements 69.72 %, branches 59.07 %, functions 66.24 %, lines 70.63 %
   coverageThreshold: {
     global: {
-      statements: 50,
-      branches: 30,
-      functions: 50,
-      lines: 50,
+      statements: 60,
+      branches: 50,
+      functions: 60,
+      lines: 65,
     },
   },
 
