@@ -63,7 +63,7 @@ jest.mock("../src/lib/aiProvider", () => ({
 // the OpenAI fallback; make the chain delegate straight to mockCreate so both
 // paths hit the same mock.
 jest.mock("../src/lib/poeBot", () => ({
-  PoeBotChainExhaustedError: class PoeBotChainExhaustedError extends Error {},
+  ...jest.requireActual("../src/lib/poeBot"),
   tryPoeBotChain: (
     _feature: string,
     fn: (client: unknown, model: string) => Promise<unknown>,

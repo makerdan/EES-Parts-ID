@@ -1,9 +1,9 @@
 ---
-name: catalog-pdf background loop outlives its test
-description: Cancelled job status flips before the processing loop exits; stale loops consume the next test's mocks
+name: catalog-pdf background loop termination
+description: How to keep cancelled catalog-pdf background loops from outliving tests or burning AI calls
 ---
-Rule: in catalog-pdf integration tests, a job's status can read "cancelled"/terminal while its background processing loop is still draining pages up to the next CANCEL_CHECK_INTERVAL boundary. The stale loop then consumes the *next* test's shared mock implementations (extractCatalogPage etc.), firing side effects (e.g. cancel POSTs) against the wrong job.
+Rule: catalog-pdf background page-processing loops check cancellation before every page (CANCEL_CHECK_INTERVAL=1) and register themselves in an in-module registry; tests must `await awaitJobTermination(jobId)` (exported from the catalog-pdf route) after job status reads terminal, before asserting on shared mocks.
 
-**Why:** caused intermittent full-suite-only failures where a job ended "done" instead of "cancelled" — a previous test's loop ate the mock calls that were supposed to trigger cancellation.
+**Why:** job status flips to "cancelled" while the loop is still finishing the in-flight page; historically (interval=10) stale loops drained up to 9 extra pages, consumed the *next* test's mock implementations, and spent AI calls after cancel. Per-test tag-filtering of mocks was the old workaround — no longer needed.
 
-**How to apply:** embed a per-test tag in fake page text (`makeFakePages(count, tag)`) and have mock implementations ignore calls whose page text lacks the tag; count assertions must filter calls by tag too.
+**How to apply:** in catalog-pdf integration tests, call `awaitJobTermination(jobId)` after `waitForJobTerminal` and before any mock-call-count assertions. In route code, any new background loop launched via setImmediate must be wrapped with `trackJobLoop(jobId, promise)` so termination stays awaitable.

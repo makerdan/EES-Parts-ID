@@ -167,7 +167,38 @@ async function finalizeParentIfComplete(parentId: number, log: typeof logger = l
 
 // Maximum number of unmatched parts to store per job (prevents unbounded JSON blobs).
 const MAX_UNMATCHED_STORED = 300;
-const CANCEL_CHECK_INTERVAL = 10;
+// Check for cancellation before every page so a cancel stops work within at
+// most 1 page (the page whose AI call is already in flight). Each page already
+// involves at least one AI round-trip, so one extra lightweight DB read per
+// page is negligible.
+const CANCEL_CHECK_INTERVAL = 1;
+
+// ── Active background-loop registry ──────────────────────────────────────────
+// Maps jobId → a promise that settles only when the background processing loop
+// for that job has fully terminated (including its cleanup/finally block).
+// Lets callers (primarily integration tests, but also graceful-shutdown hooks)
+// await true loop termination instead of inferring it from job status, which
+// can flip to a terminal state while the loop is still draining.
+const activeJobLoops = new Map<number, Promise<void>>();
+
+function trackJobLoop(jobId: number, loop: Promise<void>): void {
+  const settled = loop
+    .catch(() => {
+      /* errors are already handled/logged inside the loop */
+    })
+    .finally(() => {
+      activeJobLoops.delete(jobId);
+    });
+  activeJobLoops.set(jobId, settled);
+}
+
+/**
+ * Resolves once the background processing loop for the given job has fully
+ * terminated. Resolves immediately if no loop is currently running.
+ */
+export function awaitJobTermination(jobId: number): Promise<void> {
+  return activeJobLoops.get(jobId) ?? Promise.resolve();
+}
 
 // ── Session-items rollback helper ──────────────────────────────────────────────
 // Reverts every inventory row that was updated by a given job ID: restores the
@@ -688,7 +719,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   // ensures the outer try/finally does NOT decrement the counter — the
   // setImmediate's own finally is responsible for releasing it.
   backgroundLaunched = true;
-  setImmediate(async () => {
+  setImmediate(() => trackJobLoop(jobRow.id, (async () => {
     try {
       const pages = await extractPdfPages(pdfBuffer);
       await db
@@ -747,7 +778,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
         reqLogger.error({ activePdfJobs }, "[catalog-pdf] activePdfJobs went negative — counter drift detected");
       }
     }
-  });
+  })()));
 
   } finally {
     // Release the reserved slot on any early exit (validation failure, DB error,
@@ -1107,7 +1138,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
 
   // ── Async resume processing ────────────────────────────────────────────────
   resumeBackgroundLaunched = true;
-  setImmediate(async () => {
+  setImmediate(() => trackJobLoop(jobId, (async () => {
     try {
       const pdfBuffer = Buffer.from(pdfBase64, "base64");
       const pages = await extractPdfPages(pdfBuffer);
@@ -1141,7 +1172,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
     } finally {
       activePdfJobs--;
     }
-  });
+  })()));
 
   } finally {
     if (!resumeBackgroundLaunched) activePdfJobs--;

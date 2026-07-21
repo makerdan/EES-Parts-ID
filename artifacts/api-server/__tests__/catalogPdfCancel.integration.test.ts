@@ -67,6 +67,7 @@ import { db, catalogPdfJobTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
+import { awaitJobTermination } from "../src/routes/catalogPdf";
 
 // ── Typed mock handles ─────────────────────────────────────────────────────────
 
@@ -90,18 +91,10 @@ const FAKE_PDF_BASE64 = Buffer.from(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * `tag` embeds a per-test marker in each page's text so that
- * mockExtractCatalogPage implementations can distinguish calls made by THIS
- * test's job from stray calls made by a previous test's background loop.
- * (A job's status can flip to "cancelled" while its processing loop is still
- * draining pages up to the next CANCEL_CHECK_INTERVAL boundary, so the loop
- * may outlive the test that started it and consume the next test's mocks.)
- */
-function makeFakePages(count: number, tag = "") {
+function makeFakePages(count: number) {
   return Array.from({ length: count }, (_, i) => ({
     pageNum: i + 1,
-    text: `page ${i + 1} text ${tag}`,
+    text: `page ${i + 1} text`,
     images: [] as Buffer[],
     isRendered: false,
     pageWidth: 0,
@@ -326,13 +319,12 @@ describe("POST /api/admin/catalog-pdf/:jobId/cancel — processing loop stops on
      * will then see status = "cancelled" on the very first page and break
      * without ever reaching "done".
      */
-    const TAG = "cancel-before-loop";
     mockExtractPdfPages.mockImplementation(async () => {
       await supertest(app)
         .post(`/api/admin/catalog-pdf/${jobId}/cancel`)
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
-      return makeFakePages(TOTAL_PAGES, TAG);
+      return makeFakePages(TOTAL_PAGES);
     });
     mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 
@@ -343,15 +335,15 @@ describe("POST /api/admin/catalog-pdf/:jobId/cancel — processing loop stops on
       .expect(200);
 
     const finalStatus = await waitForJobTerminal(jobId, adminToken);
+    // Await true termination of the background loop — no stale loop can
+    // outlive this test and consume the next test's mocks.
+    await awaitJobTermination(jobId);
 
     expect(finalStatus).toBe("cancelled");
     expect(mockExtractCatalogPage).not.toHaveBeenCalled();
   });
 
   it("loop stops mid-way and does not process further pages after cancellation", async () => {
-    // The processing loop only polls the DB for cancellation every
-    // CANCEL_CHECK_INTERVAL (10) pages, so use more pages than one interval
-    // to guarantee the loop hits a cancellation check after the cancel lands.
     const TOTAL_PAGES = 25;
 
     const jobId = await seedJob({
@@ -364,15 +356,12 @@ describe("POST /api/admin/catalog-pdf/:jobId/cancel — processing loop stops on
     let extractCallCount = 0;
 
     /**
-     * Cancel inside extractCatalogPage on the first call. The loop keeps
-     * processing until the next batched cancellation check (page index 10),
-     * sees "cancelled", and breaks. Pages 11+ should never be processed.
+     * Cancel inside extractCatalogPage on the first call. The loop checks
+     * cancellation before every page, so it finishes page 1, sees "cancelled"
+     * before page 2, and breaks. Pages 2+ should never be processed.
      */
-    const TAG = "cancel-mid-loop";
-    mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(TOTAL_PAGES, TAG));
-    mockExtractCatalogPage.mockImplementation(async (pageText: string) => {
-      // Ignore stray calls from a previous test's still-draining loop.
-      if (!pageText.includes(TAG)) return { entries: [], rawText: "" };
+    mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(TOTAL_PAGES));
+    mockExtractCatalogPage.mockImplementation(async () => {
       extractCallCount++;
       if (extractCallCount === 1) {
         await supertest(app)
@@ -390,18 +379,15 @@ describe("POST /api/admin/catalog-pdf/:jobId/cancel — processing loop stops on
       .expect(200);
 
     const finalStatus = await waitForJobTerminal(jobId, adminToken);
+    // Await true termination of the background loop before asserting on
+    // mock call counts — the loop cannot outlive this test.
+    await awaitJobTermination(jobId);
 
     expect(finalStatus).toBe("cancelled");
 
-    // At most one full batch (10 pages) runs before the loop sees the
-    // cancellation at the next interval check and breaks. Count only this
-    // test's calls (identified by TAG) to ignore stray calls from earlier
-    // tests' loops.
-    const taggedCalls = mockExtractCatalogPage.mock.calls.filter(
-      (c) => typeof c[0] === "string" && c[0].includes(TAG),
-    ).length;
-    expect(taggedCalls).toBeLessThanOrEqual(10);
-    expect(taggedCalls).toBeLessThan(TOTAL_PAGES);
+    // Cancellation is checked before every page, so only the page whose AI
+    // call was already in flight (page 1) is processed after the cancel.
+    expect(mockExtractCatalogPage).toHaveBeenCalledTimes(1);
 
     const row = await readJobRow(jobId);
     expect(row.status).toBe("cancelled");
@@ -423,11 +409,8 @@ describe("POST /api/admin/catalog-pdf/:jobId/cancel — processing loop stops on
      * before the loop breaks on page 2.
      */
     let extractCallCount = 0;
-    const TAG = "cancel-retains-count";
-    mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(TOTAL_PAGES, TAG));
-    mockExtractCatalogPage.mockImplementation(async (pageText: string) => {
-      // Ignore stray calls from a previous test's still-draining loop.
-      if (!pageText.includes(TAG)) return { entries: [], rawText: "" };
+    mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(TOTAL_PAGES));
+    mockExtractCatalogPage.mockImplementation(async () => {
       extractCallCount++;
       if (extractCallCount === 2) {
         await supertest(app)
@@ -445,12 +428,13 @@ describe("POST /api/admin/catalog-pdf/:jobId/cancel — processing loop stops on
       .expect(200);
 
     await waitForJobTerminal(jobId, adminToken);
+    await awaitJobTermination(jobId);
 
     const row = await readJobRow(jobId);
     expect(row.status).toBe("cancelled");
     // Pages 1 and 2 were processed (page 2 extracted entries, incremented count,
-    // then page 3 check saw cancelled and broke).
-    expect(row.processedPages).toBeGreaterThanOrEqual(1);
+    // then the per-page check before page 3 saw cancelled and broke).
+    expect(row.processedPages).toBe(2);
     expect(row.processedPages).toBeLessThan(TOTAL_PAGES);
   });
 });
