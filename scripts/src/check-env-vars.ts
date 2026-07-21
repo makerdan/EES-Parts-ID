@@ -33,8 +33,9 @@ const IGNORED_PREFIXES = ["EXPO_PUBLIC_"];
 /**
  * Standard Node.js / platform-injected vars that don't need .env.example docs.
  * NODE_ENV is universally understood and is injected by the runtime.
+ * JEST_WORKER_ID is injected by Jest in test workers; it is never set by users.
  */
-const ALWAYS_EXPECTED_IN_CODE = new Set(["NODE_ENV"]);
+const ALWAYS_EXPECTED_IN_CODE = new Set(["NODE_ENV", "JEST_WORKER_ID"]);
 
 // ---------------------------------------------------------------------------
 // Collect all .ts files under a directory (recursive)

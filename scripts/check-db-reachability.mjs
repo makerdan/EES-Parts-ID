@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 /**
- * Guard: @workspace/db (the Postgres driver + Drizzle schema) must never be
- * reachable from the parts-id mobile/web client bundle.
+ * Guard: server-only packages (the Postgres driver, AI/LLM server SDKs, and
+ * anything else holding API keys) must never be reachable from the parts-id
+ * mobile/web client bundle.
+ *
+ * Forbidden targets = @workspace/db (hard baseline) plus every workspace
+ * package whose package.json sets `"serverOnly": true`. To mark a new lib as
+ * server-only, add that flag — no script change needed.
  *
  * The ESLint no-restricted-imports rule in artifacts/parts-id catches DIRECT
  * imports of @workspace/db, but a transitive leak is still possible: if a new
@@ -27,8 +32,12 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-const FORBIDDEN_TARGET = "@workspace/db";
-// Client-side packages that must never (transitively) depend on the DB driver.
+// Baseline server-only packages that must always be guarded, even if their
+// package.json flag is accidentally removed.
+const BASELINE_FORBIDDEN_TARGETS = ["@workspace/db"];
+// Additionally, any workspace package with `"serverOnly": true` in its
+// package.json is treated as a forbidden target (API keys, server SDKs, etc.).
+// Client-side packages that must never (transitively) depend on server-only code.
 const CLIENT_ROOTS = ["@workspace/parts-id"];
 
 function readWorkspaceGlobs(root) {
@@ -98,7 +107,12 @@ export function buildGraph(root) {
     if (!existsSync(pkgPath)) continue;
     const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
     if (!pkg.name) continue;
-    packages.set(pkg.name, { dir, pkg, deps: new Set() });
+    packages.set(pkg.name, {
+      dir,
+      pkg,
+      deps: new Set(),
+      serverOnly: pkg.serverOnly === true,
+    });
   }
   for (const [, entry] of packages) {
     for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
@@ -119,6 +133,14 @@ export function buildGraph(root) {
     delete entry.pkg;
   }
   return packages;
+}
+
+export function collectForbiddenTargets(packages) {
+  const targets = new Set(BASELINE_FORBIDDEN_TARGETS);
+  for (const [name, entry] of packages) {
+    if (entry.serverOnly) targets.add(name);
+  }
+  return [...targets].sort();
 }
 
 // BFS from root, tracking the path so we can print the offending chain.
@@ -173,9 +195,34 @@ function selfTest() {
       expectChain: false,
     },
   ];
+  // serverOnly-flag detection: flagged packages become forbidden targets.
+  const flagGraph = mk({ app: ["ai-lib"], "ai-lib": [], "@workspace/db": [] });
+  flagGraph.get("ai-lib").serverOnly = true;
+  cases.push(
+    {
+      name: "serverOnly-flagged package reachable",
+      graph: flagGraph,
+      target: "ai-lib",
+      expectChain: true,
+    },
+    {
+      name: "serverOnly flag collected into targets",
+      graph: flagGraph,
+      custom: () => {
+        const targets = collectForbiddenTargets(flagGraph);
+        return targets.includes("ai-lib") && targets.includes("@workspace/db");
+      },
+    },
+  );
   let ok = true;
   for (const c of cases) {
-    const chain = findPathTo(c.graph, "app", "@workspace/db");
+    if (c.custom) {
+      const pass = c.custom();
+      console.log(`${pass ? "ok" : "FAIL"}: self-test "${c.name}"`);
+      if (!pass) ok = false;
+      continue;
+    }
+    const chain = findPathTo(c.graph, "app", c.target ?? "@workspace/db");
     const pass = Boolean(chain) === c.expectChain;
     console.log(`${pass ? "ok" : "FAIL"}: self-test "${c.name}"${chain ? ` (${chain.join(" -> ")})` : ""}`);
     if (!pass) ok = false;
@@ -199,12 +246,16 @@ function main() {
 
   const packages = buildGraph(ROOT);
 
-  if (!packages.has(FORBIDDEN_TARGET)) {
-    console.error(
-      `check-db-reachability: could not find package ${FORBIDDEN_TARGET} in the workspace; ` +
-        `the check would be vacuous. Update scripts/check-db-reachability.mjs.`,
-    );
-    process.exit(1);
+  const forbiddenTargets = collectForbiddenTargets(packages);
+
+  for (const target of BASELINE_FORBIDDEN_TARGETS) {
+    if (!packages.has(target)) {
+      console.error(
+        `check-db-reachability: could not find package ${target} in the workspace; ` +
+          `the check would be vacuous. Update scripts/check-db-reachability.mjs.`,
+      );
+      process.exit(1);
+    }
   }
 
   let failed = false;
@@ -217,18 +268,20 @@ function main() {
       failed = true;
       continue;
     }
-    const chain = findPathTo(packages, rootName, FORBIDDEN_TARGET);
-    if (chain) {
-      failed = true;
-      console.error(
-        `\nFORBIDDEN DEPENDENCY: ${FORBIDDEN_TARGET} is reachable from ${rootName}:\n` +
-          `  ${chain.join("  ->  ")}\n\n` +
-          `The DB driver must never ship to the client. Break this chain by moving\n` +
-          `the shared code out of the package that imports ${FORBIDDEN_TARGET},\n` +
-          `or by removing the local dependency edge.`,
-      );
-    } else {
-      console.log(`ok: ${FORBIDDEN_TARGET} is not reachable from ${rootName}`);
+    for (const target of forbiddenTargets) {
+      const chain = findPathTo(packages, rootName, target);
+      if (chain) {
+        failed = true;
+        console.error(
+          `\nFORBIDDEN DEPENDENCY: ${target} is reachable from ${rootName}:\n` +
+            `  ${chain.join("  ->  ")}\n\n` +
+            `Server-only code must never ship to the client. Break this chain by\n` +
+            `moving the shared code out of the package that imports ${target},\n` +
+            `or by removing the local dependency edge.`,
+        );
+      } else {
+        console.log(`ok: ${target} is not reachable from ${rootName}`);
+      }
     }
   }
 
