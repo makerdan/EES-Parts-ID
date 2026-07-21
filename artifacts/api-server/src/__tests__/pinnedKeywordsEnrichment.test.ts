@@ -54,11 +54,10 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
-import { eq, isNull } from "drizzle-orm";
+import { eq, isNull, sql } from "drizzle-orm";
 import app from "../app";
 import { signAdminToken } from "../../__tests__/helpers/adminAuth";
 import { db, inventoryTable } from "@workspace/db";
-import { cleanupFixtures } from "../../__tests__/helpers/testDb";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PINNED = ["Cutler-Hammer", "BAB breaker", "CH-series"];
@@ -120,7 +119,12 @@ async function triggerBulkEnrichAndWait(
 
 // ── Teardown ──────────────────────────────────────────────────────────────────
 afterAll(async () => {
-  await cleanupFixtures();
+  // Delete only THIS suite's fixture rows (JEST-ITG-PIN-*). Do NOT use a
+  // blanket JEST-ITG-% prefix delete — parallel suites share the database and
+  // a prefix delete wipes fixtures another suite is actively using.
+  await db
+    .delete(inventoryTable)
+    .where(sql`${inventoryTable.catalog} LIKE ${"JEST-ITG-PIN-%"}`);
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

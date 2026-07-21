@@ -3,11 +3,52 @@
  * Inserts clearly-labelled fixture rows and removes them after the suite.
  */
 
-import { db, pool, inventoryTable } from "@workspace/db";
-import { eq, like, sql } from "drizzle-orm";
+import { db, pool, inventoryTable, usersTable } from "@workspace/db";
+import { eq, sql } from "drizzle-orm";
 
-/** All fixture catalog numbers inserted by this helper (for cleanup). */
-const FIXTURE_CATALOG_PREFIX = "JEST-ITG-";
+/**
+ * Seed (or update) a test user row, race-safe under parallel Jest workers.
+ *
+ * Hardening against `users_email_unique` duplicate-key races: the email is
+ * DERIVED from the clerkUserId (`<clerkUserId>@jest.test.example`), so two
+ * different suites can never collide on the same email, and re-seeding the
+ * same user from concurrent workers upserts idempotently on clerk_user_id.
+ * Never pass a hand-written shared email here.
+ */
+type UserInsert = typeof usersTable.$inferInsert;
+
+export async function seedTestUser(opts: {
+  clerkUserId: UserInsert["clerkUserId"] & string;
+  status?: UserInsert["status"];
+  role?: UserInsert["role"];
+}): Promise<void> {
+  const { clerkUserId, status = "approved", role = "user" } = opts;
+  await db
+    .insert(usersTable)
+    .values({
+      clerkUserId,
+      email: `${clerkUserId.toLowerCase()}@jest.test.example`,
+      status,
+      role,
+    })
+    .onConflictDoUpdate({
+      target: usersTable.clerkUserId,
+      set: { status, role },
+    });
+}
+
+/** Remove a user seeded by seedTestUser. Idempotent. */
+export async function cleanupTestUser(clerkUserId: string): Promise<void> {
+  await db.delete(usersTable).where(eq(usersTable.clerkUserId, clerkUserId));
+}
+
+/**
+ * Catalog numbers seeded by THIS module instance (i.e. this Jest worker).
+ * cleanupFixtures() deletes only these rows — never a blanket
+ * `LIKE 'JEST-ITG-%'` — so a suite tearing down in one worker cannot wipe
+ * fixtures that a different suite is actively using in a parallel worker.
+ */
+const _seededCatalogs = new Set<string>();
 
 export interface FixtureItem {
   vendor: string;
@@ -27,6 +68,7 @@ export interface FixtureItem {
  * Returns the actual inserted rows (with generated ids).
  */
 export async function seedFixtures(items: FixtureItem[]) {
+  for (const i of items) _seededCatalogs.add(i.catalog);
   const rows = await db
     .insert(inventoryTable)
     .values(
@@ -45,13 +87,29 @@ export async function seedFixtures(items: FixtureItem[]) {
 }
 
 /**
- * Remove all rows whose catalog starts with the JEST-ITG- prefix.
- * Safe to call even if nothing was seeded.
+ * Remove the fixture rows seeded by THIS worker's seedFixtures() calls.
+ * Safe to call even if nothing was seeded (no-op).
+ *
+ * IMPORTANT: this deliberately does NOT delete every `JEST-ITG-%` row.
+ * Suites run in parallel Jest workers against a shared database; a blanket
+ * prefix delete from one suite's beforeAll/afterAll silently wipes fixtures
+ * another suite is mid-way through using, producing flaky
+ * "fixture JEST-ITG-… not found" failures. Because seedFixtures() uses
+ * onConflictDoNothing(), stale leftovers from a crashed previous run are
+ * harmless — re-seeding the same catalog simply reuses the existing row.
  */
 export async function cleanupFixtures() {
+  if (_seededCatalogs.size === 0) return;
+  const catalogs = [..._seededCatalogs];
+  _seededCatalogs.clear();
   await db
     .delete(inventoryTable)
-    .where(sql`${inventoryTable.catalog} LIKE ${FIXTURE_CATALOG_PREFIX + "%"}`);
+    .where(
+      sql`${inventoryTable.catalog} IN (${sql.join(
+        catalogs.map((c) => sql`${c}`),
+        sql`, `,
+      )})`,
+    );
 }
 
 /**
