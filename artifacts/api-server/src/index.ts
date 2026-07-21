@@ -226,6 +226,8 @@ async function migrateUsersTable(): Promise<void> {
 }
 
 const STARTUP_MIGRATIONS_TIMEOUT_MS = 25_000;
+// unref(): these are fallback timers only — they must never be the thing
+// keeping the process (or a Jest worker) alive after everything else is done.
 const migrationsTimeout = new Promise<void>((resolve) =>
   setTimeout(() => {
     logger.warn(
@@ -233,21 +235,25 @@ const migrationsTimeout = new Promise<void>((resolve) =>
       "Startup migrations exceeded time limit — proceeding to startServer anyway",
     );
     resolve();
-  }, STARTUP_MIGRATIONS_TIMEOUT_MS),
+  }, STARTUP_MIGRATIONS_TIMEOUT_MS).unref(),
 );
 
 const INIT_PROVIDER_TIMEOUT_MS = 8_000;
 
 function withStartupTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T | void> {
+  let timer: NodeJS.Timeout | undefined;
   return Promise.race([
     promise,
-    new Promise<void>((resolve) =>
-      setTimeout(() => {
+    new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
         logger.warn({ timeoutMs, label }, `Startup step timed out — proceeding anyway`);
         resolve();
-      }, timeoutMs),
-    ),
-  ]);
+      }, timeoutMs);
+      timer.unref();
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
 }
 
 // ── Audit log retention ───────────────────────────────────────────────────────
