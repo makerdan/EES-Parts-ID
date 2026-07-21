@@ -41,25 +41,21 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { db, usersTable } from "@workspace/db";
-import { like } from "drizzle-orm";
+import { seedTestUser, cleanupTestUser } from "./helpers/testDb";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 const ADMIN_TOKEN = ADMIN_TEST_USER_ID;
 const NON_ADMIN_USER = "jest-writeauth-user";
 
 beforeAll(async () => {
-  await db
-    .insert(usersTable)
-    .values({ clerkUserId: NON_ADMIN_USER, email: "u@test.example", status: "approved", role: "user" })
-    .onConflictDoUpdate({
-      target: usersTable.clerkUserId,
-      set: { status: usersTable.status, role: usersTable.role },
-    });
+  // seedTestUser derives the email from the clerkUserId, so parallel suites
+  // can never collide on users_email_unique, and re-seeding is an idempotent
+  // upsert on clerk_user_id (safe when two workers race).
+  await seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" });
 });
 
 afterAll(async () => {
-  await db.delete(usersTable).where(like(usersTable.clerkUserId, "jest-writeauth-%"));
+  await cleanupTestUser(NON_ADMIN_USER);
 }, 15_000);
 
 /** Runs the standard no-token / non-admin / admin assertions for one route. */
