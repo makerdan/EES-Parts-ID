@@ -68,29 +68,39 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 
 Only long-running services are ordinary workflows: `artifacts/api-server: API Server`, `artifacts/parts-id: expo`, `artifacts/mockup-sandbox: Component Preview Server`. Every one-off check is a **registered validation command** (run via validation runs; these do not consume workflow slots). Names with colons were renamed to dashes; all commands are unchanged.
 
-| Old workflow name | Validation command |
-|---|---|
-| `api-server-coverage` | `api-server-coverage` |
-| `api-server-typecheck` | `api-server-typecheck` |
-| `bundle:domain-check` | `bundle-domain-check` |
-| `canvas-typecheck` | `canvas-typecheck` |
-| `codegen:check` | `codegen-check` |
-| `env:check` | `env-check` |
-| `lint` | `lint` |
-| `lint:mocks` | `lint-mocks` |
-| `parts-id-typecheck` | `parts-id-typecheck` |
-| `port-guard` | `port-guard` (one-shot scan, not a watcher) |
-| `post-merge-health-test` | `post-merge-health-test` |
-| `schema:check` | `schema-check` |
-| `security-audit` | `security-audit` |
-| `spec:check` | `spec-check` |
-| `spec:check:tests` | `spec-check-tests` |
-| `test` | `test` |
-| `tsc` | `tsc` |
-| `tsconfig:check` | `tsconfig-check` |
-| `typecheck` | `typecheck` |
-| `typecheck:libs` | `typecheck-libs` |
-| `verify-fts` | `verify-fts` |
+### Validation tiers (consolidated runners)
+
+Three tier commands run subsets of the checks below sequentially via `scripts/run-tier.mjs`, wrapped in `node scripts/serial-lock.mjs --` so tier runs (and any check that internally takes the same lock, like `test`) **cannot race each other** — concurrent invocations queue and run one at a time. Per-step timing starts after lock acquisition, so queue-wait time never counts against a step. Tiers are cumulative: standard includes fast, heavy includes standard.
+
+- **`test-fast`** — static checks only: `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check`. For pure UI/copy changes.
+- **`test-standard`** — fast + `codegen-check`, `spec-check`, `env-check`, `spec-check-tests`, `test`. For most feature/bug-fix work.
+- **`test-heavy`** — standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test`. For schema migrations, new API routes, auth/security changes, multi-package refactors.
+
+Individual check commands remain registered for targeted runs. Tier membership lives in `scripts/run-tier.mjs` (`FAST` / `STANDARD_EXTRA` / `HEAVY_EXTRA`) — keep it in sync with this table when checks change. Note: `tsc` subsumes `typecheck`, `typecheck-libs`, `canvas-typecheck`, `api-server-typecheck`, and `parts-id-typecheck`, so tiers run only `tsc`.
+
+| Old workflow name | Validation command | Tier |
+|---|---|---|
+| `api-server-coverage` | `api-server-coverage` | heavy |
+| `api-server-typecheck` | `api-server-typecheck` | fast (via `tsc`) |
+| `bundle:domain-check` | `bundle-domain-check` | fast |
+| `canvas-typecheck` | `canvas-typecheck` | fast (via `tsc`) |
+| `codegen:check` | `codegen-check` | standard |
+| `env:check` | `env-check` | standard |
+| `lint` | `lint` | fast |
+| `lint:mocks` | `lint-mocks` | fast |
+| `parts-id-typecheck` | `parts-id-typecheck` | fast (via `tsc`) |
+| `port-guard` | `port-guard` (one-shot scan, not a watcher) | fast |
+| `post-merge-health-test` | `post-merge-health-test` | heavy |
+| `schema:check` | `schema-check` | heavy |
+| `security-audit` | `security-audit` | heavy |
+| `spec:check` | `spec-check` | standard |
+| `spec:check:tests` | `spec-check-tests` | standard |
+| `test` | `test` | standard |
+| `tsc` | `tsc` | fast |
+| `tsconfig:check` | `tsconfig-check` | fast |
+| `typecheck` | `typecheck` | fast (via `tsc`) |
+| `typecheck:libs` | `typecheck-libs` | fast (via `tsc`) |
+| `verify-fts` | `verify-fts` | heavy |
 
 ## Admin MFA Enforcement
 

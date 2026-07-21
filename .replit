@@ -163,6 +163,18 @@ args = "typecheck-libs"
 task = "workflow.run"
 args = "bundle-domain-check"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "test-fast"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "test-standard"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "test-heavy"
+
 [[workflows.workflow]]
 name = "post-merge-health-test"
 author = "agent"
@@ -282,7 +294,7 @@ isValidation = true
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/api-server run test:coverage"
+args = "node scripts/serial-lock.mjs -- pnpm --filter @workspace/api-server run test:coverage"
 
 [[workflows.workflow]]
 name = "test"
@@ -299,12 +311,12 @@ args = "pnpm test"
 name = "codegen-check"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/api-spec run codegen:check"
-
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node scripts/serial-lock.mjs -- pnpm --filter @workspace/api-spec run codegen:check"
 
 [[workflows.workflow]]
 name = "spec-check"
@@ -390,6 +402,39 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/parts-id run check:bundle-domain"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "test-fast"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs fast"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "test-standard"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs standard"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "test-heavy"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs heavy"
 
 [workflows.workflow.metadata]
 isValidation = true
