@@ -175,6 +175,10 @@ args = "test-standard"
 task = "workflow.run"
 args = "test-heavy"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "test-standard-plus"
+
 [[workflows.workflow]]
 name = "post-merge-health-test"
 author = "agent"
@@ -435,6 +439,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs heavy"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "test-standard-plus"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs standard-plus"
 
 [workflows.workflow.metadata]
 isValidation = true

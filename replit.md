@@ -70,17 +70,18 @@ Only long-running services are ordinary workflows: `artifacts/api-server: API Se
 
 ### Validation tiers (consolidated runners)
 
-Three tier commands run subsets of the checks below sequentially via `scripts/run-tier.mjs`, wrapped in `node scripts/serial-lock.mjs --` so tier runs (and any check that internally takes the same lock, like `test`) **cannot race each other** — concurrent invocations queue and run one at a time. Per-step timing starts after lock acquisition, so queue-wait time never counts against a step. Tiers are cumulative: standard includes fast, heavy includes standard.
+Four tier commands run subsets of the checks below sequentially via `scripts/run-tier.mjs`, wrapped in `node scripts/serial-lock.mjs --` so tier runs (and any check that internally takes the same lock, like `test`) **cannot race each other** — concurrent invocations queue and run one at a time. Per-step timing starts after lock acquisition, so queue-wait time never counts against a step. Tiers are cumulative: standard includes fast, standard-plus includes standard, heavy includes standard-plus.
 
-- **`test-fast`** — static checks only: `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check`. For pure UI/copy changes.
-- **`test-standard`** — fast + `codegen-check`, `spec-check`, `env-check`, `spec-check-tests`, `test`. For most feature/bug-fix work.
-- **`test-heavy`** — standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test`. For schema migrations, new API routes, auth/security changes, multi-package refactors.
+- **`test-fast`** — static checks only: `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check`. For pure UI/copy changes. (~5 min)
+- **`test-standard`** — fast + `codegen-check`, `spec-check`, `env-check`, `spec-check-tests`, `test`. For most feature/bug-fix work. (~20 min)
+- **`test-standard-plus`** — standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test`. Full quality signal without Playwright browser automation. (~30 min)
+- **`test-heavy`** — standard-plus (same steps, no Playwright currently). For schema migrations, new API routes, auth/security changes, multi-package refactors. (~30 min)
 
-Individual check commands remain registered for targeted runs. Tier membership lives in `scripts/run-tier.mjs` (`FAST` / `STANDARD_EXTRA` / `HEAVY_EXTRA`) — keep it in sync with this table when checks change. Note: `tsc` subsumes `typecheck`, `typecheck-libs`, `canvas-typecheck`, `api-server-typecheck`, and `parts-id-typecheck`, so tiers run only `tsc`.
+Individual check commands remain registered for targeted runs. Tier membership lives in `scripts/run-tier.mjs` (`FAST` / `STANDARD_EXTRA` / `STANDARD_PLUS_EXTRA` / `HEAVY_EXTRA`) — keep it in sync with this table when checks change. Note: `tsc` subsumes `typecheck`, `typecheck-libs`, `canvas-typecheck`, `api-server-typecheck`, and `parts-id-typecheck`, so tiers run only `tsc`.
 
 | Old workflow name | Validation command | Tier |
 |---|---|---|
-| `api-server-coverage` | `api-server-coverage` | heavy |
+| `api-server-coverage` | `api-server-coverage` | standard-plus / heavy |
 | `api-server-typecheck` | `api-server-typecheck` | fast (via `tsc`) |
 | `bundle:domain-check` | `bundle-domain-check` | fast |
 | `canvas-typecheck` | `canvas-typecheck` | fast (via `tsc`) |
@@ -90,9 +91,9 @@ Individual check commands remain registered for targeted runs. Tier membership l
 | `lint:mocks` | `lint-mocks` | fast |
 | `parts-id-typecheck` | `parts-id-typecheck` | fast (via `tsc`) |
 | `port-guard` | `port-guard` (one-shot scan, not a watcher) | fast |
-| `post-merge-health-test` | `post-merge-health-test` | heavy |
-| `schema:check` | `schema-check` | heavy |
-| `security-audit` | `security-audit` | heavy |
+| `post-merge-health-test` | `post-merge-health-test` | standard-plus / heavy |
+| `schema:check` | `schema-check` | standard-plus / heavy |
+| `security-audit` | `security-audit` | standard-plus / heavy |
 | `spec:check` | `spec-check` | standard |
 | `spec:check:tests` | `spec-check-tests` | standard |
 | `test` | `test` | standard |
@@ -100,7 +101,7 @@ Individual check commands remain registered for targeted runs. Tier membership l
 | `tsconfig:check` | `tsconfig-check` | fast |
 | `typecheck` | `typecheck` | fast (via `tsc`) |
 | `typecheck:libs` | `typecheck-libs` | fast (via `tsc`) |
-| `verify-fts` | `verify-fts` | heavy |
+| `verify-fts` | `verify-fts` | standard-plus / heavy |
 
 ## Admin MFA Enforcement
 
