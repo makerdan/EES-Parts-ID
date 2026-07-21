@@ -286,6 +286,17 @@ function pressFitButton(renderer: TestRenderer.ReactTestRenderer) {
 
 let computeFitTargetSpy: jest.SpyInstance;
 
+// Track every renderer created so afterEach can unmount them all. Without
+// unmounting, WarehouseMapView's pending timers (e.g. the 3 s empty-state
+// auto-dismiss) fire after the suite finishes and emit "Cannot log after
+// tests are done" warnings during later suites in the same process.
+const mountedRenderers: TestRenderer.ReactTestRenderer[] = [];
+
+function trackRenderer(r: TestRenderer.ReactTestRenderer) {
+  mountedRenderers.push(r);
+  return r;
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   // Re-register the floorPlanCache mocks since clearAllMocks resets them.
@@ -303,7 +314,15 @@ beforeEach(() => {
   (require("react-native").Platform as { OS: string }).OS = "ios";
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // Unmount every tree mounted during the test so component cleanup effects
+  // clear all pending timers before the next test/suite runs.
+  while (mountedRenderers.length > 0) {
+    const r = mountedRenderers.pop()!;
+    await act(async () => {
+      r.unmount();
+    });
+  }
   computeFitTargetSpy.mockRestore();
 });
 
@@ -319,7 +338,7 @@ describe("applyFitIfReady — z0 snap at callback invocation", () => {
   async function mountAndLayout(containerW: number, containerH: number) {
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
+      renderer = trackRenderer(TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />));
     });
     await act(async () => {
       fireOnLayout(renderer, containerW, containerH);
@@ -386,7 +405,7 @@ describe("applyFit — z0 snap via fit button callback", () => {
   async function mountAndPressfit(containerW: number, containerH: number) {
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
+      renderer = trackRenderer(TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />));
     });
     await act(async () => {
       fireOnLayout(renderer, containerW, containerH);

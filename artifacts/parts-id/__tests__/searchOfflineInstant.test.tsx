@@ -401,11 +401,18 @@ const flushMicrotasks = () =>
     await Promise.resolve();
   });
 
+// Track mounted trees so afterEach can unmount them before flushing
+// pending timers; firing the sync-retry backoff timer while still mounted
+// triggers async state updates that outlive the suite and emit "Cannot log
+// after tests are done" warnings.
+const mountedTrees: renderer.ReactTestRenderer[] = [];
+
 async function mountScreen() {
   let tree!: renderer.ReactTestRenderer;
   await act(async () => {
     tree = renderer.create(<SearchScreen />);
   });
+  mountedTrees.push(tree);
   await flushMicrotasks();
   return tree;
 }
@@ -452,7 +459,15 @@ beforeEach(() => {
   mockResolveOfflineFallback.mockReset();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // Unmount first so component cleanup clears pending timers (sync retry,
+  // search timeout) instead of letting runOnlyPendingTimers fire them.
+  while (mountedTrees.length > 0) {
+    const t = mountedTrees.pop()!;
+    await act(async () => {
+      t.unmount();
+    });
+  }
   jest.runOnlyPendingTimers();
   jest.useRealTimers();
 });
