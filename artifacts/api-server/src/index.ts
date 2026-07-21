@@ -10,6 +10,7 @@ import { logger } from "./lib/logger";
 import { MAX_RETRIES, startServer } from "./lib/startServer";
 import { validateEnv } from "./lib/validateEnv";
 import { applyZoneSectionNumFix } from "./lib/zoneSectionNumFix";
+import { shutdownCatalogPdfLoops } from "./routes/catalogPdf";
 
 // Resolve scripts/dev-ports.json by walking up from cwd. Deliberately avoids
 // `import.meta` (createRequire(import.meta.url)) so this file stays parseable
@@ -77,7 +78,7 @@ async function recoverOrphanedJobs(): Promise<void> {
       .update(catalogPdfJobTable)
       .set({
         status: "failed",
-        errorMessage: "Server restarted while job was in progress. Please resubmit the PDF.",
+        errorMessage: "Server restarted while job was in progress. Use Resume to continue from the last processed page.",
         finishedAt: new Date(),
       })
       .where(eq(catalogPdfJobTable.status, "processing"))
@@ -283,10 +284,35 @@ Promise.race([
   .then(() => withStartupTimeout(initProvider(), INIT_PROVIDER_TIMEOUT_MS, "initProvider"))
   .then(() => startServer(app, port, MAX_RETRIES))
   .then((server) => {
+    // Hard cap on total shutdown time: if draining hangs (slow AI call, DB
+    // stall), force-exit so the platform doesn't have to SIGKILL us.
+    const SHUTDOWN_HARD_LIMIT_MS = 20_000;
+    // Bounded wait for background catalog-pdf loops to stop at a page boundary
+    // and be marked with a resumable status.
+    const PDF_LOOP_DRAIN_TIMEOUT_MS = 10_000;
+
+    let shuttingDown = false;
     const shutdown = (signal: string) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
       logger.info({ signal }, "Received shutdown signal — draining in-flight requests");
-      server.close(() => {
-        logger.info("Server closed — exiting cleanly");
+
+      setTimeout(() => {
+        logger.warn({ hardLimitMs: SHUTDOWN_HARD_LIMIT_MS }, "Shutdown hard limit reached — forcing exit");
+        process.exit(0);
+      }, SHUTDOWN_HARD_LIMIT_MS).unref();
+
+      const serverClosed = new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+
+      // Stop background PDF loops (marks in-flight jobs resumable) while the
+      // HTTP server drains, then exit once both are done.
+      Promise.allSettled([
+        shutdownCatalogPdfLoops(PDF_LOOP_DRAIN_TIMEOUT_MS),
+        serverClosed,
+      ]).then(() => {
+        logger.info("Server closed and background loops drained — exiting cleanly");
         process.exit(0);
       });
     };

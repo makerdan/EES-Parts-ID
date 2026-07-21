@@ -37,3 +37,4 @@
 - [closePool must tolerate mocked @workspace/db](closepool-mocked-db.md) — global afterAll teardown runs in mocked-db suites where pool is undefined; guard for missing pool, not just a module-local flag.
 - [Validation workflow wiring](validation-workflow-wiring.md) — setValidationCommand auto-creates isValidation workflow AND wires it into the Project gate; removeWorkflow also unwires it.
 - [drizzle push under validation load](drizzle-push-validation-load.md) — jest globalSetup drizzle-kit push can exceed 30s under concurrent post-merge validation; use 120s timeout, DB is fine.
+- [reverseVendorMap row-order flake](vendor-map-row-order-flake.md) — vendorNameResolutionMap conflict-winner tests rely on physical DB row order and flake when vendor rows are touched; unrelated to most changes.

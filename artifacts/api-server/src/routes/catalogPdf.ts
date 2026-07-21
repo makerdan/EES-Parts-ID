@@ -200,6 +200,77 @@ export function awaitJobTermination(jobId: number): Promise<void> {
   return activeJobLoops.get(jobId) ?? Promise.resolve();
 }
 
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// When the server receives SIGTERM/SIGINT, `shutdownCatalogPdfLoops` flips this
+// flag so every in-flight page loop stops at its next page boundary, waits
+// (bounded) for the loops to drain, and then marks any job still stuck in
+// "processing" as failed with a resumable message. This means admins never see
+// jobs permanently stuck in "processing" after a deploy/restart.
+let shuttingDown = false;
+
+/** True once graceful shutdown has been requested (test/introspection helper). */
+export function isShuttingDown(): boolean {
+  return shuttingDown;
+}
+
+/** Test-only: reset the shutdown flag between test cases. */
+export function resetShutdownStateForTests(): void {
+  shuttingDown = false;
+}
+
+/** Test-only: register a fake background loop in the registry. */
+export function registerJobLoopForTests(jobId: number, loop: Promise<void>): void {
+  trackJobLoop(jobId, loop);
+}
+
+export const SHUTDOWN_ERROR_MESSAGE =
+  "Server restarted while job was in progress. Use Resume to continue from the last processed page.";
+
+/**
+ * Requests shutdown of all active catalog-pdf background loops.
+ * - Signals loops to stop at the next page boundary.
+ * - Waits up to `timeoutMs` for tracked loops to fully terminate.
+ * - Marks any affected job still in "processing" as failed with a resumable
+ *   message so nothing stays stuck in "processing" across the restart.
+ */
+export async function shutdownCatalogPdfLoops(timeoutMs = 10_000): Promise<void> {
+  shuttingDown = true;
+  const jobIds = [...activeJobLoops.keys()];
+  if (jobIds.length === 0) return;
+
+  logger.info({ jobIds, timeoutMs }, "[catalog-pdf] shutdown requested — draining background loops");
+
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = await Promise.race([
+    Promise.allSettled([...activeJobLoops.values()]).then(() => false),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(true), timeoutMs);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+
+  try {
+    const stillProcessing = await db
+      .update(catalogPdfJobTable)
+      .set({ status: "failed", errorMessage: SHUTDOWN_ERROR_MESSAGE, finishedAt: new Date() })
+      .where(
+        and(
+          inArray(catalogPdfJobTable.id, jobIds),
+          inArray(catalogPdfJobTable.status, ["pending", "processing"]),
+        ),
+      )
+      .returning({ id: catalogPdfJobTable.id });
+    if (stillProcessing.length > 0) {
+      logger.warn(
+        { jobIds: stillProcessing.map((r) => r.id), timedOut },
+        "[catalog-pdf] marked in-flight jobs as failed (resumable) during shutdown",
+      );
+    }
+  } catch (err) {
+    logger.error({ err, jobIds }, "[catalog-pdf] failed to mark in-flight jobs during shutdown");
+  }
+}
+
 // ── Session-items rollback helper ──────────────────────────────────────────────
 // Reverts every inventory row that was updated by a given job ID: restores the
 // previous description and clears all pdf-extraction fields (imageUrl, imageSource,
@@ -276,6 +347,26 @@ async function processPdfPages(
 
   for (let pageIndex = 0; pageIndex < remainingPages.length; pageIndex++) {
     const page = remainingPages[pageIndex]!;
+    if (shuttingDown) {
+      // Server is shutting down: persist progress and mark the job failed with
+      // a resumable message. Do NOT revert session items — the resume path
+      // continues from processedPages and keeps partial work.
+      await db
+        .update(catalogPdfJobTable)
+        .set({
+          status: "failed",
+          errorMessage: SHUTDOWN_ERROR_MESSAGE,
+          processedPages,
+          partsFound,
+          matchedParts,
+          imagesMatched,
+          unmatchedParts: unmatchedPartsList.length > 0 ? unmatchedPartsList : null,
+          finishedAt: new Date(),
+        })
+        .where(eq(catalogPdfJobTable.id, jobId));
+      log.info({ jobId, processedPages, pageOffset }, "[catalog-pdf] loop stopped for server shutdown — job marked resumable");
+      return;
+    }
     if (pageIndex % CANCEL_CHECK_INTERVAL === 0) {
       const [currentRow] = await db
         .select({ status: catalogPdfJobTable.status })
