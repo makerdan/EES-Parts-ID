@@ -143,6 +143,10 @@ cleanup() {
     fi
   fi
   rm -rf "$MOCK_DIR" "$HEAVY_DIR"
+  # Port-guard synthetic test file: if the run is killed between creating it
+  # and its inline `rm -f`, it would linger in artifacts/ and break the
+  # check-hardcoded-ports.sh gate on every subsequent run.
+  rm -f "$SCRIPT_DIR/../artifacts/".port-guard-test-*.ts
   exit "$ec"
 }
 trap cleanup EXIT TERM INT
@@ -889,7 +893,7 @@ rm -f "$PORT_SET_URL_FILE"
 
 assert_contains "PORT set — curl uses localhost URL with PORT" \
   "http://localhost:53421/api/healthz" "$PORT_SET_URL"
-if echo "$PORT_SET_OUTPUT" | grep -q "WARNING: PORT is not set"; then
+if [[ "$PORT_SET_OUTPUT" == *"WARNING: PORT is not set"* ]]; then
   fail "PORT set — no fallback WARNING should be printed"
 else
   pass "PORT set — no fallback WARNING printed"
@@ -1074,7 +1078,7 @@ SENTINELS_OUTPUT=$(env REPLIT_DEV_DOMAIN="mock-domain.test" bash -c '
   fi
 ' 2>&1)
 
-if echo "$SENTINELS_OUTPUT" | grep -q "SENTINELS_OK"; then
+if [[ "$SENTINELS_OUTPUT" == *"SENTINELS_OK"* ]]; then
   pass "check_generated_files — both sentinel files exist and are non-empty"
 else
   fail "check_generated_files — one or more sentinel files are missing/empty (run codegen first)"
@@ -1325,7 +1329,7 @@ fi
 assert_contains "viewbox-sync timeout — prints timeout-specific message" "timed out after 30s" "$VIEWBOX_TIMEOUT_OUTPUT"
 
 # The timeout path must remain distinct from the generic mismatch failure.
-if echo "$VIEWBOX_TIMEOUT_OUTPUT" | grep -q 'SVG_VIEWBOX_W/H'; then
+if [[ "$VIEWBOX_TIMEOUT_OUTPUT" == *'SVG_VIEWBOX_W/H'* ]]; then
   fail "viewbox-sync timeout — printed the generic SVG_VIEWBOX_W/H mismatch message; the timeout path must be distinct"
 else
   pass "viewbox-sync timeout — did NOT print the generic mismatch message (timeout path is distinct)"
@@ -1391,7 +1395,7 @@ if [[ -z "$NEXT_WORKFLOW_LINE" ]]; then
 fi
 
 AUDIT_BLOCK=$(sed -n "${AUDIT_LINE},${NEXT_WORKFLOW_LINE}p" "$REPLIT_CFG")
-if echo "$AUDIT_BLOCK" | grep -q 'isValidation = true'; then
+if [[ "$AUDIT_BLOCK" == *'isValidation = true'* ]]; then
   pass "security-audit — isValidation = true set on the workflow"
 else
   fail "security-audit — isValidation = true NOT found in the security-audit workflow block"
@@ -1407,7 +1411,7 @@ if [[ -z "$NEXT_AFTER_PROJECT" ]]; then
 fi
 
 PROJECT_BLOCK=$(sed -n "${PROJECT_LINE},${NEXT_AFTER_PROJECT}p" "$REPLIT_CFG")
-if echo "$PROJECT_BLOCK" | grep -q 'args = "security-audit"'; then
+if [[ "$PROJECT_BLOCK" == *'args = "security-audit"'* ]]; then
   pass "security-audit — listed as a task in the Project CI gate"
 else
   fail "security-audit — NOT listed as a task in the Project CI gate (add a [[workflows.workflow.tasks]] entry with args = \"security-audit\")"
@@ -1415,7 +1419,7 @@ fi
 
 # Check that the security-audit workflow command includes the prod moderate pass.
 # This ensures the two-tier gate (high for all, moderate for prod-only) is intact.
-if echo "$AUDIT_BLOCK" | grep -q 'pnpm audit --prod --audit-level=moderate'; then
+if [[ "$AUDIT_BLOCK" == *'pnpm audit --prod --audit-level=moderate'* ]]; then
   pass "security-audit — prod moderate-level pass present in workflow command"
 else
   fail "security-audit — prod moderate-level pass MISSING from security-audit workflow (add 'pnpm audit --prod --audit-level=moderate' to the command)"
@@ -1450,7 +1454,7 @@ if [[ -n "$CANVAS_TC_LINE" ]]; then
   fi
   CANVAS_TC_BLOCK=$(sed -n "${CANVAS_TC_LINE},${NEXT_CANVAS_WORKFLOW_LINE}p" "$REPLIT_CFG")
 
-  if echo "$CANVAS_TC_BLOCK" | grep -q 'isValidation = true'; then
+  if [[ "$CANVAS_TC_BLOCK" == *'isValidation = true'* ]]; then
     pass "canvas-typecheck — isValidation = true set on the workflow"
   else
     fail "canvas-typecheck — isValidation = true NOT found in the canvas-typecheck workflow block"
@@ -1458,7 +1462,7 @@ if [[ -n "$CANVAS_TC_LINE" ]]; then
 fi
 
 # Reuse PROJECT_BLOCK extracted in Test 34 (same variable, same scope).
-if echo "$PROJECT_BLOCK" | grep -q 'args = "canvas-typecheck"'; then
+if [[ "$PROJECT_BLOCK" == *'args = "canvas-typecheck"'* ]]; then
   pass "canvas-typecheck — listed as a task in the Project CI gate"
 else
   fail "canvas-typecheck — NOT listed as a task in the Project CI gate (add a [[workflows.workflow.tasks]] entry with args = \"canvas-typecheck\")"
