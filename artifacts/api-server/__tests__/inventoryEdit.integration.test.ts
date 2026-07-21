@@ -54,13 +54,15 @@ jest.mock("../src/utils/aiHelpers", () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
-import { db, inventoryTable, usersTable } from "@workspace/db";
-import { eq, like } from "drizzle-orm";
+import { db, inventoryTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import {
   cleanupEditableItem,
   seedEditableItem,
+  seedTestUser,
+  cleanupTestUser,
 } from "./helpers/testDb";
 import type { EditableItem } from "./helpers/testDb";
 
@@ -84,18 +86,8 @@ async function fetchRow(id: number) {
 
 beforeAll(async () => {
   // Insert a non-admin user so auth-guard tests can confirm 403.
-  await db
-    .insert(usersTable)
-    .values({
-      clerkUserId: NON_ADMIN_USER,
-      email: "nonadmin@edit.test",
-      status: "approved",
-      role: "user",
-    })
-    .onConflictDoUpdate({
-      target: usersTable.clerkUserId,
-      set: { status: "approved", role: "user" },
-    });
+  // seedTestUser derives the email from the clerkUserId (collision-safe).
+  await seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" });
 
   item = await seedEditableItem();
 
@@ -112,7 +104,7 @@ afterAll(async () => {
   // the next run anyway.
   try {
     await cleanupEditableItem();
-    await db.delete(usersTable).where(like(usersTable.clerkUserId, "jest-edit-%"));
+    await cleanupTestUser(NON_ADMIN_USER);
   } catch {
     // pool already closed — no-op
   }

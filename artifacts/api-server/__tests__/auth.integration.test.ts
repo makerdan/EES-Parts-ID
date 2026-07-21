@@ -40,8 +40,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { db, usersTable } from "@workspace/db";
-import { inArray, like } from "drizzle-orm";
+import { seedTestUser, cleanupTestUser } from "./helpers/testDb";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 // The bootstrap admin authenticates simply by presenting their Clerk user id.
@@ -53,27 +52,15 @@ const APPROVED_USER = "jest-auth-approved-user";
 const PENDING_USER = "jest-auth-pending-user";
 
 beforeAll(async () => {
-  // Remove any stale rows from a previously-interrupted run: the users table
-  // has a unique index on email, so a leftover row holding one of these
-  // fixture emails under a different clerk id would make the insert below
-  // fail with users_email_unique.
-  await db
-    .delete(usersTable)
-    .where(inArray(usersTable.email, ["approved@test.example", "pending@test.example"]));
-  await db
-    .insert(usersTable)
-    .values([
-      { clerkUserId: APPROVED_USER, email: "approved@test.example", status: "approved", role: "user" },
-      { clerkUserId: PENDING_USER, email: "pending@test.example", status: "pending", role: "user" },
-    ])
-    .onConflictDoUpdate({
-      target: usersTable.clerkUserId,
-      set: { status: usersTable.status, role: usersTable.role },
-    });
+  // seedTestUser derives the email from the clerkUserId, so parallel suites
+  // can never collide on users_email_unique.
+  await seedTestUser({ clerkUserId: APPROVED_USER, status: "approved", role: "user" });
+  await seedTestUser({ clerkUserId: PENDING_USER, status: "pending", role: "user" });
 });
 
 afterAll(async () => {
-  await db.delete(usersTable).where(like(usersTable.clerkUserId, "jest-auth-%"));
+  await cleanupTestUser(APPROVED_USER);
+  await cleanupTestUser(PENDING_USER);
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

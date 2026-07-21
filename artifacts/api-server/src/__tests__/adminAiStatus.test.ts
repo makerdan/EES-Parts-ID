@@ -81,8 +81,7 @@ import {
   probePoeBotsOnStartup,
   getAllPoeModelNames,
 } from "../lib/aiProvider";
-import { db, usersTable } from "@workspace/db";
-import { like } from "drizzle-orm";
+import { seedTestUser, cleanupTestUser } from "../../__tests__/helpers/testDb";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // The bootstrap admin authenticates by presenting their Clerk user id.
@@ -95,19 +94,14 @@ const NON_ADMIN_USER = "jest-aistatus-nonadmin";
 
 // ── Setup / teardown ──────────────────────────────────────────────────────────
 beforeAll(async () => {
-  await db
-    .insert(usersTable)
-    .values({ clerkUserId: NON_ADMIN_USER, email: "na@test.example", status: "approved", role: "user" })
-    .onConflictDoUpdate({
-      target: usersTable.clerkUserId,
-      set: { status: usersTable.status, role: usersTable.role },
-    });
+  // seedTestUser derives the email from the clerkUserId (collision-safe).
+  await seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" });
 });
 
 afterAll(async () => {
   // Restore provider to "poe" so module state is clean for any subsequent suites
   setProvider("poe");
-  await db.delete(usersTable).where(like(usersTable.clerkUserId, "jest-aistatus-%"));
+  await cleanupTestUser(NON_ADMIN_USER);
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

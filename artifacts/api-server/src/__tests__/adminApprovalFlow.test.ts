@@ -68,11 +68,10 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
-import { like } from "drizzle-orm";
 
 import app from "../app";
 import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
-import { db, usersTable } from "@workspace/db";
+import { seedTestUser, cleanupTestUser } from "../../__tests__/helpers/testDb";
 
 // ── Fixed test Clerk user ids ─────────────────────────────────────────────────
 // All ids share the "jest-approval-" prefix so the afterAll cleanup can
@@ -96,38 +95,16 @@ function nonAdminBearer(): string {
 beforeAll(async () => {
   // Seed a pending user and a to-be-banned user directly so tests do not
   // depend on an outbound Clerk API call from requireAppAuth.
-  await db
-    .insert(usersTable)
-    .values([
-      {
-        clerkUserId: PENDING_USER,
-        email: "pending@test.example",
-        status: "pending",
-        role: "user",
-      },
-      {
-        clerkUserId: TO_BAN_USER,
-        email: "tobanned@test.example",
-        status: "pending",
-        role: "user",
-      },
-      {
-        clerkUserId: NON_ADMIN_USER,
-        email: "nonadmin@test.example",
-        status: "approved",
-        role: "user",
-      },
-    ])
-    .onConflictDoUpdate({
-      target: usersTable.clerkUserId,
-      set: { status: "pending", role: "user", updatedAt: new Date() },
-    });
+  // seedTestUser derives each email from the clerkUserId (collision-safe).
+  await seedTestUser({ clerkUserId: PENDING_USER, status: "pending", role: "user" });
+  await seedTestUser({ clerkUserId: TO_BAN_USER, status: "pending", role: "user" });
+  await seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" });
 });
 
 afterAll(async () => {
-  await db
-    .delete(usersTable)
-    .where(like(usersTable.clerkUserId, "jest-approval-%"));
+  await cleanupTestUser(PENDING_USER);
+  await cleanupTestUser(TO_BAN_USER);
+  await cleanupTestUser(NON_ADMIN_USER);
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────
