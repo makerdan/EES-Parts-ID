@@ -90,12 +90,20 @@ function makeAdminToken(): string {
   return ADMIN_TEST_USER_ID;
 }
 
+// Collision-safe under parallel Jest workers: the email is DERIVED from the
+// clerkUserId (same convention as helpers/testDb.ts seedTestUser), so this
+// suite can never trip the users_email_unique constraint against another
+// suite's hand-written email.
+function emailFor(clerkUserId: string): string {
+  return `${clerkUserId.toLowerCase()}@jest.test.example`;
+}
+
 async function seedUser(
   clerkUserId: string,
-  email: string,
   status: "pending" | "approved" | "banned" = "pending",
   role: "user" | "admin" = "user",
 ) {
+  const email = emailFor(clerkUserId);
   await db
     .insert(usersTable)
     .values({ clerkUserId, email, status, role })
@@ -108,7 +116,7 @@ async function seedUser(
 /** Seeds an approved, non-admin user and returns its Clerk user id (= token). */
 async function seedNonAdmin(): Promise<string> {
   const id = `${FIXTURE_PREFIX}nonadmin`;
-  await seedUser(id, "nonadmin@example.com", "approved", "user");
+  await seedUser(id, "approved", "user");
   return id;
 }
 
@@ -165,8 +173,8 @@ describe("GET /api/admin/users — authenticated", () => {
   });
 
   it("returns seeded users with clerkUserId, email, status, createdAt, updatedAt fields", async () => {
-    await seedUser(`${FIXTURE_PREFIX}alice`, "alice@example.com", "pending");
-    await seedUser(`${FIXTURE_PREFIX}bob`, "bob@example.com", "approved");
+    await seedUser(`${FIXTURE_PREFIX}alice`, "pending");
+    await seedUser(`${FIXTURE_PREFIX}bob`, "approved");
 
     const token = makeAdminToken();
     const res = await supertest(app)
@@ -179,20 +187,20 @@ describe("GET /api/admin/users — authenticated", () => {
     const bob = users.find(u => u.clerkUserId === `${FIXTURE_PREFIX}bob`);
 
     expect(alice).toBeDefined();
-    expect(alice?.email).toBe("alice@example.com");
+    expect(alice?.email).toBe(emailFor(`${FIXTURE_PREFIX}alice`));
     expect(alice?.status).toBe("pending");
     expect(alice).toHaveProperty("createdAt");
     expect(alice).toHaveProperty("updatedAt");
 
     expect(bob).toBeDefined();
-    expect(bob?.email).toBe("bob@example.com");
+    expect(bob?.email).toBe(emailFor(`${FIXTURE_PREFIX}bob`));
     expect(bob?.status).toBe("approved");
   });
 
   it("includes users with all three status values", async () => {
-    await seedUser(`${FIXTURE_PREFIX}pending-1`, "p@example.com", "pending");
-    await seedUser(`${FIXTURE_PREFIX}approved-1`, "a@example.com", "approved");
-    await seedUser(`${FIXTURE_PREFIX}banned-1`, "b@example.com", "banned");
+    await seedUser(`${FIXTURE_PREFIX}pending-1`, "pending");
+    await seedUser(`${FIXTURE_PREFIX}approved-1`, "approved");
+    await seedUser(`${FIXTURE_PREFIX}banned-1`, "banned");
 
     const token = makeAdminToken();
     const res = await supertest(app)
@@ -242,7 +250,7 @@ describe("POST /api/admin/users/:clerkUserId/approve — auth guard", () => {
 describe("POST /api/admin/users/:clerkUserId/approve — authenticated", () => {
   it("sets a pending user's status to approved and returns the updated user", async () => {
     const userId = `${FIXTURE_PREFIX}approve-me`;
-    await seedUser(userId, "approve@example.com", "pending");
+    await seedUser(userId, "pending");
 
     const token = makeAdminToken();
     const res = await supertest(app)
@@ -257,7 +265,7 @@ describe("POST /api/admin/users/:clerkUserId/approve — authenticated", () => {
 
   it("persists the approved status to the database", async () => {
     const userId = `${FIXTURE_PREFIX}persist-approve`;
-    await seedUser(userId, "persist@example.com", "pending");
+    await seedUser(userId, "pending");
 
     const token = makeAdminToken();
     await supertest(app)
@@ -286,7 +294,7 @@ describe("POST /api/admin/users/:clerkUserId/approve — authenticated", () => {
 
   it("can also approve an already-banned user", async () => {
     const userId = `${FIXTURE_PREFIX}was-banned`;
-    await seedUser(userId, "banned@example.com", "banned");
+    await seedUser(userId, "banned");
 
     const token = makeAdminToken();
     const res = await supertest(app)
@@ -329,7 +337,7 @@ describe("POST /api/admin/users/:clerkUserId/ban — auth guard", () => {
 describe("POST /api/admin/users/:clerkUserId/ban — authenticated", () => {
   it("sets a pending user's status to banned and returns the updated user", async () => {
     const userId = `${FIXTURE_PREFIX}ban-me`;
-    await seedUser(userId, "ban@example.com", "pending");
+    await seedUser(userId, "pending");
 
     const token = makeAdminToken();
     const res = await supertest(app)
@@ -344,7 +352,7 @@ describe("POST /api/admin/users/:clerkUserId/ban — authenticated", () => {
 
   it("persists the banned status to the database", async () => {
     const userId = `${FIXTURE_PREFIX}persist-ban`;
-    await seedUser(userId, "persistban@example.com", "pending");
+    await seedUser(userId, "pending");
 
     const token = makeAdminToken();
     await supertest(app)
@@ -373,7 +381,7 @@ describe("POST /api/admin/users/:clerkUserId/ban — authenticated", () => {
 
   it("can also ban an already-approved user", async () => {
     const userId = `${FIXTURE_PREFIX}was-approved`;
-    await seedUser(userId, "approved@example.com", "approved");
+    await seedUser(userId, "approved");
 
     const token = makeAdminToken();
     const res = await supertest(app)
@@ -406,7 +414,7 @@ describe("POST /api/admin/users/:clerkUserId/promote", () => {
 
   it("promotes an approved user to admin", async () => {
     const userId = `${FIXTURE_PREFIX}promote-me`;
-    await seedUser(userId, "promote@example.com", "approved", "user");
+    await seedUser(userId, "approved", "user");
 
     const res = await supertest(app)
       .post(`/api/admin/users/${userId}/promote`)
@@ -424,7 +432,7 @@ describe("POST /api/admin/users/:clerkUserId/promote", () => {
 
   it("returns 400 when promoting a user who is not approved", async () => {
     const userId = `${FIXTURE_PREFIX}promote-pending`;
-    await seedUser(userId, "pending@example.com", "pending", "user");
+    await seedUser(userId, "pending", "user");
 
     const res = await supertest(app)
       .post(`/api/admin/users/${userId}/promote`)
@@ -463,7 +471,7 @@ describe("POST /api/admin/users/:clerkUserId/demote", () => {
 
   it("demotes an admin user back to role=user", async () => {
     const userId = `${FIXTURE_PREFIX}demote-me`;
-    await seedUser(userId, "demote@example.com", "approved", "admin");
+    await seedUser(userId, "approved", "admin");
 
     const res = await supertest(app)
       .post(`/api/admin/users/${userId}/demote`)
@@ -502,8 +510,8 @@ describe("POST /api/admin/users/:clerkUserId/demote", () => {
 
 describe("GET /api/admin/users — role field", () => {
   it("includes a role field for each user", async () => {
-    await seedUser(`${FIXTURE_PREFIX}role-user`, "roleuser@example.com", "approved", "user");
-    await seedUser(`${FIXTURE_PREFIX}role-admin`, "roleadmin@example.com", "approved", "admin");
+    await seedUser(`${FIXTURE_PREFIX}role-user`, "approved", "user");
+    await seedUser(`${FIXTURE_PREFIX}role-admin`, "approved", "admin");
 
     const res = await supertest(app)
       .get("/api/admin/users")
@@ -520,7 +528,7 @@ describe("GET /api/admin/users — role field", () => {
 
   it("reflects a promoted user's role immediately in the user list", async () => {
     const userId = `${FIXTURE_PREFIX}role-after-promote`;
-    await seedUser(userId, "rafp@example.com", "approved", "user");
+    await seedUser(userId, "approved", "user");
 
     await supertest(app)
       .post(`/api/admin/users/${userId}/promote`)
@@ -539,7 +547,7 @@ describe("GET /api/admin/users — role field", () => {
 
   it("reflects a demoted user's role immediately in the user list", async () => {
     const userId = `${FIXTURE_PREFIX}role-after-demote`;
-    await seedUser(userId, "rafd@example.com", "approved", "admin");
+    await seedUser(userId, "approved", "admin");
 
     await supertest(app)
       .post(`/api/admin/users/${userId}/demote`)
@@ -587,7 +595,7 @@ describe("GET /api/admin/me", () => {
 
   it("returns { isAdmin: true } for a user after they are promoted", async () => {
     const userId = `${FIXTURE_PREFIX}promote-then-me`;
-    await seedUser(userId, "promoteme@example.com", "approved", "user");
+    await seedUser(userId, "approved", "user");
 
     await supertest(app)
       .post(`/api/admin/users/${userId}/promote`)
@@ -604,7 +612,7 @@ describe("GET /api/admin/me", () => {
 
   it("returns { isAdmin: false } for a user after they are demoted", async () => {
     const userId = `${FIXTURE_PREFIX}demote-then-me`;
-    await seedUser(userId, "demoteme@example.com", "approved", "admin");
+    await seedUser(userId, "approved", "admin");
 
     await supertest(app)
       .post(`/api/admin/users/${userId}/demote`)
@@ -621,7 +629,7 @@ describe("GET /api/admin/me", () => {
 
   it("full round-trip: promote → isAdmin true → demote → isAdmin false", async () => {
     const userId = `${FIXTURE_PREFIX}roundtrip`;
-    await seedUser(userId, "roundtrip@example.com", "approved", "user");
+    await seedUser(userId, "approved", "user");
 
     await supertest(app)
       .post(`/api/admin/users/${userId}/promote`)

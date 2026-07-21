@@ -41,8 +41,15 @@ jest.mock("openai", () =>
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { db, usersTable } from "@workspace/db";
+import { seedTestUser, cleanupTestUser } from "./helpers/testDb";
 
+const NONADMIN_USER_ID = "me-test-nonadmin-user";
+const PROMOTED_ADMIN_USER_ID = "me-test-promoted-admin";
+
+afterAll(async () => {
+  await cleanupTestUser(NONADMIN_USER_ID);
+  await cleanupTestUser(PROMOTED_ADMIN_USER_ID);
+});
 
 describe("GET /api/admin/me", () => {
   it("returns { isAdmin: true } for the bootstrap admin (ADMIN_CLERK_USER_ID)", async () => {
@@ -56,11 +63,8 @@ describe("GET /api/admin/me", () => {
   });
 
   it("returns { isAdmin: false } for an approved non-admin user", async () => {
-    const userId = "me-test-nonadmin-user";
-    await db
-      .insert(usersTable)
-      .values({ clerkUserId: userId, status: "approved", role: "user" })
-      .onConflictDoNothing();
+    const userId = NONADMIN_USER_ID;
+    await seedTestUser({ clerkUserId: userId, status: "approved", role: "user" });
 
     const res = await supertest(app)
       .get("/api/admin/me")
@@ -71,11 +75,8 @@ describe("GET /api/admin/me", () => {
   });
 
   it("returns { isAdmin: true } for a promoted admin user (role = admin)", async () => {
-    const userId = "me-test-promoted-admin";
-    await db
-      .insert(usersTable)
-      .values({ clerkUserId: userId, status: "approved", role: "admin" })
-      .onConflictDoNothing();
+    const userId = PROMOTED_ADMIN_USER_ID;
+    await seedTestUser({ clerkUserId: userId, status: "approved", role: "admin" });
 
     const res = await supertest(app)
       .get("/api/admin/me")

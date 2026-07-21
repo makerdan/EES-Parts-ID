@@ -74,12 +74,16 @@ function makeAdminToken(): string {
   return ADMIN_TEST_USER_ID;
 }
 
+// Collision-safe under parallel Jest workers: the email is DERIVED from the
+// clerkUserId (same convention as helpers/testDb.ts seedTestUser), so this
+// suite can never trip the users_email_unique constraint against another
+// suite's hand-written email.
 async function seedUser(
   clerkUserId: string,
-  email: string,
   status: "pending" | "approved" | "banned" = "pending",
   role: "user" | "admin" = "user",
 ) {
+  const email = `${clerkUserId.toLowerCase()}@jest.test.example`;
   await db
     .insert(usersTable)
     .values({ clerkUserId, email, status, role })
@@ -91,7 +95,7 @@ async function seedUser(
 
 async function seedNonAdmin(): Promise<string> {
   const id = `${FIXTURE_PREFIX}nonadmin`;
-  await seedUser(id, "audit-nonadmin@example.com", "approved", "user");
+  await seedUser(id, "approved", "user");
   return id;
 }
 
@@ -135,7 +139,7 @@ afterEach(async () => {
 describe("approve action — audit row", () => {
   it("writes one audit row when a user is successfully approved", async () => {
     const userId = `${FIXTURE_PREFIX}approve`;
-    await seedUser(userId, "audit-approve@example.com", "pending");
+    await seedUser(userId, "pending");
     const since = new Date();
 
     await supertest(app)
@@ -169,7 +173,7 @@ describe("approve action — audit row", () => {
 describe("ban action — audit row", () => {
   it("writes one audit row when a user is successfully banned", async () => {
     const userId = `${FIXTURE_PREFIX}ban`;
-    await seedUser(userId, "audit-ban@example.com", "pending");
+    await seedUser(userId, "pending");
     const since = new Date();
 
     await supertest(app)
@@ -202,7 +206,7 @@ describe("ban action — audit row", () => {
 describe("promote action — audit row", () => {
   it("writes one audit row when a user is successfully promoted", async () => {
     const userId = `${FIXTURE_PREFIX}promote`;
-    await seedUser(userId, "audit-promote@example.com", "approved", "user");
+    await seedUser(userId, "approved", "user");
     const since = new Date();
 
     await supertest(app)
@@ -235,7 +239,7 @@ describe("promote action — audit row", () => {
 describe("demote action — audit row", () => {
   it("writes one audit row when a user is successfully demoted", async () => {
     const userId = `${FIXTURE_PREFIX}demote`;
-    await seedUser(userId, "audit-demote@example.com", "approved", "admin");
+    await seedUser(userId, "approved", "admin");
     const since = new Date();
 
     await supertest(app)
@@ -355,7 +359,7 @@ describe("GET /api/admin/audit-log — authenticated", () => {
 
   it("includes rows written by approve/ban/promote/demote with expected shape", async () => {
     const userId = `${FIXTURE_PREFIX}shape`;
-    await seedUser(userId, "audit-shape@example.com", "pending");
+    await seedUser(userId, "pending");
     const since = new Date();
 
     await supertest(app)
@@ -387,8 +391,8 @@ describe("GET /api/admin/audit-log — authenticated", () => {
   it("returns rows in reverse-chronological order", async () => {
     const userA = `${FIXTURE_PREFIX}order-a`;
     const userB = `${FIXTURE_PREFIX}order-b`;
-    await seedUser(userA, "audit-order-a@example.com", "pending");
-    await seedUser(userB, "audit-order-b@example.com", "pending");
+    await seedUser(userA, "pending");
+    await seedUser(userB, "pending");
 
     await supertest(app)
       .post(`/api/admin/users/${userA}/approve`)
