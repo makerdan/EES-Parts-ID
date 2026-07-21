@@ -602,8 +602,11 @@ describe("ZoneEditor — undo / redo stack", () => {
       // the (UNDO_LIMIT + 1)th was a no-op because the oldest entry was dropped.
       expect(patchCount).toBe(UNDO_LIMIT);
     },
-    // This test does 101 async operations; give it ample time.
-    30_000,
+    // This test does 101 async operations; give it ample time. It was
+    // observed at 30.11s under validation-run CPU contention (~10 checks
+    // running concurrently), so 30s was right on the edge — 60s is ~2× the
+    // loaded ceiling.
+    60_000,
   );
 
   // ── 9. Undo of bulk aisle reassignment (with sentinel conflict) ─────────────

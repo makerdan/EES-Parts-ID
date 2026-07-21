@@ -30,7 +30,11 @@ pnpm --filter @workspace/api-spec run codegen:ensure || {
 # ── Suite definitions: name:pnpm-filter:budget-seconds:runner ────────────────
 # runner: jest | vitest
 SUITES=(
-  "mockup-sandbox:./artifacts/mockup-sandbox:90:vitest"
+  # Budget rationale: ~25-30s idle, but validation runs execute ~10 checks
+  # (typechecks, lint, coverage, jest suites) concurrently and measured wall
+  # time reached 90s+ under that contention (observed 90.16s overrun of the
+  # old 90s budget). 180s is ~2× the loaded ceiling.
+  "mockup-sandbox:./artifacts/mockup-sandbox:180:vitest"
   # Budget rationale: the full jest suite completes in ~70-120s on an idle
   # machine, but validation runs share CPU with three dev-server workflows and
   # measured wall time reached 150s+ under that load. 300s is ~2× the loaded
