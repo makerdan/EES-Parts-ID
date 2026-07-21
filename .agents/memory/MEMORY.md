@@ -36,3 +36,4 @@
 - [React 19 + TS 5.9 class-JSX compat shim](react19-ts59-class-jsx-compat.md) — ambient declare module (script-mode .d.ts) replaces rn-svg/expo-camera/expo-blur types; class components → ComponentType; module augmentation of submodule interfaces breaks extends chain in TS 5.9.
 - [closePool must tolerate mocked @workspace/db](closepool-mocked-db.md) — global afterAll teardown runs in mocked-db suites where pool is undefined; guard for missing pool, not just a module-local flag.
 - [Validation workflow wiring](validation-workflow-wiring.md) — setValidationCommand auto-creates isValidation workflow AND wires it into the Project gate; removeWorkflow also unwires it.
+- [drizzle push under validation load](drizzle-push-validation-load.md) — jest globalSetup drizzle-kit push can exceed 30s under concurrent post-merge validation; use 120s timeout, DB is fine.

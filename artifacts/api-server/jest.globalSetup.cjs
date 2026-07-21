@@ -23,7 +23,10 @@ const path = require("path");
 const { Client } = require("pg");
 
 const DB_PREFLIGHT_TIMEOUT_MS = 5_000;
-const DRIZZLE_PUSH_TIMEOUT_MS = 30_000;
+// 120s: drizzle-kit push normally takes a few seconds, but under heavy
+// concurrent load (e.g. ~20 validation commands running in parallel after a
+// task merge) it has been observed to exceed 30s even with a reachable DB.
+const DRIZZLE_PUSH_TIMEOUT_MS = 120_000;
 
 async function checkDbReachable() {
   const client = new Client({
@@ -112,7 +115,7 @@ module.exports = async function globalSetup() {
   } catch (err) {
     if (err.signal === "SIGTERM" || err.code === "ETIMEDOUT") {
       throw new Error(
-        "[jest globalSetup] drizzle-kit push exceeded 30s — check DATABASE_URL" +
+        `[jest globalSetup] drizzle-kit push exceeded ${DRIZZLE_PUSH_TIMEOUT_MS / 1000}s — check DATABASE_URL` +
           " connectivity and that the DB server is reachable."
       );
     }
