@@ -260,7 +260,7 @@ isValidation = true
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm audit --audit-level=high && pnpm audit --prod --audit-level=moderate"
+args = "pnpm audit --audit-level=low"
 
 [[workflows.workflow]]
 name = "lint"
