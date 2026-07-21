@@ -2,11 +2,11 @@
 /**
  * run-tier.mjs — consolidated validation tier runner (Port-Authority-Heavy Step 3).
  *
- * Usage: node scripts/serial-lock.mjs -- node scripts/run-tier.mjs <fast|standard|heavy>
+ * Usage: node scripts/serial-lock.mjs -- node scripts/run-tier.mjs <fast|standard|standard-plus|heavy>
  *
  * Runs the member checks of the requested tier sequentially, fails fast on
  * the first non-zero exit, and prints a per-step timing report. Tiers are
- * cumulative: standard includes fast, heavy includes standard.
+ * cumulative: standard includes fast, standard-plus includes standard, heavy includes standard-plus.
  *
  * Serialization: the registered validation commands wrap this script in
  * scripts/serial-lock.mjs, so per-step timings below are measured AFTER lock
@@ -38,7 +38,7 @@ const STANDARD_EXTRA = [
   ["test", "pnpm test"],
 ];
 
-const HEAVY_EXTRA = [
+const STANDARD_PLUS_EXTRA = [
   ["schema-check", "pnpm --filter @workspace/db run schema:check"],
   ["verify-fts", "pnpm --filter @workspace/db run verify-fts"],
   ["api-server-coverage", "pnpm --filter @workspace/api-server run test:coverage"],
@@ -46,16 +46,21 @@ const HEAVY_EXTRA = [
   ["post-merge-health-test", "bash scripts/test-post-merge.sh"],
 ];
 
+const HEAVY_EXTRA = [
+  ...STANDARD_PLUS_EXTRA,
+];
+
 const TIERS = {
   fast: FAST,
   standard: [...FAST, ...STANDARD_EXTRA],
+  "standard-plus": [...FAST, ...STANDARD_EXTRA, ...STANDARD_PLUS_EXTRA],
   heavy: [...FAST, ...STANDARD_EXTRA, ...HEAVY_EXTRA],
 };
 
 const tier = process.argv[2];
 const steps = TIERS[tier];
 if (!steps) {
-  console.error(`Usage: run-tier.mjs <fast|standard|heavy> (got: ${tier ?? "nothing"})`);
+  console.error(`Usage: run-tier.mjs <fast|standard|standard-plus|heavy> (got: ${tier ?? "nothing"})`);
   process.exit(2);
 }
 
