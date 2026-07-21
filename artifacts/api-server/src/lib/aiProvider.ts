@@ -337,13 +337,16 @@ const PROBE_TIMEOUT_MS = 15_000;
  * catalog-bot fallback.  Callers must check _provider === "poe" first.
  */
 async function _probeBotAndRecord(botName: string): Promise<void> {
+  // Cleared in the finally below — if the race resolves before the timeout,
+  // an uncancelled 15s timer would keep the process (and Jest workers) alive.
+  let probeTimer: NodeJS.Timeout | undefined;
   try {
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      probeTimer = setTimeout(
         () => reject(new Error(`__PROBE_TIMEOUT__`)),
         PROBE_TIMEOUT_MS,
-      ),
-    );
+      );
+    });
 
     try {
       await Promise.race([
@@ -432,6 +435,8 @@ async function _probeBotAndRecord(botName: string): Promise<void> {
       { botName, err },
       `Poe bot '${botName}' probe encountered an unexpected error — server will continue`,
     );
+  } finally {
+    if (probeTimer !== undefined) clearTimeout(probeTimer);
   }
 }
 

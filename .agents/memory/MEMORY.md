@@ -38,4 +38,5 @@
 - [Validation workflow wiring](validation-workflow-wiring.md) — setValidationCommand auto-creates isValidation workflow AND wires it into the Project gate; removeWorkflow also unwires it.
 - [drizzle push under validation load](drizzle-push-validation-load.md) — jest globalSetup drizzle-kit push can exceed 30s under concurrent post-merge validation; use 120s timeout, DB is fine.
 - [reverseVendorMap row-order flake](vendor-map-row-order-flake.md) — vendorNameResolutionMap conflict-winner tests rely on physical DB row order and flake when vendor rows are touched; unrelated to most changes.
+- [Uncancelled Promise.race timeout timers](uncancelled-race-timeout-timers.md) — un-cleared setTimeout in a race keeps Jest workers alive ("Jest did not exit"); clearTimeout in finally + unref fallback timers.
 - [Shared-DB fixture prefix wipe](shared-db-fixture-prefix-wipe.md) — parallel Jest suites on one shared DB must never blanket-delete by fixture prefix; delete only rows the current worker seeded.
