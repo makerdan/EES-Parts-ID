@@ -412,6 +412,26 @@ beforeEach(() => {
   useApp.mockReturnValue(makeAppContext());
 });
 
+// Unmount every tree mounted during the test so SearchScreen cleanup effects
+// clear pending timers (e.g. the sync-retry backoff) before the suite ends;
+// otherwise those timers fire later in the process and emit "Cannot log after
+// tests are done" warnings.
+const mountedTrees: renderer.ReactTestRenderer[] = [];
+
+function trackTree(t: renderer.ReactTestRenderer) {
+  mountedTrees.push(t);
+  return t;
+}
+
+afterEach(async () => {
+  while (mountedTrees.length > 0) {
+    const t = mountedTrees.pop()!;
+    await act(async () => {
+      t.unmount();
+    });
+  }
+});
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("flatListData memo in SearchScreen — reference stability", () => {
@@ -421,7 +441,7 @@ describe("flatListData memo in SearchScreen — reference stability", () => {
 
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
-      tree = renderer.create(<SearchScreen />);
+      tree = trackTree(renderer.create(<SearchScreen />));
     });
 
     // Let on-mount effects run (queryCache load, keyboard listeners, etc.).
@@ -452,7 +472,7 @@ describe("flatListData memo in SearchScreen — reference stability", () => {
 
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
-      tree = renderer.create(<SearchScreen />);
+      tree = trackTree(renderer.create(<SearchScreen />));
     });
 
     await flushPromises();

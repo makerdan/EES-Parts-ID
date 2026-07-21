@@ -40,3 +40,4 @@
 - [reverseVendorMap row-order flake](vendor-map-row-order-flake.md) — vendorNameResolutionMap conflict-winner tests rely on physical DB row order and flake when vendor rows are touched; unrelated to most changes.
 - [Uncancelled Promise.race timeout timers](uncancelled-race-timeout-timers.md) — un-cleared setTimeout in a race keeps Jest workers alive ("Jest did not exit"); clearTimeout in finally + unref fallback timers.
 - [Shared-DB fixture prefix wipe](shared-db-fixture-prefix-wipe.md) — parallel Jest suites on one shared DB must never blanket-delete by fixture prefix; delete only rows the current worker seeded.
+- [Unmount RTR trees before timer flush](rtr-unmount-before-timer-flush.md) — unmount all react-test-renderer trees in afterEach BEFORE runOnlyPendingTimers, or leftover component timers fire in later suites ("Cannot log after tests are done").
