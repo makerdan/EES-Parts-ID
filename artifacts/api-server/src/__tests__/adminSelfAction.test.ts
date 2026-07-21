@@ -64,11 +64,10 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
-import { like } from "drizzle-orm";
 
 import app from "../app";
 import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
-import { db, usersTable } from "@workspace/db";
+import { seedTestUser, cleanupTestUser } from "../../__tests__/helpers/testDb";
 
 // ── Fixed test Clerk user ids ─────────────────────────────────────────────────
 // All ids share the "jest-selfaction-" prefix for isolated cleanup.
@@ -88,32 +87,14 @@ function promotedAdminBearer(): string {
 
 // ── Seed / teardown ───────────────────────────────────────────────────────────
 beforeAll(async () => {
-  await db
-    .insert(usersTable)
-    .values([
-      {
-        clerkUserId: PROMOTED_ADMIN,
-        email: "promoted@test.example",
-        status: "approved",
-        role: "admin",
-      },
-      {
-        clerkUserId: TARGET_USER,
-        email: "target@test.example",
-        status: "approved",
-        role: "user",
-      },
-    ])
-    .onConflictDoUpdate({
-      target: usersTable.clerkUserId,
-      set: { status: "approved", updatedAt: new Date() },
-    });
+  // seedTestUser derives each email from the clerkUserId (collision-safe).
+  await seedTestUser({ clerkUserId: PROMOTED_ADMIN, status: "approved", role: "admin" });
+  await seedTestUser({ clerkUserId: TARGET_USER, status: "approved", role: "user" });
 });
 
 afterAll(async () => {
-  await db
-    .delete(usersTable)
-    .where(like(usersTable.clerkUserId, "jest-selfaction-%"));
+  await cleanupTestUser(PROMOTED_ADMIN);
+  await cleanupTestUser(TARGET_USER);
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,13 +123,7 @@ describe("POST /api/admin/users/:id/ban — self-action guard", () => {
 
   it("returns 200 when a promoted admin bans a different user", async () => {
     // First ensure TARGET_USER is in approved state for this test.
-    await db
-      .insert(usersTable)
-      .values({ clerkUserId: TARGET_USER, email: "target@test.example", status: "approved", role: "user" })
-      .onConflictDoUpdate({
-        target: usersTable.clerkUserId,
-        set: { status: "approved", updatedAt: new Date() },
-      });
+    await seedTestUser({ clerkUserId: TARGET_USER, status: "approved", role: "user" });
 
     const res = await supertest(app)
       .post(`/api/admin/users/${TARGET_USER}/ban`)
@@ -211,13 +186,7 @@ describe("POST /api/admin/users/:id/approve — self-action guard", () => {
   });
 
   it("returns 200 when a promoted admin approves a different user", async () => {
-    await db
-      .insert(usersTable)
-      .values({ clerkUserId: TARGET_USER, email: "target@test.example", status: "pending", role: "user" })
-      .onConflictDoUpdate({
-        target: usersTable.clerkUserId,
-        set: { status: "pending", updatedAt: new Date() },
-      });
+    await seedTestUser({ clerkUserId: TARGET_USER, status: "pending", role: "user" });
 
     const res = await supertest(app)
       .post(`/api/admin/users/${TARGET_USER}/approve`)
@@ -239,25 +208,12 @@ describe("DELETE /api/admin/users/:id — delete guards", () => {
 
   beforeEach(async () => {
     // Re-seed before every test so the success case always finds a row.
-    await db
-      .insert(usersTable)
-      .values({
-        clerkUserId: DELETABLE_USER,
-        email: "deletable@test.example",
-        status: "approved",
-        role: "user",
-      })
-      .onConflictDoUpdate({
-        target: usersTable.clerkUserId,
-        set: { status: "approved", updatedAt: new Date() },
-      });
+    await seedTestUser({ clerkUserId: DELETABLE_USER, status: "approved", role: "user" });
   });
 
   afterEach(async () => {
     // Clean up the deletable user in case a test did NOT delete it.
-    await db
-      .delete(usersTable)
-      .where(like(usersTable.clerkUserId, "jest-selfaction-deletable%"));
+    await cleanupTestUser(DELETABLE_USER);
   });
 
   it("returns 400 when a promoted admin tries to delete themselves", async () => {
