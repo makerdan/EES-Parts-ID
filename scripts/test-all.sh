@@ -1,20 +1,46 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+# ── Serialization lock ────────────────────────────────────────────────────────
+# The three suites share /tmp/jest-results-*.json output files and the
+# manifest; concurrent invocations of this script would corrupt them and
+# contend for CPU (making budgets lie). Re-exec ourselves under the
+# crash-safe serial lock so concurrent runs queue instead of racing.
+# The lock wrapper exports SERIAL_LOCK_HELD_PID; on the second pass (or when
+# an ancestor already holds the lock) we fall through and run for real.
+# IMPORTANT: everything below — including the outer watchdog budget — only
+# starts AFTER the lock is acquired, so queue-wait time is never counted
+# against any budget.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "${SERIAL_LOCK_HELD_PID:-}" ] || ! kill -0 "${SERIAL_LOCK_HELD_PID}" 2>/dev/null; then
+  exec node "${SCRIPT_DIR}/serial-lock.mjs" -- bash "${BASH_SOURCE[0]}" "$@"
+fi
+echo "[test-all] serialized run — lock held (waited ${SERIAL_LOCK_WAIT_SECS:-0}s in queue; budgets start now)."
+
+# Ensure generated API clients are present and current before any suite reads
+# them. codegen:ensure is itself idempotent and file-locked (see
+# lib/api-spec/scripts/ensure-codegen.mjs), so this cannot race a concurrent
+# dev-workflow boot; running it here while we hold the serial lock also means
+# no other test run can observe a mid-regeneration state.
+pnpm --filter @workspace/api-spec run codegen:ensure || {
+  echo "[test-all] ERROR: codegen:ensure failed — generated API clients may be missing."
+  exit 1
+}
+
 # ── Suite definitions: name:pnpm-filter:budget-seconds:runner ────────────────
 # runner: jest | vitest
 SUITES=(
   "mockup-sandbox:./artifacts/mockup-sandbox:90:vitest"
-  # Budget rationale: 102 test files (90 suites passing + 12 failing-to-compile due to
-  # codegen drift) complete in ~70s locally. 150s is ~2× that realistic ceiling and
-  # gives CI headroom without hiding genuinely slow tests. The old 300s was never
-  # measured and was pure headroom.
-  "parts-id:./artifacts/parts-id:150:jest"
-  # Budget rationale: 17 unit files complete in ~9s locally; 31 integration files
-  # need postgres. With the CI postgres service container always healthy, the full
-  # suite runs in ~60-90s (no DB-hang overhead). 120s is ~2× that realistic ceiling.
-  # The old 600s budget was sized for worst-case DB-hang scenarios that no longer apply.
-  "api-server:./artifacts/api-server:120:jest"
+  # Budget rationale: the full jest suite completes in ~70-120s on an idle
+  # machine, but validation runs share CPU with three dev-server workflows and
+  # measured wall time reached 150s+ under that load. 300s is ~2× the loaded
+  # ceiling; a genuine hang still fails fast enough to be useful.
+  "parts-id:./artifacts/parts-id:300:jest"
+  # Budget rationale: ~60-90s idle, but observed >120s under validation-run
+  # CPU contention (dev servers running concurrently). 240s is ~2× the loaded
+  # ceiling. The old 600s budget was sized for DB-hang scenarios that no
+  # longer apply.
+  "api-server:./artifacts/api-server:240:jest"
 )
 
 # Total outer wall-clock cap (18 min).

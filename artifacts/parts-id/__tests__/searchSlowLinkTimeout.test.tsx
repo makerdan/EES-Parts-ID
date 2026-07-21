@@ -170,6 +170,18 @@ jest.mock("@/utils/offlineBarcode", () => ({
   FUSE_SYNC_MAX_AGE_MS:     Infinity,
   FUSE_SOFT_STALE_MS:       Infinity,
   lookupByBarcodeOffline:   jest.fn().mockResolvedValue(null),
+  // Mirrors the real parser: envelope format { items: [...] } or legacy plain array.
+  parseFuseCacheItems: jest.fn((raw: string) => {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && Array.isArray(parsed.items)) return parsed.items;
+      return null;
+    } catch {
+      return null;
+    }
+  }),
+  replaceBarcodeCacheWithServerItems: jest.fn().mockResolvedValue(undefined),
 }));
 
 // resolveOfflineFallback is configured per-test via mockResolveOfflineFallback.

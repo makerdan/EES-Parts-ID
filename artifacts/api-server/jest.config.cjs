@@ -69,6 +69,10 @@ const sharedConfig = {
     "^@clerk/express$": "<rootDir>/__mocks__/clerkExpress.cjs",
     // Stub the ESM-only http-proxy-middleware (see __mocks__/httpProxyMiddleware.cjs).
     "^http-proxy-middleware$": "<rootDir>/__mocks__/httpProxyMiddleware.cjs",
+    // Stub the ESM-only pdfjs legacy build (uses import.meta at module scope,
+    // unparseable in the Jest CJS runtime). Tests that need behaviour mock
+    // this specifier themselves; the stub just prevents the parse crash.
+    "^pdfjs-dist/legacy/build/pdf\\.mjs$": "<rootDir>/__mocks__/pdfjs-dist-legacy.cjs",
     "^@workspace/db$":
       "<rootDir>/../../lib/db/src/index.ts",
     "^@workspace/api-zod$":

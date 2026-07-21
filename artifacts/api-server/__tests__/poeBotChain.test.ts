@@ -127,29 +127,34 @@ describe("getPoeChainForFeature() — chain composition", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("tryPoeBotChain('identify') — exhaustion after both bots fail", () => {
+  // NOTE: this test file sets AI_INTEGRATIONS_OPENAI_* env vars, so the
+  // Replit AI backstop IS configured: after the 2-bot Poe chain is exhausted,
+  // fn is invoked one final time with the Replit AI client and the OpenAI
+  // model for the feature. When that call also fails, the transient error
+  // from the fallback attempt is what propagates to the caller.
   function makeTransientError(): PoeBotModule.PoeHttpError {
     return new poeBot.PoeHttpError(500, "Internal Server Error");
   }
 
-  it("throws PoeBotChainExhaustedError when both Claude and Gemini fail with transient errors", async () => {
+  it("rejects with the transient error when both Poe bots AND the Replit AI backstop fail", async () => {
     const fn = jest.fn().mockRejectedValue(makeTransientError());
 
     await expect(poeBot.tryPoeBotChain("identify", fn)).rejects.toBeInstanceOf(
-      poeBot.PoeBotChainExhaustedError,
+      poeBot.PoeHttpError,
     );
   });
 
-  it("calls fn exactly 2 times — once per bot in the identify chain (not 3)", async () => {
+  it("calls fn exactly 3 times — once per Poe bot plus the Replit AI backstop", async () => {
     const fn = jest.fn().mockRejectedValue(makeTransientError());
 
     await expect(poeBot.tryPoeBotChain("identify", fn)).rejects.toBeInstanceOf(
-      poeBot.PoeBotChainExhaustedError,
+      poeBot.PoeHttpError,
     );
 
-    expect(fn).toHaveBeenCalledTimes(2);
+    expect(fn).toHaveBeenCalledTimes(3);
   });
 
-  it("passes bot names in chain order: Claude first, then Gemini catalog bot", async () => {
+  it("passes model names in order: the Poe chain first, then the Replit AI model", async () => {
     const calledWith: string[] = [];
     const fn = jest
       .fn()
@@ -159,22 +164,25 @@ describe("tryPoeBotChain('identify') — exhaustion after both bots fail", () =>
       });
 
     await expect(poeBot.tryPoeBotChain("identify", fn)).rejects.toBeInstanceOf(
-      poeBot.PoeBotChainExhaustedError,
+      poeBot.PoeHttpError,
     );
 
     const expectedChain = aiProvider.getPoeChainForFeature("identify");
-    expect(calledWith).toEqual(expectedChain);
+    expect(calledWith.slice(0, expectedChain.length)).toEqual(expectedChain);
+    expect(calledWith).toHaveLength(expectedChain.length + 1);
   });
 
-  it("does NOT call fn a 3rd time after 2 bots are exhausted", async () => {
-    const fn = jest.fn().mockRejectedValue(makeTransientError());
+  it("uses the Replit AI backstop's result when the Poe chain is exhausted", async () => {
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(makeTransientError())
+      .mockRejectedValueOnce(makeTransientError())
+      .mockResolvedValueOnce("ok from replit ai");
 
-    await expect(poeBot.tryPoeBotChain("identify", fn)).rejects.toBeInstanceOf(
-      poeBot.PoeBotChainExhaustedError,
+    await expect(poeBot.tryPoeBotChain("identify", fn)).resolves.toBe(
+      "ok from replit ai",
     );
-
-    expect(fn).not.toHaveBeenCalledTimes(3);
-    expect(fn.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(fn).toHaveBeenCalledTimes(3);
   });
 
   it("returns the successful result if only the first bot fails and the second succeeds", async () => {
@@ -189,15 +197,19 @@ describe("tryPoeBotChain('identify') — exhaustion after both bots fail", () =>
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
-  it("re-throws immediately (without trying the second bot) when the first bot throws a non-transient error", async () => {
-    const permanentError = new Error("Auth failure — non-transient");
-    const fn = jest.fn().mockRejectedValueOnce(permanentError);
+  it("abandons the chain (skipping the second bot) on a non-transient error and goes straight to the Replit AI backstop", async () => {
+    const permanentError = new Error("Hard failure — non-transient");
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(permanentError)
+      .mockResolvedValueOnce("ok from replit ai");
 
-    await expect(poeBot.tryPoeBotChain("identify", fn)).rejects.toThrow(
-      permanentError,
+    await expect(poeBot.tryPoeBotChain("identify", fn)).resolves.toBe(
+      "ok from replit ai",
     );
 
-    expect(fn).toHaveBeenCalledTimes(1);
+    // 1 Poe attempt (chain abandoned, 2nd bot skipped) + 1 Replit AI attempt.
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -210,14 +222,14 @@ describe("tryPoeBotChain('dimensions') — exhaustion after both bots fail", () 
     return new poeBot.PoeHttpError(500, "Internal Server Error");
   }
 
-  it("throws PoeBotChainExhaustedError after exactly 2 attempts for dimensions chain", async () => {
+  it("rejects after 2 Poe attempts plus the Replit AI backstop for the dimensions chain", async () => {
     const fn = jest.fn().mockRejectedValue(makeTransientError());
 
     await expect(
       poeBot.tryPoeBotChain("dimensions", fn),
-    ).rejects.toBeInstanceOf(poeBot.PoeBotChainExhaustedError);
+    ).rejects.toBeInstanceOf(poeBot.PoeHttpError);
 
-    expect(fn).toHaveBeenCalledTimes(2);
+    expect(fn).toHaveBeenCalledTimes(3);
   });
 });
 

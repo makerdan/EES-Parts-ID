@@ -8,6 +8,14 @@
 
 const mockCreate = jest.fn();
 
+// The seed now goes through the aiProvider abstraction (Poe-backed), not the
+// openai package directly — mock it so no real network calls are made.
+jest.mock("../src/lib/aiProvider", () => ({
+  getAiClient: () => ({ chat: { completions: { create: mockCreate } } }),
+  getEnrichModel: () => "mock-enrich-model",
+  getIdentifyModel: () => "mock-identify-model",
+}));
+
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
   openai: {
     chat: { completions: { create: mockCreate } },

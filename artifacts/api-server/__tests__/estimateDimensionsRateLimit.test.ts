@@ -69,6 +69,7 @@ jest.mock("../src/lib/aiProvider", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 
 import supertest from "supertest";
+import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import app from "../src/app";
 
 // ── Shared constants ──────────────────────────────────────────────────────────
@@ -97,7 +98,24 @@ function hit(ip: string) {
     .send({ imageBase64: TINY_IMAGE });
 }
 
+// Per-run unique IP prefix: the rate limiter persists windows in the shared
+// dev database, so re-using fixed IPs across back-to-back runs (< 60s apart)
+// would inherit the previous run's exhausted quota and 429 immediately.
+const RUN_OCTET = 1 + Math.floor(Math.random() * 250);
+const uniqueIp = (host: number) => `10.${RUN_OCTET}.${(Date.now() >> 8) & 0xff}.${host}`;
+
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
+
+beforeAll(() => {
+  // The endpoint sits behind requireAppAuth; authenticate every request as
+  // the bootstrap admin (the clerk mock reads this env var when no Bearer
+  // token is supplied).
+  process.env.TEST_DEFAULT_AUTH_USER = ADMIN_TEST_USER_ID;
+});
+
+afterAll(() => {
+  delete process.env.TEST_DEFAULT_AUTH_USER;
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -124,7 +142,7 @@ beforeEach(() => {
 
 describe("POST /api/inventory/estimate-dimensions/search — rate limiter", () => {
   it("allows every request within the limit and returns 200 for each", async () => {
-    const ip = "10.20.0.1";
+    const ip = uniqueIp(1);
 
     for (let i = 0; i < RATE_LIMIT; i++) {
       const res = await hit(ip);
@@ -133,7 +151,7 @@ describe("POST /api/inventory/estimate-dimensions/search — rate limiter", () =
   });
 
   it("blocks the (limit + 1)th request with 429 and a JSON error body", async () => {
-    const ip = "10.20.0.2";
+    const ip = uniqueIp(2);
 
     for (let i = 0; i < RATE_LIMIT; i++) {
       await hit(ip);
@@ -147,8 +165,8 @@ describe("POST /api/inventory/estimate-dimensions/search — rate limiter", () =
   });
 
   it("does not count one IP's requests against a different IP's quota", async () => {
-    const ipA = "10.20.0.3";
-    const ipB = "10.20.0.4";
+    const ipA = uniqueIp(3);
+    const ipB = uniqueIp(4);
 
     // Exhaust the limit for IP-A.
     for (let i = 0; i < RATE_LIMIT; i++) {

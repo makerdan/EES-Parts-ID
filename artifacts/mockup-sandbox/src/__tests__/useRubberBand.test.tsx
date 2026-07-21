@@ -420,6 +420,8 @@ describe("useRubberBand — Zone Editor integration", () => {
         return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(""), json: () => Promise.resolve({}) });
       if (method === "GET" && s.includes("/warehouse-zones/coverage"))
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ unsortedCount: 0, uncoveredAisles: [] }), text: () => Promise.resolve("") });
+      if (method === "GET" && s.includes("/warehouse-zones/alignment"))
+        return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
       if (method === "GET" && s.includes("/warehouse-zones"))
         return new Promise((res) => {
           resolveZones = res as (v: unknown) => void;
@@ -625,6 +627,8 @@ describe("useRubberBand — Zone Editor integration", () => {
         return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(""), json: () => Promise.resolve({}) });
       if (method === "GET" && s.includes("/warehouse-zones/coverage"))
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ unsortedCount: 0, uncoveredAisles: [] }), text: () => Promise.resolve("") });
+      if (method === "GET" && s.includes("/warehouse-zones/alignment"))
+        return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
       if (method === "GET" && s.includes("/warehouse-zones"))
         return new Promise((res) => { resolveZones = res as (v: unknown) => void; });
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve("") });

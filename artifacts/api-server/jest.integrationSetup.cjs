@@ -5,11 +5,14 @@
  * Integration tests (matching *.integration.test.ts) get a 20s timeout
  * instead of the 10s baseline.  Unit/mock tests keep the 10s default.
  *
- * Pool teardown: a global afterAll closes the shared pg pool after every test
- * file, regardless of whether the file explicitly imports closePool().  The
- * guard flag in testDb.ts makes repeated calls idempotent — files that already
- * call closePool() in their own afterAll are unaffected.  This prevents Jest
- * from printing "Force exiting Jest" due to lingering pool connections.
+ * Pool teardown: none needed here. The shared pg pool in @workspace/db is
+ * created with `allowExitOnIdle: true` whenever JEST_WORKER_ID is set, so the
+ * worker process can exit once connections go idle without an explicit
+ * pool.end(). A previous version of this file registered a global afterAll
+ * that called closePool(), but setupFilesAfterEnv afterAll hooks run BEFORE
+ * the test file's own afterAll hooks — so per-suite DB cleanup (e.g.
+ * cleanupFixtures()) ran against an already-ended pool and failed the suite.
+ * Do not re-add a global closePool() here.
  */
 
 const path = require("path");
@@ -23,16 +26,23 @@ if (isIntegration) {
   jest.setTimeout(20_000);
 }
 
-afterAll(async () => {
-  // Jest's module resolver honours moduleNameMapper and the ts-jest transform
-  // even for require() calls made inside setupFilesAfterEnv files, so
-  // requiring the TypeScript testDb helper works here.
-  //
-  // closePool() is idempotent (guarded by _poolEnded flag) so calling it here
-  // is always safe: test files that already called it get a no-op, and test
-  // files that never imported testDb get the pool closed for the first time.
-  // pg's Pool.end() with no active connections resolves immediately, so this
-  // is also safe in pure-unit tests where no queries were ever made.
-  const { closePool } = require("./__tests__/helpers/testDb");
-  await closePool();
-});
+// Rate limits: the sliding-window limiter persists state in the shared dev
+// database (rate_limit_buckets), so the default per-minute caps (e.g. 5
+// catalog-pdf uploads/min per admin) are exhausted almost immediately when a
+// dozen catalog-pdf suites run in parallel as the same bootstrap admin — and
+// leftover rows even bleed into the NEXT test run. Raise the caps for suites
+// unless a test explicitly set its own value. The estimate-dimensions limiter
+// (ESTIMATE_SEARCH_RATE_LIMIT) is deliberately left alone — its dedicated
+// test exercises real limit behaviour with per-run unique keys.
+process.env.RATE_LIMIT_CATALOG_PDF_UPLOAD_PER_MIN ??= "100000";
+process.env.RATE_LIMIT_IDENTIFY_PER_MIN ??= "100000";
+process.env.RATE_LIMIT_TRANSLATE_PER_MIN ??= "100000";
+process.env.RATE_LIMIT_PART_CARD_PER_MIN ??= "100000";
+process.env.RATE_LIMIT_REFERENCE_ASK_PER_MIN ??= "100000";
+process.env.RATE_LIMIT_INVENTORY_SEARCH_PER_MIN ??= "100000";
+process.env.RATE_LIMIT_ADMIN_QUERY_PER_MIN ??= "100000";
+// The catalog-pdf background-processing suite deliberately hangs several
+// background jobs (never-resolving extract mocks). Each hung job holds an
+// in-process concurrency slot forever, so the default cap of 3 concurrent
+// PDF jobs starts returning 429 mid-suite. Raise it for tests.
+process.env.MAX_CONCURRENT_PDF_JOBS ??= "100000";

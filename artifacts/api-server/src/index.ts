@@ -1,6 +1,7 @@
 import { adminAuditLogTable, catalogPdfJobTable, db } from "@workspace/db";
 import { eq, lt, sql } from "drizzle-orm";
-import { createRequire } from "module";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 
 import app from "./app";
 import { initProvider, probePoeBotsOnStartup } from "./lib/aiProvider";
@@ -9,10 +10,26 @@ import { MAX_RETRIES, startServer } from "./lib/startServer";
 import { validateEnv } from "./lib/validateEnv";
 import { applyZoneSectionNumFix } from "./lib/zoneSectionNumFix";
 
-const _require = createRequire(import.meta.url);
-const { API_SERVER_PORT: DEV_FALLBACK_PORT } = _require("../../../scripts/dev-ports.json") as {
-  API_SERVER_PORT: number;
-};
+// Resolve scripts/dev-ports.json by walking up from cwd. Deliberately avoids
+// `import.meta` (createRequire(import.meta.url)) so this file stays parseable
+// under the CommonJS ts-jest transform used by the test suite.
+function readDevFallbackPort(): number {
+  let dir = process.cwd();
+  for (let i = 0; i < 6; i++) {
+    const candidate = path.join(dir, "scripts", "dev-ports.json");
+    if (existsSync(candidate)) {
+      const parsed = JSON.parse(readFileSync(candidate, "utf8")) as {
+        API_SERVER_PORT: number;
+      };
+      return parsed.API_SERVER_PORT;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return NaN;
+}
+const DEV_FALLBACK_PORT = readDevFallbackPort();
 
 process.on("uncaughtException", (err) => {
   logger.error({ err }, "Uncaught exception — exiting");

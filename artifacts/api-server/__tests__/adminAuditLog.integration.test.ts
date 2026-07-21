@@ -343,13 +343,14 @@ describe("GET /api/admin/audit-log — auth guard", () => {
 // ── GET /api/admin/audit-log — authenticated ───────────────────────────────
 
 describe("GET /api/admin/audit-log — authenticated", () => {
-  it("returns 200 with an array", async () => {
+  it("returns 200 with a paginated rows array", async () => {
     const res = await supertest(app)
       .get("/api/admin/audit-log")
       .set("Authorization", `Bearer ${makeAdminToken()}`)
       .expect(200);
 
-    expect(Array.isArray(res.body)).toBe(true);
+    expect(Array.isArray(res.body.rows)).toBe(true);
+    expect(res.body).toHaveProperty("nextCursor");
   });
 
   it("includes rows written by approve/ban/promote/demote with expected shape", async () => {
@@ -365,11 +366,11 @@ describe("GET /api/admin/audit-log — authenticated", () => {
     await new Promise((r) => setTimeout(r, 200));
 
     const res = await supertest(app)
-      .get("/api/admin/audit-log")
+      .get("/api/admin/audit-log?limit=200")
       .set("Authorization", `Bearer ${makeAdminToken()}`)
       .expect(200);
 
-    const rows: Array<Record<string, unknown>> = res.body;
+    const rows: Array<Record<string, unknown>> = res.body.rows;
     const row = rows.find(
       (r) => r.targetClerkUserId === userId && r.action === "approve" &&
              new Date(r.createdAt as string) >= since,
@@ -405,11 +406,11 @@ describe("GET /api/admin/audit-log — authenticated", () => {
     await new Promise((r) => setTimeout(r, 200));
 
     const res = await supertest(app)
-      .get("/api/admin/audit-log")
+      .get("/api/admin/audit-log?limit=200")
       .set("Authorization", `Bearer ${makeAdminToken()}`)
       .expect(200);
 
-    const rows: Array<Record<string, unknown>> = res.body;
+    const rows: Array<Record<string, unknown>> = res.body.rows;
     const filtered = rows.filter(
       (r) => r.targetClerkUserId === userA || r.targetClerkUserId === userB,
     );

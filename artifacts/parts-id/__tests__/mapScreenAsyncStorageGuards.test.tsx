@@ -93,7 +93,21 @@ jest.mock("@/utils/offlineBarcode", () => ({
   FUSE_CACHE_SYNCED_AT_KEY: "fuse_synced_at",
   getFuseCacheSyncedAt:     jest.fn().mockResolvedValue(Date.now()),
   FUSE_SYNC_MAX_AGE_MS:     Infinity,
+  FUSE_SOFT_STALE_MS:       Infinity,
   lookupByBarcodeOffline:   jest.fn().mockResolvedValue(null),
+  // Mirrors the real parser: envelope format { items: [...] }, legacy plain
+  // array, or null for anything else (which triggers the corrupt-value warn).
+  parseFuseCacheItems: jest.fn((raw: string) => {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && Array.isArray(parsed.items)) return parsed.items;
+      return null;
+    } catch {
+      return null;
+    }
+  }),
+  replaceBarcodeCacheWithServerItems: jest.fn().mockResolvedValue(undefined),
 }));
 
 // ─── @/hooks/useWarehouseZones ───────────────────────────────────────────────

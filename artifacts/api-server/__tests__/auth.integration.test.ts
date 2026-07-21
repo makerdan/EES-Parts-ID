@@ -41,7 +41,7 @@ import supertest from "supertest";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import { db, usersTable } from "@workspace/db";
-import { like } from "drizzle-orm";
+import { inArray, like } from "drizzle-orm";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 // The bootstrap admin authenticates simply by presenting their Clerk user id.
@@ -53,6 +53,13 @@ const APPROVED_USER = "jest-auth-approved-user";
 const PENDING_USER = "jest-auth-pending-user";
 
 beforeAll(async () => {
+  // Remove any stale rows from a previously-interrupted run: the users table
+  // has a unique index on email, so a leftover row holding one of these
+  // fixture emails under a different clerk id would make the insert below
+  // fail with users_email_unique.
+  await db
+    .delete(usersTable)
+    .where(inArray(usersTable.email, ["approved@test.example", "pending@test.example"]));
   await db
     .insert(usersTable)
     .values([

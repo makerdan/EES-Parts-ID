@@ -74,6 +74,27 @@ module.exports = async function globalSetup() {
     );
   }
 
+  // ── 1b. Reset rate-limiter state ──────────────────────────────────────────
+  // The sliding-window rate limiter persists per-key hit windows in the
+  // rate_limit_buckets table of this same (dev) database. Leftover rows from a
+  // previous test run (or from the dev server) would make suites hit 429s that
+  // have nothing to do with the code under test, so clear the table up front.
+  try {
+    const client = new Client({
+      connectionString: process.env.DATABASE_URL,
+      connectionTimeoutMillis: DB_PREFLIGHT_TIMEOUT_MS,
+    });
+    await client.connect();
+    await client.query("DELETE FROM rate_limit_buckets");
+    await client.end();
+    console.log("[jest globalSetup] rate_limit_buckets cleared.");
+  } catch (err) {
+    // Table may not exist yet before the schema sync below — not fatal.
+    console.warn(
+      "[jest globalSetup] could not clear rate_limit_buckets: " + err.message
+    );
+  }
+
   // ── 2. Schema sync ────────────────────────────────────────────────────────
   const dbPackageDir = path.resolve(__dirname, "../../lib/db");
 

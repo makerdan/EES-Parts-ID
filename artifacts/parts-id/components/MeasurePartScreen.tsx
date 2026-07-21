@@ -355,7 +355,7 @@ export function MeasurePartScreen({
     setEstimateError(null);
 
     try {
-      const photo = await cameraRef.current.takePicture({
+      const photo = await cameraRef.current.takePictureAsync({
         base64: true,
         quality: 0.4,
         skipProcessing: true,
@@ -437,7 +437,7 @@ export function MeasurePartScreen({
         : null;
 
     try {
-      const photo = await cameraRef.current.takePicture({
+      const photo = await cameraRef.current.takePictureAsync({
         base64: true,
         quality: 0.4,
         skipProcessing: true,

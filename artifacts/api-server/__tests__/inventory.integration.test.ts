@@ -450,14 +450,20 @@ describe("POST /api/inventory/search — size-range filters without keywords", (
     }
   });
 
-  it("returns 200 with empty results when no items fall within the given range", async () => {
+  it("returns 200 with no fixture rows when no fixtures fall within the given range", async () => {
     const res = await supertest(app)
       .post("/api/inventory/search")
       .send({ minLength: 9000, maxLength: 9999 })
       .expect(200);
 
-    expect(res.body.results).toEqual([]);
-    expect(res.body.totalMatches).toBe(0);
+    // The suite runs against a shared dev database that may contain real
+    // inventory rows falling inside this range, so totalMatches === 0 cannot
+    // be asserted. What the test owns is its fixtures: none of them have a
+    // length in [9000, 9999], so none may appear in the results.
+    const fixtureCatalogs = res.body.results
+      .map((r: { item: { catalog: string } }) => r.item.catalog)
+      .filter((c: string) => c.startsWith("JEST-ITG-"));
+    expect(fixtureCatalogs).toEqual([]);
   });
 
   it("filters by diameter alone (no keywords, no length filter)", async () => {
