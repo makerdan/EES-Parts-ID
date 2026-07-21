@@ -429,19 +429,31 @@ declare module "expo-camera" {
   export declare function getMicrophonePermissionsAsync(): Promise<PermissionResponse>;
   export declare function requestMicrophonePermissionsAsync(): Promise<PermissionResponse>;
 
+  // The runtime CameraView class instance also exposes takePictureAsync
+  // (see expo-camera/build/CameraView.d.ts), which CameraViewRef omits.
+  import type {
+    CameraCapturedPicture,
+    CameraPictureOptions,
+  } from "expo-camera/build/Camera.types";
+  export interface CameraViewInstance extends CameraViewRef {
+    takePictureAsync(
+      options?: CameraPictureOptions
+    ): Promise<CameraCapturedPicture>;
+  }
+
   // CameraView re-declared using ForwardRefExoticComponent so that:
   //   1. <CameraView ref={cameraRef} ...> is valid JSX (ref accepted)
   //   2. The component passes React 19's JSX class-element check
-  //   3. useRef<CameraView>(null) works because we also export type CameraView = CameraViewRef
+  //   3. useRef<CameraView>(null) works because we also export type CameraView = CameraViewInstance
   export declare const CameraView: React.ForwardRefExoticComponent<
-    CameraViewProps & React.RefAttributes<CameraViewRef>
+    CameraViewProps & React.RefAttributes<CameraViewInstance>
   > & {
     isModernBarcodeScannerAvailable: boolean;
     isAvailableAsync(): Promise<boolean>;
   };
 
-  // Allow `useRef<CameraView>` as a type alias for CameraViewRef
-  export type CameraView = CameraViewRef;
+  // Allow `useRef<CameraView>` as a type alias for the runtime instance
+  export type CameraView = CameraViewInstance;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

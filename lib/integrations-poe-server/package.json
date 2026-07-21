@@ -2,6 +2,7 @@
   "name": "@workspace/integrations-poe-server",
   "version": "0.0.0",
   "private": true,
+  "serverOnly": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
