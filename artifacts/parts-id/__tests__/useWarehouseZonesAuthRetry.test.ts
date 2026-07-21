@@ -198,7 +198,14 @@ describe("useWarehouseZones — slow-auth retry via subscribeToTokenAvailable", 
       renderHook(() => useWarehouseZones());
       await flushPromises();
 
-      const callsAfterInitialFail = mockFetchWithAuth.mock.calls.length;
+      // The hook fetches /warehouse-zones (critical) and
+      // /warehouse-zones/alignment (best-effort) in parallel on every attempt;
+      // count only the critical zones calls for the retry assertion.
+      const countZonesCalls = () =>
+        mockFetchWithAuth.mock.calls.filter(
+          (c) => typeof c[0] === "string" && !String(c[0]).includes("/alignment"),
+        ).length;
+      const callsAfterInitialFail = countZonesCalls();
 
       mockGetAuthToken.mockReturnValue("tok-abc123");
       mockFetchWithAuth.mockResolvedValueOnce({
@@ -212,7 +219,7 @@ describe("useWarehouseZones — slow-auth retry via subscribeToTokenAvailable", 
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
       });
 
-      expect(mockFetchWithAuth.mock.calls.length).toBe(callsAfterInitialFail + 1);
+      expect(countZonesCalls()).toBe(callsAfterInitialFail + 1);
     });
 
     it("sets loading=false after the retry resolves", async () => {

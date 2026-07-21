@@ -38,10 +38,12 @@ import { SVG_VIEWBOX_W, SVG_VIEWBOX_H, parseContentViewBox } from "@/utils/mapVi
  */
 function resolveApiBase(): string | null {
   const explicit = process.env.EXPO_PUBLIC_API_BASE;
-  if (explicit) return explicit.replace(/\/$/, "");
+  if (explicit && !explicit.includes("jest-tests.local")) return explicit.replace(/\/$/, "");
 
   const domain = process.env.EXPO_PUBLIC_DOMAIN;
-  if (domain) return `https://${domain}/api`;
+  // "jest-tests.local" is the sentinel injected by jest.env-setup.js so that
+  // apiBase resolution works in unit tests — it is not a reachable server.
+  if (domain && domain !== "jest-tests.local") return `https://${domain}/api`;
 
   return null;
 }

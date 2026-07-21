@@ -16,7 +16,7 @@ import { createWriteStream } from "node:fs";
 import { resolve } from "node:path";
 
 import { db, pool } from "@workspace/db";
-import { inventoryTable } from "@workspace/db";
+import { inventoryFtsVector, inventoryTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
 
@@ -246,14 +246,6 @@ async function importBarcodes() {
   // Mirrors lib/db/scripts/verify-fts-index.ts Phase 2 logic.
   console.log("Running FTS planner smoke-test...");
   {
-    const FTS_VECTOR_EXPR =
-      `to_tsvector('english', ` +
-      `coalesce(i.vendor,'') || ' ' || ` +
-      `coalesce(i.catalog,'') || ' ' || ` +
-      `coalesce(i.description,'') || ' ' || ` +
-      `coalesce(i.expanded_description,'') || ' ' || ` +
-      `immutable_array_to_string(i.ai_keywords,' '))`;
-
     const countRes = await pool.query<{ n: string }>(
       `SELECT COUNT(*)::int AS n FROM inventory`,
     );
@@ -262,12 +254,13 @@ async function importBarcodes() {
     if (rowCount === 0) {
       console.warn("WARN: inventory table is empty — planner check skipped.");
     } else {
-      const explainRes = await pool.query<{ "QUERY PLAN": string }>(
-        `EXPLAIN (ANALYZE, FORMAT TEXT, BUFFERS OFF)
-         SELECT i.id FROM inventory i
-         WHERE ${FTS_VECTOR_EXPR} @@ websearch_to_tsquery('english', 'xverifyftszz')
-         LIMIT 1`,
-      );
+      // Use the shared inventoryFtsVector() helper so this expression can
+      // never drift from the GIN index definition (see ftsExpression guard).
+      const explainRes = await db.execute<{ "QUERY PLAN": string }>(sql`
+        EXPLAIN (ANALYZE, FORMAT TEXT, BUFFERS OFF)
+        SELECT i.id FROM inventory i
+        WHERE ${inventoryFtsVector("i")} @@ websearch_to_tsquery('english', 'xverifyftszz')
+        LIMIT 1`);
       const planText = explainRes.rows.map((r) => r["QUERY PLAN"]).join("\n");
       const INDEX_SCAN_RE =
         /(?:Index Scan using|Bitmap Index Scan on)\s+inventory_fts_idx\b/;

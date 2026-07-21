@@ -66,6 +66,10 @@ jest.mock("@workspace/api-client-react", () => ({
 jest.mock("@tanstack/react-query", () => ({
   useQueryClient: jest.fn(() => ({
     invalidateQueries: mockInvalidateQueries,
+    // The expanded-description save path patches cached query data in place
+    // before invalidating — the mock must expose it or the save handler throws
+    // and never reaches invalidateQueries.
+    setQueriesData: jest.fn(),
   })),
 }));
 
@@ -300,7 +304,7 @@ describe("PartDetailsEditor – expanded-description save path", () => {
     });
 
     expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["inventory"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
 
     mockFetch.mockRestore();
   });
@@ -372,7 +376,7 @@ describe("PartDetailsEditor – expanded-description save path", () => {
     expect(JSON.parse(init.body as string)).toEqual({ expandedDescription: null });
 
     expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["inventory"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
 
     mockFetch.mockRestore();
   });

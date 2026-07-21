@@ -29,7 +29,11 @@ const mockPageCleanup = jest.fn();
 const mockGetPage = jest.fn();
 const mockGetDocument = jest.fn();
 
-jest.mock("pdfjs-dist", () => ({
+// pdfProcessor.ts imports the Node-safe legacy build (pdf.mjs), so the mock
+// must target that exact specifier — mocking bare "pdfjs-dist" no longer
+// intercepts anything. (jest.config.cjs maps this specifier to a CJS stub so
+// the real ESM file, which Jest cannot parse, is never resolved.)
+jest.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
   GlobalWorkerOptions: { workerSrc: "" },
   getDocument: mockGetDocument,
   OPS: {
@@ -44,14 +48,26 @@ jest.mock("pdfjs-dist", () => ({
 const mockCreate = jest.fn();
 
 jest.mock("../src/lib/aiProvider", () => ({
-  getAiClient: () => ({
+  getProvider: () => "openai",
+  getOpenAIFallbackClient: () => ({
     chat: {
       completions: {
         create: mockCreate,
       },
     },
   }),
-  getCatalogModel: () => "gpt-4o",
+  getOpenAIModelForFeature: () => "gpt-4o",
+}));
+
+// catalogExtractor routes through the Poe bot chain unless it explicitly uses
+// the OpenAI fallback; make the chain delegate straight to mockCreate so both
+// paths hit the same mock.
+jest.mock("../src/lib/poeBot", () => ({
+  PoeBotChainExhaustedError: class PoeBotChainExhaustedError extends Error {},
+  tryPoeBotChain: (
+    _feature: string,
+    fn: (client: unknown, model: string) => Promise<unknown>,
+  ) => fn({ chat: { completions: { create: mockCreate } } }, "gpt-4o"),
 }));
 
 // ── Imports (after all mocks are in place) ────────────────────────────────────
@@ -81,9 +97,21 @@ function makeFakePage(textItems: Array<{ str: string }>, imageOps = false) {
 
 /** Sets up the pdfjs-dist mock to return a document with `pages` pages. */
 function setupPdfjsDoc(pages: Array<{ str: string }[]>) {
-  for (const pageTextItems of pages) {
-    mockGetPage.mockResolvedValueOnce(makeFakePage(pageTextItems));
-  }
+  // pdfJsFallback fetches each page TWICE (once in the structure-tree
+  // prefetch pass, once in the main extraction loop), so getPage must be
+  // repeatable — resolve by page number rather than queueing with ...Once.
+  // Text/operator mocks stay queued (...Once) because only the main loop
+  // consumes them; build the page objects lazily on first access per page so
+  // the queue order still matches page order.
+  const pageObjs = new Map<number, ReturnType<typeof makeFakePage>>();
+  mockGetPage.mockImplementation((pageNum: number) => {
+    let page = pageObjs.get(pageNum);
+    if (!page) {
+      page = makeFakePage(pages[pageNum - 1] ?? []);
+      pageObjs.set(pageNum, page);
+    }
+    return Promise.resolve(page);
+  });
   mockGetDocument.mockReturnValueOnce({
     promise: Promise.resolve({
       numPages: pages.length,

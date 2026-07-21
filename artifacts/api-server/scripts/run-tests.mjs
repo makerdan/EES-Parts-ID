@@ -12,7 +12,7 @@
  */
 
 import { spawnSync } from "child_process";
-import { existsSync, readFileSync, unlinkSync } from "fs";
+import { copyFileSync, existsSync, readFileSync, unlinkSync } from "fs";
 import { glob } from "node:fs/promises";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -56,9 +56,26 @@ if (existsSync(RESULTS_FILE)) {
   unlinkSync(RESULTS_FILE);
 }
 
+// pnpm ≥9 forwards a literal "--" separator into script argv; Jest would
+// treat it and everything after it as test-path patterns (matching nothing).
+// Strip it, and intercept any caller-supplied --outputFile: the guard below
+// must read Jest's JSON from RESULTS_FILE, so we run Jest with RESULTS_FILE
+// and copy the JSON to the caller's requested path afterwards.
+const forwarded = [];
+let callerOutputFile = null;
+for (const arg of process.argv.slice(2)) {
+  if (arg === "--") continue;
+  if (arg.startsWith("--outputFile=")) {
+    callerOutputFile = arg.slice("--outputFile=".length);
+    continue;
+  }
+  if (arg === "--json") continue; // already passed below
+  forwarded.push(arg);
+}
+
 const result = spawnSync(
   jestBin,
-  ["--json", `--outputFile=${RESULTS_FILE}`, ...process.argv.slice(2)],
+  ["--json", `--outputFile=${RESULTS_FILE}`, ...forwarded],
   { stdio: "inherit", cwd: ROOT }
 );
 
@@ -78,6 +95,13 @@ try {
   console.error(`\nERROR: Suite-count guard: could not parse jest-results.json — ${err.message}`);
   process.exit(1);
 } finally {
+  try {
+    if (callerOutputFile) {
+      copyFileSync(RESULTS_FILE, callerOutputFile);
+    }
+  } catch (err) {
+    console.error(`WARNING: could not copy results to ${callerOutputFile} — ${err.message}`);
+  }
   try {
     unlinkSync(RESULTS_FILE);
   } catch {

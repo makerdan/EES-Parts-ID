@@ -1310,7 +1310,9 @@ router.post("/catalog-pdf/reviews/:id/revert", requireAdminAuth, async (req, res
   // This closes the loop for chunk-race winners, where catalogPdfJobId points
   // to a child job rather than the parent, and prevents cross-session reverts
   // when two review tabs are open simultaneously.
-  const rawJobId = (req.body as { jobId?: unknown }).jobId;
+  // req.body is undefined (not {}) when the request has no JSON body — e.g. a
+  // bare POST with no Content-Type — so guard with optional chaining.
+  const rawJobId = (req.body as { jobId?: unknown } | undefined)?.jobId;
   const jobIdContext = rawJobId !== undefined ? Number(rawJobId) : null;
   if (jobIdContext !== null && (!Number.isFinite(jobIdContext) || jobIdContext <= 0)) {
     return void res.status(400).json({ error: "Invalid jobId" });

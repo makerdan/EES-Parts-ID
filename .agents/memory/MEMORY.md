@@ -31,6 +31,8 @@
 - [drizzle generate broken — hand-write SQL migrations](drizzle-generate-broken-handwrite-migrations.md) — lib/db generate fails (partial meta); add columns via hand-written drizzle/NNNN.sql + push; schema:check scans quoted column names in .sql.
 - [pipefail echo|grep -q flake](pipefail-echo-grep-flake.md) — `echo "$VAR" | grep -q` under pipefail fails spuriously via SIGPIPE under load; grep the file directly in bash test suites.
 - [@types/react version split](types-react-version-split.md) — keep one @types/react line workspace-wide (catalog ~19.1.x); a split breaks mockup typecheck with "two unrelated types" ref errors after any install.
+- [pdfjs Jest moduleNameMapper stub](pdfjs-jest-modulemapper.md) — map pdfjs-dist/legacy/build/pdf.mjs to a CJS stub in jest.config; per-file virtual jest.mock intermittently parses the real import.meta ESM in full runs.
+- [catalog-pdf loop outlives test](catalog-pdf-loop-outlives-test.md) — job status reads terminal before the loop exits; tag fake page text per test so stale loops can't consume the next test's mocks.
 - [React 19 + TS 5.9 class-JSX compat shim](react19-ts59-class-jsx-compat.md) — ambient declare module (script-mode .d.ts) replaces rn-svg/expo-camera/expo-blur types; class components → ComponentType; module augmentation of submodule interfaces breaks extends chain in TS 5.9.
 - [closePool must tolerate mocked @workspace/db](closepool-mocked-db.md) — global afterAll teardown runs in mocked-db suites where pool is undefined; guard for missing pool, not just a module-local flag.
 - [Validation workflow wiring](validation-workflow-wiring.md) — setValidationCommand auto-creates isValidation workflow AND wires it into the Project gate; removeWorkflow also unwires it.

@@ -170,6 +170,47 @@ run_viewbox_sync_check() {
 }
 
 # ---------------------------------------------------------------------------
+# check_sibling_services — warn-only liveness probes for the two non-API
+# services. Both are probed through their proxy domains because their local
+# PORT values are dynamic and not visible to this script:
+#   • mockup-sandbox Vite server:  https://$REPLIT_DEV_DOMAIN/__mockup/
+#   • Expo dev server:             https://$REPLIT_EXPO_DEV_DOMAIN/status
+#     (returns "packager-status:running" — a genuine dev-server response,
+#     not an SPA HTML fallback, so it cannot lie).
+# Warn-only by design: the workflow supervisor owns restarts for these
+# services, and a transient blip here must not fail the whole merge. Budget:
+# at most 2 probes × 2 attempts × 4s = 16s added to the post-merge window.
+# ---------------------------------------------------------------------------
+check_sibling_services() {
+  local ok=0
+  for attempt in 1 2; do
+    if curl -s --max-time 4 -o /dev/null -w "%{http_code}" "https://${REPLIT_DEV_DOMAIN}/__mockup/" 2>/dev/null | grep -q '^200$'; then
+      echo "[post-merge] mockup-sandbox Vite server is responding."
+      ok=1
+      break
+    fi
+    [ "$attempt" -lt 2 ] && sleep 2
+  done
+  if [ "$ok" -ne 1 ]; then
+    echo "[post-merge] WARNING: mockup-sandbox Vite server did not respond at /__mockup/ — workflow supervisor should restart it."
+  fi
+
+  ok=0
+  for attempt in 1 2; do
+    if curl -s --max-time 4 "https://${REPLIT_EXPO_DEV_DOMAIN}/status" 2>/dev/null | grep -q 'packager-status:running'; then
+      echo "[post-merge] Expo dev server is responding (packager-status:running)."
+      ok=1
+      break
+    fi
+    [ "$attempt" -lt 2 ] && sleep 2
+  done
+  if [ "$ok" -ne 1 ]; then
+    echo "[post-merge] WARNING: Expo dev server did not report packager-status:running — workflow supervisor should restart it."
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main — only runs when the script is executed directly, not sourced.
 # This guard allows test scripts to source and unit-test the functions above.
 # ---------------------------------------------------------------------------
@@ -297,6 +338,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
   # First health check pass.
   if check_api_health "initial"; then
+    check_sibling_services
     run_viewbox_sync_check
     exit 0
   fi
@@ -321,6 +363,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
   # Second health check pass after restart.
   if check_api_health "post-restart"; then
+    check_sibling_services
     run_viewbox_sync_check
     exit 0
   fi

@@ -56,7 +56,7 @@ import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, catalogPdfJobTable, inventoryTable } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
 import { matchCatalogNumber } from "../src/utils/catalogMatcher";
@@ -85,6 +85,12 @@ const seededInventoryIds: number[] = [];
 
 /** Seed a single inventory row and record its id for cleanup. */
 async function seedInventoryItem(catalog: string): Promise<number> {
+  // Remove any stale fixture row left behind by a previous crashed/killed
+  // run — (vendor, catalog) is unique, so a leftover row makes this insert
+  // fail with a duplicate-key error.
+  await db
+    .delete(inventoryTable)
+    .where(and(eq(inventoryTable.vendor, VENDOR), eq(inventoryTable.catalog, catalog)));
   const [row] = await db
     .insert(inventoryTable)
     .values({

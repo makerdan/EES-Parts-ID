@@ -307,7 +307,7 @@ describe("DELETE /api/admin/users/:id — delete guards", () => {
       .set("Authorization", promotedAdminBearer())
       .expect(200);
 
-    expect(res.body).toEqual({ deleted: true });
+    expect(res.body).toEqual({ deleted: true, clerkDeleted: true });
   });
 
   it("returns 200 with deleted:true when the bootstrap admin deletes another user", async () => {
@@ -316,7 +316,7 @@ describe("DELETE /api/admin/users/:id — delete guards", () => {
       .set("Authorization", bootstrapBearer())
       .expect(200);
 
-    expect(res.body).toEqual({ deleted: true });
+    expect(res.body).toEqual({ deleted: true, clerkDeleted: true });
   });
 });
 

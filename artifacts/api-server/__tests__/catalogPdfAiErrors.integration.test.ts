@@ -119,6 +119,26 @@ async function startJob(): Promise<string> {
   return jobId;
 }
 
+/**
+ * Polls the DB until the parent job leaves 'pending'/'processing'. The child
+ * row is marked failed BEFORE the parent UPDATE runs in the background catch,
+ * so reading the parent immediately after the child turns terminal races the
+ * propagation write.
+ */
+async function waitForParentTerminal(
+  parentId: number,
+  timeoutMs = 10_000,
+): Promise<{ status: string; errorMessage: string | null }> {
+  const deadline = Date.now() + timeoutMs;
+  let row = await readJobRow(parentId);
+  while (Date.now() < deadline) {
+    if (row.status !== "pending" && row.status !== "processing") return row;
+    await new Promise((r) => setTimeout(r, 50));
+    row = await readJobRow(parentId);
+  }
+  return row;
+}
+
 async function waitForTerminal(jobId: string, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -156,7 +176,9 @@ afterAll(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("CatalogAiError propagation — DB job row", () => {
-  it("sets status=failed and a non-null errorMessage when extractCatalogPage throws CatalogAiError('ai_error')", async () => {
+  it("skips the page and completes the job when extractCatalogPage throws a transient CatalogAiError('ai_error')", async () => {
+    // Transient ai_error is per-page recoverable: the route logs it, counts
+    // the page as processed, and continues — the job still finishes 'done'.
     mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
     mockExtractCatalogPage.mockRejectedValueOnce(
       new CatalogAiError("ai_error", "upstream AI provider returned an unexpected error"),
@@ -166,9 +188,8 @@ describe("CatalogAiError propagation — DB job row", () => {
     await waitForTerminal(jobId);
 
     const row = await readJobRow(Number(jobId));
-    expect(row.status).toBe("failed");
-    expect(row.errorMessage).not.toBeNull();
-    expect(row.errorMessage).toBe("ai_error");
+    expect(row.status).toBe("done");
+    expect(row.errorMessage).toBeNull();
   });
 
   it("persists the 'ai_payload_too_large' code as errorMessage when that variant is thrown", async () => {
@@ -191,7 +212,7 @@ describe("CatalogAiError propagation — DB job row", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("CatalogAiError propagation — status API response", () => {
-  it("includes errorMessage in the status JSON when the job fails with a CatalogAiError", async () => {
+  it("reports status=done with a null errorMessage when a transient CatalogAiError('ai_error') skipped a page", async () => {
     mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
     mockExtractCatalogPage.mockRejectedValueOnce(
       new CatalogAiError("ai_error", "AI call failed"),
@@ -205,9 +226,8 @@ describe("CatalogAiError propagation — status API response", () => {
       .set("Authorization", `Bearer ${adminToken}`)
       .expect(200);
 
-    expect(res.body.status).toBe("failed");
-    expect(res.body).toHaveProperty("errorMessage");
-    expect(res.body.errorMessage).toBe("ai_error");
+    expect(res.body.status).toBe("done");
+    expect(res.body.errorMessage ?? null).toBeNull();
   });
 
   it("includes errorMessage='ai_payload_too_large' in the status JSON for that variant", async () => {
@@ -324,7 +344,7 @@ describe("Raw provider payload-too-large error — job fails asynchronously with
     expect(childRow.status).toBe("failed");
     expect(childRow.errorMessage).toBe("ai_payload_too_large");
 
-    const parentRow = await readJobRow(parentId);
+    const parentRow = await waitForParentTerminal(parentId);
     expect(parentRow.status).toBe("failed");
     expect(parentRow.errorMessage).toBe("ai_payload_too_large");
   });
@@ -381,13 +401,14 @@ describe("CatalogAiError propagation — chunked upload (child + parent)", () =>
 
     await waitForTerminal(chunkJobId);
 
+    // Transient ai_error is per-page recoverable: the child skips the page
+    // and completes; nothing propagates a failure to the parent.
     const childRow = await readJobRow(Number(chunkJobId));
-    expect(childRow.status).toBe("failed");
-    expect(childRow.errorMessage).toBe("ai_error");
+    expect(childRow.status).toBe("done");
+    expect(childRow.errorMessage).toBeNull();
 
     const parentRow = await readJobRow(parentId);
-    expect(parentRow.status).toBe("failed");
-    expect(parentRow.errorMessage).toBe("ai_error");
+    expect(parentRow.status).not.toBe("failed");
   });
 
   it("propagates 'ai_payload_too_large' from a chunk to the parent job", async () => {
@@ -419,7 +440,7 @@ describe("CatalogAiError propagation — chunked upload (child + parent)", () =>
     expect(childRow.status).toBe("failed");
     expect(childRow.errorMessage).toBe("ai_payload_too_large");
 
-    const parentRow = await readJobRow(parentId);
+    const parentRow = await waitForParentTerminal(parentId);
     expect(parentRow.status).toBe("failed");
     expect(parentRow.errorMessage).toBe("ai_payload_too_large");
   });

@@ -134,13 +134,15 @@ describe("verifyAdminRequest — non-ok HTTP response", () => {
     expect(setIsAdmin).toHaveBeenCalledWith(false);
   });
 
-  it("(b) sets isAdmin to false on 500", async () => {
+  it("(b) leaves admin state unchanged on 500 (transient server error)", async () => {
     mockFetch.mockResolvedValueOnce(makeErrorResponse(500));
     const { deps, setIsAdmin } = makeDeps();
 
     await verifyAdminRequest(deps);
 
-    expect(setIsAdmin).toHaveBeenCalledWith(false);
+    // 5xx responses are non-authoritative transient conditions — the
+    // implementation deliberately leaves admin state untouched.
+    expect(setIsAdmin).not.toHaveBeenCalled();
   });
 });
 

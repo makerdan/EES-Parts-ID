@@ -43,7 +43,15 @@ jest.mock("../lib/logger", () => ({
   },
 }));
 
-import { identifyLimiter, translateLimiter } from "../lib/rateLimiter";
+// jest.integrationSetup.cjs raises RATE_LIMIT_*_PER_MIN to a huge value so
+// integration suites never trip real limits — but these unit tests assert the
+// default window of 20. Pin the env BEFORE the module is loaded (via
+// requireActual below, which is not hoisted like an import statement).
+process.env["RATE_LIMIT_IDENTIFY_PER_MIN"] = "20";
+process.env["RATE_LIMIT_TRANSLATE_PER_MIN"] = "20";
+
+const { identifyLimiter, translateLimiter } =
+  jest.requireActual<typeof import("../lib/rateLimiter")>("../lib/rateLimiter");
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
