@@ -64,6 +64,34 @@ Seed: `node --import tsx/esm --no-warnings src/seed/run.ts` from `artifacts/api-
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
 
+## Checks: validation commands (formerly workflows)
+
+Only long-running services are ordinary workflows: `artifacts/api-server: API Server`, `artifacts/parts-id: expo`, `artifacts/mockup-sandbox: Component Preview Server`. Every one-off check is a **registered validation command** (run via validation runs; these do not consume workflow slots). Names with colons were renamed to dashes; all commands are unchanged.
+
+| Old workflow name | Validation command |
+|---|---|
+| `api-server-coverage` | `api-server-coverage` |
+| `api-server-typecheck` | `api-server-typecheck` |
+| `bundle:domain-check` | `bundle-domain-check` |
+| `canvas-typecheck` | `canvas-typecheck` |
+| `codegen:check` | `codegen-check` |
+| `env:check` | `env-check` |
+| `lint` | `lint` |
+| `lint:mocks` | `lint-mocks` |
+| `parts-id-typecheck` | `parts-id-typecheck` |
+| `port-guard` | `port-guard` (one-shot scan, not a watcher) |
+| `post-merge-health-test` | `post-merge-health-test` |
+| `schema:check` | `schema-check` |
+| `security-audit` | `security-audit` |
+| `spec:check` | `spec-check` |
+| `spec:check:tests` | `spec-check-tests` |
+| `test` | `test` |
+| `tsc` | `tsc` |
+| `tsconfig:check` | `tsconfig-check` |
+| `typecheck` | `typecheck` |
+| `typecheck:libs` | `typecheck-libs` |
+| `verify-fts` | `verify-fts` |
+
 ## Admin MFA Enforcement
 
 Admin endpoints enforce multi-factor authentication **by default**. Any admin session that lacks a completed second factor (`totp`, `phone_code`, or hardware key) in the Clerk `amr` session claim receives:
