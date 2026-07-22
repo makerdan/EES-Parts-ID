@@ -48,8 +48,12 @@ if (process.env.FREE_PORTS_GUARD === "1") {
   process.exit(0);
 }
 if (process.env.NODE_ENV === "production" || process.env.REPLIT_DEPLOYMENT === "1") {
-  console.error("free-ports: refusing to run in production.");
-  process.exit(2);
+  // In production the sweep must never run, but it also must not block the
+  // server from starting: `serve` scripts chain this with `&&`, so a
+  // non-zero exit here kills the whole production start command and the
+  // deployment health check fails. Skip as a no-op instead.
+  console.log("free-ports: production environment — skipping sweep.");
+  process.exit(0);
 }
 
 const argv = process.argv.slice(2);
