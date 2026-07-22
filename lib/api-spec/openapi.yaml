@@ -296,6 +296,37 @@ paths:
         "404":
           description: Item not found
 
+  /inventory/{id}/size:
+    patch:
+      operationId: updateItemSize
+      tags: [inventory]
+      summary: Update the size label for a single inventory item (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSizeBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "400":
+          description: Invalid size value (e.g. exceeds 100 chars)
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+
   /inventory/{id}/description:
     patch:
       operationId: updateItemDescription
@@ -806,6 +837,10 @@ components:
           type: string
           nullable: true
           description: AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)
+        size:
+          type: string
+          nullable: true
+          description: Human-readable size label manually entered by an admin (e.g. 1/2", 3/4", 4" x 2") — max 100 chars
         dimensions:
           type: object
           nullable: true
@@ -1197,6 +1232,16 @@ components:
             type: string
       required:
         - keywords
+
+    UpdateSizeBody:
+      type: object
+      properties:
+        size:
+          type: string
+          nullable: true
+          description: Human-readable size label (max 100 chars). Pass null to clear.
+      required:
+        - size
 
     UpdateDescriptionBody:
       type: object

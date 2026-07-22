@@ -82,6 +82,9 @@ export default function EditItemScreen() {
   }, [isLoading, isAdmin, saveStatus]);
 
   const [description, setDescription] = useState(item?.description ?? "");
+  const [size, setSize] = useState((item as unknown as { size?: string | null })?.size ?? "");
+  const [sizeSaving, setSizeSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [sizeError, setSizeError] = useState<string | null>(null);
   const [expandedDescription, setExpandedDescription] = useState(item?.expandedDescription ?? "");
   const savedExpandedDescRef = useRef<string>(item?.expandedDescription ?? "");
   const [expandedDescSaving, setExpandedDescSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -193,6 +196,53 @@ export default function EditItemScreen() {
     setKeywords([...keywords, t]);
     setNewKeyword("");
     setSaveStatus("idle");
+  };
+
+  const handleSaveSize = async () => {
+    const current = itemRef.current;
+    if (!current || !adminToken) return;
+    if (size.length > 100) {
+      setSizeError("Size must be 100 characters or fewer.");
+      return;
+    }
+    setSizeSaving("saving");
+    setSizeError(null);
+    const prevSize = (current as unknown as { size?: string | null })?.size ?? null;
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${current.id}/size`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ size: size.trim() || null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      const listKeyPrefixSize = getListInventoryQueryKey()[0];
+      const newSizeVal = size.trim() || null;
+      const patchSize = (i: InventoryItem): InventoryItem =>
+        i.id === current.id ? { ...i, ...(({ size: newSizeVal } as unknown) as Partial<InventoryItem>) } : i;
+      queryClient.setQueriesData<InventoryListResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefixSize },
+        (old) => old ? { ...old, items: old.items.map(patchSize) } : old,
+      );
+      queryClient.setQueriesData<SearchInventoryResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+        (old) => {
+          if (!old) return old;
+          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+            r.item.id === current.id ? { ...r, item: patchSize(r.item) } : r;
+          return { ...old, results: old.results.map(patchResult), sizeUnknownResults: old.sizeUnknownResults?.map(patchResult) };
+        },
+      );
+      await invalidateListCache({ queryClient });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      setSizeSaving("saved");
+    } catch (err) {
+      setSizeError(err instanceof Error ? err.message : "Save failed");
+      setSizeSaving("error");
+      setSize(prevSize ?? "");
+    }
   };
 
   const handleSaveExpandedDesc = async () => {
@@ -699,6 +749,56 @@ export default function EditItemScreen() {
             autoCorrect
             autoCapitalize="sentences"
           />
+
+          {/* Size */}
+          <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>SIZE</Text>
+          <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
+            Human-readable size label (e.g. 1/2", 3/4", 4" × 2"). Max 100 chars.
+          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
+            <KeyboardDoneInput
+              value={size}
+              onChangeText={(v) => { setSize(v); if (sizeSaving !== "idle") setSizeSaving("idle"); setSizeError(null); }}
+              placeholder='e.g. 1/2"'
+              placeholderTextColor={colors.mutedForeground}
+              maxLength={100}
+              style={[
+                s.descInput,
+                { flex: 1, backgroundColor: colors.muted, borderColor: sizeSaving === "error" ? colors.destructive : colors.border, color: colors.foreground },
+              ]}
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+            <Pressable
+              onPress={handleSaveSize}
+              disabled={sizeSaving === "saving" || size.trim() === ((item as unknown as { size?: string | null })?.size ?? "") || size.length > 100}
+              style={[
+                s.saveBtn,
+                {
+                  marginTop: 0,
+                  backgroundColor:
+                    (sizeSaving === "saving" || size.trim() === ((item as unknown as { size?: string | null })?.size ?? "") || size.length > 100)
+                      ? colors.muted
+                      : colors.primary,
+                },
+              ]}
+            >
+              <Text style={[s.saveBtnText, { color: (sizeSaving === "saving" || size.trim() === ((item as unknown as { size?: string | null })?.size ?? "") || size.length > 100) ? colors.mutedForeground : colors.primaryForeground }]}>
+                Save
+              </Text>
+            </Pressable>
+          </View>
+          {sizeSaving === "error" && sizeError ? (
+            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{sizeError}</Text>
+          ) : null}
+          {sizeSaving === "saved" ? (
+            <Text style={{ color: colors.success, fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 4 }}>✓ Saved</Text>
+          ) : sizeSaving === "saving" ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
+              <ActivityIndicator size="small" color={colors.mutedForeground} />
+              <Text style={{ color: colors.mutedForeground, fontSize: 12, fontFamily: "Inter_500Medium" }}>Saving…</Text>
+            </View>
+          ) : null}
 
           {/* Expanded Description */}
           <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>EXPANDED DESCRIPTION</Text>

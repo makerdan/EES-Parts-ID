@@ -44,6 +44,7 @@ import type {
   UpdateDescriptionBody,
   UpdateDimensionsBody,
   UpdateKeywordsBody,
+  UpdateSizeBody,
   UpdateWarehouseZoneBody,
   UploadPhotoBody,
   UploadPhotoResponse,
@@ -1086,6 +1087,93 @@ export const useUpdateItemBarcodes = <
   TContext
 > => {
   return useMutation(getUpdateItemBarcodesMutationOptions(options));
+};
+
+/**
+ * @summary Update the size label for a single inventory item (admin)
+ */
+export const getUpdateItemSizeUrl = (id: number) => {
+  return `/api/inventory/${id}/size`;
+};
+
+export const updateItemSize = async (
+  id: number,
+  updateSizeBody: UpdateSizeBody,
+  options?: RequestInit,
+): Promise<InventoryItem> => {
+  return customFetch<InventoryItem>(getUpdateItemSizeUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateSizeBody),
+  });
+};
+
+export const getUpdateItemSizeMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemSize>>,
+    TError,
+    { id: number; data: BodyType<UpdateSizeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateItemSize>>,
+  TError,
+  { id: number; data: BodyType<UpdateSizeBody> },
+  TContext
+> => {
+  const mutationKey = ["updateItemSize"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateItemSize>>,
+    { id: number; data: BodyType<UpdateSizeBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateItemSize(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateItemSizeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateItemSize>>
+>;
+export type UpdateItemSizeMutationBody = BodyType<UpdateSizeBody>;
+export type UpdateItemSizeMutationError = ErrorType<void>;
+
+/**
+ * @summary Update the size label for a single inventory item (admin)
+ */
+export const useUpdateItemSize = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemSize>>,
+    TError,
+    { id: number; data: BodyType<UpdateSizeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateItemSize>>,
+  TError,
+  { id: number; data: BodyType<UpdateSizeBody> },
+  TContext
+> => {
+  return useMutation(getUpdateItemSizeMutationOptions(options));
 };
 
 /**

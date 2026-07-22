@@ -13,6 +13,7 @@ import { PartCard } from "@/components/PartCard";
 import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { PinIcon } from "@/components/PinIcon";
 import { RetryImage } from "@/components/RetryImage";
+import { SizeVariantDropdown } from "@/components/SizeVariantDropdown";
 import { useColors } from "@/hooks/useColors";
 
 interface ResultCardProps {
@@ -114,19 +115,21 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
   const [reenrichState, setReenrichState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [localKeywords, setLocalKeywords] = useState<Array<string> | null>(null);
   const [localEnrichedAt, setLocalEnrichedAt] = useState<Date | string | null | undefined>(undefined);
+  const [activeItem, setActiveItem] = useState<InventoryItem>(result.item);
   const { item, confidence, seriesLabel, variants } = result;
   const fs = (base: number) => Math.round(base * fontScale);
 
   const hasVariants = variants && variants.length > 0;
-  const displayKeywords = localKeywords ?? item.aiKeywords;
+  const displayKeywords = localKeywords ?? activeItem.aiKeywords;
   const hasKeywords = displayKeywords && displayKeywords.length > 0;
-  const displayEnrichedAt = localEnrichedAt !== undefined ? localEnrichedAt : item.enrichedAt;
+  const displayEnrichedAt = localEnrichedAt !== undefined ? localEnrichedAt : activeItem.enrichedAt;
+  const isViewingVariant = activeItem.id !== item.id;
 
   const handleReenrich = async () => {
     if (!onReenrichKeywords || reenrichState === "loading") return;
     setReenrichState("loading");
     try {
-      const updated = await onReenrichKeywords(item);
+      const updated = await onReenrichKeywords(activeItem);
       setLocalKeywords(updated.aiKeywords ?? null);
       setLocalEnrichedAt(updated.enrichedAt ?? null);
       setReenrichState("done");
@@ -168,30 +171,43 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
               </Text>
             </View>
             <View style={cardStyles.titleGroup}>
+              {isViewingVariant ? (
+                <Pressable
+                  onPress={(e) => { e?.stopPropagation?.(); setActiveItem(item); setLocalKeywords(null); setLocalEnrichedAt(undefined); }}
+                  hitSlop={8}
+                  style={cardStyles.backBtn}
+                  accessibilityLabel={`Back to ${item.catalog}`}
+                  accessibilityRole="button"
+                >
+                  <Text style={[cardStyles.backBtnText, { color: colors.primary, fontSize: fs(11) }]}>
+                    {`← ${item.catalog}`}
+                  </Text>
+                </Pressable>
+              ) : null}
               <Text style={[cardStyles.vendor, { color: colors.mutedForeground, fontSize: fs(11) }]}>
-                {item.vendor}
+                {activeItem.vendor}
               </Text>
               <Text style={[cardStyles.catalog, { color: colors.foreground, fontSize: fs(17) }]}>
-                {item.catalog}
+                {activeItem.catalog}
               </Text>
             </View>
           </View>
           <View style={cardStyles.headerRight}>
-            {(item.thumbnailUrl ?? item.imageUrl ?? item.thumbnailUrl2 ?? item.imageUrl2) ? (() => {
-              const slot1 = item.thumbnailUrl ?? item.imageUrl ?? null;
-              const slot2 = item.thumbnailUrl2 ?? item.imageUrl2 ?? null;
+            {(activeItem.thumbnailUrl ?? activeItem.imageUrl ?? activeItem.thumbnailUrl2 ?? activeItem.imageUrl2) ? (() => {
+              const slot1 = activeItem.thumbnailUrl ?? activeItem.imageUrl ?? null;
+              const slot2 = activeItem.thumbnailUrl2 ?? activeItem.imageUrl2 ?? null;
               const allUris = [
-                ...(item.imageUrl ?? item.thumbnailUrl ? [(item.imageUrl ?? item.thumbnailUrl) as string] : []),
-                ...(item.imageUrl2 ?? item.thumbnailUrl2 ? [(item.imageUrl2 ?? item.thumbnailUrl2) as string] : []),
+                ...(activeItem.imageUrl ?? activeItem.thumbnailUrl ? [(activeItem.imageUrl ?? activeItem.thumbnailUrl) as string] : []),
+                ...(activeItem.imageUrl2 ?? activeItem.thumbnailUrl2 ? [(activeItem.imageUrl2 ?? activeItem.thumbnailUrl2) as string] : []),
               ];
               const isSmall = slot1 !== null && slot2 !== null;
               return (
                 <View style={cardStyles.thumbnailRow}>
                   {slot1 ? (
                     <Pressable
-                      onPress={(e) => { e.stopPropagation?.(); setLightboxUris(allUris); setLightboxIndex(0); }}
+                      onPress={(e) => { e?.stopPropagation?.(); setLightboxUris(allUris); setLightboxIndex(0); }}
                       hitSlop={4}
-                      accessibilityLabel={`View photo 1 for ${item.catalog}`}
+                      accessibilityLabel={`View photo 1 for ${activeItem.catalog}`}
                       accessibilityRole="button"
                     >
                       <RetryImage
@@ -203,9 +219,9 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
                   ) : null}
                   {slot2 ? (
                     <Pressable
-                      onPress={(e) => { e.stopPropagation?.(); setLightboxUris(allUris); setLightboxIndex(slot1 ? 1 : 0); }}
+                      onPress={(e) => { e?.stopPropagation?.(); setLightboxUris(allUris); setLightboxIndex(slot1 ? 1 : 0); }}
                       hitSlop={4}
-                      accessibilityLabel={`View photo 2 for ${item.catalog}`}
+                      accessibilityLabel={`View photo 2 for ${activeItem.catalog}`}
                       accessibilityRole="button"
                     >
                       <RetryImage
@@ -225,10 +241,10 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
             <ConfidenceBadge confidence={confidence} />
             {onEditItem ? (
               <Pressable
-                onPress={(e) => { e.stopPropagation?.(); onEditItem(item); }}
+                onPress={(e) => { e?.stopPropagation?.(); onEditItem(activeItem); }}
                 hitSlop={8}
                 style={[cardStyles.editItemBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
-                accessibilityLabel={`Edit ${item.catalog}`}
+                accessibilityLabel={`Edit ${activeItem.catalog}`}
                 accessibilityRole="button"
               >
                 <Text style={[cardStyles.editItemBtnText, { color: colors.primary }]}>✏️ Edit</Text>
@@ -238,14 +254,14 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
         </View>
 
         {/* Description */}
-        {item.description ? (
+        {activeItem.description ? (
           <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
-            {item.description}
+            {activeItem.description}
           </Text>
-        ) : item.expandedDescription ? (
+        ) : activeItem.expandedDescription ? (
           <View style={cardStyles.descriptionBlock}>
             <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
-              {item.expandedDescription}
+              {activeItem.expandedDescription}
             </Text>
           </View>
         ) : (
@@ -255,16 +271,16 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
         )}
 
         {/* Bin location(s) — read-only */}
-        {item.binLocations && item.binLocations.length > 0 ? (
+        {activeItem.binLocations && activeItem.binLocations.length > 0 ? (
           <View style={[cardStyles.binRow, { backgroundColor: colors.accent }]}>
             <PinIcon fill="#f59e0b" stroke="#b45309" size={16} />
             <Text style={[cardStyles.binText, { color: colors.accentForeground, flex: 1 }]}>
-              {item.binLocations.length === 1 ? "Bin: " : "Bins: "}
-              {item.binLocations.join(", ")}
+              {activeItem.binLocations.length === 1 ? "Bin: " : "Bins: "}
+              {activeItem.binLocations.join(", ")}
             </Text>
             {onShowOnMap ? (
               <Pressable
-                onPress={(e) => { e.stopPropagation?.(); onShowOnMap(item); }}
+                onPress={(e) => { e?.stopPropagation?.(); onShowOnMap(activeItem); }}
                 hitSlop={8}
                 style={[cardStyles.binActionBtn, { borderColor: colors.accentForeground + "44" }]}
               >
@@ -281,11 +297,21 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
           </View>
         )}
 
+        {/* Size variant dropdown — always visible on collapsed card when hasVariants */}
+        {hasVariants && !expanded ? (
+          <SizeVariantDropdown
+            variants={variants ?? []}
+            onSelect={(v) => { setActiveItem(v); setLocalKeywords(null); setLocalEnrichedAt(undefined); }}
+            colors={colors}
+            fontScale={fontScale}
+          />
+        ) : null}
+
         {/* Dimensions badge */}
         {sizeUnknown ? (
           onMeasure ? (
             <Pressable
-              onPress={(e) => { e.stopPropagation?.(); onMeasure(item); }}
+              onPress={(e) => { e?.stopPropagation?.(); onMeasure(activeItem); }}
               hitSlop={8}
               style={[cardStyles.dimBadge, { backgroundColor: colors.warning + "18", borderWidth: 1, borderColor: colors.warning + "88" }]}
             >
@@ -298,13 +324,13 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
               <Text style={[cardStyles.dimText, { color: colors.warning }]}>Size not measured</Text>
             </View>
           )
-        ) : item.dimensions &&
-         Object.values(item.dimensions).some(v => v != null) ? (
+        ) : activeItem.dimensions &&
+         Object.values(activeItem.dimensions).some(v => v != null) ? (
           <View style={[cardStyles.dimBadge, { backgroundColor: colors.muted }]}>
             <Text style={[cardStyles.dimIcon, { color: colors.mutedForeground }]}>📐</Text>
             <Text style={[cardStyles.dimText, { color: colors.mutedForeground }]}>
               {(() => {
-                const d = item.dimensions!;
+                const d = activeItem.dimensions!;
                 const parts: Array<string> = [];
                 if (d.length != null && d.width != null && d.height != null) {
                   parts.push(`${d.length} × ${d.width} × ${d.height} mm`);
@@ -321,45 +347,55 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
         {/* Expanded content */}
         {expanded ? (
           <>
+            {/* Size variant dropdown inside expanded card */}
+            {hasVariants ? (
+              <SizeVariantDropdown
+                variants={variants ?? []}
+                onSelect={(v) => { setActiveItem(v); setLocalKeywords(null); setLocalEnrichedAt(undefined); }}
+                colors={colors}
+                fontScale={fontScale}
+              />
+            ) : null}
+
             {/* Catalog images */}
-            {(item.imageUrl || item.imageUrl2) ? (
+            {(activeItem.imageUrl || activeItem.imageUrl2) ? (
               <View style={cardStyles.section}>
                 <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
-                  {item.imageUrl && item.imageUrl2 ? "CATALOG IMAGES" : "CATALOG IMAGE"}
+                  {activeItem.imageUrl && activeItem.imageUrl2 ? "CATALOG IMAGES" : "CATALOG IMAGE"}
                 </Text>
                 <View style={cardStyles.catalogImageRow}>
-                  {item.imageUrl ? (
+                  {activeItem.imageUrl ? (
                     <Pressable
-                      style={[cardStyles.catalogImageWrap, { backgroundColor: colors.muted }, item.imageUrl2 ? cardStyles.catalogImageWrapHalf : null]}
+                      style={[cardStyles.catalogImageWrap, { backgroundColor: colors.muted }, activeItem.imageUrl2 ? cardStyles.catalogImageWrapHalf : null]}
                       onPress={(e) => {
-                        e.stopPropagation?.();
-                        const uris = [item.imageUrl!, ...(item.imageUrl2 ? [item.imageUrl2] : [])];
+                        e?.stopPropagation?.();
+                        const uris = [activeItem.imageUrl!, ...(activeItem.imageUrl2 ? [activeItem.imageUrl2] : [])];
                         setLightboxUris(uris);
                         setLightboxIndex(0);
                       }}
                     >
                       <RetryImage
-                        uri={item.imageUrl}
+                        uri={activeItem.imageUrl}
                         style={cardStyles.catalogImage}
                         resizeMode="contain"
                       />
-                      {item.imageUrl2 ? (
+                      {activeItem.imageUrl2 ? (
                         <Text style={[cardStyles.catalogImageLabel, { color: colors.mutedForeground }]}>Box / Label</Text>
                       ) : null}
                     </Pressable>
                   ) : null}
-                  {item.imageUrl2 ? (
+                  {activeItem.imageUrl2 ? (
                     <Pressable
                       style={[cardStyles.catalogImageWrap, { backgroundColor: colors.muted }, cardStyles.catalogImageWrapHalf]}
                       onPress={(e) => {
-                        e.stopPropagation?.();
-                        const uris = [...(item.imageUrl ? [item.imageUrl] : []), item.imageUrl2!];
+                        e?.stopPropagation?.();
+                        const uris = [...(activeItem.imageUrl ? [activeItem.imageUrl] : []), activeItem.imageUrl2!];
                         setLightboxUris(uris);
-                        setLightboxIndex(item.imageUrl ? 1 : 0);
+                        setLightboxIndex(activeItem.imageUrl ? 1 : 0);
                       }}
                     >
                       <RetryImage
-                        uri={item.imageUrl2}
+                        uri={activeItem.imageUrl2}
                         style={cardStyles.catalogImage}
                         resizeMode="contain"
                       />
@@ -375,9 +411,9 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
               <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
                 BARCODES
               </Text>
-              {item.barcodes && item.barcodes.length > 0 ? (
+              {activeItem.barcodes && activeItem.barcodes.length > 0 ? (
                 <View style={cardStyles.keywordRow}>
-                  {item.barcodes.map((bc, i) => (
+                  {activeItem.barcodes.map((bc, i) => (
                     <View key={i} style={[cardStyles.keyword, { backgroundColor: colors.muted }]}>
                       <Text style={[cardStyles.keywordText, { color: colors.foreground, fontFamily: "Inter_500Medium" }]}>
                         {bc}
@@ -400,11 +436,11 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
                 </Text>
                 {onReenrichKeywords ? (
                   <Pressable
-                    onPress={(e) => { e.stopPropagation?.(); handleReenrich(); }}
+                    onPress={(e) => { e?.stopPropagation?.(); handleReenrich(); }}
                     hitSlop={8}
                     disabled={reenrichState === "loading"}
                     style={[cardStyles.reenrichBtn, { backgroundColor: colors.muted, borderColor: colors.border, opacity: reenrichState === "loading" ? 0.6 : 1 }]}
-                    accessibilityLabel={`Re-enrich keywords for ${item.catalog}`}
+                    accessibilityLabel={`Re-enrich keywords for ${activeItem.catalog}`}
                     accessibilityRole="button"
                   >
                     {reenrichState === "loading" ? (
@@ -468,9 +504,9 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
 
         {/* Part Details (web-sourced specs) */}
         <PartCard
-          catalog={item.catalog}
-          vendor={item.vendor ?? ""}
-          description={item.description ?? item.expandedDescription ?? ""}
+          catalog={activeItem.catalog}
+          vendor={activeItem.vendor ?? ""}
+          description={activeItem.description ?? activeItem.expandedDescription ?? ""}
           autoExpand={autoExpandPartCard}
         />
 
@@ -518,6 +554,13 @@ const cardStyles = StyleSheet.create({
   },
   rankText: { fontSize: 11, fontFamily: "Inter_700Bold" },
   titleGroup: { flex: 1 },
+  backBtn: {
+    marginBottom: 2,
+    alignSelf: "flex-start",
+  },
+  backBtnText: {
+    fontFamily: "Inter_600SemiBold",
+  },
   vendor: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5 },
   catalog: { fontSize: 17, fontFamily: "Inter_700Bold", marginTop: 2 },
   badge: {
