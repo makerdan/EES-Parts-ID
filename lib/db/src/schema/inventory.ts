@@ -80,6 +80,10 @@ export const inventoryTable = pgTable(
     // the admin-only "Expand Descriptions" enrichment job. Never modifies the
     // original description. Null means not yet expanded (or admin discarded it).
     expandedDescription: text("expanded_description"),
+    // ── Human-readable size label ─────────────────────────────────────────────
+    // Manually entered by admins (e.g. '1/2"', '3/4"', '4" x 2"').
+    // Free text, max 100 chars. Null means no size label has been recorded.
+    size: text("size"),
     // ── Physical dimensions ──────────────────────────────────────────────────
     // Nullable JSON object: { length?, width?, height?, diameter? } all in mm.
     // Populated via LiDAR scan or manual entry. Kept as jsonb so the schema

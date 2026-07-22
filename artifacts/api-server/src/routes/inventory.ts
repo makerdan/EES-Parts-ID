@@ -12,6 +12,7 @@ import {
   UpdateItemDescriptionResponse,
   UpdateItemDimensionsResponse,
   UpdateItemKeywordsResponse,
+  UpdateItemSizeResponse,
   UploadItemPhotoResponse,
   UpsertBatchPreviewResponse,
 } from "@workspace/api-zod";
@@ -684,6 +685,7 @@ router.post("/search", async (req, res) => {
       bin_locations: Array<string>; ai_keywords: Array<string>; pinned_keywords: Array<string>; barcodes: Array<string>;
       enriched_at: Date | null; image_url: string | null; thumbnail_url: string | null; image_url_2: string | null; thumbnail_url_2: string | null;
       expanded_description: string | null;
+      size: string | null;
       dimensions: { length?: number | null; width?: number | null; height?: number | null; diameter?: number | null } | null;
       created_at: Date; updated_at: Date;
       fts_rank: number; trgm_sim: number;
@@ -789,7 +791,7 @@ router.post("/search", async (req, res) => {
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
-              i.bin_locations, i.ai_keywords, i.pinned_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.expanded_description, i.dimensions, i.created_at, i.updated_at,
+              i.bin_locations, i.ai_keywords, i.pinned_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.expanded_description, i.size, i.dimensions, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 ${inventoryFtsVector('i')},
                 websearch_to_tsquery('english', ${tsQuery})
@@ -879,6 +881,7 @@ router.post("/search", async (req, res) => {
         imageUrl2: typeof row.image_url_2 === "string" ? row.image_url_2 : null,
         thumbnailUrl2: typeof row.thumbnail_url_2 === "string" ? row.thumbnail_url_2 : null,
         expandedDescription: typeof row.expanded_description === "string" ? row.expanded_description : null,
+        size: typeof row.size === "string" ? row.size : null,
         imageSource: null,
         imageConfidence: null,
         previousDescription: null,
@@ -2249,6 +2252,36 @@ router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
   } catch (err) {
     reqLogger.error({ err }, "[inventory/bins] Failed to update bins");
     res.status(500).json({ error: "Failed to update bins" });
+  }
+});
+
+// ── PATCH /inventory/:id/size ──────────────────────────────────────────────────
+// Admin-only: set or clear the human-readable size label on a single part
+// (e.g. '1/2"', '3/4"', '4" x 2"'). Max 100 chars. Pass null to clear.
+router.patch("/:id/size", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
+  try {
+    const id = parseInt(String(req.params["id"] ?? "0"));
+    const { size } = req.body as { size?: unknown };
+
+    if (size !== null && typeof size !== "string") {
+      return void res.status(400).json({ error: "size must be a string or null" });
+    }
+    if (typeof size === "string" && size.length > 100) {
+      return void res.status(400).json({ error: "size must be 100 characters or fewer" });
+    }
+
+    const [updated] = await db
+      .update(inventoryTable)
+      .set({ size: size === null ? null : size.trim() || null, updatedAt: new Date() })
+      .where(eq(inventoryTable.id, id))
+      .returning();
+
+    if (!updated) return void res.status(404).json({ error: "Item not found" });
+    res.json(UpdateItemSizeResponse.parse(updated));
+  } catch (err) {
+    reqLogger.error({ err }, "[inventory/size] Failed to update size");
+    res.status(500).json({ error: "Failed to update size" });
   }
 });
 

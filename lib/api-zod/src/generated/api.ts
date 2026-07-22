@@ -93,6 +93,12 @@ export const ListInventoryResponse = zod.object({
         .describe(
           "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
         ),
+      size: zod
+        .string()
+        .nullish()
+        .describe(
+          'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
+        ),
       dimensions: zod
         .object({
           length: zod.number().nullish(),
@@ -306,6 +312,12 @@ export const SearchInventoryResponse = zod
             .describe(
               "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
             ),
+          size: zod
+            .string()
+            .nullish()
+            .describe(
+              'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
+            ),
           dimensions: zod
             .object({
               length: zod.number().nullish(),
@@ -369,6 +381,12 @@ export const SearchInventoryResponse = zod
               .nullish()
               .describe(
                 "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+              ),
+            size: zod
+              .string()
+              .nullish()
+              .describe(
+                'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
               ),
             dimensions: zod
               .object({
@@ -443,6 +461,12 @@ export const SearchInventoryResponse = zod
               .describe(
                 "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
               ),
+            size: zod
+              .string()
+              .nullish()
+              .describe(
+                'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
+              ),
             dimensions: zod
               .object({
                 length: zod.number().nullish(),
@@ -506,6 +530,12 @@ export const SearchInventoryResponse = zod
                 .nullish()
                 .describe(
                   "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+                ),
+              size: zod
+                .string()
+                .nullish()
+                .describe(
+                  'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
                 ),
               dimensions: zod
                 .object({
@@ -693,6 +723,12 @@ export const UpdateItemBinsResponse = zod.object({
     .describe(
       "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
     ),
+  size: zod
+    .string()
+    .nullish()
+    .describe(
+      'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
+    ),
   dimensions: zod
     .object({
       length: zod.number().nullish(),
@@ -798,6 +834,12 @@ export const UpdateItemDimensionsResponse = zod.object({
     .describe(
       "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
     ),
+  size: zod
+    .string()
+    .nullish()
+    .describe(
+      'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
+    ),
   dimensions: zod
     .object({
       length: zod.number().nullish(),
@@ -864,6 +906,12 @@ export const LookupByBarcodeResponse = zod.object({
     .nullish()
     .describe(
       "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+    ),
+  size: zod
+    .string()
+    .nullish()
+    .describe(
+      'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
     ),
   dimensions: zod
     .object({
@@ -938,6 +986,92 @@ export const UpdateItemBarcodesResponse = zod.object({
     .describe(
       "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
     ),
+  size: zod
+    .string()
+    .nullish()
+    .describe(
+      'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
+    ),
+  dimensions: zod
+    .object({
+      length: zod.number().nullish(),
+      width: zod.number().nullish(),
+      height: zod.number().nullish(),
+      diameter: zod.number().nullish(),
+    })
+    .nullish()
+    .describe(
+      "Physical dimensions in millimetres (length, width, height, diameter)",
+    ),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Update the size label for a single inventory item (admin)
+ */
+export const UpdateItemSizeParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateItemSizeBody = zod.object({
+  size: zod
+    .string()
+    .nullable()
+    .describe("Human-readable size label (max 100 chars). Pass null to clear."),
+});
+
+export const UpdateItemSizeResponse = zod.object({
+  id: zod.number(),
+  vendor: zod.string(),
+  catalog: zod.string(),
+  description: zod.string(),
+  binLocations: zod
+    .array(zod.string())
+    .describe(
+      "Bin locations where this part is stored (a part may live in multiple bins)",
+    ),
+  aiKeywords: zod.array(zod.string()),
+  barcodes: zod
+    .array(zod.string())
+    .describe("Barcode values associated with this part"),
+  enrichedAt: zod.coerce.date().nullish(),
+  imageUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+    ),
+  thumbnailUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
+    ),
+  imageUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  thumbnailUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  expandedDescription: zod
+    .string()
+    .nullish()
+    .describe(
+      "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+    ),
+  size: zod
+    .string()
+    .nullish()
+    .describe(
+      'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
+    ),
   dimensions: zod
     .object({
       length: zod.number().nullish(),
@@ -1009,6 +1143,12 @@ export const UpdateItemDescriptionResponse = zod.object({
     .describe(
       "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
     ),
+  size: zod
+    .string()
+    .nullish()
+    .describe(
+      'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
+    ),
   dimensions: zod
     .object({
       length: zod.number().nullish(),
@@ -1075,6 +1215,12 @@ export const ReenrichItemResponse = zod.object({
     .nullish()
     .describe(
       "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+    ),
+  size: zod
+    .string()
+    .nullish()
+    .describe(
+      'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
     ),
   dimensions: zod
     .object({
@@ -1146,6 +1292,12 @@ export const UpdateItemKeywordsResponse = zod.object({
     .nullish()
     .describe(
       "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+    ),
+  size: zod
+    .string()
+    .nullish()
+    .describe(
+      'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
     ),
   dimensions: zod
     .object({
@@ -1253,6 +1405,12 @@ export const AiIdentifyPartResponse = zod.object({
           .describe(
             "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
           ),
+        size: zod
+          .string()
+          .nullish()
+          .describe(
+            'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
+          ),
         dimensions: zod
           .object({
             length: zod.number().nullish(),
@@ -1316,6 +1474,12 @@ export const AiIdentifyPartResponse = zod.object({
             .nullish()
             .describe(
               "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+            ),
+          size: zod
+            .string()
+            .nullish()
+            .describe(
+              'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
             ),
           dimensions: zod
             .object({

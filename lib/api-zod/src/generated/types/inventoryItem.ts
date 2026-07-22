@@ -28,6 +28,8 @@ export interface InventoryItem {
   thumbnailUrl2?: string | null;
   /** AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original) */
   expandedDescription?: string | null;
+  /** Human-readable size label manually entered by an admin (e.g. 1/2", 3/4", 4" x 2") — max 100 chars */
+  size?: string | null;
   /** Physical dimensions in millimetres (length, width, height, diameter) */
   dimensions?: InventoryItemDimensions;
   createdAt: Date;
