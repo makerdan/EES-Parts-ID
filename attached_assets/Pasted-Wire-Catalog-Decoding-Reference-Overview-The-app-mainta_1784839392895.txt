@@ -1,0 +1,61 @@
+Wire Catalog Decoding Reference
+Overview
+The app maintains a client-side catalog of ~180+ hardcoded wire reel entries. Each entry has three fields:
+
+Field	Example	Purpose
+vendor	COP, ALU	Copper or Aluminum wire
+catalog	THHN2BK2500	Compact machine-readable code
+description	THHN 2 AWG STR BLACK 2500'	Human-readable label
+Catalog Code Structure
+A catalog code is a concatenated string with up to 4 segments, read left-to-right with no delimiters:
+
+[WIRE TYPE][GAUGE][COLOR][FOOTAGE]
+
+Examples:
+
+THHN2BK2500 → THHN · 2 AWG · Black · 2500 ft
+XHHW350OR2500 → XHHW · 350 KCMIL · Orange · 2500 ft
+THHN40BL1000 → THHN · 4/0 AWG · Blue · 1000 ft
+Multi-conductor cable types (TC, SER, URD, TRIPLEX, etc.) omit the color segment entirely.
+
+Wire Types
+The app recognizes 16 wire type codes as prefixes on catalog entries:
+
+Code	Meaning
+THHN	Thermoplastic High Heat Nylon (most common single-conductor)
+XHHW	Cross-linked polyethylene, heat/water resistant
+URD	Underground Residential Distribution
+SER	Service Entrance Cable (round)
+TC	Tray Cable
+RX	Romex (NM-B residential)
+UF	Underground Feeder
+BARE	Bare copper conductor
+ALF	Aluminum Feeder
+LT / LTNM	Liquid-tight conduit
+MHF	Mobile Home Feeder
+SEOOW	Portable power cable
+SJEW / SJEOO	Flexible cord types
+TRIPLEX	3-conductor twisted aluminum
+Parsing rule: The system tries the longest matching type prefix first (e.g., SEOOW before SE).
+
+Wire Gauges
+Gauges appear immediately after the wire type in the catalog code. Two gauge families exist:
+
+AWG (American Wire Gauge) — smaller number = thicker wire:
+
+Single: 1, 2, 3, 4, 6, 8
+"Aught" sizes (written as X/0): 1/0, 2/0, 3/0, 4/0
+In catalog codes, slashes are dropped: 4/0 → 40, 2/0 → 20, 1/0 → 10
+KCMIL (Thousand Circular Mils) — larger number = thicker wire:
+
+250, 300, 350, 400, 500, 600, 700, 750, 900
+These appear verbatim in the catalog code
+Examples:
+
+THHN1BK → AWG 1
+THHN40BK → AWG 4/0 (four-aught)
+THHN250BK → 250 KCMIL
+Important ambiguity: 40 in a catalog code always means 4/0 AWG (not gauge 40, which doesn't exist). Similarly 10 = 1/0, 20 = 2/0, 30 = 3/0.
+
+Color Codes
+Two-letter codes immediately follow the gauge (only for single-conductor types like THHN, XHHW):
