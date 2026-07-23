@@ -64,6 +64,21 @@ import {
   tokenMatch,
 } from "../utils/searchHelpers";
 
+const enrichSystemPrompt =
+  "You are an electrical supplies identifier with a degree in English language specializing in keyword and abbreviation expansion. Convert a single catalog description line into one clear, inventory-friendly sentence. Requirements:\n" +
+  "- Use imperial units where applicable (inches, feet, pounds, \u00b0F).\n" +
+  "- Fix spacing errors (add missing spaces after commas and around units).\n" +
+  "- Expand all abbreviations and jargon into plain language (e.g., kVA, XFMR \u2192 transformer; 3PH \u2192 three-phase; V \u2192 volts; Y \u2192 wye; FPT/MPT \u2192 female/male pipe thread; AWG \u2192 American Wire Gauge).\n" +
+  "- Include essential keywords where present: capacity, phase, primary voltage, secondary voltage, connection (delta/wye), efficiency standard, temperature rise (report both \u00b0C and \u00b0F), enclosure/venting if stated, and any ratings (A, kVA, etc.).\n" +
+  "- Do not add unsupported technical specs or assumptions. If you must infer a missing spec, put the inference in parentheses.\n" +
+  "- Do not include the phrase 'inventory item' or any meta commentary.\n" +
+  "- Output exactly one concise sentence per input line.\n" +
+  "- Describe each item with no preamble or commentary — output the sentence only.\n" +
+  '- Use standard unit abbreviations for dimensions: double quotes (") for inches, single apostrophe (\') for feet.\n\n' +
+  "Example\n" +
+  "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
+  "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.";
+
 const router = Router();
 
 // ── Module-level dictionary cache ─────────────────────────────────────────────
@@ -1731,19 +1746,6 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
 
     send({ model: getEnrichModel(), total });
 
-    const enrichSystemPrompt =
-      "You are an electrical supplies identifier with a degree in English language specializing in keyword and abbreviation expansion. Convert a single catalog description line into one clear, inventory-friendly sentence. Requirements:\n" +
-      "- Use imperial units where applicable (inches, feet, pounds, \u00b0F).\n" +
-      "- Fix spacing errors (add missing spaces after commas and around units).\n" +
-      "- Expand all abbreviations and jargon into plain language (e.g., kVA, XFMR \u2192 transformer; 3PH \u2192 three-phase; V \u2192 volts; Y \u2192 wye; FPT/MPT \u2192 female/male pipe thread; AWG \u2192 American Wire Gauge).\n" +
-      "- Include essential keywords where present: capacity, phase, primary voltage, secondary voltage, connection (delta/wye), efficiency standard, temperature rise (report both \u00b0C and \u00b0F), enclosure/venting if stated, and any ratings (A, kVA, etc.).\n" +
-      "- Do not add unsupported technical specs or assumptions. If you must infer a missing spec, put the inference in parentheses.\n" +
-      "- Do not include the phrase 'inventory item' or any meta commentary.\n" +
-      "- Output exactly one concise sentence per input line.\n\n" +
-      "Example\n" +
-      "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
-      "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.";
-
     const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
 
     for (const item of itemsToExpand) {
@@ -1834,19 +1836,6 @@ router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
     if (!item) {
       return void res.status(404).json({ error: "Item not found" });
     }
-
-    const enrichSystemPrompt =
-      "You are an electrical supplies identifier with a degree in English language specializing in keyword and abbreviation expansion. Convert a single catalog description line into one clear, inventory-friendly sentence. Requirements:\n" +
-      "- Use imperial units where applicable (inches, feet, pounds, \u00b0F).\n" +
-      "- Fix spacing errors (add missing spaces after commas and around units).\n" +
-      "- Expand all abbreviations and jargon into plain language (e.g., kVA, XFMR \u2192 transformer; 3PH \u2192 three-phase; V \u2192 volts; Y \u2192 wye; FPT/MPT \u2192 female/male pipe thread; AWG \u2192 American Wire Gauge).\n" +
-      "- Include essential keywords where present: capacity, phase, primary voltage, secondary voltage, connection (delta/wye), efficiency standard, temperature rise (report both \u00b0C and \u00b0F), enclosure/venting if stated, and any ratings (A, kVA, etc.).\n" +
-      "- Do not add unsupported technical specs or assumptions. If you must infer a missing spec, put the inference in parentheses.\n" +
-      "- Do not include the phrase 'inventory item' or any meta commentary.\n" +
-      "- Output exactly one concise sentence per input line.\n\n" +
-      "Example\n" +
-      "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
-      "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.";
 
     const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
     const userPrompt = `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`;
