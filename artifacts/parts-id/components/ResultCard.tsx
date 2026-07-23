@@ -13,7 +13,7 @@ import { PartCard } from "@/components/PartCard";
 import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { PinIcon } from "@/components/PinIcon";
 import { RetryImage } from "@/components/RetryImage";
-import { SizeVariantDropdown } from "@/components/SizeVariantDropdown";
+import { getSizeLabel, SizeVariantDropdown } from "@/components/SizeVariantDropdown";
 import { useColors } from "@/hooks/useColors";
 
 interface ResultCardProps {
@@ -190,6 +190,13 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
               <Text style={[cardStyles.catalog, { color: colors.foreground, fontSize: fs(17) }]}>
                 {activeItem.catalog}
               </Text>
+              {isViewingVariant ? (
+                <View style={[cardStyles.sizeBadge, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "44" }]}>
+                  <Text style={[cardStyles.sizeBadgeText, { color: colors.primary, fontSize: fs(11) }]}>
+                    {getSizeLabel((activeItem as unknown as { size?: string | null }).size, activeItem.description)}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
           <View style={cardStyles.headerRight}>
@@ -563,6 +570,17 @@ const cardStyles = StyleSheet.create({
   },
   vendor: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5 },
   catalog: { fontSize: 17, fontFamily: "Inter_700Bold", marginTop: 2 },
+  sizeBadge: {
+    alignSelf: "flex-start",
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  sizeBadgeText: {
+    fontFamily: "Inter_600SemiBold",
+  },
   badge: {
     flexDirection: "row",
     alignItems: "center",
