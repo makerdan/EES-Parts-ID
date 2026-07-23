@@ -75,9 +75,49 @@ const enrichSystemPrompt =
   "- Output exactly one concise sentence per input line.\n" +
   "- Describe each item with no preamble or commentary — output the sentence only.\n" +
   '- Use standard unit abbreviations for dimensions: double quotes (") for inches, single apostrophe (\') for feet.\n\n' +
+  "WIRE CATALOG CODE DECODING\n" +
+  "If the catalog code matches a wire/cable pattern, decode it precisely using the rules below before writing the description.\n\n" +
+  "Single-conductor wire structure: [WIRE TYPE][GAUGE][CONDUCTOR TYPE (optional)][COLOR][FOOTAGE]\n" +
+  "Try the longest matching wire-type prefix first. Known wire type prefixes: THHN, XHHW, THWN-2, THWN, THW, TW, USE-2, USE, XHHW-2, UF, BARE, SEOOW, SJEW, SJEOO, LT, LTNM, TC, RX, SER, URD, TRIPLEX, ALF, MHF.\n\n" +
+  "Gauge decoding (the numeric segment immediately after the wire type):\n" +
+  "- Single AWG digits: 1, 2, 3, 4, 6, 8, 10, 12, 14 \u2192 state as '[gauge] AWG'\n" +
+  "- Aught sizes: 10 \u2192 1/0 AWG, 20 \u2192 2/0 AWG, 30 \u2192 3/0 AWG, 40 \u2192 4/0 AWG\n" +
+  "- KCMIL values (250, 300, 350, 400, 500, 600, 700, 750, 900) \u2192 state as '[value] KCMIL'\n\n" +
+  "Conductor type codes (optional, appears between gauge and color): SOL \u2192 solid, STR \u2192 stranded.\n\n" +
+  "Color codes (single-conductor types only): BK=black, WH=white, GY=gray, BL=blue, RD=red, YL=yellow, OR=orange, GN=green, BR=brown, PR=purple, PK=pink.\n\n" +
+  "Types with NO color segment (omit color from description): TC, RX, URD, SER, TRIPLEX, UF, ALF, LT, LTNM, BARE, SEOOW.\n\n" +
+  "Conductor material — determine from vendor code suffix or wire type:\n" +
+  "- COP, COR, PRI suffix \u2192 copper\n" +
+  "- ALU, ALF suffix \u2192 aluminum\n" +
+  "- URD, SER, TRIPLEX, MHF \u2192 always aluminum\n" +
+  "- BARE, RX (Romex/NM-B), TC \u2192 always copper\n" +
+  "- THHN, THWN, XHHW and similar single-conductor types \u2192 copper unless an ALU/ALF vendor suffix is present\n\n" +
+  "Trailing numeric segment \u2192 footage in feet (express as '[footage]\\'' or '[footage] ft').\n\n" +
+  "Multi-conductor cable formats:\n" +
+  "- Romex/NM-B (RX): RX{gauge}{conductors}WG{footage} \u2192 '[footage] ft roll of {gauge}/{conductors} with ground Romex (NM-B) cable.'\n" +
+  "- Tray Cable (TC): TC{gauge}{conductors}WG{footage} or TC{gauge}{conductors}{footage} \u2192 '[footage] ft of {gauge} AWG {conductors}-conductor copper tray cable (TC-ER).'\n" +
+  "- SER: SER{gauge}{footage} or SER{g1}{g2}{footage} \u2192 '[footage] ft of SER aluminum service entrance cable, {gauge} AWG.'\n" +
+  "- URD: URD{gauge}{footage} \u2192 '[footage] ft of {gauge} AWG aluminum URD underground cable.' Three-conductor: URD{g1}{g2}{g3}{footage}.\n" +
+  "- TRIPLEX: {gauge}TRIPLEX{footage} \u2192 '[footage] ft reel of {gauge} AWG aluminum TRIPLEX 3-conductor cable.'\n" +
+  "- MHF: MHF{phase}{neutral}{ground}{footage} \u2192 '[footage] ft of MHF aluminum mobile home feeder cable.'\n\n" +
   "Example\n" +
   "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
-  "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.";
+  "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.\n\n" +
+  "Example\n" +
+  "Input: THHN12SOLBL500\n" +
+  "Output: 500' spool of blue THHN-insulated solid copper wire, 12 AWG.\n\n" +
+  "Example\n" +
+  "Input: XHHW40BK1000\n" +
+  "Output: 1000' spool of black XHHW-insulated aluminum wire, 4/0 AWG.\n\n" +
+  "Example\n" +
+  "Input: THHN350OR2500\n" +
+  "Output: 2500' spool of orange THHN-insulated copper wire, 350 KCMIL.\n\n" +
+  "Example\n" +
+  "Input: RX122WG1000\n" +
+  "Output: 1000 ft roll of 12/2 with ground Romex (NM-B) cable.\n\n" +
+  "Example\n" +
+  "Input: 4TRIPLEX1500\n" +
+  "Output: 1500 ft reel of 4 AWG aluminum TRIPLEX 3-conductor cable.";
 
 const router = Router();
 
