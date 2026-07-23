@@ -68,11 +68,15 @@ export default function MapScreen() {
   const pinnedBinLabels = useMemo(() => {
     const m = new Map<number, string>();
     const aisleSections = new Map<number, Set<number>>();
+    const aisleSizeLabels = new Map<number, string | undefined>();
     for (const p of pinnedParts) {
       const parsed = parseBin(p.binCode);
       if (!parsed) continue;
       // First bin in this aisle → use its full code as the primary label
-      if (!m.has(p.aisleNum)) m.set(p.aisleNum, p.binCode);
+      if (!m.has(p.aisleNum)) {
+        m.set(p.aisleNum, p.binCode);
+        aisleSizeLabels.set(p.aisleNum, p.sizeLabel);
+      }
       // Track all distinct sections so we can append extras
       const secs = aisleSections.get(p.aisleNum) ?? new Set<number>();
       secs.add(parsed.section);
@@ -80,14 +84,19 @@ export default function MapScreen() {
     }
     // When more than one section exists in an aisle, append "·§SS" for each extra
     for (const [aisle, secs] of aisleSections) {
-      if (secs.size <= 1) continue;
       const firstCode = m.get(aisle)!;
-      const firstSection = parseBin(firstCode)?.section ?? -1;
-      const extras = [...secs]
-        .filter(s => s !== firstSection)
-        .sort((a, b) => a - b)
-        .map(s => `§${String(s).padStart(2, "0")}`);
-      m.set(aisle, `${firstCode} ${extras.join("·")}`);
+      const sizeLabel = aisleSizeLabels.get(aisle);
+      if (secs.size > 1) {
+        const firstSection = parseBin(firstCode)?.section ?? -1;
+        const extras = [...secs]
+          .filter(s => s !== firstSection)
+          .sort((a, b) => a - b)
+          .map(s => `§${String(s).padStart(2, "0")}`);
+        const binPart = `${firstCode} ${extras.join("·")}`;
+        m.set(aisle, sizeLabel ? `${binPart} · ${sizeLabel}` : binPart);
+      } else if (sizeLabel) {
+        m.set(aisle, `${firstCode} · ${sizeLabel}`);
+      }
     }
     return m;
   }, [pinnedParts]);

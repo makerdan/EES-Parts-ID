@@ -242,7 +242,7 @@ export default function SearchScreen() {
   // Tolerance selected in the similar-size banner (fraction, e.g. 0.10 = ±10%)
   const [similarSizeTolerance, setSimilarSizeTolerance] = useState(0.10);
 
-  const { handleShowOnMap, handleVariantsToggle } = useMapPinHandlers({
+  const { handleShowOnMap, handleVariantsToggle, handleVariantSelect } = useMapPinHandlers({
     setPinnedParts,
     setPendingMapFocus,
     showToast,
@@ -1938,6 +1938,7 @@ export default function SearchScreen() {
                 onShowOnMap={handleShowOnMap}
                 onMeasure={isAdmin && listItem.kind === "sizeUnknown" ? setMeasureItem : undefined}
                 onVariantsToggle={handleVariantsToggle}
+                onVariantSelect={handleVariantSelect}
                 rank={index}
                 fontScale={textFontScale}
                 sizeUnknown={listItem.kind === "sizeUnknown"}

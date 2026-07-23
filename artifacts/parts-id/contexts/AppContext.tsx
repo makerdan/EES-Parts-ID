@@ -46,6 +46,10 @@ export type PinnedPart = {
   variant?: boolean;
   /** ID of the parent search result item — used to scope variant pin removal to a single card. */
   groupId?: number;
+  /** ID of the inventory item that owns this primary pin — used to update sizeLabel when the user switches variants. */
+  partId?: number;
+  /** Size label for the active variant (e.g. "M6 × 1.0 × 20") — shown in the map pin badge. */
+  sizeLabel?: string;
 };
 
 /** Dimensions captured by the Measure tab, passed back to an item edit form. */

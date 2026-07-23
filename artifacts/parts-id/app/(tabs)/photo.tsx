@@ -72,7 +72,7 @@ export default function PhotoScreen() {
   /** Item opened in the full detail/edit sheet — shows the "Map it!" button. */
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
 
-  const { handleShowOnMap, handleVariantsToggle } = useMapPinHandlers({
+  const { handleShowOnMap, handleVariantsToggle, handleVariantSelect } = useMapPinHandlers({
     setPinnedParts,
     setPendingMapFocus,
     showToast,
@@ -699,6 +699,7 @@ export default function PhotoScreen() {
                 onEditItem={isAdmin ? (item) => setDetailsItem(item) : undefined}
                 onShowOnMap={handleShowOnMap}
                 onVariantsToggle={handleVariantsToggle}
+                onVariantSelect={handleVariantSelect}
                 rank={0}
                 fontScale={textFontScale}
               />
@@ -786,6 +787,7 @@ export default function PhotoScreen() {
                   onEditItem={isAdmin ? (item) => setDetailsItem(item) : undefined}
                   onShowOnMap={handleShowOnMap}
                   onVariantsToggle={handleVariantsToggle}
+                  onVariantSelect={handleVariantSelect}
                   rank={index}
                   fontScale={textFontScale}
                   autoExpandPartCard={index === 0}
