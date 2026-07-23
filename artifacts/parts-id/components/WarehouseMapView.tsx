@@ -335,7 +335,14 @@ export function ZoneOverlayItem({
   // naturally with pinch/zoom.  The worklet divides by scale.value to keep the
   // badge at a constant visual size (same strategy as strokeWidth / fontSize).
   const badgeBaseFontSize = Math.max(18, Math.min(30, zone.svgHeight / 4.5));
-  const badgeLabelLen = (binLabel ?? "").length || 8;
+  // Cap badge label at 18 chars so long "bin · size" strings (e.g. "17-06-204 · M6 × 1.0 × 20")
+  // don't overflow into adjacent zones at low zoom levels.
+  const MAX_BADGE_CHARS = 18;
+  const rawBadgeLabel = binLabel ?? "";
+  const badgeDisplayLabel = rawBadgeLabel.length > MAX_BADGE_CHARS
+    ? rawBadgeLabel.slice(0, MAX_BADGE_CHARS - 1) + "\u2026"
+    : rawBadgeLabel;
+  const badgeLabelLen = badgeDisplayLabel.length || 8;
   const badgeCx = zone.svgX + zone.svgWidth / 2;
   const badgeMarkerR = Math.max(10, Math.min(30, zone.svgWidth / 6));
   // Pin tip sits at zone vertical center; ball center is markerR*1.85 above it,
@@ -510,7 +517,7 @@ export function ZoneOverlayItem({
             fontWeight="bold"
             animatedProps={badgeTextAnimatedProps}
           >
-            {binLabel}
+            {badgeDisplayLabel}
           </AnimatedSvgText>
         </G>
       ) : null}
