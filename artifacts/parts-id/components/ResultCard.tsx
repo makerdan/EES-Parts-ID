@@ -48,6 +48,12 @@ interface ResultCardProps {
    * Used to record the part in the "Recently Viewed" history.
    */
   onOpen?: (item: InventoryItem) => void;
+  /**
+   * Called when the user switches to a different size variant via the dropdown.
+   * Receives the base (primary) item and the newly selected variant so the
+   * caller can update any existing map pin for this item.
+   */
+  onVariantSelect?: (baseItem: InventoryItem, selectedVariant: InventoryItem) => void;
 }
 
 const CONFIDENCE_COLORS = {
@@ -106,7 +112,7 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVariantsToggle, rank, fontScale = 1.0, sizeUnknown = false, autoExpandPartCard = false, onReenrichKeywords, onOpen }: ResultCardProps) {
+export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVariantsToggle, rank, fontScale = 1.0, sizeUnknown = false, autoExpandPartCard = false, onReenrichKeywords, onOpen, onVariantSelect }: ResultCardProps) {
   "use no memo";
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
@@ -308,7 +314,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
         {hasVariants && !expanded ? (
           <SizeVariantDropdown
             variants={variants ?? []}
-            onSelect={(v) => { setActiveItem(v); setLocalKeywords(null); setLocalEnrichedAt(undefined); }}
+            onSelect={(v) => { setActiveItem(v); setLocalKeywords(null); setLocalEnrichedAt(undefined); onVariantSelect?.(item, v); }}
             colors={colors}
             fontScale={fontScale}
           />
@@ -358,7 +364,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
             {hasVariants ? (
               <SizeVariantDropdown
                 variants={variants ?? []}
-                onSelect={(v) => { setActiveItem(v); setLocalKeywords(null); setLocalEnrichedAt(undefined); }}
+                onSelect={(v) => { setActiveItem(v); setLocalKeywords(null); setLocalEnrichedAt(undefined); onVariantSelect?.(item, v); }}
                 colors={colors}
                 fontScale={fontScale}
               />

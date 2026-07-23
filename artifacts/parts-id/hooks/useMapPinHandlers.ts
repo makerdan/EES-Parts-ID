@@ -2,6 +2,7 @@ import type { InventoryItem } from "@workspace/api-client-react";
 import { router } from "expo-router";
 import { useCallback } from "react";
 
+import { getSizeLabel } from "@/components/SizeVariantDropdown";
 import type { PinnedPart } from "@/contexts/AppContext";
 import { parseBin } from "@/lib/aisleHierarchy";
 
@@ -39,13 +40,23 @@ export function useMapPinHandlers({
         showToast("No bin location assigned — add a bin to this item first.");
         return;
       }
+      const sizeLabel = getSizeLabel(
+        (item as unknown as { size?: string | null }).size,
+        item.description,
+      );
       const newPins: Array<PinnedPart> = [];
       let firstParsed: ReturnType<typeof parseBin> | null = null;
       for (const bin of bins) {
         const parsed = parseBin(bin);
         if (parsed) {
           if (!firstParsed) firstParsed = parsed;
-          newPins.push({ binCode: bin, label: item.catalog, aisleNum: parsed.aisle });
+          newPins.push({
+            binCode: bin,
+            label: item.catalog,
+            aisleNum: parsed.aisle,
+            partId: item.id,
+            sizeLabel,
+          });
         }
       }
       if (!firstParsed) {
@@ -61,6 +72,26 @@ export function useMapPinHandlers({
       router.navigate("/(tabs)/map");
     },
     [setPendingMapFocus, setPinnedParts, showToast],
+  );
+
+  /**
+   * Called when the user switches size variants on a ResultCard that already
+   * has a primary map pin.  Updates the sizeLabel on any existing primary pins
+   * that belong to the base item so the map badge stays in sync.
+   */
+  const handleVariantSelect = useCallback(
+    (baseItem: InventoryItem, selectedVariant: InventoryItem) => {
+      const sizeLabel = getSizeLabel(
+        (selectedVariant as unknown as { size?: string | null }).size,
+        selectedVariant.description,
+      );
+      setPinnedParts((prev) =>
+        prev.map((p) =>
+          p.partId === baseItem.id && !p.variant ? { ...p, sizeLabel } : p,
+        ),
+      );
+    },
+    [setPinnedParts],
   );
 
   const handleVariantsToggle = useCallback(
@@ -96,5 +127,5 @@ export function useMapPinHandlers({
     [setPinnedParts],
   );
 
-  return { handleShowOnMap, handleVariantsToggle };
+  return { handleShowOnMap, handleVariantsToggle, handleVariantSelect };
 }
