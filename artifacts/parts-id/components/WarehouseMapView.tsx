@@ -101,6 +101,8 @@ import {
   prefetchZoomLevel,
 } from "@/utils/tilePyramidCache";
 
+import { WAREHOUSE_MAP_SVG } from "../assets/warehouse-map-raw";
+
 const VIEWPORT_KEY = "@rdc34/warehouse_map_viewport_v2";
 const FloorPlanMetaSchema = z.object({ hash: z.string() });
 
@@ -214,14 +216,11 @@ async function _loadFloorPlanFromBundle(signal: AbortSignal): Promise<void> {
   const uri = asset.localUri ?? asset.uri ?? "";
   let newData: SvgData;
   if (Platform.OS === "web") {
-    const res = await fetch(uri, { signal });
-    const xml = await res.text();
-    if (signal.aborted) throw new Error("aborted");
-    // Strip the outer <svg> wrapper so the content can be embedded
-    // directly inside the main SVG canvas as a child <g> element.
-    // This matches the approach used in the Zone Editor and keeps the
-    // floor plan and zone overlays in the same SVG viewport, eliminating
-    // any CSS-transform rasterisation blur at high zoom levels.
+    // On web, the asset URI can be a relative path that fetch() cannot
+    // resolve correctly behind the Replit proxy. Use the pre-bundled SVG
+    // string constant directly — it is embedded at module-evaluation time
+    // and is always available regardless of proxy or asset-serving environment.
+    const xml = WAREHOUSE_MAP_SVG;
     const innerXml = stripSvgWrapper(xml);
     newData = { xml, innerXml, uri: "", contentViewBox: parseContentViewBox(xml) ?? undefined };
   } else {

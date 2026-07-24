@@ -18,6 +18,7 @@ import { desc } from "drizzle-orm";
 import { Router } from "express";
 import sharp from "sharp";
 
+import { WAREHOUSE_MAP_SVG } from "../assets/warehouse-map-raw";
 import { logger } from "../lib/logger";
 import { readFloorPlanSvg,uploadFloorPlanSvg } from "../lib/objectStorage";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
@@ -70,6 +71,31 @@ function sanitizeSvg(svg: string): string {
 const router = Router();
 
 const MAX_SVG_BYTES = 10 * 1024 * 1024; // 10 MB
+
+// ── Bundled SVG fallback ──────────────────────────────────────────────────────
+// Served when no floor plan has been uploaded yet, or when object storage is
+// not configured (DEFAULT_OBJECT_STORAGE_BUCKET_ID missing). This ensures the
+// Map tab always shows the floor plan in dev/Replit preview environments.
+// The bundled file is superseded automatically once an admin uploads a real plan.
+//
+// The SVG is embedded as a compile-time string constant (WAREHOUSE_MAP_SVG)
+// so no filesystem read or import.meta.url path resolution is needed.
+// This is safe in Jest (no import.meta syntax), production builds (esbuild
+// inlines the constant), and all other environments.
+
+let _bundledSvgHash: string | null = null;
+
+/** Lazily compute (and cache) the SHA-256 hash of the bundled SVG string. */
+function getBundledSvgHash(): string {
+  if (_bundledSvgHash) return _bundledSvgHash;
+  _bundledSvgHash = crypto.createHash("sha256").update(WAREHOUSE_MAP_SVG).digest("hex");
+  return _bundledSvgHash;
+}
+
+/** Return the bundled SVG as a Buffer. */
+function getBundledSvg(): Buffer {
+  return Buffer.from(WAREHOUSE_MAP_SVG, "utf8");
+}
 
 // ── Tile pyramid constants ────────────────────────────────────────────────────
 
@@ -257,11 +283,16 @@ async function getLatestMeta() {
 router.get("/floor-plan/meta", async (_req, res) => {
   try {
     const meta = await getLatestMeta();
-    if (!meta) {
-      res.status(404).json({ error: "No floor plan uploaded yet" });
+    // When a real floor plan has been uploaded AND object storage is configured,
+    // return its hash and upload timestamp.
+    if (meta && process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID) {
+      res.json({ hash: meta.hash, updatedAt: meta.uploadedAt });
       return;
     }
-    res.json({ hash: meta.hash, updatedAt: meta.uploadedAt });
+    // Fall back to the bundled SVG so the client always has a floor plan to
+    // display even before an admin uploads one or when object storage is absent.
+    const hash = getBundledSvgHash();
+    res.json({ hash, updatedAt: new Date(0).toISOString() });
   } catch {
     res.status(500).json({ error: "Failed to fetch floor plan metadata" });
   }
@@ -271,27 +302,32 @@ router.get("/floor-plan/meta", async (_req, res) => {
 router.get("/floor-plan/svg", async (_req, res) => {
   try {
     const meta = await getLatestMeta();
-    // Return 404 when no floor plan has been uploaded, or when object storage
-    // is not configured (missing bucket env var). Both cases mean the SVG is
-    // unavailable — callers (e.g. the post-merge viewBox sync check) treat 404
-    // as a graceful skip rather than a hard failure.
-    if (!meta || !process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID) {
-      res.status(404).json({ error: "No floor plan uploaded yet" });
-      return;
+    // Serve the uploaded SVG when both a floor plan record and object storage
+    // are present. Otherwise fall through to the bundled-file fallback below.
+    if (meta && process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID) {
+      try {
+        const svgBuffer = await readFloorPlanSvg(meta.objectPath);
+        res.set("Content-Type", "image/svg+xml");
+        res.set("Cache-Control", "public, max-age=3600");
+        res.send(svgBuffer);
+        return;
+      } catch (storageErr) {
+        // Storage read failed — log a warning and fall through to the bundle.
+        const e = storageErr as { code?: number; message?: string };
+        logger.warn({ errCode: e.code, errMsg: e.message }, "floor-plan/svg storage read failed — falling back to bundled SVG");
+      }
     }
-    const svgBuffer = await readFloorPlanSvg(meta.objectPath);
+    // Bundled fallback: serve the warehouse-map.svg embedded in the server bundle.
+    // This is the dev/bootstrap path; it is superseded once an admin uploads
+    // a real floor plan and object storage is configured.
+    const svgBuffer = getBundledSvg();
     res.set("Content-Type", "image/svg+xml");
-    res.set("Cache-Control", "public, max-age=3600");
+    res.set("Cache-Control", "public, max-age=60");
     res.send(svgBuffer);
   } catch (err) {
-    // Any failure reading from object storage means we cannot serve the SVG,
-    // so treat it as "not available" (404) rather than an internal error (500).
-    // This covers both "object does not exist in bucket" and transient storage
-    // errors — callers such as the post-merge viewBox sync check treat 404 as a
-    // graceful skip rather than a hard failure.
     const e = err as { code?: number; message?: string };
-    logger.warn({ errCode: e.code, errMsg: e.message }, "floor-plan/svg storage read failed — returning 404");
-    res.status(404).json({ error: "No floor plan uploaded yet" });
+    logger.error({ errCode: e.code, errMsg: e.message }, "floor-plan/svg failed to serve bundled SVG");
+    res.status(500).json({ error: "Failed to serve floor plan" });
   }
 });
 
