@@ -101,8 +101,6 @@ import {
   prefetchZoomLevel,
 } from "@/utils/tilePyramidCache";
 
-import { WAREHOUSE_MAP_SVG } from "../assets/warehouse-map-raw";
-
 const VIEWPORT_KEY = "@rdc34/warehouse_map_viewport_v2";
 const FloorPlanMetaSchema = z.object({ hash: z.string() });
 
@@ -218,8 +216,10 @@ async function _loadFloorPlanFromBundle(signal: AbortSignal): Promise<void> {
   if (Platform.OS === "web") {
     // On web, the asset URI can be a relative path that fetch() cannot
     // resolve correctly behind the Replit proxy. Use the pre-bundled SVG
-    // string constant directly — it is embedded at module-evaluation time
-    // and is always available regardless of proxy or asset-serving environment.
+    // string constant directly — loaded lazily here so the large module is
+    // not parsed at WarehouseMapView module-evaluation time (avoids a
+    // visible delay on low-end devices that never reach the Map tab).
+    const { WAREHOUSE_MAP_SVG } = await import("../assets/warehouse-map-raw");
     const xml = WAREHOUSE_MAP_SVG;
     const innerXml = stripSvgWrapper(xml);
     newData = { xml, innerXml, uri: "", contentViewBox: parseContentViewBox(xml) ?? undefined };
