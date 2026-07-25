@@ -472,7 +472,7 @@ describe("PartDetailsEditor – handleSave partial-failure path: no partial writ
     expect(mockSetQueriesData).not.toHaveBeenCalled();
   });
 
-  it("does NOT call setQueriesData when the description PATCH fails alongside a succeeding bins op", async () => {
+  it("calls setQueriesData to re-apply the succeeded bins patch when description PATCH fails", async () => {
     // Description PATCH returns HTTP 500; bins mutation succeeds.
     mockFetch.mockResolvedValue({
       ok: false,
@@ -503,9 +503,10 @@ describe("PartDetailsEditor – handleSave partial-failure path: no partial writ
     const saveBtn = findPressable(tree.root, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
-    // Even though bins mutation succeeded, the partially-failed set must not
-    // write any new values into the cache.
-    expect(mockSetQueriesData).not.toHaveBeenCalled();
+    // Bins succeeded — setQueriesData MUST be called to re-apply the bins patch
+    // so the list view reflects the committed server state even though description
+    // failed. Only failed fields are omitted from the cache update.
+    expect(mockSetQueriesData).toHaveBeenCalled();
   });
 
   it("restores both cache snapshots via setQueryData when the bins mutation rejects", async () => {
