@@ -16,7 +16,8 @@
     "seed:reference": "tsx src/seed/runQuickLookupChips.ts",
     "seed:barcodes": "tsx src/seed/import-barcodes.ts",
     "lint": "eslint . --ext .ts && knip",
-    "dead-exports": "knip"
+    "dead-exports": "knip",
+    "gen:map": "node scripts/gen-warehouse-map-raw.js"
   },
   "dependencies": {
     "@clerk/express": "^2.1.35",
