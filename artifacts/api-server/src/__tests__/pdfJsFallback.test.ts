@@ -64,13 +64,7 @@ describe("pdfJsFallback — error propagation via extractPdfPages", () => {
         mod = require("../utils/pdfProcessor") as PdfProcessorModule;
       });
 
-      // The promise must reject — if it resolves at all the assertion fails.
-      let resolved = false;
-      await mod.extractPdfPages(Buffer.alloc(0)).then(() => {
-        resolved = true;
-      }).catch(() => { /* expected */ });
-
-      expect(resolved).toBe(false);
+      await expect(mod.extractPdfPages(Buffer.alloc(0))).rejects.toThrow();
     });
   });
 
@@ -108,12 +102,7 @@ describe("pdfJsFallback — error propagation via extractPdfPages", () => {
         mod = require("../utils/pdfProcessor") as PdfProcessorModule;
       });
 
-      let resolved = false;
-      await mod.extractPdfPages(Buffer.alloc(0)).then(() => {
-        resolved = true;
-      }).catch(() => { /* expected */ });
-
-      expect(resolved).toBe(false);
+      await expect(mod.extractPdfPages(Buffer.alloc(0))).rejects.toThrow("pdfjs getDocument failure");
     });
   });
 

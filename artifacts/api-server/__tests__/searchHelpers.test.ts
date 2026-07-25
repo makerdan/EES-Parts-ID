@@ -211,10 +211,16 @@ describe("compareBySize", () => {
     ];
     items.sort(compareBySize);
     // Typed items first (1/2 = 0.5 < 20), untyped land at the end together.
-    expect(extractSizeValue(items[0]!)).not.toBeNull();
-    expect(extractSizeValue(items[1]!)).not.toBeNull();
-    expect(extractSizeValue(items[2]!)).toBeNull();
-    expect(extractSizeValue(items[3]!)).toBeNull();
+    expect(items).toHaveLength(4);
+    // Runtime-safe: the toHaveLength assertion above fires first if any are absent.
+    const i0 = items[0]!;
+    const i1 = items[1]!;
+    const i2 = items[2]!;
+    const i3 = items[3]!;
+    expect(extractSizeValue(i0)).not.toBeNull();
+    expect(extractSizeValue(i1)).not.toBeNull();
+    expect(extractSizeValue(i2)).toBeNull();
+    expect(extractSizeValue(i3)).toBeNull();
   });
 
   it("treats two untyped items as equal", () => {

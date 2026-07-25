@@ -104,17 +104,25 @@ beforeEach(() => {
 
 describe("setProvider() and getAiClient()", () => {
   it("getAiClient() returns an instance configured for poe by default", () => {
-    const client = mod.getAiClient() as unknown as { _cfg: { apiKey: string; baseURL: string } };
-    expect(client._cfg.baseURL).toBe("https://api.poe.com/v1");
-    expect(client._cfg.apiKey).toBe("test-poe-key");
+    // Assert on the constructor arguments recorded by the mock rather than
+    // reading the internal _cfg field — if the client implementation changes
+    // its internal storage the cast would silently succeed and return undefined.
+    // beforeEach clears mockCreatedConfigs after calling setProvider, so we
+    // trigger a fresh setProvider("poe") here to record a new constructor call.
+    mod.setProvider("poe");
+    // Runtime-safe: setProvider() above always pushes a config entry.
+    const cfg = mockCreatedConfigs[mockCreatedConfigs.length - 1]!;
+    expect(cfg.baseURL).toBe("https://api.poe.com/v1");
+    expect(cfg.apiKey).toBe("test-poe-key");
   });
 
   it("switches to the openai client after setProvider('openai')", () => {
     mod.setProvider("openai");
 
-    const client = mod.getAiClient() as unknown as { _cfg: { apiKey: string; baseURL: string } };
-    expect(client._cfg.baseURL).toBe("https://test.openai.example/v1");
-    expect(client._cfg.apiKey).toBe("test-openai-key");
+    // Runtime-safe: setProvider() above always pushes a config entry.
+    const cfg = mockCreatedConfigs[mockCreatedConfigs.length - 1]!;
+    expect(cfg.baseURL).toBe("https://test.openai.example/v1");
+    expect(cfg.apiKey).toBe("test-openai-key");
   });
 
   it("the client reference returned by getAiClient() changes after setProvider()", () => {
@@ -137,8 +145,9 @@ describe("setProvider() and getAiClient()", () => {
     mod.setProvider("openai");
     mod.setProvider("poe");
 
-    const client = mod.getAiClient() as unknown as { _cfg: { apiKey: string; baseURL: string } };
-    expect(client._cfg.baseURL).toBe("https://api.poe.com/v1");
+    // Runtime-safe: the second setProvider("poe") above always pushes a config entry.
+    const cfg = mockCreatedConfigs[mockCreatedConfigs.length - 1]!;
+    expect(cfg.baseURL).toBe("https://api.poe.com/v1");
   });
 });
 

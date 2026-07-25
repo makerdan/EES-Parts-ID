@@ -113,8 +113,11 @@ describe("extractCatalogPage – output shape", () => {
       hasPartImage: false,
       imageRegion: null,
     });
-    expect(typeof result.entries[0]!.confidence).toBe("number");
-    expect(result.entries[1]!.catalogNumber).toBe("BR220");
+    // Runtime-safe: the toHaveLength(2) assertion above fires first if absent.
+    const entry0 = result.entries[0]!;
+    const entry1 = result.entries[1]!;
+    expect(typeof entry0.confidence).toBe("number");
+    expect(entry1.catalogNumber).toBe("BR220");
   });
 
   it("returns [] immediately when both pageText and pageImages are empty (no AI call)", async () => {
