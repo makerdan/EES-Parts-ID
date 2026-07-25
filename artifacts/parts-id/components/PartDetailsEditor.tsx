@@ -101,6 +101,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     photo?: string;
     photo2?: string;
   }>({});
+  const [committedFields, setCommittedFields] = useState<Set<string>>(new Set());
 
   // Expanded description state (admin-only field, saved independently)
   const [expandedDescText, setExpandedDescText] = useState(item?.expandedDescription ?? "");
@@ -202,6 +203,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     setExpandedDescText(current.expandedDescription ?? "");
     setExpandedDescSaving("idle");
     setExpandedDescError(null);
+    setCommittedFields(new Set());
   }, [item?.id]);
 
   const addBin = () => {
@@ -636,7 +638,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     results.forEach((result, i) => {
       if (result.status === "rejected") {
         anyFailed = true;
-        ops[i].restoreFn();
         const msg =
           result.reason instanceof Error ? result.reason.message : "Save failed";
         newFieldErrors[ops[i].field] = msg.includes("401")
@@ -696,6 +697,27 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           },
         );
       }
+
+      setCommittedFields(prev => {
+        const next = new Set(prev);
+        succeededFields.forEach(f => next.add(f));
+        return next;
+      });
+
+      const fieldLabel: Record<string, string> = {
+        description: "Description",
+        bins: "Bins",
+        keywords: "Keywords",
+        dimensions: "Dimensions",
+        photo: "Photo 1",
+        photo2: "Photo 2",
+      };
+      const savedLabels = [...succeededFields].map(f => fieldLabel[f] ?? f);
+      const failedLabels = Object.keys(newFieldErrors).map(f => fieldLabel[f] ?? f);
+      const parts: Array<string> = [];
+      if (savedLabels.length > 0) parts.push(`${savedLabels.join(", ")} saved`);
+      if (failedLabels.length > 0) parts.push(`${failedLabels.join(", ")} failed`);
+      setErrorMsg(parts.join(" · ") + " — check connection and retry");
 
       setFieldSaveErrors(newFieldErrors);
       setSaveStatus("error");
@@ -854,7 +876,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
             </Text>
 
             {/* Photos */}
-            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>PHOTOS</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>PHOTOS</Text>
+              {(committedFields.has("photo") || committedFields.has("photo2")) ? (
+                <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+              ) : null}
+            </View>
             <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
               {Platform.OS !== "web"
                 ? "Retake or remove item photos."
@@ -893,7 +920,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
             </View>
 
             {/* Description */}
-            <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 20 }]}>DESCRIPTION</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 20 }}>
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
+              {committedFields.has("description") ? (
+                <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+              ) : null}
+            </View>
             <KeyboardDoneInput
               value={description}
               onChangeText={setDescription}
@@ -994,9 +1026,14 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
             </Pressable>
 
             {/* Bin Locations */}
-            <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 20 }]}>
-              BIN LOCATIONS ({bins.length})
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 20 }}>
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
+                BIN LOCATIONS ({bins.length})
+              </Text>
+              {committedFields.has("bins") ? (
+                <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+              ) : null}
+            </View>
             <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
               Tap a bin to copy it. Tap ✕ to remove.
             </Text>
@@ -1076,9 +1113,14 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
             ) : null}
 
             {/* Keywords */}
-            <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
-              KEYWORDS ({keywords.length})
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 24 }}>
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
+                KEYWORDS ({keywords.length})
+              </Text>
+              {committedFields.has("keywords") ? (
+                <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+              ) : null}
+            </View>
             <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
               Tap a keyword to remove it.
             </Text>
@@ -1130,6 +1172,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
             <View style={[styles.dimHeader, { marginTop: 24 }]}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>DIMENSIONS (mm)</Text>
+                {committedFields.has("dimensions") ? (
+                  <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+                ) : null}
               </View>
               {Platform.OS === "ios" ? (
                 lidarAvailable ? (
