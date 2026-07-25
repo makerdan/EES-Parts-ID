@@ -505,7 +505,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       height: parseDimField(dimHeight),
       diameter: parseDimField(dimDiameter),
     };
-    const oldDims = existingDims ?? {};
+    const oldDims = itemRef.current?.dimensions ?? {};
     const dimsChanged =
       newDims.length !== (oldDims.length ?? null) ||
       newDims.width !== (oldDims.width ?? null) ||
@@ -516,10 +516,11 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       ops.push({
         field: "dimensions",
         restoreFn: () => {
-          setDimLength(fmtDim(existingDims?.length));
-          setDimWidth(fmtDim(existingDims?.width));
-          setDimHeight(fmtDim(existingDims?.height));
-          setDimDiameter(fmtDim(existingDims?.diameter));
+          const savedDims = itemRef.current?.dimensions;
+          setDimLength(fmtDim(savedDims?.length));
+          setDimWidth(fmtDim(savedDims?.width));
+          setDimHeight(fmtDim(savedDims?.height));
+          setDimDiameter(fmtDim(savedDims?.diameter));
         },
         promise: fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
           method: "PATCH",
@@ -647,17 +648,55 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     });
 
     if (anyFailed) {
-      // onError: restore cache snapshots to roll back any partial optimistic
-      // patches that individual mutations may have applied before one failed.
-      // We do NOT re-apply succeeded-field patches here — a partial failure
-      // means the whole save is retried, and showing a split cache state
-      // (some fields updated, others not) would be confusing and incorrect.
+      // onError: restore the full cache snapshot to roll back any optimistic
+      // patches that TanStack mutations (bins, keywords) applied before they
+      // failed. This ensures the cache is in a clean state before we selectively
+      // re-apply the patches for fields that already committed to the server.
       for (const [key, data] of inventorySnapshot) {
         queryClient.setQueryData(key, data);
       }
       for (const [key, data] of searchSnapshot) {
         queryClient.setQueryData(key, data);
       }
+
+      // Re-apply patches for fields that SUCCEEDED so the list / search view
+      // reflects what is now on the server, even though the overall save failed.
+      // Only the failed fields need retry — succeeded fields are already committed.
+      if (succeededFields.size > 0) {
+        const patchItemPartial = (i: InventoryItem): InventoryItem => {
+          if (i.id !== current.id) return i;
+          return {
+            ...i,
+            ...(succeededFields.has("description") ? { description: description.trim() } : {}),
+            ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
+            ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
+            ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
+            ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+            ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
+          };
+        };
+        queryClient.setQueriesData<InventoryListResponse>(
+          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+          (old) => {
+            if (!old) return old;
+            return { ...old, items: old.items.map(patchItemPartial) };
+          },
+        );
+        queryClient.setQueriesData<SearchInventoryResponse>(
+          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+          (old) => {
+            if (!old) return old;
+            const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+              r.item.id === current.id ? { ...r, item: patchItemPartial(r.item) } : r;
+            return {
+              ...old,
+              results: old.results.map(patchResult),
+              sizeUnknownResults: old.sizeUnknownResults?.map(patchResult),
+            };
+          },
+        );
+      }
+
       setFieldSaveErrors(newFieldErrors);
       setSaveStatus("error");
     } else {

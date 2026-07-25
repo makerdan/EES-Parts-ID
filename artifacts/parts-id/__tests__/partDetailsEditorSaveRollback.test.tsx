@@ -284,16 +284,14 @@ describe("PartDetailsEditor – handleSave rollback on mutation failure", () => 
 });
 
 // =============================================================================
-// C. Partial failure: full rollback — no partial write visible in either cache
+// C. Partial failure: selective rollback — succeeded fields stay in cache
 // =============================================================================
 
 describe("PartDetailsEditor – selective cache rollback on partial failure", () => {
-  it("does NOT call setQueriesData even when some ops succeed alongside a failing op", async () => {
+  it("calls setQueriesData to re-apply patches for succeeded fields when some ops fail", async () => {
     // Mock fetch: description PATCH succeeds, dimensions PATCH fails.
-    // Policy: any failure rolls back the entire save — no partial cache write
-    // is ever applied, even for succeeded fields. The user must retry the full
-    // save. This keeps the cache in a consistent state and avoids a split UI
-    // where some fields appear updated while others show an error.
+    // Policy: only failed fields are rolled back; succeeded fields remain visible
+    // in the cache so the user sees what the server committed.
     (global as unknown as { fetch: jest.Mock }).fetch = jest.fn((url: string, opts?: RequestInit) => {
       const method = (opts?.method ?? "GET").toUpperCase();
       if (method === "PATCH" && String(url).includes("/description")) {
@@ -332,11 +330,9 @@ describe("PartDetailsEditor – selective cache rollback on partial failure", ()
     expect(saveBtn).not.toBeNull();
     await act(async () => { saveBtn!.props.onPress(); });
 
-    // setQueriesData must NOT be called in the failure path — even though
-    // description succeeded, the full-rollback policy means no new values
-    // are written to the cache. Snapshot restore uses setQueryData (not
-    // setQueriesData) and that is tested in section B above.
-    expect(mockSetQueriesData).not.toHaveBeenCalled();
+    // setQueriesData MUST be called in the failure path — description succeeded
+    // so its patch must be re-applied after the full-snapshot restore.
+    expect(mockSetQueriesData).toHaveBeenCalled();
   });
 
   it("does NOT call setQueriesData in the failure path when all ops fail (no succeeded fields to preserve)", async () => {
@@ -367,6 +363,93 @@ describe("PartDetailsEditor – selective cache rollback on partial failure", ()
     // All ops failed — setQueriesData should NOT be called in the failure path
     // (no succeeded fields to re-apply).
     expect(mockSetQueriesData).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// D. Stale existingDims — background refetch must not cause spurious PATCH
+// =============================================================================
+
+describe("PartDetailsEditor – stale existingDims bug (itemRef fix)", () => {
+  /**
+   * Regression: if handleSave uses `existingDims` from its render-time closure
+   * instead of `itemRef.current?.dimensions`, a background refetch that arrives
+   * AFTER the handler was created but BEFORE the user taps Save can leave
+   * `existingDims` stale.  In that window, if the user also typed a dim value
+   * that now matches the freshly-fetched server dims, the stale closure
+   * compares against the OLD server value and fires a spurious PATCH.
+   *
+   * We simulate this by:
+   *  1. Mounting with null dims, then having the user type "12" into dimLength.
+   *  2. Capturing the save-button's onPress from that render (which closes over
+   *     existingDims = null — the old server value).
+   *  3. Simulating a background refetch via tree.update() so that
+   *     itemRef.current.dimensions becomes { length: 12 } (server caught up).
+   *  4. Calling the stale handler.
+   *
+   * With the OLD code (existingDims closure): oldDims = null, newDims = {length:12}
+   * → dimsChanged = true → spurious PATCH.
+   * With the FIX (itemRef.current?.dimensions): oldDims = {length:12}, newDims =
+   * {length:12} → dimsChanged = false → no PATCH.
+   */
+  it("does NOT dispatch a spurious dimensions PATCH when a stale-closure handler runs after itemRef catches up to the server dims", async () => {
+    const fetchSpy = jest.fn(() =>
+      Promise.resolve({ ok: true, status: 200, json: async () => ({}) } as Response)
+    );
+    (global as unknown as { fetch: jest.Mock }).fetch = fetchSpy;
+
+    // Step 1: mount with no server dims; dim inputs initialise as "".
+    const item = makeItem({ description: "Original", dimensions: undefined });
+    const tree = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = tree;
+
+    // Step 2a: user types "12" into the first numeric dim input.
+    const dimInput = tree.root.findAll(
+      (n) => n.props?.keyboardType === "numeric" && typeof n.props?.onChangeText === "function",
+      { deep: true },
+    )[0];
+    expect(dimInput).toBeDefined();
+    await act(async () => { dimInput.props.onChangeText("12"); });
+
+    // Step 2b: change description so there is always at least one op queued —
+    // without this handleSave returns early before reaching the dims check.
+    const descInput = tree.root.findAll(
+      (n) => n.props?.placeholder === "Brief description of the part…",
+      { deep: true },
+    )[0];
+    await act(async () => { descInput.props.onChangeText("Updated description"); });
+
+    // Step 2c: capture the stale save handler NOW (closure has existingDims = null).
+    const saveBtn = findPressable(tree.root, "Save Details");
+    expect(saveBtn).not.toBeNull();
+    const staleSaveHandler = saveBtn!.props.onPress as () => void;
+
+    // Step 3: simulate a background refetch — item prop gets dims = {length:12}.
+    // This commits a new render so itemRef.current.dimensions becomes {length:12}.
+    // existingDims in the STALE handler closure is still null.
+    const updatedItem = makeItem({
+      description: "Original",
+      dimensions: { length: 12, width: null, height: null, diameter: null },
+    });
+    await act(async () => {
+      tree.update(
+        <PartDetailsEditor item={updatedItem} adminToken="test-token" onClose={jest.fn()} />
+      );
+    });
+
+    // Step 4: call the stale handler (pre-refetch closure).
+    await act(async () => { staleSaveHandler(); });
+
+    // With the fix, oldDims = itemRef.current?.dimensions = {length:12} which
+    // matches newDims = {length:12} → dimsChanged = false → no PATCH for dims.
+    const dimsPatchCalls = (fetchSpy.mock.calls as unknown as Array<[string, RequestInit]>).filter(
+      ([url, opts]) =>
+        (opts?.method ?? "GET").toUpperCase() === "PATCH" &&
+        String(url).includes("/dimensions"),
+    );
+    expect(dimsPatchCalls).toHaveLength(0);
   });
 });
 
