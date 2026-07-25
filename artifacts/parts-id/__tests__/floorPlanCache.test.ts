@@ -270,3 +270,64 @@ describe("getIfValid", () => {
     expect(getIfValid("")).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Regression: stale web cache with innerXml: "" must not suppress re-fetch
+// ─────────────────────────────────────────────────────────────────────────────
+describe("stale web cache — innerXml empty regression", () => {
+  const SERVER_HASH = "server-hash-abc";
+  const staleEntry = JSON.stringify({
+    hash: SERVER_HASH,
+    xml: "<svg><g/></svg>",
+    innerXml: "",          // ← stale: written before the web SVG-strip fix
+    uri: "",
+  });
+
+  beforeEach(() => {
+    mockGetItem.mockResolvedValue(staleEntry);
+  });
+
+  it("populates the cache from AsyncStorage even when innerXml is empty", async () => {
+    await initPersistRead();
+    // The raw cache entry is present — hasCachedData and getCachedData both
+    // see it (they don't filter by innerXml).
+    expect(hasCachedData()).toBe(true);
+    const data = getCachedData();
+    expect(data).not.toBeNull();
+    expect(data!.innerXml).toBe("");
+  });
+
+  it("getIfValid returns the stale entry (callers must apply the web innerXml guard)", async () => {
+    // getIfValid only checks the hash; it is the caller's responsibility
+    // (WarehouseMapView._loadFloorPlanFromServer / _loadFloorPlanFromBundle)
+    // to reject entries with innerXml: "" on web and re-fetch.
+    await initPersistRead();
+    const stale = getIfValid(SERVER_HASH);
+    expect(stale).not.toBeNull();
+    expect(stale!.innerXml).toBe("");
+  });
+
+  it("after re-fetch setCached overwrites the stale entry with a non-empty innerXml", async () => {
+    await initPersistRead();
+    // Simulate what _loadFloorPlanFromServer does after detecting a stale cache:
+    // it strips the SVG wrapper and stores the real content.
+    const freshData: SvgData = {
+      xml: "<svg><g id='real'/></svg>",
+      innerXml: "<g id='real'/>",
+      uri: "",
+    };
+    setCached(SERVER_HASH, freshData);
+
+    // In-memory cache now has the real innerXml.
+    expect(getCachedData()!.innerXml).toBe("<g id='real'/>");
+    // getIfValid returns the updated entry — no stale data remains.
+    expect(getIfValid(SERVER_HASH)!.innerXml).toBe("<g id='real'/>");
+
+    // AsyncStorage was updated (fire-and-forget).
+    await Promise.resolve();
+    expect(mockSetItem).toHaveBeenCalledWith(
+      STORAGE_KEY,
+      JSON.stringify({ hash: SERVER_HASH, ...freshData }),
+    );
+  });
+});

@@ -175,7 +175,11 @@ async function _loadFloorPlanFromServer(signal: AbortSignal): Promise<void> {
   const { hash } = FloorPlanMetaSchema.parse(await metaRes.json());
   if (signal.aborted) throw new Error("aborted");
   // Cache hit — skip re-fetching the SVG bytes entirely.
-  if (getIfValid(hash) !== null) return;
+  // On web we also require a non-empty innerXml: a stale entry written before
+  // the web SVG-strip fix (innerXml: "") must be treated as a miss so the floor
+  // plan is fetched and the cache self-heals on first load.
+  const cached = getIfValid(hash);
+  if (cached !== null && (Platform.OS !== "web" || Boolean(cached.innerXml))) return;
   // Bail out early if the fetch was cancelled between the meta check and the SVG fetch.
   if (signal?.aborted) throw new Error("aborted");
 
@@ -209,7 +213,9 @@ async function _loadFloorPlanFromBundle(signal: AbortSignal): Promise<void> {
   if (signal.aborted) throw new Error("aborted");
   const currentHash = asset.hash ?? "";
   // Cache hit — persisted hash matches; skip the URI fetch entirely.
-  if (getIfValid(currentHash) !== null) return;
+  // On web, also require a non-empty innerXml so a stale "" entry self-heals.
+  const cachedBundle = getIfValid(currentHash);
+  if (cachedBundle !== null && (Platform.OS !== "web" || Boolean(cachedBundle.innerXml))) return;
 
   const uri = asset.localUri ?? asset.uri ?? "";
   let newData: SvgData;
@@ -1584,7 +1590,13 @@ export function WarehouseMapView({
     let cancelled = false;
     const isServerUpdate = serverHashChanged > 0;
 
-    if (!isServerUpdate && hasCachedData()) return; // already cached, no server update
+    // Fast-path: skip the load if we already have adequate cached data.
+    // On web, "adequate" requires a non-empty innerXml — a stale entry written
+    // before the web SVG-strip fix (innerXml: "") must not suppress the reload.
+    const cached = getCachedData();
+    const isAdequate = cached !== null &&
+      (Platform.OS !== "web" || Boolean(cached.innerXml));
+    if (!isServerUpdate && isAdequate) return;
 
     if (isServerUpdate) {
       // Admin uploaded a new floor plan while the app was open.  Bust the
