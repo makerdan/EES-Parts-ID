@@ -455,6 +455,50 @@ describe("PATCH /api/inventory/42/bins — validation errors", () => {
 
     expect(res.status).toBe(400);
   });
+
+  it("returns 400 when binLocations has more than 50 elements", async () => {
+    const tooMany = Array.from({ length: 51 }, (_, i) => `BIN-${i}`);
+
+    const res = await supertest(app)
+      .patch("/api/inventory/42/bins")
+      .send({ binLocations: tooMany });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/50/);
+  });
+
+  it("returns 400 when a bin location string exceeds 200 characters", async () => {
+    const longBin = "X".repeat(201);
+
+    const res = await supertest(app)
+      .patch("/api/inventory/42/bins")
+      .send({ binLocations: [longBin] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/200/);
+  });
+
+  it("accepts exactly 50 elements (at the count limit)", async () => {
+    const exactly50 = Array.from({ length: 50 }, (_, i) => `BIN-${i}`);
+    mockUpdateReturning.mockResolvedValue([makeWellFormedRow({ binLocations: exactly50 })]);
+
+    const res = await supertest(app)
+      .patch("/api/inventory/42/bins")
+      .send({ binLocations: exactly50 });
+
+    expect(res.status).toBe(200);
+  });
+
+  it("accepts a bin location string of exactly 200 characters", async () => {
+    const exactBin = "Y".repeat(200);
+    mockUpdateReturning.mockResolvedValue([makeWellFormedRow({ binLocations: [exactBin] })]);
+
+    const res = await supertest(app)
+      .patch("/api/inventory/42/bins")
+      .send({ binLocations: [exactBin] });
+
+    expect(res.status).toBe(200);
+  });
 });
 
 describe("PATCH /api/inventory/42/bins — not found", () => {
@@ -552,6 +596,54 @@ describe("PATCH /api/inventory/42/keywords — validation errors", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/array/i);
+  });
+
+  it("returns 400 when keywords array has more than 200 elements", async () => {
+    const tooMany = Array.from({ length: 201 }, (_, i) => `kw${i}`);
+
+    const res = await supertest(app)
+      .patch("/api/inventory/42/keywords")
+      .send({ keywords: tooMany });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/200/);
+  });
+
+  it("returns 400 when any keyword exceeds 100 characters", async () => {
+    const longKw = "k".repeat(101);
+
+    const res = await supertest(app)
+      .patch("/api/inventory/42/keywords")
+      .send({ keywords: ["valid", longKw] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/100/);
+  });
+
+  it("accepts exactly 200 keywords (at the count limit)", async () => {
+    const exactly200 = Array.from({ length: 200 }, (_, i) => `kw${i}`);
+    mockUpdateReturning.mockResolvedValue([
+      makeWellFormedRow({ aiKeywords: exactly200, pinnedKeywords: exactly200 }),
+    ]);
+
+    const res = await supertest(app)
+      .patch("/api/inventory/42/keywords")
+      .send({ keywords: exactly200 });
+
+    expect(res.status).toBe(200);
+  });
+
+  it("accepts a keyword of exactly 100 characters (at the length limit)", async () => {
+    const exactKw = "k".repeat(100);
+    mockUpdateReturning.mockResolvedValue([
+      makeWellFormedRow({ aiKeywords: [exactKw], pinnedKeywords: [exactKw] }),
+    ]);
+
+    const res = await supertest(app)
+      .patch("/api/inventory/42/keywords")
+      .send({ keywords: [exactKw] });
+
+    expect(res.status).toBe(200);
   });
 });
 

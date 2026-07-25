@@ -16,6 +16,7 @@
 // Chainable stubs for:
 //   db.select().from(inventoryTable).where(...)   → existing-row check
 //   db.insert(inventoryTable).values({}).returning()  → inserted row
+//   db.delete(inventoryTable).where(...)           → rollback after 413
 const mockWhere = jest.fn();
 const mockFrom = jest.fn(() => ({ where: mockWhere }));
 const mockSelect = jest.fn(() => ({ from: mockFrom }));
@@ -24,10 +25,14 @@ const mockReturning = jest.fn();
 const mockValues = jest.fn(() => ({ returning: mockReturning }));
 const mockInsert = jest.fn(() => ({ values: mockValues }));
 
+const mockDeleteWhere = jest.fn().mockResolvedValue(undefined);
+const mockDelete = jest.fn(() => ({ where: mockDeleteWhere }));
+
 jest.mock("@workspace/db", () => ({
   db: {
     select: mockSelect,
     insert: mockInsert,
+    delete: mockDelete,
   },
   inventoryTable: {},
   usersTable: {},
@@ -86,10 +91,23 @@ jest.mock("../lib/objectStorage", () => ({
   uploadCatalogImage: jest.fn(),
 }));
 
+// ── Image helpers mocks ────────────────────────────────────────────────────────
+jest.mock("../utils/aiHelpers", () => ({
+  estimateImageBytes: jest.fn().mockReturnValue(1024),
+}));
+
+jest.mock("../utils/imageResize", () => ({
+  resizeImages: jest.fn().mockResolvedValue({
+    fullBuffer: Buffer.alloc(1),
+    thumbnailBuffer: Buffer.alloc(1),
+  }),
+}));
+
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../app";
 import { AddPartResponse, AddPartConflictResponse } from "@workspace/api-zod";
+import { estimateImageBytes } from "../utils/aiHelpers";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -128,9 +146,14 @@ beforeEach(() => {
   mockFrom.mockReturnValue({ where: mockWhere });
   mockInsert.mockReturnValue({ values: mockValues });
   mockValues.mockReturnValue({ returning: mockReturning });
+  mockDelete.mockReturnValue({ where: mockDeleteWhere });
+  mockDeleteWhere.mockResolvedValue(undefined);
 
   // Default: no existing row (not a duplicate), so the insert path runs.
   mockWhere.mockResolvedValue([]);
+
+  // Default: estimateImageBytes returns a small value (well within 10 MB).
+  (estimateImageBytes as jest.Mock).mockReturnValue(1024);
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -330,4 +353,99 @@ describe("AddPartConflictResponse schema — parse throws on malformed rows", ()
       }),
     ).not.toThrow();
   });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// LAYER 3: Input validation — field length and imageBase64 size guards
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("POST /api/inventory/add-part — input validation: field lengths", () => {
+  it("returns 400 when vendor exceeds 50 characters", async () => {
+    const longVendor = "A".repeat(51);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .send({ vendor: longVendor, catalog: "VALID-CATALOG" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/vendor.*50|50.*vendor/i);
+  });
+
+  it("returns 400 when catalog exceeds 100 characters", async () => {
+    const longCatalog = "C".repeat(101);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .send({ vendor: "ACME", catalog: longCatalog });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/catalog.*100|100.*catalog/i);
+  });
+
+  it("returns 400 when binLocation exceeds 200 characters", async () => {
+    const longBin = "B".repeat(201);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .send({ vendor: "ACME", catalog: "VALID-CAT", binLocation: longBin });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/binLocation.*200|200.*binLocation/i);
+  });
+
+  it("accepts vendor of exactly 50 characters (at the limit)", async () => {
+    mockReturning.mockResolvedValue([makeWellFormedRow({ vendor: "A".repeat(50) })]);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .send({ vendor: "A".repeat(50), catalog: "VALID-CAT" });
+
+    expect(res.status).toBe(201);
+  });
+
+  it("accepts catalog of exactly 100 characters (at the limit)", async () => {
+    mockReturning.mockResolvedValue([makeWellFormedRow({ catalog: "C".repeat(100) })]);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .send({ vendor: "ACME", catalog: "C".repeat(100) });
+
+    expect(res.status).toBe(201);
+  });
+
+  it("accepts binLocation of exactly 200 characters (at the limit)", async () => {
+    mockReturning.mockResolvedValue([makeWellFormedRow({ binLocations: ["B".repeat(200)] })]);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .send({ vendor: "ACME", catalog: "VALID-CAT", binLocation: "B".repeat(200) });
+
+    expect(res.status).toBe(201);
+  });
+});
+
+describe("POST /api/inventory/add-part — input validation: imageBase64 size guard", () => {
+  it("returns 413 when imageBase64 payload exceeds 10 MB", async () => {
+    mockReturning.mockResolvedValue([makeWellFormedRow()]);
+    (estimateImageBytes as jest.Mock).mockReturnValue(11 * 1024 * 1024);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .send({ vendor: "ACME", catalog: "X-IMG-001", imageBase64: "dGVzdA==" });
+
+    expect(res.status).toBe(413);
+    expect(res.body.error).toMatch(/10 mb/i);
+  });
+
+  it("413 response rolls back the inserted row (db.delete is called)", async () => {
+    mockReturning.mockResolvedValue([makeWellFormedRow()]);
+    (estimateImageBytes as jest.Mock).mockReturnValue(11 * 1024 * 1024);
+
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .send({ vendor: "ACME", catalog: "X-IMG-002", imageBase64: "dGVzdA==" });
+
+    expect(mockDelete).toHaveBeenCalled();
+  });
+
 });
