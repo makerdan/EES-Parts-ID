@@ -70,6 +70,9 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  // clearAllMocks resets call history on jest.fn() instances (restoreAllMocks
+  // only reverts jest.spyOn() spies, leaving jest.fn() call counts intact).
+  jest.clearAllMocks();
   jest.restoreAllMocks();
 });
 

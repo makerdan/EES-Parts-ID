@@ -99,10 +99,13 @@ function hit(ip: string) {
 }
 
 // Per-run unique IP prefix: the rate limiter persists windows in the shared
-// dev database, so re-using fixed IPs across back-to-back runs (< 60s apart)
-// would inherit the previous run's exhausted quota and 429 immediately.
-const RUN_OCTET = 1 + Math.floor(Math.random() * 250);
-const uniqueIp = (host: number) => `10.${RUN_OCTET}.${(Date.now() >> 8) & 0xff}.${host}`;
+// dev database, so re-using fixed IPs across concurrent or back-to-back runs
+// (< 60s apart) would inherit another run's exhausted quota and 429 immediately.
+// crypto.randomUUID() gives ~122 bits of entropy, making collisions negligible
+// even across many parallel CI workers.
+const RUN_TAG = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+const uniqueIp = (host: number) =>
+  `10.${parseInt(RUN_TAG.slice(0, 2), 16) % 256}.${parseInt(RUN_TAG.slice(2, 4), 16) % 256}.${host}`;
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
