@@ -315,7 +315,7 @@ async function parseXlsx(uri: string): Promise<Array<ParsedRow>> {
     try {
       const rows = await readSheet(arrayBuffer, sheetNum);
       if (!rows || rows.length === 0) break;
-      const hdrs = rows[0].map(h => String(h ?? "").trim().toLowerCase());
+      const hdrs = rows[0]!.map(h => String(h ?? "").trim().toLowerCase());
       let score = 0;
       if (VENDOR_ALIASES.some(a => hdrs.includes(a))) score += 2;
       if (CATALOG_ALIASES.some(a => hdrs.includes(a))) score += 2;

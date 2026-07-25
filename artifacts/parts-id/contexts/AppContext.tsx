@@ -107,7 +107,35 @@ export async function loadSettings(): Promise<AppSettings> {
       await saveSettings(DEFAULT_SETTINGS);
       return DEFAULT_SETTINGS;
     }
-    const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    const parsedRaw: unknown = JSON.parse(raw);
+    // Stored settings survive app upgrades — reject non-object shapes outright
+    // and validate each field below before merging over the defaults.
+    if (typeof parsedRaw !== "object" || parsedRaw === null || Array.isArray(parsedRaw)) {
+      return DEFAULT_SETTINGS;
+    }
+    const candidate = parsedRaw as Record<string, unknown>;
+    const parsed: Partial<AppSettings> = {};
+    if (VALID_TEXT_SIZES.includes(candidate.textSize as TextSize)) {
+      parsed.textSize = candidate.textSize as TextSize;
+    }
+    if (VALID_THEME_MODES.includes(candidate.themeMode as ThemeMode)) {
+      parsed.themeMode = candidate.themeMode as ThemeMode;
+    }
+    if (VALID_DIMENSION_UNITS.includes(candidate.dimensionUnit as DimensionUnit)) {
+      parsed.dimensionUnit = candidate.dimensionUnit as DimensionUnit;
+    }
+    if (
+      typeof candidate.defaultConfidenceThreshold === "number" &&
+      isFinite(candidate.defaultConfidenceThreshold)
+    ) {
+      parsed.defaultConfidenceThreshold = candidate.defaultConfidenceThreshold;
+    }
+    if (typeof candidate.shelfViewEnabled === "boolean") {
+      parsed.shelfViewEnabled = candidate.shelfViewEnabled;
+    }
+    if (typeof candidate.scanSound === "boolean") {
+      parsed.scanSound = candidate.scanSound;
+    }
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
@@ -204,7 +232,7 @@ async function fetchAdminProfile(token: string, signal?: AbortSignal): Promise<A
   try {
     const resp = await fetchWithAuth(`${API_BASE}/admin/profile`, {
       headers: { Authorization: `Bearer ${token}` },
-      signal,
+      ...(signal !== undefined ? { signal } : {}),
     });
     if (!resp.ok) return null;
     return await resp.json() as AdminProfilePayload;
@@ -412,7 +440,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const resp = await fetch(`${API_BASE}/auth/status`, {
       headers: { Authorization: `Bearer ${token}` },
-      signal,
+      ...(signal !== undefined ? { signal } : {}),
     });
 
     if (signal?.aborted) return;

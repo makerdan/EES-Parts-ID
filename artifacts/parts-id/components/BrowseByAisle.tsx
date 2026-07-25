@@ -46,15 +46,15 @@ export interface BrowseByAisleProps {
   inventory: Array<InventoryItem>;
   isSyncing: boolean;
   shelfViewEnabled: boolean;
-  fontScale?: number;
+  fontScale?: number | undefined;
   onClose: () => void;
-  onPartAdded?: () => void;
-  onRefresh?: () => void | Promise<void>;
-  initialAisle?: number;
-  sectionNumbers?: Array<number>;
-  adminToken?: string | null;
-  isAdmin?: boolean;
-  onShowOnMap?: (item: InventoryItem) => void;
+  onPartAdded?: (() => void) | undefined;
+  onRefresh?: (() => void | Promise<void>) | undefined;
+  initialAisle?: number | undefined;
+  sectionNumbers?: Array<number> | undefined;
+  adminToken?: string | null | undefined;
+  isAdmin?: boolean | undefined;
+  onShowOnMap?: ((item: InventoryItem) => void) | undefined;
 }
 
 type CrumbState = {
@@ -516,7 +516,7 @@ function SectionShelfView({
         shelf={shelf}
         selectedKey={selectedKey}
         onSelectPart={handleSelectPart}
-        onAddHere={onAddHereShelf ? () => onAddHereShelf(shelf.shelfHundreds) : undefined}
+        {...(onAddHereShelf ? { onAddHere: () => onAddHereShelf(shelf.shelfHundreds) } : {})}
         colors={colors}
       />
     ),
@@ -530,11 +530,10 @@ function SectionShelfView({
           item: selectedPart.item,
           confidence: 1,
           matchReason: "",
-          seriesLabel: undefined,
           variants: [],
         }}
-        onEditItem={onEditItem}
-        onShowOnMap={onShowOnMap}
+        {...(onEditItem ? { onEditItem } : {})}
+        {...(onShowOnMap ? { onShowOnMap } : {})}
         rank={0}
         fontScale={fontScale}
       />
@@ -641,11 +640,10 @@ function PartsListView({
                 item: part.item,
                 confidence: 1,
                 matchReason: `${section.label} · ${part.bin.raw}`,
-                seriesLabel: undefined,
                 variants: [],
               }}
-              onEditItem={onEditItem}
-              onShowOnMap={onShowOnMap}
+              {...(onEditItem ? { onEditItem } : {})}
+              {...(onShowOnMap ? { onShowOnMap } : {})}
               rank={0}
               fontScale={fontScale}
             />
@@ -827,7 +825,7 @@ export function BrowseByAisle({
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <BrowseHeader
         title={headerTitle}
-        subtitle={headerSubtitle}
+        {...(headerSubtitle !== undefined ? { subtitle: headerSubtitle } : {})}
         onBack={level === "aisles" ? onClose : goBack}
         colors={colors}
       />
@@ -942,7 +940,7 @@ export function BrowseByAisle({
                 onPress={() => {
                   setCrumbs(prev => ({ ...prev, section }));
                 }}
-                onAddHere={isAdmin ? () => handleAddHereSection(section) : undefined}
+                {...(isAdmin ? { onAddHere: () => handleAddHereSection(section) } : {})}
                 colors={colors}
                 fontScale={fontScale}
                 highlighted={section.sectionNum === highlightedSectionNum}
@@ -967,9 +965,9 @@ export function BrowseByAisle({
               prevLabel={filteredSections[sectionIdx - 1]?.label ?? ""}
               nextLabel={filteredSections[sectionIdx + 1]?.label ?? ""}
               fontScale={fontScale}
-              onEditItem={handleEditItem}
-              onShowOnMap={onShowOnMap}
-              onAddHereShelf={isAdmin ? handleAddHereShelf : undefined}
+              {...(handleEditItem ? { onEditItem: handleEditItem } : {})}
+              {...(onShowOnMap ? { onShowOnMap } : {})}
+              {...(isAdmin ? { onAddHereShelf: handleAddHereShelf } : {})}
               colors={colors}
               cardItemPanHandlers={cardItemSwipe.panHandlers}
               sectionPanHandlers={sectionSwipe.panHandlers}
@@ -984,8 +982,8 @@ export function BrowseByAisle({
               prevLabel={filteredSections[sectionIdx - 1]?.label ?? ""}
               nextLabel={filteredSections[sectionIdx + 1]?.label ?? ""}
               fontScale={fontScale}
-              onEditItem={handleEditItem}
-              onShowOnMap={onShowOnMap}
+              {...(handleEditItem ? { onEditItem: handleEditItem } : {})}
+              {...(onShowOnMap ? { onShowOnMap } : {})}
               colors={colors}
               sectionPanHandlers={sectionSwipe.panHandlers}
             />
@@ -1011,7 +1009,7 @@ export function BrowseByAisle({
         onSuccess={() => {
           onPartAdded?.();
         }}
-        onAddDetails={handleEditItem}
+        {...(handleEditItem ? { onAddDetails: handleEditItem } : {})}
       />
     </View>
   );

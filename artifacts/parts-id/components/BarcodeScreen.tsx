@@ -599,7 +599,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
             </Text>
             <ResultCard
               result={{ item: matchedItem, confidence: 1.0, matchReason: isOfflineMatch ? "offline match" : "barcode match", seriesBase: null, seriesLabel: null, variants: [] }}
-              onEditItem={isAdmin ? (item) => setDetailsItem(item) : undefined}
+              {...(isAdmin ? { onEditItem: (item: InventoryItem) => setDetailsItem(item) } : {})}
               rank={0}
               fontScale={textFontScale}
             />
@@ -679,7 +679,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
                   seriesLabel: null,
                   variants: [],
                 }}
-                onEditItem={isAdmin ? (item) => { setHistoryPreviewItem(null); setDetailsItem(item); } : undefined}
+                {...(isAdmin ? { onEditItem: (item: InventoryItem) => { setHistoryPreviewItem(null); setDetailsItem(item); } } : {})}
                 rank={0}
                 fontScale={textFontScale}
               />

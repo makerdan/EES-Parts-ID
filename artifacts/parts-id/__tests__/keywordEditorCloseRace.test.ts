@@ -77,8 +77,8 @@ describe("KeywordEditor cross-item save isolation", () => {
     ]);
     expect(writes.some(w => w.id === 1 && w.kws.includes("b-edit"))).toBe(false);
     expect(writes.some(w => w.id === 2 && w.kws.includes("a-edit"))).toBe(false);
-    expect(stateById[1].lastSaved).toEqual(["a-edit"]);
-    expect(stateById[2].lastSaved).toEqual(["b-edit"]);
+    expect(stateById[1]!.lastSaved).toEqual(["a-edit"]);
+    expect(stateById[2]!.lastSaved).toEqual(["b-edit"]);
   });
 
   it("close-then-reopen of the SAME item still drains pending edits made before close", async () => {
@@ -91,7 +91,7 @@ describe("KeywordEditor cross-item save isolation", () => {
       writes.push({ id, kws });
       // Simulate further editing landing on the same item state mid-save.
       if (writes.length === 1) {
-        stateById[1].latest = ["edit1", "edit2"];
+        stateById[1]!.latest = ["edit1", "edit2"];
       }
     });
 
@@ -101,7 +101,7 @@ describe("KeywordEditor cross-item save isolation", () => {
       { id: 1, kws: ["edit1"] },
       { id: 1, kws: ["edit1", "edit2"] },
     ]);
-    expect(stateById[1].lastSaved).toEqual(["edit1", "edit2"]);
+    expect(stateById[1]!.lastSaved).toEqual(["edit1", "edit2"]);
   });
 
   it("a second performSaveForId(id) entered while one is running for the same id is a no-op", async () => {

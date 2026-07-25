@@ -65,14 +65,14 @@ describe("invalidateListCache", () => {
     const qc = makeQueryClient();
     await invalidateListCache({ queryClient: qc });
     expect(qc.invalidateQueries).toHaveBeenCalledTimes(1);
-    const arg = qc.invalidateQueries.mock.calls[0][0] as { predicate: (q: { queryKey: unknown }) => boolean };
+    const arg = qc.invalidateQueries.mock.calls[0]![0] as { predicate: (q: { queryKey: unknown }) => boolean };
     expect(typeof arg.predicate).toBe("function");
   });
 
   it("predicate matches a query whose key starts with the list prefix", async () => {
     const qc = makeQueryClient();
     await invalidateListCache({ queryClient: qc });
-    const { predicate } = qc.invalidateQueries.mock.calls[0][0] as {
+    const { predicate } = qc.invalidateQueries.mock.calls[0]![0] as {
       predicate: (q: { queryKey: unknown }) => boolean;
     };
     expect(predicate({ queryKey: [LIST_KEY_PREFIX] })).toBe(true);
@@ -82,7 +82,7 @@ describe("invalidateListCache", () => {
   it("predicate does not match searchInventory or other keys", async () => {
     const qc = makeQueryClient();
     await invalidateListCache({ queryClient: qc });
-    const { predicate } = qc.invalidateQueries.mock.calls[0][0] as {
+    const { predicate } = qc.invalidateQueries.mock.calls[0]![0] as {
       predicate: (q: { queryKey: unknown }) => boolean;
     };
     expect(predicate({ queryKey: ["searchInventory"] })).toBe(false);
@@ -113,8 +113,8 @@ describe("invalidateSearchAndEvictItem", () => {
 
     expect(storage.setItem).toHaveBeenCalledTimes(1);
     const written = JSON.parse((storage.setItem.mock.calls[0] as [string, string])[1]) as QueryCache<MinSearchResult>;
-    expect(written["q1"].results).toHaveLength(1);
-    expect(written["q1"].results[0].item.id).toBe(2);
+    expect(written["q1"]!.results).toHaveLength(1);
+    expect(written["q1"]!.results[0]!.item.id).toBe(2);
   });
 
   it("does not write to AsyncStorage when the target item is not in the cache", async () => {
@@ -241,8 +241,8 @@ describe("evictDeletedItemFromAllCaches", () => {
 
     expect(storage.setItem).toHaveBeenCalledTimes(1);
     const written = JSON.parse((storage.setItem.mock.calls[0] as [string, string])[1]) as QueryCache<MinSearchResult>;
-    expect(written["q1"].results).toHaveLength(1);
-    expect(written["q1"].results[0].item.id).toBe(8);
+    expect(written["q1"]!.results).toHaveLength(1);
+    expect(written["q1"]!.results[0]!.item.id).toBe(8);
   });
 
   it("swallows AsyncStorage parse failure without propagating", async () => {

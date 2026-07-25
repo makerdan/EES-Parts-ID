@@ -623,7 +623,7 @@ export default function SearchScreen() {
         item: r.item,
         confidence: Math.max(0, 1 - (r.score ?? 0.5)),
         matchReason: "offline Fuse match",
-        seriesLabel: undefined,
+        seriesLabel: null,
         variants: [],
       }));
   }, []);

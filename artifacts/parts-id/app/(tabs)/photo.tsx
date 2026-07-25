@@ -252,11 +252,12 @@ export default function PhotoScreen() {
       const identifyResult = await identifyMutation.mutateAsync({
         data: {
           images: imagesToSend.map((i) => i.base64),
-          keywords: keywords.trim() || undefined,
-          vendor: vendor.trim() || undefined,
-          color: color.trim() || undefined,
-          size: size.trim() || undefined,
-          textNumbers: textNumbers.trim() || undefined,
+          // exactOptionalPropertyTypes: only include optional keys when set
+          ...(keywords.trim() ? { keywords: keywords.trim() } : {}),
+          ...(vendor.trim() ? { vendor: vendor.trim() } : {}),
+          ...(color.trim() ? { color: color.trim() } : {}),
+          ...(size.trim() ? { size: size.trim() } : {}),
+          ...(textNumbers.trim() ? { textNumbers: textNumbers.trim() } : {}),
         },
       });
 
@@ -280,14 +281,17 @@ export default function PhotoScreen() {
         // Phase 3 — AI done, now querying inventory.
         setProgressPhase("searching");
 
+        const catalogTerm = identifyResult.partNumbers?.[0] || undefined;
+        const vendorTerm = (identifyResult.detectedVendor ?? vendor.trim()) || undefined;
         const searchResult = await searchMutation.mutateAsync({
           data: {
             keywords: allTerms,
-            catalog: identifyResult.partNumbers?.[0] || undefined,
-            vendor: (identifyResult.detectedVendor ?? vendor.trim()) || undefined,
-            color: color.trim() || undefined,
-            size: size.trim() || undefined,
-            textNumbers: textNumbers.trim() || undefined,
+            // exactOptionalPropertyTypes: only include optional keys when set
+            ...(catalogTerm ? { catalog: catalogTerm } : {}),
+            ...(vendorTerm ? { vendor: vendorTerm } : {}),
+            ...(color.trim() ? { color: color.trim() } : {}),
+            ...(size.trim() ? { size: size.trim() } : {}),
+            ...(textNumbers.trim() ? { textNumbers: textNumbers.trim() } : {}),
             confidenceThreshold: 40,
           },
         });
@@ -300,7 +304,7 @@ export default function PhotoScreen() {
         setMapPromptBins([]);
         setAdminBridgeItem(null);
         if (searchResult.results.length > 0) {
-          const topItem = searchResult.results[0].item;
+          const topItem = searchResult.results[0]!.item;
           const pins: Array<PinnedPart> = [];
           for (const bin of (topItem.binLocations ?? [])) {
             const parsed = parseBin(bin);
@@ -348,11 +352,12 @@ export default function PhotoScreen() {
                   const fallbackResult = await aiIdentifyPart(
                     {
                       images: imagesToSend.map((i) => i.base64),
-                      keywords: keywords.trim() || undefined,
-                      vendor: vendor.trim() || undefined,
-                      color: color.trim() || undefined,
-                      size: size.trim() || undefined,
-                      textNumbers: textNumbers.trim() || undefined,
+                      // exactOptionalPropertyTypes: only include optional keys when set
+                      ...(keywords.trim() ? { keywords: keywords.trim() } : {}),
+                      ...(vendor.trim() ? { vendor: vendor.trim() } : {}),
+                      ...(color.trim() ? { color: color.trim() } : {}),
+                      ...(size.trim() ? { size: size.trim() } : {}),
+                      ...(textNumbers.trim() ? { textNumbers: textNumbers.trim() } : {}),
                     },
                     { headers: { "x-use-openai-fallback": "true" } },
                   );
@@ -366,14 +371,17 @@ export default function PhotoScreen() {
                   ].join(" ");
                   if (allTerms.trim()) {
                     setProgressPhase("searching");
+                    const fbCatalog = fallbackResult.partNumbers?.[0] || undefined;
+                    const fbVendor = (fallbackResult.detectedVendor ?? vendor.trim()) || undefined;
                     const searchResult = await searchMutation.mutateAsync({
                       data: {
                         keywords: allTerms,
-                        catalog: fallbackResult.partNumbers?.[0] || undefined,
-                        vendor: (fallbackResult.detectedVendor ?? vendor.trim()) || undefined,
-                        color: color.trim() || undefined,
-                        size: size.trim() || undefined,
-                        textNumbers: textNumbers.trim() || undefined,
+                        // exactOptionalPropertyTypes: only include optional keys when set
+                        ...(fbCatalog ? { catalog: fbCatalog } : {}),
+                        ...(fbVendor ? { vendor: fbVendor } : {}),
+                        ...(color.trim() ? { color: color.trim() } : {}),
+                        ...(size.trim() ? { size: size.trim() } : {}),
+                        ...(textNumbers.trim() ? { textNumbers: textNumbers.trim() } : {}),
                         confidenceThreshold: 40,
                       },
                     });

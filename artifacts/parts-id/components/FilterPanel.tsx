@@ -71,9 +71,9 @@ interface FilterPanelProps {
   values: FilterValues;
   onChange: (key: keyof FilterValues, value: string | number | boolean) => void;
   /** Per-chip counts returned from the last search (key → option → count) */
-  dimensionCounts?: DimensionCounts;
+  dimensionCounts?: DimensionCounts | undefined;
   /** Called when the user taps either Apply button inside the expanded panel */
-  onApply?: () => void;
+  onApply?: (() => void) | undefined;
 }
 
 // ── 16 required chip dimensions (must mirror CHIP_DIMS_SERVER in inventory.ts) ─
@@ -741,17 +741,20 @@ export function FilterPanel({ values, onChange, dimensionCounts, onApply }: Filt
             </View>
 
             {/* ── Chip dimensions ── */}
-            {CHIP_DIMS.map((dim) => (
-              <ChipRow
-                key={dim.key}
-                label={dim.label}
-                options={dim.options}
-                value={String(values[dim.key] ?? "")}
-                onChange={(v) => onChange(dim.key, v)}
-                colors={colors}
-                counts={dimensionCounts?.[dim.key]}
-              />
-            ))}
+            {CHIP_DIMS.map((dim) => {
+              const dimCounts = dimensionCounts?.[dim.key];
+              return (
+                <ChipRow
+                  key={dim.key}
+                  label={dim.label}
+                  options={dim.options}
+                  value={String(values[dim.key] ?? "")}
+                  onChange={(v) => onChange(dim.key, v)}
+                  colors={colors}
+                  {...(dimCounts !== undefined ? { counts: dimCounts } : {})}
+                />
+              );
+            })}
             <ConfidenceSlider
               value={values.confidenceThreshold}
               onChange={v => onChange("confidenceThreshold", v)}

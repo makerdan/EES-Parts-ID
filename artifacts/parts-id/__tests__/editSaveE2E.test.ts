@@ -203,12 +203,12 @@ describe("editSaveE2E — full happy-path save", () => {
     ][];
 
     // First call: predicate-based list invalidation
-    expect(typeof calls[0][0].predicate).toBe("function");
-    expect(calls[0][0].queryKey).toBeUndefined();
+    expect(typeof calls[0]![0].predicate).toBe("function");
+    expect(calls[0]![0].queryKey).toBeUndefined();
 
     // Second call: exact searchInventory key
-    expect(calls[1][0].queryKey).toEqual(["searchInventory"]);
-    expect(calls[1][0].predicate).toBeUndefined();
+    expect(calls[1]![0].queryKey).toEqual(["searchInventory"]);
+    expect(calls[1]![0].predicate).toBeUndefined();
   });
 
   it("AsyncStorage.setItem is called to evict the saved item from the offline cache", async () => {
@@ -540,7 +540,7 @@ describe("editSaveE2E — invalidateAllCachesAfterSave edge cases", () => {
     const calls = queryClient.invalidateQueries.mock.calls as [
       { predicate?: (q: { queryKey: unknown }) => boolean; queryKey?: unknown[] },
     ][];
-    const listPredicate = calls[0][0].predicate!;
+    const listPredicate = calls[0]![0].predicate!;
 
     expect(listPredicate({ queryKey: ["/api/inventory"] })).toBe(true);
     expect(listPredicate({ queryKey: ["/api/inventory", { page: 1 }] })).toBe(true);

@@ -29,8 +29,8 @@ jest.mock("expo-file-system/legacy", () => ({
 // ─── PartPhotoPicker mock — captures onChange per slot ────────────────────────
 
 const mockPhotoCbs: {
-  slot1?: (uri: string | null) => void;
-  slot2?: (uri: string | null) => void;
+  slot1?: ((uri: string | null) => void) | undefined;
+  slot2?: ((uri: string | null) => void) | undefined;
 } = {};
 
 jest.mock("@/components/PartPhotoPicker", () => ({

@@ -272,7 +272,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
             placeholder="e.g. BR120"
             placeholderTextColor={colors.mutedForeground}
             value={catalog}
-            onChangeText={v => { setCatalog(v.toUpperCase()); if (fieldErrors.catalog) setFieldErrors(p => ({ ...p, catalog: undefined })); }}
+            onChangeText={v => { setCatalog(v.toUpperCase()); if (fieldErrors.catalog) setFieldErrors(({ catalog, ...rest }) => rest); }}
             autoCapitalize="characters"
             autoCorrect={false}
             returnKeyType="next"
@@ -290,7 +290,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
             placeholder="e.g. EATON"
             placeholderTextColor={colors.mutedForeground}
             value={vendor}
-            onChangeText={v => { setVendor(v.toUpperCase()); if (fieldErrors.vendor) setFieldErrors(p => ({ ...p, vendor: undefined })); }}
+            onChangeText={v => { setVendor(v.toUpperCase()); if (fieldErrors.vendor) setFieldErrors(({ vendor, ...rest }) => rest); }}
             autoCapitalize="characters"
             autoCorrect={false}
             returnKeyType="next"
@@ -308,7 +308,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
             placeholder="e.g. 01-05-210"
             placeholderTextColor={colors.mutedForeground}
             value={binLocation}
-            onChangeText={v => { setBinLocation(v); if (fieldErrors.bin) setFieldErrors(p => ({ ...p, bin: undefined })); }}
+            onChangeText={v => { setBinLocation(v); if (fieldErrors.bin) setFieldErrors(({ bin, ...rest }) => rest); }}
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="done"

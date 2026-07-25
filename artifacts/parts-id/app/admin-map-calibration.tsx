@@ -124,6 +124,7 @@ export default function AdminMapCalibrationScreen() {
     for (let i = 0; i < 3; i++) {
       const coord = svgCoords[i];
       const form = forms[i];
+      if (!form) continue;
       const wx = safeParseFloat(form.worldXStr);
       const wy = safeParseFloat(form.worldYStr);
       if (coord && wx !== null && wy !== null) {
@@ -182,6 +183,7 @@ export default function AdminMapCalibrationScreen() {
   const handleSaveSlot = useCallback(async (idx: number) => {
     const coord = svgCoords[idx];
     const form = forms[idx];
+    if (!form) return;
     const wx = safeParseFloat(form.worldXStr);
     const wy = safeParseFloat(form.worldYStr);
 

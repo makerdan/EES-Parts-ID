@@ -303,7 +303,7 @@ describe("PartDetailsEditor – selective cache rollback on partial failure", ()
       return Promise.resolve({ ok: true, status: 200, json: async () => ({}) } as Response);
     }) as jest.Mock;
 
-    const item = makeItem({ description: "Original", dimensions: undefined });
+    const item = makeItem({ description: "Original" });
     const tree = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
@@ -315,7 +315,7 @@ describe("PartDetailsEditor – selective cache rollback on partial failure", ()
       { deep: true },
     )[0];
     expect(descInput).toBeDefined();
-    await act(async () => { descInput.props.onChangeText("New description"); });
+    await act(async () => { descInput!.props.onChangeText("New description"); });
 
     // Find first dimension TextInput (numeric keyboard) and change it.
     const dimInput = tree.root.findAll(
@@ -323,7 +323,7 @@ describe("PartDetailsEditor – selective cache rollback on partial failure", ()
       { deep: true },
     )[0];
     expect(dimInput).toBeDefined();
-    await act(async () => { dimInput.props.onChangeText("5"); });
+    await act(async () => { dimInput!.props.onChangeText("5"); });
 
     // Press Save.
     const saveBtn = findPressable(tree.root, "Save Details");
@@ -399,7 +399,7 @@ describe("PartDetailsEditor – stale existingDims bug (itemRef fix)", () => {
     (global as unknown as { fetch: jest.Mock }).fetch = fetchSpy;
 
     // Step 1: mount with no server dims; dim inputs initialise as "".
-    const item = makeItem({ description: "Original", dimensions: undefined });
+    const item = makeItem({ description: "Original" });
     const tree = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
@@ -411,7 +411,7 @@ describe("PartDetailsEditor – stale existingDims bug (itemRef fix)", () => {
       { deep: true },
     )[0];
     expect(dimInput).toBeDefined();
-    await act(async () => { dimInput.props.onChangeText("12"); });
+    await act(async () => { dimInput!.props.onChangeText("12"); });
 
     // Step 2b: change description so there is always at least one op queued —
     // without this handleSave returns early before reaching the dims check.
@@ -419,7 +419,7 @@ describe("PartDetailsEditor – stale existingDims bug (itemRef fix)", () => {
       (n) => n.props?.placeholder === "Brief description of the part…",
       { deep: true },
     )[0];
-    await act(async () => { descInput.props.onChangeText("Updated description"); });
+    await act(async () => { descInput!.props.onChangeText("Updated description"); });
 
     // Step 2c: capture the stale save handler NOW (closure has existingDims = null).
     const saveBtn = findPressable(tree.root, "Save Details");

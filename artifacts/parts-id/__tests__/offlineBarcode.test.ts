@@ -152,7 +152,7 @@ describe("upsertItemInBarcodeCache", () => {
     expect(key).toBe(FUSE_CACHE_KEY);
     const saved = (JSON.parse(raw) as { items: InventoryItem[] }).items;
     expect(saved).toHaveLength(1);
-    expect(saved[0].barcodes).toContain("NEW-BC");
+    expect(saved[0]!.barcodes).toContain("NEW-BC");
   });
 
   it("updates an existing item when cache is in envelope format", async () => {
@@ -164,7 +164,7 @@ describe("upsertItemInBarcodeCache", () => {
 
     const [, raw] = mockSetItem.mock.calls[0] as [string, string];
     const parsed = JSON.parse(raw) as { items: InventoryItem[]; syncedAt: number | null };
-    expect(parsed.items[0].barcodes).toContain("NEW-BC");
+    expect(parsed.items[0]!.barcodes).toContain("NEW-BC");
     // syncedAt from the existing envelope is preserved
     expect(parsed.syncedAt).toBe(1_700_000_000_000);
   });
@@ -191,7 +191,7 @@ describe("upsertItemInBarcodeCache", () => {
     const [, raw] = mockSetItem.mock.calls[0] as [string, string];
     const saved = (JSON.parse(raw) as { items: InventoryItem[] }).items;
     expect(saved).toHaveLength(1);
-    expect(saved[0].id).toBe(7);
+    expect(saved[0]!.id).toBe(7);
   });
 
   it("does not append a new item when the cache is at MAX_FUSE_CACHE_ITEMS", async () => {

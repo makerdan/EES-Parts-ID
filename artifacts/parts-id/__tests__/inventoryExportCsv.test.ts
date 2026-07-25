@@ -91,7 +91,7 @@ describe("serializeInventoryToCsv", () => {
     const csv = serializeInventoryToCsv([
       makeItem({ vendor: "Acme", catalog: "P-01", description: "Widget", binLocations: ["A1"], barcodes: ["111"] }),
     ]);
-    const fields = parseFields(csv.split("\n")[1]);
+    const fields = parseFields(csv.split("\n")[1]!);
     expect(fields[0]).toBe("Acme");
     expect(fields[1]).toBe("P-01");
     expect(fields[2]).toBe("Widget");
@@ -105,7 +105,7 @@ describe("serializeInventoryToCsv", () => {
     const csv = serializeInventoryToCsv([
       makeItem({ binLocations: ["A1", "B2", "C3"] }),
     ]);
-    const fields = parseFields(csv.split("\n")[1]);
+    const fields = parseFields(csv.split("\n")[1]!);
     expect(fields[3]).toBe("A1;B2;C3");
   });
 
@@ -121,7 +121,7 @@ describe("serializeInventoryToCsv", () => {
 
   it("produces a blank bin cell when binLocations is empty", () => {
     const csv = serializeInventoryToCsv([makeItem({ binLocations: [] })]);
-    const fields = parseFields(csv.split("\n")[1]);
+    const fields = parseFields(csv.split("\n")[1]!);
     expect(fields[3]).toBe("");
   });
 
@@ -129,7 +129,7 @@ describe("serializeInventoryToCsv", () => {
 
   it("produces a blank barcodes cell when barcodes is empty", () => {
     const csv = serializeInventoryToCsv([makeItem({ barcodes: [] })]);
-    const fields = parseFields(csv.split("\n")[1]);
+    const fields = parseFields(csv.split("\n")[1]!);
     expect(fields[4]).toBe("");
   });
 
@@ -137,7 +137,7 @@ describe("serializeInventoryToCsv", () => {
     const csv = serializeInventoryToCsv([
       makeItem({ binLocations: [], barcodes: [] }),
     ]);
-    const fields = parseFields(csv.split("\n")[1]);
+    const fields = parseFields(csv.split("\n")[1]!);
     expect(fields[3]).toBe("");
     expect(fields[4]).toBe("");
   });
@@ -181,7 +181,7 @@ describe("serializeInventoryToCsv", () => {
       makeItem({ catalog: "SECOND", binLocations: ["Y2"] }),
     ];
     const lines = serializeInventoryToCsv(items).split("\n");
-    expect(parseFields(lines[1])[1]).toBe("FIRST");
-    expect(parseFields(lines[2])[1]).toBe("SECOND");
+    expect(parseFields(lines[1]!)[1]).toBe("FIRST");
+    expect(parseFields(lines[2]!)[1]).toBe("SECOND");
   });
 });

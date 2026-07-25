@@ -123,7 +123,7 @@ describe("pruneExpired", () => {
     };
     const out = pruneExpired(cache);
     expect(Object.keys(out)).toEqual(["fresh"]);
-    expect(out.fresh.results).toEqual([1]);
+    expect(out.fresh!.results).toEqual([1]);
   });
 
   it("returns an empty object when all entries are expired", () => {

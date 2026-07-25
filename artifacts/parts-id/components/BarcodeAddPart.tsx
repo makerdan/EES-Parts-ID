@@ -801,7 +801,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
                   style={apStyles.camera}
                   facing="back"
                   barcodeScannerSettings={{ barcodeTypes: ["qr", "ean13", "ean8", "upc_a", "upc_e", "code128", "code39", "code93", "codabar", "itf14", "datamatrix", "pdf417", "aztec"] }}
-                  onBarcodeScanned={isCameraActive ? handleBarcodeScanned : undefined}
+                  {...(isCameraActive ? { onBarcodeScanned: handleBarcodeScanned } : {})}
                 />
               ) : (
                 <View style={[apStyles.camera, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>

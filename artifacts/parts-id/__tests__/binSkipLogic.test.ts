@@ -187,7 +187,7 @@ describe("serializeToCsv", () => {
   it("blanks the bin cell for a skipped row", () => {
     const csv = serializeToCsv([row0, row1], new Set([0]));
     const lines = csv.split("\n");
-    const fields0 = lines[1].split(",").map(f => f.replace(/^"|"$/g, ""));
+    const fields0 = lines[1]!.split(",").map(f => f.replace(/^"|"$/g, ""));
     expect(fields0[3]).toBe("");
   });
 
@@ -201,7 +201,7 @@ describe("serializeToCsv", () => {
     const csv = serializeToCsv([row0, row1], new Set([0, 1]));
     const lines = csv.split("\n");
     for (let i = 1; i <= 2; i++) {
-      const fields = lines[i].split(",").map(f => f.replace(/^"|"$/g, ""));
+      const fields = lines[i]!.split(",").map(f => f.replace(/^"|"$/g, ""));
       expect(fields[3]).toBe("");
     }
   });
@@ -215,7 +215,7 @@ describe("serializeToCsv", () => {
     const row = makeParsedRow({ barcodes: ["111", "222", "333"], binLocations: [] });
     const csv = serializeToCsv([row], new Set<number>());
     const dataLine = csv.split("\n")[1];
-    const fields = dataLine.match(/"[^"]*"|[^,]+/g) ?? [];
+    const fields = dataLine!.match(/"[^"]*"|[^,]+/g) ?? [];
     expect(fields[4]).toBe('"111;222;333"');
   });
 
@@ -229,7 +229,7 @@ describe("serializeToCsv", () => {
     const row = makeParsedRow({ description: "nuts, bolts, and washers", binLocations: ["A1"], barcodes: [] });
     const csv = serializeToCsv([row], new Set<number>());
     const dataLine = csv.split("\n")[1];
-    const fields = dataLine.match(/"[^"]*"|[^,]+/g) ?? [];
+    const fields = dataLine!.match(/"[^"]*"|[^,]+/g) ?? [];
     expect(fields[2]).toBe('"nuts, bolts, and washers"');
     expect(fields[3]).toBe('"A1"');
   });

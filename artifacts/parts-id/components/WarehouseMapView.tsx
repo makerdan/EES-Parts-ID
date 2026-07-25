@@ -191,16 +191,17 @@ async function _loadFloorPlanFromServer(signal: AbortSignal): Promise<void> {
   // Guard against abort firing between the response body read and the state write.
   if (signal?.aborted) throw new Error("aborted");
 
-  const contentViewBox = parseContentViewBox(xml) ?? undefined;
+  const contentViewBox = parseContentViewBox(xml);
+  const contentViewBoxProp = contentViewBox !== null ? { contentViewBox } : {};
   let newData: SvgData;
   if (Platform.OS === "web") {
     // Strip the outer <svg> wrapper so the content can be embedded
     // directly inside the main SVG canvas as a child <g> element.
     const innerXml = stripSvgWrapper(xml);
-    newData = { xml, innerXml, uri: "", contentViewBox };
+    newData = { xml, innerXml, uri: "", ...contentViewBoxProp };
   } else {
     // On native, SvgUri can render directly from an http:// URL.
-    newData = { xml, innerXml: "", uri: `${API_BASE}/floor-plan/svg`, contentViewBox };
+    newData = { xml, innerXml: "", uri: `${API_BASE}/floor-plan/svg`, ...contentViewBoxProp };
   }
   setCached(hash, newData);
 }
@@ -211,6 +212,7 @@ async function _loadFloorPlanFromBundle(signal: AbortSignal): Promise<void> {
     require("../assets/warehouse-map.svg"),
   );
   if (signal.aborted) throw new Error("aborted");
+  if (!asset) throw new Error("floor-plan asset failed to load");
   const currentHash = asset.hash ?? "";
   // Cache hit — persisted hash matches; skip the URI fetch entirely.
   // On web, also require a non-empty innerXml so a stale "" entry self-heals.
@@ -228,14 +230,26 @@ async function _loadFloorPlanFromBundle(signal: AbortSignal): Promise<void> {
     const { WAREHOUSE_MAP_SVG } = await import("../assets/warehouse-map-raw");
     const xml = WAREHOUSE_MAP_SVG;
     const innerXml = stripSvgWrapper(xml);
-    newData = { xml, innerXml, uri: "", contentViewBox: parseContentViewBox(xml) ?? undefined };
+    const contentViewBox = parseContentViewBox(xml);
+    newData = {
+      xml,
+      innerXml,
+      uri: "",
+      ...(contentViewBox !== null ? { contentViewBox } : {}),
+    };
   } else {
     // Fetch the SVG text so the tile renderer can use SvgXml with per-tile
     // viewBox crops at high zoom.  This is a local-file read so it is fast.
     const res = await fetch(uri, { signal });
     if (signal.aborted) throw new Error("aborted");
     const xml = res.ok ? await res.text() : "";
-    newData = { xml, innerXml: "", uri, contentViewBox: parseContentViewBox(xml) ?? undefined };
+    const contentViewBox = parseContentViewBox(xml);
+    newData = {
+      xml,
+      innerXml: "",
+      uri,
+      ...(contentViewBox !== null ? { contentViewBox } : {}),
+    };
   }
   // Write to both in-memory cache and AsyncStorage so the next cold start
   // skips the network fetch.  Also updates the stored hash so subsequent
@@ -458,8 +472,8 @@ export function ZoneOverlayItem({
       {...(Platform.OS === "web"
         ? (isActive ? { onClick: () => onZoneTap(zone) } : undefined)
         : {
-            onPress: isActive ? () => onZoneTap(zone) : undefined,
-            onLongPress: isActive ? () => onZoneLongPress?.(zone) : undefined,
+            ...(isActive ? { onPress: () => onZoneTap(zone) } : {}),
+            ...(isActive ? { onLongPress: () => onZoneLongPress?.(zone) } : {}),
             delayLongPress: 400,
           }
       )}
@@ -706,64 +720,64 @@ export interface WarehouseMapViewProps {
    * overlay (translate in SVG units + uniform scale about the SVG origin),
    * on top of the shared pan/zoom viewport. Defaults to identity when omitted.
    */
-  zoneAlignment?: { translateX: number; translateY: number; scale: number };
+  zoneAlignment?: { translateX: number; translateY: number; scale: number } | undefined;
   /**
    * Optional affine transform string (SVG matrix(a,b,c,d,e,f)) computed from
    * 3 named anchor points. When present, applied as the outer `<G transform>`
    * on the zone overlay layer; ZoneAlignment is applied as a nested fine-trim.
    * Computed by computeAnchorTransform + matrixToSvgString in mapAnchorTransform.ts.
    */
-  anchorTransform?: string | null;
+  anchorTransform?: string | null | undefined;
   zonesLoading: boolean;
   zonesError: boolean;
   onZonesRetry: () => void;
   onZoneTap: (zone: ApiWarehouseZone) => void;
-  onZoneLongPress?: (zone: ApiWarehouseZone) => void;
-  isAdmin?: boolean;
-  cycleMode?: boolean;
-  countedZoneIds?: ReadonlySet<number>;
+  onZoneLongPress?: ((zone: ApiWarehouseZone) => void) | undefined;
+  isAdmin?: boolean | undefined;
+  cycleMode?: boolean | undefined;
+  countedZoneIds?: ReadonlySet<number> | undefined;
   /** Zone IDs of primary search result pins — highlighted amber on the map. */
-  pinnedZoneIds?: ReadonlySet<number>;
+  pinnedZoneIds?: ReadonlySet<number> | undefined;
   /** Zone IDs of variant/related-size pins — highlighted purple on the map. */
-  variantZoneIds?: ReadonlySet<number>;
+  variantZoneIds?: ReadonlySet<number> | undefined;
   /** Maps aisleNum → first bin code (e.g. "17-06-204") to render as a label inside the pinned zone. */
-  pinnedBinLabels?: ReadonlyMap<number, string>;
+  pinnedBinLabels?: ReadonlyMap<number, string> | undefined;
   /** Maps aisleNum → list of section numbers for primary pins — drives section-level 3D pin markers. */
-  pinnedSectionsMap?: ReadonlyMap<number, Array<number>>;
+  pinnedSectionsMap?: ReadonlyMap<number, Array<number>> | undefined;
   /** Maps aisleNum → list of section numbers for variant pins — drives section-level 3D pin markers. */
-  variantSectionsMap?: ReadonlyMap<number, Array<number>>;
+  variantSectionsMap?: ReadonlyMap<number, Array<number>> | undefined;
   /**
    * When set, the map animates its viewport to center on this aisle's zone.
    * Consumed once; set to null after navigating away.
    */
-  focusAisleNum?: number | null;
+  focusAisleNum?: number | null | undefined;
   /**
    * When set alongside focusAisleNum, centres on the specific section zone
    * rather than the first zone found in the aisle. Falls back to the aisle's
    * first zone if no matching section zone exists.
    */
-  focusSectionNum?: number | null;
+  focusSectionNum?: number | null | undefined;
   /** Called after the auto-focus animation fires so the parent can clear focusAisleNum. */
-  onFocusConsumed?: () => void;
+  onFocusConsumed?: (() => void) | undefined;
   /** Called when focusAisleNum is set but no matching zone exists on the map. */
-  onFocusFailed?: () => void;
+  onFocusFailed?: (() => void) | undefined;
   /**
    * When true, tapping a zone fires onZoneTap (select mode).
    * When false (default), zone taps are suppressed and the map is pan-only.
    */
-  selectMode?: boolean;
+  selectMode?: boolean | undefined;
   /** Called when the user toggles select mode via the in-map button. */
-  onSelectModeChange?: (enabled: boolean) => void;
+  onSelectModeChange?: ((enabled: boolean) => void) | undefined;
   /**
    * ID of the zone currently selected (action menu open). The matching zone
    * is rendered with a highlighted stroke and fill tint.
    */
-  selectedZoneId?: number;
+  selectedZoneId?: number | undefined;
   /**
    * Called when the user starts a pan gesture on the map. Use this to dismiss
    * any selection state (e.g. the zone action menu).
    */
-  onPanStart?: () => void;
+  onPanStart?: (() => void) | undefined;
 }
 
 /** 3D-style teardrop pin rendered entirely in SVG viewBox coordinates.
@@ -1930,20 +1944,20 @@ export function WarehouseMapView({
 
     // If the nearest stop is in the wrong direction, walk to the closest
     // stop that respects the gesture direction.
-    if (zoomingIn && ZOOM_STOPS[stopIdx].scale < currentScale) {
+    if (zoomingIn && ZOOM_STOPS[stopIdx]!.scale < currentScale) {
       // Zooming in: find the lowest stop at or above current scale.
       const idx = ZOOM_STOPS.findIndex(s => s.scale >= currentScale);
       stopIdx = idx === -1 ? ZOOM_STOPS.length - 1 : idx;
-    } else if (!zoomingIn && ZOOM_STOPS[stopIdx].scale > currentScale) {
+    } else if (!zoomingIn && ZOOM_STOPS[stopIdx]!.scale > currentScale) {
       // Zooming out: find the highest stop at or below current scale.
       let idx = -1;
       for (let i = ZOOM_STOPS.length - 1; i >= 0; i--) {
-        if (ZOOM_STOPS[i].scale <= currentScale) { idx = i; break; }
+        if (ZOOM_STOPS[i]!.scale <= currentScale) { idx = i; break; }
       }
       stopIdx = idx === -1 ? 0 : idx;
     }
 
-    const targetScale = ZOOM_STOPS[stopIdx].scale;
+    const targetScale = ZOOM_STOPS[stopIdx]!.scale;
     pinFocusModeV.value = 0;
     const { maxX, maxY } = panBounds(containerWRef.current, containerHRef.current, targetScale, containerWRef.current / svgAspectRef.current);
     const newTX = Math.max(-maxX, Math.min(maxX, translateX.value));
@@ -2114,7 +2128,7 @@ export function WarehouseMapView({
   // a fixed ratio, so each tap lands exactly on a preset stop.
   const { stepIn: handleZoomIn, stepOut: handleZoomOut } = useMapZoomSteps(
     ZOOM_STOPS.length,
-    (stopIndex) => applyZoom(ZOOM_STOPS[stopIndex].scale),
+    (stopIndex) => applyZoom(ZOOM_STOPS[stopIndex]!.scale),
     () => zoomStopForScale(scale.value),
   );
 
@@ -2148,6 +2162,9 @@ export function WarehouseMapView({
       // so variant locations sharing a zone are shown with their distinct purple
       // treatment alongside the amber primary marker.
       const isVariantPinned = !cycleMode && (variantZoneIds?.has(zone.id) ?? false);
+      const binLabel = (isPinned || isVariantPinned) ? pinnedBinLabels?.get(aisleNum) : undefined;
+      const pinnedSections = isPinned ? pinnedSectionsMap?.get(aisleNum) : undefined;
+      const variantSections = isVariantPinned ? variantSectionsMap?.get(aisleNum) : undefined;
       return (
         <ZoneOverlayItem
           key={zone.id}
@@ -2155,15 +2172,15 @@ export function WarehouseMapView({
           scale={scale}
           colors={colors}
           onZoneTap={selectMode ? onZoneTap : () => undefined}
-          onZoneLongPress={onZoneLongPress}
+          {...(onZoneLongPress !== undefined ? { onZoneLongPress } : {})}
           cycleMode={cycleMode}
           isCounted={countedZoneIds?.has(zone.id) ?? false}
           isPinned={isPinned}
           isVariantPinned={isVariantPinned}
           isSelected={!cycleMode && zone.id === selectedZoneId}
-          binLabel={(isPinned || isVariantPinned) ? pinnedBinLabels?.get(aisleNum) : undefined}
-          pinnedSections={isPinned ? pinnedSectionsMap?.get(aisleNum) : undefined}
-          variantSections={isVariantPinned ? variantSectionsMap?.get(aisleNum) : undefined}
+          {...(binLabel !== undefined ? { binLabel } : {})}
+          {...(pinnedSections !== undefined ? { pinnedSections } : {})}
+          {...(variantSections !== undefined ? { variantSections } : {})}
         />
       );
     });

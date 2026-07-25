@@ -194,7 +194,7 @@ export function createMapViewportMock(): object {
     clampScale:          jest.fn().mockImplementation((s: number) => Math.max(actual.MIN_SCALE, Math.min(actual.MAX_SCALE, s))),
     parseContentViewBox: jest.fn().mockReturnValue(null),
     fitContentViewport:  jest.fn().mockReturnValue({ scale: 1, tx: 0, ty: 0 }),
-    computeFitTarget:    jest.fn().mockReturnValue({ scale: actual.ZOOM_STOPS[0].scale, tx: 0, ty: 0 }),
+    computeFitTarget:    jest.fn().mockReturnValue({ scale: actual.ZOOM_STOPS[0]!.scale, tx: 0, ty: 0 }),
     makeTileViewBox:     jest.fn().mockReturnValue("0 0 100 100"),
     computeFocusPan:     jest.fn().mockReturnValue({ tx: 0, ty: 0 }),
     runFocusAisleEffect: jest.fn().mockReturnValue(null),

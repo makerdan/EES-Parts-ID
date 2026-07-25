@@ -716,7 +716,7 @@ describe("WarehouseMapView – focusAisleNum effect calls onFocusConsumed when n
     expect(viewWithLayout).toBeDefined();
 
     await act(async () => {
-      viewWithLayout.props.onLayout({
+      viewWithLayout!.props.onLayout({
         nativeEvent: { layout: { width: 400, height: 800 } },
       });
     });

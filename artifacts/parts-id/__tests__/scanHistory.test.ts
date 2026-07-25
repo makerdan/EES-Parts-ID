@@ -68,15 +68,15 @@ describe("prependEntry", () => {
     const entry = makeEntry("BC-001");
     const result = prependEntry([], entry);
     expect(result).toHaveLength(1);
-    expect(result[0].barcode).toBe("BC-001");
+    expect(result[0]!.barcode).toBe("BC-001");
   });
 
   it("places the new entry at index 0", () => {
     const existing = [makeEntry("OLD-1"), makeEntry("OLD-2")];
     const newer = makeEntry("NEW");
     const result = prependEntry(existing, newer);
-    expect(result[0].barcode).toBe("NEW");
-    expect(result[1].barcode).toBe("OLD-1");
+    expect(result[0]!.barcode).toBe("NEW");
+    expect(result[1]!.barcode).toBe("OLD-1");
   });
 
   it("deduplicates: removes an existing entry with the same barcode before prepending", () => {
@@ -89,7 +89,7 @@ describe("prependEntry", () => {
     // Only one entry for BC-DUPE, and it should be the latest one
     const dupeEntries = result.filter((e) => e.barcode === "BC-DUPE");
     expect(dupeEntries).toHaveLength(1);
-    expect(dupeEntries[0].timestamp).toBe("2025-06-01T10:00:00.000Z");
+    expect(dupeEntries[0]!.timestamp).toBe("2025-06-01T10:00:00.000Z");
   });
 
   it("trims the list to at most 50 entries", () => {
@@ -98,7 +98,7 @@ describe("prependEntry", () => {
     );
     const result = prependEntry(existing, makeEntry("BC-NEW"));
     expect(result).toHaveLength(50);
-    expect(result[0].barcode).toBe("BC-NEW");
+    expect(result[0]!.barcode).toBe("BC-NEW");
   });
 
   it("does not mutate the existing array", () => {
@@ -111,7 +111,7 @@ describe("prependEntry", () => {
   it("works with a not-found entry", () => {
     const entry: ScanEntry = makeEntry("BC-MISS", false);
     const result = prependEntry([], entry);
-    expect(result[0].found).toBe(false);
+    expect(result[0]!.found).toBe(false);
   });
 });
 
@@ -126,25 +126,25 @@ describe("groupScansByDate", () => {
     const entries = [makeEntry("BC-TODAY", true, daysAgoISO(0))];
     const groups = groupScansByDate(entries);
     expect(groups).toHaveLength(1);
-    expect(groups[0].label).toBe("Today");
-    expect(groups[0].entries).toHaveLength(1);
+    expect(groups[0]!.label).toBe("Today");
+    expect(groups[0]!.entries).toHaveLength(1);
   });
 
   it("labels yesterday's entries as 'Yesterday'", () => {
     const entries = [makeEntry("BC-YEST", true, daysAgoISO(1))];
     const groups = groupScansByDate(entries);
     expect(groups).toHaveLength(1);
-    expect(groups[0].label).toBe("Yesterday");
+    expect(groups[0]!.label).toBe("Yesterday");
   });
 
   it("labels older entries with a month-day string (not Today / Yesterday)", () => {
     const entries = [makeEntry("BC-OLD", true, daysAgoISO(5))];
     const groups = groupScansByDate(entries);
     expect(groups).toHaveLength(1);
-    expect(groups[0].label).not.toBe("Today");
-    expect(groups[0].label).not.toBe("Yesterday");
+    expect(groups[0]!.label).not.toBe("Today");
+    expect(groups[0]!.label).not.toBe("Yesterday");
     // Month name + day number, e.g. "May 15"
-    expect(groups[0].label).toMatch(/^[A-Z][a-z]{2} \d+$/);
+    expect(groups[0]!.label).toMatch(/^[A-Z][a-z]{2} \d+$/);
   });
 
   it("groups multiple entries with the same date into one bucket", () => {
@@ -156,7 +156,7 @@ describe("groupScansByDate", () => {
     ];
     const groups = groupScansByDate(entries);
     expect(groups).toHaveLength(1);
-    expect(groups[0].entries).toHaveLength(3);
+    expect(groups[0]!.entries).toHaveLength(3);
   });
 
   it("produces one group per distinct date", () => {
@@ -186,8 +186,8 @@ describe("groupScansByDate", () => {
       makeEntry("SECOND", true, ts),
     ];
     const [group] = groupScansByDate(entries) as [ScanGroup];
-    expect(group.entries[0].barcode).toBe("FIRST");
-    expect(group.entries[1].barcode).toBe("SECOND");
+    expect(group.entries[0]!.barcode).toBe("FIRST");
+    expect(group.entries[1]!.barcode).toBe("SECOND");
   });
 });
 
@@ -207,7 +207,7 @@ describe("loadScanHistory", () => {
     mockGetItem.mockResolvedValue(JSON.stringify(entries));
     const result = await loadScanHistory();
     expect(result).toHaveLength(2);
-    expect(result[0].barcode).toBe("BC-1");
+    expect(result[0]!.barcode).toBe("BC-1");
   });
 
   it("returns an empty array for corrupt JSON", async () => {
@@ -227,7 +227,7 @@ describe("loadScanHistory", () => {
     mockGetItem.mockResolvedValue(JSON.stringify([good, bad, noTimestamp]));
     const result = await loadScanHistory();
     expect(result).toHaveLength(1);
-    expect(result[0].barcode).toBe("GOOD");
+    expect(result[0]!.barcode).toBe("GOOD");
   });
 
   it("returns an empty array when AsyncStorage throws", async () => {
@@ -246,7 +246,7 @@ describe("saveScanHistory", () => {
     const [key, raw] = mockSetItem.mock.calls[0] as [string, string];
     expect(key).toBe("@partsid/barcode_scan_history");
     const parsed = JSON.parse(raw) as ScanEntry[];
-    expect(parsed[0].barcode).toBe("BC-SAVE");
+    expect(parsed[0]!.barcode).toBe("BC-SAVE");
   });
 
   it("serialises an empty array without error", async () => {

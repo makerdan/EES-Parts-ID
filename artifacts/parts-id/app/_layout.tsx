@@ -93,7 +93,11 @@ export default function RootLayout() {
   if (!fontsLoaded && !fontError) return null;
 
   return (
-    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache} proxyUrl={proxyUrl}>
+    <ClerkProvider
+      publishableKey={publishableKey}
+      {...(tokenCache !== undefined ? { tokenCache } : {})}
+      {...(proxyUrl !== undefined ? { proxyUrl } : {})}
+    >
       <ClerkLoaded>
         <SafeAreaProvider>
           <ErrorBoundary>

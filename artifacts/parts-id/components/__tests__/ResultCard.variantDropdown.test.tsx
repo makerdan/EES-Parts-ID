@@ -157,7 +157,7 @@ describe("ResultCard — size variant dropdown", () => {
     );
     expect(selectBtns.length).toBeGreaterThan(0);
     act(() => {
-      selectBtns[0].props.onPress();
+      selectBtns[0]!.props.onPress();
     });
 
     const catalogTexts = renderer!.root.findAll(
@@ -177,7 +177,7 @@ describe("ResultCard — size variant dropdown", () => {
     });
 
     act(() => {
-      findAllWithTestID(renderer!.root, `select-variant-${variant.id}`)[0].props.onPress();
+      findAllWithTestID(renderer!.root, `select-variant-${variant.id}`)[0]!.props.onPress();
     });
 
     const backBtns = renderer!.root.findAll(
@@ -198,14 +198,14 @@ describe("ResultCard — size variant dropdown", () => {
     });
 
     act(() => {
-      findAllWithTestID(renderer!.root, `select-variant-${variant.id}`)[0].props.onPress();
+      findAllWithTestID(renderer!.root, `select-variant-${variant.id}`)[0]!.props.onPress();
     });
 
     const backBtn = renderer!.root.findAll(
       (n: ReactTestInstance) =>
         typeof n.props.accessibilityLabel === "string" &&
         (n.props.accessibilityLabel as string).startsWith("Back to"),
-    )[0];
+    )[0]!;
     act(() => {
       backBtn.props.onPress();
     });

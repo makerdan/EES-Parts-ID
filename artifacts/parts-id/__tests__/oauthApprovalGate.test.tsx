@@ -346,7 +346,7 @@ describe("OAuthButtons — Google sign-in success path", () => {
     expect(googleBtn).toBeDefined();
 
     await act(async () => {
-      googleBtn.props.onPress();
+      googleBtn!.props.onPress();
     });
 
     expect(mockSetActive).toHaveBeenCalledWith({ session: "session-google" });
@@ -360,7 +360,7 @@ describe("OAuthButtons — Google sign-in success path", () => {
 
     const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
     await act(async () => {
-      pressables[0].props.onPress();
+      pressables[0]!.props.onPress();
     });
 
     expect(mockReplace).toHaveBeenCalledWith("/(tabs)");
@@ -377,7 +377,7 @@ describe("OAuthButtons — Google sign-in success path", () => {
 
     const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
     await act(async () => {
-      pressables[0].props.onPress();
+      pressables[0]!.props.onPress();
     });
 
     expect(mockReplace).not.toHaveBeenCalled();
@@ -408,7 +408,7 @@ describe("OAuthButtons — Apple sign-in success path", () => {
     expect(appleBtn).toBeDefined();
 
     await act(async () => {
-      appleBtn.props.onPress();
+      appleBtn!.props.onPress();
     });
 
     expect(mockSetActive).toHaveBeenCalledWith({ session: "session-apple" });
@@ -422,7 +422,7 @@ describe("OAuthButtons — Apple sign-in success path", () => {
 
     const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
     await act(async () => {
-      pressables[1].props.onPress();
+      pressables[1]!.props.onPress();
     });
 
     expect(mockReplace).toHaveBeenCalledWith("/(tabs)");
@@ -505,7 +505,7 @@ describe("OAuthButtons — Google sign-up flow (new account)", () => {
 
     const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
     await act(async () => {
-      pressables[0].props.onPress();
+      pressables[0]!.props.onPress();
     });
 
     expect(mockSetActive).toHaveBeenCalledWith({ session: "session-new-user" });
@@ -521,7 +521,7 @@ describe("OAuthButtons — Google sign-up flow (new account)", () => {
 
     const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
     await act(async () => {
-      pressables[0].props.onPress();
+      pressables[0]!.props.onPress();
     });
 
     expect(mockReplace).toHaveBeenCalledWith("/(tabs)");
@@ -538,7 +538,7 @@ describe("OAuthButtons — Google sign-up flow (new account)", () => {
 
     const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
     await act(async () => {
-      pressables[0].props.onPress();
+      pressables[0]!.props.onPress();
     });
 
     expect(mockReplace).not.toHaveBeenCalled();

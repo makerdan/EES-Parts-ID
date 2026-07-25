@@ -172,7 +172,7 @@ export async function fetchWithAuth(
 
   const merged: RequestInit = {
     ...init,
-    signal: effectiveSignal,
+    ...(effectiveSignal !== undefined ? { signal: effectiveSignal } : {}),
     headers: {
       ...authHeaders,
       ...(init?.headers as Record<string, string> | undefined),

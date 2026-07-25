@@ -353,7 +353,7 @@ describe("MapPin3D — mounts on web Platform.OS without throwing", () => {
     const animatedG = groups[0];
     // animatedProps is the prop passed to <AnimatedG animatedProps={...} />.
     // It should contain a transform string produced by the worklet callback.
-    const ap = animatedG.props.animatedProps as Record<string, unknown> | undefined;
+    const ap = animatedG!.props.animatedProps as Record<string, unknown> | undefined;
     expect(ap).toBeDefined();
     expect(typeof ap?.transform).toBe("string");
     expect(ap?.transform as string).toMatch(/translate/);

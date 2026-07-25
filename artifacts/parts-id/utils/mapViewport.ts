@@ -29,10 +29,11 @@ export interface ContentViewBox {
  */
 export function parseContentViewBox(xml: string): ContentViewBox | null {
   const match = xml.match(/viewBox="([^"]+)"/);
-  if (!match) return null;
+  if (!match || match[1] === undefined) return null;
   const parts = match[1].trim().split(/[\s,]+/).map(Number);
   if (parts.length !== 4 || parts.some((n) => !isFinite(n))) return null;
-  return { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+  // Length checked to be exactly 4 above.
+  return { x: parts[0]!, y: parts[1]!, w: parts[2]!, h: parts[3]! };
 }
 
 /**
@@ -277,7 +278,7 @@ export function zoomStopForScale(scale: number): number {
   let best = 0;
   let bestDist = Infinity;
   for (let i = 0; i < ZOOM_STOPS.length; i++) {
-    const d = Math.abs(logS - Math.log(ZOOM_STOPS[i].scale));
+    const d = Math.abs(logS - Math.log(ZOOM_STOPS[i]!.scale));
     if (d < bestDist) { bestDist = d; best = i; }
   }
   return best;
@@ -303,7 +304,7 @@ export function computeFitTarget(
   const { scale: rawS, tx: rawTX, ty: rawTY } = fitContentViewport(
     vb, containerW, containerH, SVG_VIEWBOX_W, SVG_VIEWBOX_H,
   );
-  const s = ZOOM_STOPS[0].scale;
+  const s = ZOOM_STOPS[0]!.scale;
   const ratio = rawS > 0 ? s / rawS : 1;
   return { scale: s, tx: rawTX * ratio, ty: rawTY * ratio };
 }

@@ -206,6 +206,10 @@ describe("cleanStaleCacheDirs call site — hash present at mount", () => {
 
   it("does NOT call cleanStaleCacheDirs on web even when a hash is available", async () => {
     mockGetCachedHash.mockReturnValue("abc123");
+    // On web the fast-path also requires a non-empty innerXml to count as
+    // adequate; provide one so the load effect still returns early and leaves
+    // the module-level _svgLoadPromise singleton null for Path B.
+    mockGetCachedData.mockReturnValue({ uri: "", innerXml: "<g/>", xml: "<svg/>" });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (require("react-native").Platform as { OS: string }).OS = "web";
 
@@ -264,7 +268,7 @@ describe("cleanStaleCacheDirs call site — null → string hash transition", ()
     // afterward.  Pre-setting it ensures the restored value is also true, so
     // React does not warn about unwrapped state updates in the setImmediate
     // polling ticks that follow render().
-    const g = global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const g = global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean | undefined };
     const prevActEnv = g.IS_REACT_ACT_ENVIRONMENT;
     g.IS_REACT_ACT_ENVIRONMENT = true;
     try {
@@ -313,7 +317,7 @@ describe("cleanStaleCacheDirs call site — null → string hash transition", ()
     global.fetch = jest.fn().mockRejectedValue(new Error("network error"));
 
     // Same IS_REACT_ACT_ENVIRONMENT guard as the previous test.
-    const g = global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const g = global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean | undefined };
     const prevActEnv = g.IS_REACT_ACT_ENVIRONMENT;
     g.IS_REACT_ACT_ENVIRONMENT = true;
     try {

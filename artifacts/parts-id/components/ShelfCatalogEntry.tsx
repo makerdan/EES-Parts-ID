@@ -115,8 +115,9 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       }
     }
     AsyncStorage.multiGet([STORAGE_PREFIX_KEY, STORAGE_STEP_KEY]).then(pairs => {
-      const savedPrefix = pairs[0][1];
-      const savedStep = pairs[1][1];
+      // multiGet returns one entry per requested key, so both indices are present.
+      const savedPrefix = pairs[0]![1];
+      const savedStep = pairs[1]![1];
       if (savedPrefix !== null && savedPrefix !== undefined) setShelfPrefix(savedPrefix);
       if (savedStep !== null && savedStep !== undefined) {
         const parsed = parseInt(savedStep, 10) as Step;

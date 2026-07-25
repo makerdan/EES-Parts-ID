@@ -242,7 +242,12 @@ export default function EditItemScreen() {
           if (!old) return old;
           const patchResult = (r: SearchInventoryResponse["results"][number]) =>
             r.item.id === current.id ? { ...r, item: patchSize(r.item) } : r;
-          return { ...old, results: old.results.map(patchResult), sizeUnknownResults: old.sizeUnknownResults?.map(patchResult) };
+          return {
+            ...old,
+            results: old.results.map(patchResult),
+            // exactOptionalPropertyTypes: only include the optional key when present
+            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
+          };
         },
       );
       await invalidateListCache({ queryClient });
@@ -285,7 +290,12 @@ export default function EditItemScreen() {
           if (!old) return old;
           const patchResult = (r: SearchInventoryResponse["results"][number]) =>
             r.item.id === current.id ? { ...r, item: patchExpandedSave(r.item) } : r;
-          return { ...old, results: old.results.map(patchResult), sizeUnknownResults: old.sizeUnknownResults?.map(patchResult) };
+          return {
+            ...old,
+            results: old.results.map(patchResult),
+            // exactOptionalPropertyTypes: only include the optional key when present
+            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
+          };
         },
       );
       await invalidateListCache({ queryClient });
@@ -328,7 +338,12 @@ export default function EditItemScreen() {
           if (!old) return old;
           const patchResult = (r: SearchInventoryResponse["results"][number]) =>
             r.item.id === current.id ? { ...r, item: patchExpandedClear(r.item) } : r;
-          return { ...old, results: old.results.map(patchResult), sizeUnknownResults: old.sizeUnknownResults?.map(patchResult) };
+          return {
+            ...old,
+            results: old.results.map(patchResult),
+            // exactOptionalPropertyTypes: only include the optional key when present
+            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
+          };
         },
       );
       await invalidateListCache({ queryClient });
@@ -624,12 +639,14 @@ export default function EditItemScreen() {
         if (failedIndices.length > 0) {
           // Revert UI state for each field that failed.
           for (const i of failedIndices) {
-            ops[i].restoreFn();
+            // failedIndices are valid indices into ops.
+            ops[i]!.restoreFn();
           }
 
           // Which fields succeeded?
           const succeededFields = new Set(
-            ops.filter((_, i) => settled[i].status === "fulfilled").map(o => o.field),
+            // settled is built from ops.map, so index i always maps to a result.
+            ops.filter((_, i) => settled[i]!.status === "fulfilled").map(o => o.field),
           );
 
           // Restore the full cache snapshot first, then re-apply patches for
@@ -665,7 +682,12 @@ export default function EditItemScreen() {
                 if (!old) return old;
                 const patchResult = (r: SearchInventoryResponse["results"][number]) =>
                   r.item.id === current.id ? { ...r, item: patchItemPartial(r.item) } : r;
-                return { ...old, results: old.results.map(patchResult), sizeUnknownResults: old.sizeUnknownResults?.map(patchResult) };
+                return {
+            ...old,
+            results: old.results.map(patchResult),
+            // exactOptionalPropertyTypes: only include the optional key when present
+            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
+          };
               },
             );
             if (succeededFields.has("photo") && capturedImageUrl !== undefined) setPhotoUri1(capturedImageUrl);
@@ -683,7 +705,7 @@ export default function EditItemScreen() {
             if (result.status === "rejected") {
               const msg = result.reason instanceof Error ? result.reason.message : String(result.reason ?? "Save failed");
               if (msg.includes("401")) has401 = true;
-              newFieldErrors[ops[i].field as keyof typeof fieldSaveErrors] = has401
+              newFieldErrors[ops[i]!.field as keyof typeof fieldSaveErrors] = has401
                 ? "Session expired — re-unlock admin access"
                 : "Could not save — check connection";
             }
@@ -748,7 +770,8 @@ export default function EditItemScreen() {
             return {
               ...old,
               results: old.results.map(patchResult),
-              sizeUnknownResults: old.sizeUnknownResults?.map(patchResult),
+              // exactOptionalPropertyTypes: only include the optional key when present
+              ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
             };
           },
         );
@@ -1404,7 +1427,7 @@ export default function EditItemScreen() {
           visible={measureOpen}
           onClose={() => setMeasureOpen(false)}
           onConfirm={handleMeasureConfirm}
-          initialDims={existingDims}
+          {...(existingDims !== undefined ? { initialDims: existingDims } : {})}
           adminToken={adminToken ?? ""}
         />
       ) : null}

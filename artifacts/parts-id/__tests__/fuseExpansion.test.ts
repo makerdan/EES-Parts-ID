@@ -134,7 +134,7 @@ describe("Fuse aiKeywords expansion — abbreviations, synonyms, slang", () => {
     ];
     const fuse = buildIndex(items);
     const results = fuse.search("QO120");
-    expect(results[0].item.id).toBe(41);
+    expect(results[0]!.item.id).toBe(41);
   });
 
   it("description weight — descriptive keyword returns the right item", () => {
@@ -188,6 +188,6 @@ describe("Fuse aiKeywords expansion — abbreviations, synonyms, slang", () => {
     const results = fuse.search("AFCI breaker");
     // Item 90 must appear and be ranked above items 91 and 92
     expect(ids(results)).toContain(90);
-    expect(results[0].item.id).toBe(90);
+    expect(results[0]!.item.id).toBe(90);
   });
 });

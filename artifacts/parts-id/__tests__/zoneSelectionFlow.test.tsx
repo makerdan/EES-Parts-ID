@@ -450,7 +450,7 @@ describe("MapScreen — outside-tap overlay clears selectedZone without navigati
     // since ZoneActionMenu itself is mocked out).
     expect(overlays.length).toBeGreaterThan(0);
 
-    await act(async () => { overlays[0].props.onPress(); });
+    await act(async () => { overlays[0]!.props.onPress(); });
 
     expect(findByType(tree.root, "zone-action-menu")).toBeNull();
   });
@@ -467,7 +467,7 @@ describe("MapScreen — outside-tap overlay clears selectedZone without navigati
       (n) => n.props.accessibilityLabel === "Dismiss zone menu",
     );
 
-    await act(async () => { overlays[0].props.onPress(); });
+    await act(async () => { overlays[0]!.props.onPress(); });
 
     expect(mockRouterNavigate).not.toHaveBeenCalled();
     expect(mockRouterPush).not.toHaveBeenCalled();

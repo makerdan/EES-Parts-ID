@@ -79,10 +79,10 @@ type JobStatus = {
   processedPages: number;
   matchedParts: number;
   imagesMatched: number;
-  unmatchedParts?: Array<{ catalogNumber: string; description: string }>;
+  unmatchedParts?: Array<{ catalogNumber: string; description: string }> | undefined;
   errorMessage: string | null;
-  failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
-  aiRawLog?: Array<AiRawLogEntry>;
+  failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }> | undefined;
+  aiRawLog?: Array<AiRawLogEntry> | undefined;
 };
 
 const AiRawLogEntrySchema = z.object({ page: z.number(), text: z.string(), chunkJobId: z.string() });

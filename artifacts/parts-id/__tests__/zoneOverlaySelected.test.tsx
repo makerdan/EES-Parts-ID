@@ -308,7 +308,7 @@ describe("WarehouseMapView — selectedZoneId routes isSelected only to the matc
     expect(viewsWithLayout.length).toBeGreaterThan(0);
 
     await act(async () => {
-      viewsWithLayout[0].props.onLayout({
+      viewsWithLayout[0]!.props.onLayout({
         nativeEvent: { layout: { width: 400, height: 800 } },
       });
     });
@@ -348,7 +348,7 @@ describe("WarehouseMapView — selectedZoneId routes isSelected only to the matc
       { deep: true },
     );
     await act(async () => {
-      viewsWithLayout[0].props.onLayout({
+      viewsWithLayout[0]!.props.onLayout({
         nativeEvent: { layout: { width: 400, height: 800 } },
       });
     });
