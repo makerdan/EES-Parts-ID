@@ -95,7 +95,11 @@ const BASE_PROPS = {
   onZoneTap: NOOP,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Per-test renderer registry for cleanup ───────────────────────────────────
+// Renderers that are not explicitly unmounted keep the React scheduler alive and
+// cause Jest to force-exit.  Collect every created renderer so afterEach can
+// unmount them all, regardless of whether the individual test stored a reference.
+const activeRenderers: TestRenderer.ReactTestRenderer[] = [];
 
 beforeEach(() => {
   // Fake timers prevent the 3 s setEmptyDismissed setTimeout from firing as a
@@ -109,7 +113,13 @@ beforeEach(() => {
   (require("react-native").Platform as { OS: string }).OS = "web";
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // Unmount all renderers created during the test so the React concurrent
+  // scheduler does not keep the worker alive and trigger a force-exit.
+  while (activeRenderers.length) {
+    const r = activeRenderers.pop()!;
+    await act(async () => { r.unmount(); });
+  }
   // Restore real timers and native platform so other test files are not affected.
   jest.useRealTimers();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -131,7 +141,7 @@ describe("WarehouseMapView — web render smoke-test (TDZ regression guard)", ()
   it("renders on web without throwing a ReferenceError", async () => {
     await expect(
       act(async () => {
-        TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
+        activeRenderers.push(TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />));
       })
     ).resolves.not.toThrow();
   });
@@ -141,6 +151,7 @@ describe("WarehouseMapView — web render smoke-test (TDZ regression guard)", ()
 
     await act(async () => {
       renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
+      activeRenderers.push(renderer);
     });
 
     expect(renderer).not.toBeNull();
@@ -153,11 +164,11 @@ describe("WarehouseMapView — web render smoke-test (TDZ regression guard)", ()
     // A TDZ crash would throw on both mounts — two independent mount attempts
     // confirm the failure is not a one-off initialisation artifact.
     await act(async () => {
-      TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
+      activeRenderers.push(TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />));
     });
 
     await act(async () => {
-      TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
+      activeRenderers.push(TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />));
     });
 
     // If we reach here, neither mount threw — the test passes.

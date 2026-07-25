@@ -108,7 +108,7 @@ describe("AuthGate — sso-callback exemption", () => {
     renderAuthGate();
 
     expect(mockReplace).toHaveBeenCalledTimes(1);
-    expect(mockReplace).toHaveBeenCalledWith("/pending");
+    expect(mockReplace).toHaveBeenCalledWith({ pathname: "/pending" });
   });
 
   it("redirects to /banned once isSignedIn flips true while on sso-callback (banned)", () => {
@@ -119,7 +119,7 @@ describe("AuthGate — sso-callback exemption", () => {
     renderAuthGate();
 
     expect(mockReplace).toHaveBeenCalledTimes(1);
-    expect(mockReplace).toHaveBeenCalledWith("/banned");
+    expect(mockReplace).toHaveBeenCalledWith({ pathname: "/banned" });
   });
 });
 
@@ -133,7 +133,7 @@ describe("AuthGate — baseline redirect behaviour", () => {
     renderAuthGate();
 
     expect(mockReplace).toHaveBeenCalledTimes(1);
-    expect(mockReplace).toHaveBeenCalledWith("/login");
+    expect(mockReplace).toHaveBeenCalledWith({ pathname: "/login" });
   });
 
   it("does NOT redirect when isSignedIn=false and already at /login", () => {

@@ -44,16 +44,16 @@ export default function SsoCallback() {
         },
         // Keep navigation inside the expo-router SPA rather than doing a hard
         // page load, then let AuthGate correct the destination.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (to: string) => {
-          if (!cancelled) router.replace(to as any);
+          // @ts-ignore — Clerk passes arbitrary strings; expo-router typed routes
+          // require a const literal, but the runtime behaviour is identical.
+          if (!cancelled) router.replace(to);
           return Promise.resolve();
         },
       )
       .catch(() => {
         // Token missing/expired or the user cancelled — send them back to login.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (!cancelled) router.replace("/login" as any);
+        if (!cancelled) router.replace({ pathname: "/login" });
       });
 
     return () => {
