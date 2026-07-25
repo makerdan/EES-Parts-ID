@@ -36,6 +36,7 @@ import type { WarehouseZone } from "@/lib/aisleHierarchy";
 import { parseBin } from "@/lib/aisleHierarchy";
 import { FUSE_CACHE_KEY, parseFuseCacheItems } from "@/utils/offlineBarcode";
 import { swallowOrientationNotAvailable } from "@/utils/orientationLock";
+import { reportStorageError } from "@/utils/storageErrorReporter";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const CYCLE_COUNTED_KEY = "CYCLE_COUNTED_IDS";
@@ -279,7 +280,7 @@ export default function MapScreen() {
       } catch (err) {
         console.error('[map] parse cycle counted ids', err);
       }
-    });
+    }).catch(err => reportStorageError('AsyncStorage read failed (CYCLE_COUNTED_KEY)', err));
     return () => { alive = false; };
   }, []);
 

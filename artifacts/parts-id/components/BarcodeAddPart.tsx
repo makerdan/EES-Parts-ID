@@ -707,11 +707,12 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
                 <Text style={{ color: colors.mutedForeground }}> / {shelfStats.total} items have barcodes</Text>
               </Text>
               {shelfStats.total > 0 ? (
-                <View style={[apStyles.statsBar, { backgroundColor: colors.border }]}>
+                <View style={[apStyles.statsBar, { backgroundColor: colors.border, flexDirection: "row" }]}>
                   <View style={[apStyles.statsBarFill, {
                     backgroundColor: colors.success,
-                    width: `${Math.round((shelfStats.withBarcode / shelfStats.total) * 100)}%` as any,
+                    flex: shelfStats.withBarcode,
                   }]} />
+                  <View style={{ flex: shelfStats.total - shelfStats.withBarcode }} />
                 </View>
               ) : null}
             </View>
@@ -749,11 +750,12 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
                 <Text style={{ color: colors.mutedForeground }}> / {shelfStats.total} items have barcodes</Text>
               </Text>
               {shelfStats.total > 0 ? (
-                <View style={[apStyles.statsBar, { backgroundColor: colors.border }]}>
+                <View style={[apStyles.statsBar, { backgroundColor: colors.border, flexDirection: "row" }]}>
                   <View style={[apStyles.statsBarFill, {
                     backgroundColor: colors.success,
-                    width: `${Math.round((shelfStats.withBarcode / shelfStats.total) * 100)}%` as any,
+                    flex: shelfStats.withBarcode,
                   }]} />
+                  <View style={{ flex: shelfStats.total - shelfStats.withBarcode }} />
                 </View>
               ) : null}
             </View>

@@ -66,6 +66,7 @@ import {
 } from "@/utils/expandDescHandlers";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
 import { useTrackScreen } from "@/utils/useTrackScreen";
+import { reportStorageError } from "@/utils/storageErrorReporter";
 
 const EXPAND_DESC_DRAFT_KEY = "@expandDesc:draft";
 type ExpandDescDraft = {
@@ -770,7 +771,7 @@ export default function UploadScreen() {
       if (val === "import" || val === "enrichment" || val === "warehouse" || val === "people") {
         setActiveSection(val);
       }
-    });
+    }).catch(err => reportStorageError('AsyncStorage read failed (ACTIVE_SECTION_KEY)', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
@@ -1375,6 +1376,7 @@ export default function UploadScreen() {
   useEffect(() => {
     AsyncStorage.getItem(EXPAND_DESC_DRAFT_KEY).then(raw => {
       if (!raw) return;
+
       try {
         const draft: ExpandDescDraft = JSON.parse(raw);
         const pending = draft.results.filter(
@@ -1390,7 +1392,7 @@ export default function UploadScreen() {
         setExpandDescRemaining(draft.remaining);
         setExpandDescDraftSavedAt(draft.savedAt);
       } catch { /* ignore corrupt draft */ }
-    }).catch(() => {});
+    }).catch(err => reportStorageError('AsyncStorage read failed (EXPAND_DESC_DRAFT_KEY)', err));
   }, []);
 
   // Save draft whenever results change (auto-clear when all resolved)

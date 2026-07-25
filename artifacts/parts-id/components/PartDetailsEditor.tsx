@@ -938,7 +938,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               />
               <Pressable
                 onPress={handleClearExpandedDesc}
-                disabled={expandedDescSaving === "saving" || (!expandedDescText && !(item as unknown as { expandedDescription?: string | null })?.expandedDescription)}
+                disabled={expandedDescSaving === "saving" || (!expandedDescText && !item.expandedDescription)}
                 style={{
                   padding: 10,
                   borderRadius: 6,
@@ -946,7 +946,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                   borderWidth: 1,
                   borderColor: colors.border,
                   marginTop: 2,
-                  opacity: (expandedDescSaving === "saving" || (!expandedDescText && !(item as unknown as { expandedDescription?: string | null })?.expandedDescription)) ? 0.4 : 1,
+                  opacity: (expandedDescSaving === "saving" || (!expandedDescText && !item.expandedDescription)) ? 0.4 : 1,
                 }}
                 accessibilityLabel="Clear expanded description"
               >
@@ -966,13 +966,13 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
             ) : null}
             <Pressable
               onPress={handleSaveExpandedDesc}
-              disabled={expandedDescSaving === "saving" || expandedDescText.trim() === ((item as unknown as { expandedDescription?: string | null })?.expandedDescription ?? "")}
+              disabled={expandedDescSaving === "saving" || expandedDescText.trim() === (item.expandedDescription ?? "")}
               style={[
                 styles.saveBtn,
                 {
                   marginTop: 8, marginBottom: 4,
                   backgroundColor:
-                    (expandedDescSaving === "saving" || expandedDescText.trim() === ((item as unknown as { expandedDescription?: string | null })?.expandedDescription ?? ""))
+                    (expandedDescSaving === "saving" || expandedDescText.trim() === (item.expandedDescription ?? ""))
                       ? colors.muted
                       : colors.primary,
                 },
@@ -983,7 +983,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                   styles.saveBtnText,
                   {
                     color:
-                      (expandedDescSaving === "saving" || expandedDescText.trim() === ((item as unknown as { expandedDescription?: string | null })?.expandedDescription ?? ""))
+                      (expandedDescSaving === "saving" || expandedDescText.trim() === (item.expandedDescription ?? ""))
                         ? colors.mutedForeground
                         : colors.primaryForeground,
                   },
