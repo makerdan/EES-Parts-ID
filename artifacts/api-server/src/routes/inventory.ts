@@ -1184,6 +1184,23 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
     const upperVendor = vendor.trim().toUpperCase();
     const trimmedCatalog = catalog.trim();
     const trimmedDescription = description?.trim() ?? "";
+    const trimmedBinLocation = binLocation?.trim() ?? "";
+
+    if (upperVendor.length > 50) {
+      return void res.status(400).json({
+        error: `vendor must be 50 characters or fewer (got ${upperVendor.length})`,
+      });
+    }
+    if (trimmedCatalog.length > 100) {
+      return void res.status(400).json({
+        error: `catalog must be 100 characters or fewer (got ${trimmedCatalog.length})`,
+      });
+    }
+    if (trimmedBinLocation.length > 200) {
+      return void res.status(400).json({
+        error: `binLocation must be 200 characters or fewer (got ${trimmedBinLocation.length})`,
+      });
+    }
 
     const MAX_DESCRIPTION_LENGTH = 500;
     if (trimmedDescription.length > MAX_DESCRIPTION_LENGTH) {
@@ -1191,7 +1208,7 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
         error: `description must be ${MAX_DESCRIPTION_LENGTH} characters or fewer (got ${trimmedDescription.length})`,
       });
     }
-    const binLocations = binLocation?.trim() ? [binLocation.trim()] : [];
+    const binLocations = trimmedBinLocation ? [trimmedBinLocation] : [];
 
     // Check for duplicate before inserting so we can return a clear 409.
     // Return the full existing item so callers can offer to update instead of
@@ -1226,6 +1243,15 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
     // 409 conflict on the next attempt (no orphaned records).
     let finalItem = created;
     if (imageBase64?.trim() && created) {
+      const ADD_PART_PHOTO_LIMIT = 10 * 1024 * 1024; // 10 MB
+      const estimatedBytes = estimateImageBytes(imageBase64);
+      if (estimatedBytes > ADD_PART_PHOTO_LIMIT) {
+        await db.delete(inventoryTable).where(eq(inventoryTable.id, created.id)).catch(() => {});
+        const mb = (estimatedBytes / (1024 * 1024)).toFixed(1);
+        return void res.status(413).json({
+          error: `Image too large (${mb} MB) — please reduce the photo size and try again (limit is 10 MB).`,
+        });
+      }
       try {
         const rawBuffer = Buffer.from(imageBase64, "base64");
         const { fullBuffer, thumbnailBuffer } = await resizeImages(rawBuffer);
@@ -2257,6 +2283,21 @@ router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
       return void res.status(400).json({ error: "binLocations must be an array of strings" });
     }
 
+    const BINS_MAX_COUNT = 50;
+    const BINS_MAX_STRING_LENGTH = 200;
+    if (binLocations.length > BINS_MAX_COUNT) {
+      return void res.status(400).json({
+        error: `binLocations must have at most ${BINS_MAX_COUNT} entries (got ${binLocations.length})`,
+      });
+    }
+    for (const bin of binLocations as Array<string>) {
+      if (bin.trim().length > BINS_MAX_STRING_LENGTH) {
+        return void res.status(400).json({
+          error: `each bin location must be ${BINS_MAX_STRING_LENGTH} characters or fewer`,
+        });
+      }
+    }
+
     // Normalise: trim, drop empties, de-duplicate (case-insensitive). Preserves
     // the user-typed casing of the first occurrence so display stays predictable.
     const seen = new Set<string>();
@@ -2397,9 +2438,30 @@ router.patch("/:id/keywords", requireAdminAuth, async (req, res) => {
       return void res.status(400).json({ error: "keywords must be an array" });
     }
 
+    const KEYWORDS_MAX_COUNT = 200;
+    const KEYWORDS_MAX_STRING_LENGTH = 100;
+    if (keywords.length > KEYWORDS_MAX_COUNT) {
+      return void res.status(400).json({
+        error: `keywords must have at most ${KEYWORDS_MAX_COUNT} elements (got ${keywords.length})`,
+      });
+    }
+    const normalizedKeywords: Array<string> = [];
+    for (const kw of keywords) {
+      if (typeof kw !== "string") {
+        return void res.status(400).json({ error: "each keyword must be a string" });
+      }
+      const trimmed = kw.trim();
+      if (trimmed.length > KEYWORDS_MAX_STRING_LENGTH) {
+        return void res.status(400).json({
+          error: `each keyword must be ${KEYWORDS_MAX_STRING_LENGTH} characters or fewer`,
+        });
+      }
+      if (trimmed) normalizedKeywords.push(trimmed);
+    }
+
     const [updated] = await db
       .update(inventoryTable)
-      .set({ aiKeywords: keywords, pinnedKeywords: keywords, updatedAt: new Date() })
+      .set({ aiKeywords: normalizedKeywords, pinnedKeywords: normalizedKeywords, updatedAt: new Date() })
       .where(eq(inventoryTable.id, id))
       .returning();
 
