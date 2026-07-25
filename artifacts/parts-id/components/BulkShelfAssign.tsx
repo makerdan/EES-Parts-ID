@@ -868,16 +868,17 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
           /* ── Session step ─────────────────────────────────────────────── */
           <View style={bsStyles.sessionRoot}>
             {/* Progress bar */}
-            <View style={[bsStyles.progressBarTrack, { backgroundColor: colors.border }]}>
+            <View style={[bsStyles.progressBarTrack, { backgroundColor: colors.border, flexDirection: "row" }]}>
               <View
                 style={[
                   bsStyles.progressBarFill,
                   {
                     backgroundColor: progressPct === 100 ? colors.success : colors.primary,
-                    width: `${progressPct}%` as any,
+                    flex: progressPct,
                   },
                 ]}
               />
+              <View style={{ flex: 100 - progressPct }} />
             </View>
 
             {/* Progress label + target indicator */}

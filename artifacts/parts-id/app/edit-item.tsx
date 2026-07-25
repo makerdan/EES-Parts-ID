@@ -82,7 +82,7 @@ export default function EditItemScreen() {
   }, [isLoading, isAdmin, saveStatus]);
 
   const [description, setDescription] = useState(item?.description ?? "");
-  const [size, setSize] = useState((item as unknown as { size?: string | null })?.size ?? "");
+  const [size, setSize] = useState(item?.size ?? "");
   const [sizeSaving, setSizeSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [sizeError, setSizeError] = useState<string | null>(null);
   const [expandedDescription, setExpandedDescription] = useState(item?.expandedDescription ?? "");
@@ -207,7 +207,7 @@ export default function EditItemScreen() {
     }
     setSizeSaving("saving");
     setSizeError(null);
-    const prevSize = (current as unknown as { size?: string | null })?.size ?? null;
+    const prevSize = current?.size ?? null;
     try {
       const res = await fetch(`${API_BASE}/inventory/${current.id}/size`, {
         method: "PATCH",
@@ -771,19 +771,19 @@ export default function EditItemScreen() {
             />
             <Pressable
               onPress={handleSaveSize}
-              disabled={sizeSaving === "saving" || size.trim() === ((item as unknown as { size?: string | null })?.size ?? "") || size.length > 100}
+              disabled={sizeSaving === "saving" || size.trim() === (item?.size ?? "") || size.length > 100}
               style={[
                 s.saveBtn,
                 {
                   marginTop: 0,
                   backgroundColor:
-                    (sizeSaving === "saving" || size.trim() === ((item as unknown as { size?: string | null })?.size ?? "") || size.length > 100)
+                    (sizeSaving === "saving" || size.trim() === (item?.size ?? "") || size.length > 100)
                       ? colors.muted
                       : colors.primary,
                 },
               ]}
             >
-              <Text style={[s.saveBtnText, { color: (sizeSaving === "saving" || size.trim() === ((item as unknown as { size?: string | null })?.size ?? "") || size.length > 100) ? colors.mutedForeground : colors.primaryForeground }]}>
+              <Text style={[s.saveBtnText, { color: (sizeSaving === "saving" || size.trim() === (item?.size ?? "") || size.length > 100) ? colors.mutedForeground : colors.primaryForeground }]}>
                 Save
               </Text>
             </Pressable>
@@ -823,7 +823,7 @@ export default function EditItemScreen() {
             />
             <Pressable
               onPress={handleClearExpandedDesc}
-              disabled={expandedDescSaving === "saving" || (!expandedDescription && !(item as unknown as { expandedDescription?: string | null })?.expandedDescription)}
+              disabled={expandedDescSaving === "saving" || (!expandedDescription && !item?.expandedDescription)}
               style={{
                 padding: 10,
                 borderRadius: 6,
@@ -831,7 +831,7 @@ export default function EditItemScreen() {
                 borderWidth: 1,
                 borderColor: colors.border,
                 marginTop: 2,
-                opacity: (expandedDescSaving === "saving" || (!expandedDescription && !(item as unknown as { expandedDescription?: string | null })?.expandedDescription)) ? 0.4 : 1,
+                opacity: (expandedDescSaving === "saving" || (!expandedDescription && !item?.expandedDescription)) ? 0.4 : 1,
               }}
               accessibilityLabel="Clear expanded description"
             >
@@ -851,13 +851,13 @@ export default function EditItemScreen() {
           ) : null}
           <Pressable
             onPress={handleSaveExpandedDesc}
-            disabled={expandedDescSaving === "saving" || expandedDescription.trim() === ((item as unknown as { expandedDescription?: string | null })?.expandedDescription ?? "")}
+            disabled={expandedDescSaving === "saving" || expandedDescription.trim() === (item?.expandedDescription ?? "")}
             style={[
               s.saveBtn,
               {
                 marginTop: 8, marginBottom: 4,
                 backgroundColor:
-                  (expandedDescSaving === "saving" || expandedDescription.trim() === ((item as unknown as { expandedDescription?: string | null })?.expandedDescription ?? ""))
+                  (expandedDescSaving === "saving" || expandedDescription.trim() === (item?.expandedDescription ?? ""))
                     ? colors.muted
                     : colors.primary,
               },
@@ -868,7 +868,7 @@ export default function EditItemScreen() {
                 s.saveBtnText,
                 {
                   color:
-                    (expandedDescSaving === "saving" || expandedDescription.trim() === ((item as unknown as { expandedDescription?: string | null })?.expandedDescription ?? ""))
+                    (expandedDescSaving === "saving" || expandedDescription.trim() === (item?.expandedDescription ?? ""))
                       ? colors.mutedForeground
                       : colors.primaryForeground,
                 },

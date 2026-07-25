@@ -200,6 +200,7 @@ jest.mock("@/utils/offlineBarcode", () => ({
   getFuseCacheSyncedAt:   jest.fn().mockResolvedValue(Date.now()),
   FUSE_SYNC_MAX_AGE_MS:   Infinity,
   lookupByBarcodeOffline: jest.fn().mockResolvedValue(null),
+  replaceBarcodeCacheWithServerItems: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("@/utils/searchHelpers", () => ({
