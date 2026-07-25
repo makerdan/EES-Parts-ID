@@ -20,7 +20,7 @@
  * Mock strategy
  * ─────────────
  * Heavy native modules are mocked inline so WarehouseMapView can be imported
- * and rendered by react-test-renderer.
+ * and rendered by @testing-library/react-native.
  *
  * @/utils/floorPlanCache is mocked with controllable getCachedHash /
  * getCachedData / hasCachedData helpers.  For path A, hasCachedData() returns
@@ -33,7 +33,7 @@
  */
 
 import React from "react";
-import TestRenderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 
 // ─── react-native-reanimated ──────────────────────────────────────────────────
 jest.mock("react-native-reanimated", () => require("./helpers/mapMocks").createReanimatedMock());
@@ -46,6 +46,24 @@ jest.mock("react-native-svg", () => require("./helpers/mapMocks").createSvgMock(
 
 // ─── expo-asset ──────────────────────────────────────────────────────────────
 jest.mock("expo-asset", () => require("./helpers/mapMocks").createExpoAssetMock());
+
+// ─── react-native ────────────────────────────────────────────────────────────
+// RTLRN v14 uses test-renderer@1.x which enforces that text strings may only
+// appear inside host elements whose type is in ['Text', 'RCTText'].  The global
+// react-native mock maps Text → "rn-text" (used by 100+ other test files), so
+// we provide a local override that re-exports the global mock but remaps Text
+// to the "Text" host element name that test-renderer accepts.
+jest.mock("react-native", () => {
+  const React = require("react");
+  // jest.requireActual applies moduleNameMapper (→ global __mocks__/react-native.js)
+  // but skips jest.mock() factories, avoiding circular stack overflow.
+  const rnMock = jest.requireActual("react-native") as Record<string, unknown>;
+  return {
+    ...rnMock,
+    Text: ({ children, ...props }: Record<string, unknown>) =>
+      React.createElement("Text", props, children),
+  };
+});
 
 // ─── @expo/vector-icons ───────────────────────────────────────────────────────
 jest.mock("@expo/vector-icons", () => require("./helpers/mapMocks").createVectorIconsMock());
@@ -164,9 +182,8 @@ describe("cleanStaleCacheDirs call site — hash present at mount", () => {
   it("calls cleanStaleCacheDirs with the correct hash when getCachedHash returns a string on mount", async () => {
     mockGetCachedHash.mockReturnValue("abc123");
 
-    await act(async () => {
-      TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
+    // render() in RTLRN v14 is async and already wraps in act() internally.
+    await render(<WarehouseMapView {...BASE_PROPS} />);
 
     expect(mockCleanStaleCacheDirs).toHaveBeenCalledTimes(1);
     expect(mockCleanStaleCacheDirs).toHaveBeenCalledWith("abc123");
@@ -175,9 +192,7 @@ describe("cleanStaleCacheDirs call site — hash present at mount", () => {
   it("does NOT call cleanStaleCacheDirs when getCachedHash returns null at mount", async () => {
     mockGetCachedHash.mockReturnValue(null);
 
-    await act(async () => {
-      TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
+    await render(<WarehouseMapView {...BASE_PROPS} />);
 
     expect(mockCleanStaleCacheDirs).not.toHaveBeenCalled();
   });
@@ -187,9 +202,7 @@ describe("cleanStaleCacheDirs call site — hash present at mount", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (require("react-native").Platform as { OS: string }).OS = "web";
 
-    await act(async () => {
-      TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
+    await render(<WarehouseMapView {...BASE_PROPS} />);
 
     expect(mockCleanStaleCacheDirs).not.toHaveBeenCalled();
   });
@@ -205,147 +218,103 @@ describe("cleanStaleCacheDirs call site — hash present at mount", () => {
 // then setSvgHash() is called with the resolved hash.  The cleanup effect must
 // fire in response to that state update.
 //
-// jest.isolateModules ensures a fresh WarehouseMapView module instance with a
-// clean _svgLoadPromise for each test, so the async load path actually runs.
+// WHY no jest.isolateModules here:
+//   Path A tests all set hasCachedData()=true, so the SVG-load useEffect hits
+//   "if (!isServerUpdate && hasCachedData()) return" and exits before calling
+//   loadSvgAsset().  The module-level _svgLoadPromise singleton therefore
+//   remains null when Path B begins.  We can mount the top-level
+//   WarehouseMapView import directly and let the async load path run normally.
 
 describe("cleanStaleCacheDirs call site — null → string hash transition", () => {
   it("calls cleanStaleCacheDirs when hash resolves from the async SVG load (null → 'loaded-hash')", async () => {
-    // jest.isolateModules gives a fresh WarehouseMapView module instance so
-    // the module-level _svgLoadPromise singleton is re-initialized.  We
-    // configure fetchWithAuth BEFORE requiring WarehouseMapView, so the
-    // server-load path (_loadFloorPlanFromServer) sees the mocked responses
-    // and resolves _svgLoadPromise with the server hash instead of the bundle
-    // fallback hash.
-    await new Promise<void>((resolve, reject) => {
-      jest.isolateModules(async () => {
-        try {
-          // Configure fetchWithAuth responses BEFORE WarehouseMapView loads.
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const appAuth = require("@/utils/appAuth");
-          appAuth.fetchWithAuth
-            // GET /floor-plan/meta from _loadFloorPlanFromServer.
-            // (The server-hash polling setInterval is never registered because
-            // @/utils/apiBase is mocked with API_BASE:"" at the top of this
-            // file, so the polling effect's `if (!API_BASE) return` fires
-            // immediately — no fetchWithAuth call from that path.)
-            .mockResolvedValueOnce({
-              ok: true,
-              json: async () => ({ hash: "loaded-hash" }),
-            })
-            // GET /floor-plan/svg from _loadFloorPlanFromServer → minimal SVG
-            .mockResolvedValueOnce({
-              ok: true,
-              text: async () => "<svg/>",
-            })
-            // Any further call fails (should not be reached)
-            .mockResolvedValue({ ok: false });
-
-          // Configure floorPlanCache for cold-cache path.
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const fpc = require("@/utils/floorPlanCache");
-          fpc.getCachedHash.mockReturnValue(null);
-          fpc.hasCachedData.mockReturnValue(false);
-          fpc.getCachedData.mockReturnValue(null);
-          const RESOLVED_DATA = { uri: "/floor-plan/svg", innerXml: "", xml: "<svg/>" };
-          fpc.setCached.mockImplementationOnce((hash: string) => {
-            fpc.getCachedHash.mockReturnValue(hash);
-            fpc.getCachedData.mockReturnValue(RESOLVED_DATA);
-            fpc.hasCachedData.mockReturnValue(true);
-          });
-
-          // Grab the isolated cleanStaleCacheDirs instance for assertions.
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const tpc = require("@/utils/tilePyramidCache");
-
-          // NOW require WarehouseMapView so _svgLoadPromise is initialized with
-          // the patched fetchWithAuth already in place.
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const { WarehouseMapView: WMV } = require("@/components/WarehouseMapView");
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const TR = require("react-test-renderer");
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const React_ = require("react");
-
-          // With IS_REACT_ACT_ENVIRONMENT unset (false), TR.act(async cb) does
-          // NOT properly await async callbacks — it calls flushPassiveEffects()
-          // synchronously and returns a fake synchronously-resolving thenable,
-          // so the async cb runs in the background after act() exits.
-          //
-          // Strategy:
-          //  1. Mount with act() so effects are started (SVG-load async IIFE).
-          //  2. Poll with setImmediate outside act(): each yield lets microtask
-          //     continuations advance one step.  React's scheduler posts state
-          //     updates via MessageChannel (macro task, poll phase), which fires
-          //     before our check-phase setImmediate within the same iteration.
-          //     Stop once setCached is detected.
-          //  3. One more setImmediate to guarantee React's MessageChannel
-          //     re-render has fired (poll) and pendingPassiveEffectsLanes is set.
-          //  4. Final act() calls flushPassiveEffects() which directly reads
-          //     pendingPassiveEffectsLanes and runs the svgHash effect
-          //     (→ cleanStaleCacheDirs) without going through the scheduler.
-          await TR.act(async () => {
-            TR.create(React_.createElement(WMV, BASE_PROPS));
-          });
-
-          for (let i = 0; i < 20; i++) {
-            // eslint-disable-next-line no-await-in-loop
-            await new Promise<void>(r => setImmediate(r));
-            if (mockSetCached.mock.calls.length > 0) break;
-          }
-
-          // Ensure the MessageChannel re-render commit has set
-          // pendingPassiveEffectsLanes before the act() below flushes it.
-          await new Promise<void>(r => setImmediate(r));
-
-          // Flush passive effects (svgHash useEffect → cleanStaleCacheDirs).
-          await TR.act(async () => {});
-
-          // After the load resolves, setSvgHash("loaded-hash") fires which
-          // triggers the cleanStaleCacheDirs effect.
-          expect(tpc.cleanStaleCacheDirs).toHaveBeenCalledTimes(1);
-          expect(tpc.cleanStaleCacheDirs).toHaveBeenCalledWith("loaded-hash");
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
-    });
-  });
-
-  it("does NOT call cleanStaleCacheDirs when the async load fails (hash stays null)", async () => {
-    // Note: _svgLoadPromise in WarehouseMapView is already resolved from the
-    // previous test, so loadSvgAsset() returns immediately.  getCachedData()
-    // is reset to null in this test's setup so setSvgHash() is never called.
+    // Cold-cache setup: no cached data on mount so the async load runs.
     mockGetCachedHash.mockReturnValue(null);
     mockHasCachedData.mockReturnValue(false);
     mockGetCachedData.mockReturnValue(null);
+    const RESOLVED_DATA = { uri: "/floor-plan/svg", innerXml: "", xml: "<svg/>" };
+    // When setCached is called with the fetched hash, update the cache mocks
+    // so subsequent getCachedData() / getCachedHash() calls return the new data.
+    mockSetCached.mockImplementationOnce((hash: string) => {
+      mockGetCachedHash.mockReturnValue(hash);
+      mockGetCachedData.mockReturnValue(RESOLVED_DATA);
+      mockHasCachedData.mockReturnValue(true);
+    });
 
-    const originalFetch = global.fetch;
-    global.fetch = jest.fn().mockRejectedValue(new Error("network error"));
+    // Stub the two fetchWithAuth calls made by _loadFloorPlanFromServer:
+    //   1. GET /floor-plan/meta  → { hash: "loaded-hash" }
+    //   2. GET /floor-plan/svg   → "<svg/>"
+    // mockResolvedValueOnce takes priority over the factory's default
+    // implementation (which delegates to global.fetch) for those calls.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { fetchWithAuth } = require("@/utils/appAuth") as { fetchWithAuth: jest.Mock };
+    fetchWithAuth
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ hash: "loaded-hash" }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => "<svg/>" })
+      .mockResolvedValue({ ok: false });
 
-    // Enable the React act() environment for this test only so that state
-    // updates from the async IIFE (which runs after the first await inside
-    // act()) are tracked by React's act() queue and do not produce an
-    // "environment not configured to support act()" console.error.
+    // Keep IS_REACT_ACT_ENVIRONMENT=true through the full async sequence.
+    // render() sets it to true internally and restores to its previous value
+    // afterward.  Pre-setting it ensures the restored value is also true, so
+    // React does not warn about unwrapped state updates in the setImmediate
+    // polling ticks that follow render().
     const g = global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
     const prevActEnv = g.IS_REACT_ACT_ENVIRONMENT;
     g.IS_REACT_ACT_ENVIRONMENT = true;
     try {
-      await act(async () => {
-        TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-        // One macrotask boundary (setImmediate) lets the SVG-load async IIFE
-        // drain its entire microtask chain — _persistReadPromise resolves →
-        // fetch rejects → catch chain resolves — before this callback returns.
-        // The IIFE's `if (cancelled) return` guard fires at that point (cancelled
-        // is false; the component is still mounted) and setSvgLoading(false) is
-        // called while IS_REACT_ACT_ENVIRONMENT is true and IS_ACT_ACTIVE is
-        // set, so React tracks it without logging a warning.
+      // render() in RTLRN v14 is async and wraps internally in act(), which
+      // starts the component's mount effects (SVG-load async IIFE).
+      await render(<WarehouseMapView {...BASE_PROPS} />);
+
+      // Poll with setImmediate outside act(): each yield lets microtask
+      // continuations advance one step.  React's scheduler posts state
+      // updates via MessageChannel (macro task, poll phase), which fires
+      // before the check-phase setImmediate within the same iteration.
+      // Stop once setCached is detected (at most 20 ticks).
+      for (let i = 0; i < 20; i++) {
+        // eslint-disable-next-line no-await-in-loop
         await new Promise<void>(r => setImmediate(r));
-        // A second boundary ensures effects flushed by act() after the first
-        // setImmediate (e.g. the passive-effect re-run) also complete before
-        // we return from the act() callback.
-        await new Promise<void>(r => setImmediate(r));
-      });
+        if (mockSetCached.mock.calls.length > 0) break;
+      }
+
+      // One extra boundary to let the MessageChannel commit finish setting
+      // pendingPassiveEffectsLanes before the act() flush below.
+      await new Promise<void>(r => setImmediate(r));
+
+      // Flush passive effects so the svgHash useEffect → cleanStaleCacheDirs
+      // call is committed.
+      await act(async () => {});
+    } finally {
+      g.IS_REACT_ACT_ENVIRONMENT = prevActEnv;
+    }
+
+    expect(mockCleanStaleCacheDirs).toHaveBeenCalledTimes(1);
+    expect(mockCleanStaleCacheDirs).toHaveBeenCalledWith("loaded-hash");
+  });
+
+  it("does NOT call cleanStaleCacheDirs when the async load fails (hash stays null)", async () => {
+    // _svgLoadPromise is already resolved from the previous test (the server
+    // load succeeded and set it).  loadSvgAsset() therefore returns immediately
+    // without making any network calls.  getCachedData() is reset to null here
+    // so getSvgHash() stays "" and the cleanStaleCacheDirs effect never fires.
+    mockGetCachedHash.mockReturnValue(null);
+    mockHasCachedData.mockReturnValue(false);
+    mockGetCachedData.mockReturnValue(null);
+
+    // global.fetch rejection is a belt-and-suspenders guard; loadSvgAsset()
+    // returns the already-resolved promise so fetch is never actually called.
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockRejectedValue(new Error("network error"));
+
+    // Same IS_REACT_ACT_ENVIRONMENT guard as the previous test.
+    const g = global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const prevActEnv = g.IS_REACT_ACT_ENVIRONMENT;
+    g.IS_REACT_ACT_ENVIRONMENT = true;
+    try {
+      await render(<WarehouseMapView {...BASE_PROPS} />);
+      // Two setImmediate ticks drain the async IIFE microtask chain.
+      await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      await act(async () => {});
     } finally {
       g.IS_REACT_ACT_ENVIRONMENT = prevActEnv;
       global.fetch = originalFetch;

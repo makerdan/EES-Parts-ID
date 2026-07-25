@@ -47,7 +47,8 @@
 (global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import TestRenderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
 
 // ─── react-native-reanimated ──────────────────────────────────────────────────
 // Shared values are tracked plain objects.  Every useSharedValue call pushes
@@ -147,7 +148,10 @@ jest.mock("react-native-svg", () => {
     Svg: make("svg"),
     Rect: noop,
     G: make("g"),
-    Text: make("svg-text"),
+    // Use "Text" (not "svg-text") so the new test-renderer's strict text host
+    // check (textComponentTypes: ['Text','RCTText']) doesn't throw when SVG
+    // Text elements render string children.
+    Text: make("Text"),
     SvgUri: noop,
     SvgXml: noop,
     Path: noop,
@@ -187,6 +191,24 @@ jest.mock("expo-asset", () => ({
     ),
   },
 }));
+
+// ─── react-native ────────────────────────────────────────────────────────────
+// RTLRN v14 uses test-renderer@1.x which enforces that text strings may only
+// appear inside host elements whose type is in ['Text', 'RCTText'].  The global
+// react-native mock maps Text → "rn-text" (used by 100+ other test files), so
+// we provide a local override that re-exports the global mock but remaps Text
+// to the "Text" host element name that test-renderer accepts.
+jest.mock("react-native", () => {
+  const React = require("react");
+  // jest.requireActual applies moduleNameMapper (→ global __mocks__/react-native.js)
+  // but skips jest.mock() factories, avoiding circular stack overflow.
+  const rnMock = jest.requireActual("react-native") as Record<string, unknown>;
+  return {
+    ...rnMock,
+    Text: ({ children, ...props }: Record<string, unknown>) =>
+      React.createElement("Text", props, children),
+  };
+});
 
 // ─── @expo/vector-icons ──────────────────────────────────────────────────────
 
@@ -285,14 +307,21 @@ const BASE_PROPS = {
   onZoneTap:    NOOP,
 };
 
+// ─── Tree traversal helpers ───────────────────────────────────────────────────
+// RTLRN v14 uses the new `test-renderer` package whose TestInstance exposes
+// queryAll(predicate) instead of the old findAll(predicate, { deep: true }).
+
 function fireOnLayout(
-  renderer: TestRenderer.ReactTestRenderer,
+  renderer: RenderResult,
   width: number,
   height: number,
 ) {
-  const nodes = renderer.root.findAll(
+  // { includeSelf: true } is required: the new test-renderer's queryAll
+  // defaults to includeSelf:false which skips the root node itself — the
+  // outermost View with onLayout may be the root element.
+  const nodes = renderer.root!.queryAll(
     (n) => typeof n.props.onLayout === "function",
-    { deep: true },
+    { includeSelf: true },
   );
   if (nodes.length === 0) throw new Error("No onLayout node found");
   nodes[0].props.onLayout({
@@ -300,10 +329,11 @@ function fireOnLayout(
   });
 }
 
-function pressFitButton(renderer: TestRenderer.ReactTestRenderer) {
-  const btn = renderer.root.find(
+function pressFitButton(renderer: RenderResult) {
+  const btn = renderer.root!.queryAll(
     (n) => n.props.accessibilityLabel === "Fit to screen",
-  );
+    { includeSelf: true },
+  )[0];
   btn.props.onPress();
 }
 
@@ -373,10 +403,8 @@ afterEach(() => {
 
 describe("startup always fits — no viewport restore on mount", () => {
   async function mountAndLayout(containerW: number, containerH: number) {
-    let renderer!: TestRenderer.ReactTestRenderer;
-    await act(async () => {
-      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
+    // render() in RTLRN v14 is async and already wraps in act() internally.
+    const renderer = await render(<WarehouseMapView {...BASE_PROPS} />);
     await flushPromises();
     await act(async () => {
       fireOnLayout(renderer, containerW, containerH);
@@ -443,10 +471,7 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
   async function mountFitLayout(containerW: number, containerH: number) {
     mockAsyncStorageGetItem.mockResolvedValue(null);
 
-    let renderer!: TestRenderer.ReactTestRenderer;
-    await act(async () => {
-      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
+    const renderer = await render(<WarehouseMapView {...BASE_PROPS} />);
     await flushPromises();
     await act(async () => {
       fireOnLayout(renderer, containerW, containerH);
@@ -512,10 +537,7 @@ describe("startup fit — no AsyncStorage.getItem call during mount", () => {
   async function mountAndLayout(containerW: number, containerH: number) {
     // Make a stored viewport available — the component must NOT read it.
     mockAsyncStorageGetItem.mockResolvedValue(STORED_VIEWPORT);
-    let renderer!: TestRenderer.ReactTestRenderer;
-    await act(async () => {
-      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
+    const renderer = await render(<WarehouseMapView {...BASE_PROPS} />);
     await flushPromises();
     await act(async () => {
       fireOnLayout(renderer, containerW, containerH);
@@ -588,10 +610,7 @@ describe("AppState background handler — flushes pending _persistTimer write", 
   it("fires AsyncStorage.setItem immediately when backgrounded with a pending write", async () => {
     mockAsyncStorageGetItem.mockResolvedValue(null);
 
-    let renderer!: TestRenderer.ReactTestRenderer;
-    await act(async () => {
-      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
+    const renderer = await render(<WarehouseMapView {...BASE_PROPS} />);
     await flushPromises();
     await act(async () => {
       fireOnLayout(renderer, 390, 761);
@@ -629,16 +648,14 @@ describe("AppState background handler — flushes pending _persistTimer write", 
     expect(typeof stored.ty).toBe("number");
 
     // Unmount so the cleanup effect cancels the timer (avoids test pollution).
-    await act(async () => { renderer.unmount(); });
+    // In RTLRN v14, unmount() is async and wraps in act() internally.
+    await renderer.unmount();
   });
 
   it("does NOT call AsyncStorage.setItem when backgrounded with no pending write", async () => {
     mockAsyncStorageGetItem.mockResolvedValue(null);
 
-    let renderer!: TestRenderer.ReactTestRenderer;
-    await act(async () => {
-      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
+    const renderer = await render(<WarehouseMapView {...BASE_PROPS} />);
     await flushPromises();
     await act(async () => {
       fireOnLayout(renderer, 390, 761);
@@ -653,7 +670,7 @@ describe("AppState background handler — flushes pending _persistTimer write", 
     // No pending timer → handler must not call setItem.
     expect(mockAsyncStorageSetItem).not.toHaveBeenCalled();
 
-    await act(async () => { renderer.unmount(); });
+    await renderer.unmount();
   });
 });
 
@@ -751,16 +768,8 @@ describe("startup fit — cold cache (getCachedData returns null on first instal
   });
 
   // Helper: mount the component and fire onLayout with the given dimensions.
-  //
-  // The startup-fit useEffect fires on mount and keeps pendingFit = true (no
-  // AsyncStorage.getItem is called).  The fit-to-screen path runs once both
-  // contentVBRef and containerW are populated.
-  //
   async function mountAndLayout(containerW: number, containerH: number) {
-    let renderer!: TestRenderer.ReactTestRenderer;
-    await act(async () => {
-      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
+    const renderer = await render(<WarehouseMapView {...BASE_PROPS} />);
     await act(async () => {
       fireOnLayout(renderer, containerW, containerH);
     });
@@ -782,7 +791,6 @@ describe("startup fit — cold cache (getCachedData returns null on first instal
   // exactly one microtask tick AND flushes any React state updates +
   // effects triggered by that tick.  12 rounds is enough headroom for
   // the full chain (the real depth is ~6 ticks).
-  //
   async function mountLayoutAndDrain(containerW: number, containerH: number) {
     const renderer = await mountAndLayout(containerW, containerH);
     for (let i = 0; i < 12; i++) {
@@ -820,7 +828,6 @@ describe("startup fit — cold cache (getCachedData returns null on first instal
       expect(trackedValues.some((sv) => sv.value === fitTy)).toBe(true);
 
       // The startup-fit useEffect does NOT call AsyncStorage.getItem on mount.
-      // pendingFit stays true so the fit-to-screen path runs normally.
       expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
     },
   );
@@ -829,27 +836,6 @@ describe("startup fit — cold cache (getCachedData returns null on first instal
 
 // =============================================================================
 // Suite 6 — Device rotation: translate values scale by newW/oldW ratio
-//
-// After the first layout establishes the fit viewport, a second layout event
-// with different dimensions (simulating an orientation change) must scale the
-// current translateX/translateY by the ratio newW / oldW.  The floor plan is
-// always rendered at containerW × (containerW / SVG_ASPECT), so both axes
-// share the same width-only ratio.
-//
-// Mock strategy:
-// • computeFitTarget is overridden in the suite's beforeEach to return
-//   deterministic non-zero tx/ty (30, 20).  Without this, the real
-//   implementation returns near-zero values (the MOCK_CONTENT_VB centre is
-//   almost identical to the SVG viewbox centre), making 0 × ratio = 0 — a
-//   trivially true but meaningless assertion.
-// • panBounds is already mocked (outer beforeEach) to return maxX/maxY=10000
-//   so the scaled values pass through clamping unchanged.
-// • withSpring (reanimated mock) returns the target value synchronously, so
-//   translateX/savedTX both receive the scaled value in the same act() call.
-//
-// Two orientations are covered:
-//   portrait→landscape: ratio > 1  (tx/ty grow)
-//   landscape→portrait: ratio < 1  (tx/ty shrink)
 // =============================================================================
 
 describe("device rotation — translate values scale by newW/oldW ratio", () => {
@@ -857,15 +843,10 @@ describe("device rotation — translate values scale by newW/oldW ratio", () => 
   const PORTRAIT_H  = 761;
   const LANDSCAPE_W = 844;
   const LANDSCAPE_H = 390;
-  // Known non-zero fit translations returned by the mocked computeFitTarget.
-  // Chosen to be clearly distinct from any other shared value so the post-
-  // rotation assertion cannot accidentally pass against an unrelated slot.
   const FIT_TX = 30;
   const FIT_TY = 20;
 
   beforeEach(() => {
-    // Return a deterministic non-zero viewport so the rotation scaling is
-    // unambiguous.  The outer afterEach restores the spy after every test.
     computeFitTargetSpy.mockReturnValue({
       scale: ZOOM_STOPS[0].scale,
       tx:    FIT_TX,
@@ -874,21 +855,13 @@ describe("device rotation — translate values scale by newW/oldW ratio", () => 
   });
 
   it("portrait→landscape: scales translateX and translateY by newW/oldW", async () => {
-    let renderer!: TestRenderer.ReactTestRenderer;
-    await act(async () => {
-      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
+    const renderer = await render(<WarehouseMapView {...BASE_PROPS} />);
     await flushPromises();
 
-    // First layout: portrait.  hasLaidOut becomes true and applyFitIfReady
-    // fires, writing FIT_TX / FIT_TY to savedTX / savedTY (and translateX /
-    // translateY).
     await act(async () => {
       fireOnLayout(renderer, PORTRAIT_W, PORTRAIT_H);
     });
 
-    // Second layout: landscape.  hasLaidOut is already true → the rotation
-    // handler runs: centredTX = savedTX.value × (LANDSCAPE_W / PORTRAIT_W).
     await act(async () => {
       fireOnLayout(renderer, LANDSCAPE_W, LANDSCAPE_H);
     });
@@ -897,25 +870,18 @@ describe("device rotation — translate values scale by newW/oldW ratio", () => 
     const expectedTX = FIT_TX * sizeRatio;
     const expectedTY = FIT_TY * sizeRatio;
 
-    // Both translateX/savedTX and translateY/savedTY must now hold the scaled
-    // values.  (panBounds returns maxX/maxY=10000, so clamping is a no-op.)
     expect(trackedValues.some((sv) => sv.value === expectedTX)).toBe(true);
     expect(trackedValues.some((sv) => sv.value === expectedTY)).toBe(true);
   });
 
   it("landscape→portrait: scales translateX and translateY by newW/oldW", async () => {
-    let renderer!: TestRenderer.ReactTestRenderer;
-    await act(async () => {
-      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
+    const renderer = await render(<WarehouseMapView {...BASE_PROPS} />);
     await flushPromises();
 
-    // First layout: landscape — fit applies FIT_TX / FIT_TY.
     await act(async () => {
       fireOnLayout(renderer, LANDSCAPE_W, LANDSCAPE_H);
     });
 
-    // Second layout: portrait — rotation handler scales by PORTRAIT_W / LANDSCAPE_W.
     await act(async () => {
       fireOnLayout(renderer, PORTRAIT_W, PORTRAIT_H);
     });
@@ -931,32 +897,9 @@ describe("device rotation — translate values scale by newW/oldW ratio", () => 
 
 // =============================================================================
 // Suite 7 — _applyFocus: zone found, zone not found, section disambiguation
-//
-// _applyFocus is the shared focus-pan body called by both the focusAisleNum
-// useEffect and _runPendingFocus.  These tests drive it through a two-step
-// mount sequence to isolate _applyFocus from the initial startup-fit call:
-//
-//   Step 1. Mount without focusAisleNum + fire layout → startup fit runs,
-//           computeFitTarget spy accumulates the fit call.  Spy is then
-//           cleared so only calls originating from _applyFocus are visible.
-//
-//   Step 2. renderer.update(...) with focusAisleNum set → the focusAisleNum
-//           useEffect fires; all preconditions are now met (containerW > 0,
-//           zonesRef populated) so _applyFocus runs immediately.
-//
-// Three behaviours are covered:
-//   a. Zone found  → pinFocusCxV/CyV/ModeV are set, applyFit is called
-//      (evidenced by computeFitTarget being called), onFocusConsumed fires,
-//      onFocusFailed does NOT fire.
-//   b. Zone not found → onFocusFailed + onFocusConsumed fire, applyFit is
-//      NOT called (computeFitTarget NOT called after spy is cleared).
-//   c. focusSectionNum set → the matching section zone is chosen for the pin
-//      centre rather than the first zone returned by the aisle filter.
 // =============================================================================
 
 describe("_applyFocus — zone found / not found / section disambiguation", () => {
-  // Distinctive coordinates so pin CX/CY values cannot collide with any other
-  // tracked shared value.  Chosen to avoid ZOOM_STOPS scale values.
   const FOCUS_ZONE: import("@/hooks/useWarehouseZones").ApiWarehouseZone = {
     id:          1,
     aisleId:     "5",
@@ -970,14 +913,12 @@ describe("_applyFocus — zone found / not found / section disambiguation", () =
     createdAt:   "",
     updatedAt:   "",
   };
-  // pinFocusCxV = svgX + svgWidth/2  = 1000 + 250 = 1250
-  // pinFocusCyV = svgY + svgHeight/2 = 2000 + 150 = 2150
   const EXPECTED_CX = FOCUS_ZONE.svgX + FOCUS_ZONE.svgWidth  / 2;
   const EXPECTED_CY = FOCUS_ZONE.svgY + FOCUS_ZONE.svgHeight / 2;
 
-  // Helper: mount WITHOUT focusAisleNum, lay out, clear spy, then update the
-  // renderer with the supplied extra props.  Returns the renderer so tests can
-  // make additional assertions on the tree.
+  // Helper: mount WITHOUT focusAisleNum, lay out, clear spy, then rerender
+  // with the supplied extra props.
+  // In RTLRN v14, rerender() is async and already wraps in act() internally.
   async function mountThenFocus(
     extraProps: Partial<Parameters<typeof WarehouseMapView>[0]>,
     zones: Array<import("@/hooks/useWarehouseZones").ApiWarehouseZone>,
@@ -985,37 +926,30 @@ describe("_applyFocus — zone found / not found / section disambiguation", () =
     const onFocusConsumed = jest.fn();
     const onFocusFailed   = jest.fn();
 
-    let renderer!: TestRenderer.ReactTestRenderer;
-    await act(async () => {
-      renderer = TestRenderer.create(
-        <WarehouseMapView
-          {...BASE_PROPS}
-          zones={zones}
-          onFocusConsumed={onFocusConsumed}
-          onFocusFailed={onFocusFailed}
-        />,
-      );
-    });
+    const renderer = await render(
+      <WarehouseMapView
+        {...BASE_PROPS}
+        zones={zones}
+        onFocusConsumed={onFocusConsumed}
+        onFocusFailed={onFocusFailed}
+      />,
+    );
     await flushPromises();
 
-    // Fire layout so containerW/H are non-zero (startup fit runs here).
     await act(async () => { fireOnLayout(renderer, 390, 761); });
 
-    // Clear the spy so only computeFitTarget calls from _applyFocus are visible.
     computeFitTargetSpy.mockClear();
 
-    // Update with focusAisleNum (and any other extra props) to trigger _applyFocus.
-    await act(async () => {
-      renderer.update(
-        <WarehouseMapView
-          {...BASE_PROPS}
-          zones={zones}
-          onFocusConsumed={onFocusConsumed}
-          onFocusFailed={onFocusFailed}
-          {...extraProps}
-        />,
-      );
-    });
+    // rerender() wraps in act() internally — no extra act() wrapper needed.
+    await renderer.rerender(
+      <WarehouseMapView
+        {...BASE_PROPS}
+        zones={zones}
+        onFocusConsumed={onFocusConsumed}
+        onFocusFailed={onFocusFailed}
+        {...extraProps}
+      />,
+    );
 
     return { renderer, onFocusConsumed, onFocusFailed };
   }
@@ -1028,10 +962,6 @@ describe("_applyFocus — zone found / not found / section disambiguation", () =
   });
 
   it("zone found: pinFocusModeV is set to 1", async () => {
-    // After _applyFocus runs, pinFocusModeV (initially 0) becomes 1.
-    // ZOOM_STOPS[0].scale = 1.5, so the only tracked shared value that can
-    // hold exactly 1 is pinFocusModeV — all other slots hold 0, 1.5, or
-    // the distinctive CX/CY coordinates from the zone.
     await mountThenFocus({ focusAisleNum: 5 }, [FOCUS_ZONE]);
 
     expect(trackedValues.some((sv) => sv.value === 1)).toBe(true);
@@ -1072,7 +1002,6 @@ describe("_applyFocus — zone found / not found / section disambiguation", () =
   });
 
   it("focusSectionNum: picks the matching section zone's centre, not the first zone's", async () => {
-    // Two zones for the same aisle; section 2 has a clearly distinct CX/CY.
     const baseFields = {
       aisleId: "7", isInventory: true,
       svgY: 3000, svgHeight: 400,
@@ -1080,8 +1009,6 @@ describe("_applyFocus — zone found / not found / section disambiguation", () =
     };
     const ZONE_S1 = { ...baseFields, id: 10, sectionNum: 1, svgX: 100, svgWidth: 200 };
     const ZONE_S2 = { ...baseFields, id: 11, sectionNum: 2, svgX: 500, svgWidth: 200 };
-    // pinFocusCxV for S1 = 100 + 100 = 200
-    // pinFocusCxV for S2 = 500 + 100 = 600  ← expected when focusSectionNum=2
     const expectedCxS2 = ZONE_S2.svgX + ZONE_S2.svgWidth / 2;
     const unexpectedCxS1 = ZONE_S1.svgX + ZONE_S1.svgWidth / 2;
 
@@ -1091,7 +1018,6 @@ describe("_applyFocus — zone found / not found / section disambiguation", () =
     );
 
     expect(trackedValues.some((sv) => sv.value === expectedCxS2)).toBe(true);
-    // The first zone's CX must NOT have been used.
     expect(trackedValues.some((sv) => sv.value === unexpectedCxS1)).toBe(false);
   });
 });

@@ -141,10 +141,16 @@ const fakeScale = { value: 1 } as import("react-native-reanimated").SharedValue<
 //   yCenter      = svgY + svgHeight / 2 = 200 + 200 = 400
 const Y_CENTER = SVG_Y + SVG_HEIGHT / 2;  // 400
 
-/** Return all svg-text nodes from a rendered tree. */
+/**
+ * Return all SVG Text nodes from a rendered tree.
+ * createSvgMock() maps react-native-svg's Text component to the host tag
+ * "Text" (required by test-renderer@1.x's textComponentTypes allowlist).
+ * react-native's own Text component is mapped to "rn-text" by this test's
+ * inline mock, so there is no ambiguity between the two "Text" host elements.
+ */
 function getSvgTextNodes(tree: renderer.ReactTestRenderer) {
   return tree.root.findAll(
-    (n) => (n.type as string) === "svg-text",
+    (n) => (n.type as string) === "Text",
     { deep: true },
   );
 }
