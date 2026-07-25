@@ -198,12 +198,14 @@ describe("useWarehouseZones — slow-auth retry via subscribeToTokenAvailable", 
       renderHook(() => useWarehouseZones());
       await flushPromises();
 
-      // The hook fetches /warehouse-zones (critical) and
-      // /warehouse-zones/alignment (best-effort) in parallel on every attempt;
-      // count only the critical zones calls for the retry assertion.
+      // The hook fetches /warehouse-zones (critical), /warehouse-zones/alignment
+      // and /warehouse-zones/anchors (both best-effort) in parallel on every
+      // attempt; count only the critical zones calls for the retry assertion.
       const countZonesCalls = () =>
         mockFetchWithAuth.mock.calls.filter(
-          (c) => typeof c[0] === "string" && !String(c[0]).includes("/alignment"),
+          (c) => typeof c[0] === "string"
+            && !String(c[0]).includes("/alignment")
+            && !String(c[0]).includes("/anchors"),
         ).length;
       const callsAfterInitialFail = countZonesCalls();
 

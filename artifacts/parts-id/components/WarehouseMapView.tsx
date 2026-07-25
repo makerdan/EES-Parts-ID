@@ -707,6 +707,13 @@ export interface WarehouseMapViewProps {
    * on top of the shared pan/zoom viewport. Defaults to identity when omitted.
    */
   zoneAlignment?: { translateX: number; translateY: number; scale: number };
+  /**
+   * Optional affine transform string (SVG matrix(a,b,c,d,e,f)) computed from
+   * 3 named anchor points. When present, applied as the outer `<G transform>`
+   * on the zone overlay layer; ZoneAlignment is applied as a nested fine-trim.
+   * Computed by computeAnchorTransform + matrixToSvgString in mapAnchorTransform.ts.
+   */
+  anchorTransform?: string | null;
   zonesLoading: boolean;
   zonesError: boolean;
   onZonesRetry: () => void;
@@ -910,6 +917,7 @@ export function MapPinEmoji({
 export function WarehouseMapView({
   zones,
   zoneAlignment,
+  anchorTransform,
   zonesLoading,
   zonesError,
   onZonesRetry,
@@ -2378,9 +2386,17 @@ export function WarehouseMapView({
                   },
                 )
               : null}
-            <G transform={(() => { const a = safeZoneAlignment(zoneAlignment); return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`; })()}>
-              {zoneOverlays}
-            </G>
+            {anchorTransform ? (
+              <G transform={anchorTransform}>
+                <G transform={(() => { const a = safeZoneAlignment(zoneAlignment); return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`; })()}>
+                  {zoneOverlays}
+                </G>
+              </G>
+            ) : (
+              <G transform={(() => { const a = safeZoneAlignment(zoneAlignment); return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`; })()}>
+                {zoneOverlays}
+              </G>
+            )}
           </Svg>
         </Animated.View>
       </GestureDetector>

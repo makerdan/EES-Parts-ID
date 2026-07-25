@@ -358,6 +358,22 @@ export default function AdminDashboardScreen() {
             <DailyBarChart data={stats.screenViews.dailyLast30Days} colors={colors} />
           </View>
 
+          {/* Admin tools */}
+          <SectionHeader title="Map Calibration" colors={colors} />
+          <Pressable
+            onPress={() => router.push("/admin-map-calibration")}
+            style={({ pressed }) => [
+              styles.calibrationBtn,
+              { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+            ]}
+          >
+            <Feather name="crosshair" size={16} color={colors.foreground} />
+            <Text style={[styles.calibrationBtnText, { color: colors.foreground }]}>
+              Anchor-Point Calibration
+            </Text>
+            <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+          </Pressable>
+
           <View style={{ height: 32 }} />
         </ScrollView>
       ) : null}
@@ -416,6 +432,17 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  calibrationBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 4,
+  },
+  calibrationBtnText: { flex: 1, fontSize: 14, fontFamily: "Inter_500Medium" },
   tableLeft: { flex: 1, fontSize: 13, fontFamily: "Inter_400Regular", marginRight: 12 },
   tableRight: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   chartCard: {

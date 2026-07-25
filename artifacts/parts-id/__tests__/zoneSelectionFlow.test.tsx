@@ -85,6 +85,7 @@ const mockRefetchZones = jest.fn();
 jest.mock("@/hooks/useWarehouseZones", () => ({
   useWarehouseZones: jest.fn(() => ({
     zones:   [],
+    anchors: [],
     loading: false,
     error:   false,
     refetch: mockRefetchZones,

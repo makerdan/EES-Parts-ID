@@ -174,9 +174,16 @@ beforeEach(() => {
 
 describe("cleanStaleCacheDirs call site — hash present at mount", () => {
   beforeEach(() => {
-    // hasCachedData() = true → SVG-load useEffect returns early (no fetch).
+    // getCachedData() must return non-null AND have a non-empty innerXml so the
+    // SVG-load useEffect hits the fast-path early return (`isAdequate = true`)
+    // on BOTH native and web.  A stale entry with innerXml:"" would fail the
+    // isAdequate check on web (the task-706 web-cache-heal guard) and cause
+    // loadSvgAsset() to run, polluting _svgLoadPromise and breaking Path B.
+    const CACHED: { uri: string; innerXml: string; xml: string } = {
+      uri: "x", innerXml: "<g/>", xml: "<svg><g/></svg>",
+    };
     mockHasCachedData.mockReturnValue(true);
-    mockGetCachedData.mockReturnValue(null);
+    mockGetCachedData.mockReturnValue(CACHED);
   });
 
   it("calls cleanStaleCacheDirs with the correct hash when getCachedHash returns a string on mount", async () => {

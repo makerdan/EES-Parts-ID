@@ -6,7 +6,7 @@ import {
   UpdateZoneAlignmentBody,
 } from "@workspace/api-zod";
 import { db } from "@workspace/db";
-import { adminPreferencesTable, inventoryTable, warehouseZoneTable } from "@workspace/db";
+import { adminPreferencesTable, inventoryTable, mapAnchorPointsTable, warehouseZoneTable } from "@workspace/db";
 import { asc, eq, sql } from "drizzle-orm";
 import { Router } from "express";
 
@@ -30,6 +30,17 @@ router.get("/", async (_req, res) => {
     res.json(ListWarehouseZonesResponse.parse({ zones }));
   } catch {
     res.status(500).json({ error: "Failed to list zones" });
+  }
+});
+
+// GET /warehouse-zones/anchors — public read (all authenticated users)
+// Returns the saved anchor points used to compute the affine zone-overlay transform.
+router.get("/anchors", async (_req, res) => {
+  try {
+    const rows = await db.select().from(mapAnchorPointsTable);
+    res.json({ anchors: rows });
+  } catch {
+    res.status(500).json({ error: "Failed to list map anchors" });
   }
 });
 
