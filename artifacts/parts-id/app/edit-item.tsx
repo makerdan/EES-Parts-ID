@@ -428,14 +428,16 @@ export default function EditItemScreen() {
       setNewKeyword("");
     }
 
-    // Build current dimensions object for comparison
+    // Build current dimensions object for comparison.
+    // Use itemRef.current?.dimensions (not the render-time `existingDims` closure)
+    // so a mid-edit item refresh doesn't produce a stale baseline.
     const newDims: PartDimensions = {
       length: parseDimField(dimLength),
       width: parseDimField(dimWidth),
       height: parseDimField(dimHeight),
       diameter: parseDimField(dimDiameter),
     };
-    const oldDims = existingDims ?? {};
+    const oldDims = itemRef.current?.dimensions ?? {};
     const dimsChanged =
       newDims.length !== (oldDims.length ?? null) ||
       newDims.width !== (oldDims.width ?? null) ||
@@ -443,13 +445,15 @@ export default function EditItemScreen() {
       newDims.diameter !== (oldDims.diameter ?? null);
 
     try {
-      const saves: Array<Promise<unknown>> = [];
+      const ops: Array<{ field: string; restoreFn: () => void; promise: Promise<unknown> }> = [];
 
       // ?? "" handles newly-added items where description is null — null becomes ""
       // so a first-time description edit is correctly detected as a change.
       if (description.trim() !== (current.description ?? "").trim()) {
-        saves.push(
-          fetch(`${API_BASE}/inventory/${current.id}/description`, {
+        ops.push({
+          field: "description",
+          restoreFn: () => setDescription(current.description ?? ""),
+          promise: fetch(`${API_BASE}/inventory/${current.id}/description`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
             body: JSON.stringify({ description: description.trim() }),
@@ -459,24 +463,44 @@ export default function EditItemScreen() {
               throw new Error(d.error ?? `HTTP ${res.status}`);
             }
           }),
-        );
+        });
       }
 
       if (JSON.stringify(finalBins) !== JSON.stringify(current.binLocations ?? [])) {
-        saves.push(updateBinsMutation.mutateAsync({ id: current.id, data: { binLocations: finalBins } }));
+        ops.push({
+          field: "bins",
+          restoreFn: () => setBins(current.binLocations ?? []),
+          promise: updateBinsMutation.mutateAsync({ id: current.id, data: { binLocations: finalBins } }),
+        });
       }
 
       if (JSON.stringify(finalBarcodes) !== JSON.stringify(current.barcodes ?? [])) {
-        saves.push(updateBarcodesMutation.mutateAsync({ id: current.id, data: { barcodes: finalBarcodes } }));
+        ops.push({
+          field: "barcodes",
+          restoreFn: () => setBarcodes(current.barcodes ?? []),
+          promise: updateBarcodesMutation.mutateAsync({ id: current.id, data: { barcodes: finalBarcodes } }),
+        });
       }
 
       if (JSON.stringify(finalKeywords) !== JSON.stringify(current.aiKeywords ?? [])) {
-        saves.push(updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords: finalKeywords } }));
+        ops.push({
+          field: "keywords",
+          restoreFn: () => setKeywords(current.aiKeywords ?? []),
+          promise: updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords: finalKeywords } }),
+        });
       }
 
       if (dimsChanged) {
-        saves.push(
-          fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
+        ops.push({
+          field: "dimensions",
+          restoreFn: () => {
+            const savedDims = itemRef.current?.dimensions;
+            setDimLength(fmtDim(savedDims?.length));
+            setDimWidth(fmtDim(savedDims?.width));
+            setDimHeight(fmtDim(savedDims?.height));
+            setDimDiameter(fmtDim(savedDims?.diameter));
+          },
+          promise: fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
             body: JSON.stringify(newDims),
@@ -486,7 +510,7 @@ export default function EditItemScreen() {
               throw new Error(d.error ?? `HTTP ${res.status}`);
             }
           }),
-        );
+        });
       }
 
       let capturedImageUrl: string | null | undefined = undefined;
@@ -498,8 +522,11 @@ export default function EditItemScreen() {
       if (photoUri1 !== originalImageUrl) {
         if (photoUri1) {
           const slot1Uri = photoUri1;
-          saves.push(
-            (async () => {
+          const prevPhotoUri1 = originalImageUrl;
+          ops.push({
+            field: "photo",
+            restoreFn: () => setPhotoUri1(prevPhotoUri1),
+            promise: (async () => {
               const base64 = await FileSystem.readAsStringAsync(slot1Uri, { encoding: "base64" });
               const res = await fetch(`${API_BASE}/inventory/${current.id}/photo`, {
                 method: "PATCH",
@@ -513,10 +540,13 @@ export default function EditItemScreen() {
               const d = await res.json() as { imageUrl?: string | null };
               capturedImageUrl = d.imageUrl ?? null;
             })(),
-          );
+          });
         } else {
-          saves.push(
-            fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+          const prevPhotoUri1 = originalImageUrl;
+          ops.push({
+            field: "photo",
+            restoreFn: () => setPhotoUri1(prevPhotoUri1),
+            promise: fetch(`${API_BASE}/inventory/${current.id}/photo`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
               body: JSON.stringify({ remove: true, slot: 1 }),
@@ -527,15 +557,18 @@ export default function EditItemScreen() {
               }
               capturedImageUrl = null;
             }),
-          );
+          });
         }
       }
 
       if (photoUri2 !== originalImageUrl2) {
         if (photoUri2) {
           const slot2Uri = photoUri2;
-          saves.push(
-            (async () => {
+          const prevPhotoUri2 = originalImageUrl2;
+          ops.push({
+            field: "photo2",
+            restoreFn: () => setPhotoUri2(prevPhotoUri2),
+            promise: (async () => {
               const base64 = await FileSystem.readAsStringAsync(slot2Uri, { encoding: "base64" });
               const res = await fetch(`${API_BASE}/inventory/${current.id}/photo`, {
                 method: "PATCH",
@@ -549,10 +582,13 @@ export default function EditItemScreen() {
               const d = await res.json() as { imageUrl2?: string | null };
               capturedImageUrl2 = d.imageUrl2 ?? null;
             })(),
-          );
+          });
         } else {
-          saves.push(
-            fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+          const prevPhotoUri2 = originalImageUrl2;
+          ops.push({
+            field: "photo2",
+            restoreFn: () => setPhotoUri2(prevPhotoUri2),
+            promise: fetch(`${API_BASE}/inventory/${current.id}/photo`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
               body: JSON.stringify({ remove: true, slot: 2 }),
@@ -563,20 +599,89 @@ export default function EditItemScreen() {
               }
               capturedImageUrl2 = null;
             }),
-          );
+          });
         }
       }
 
-      if (saves.length > 0) {
-        const settled = await Promise.allSettled(saves);
-        const failures = settled.filter((r): r is PromiseRejectedResult => r.status === "rejected");
-        if (failures.length > 0) {
-          const firstMsg = failures[0].reason instanceof Error
-            ? failures[0].reason.message
-            : String(failures[0].reason ?? "Save failed");
-          throw new Error(firstMsg);
+      if (ops.length > 0) {
+        const settled = await Promise.allSettled(ops.map(o => o.promise));
+
+        const failedIndices = settled
+          .map((r, i) => r.status === "rejected" ? i : -1)
+          .filter(i => i >= 0);
+
+        if (failedIndices.length > 0) {
+          // Revert UI state for each field that failed.
+          for (const i of failedIndices) {
+            ops[i].restoreFn();
+          }
+
+          // Which fields succeeded?
+          const succeededFields = new Set(
+            ops.filter((_, i) => settled[i].status === "fulfilled").map(o => o.field),
+          );
+
+          // Restore the full cache snapshot first, then re-apply patches for
+          // fields that succeeded so they remain visible to the user.
+          for (const [key, data] of inventorySnapshot) {
+            queryClient.setQueryData(key, data);
+          }
+          for (const [key, data] of searchSnapshot) {
+            queryClient.setQueryData(key, data);
+          }
+
+          if (succeededFields.size > 0) {
+            const patchItemPartial = (i: InventoryItem): InventoryItem => {
+              if (i.id !== current.id) return i;
+              return {
+                ...i,
+                ...(succeededFields.has("description") ? { description: description.trim() } : {}),
+                ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
+                ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
+                ...(succeededFields.has("barcodes") ? { barcodes: finalBarcodes } : {}),
+                ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
+                ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+                ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
+              };
+            };
+            queryClient.setQueriesData<InventoryListResponse>(
+              { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+              (old) => old ? { ...old, items: old.items.map(patchItemPartial) } : old,
+            );
+            queryClient.setQueriesData<SearchInventoryResponse>(
+              { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+              (old) => {
+                if (!old) return old;
+                const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+                  r.item.id === current.id ? { ...r, item: patchItemPartial(r.item) } : r;
+                return { ...old, results: old.results.map(patchResult), sizeUnknownResults: old.sizeUnknownResults?.map(patchResult) };
+              },
+            );
+            if (succeededFields.has("photo") && capturedImageUrl !== undefined) setPhotoUri1(capturedImageUrl);
+            if (succeededFields.has("photo2") && capturedImageUrl2 !== undefined) setPhotoUri2(capturedImageUrl2);
+          }
+
+          await queryClient.invalidateQueries(
+            { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+          );
+          await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+
+          const firstFailure = settled[failedIndices[0]] as PromiseRejectedResult;
+          const failMsg = firstFailure.reason instanceof Error
+            ? firstFailure.reason.message
+            : String(firstFailure.reason ?? "Save failed");
+          if (failMsg.includes("401")) {
+            setErrorMsg("Admin session expired. Re-unlock and try again.");
+          } else if (failMsg && failMsg !== "Save failed" && !failMsg.startsWith("HTTP 5")) {
+            setErrorMsg(failMsg);
+          } else {
+            setErrorMsg("Could not save changes. Check connection and try again.");
+          }
+          setSaveStatus("error");
+          return;
         }
 
+        // All fields saved — patch cache and navigate away.
         const patchItem = (i: InventoryItem): InventoryItem => {
           if (i.id !== current.id) return i;
           return {
