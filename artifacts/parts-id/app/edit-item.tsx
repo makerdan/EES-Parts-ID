@@ -96,6 +96,16 @@ export default function EditItemScreen() {
   const [keywords, setKeywords] = useState<Array<string>>(item?.aiKeywords ?? []);
   const [newKeyword, setNewKeyword] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [fieldSaveErrors, setFieldSaveErrors] = useState<{
+    description?: string;
+    bins?: string;
+    barcodes?: string;
+    keywords?: string;
+    dimensions?: string;
+    photo?: string;
+    photo2?: string;
+  }>({});
+  const [committedFields, setCommittedFields] = useState<Set<string>>(new Set());
   const [scannerOpen, setScannerOpen] = useState(false);
   const [measureOpen, setMeasureOpen] = useState(false);
   const [lidarAvailable, setLidarAvailable] = useState(false);
@@ -386,6 +396,7 @@ export default function EditItemScreen() {
     }
     setSaveStatus("saving");
     setErrorMsg(null);
+    setFieldSaveErrors({});
 
     const listKeyPrefix = getListInventoryQueryKey()[0];
     const inventorySnapshot = queryClient.getQueriesData<InventoryListResponse>(
@@ -666,16 +677,42 @@ export default function EditItemScreen() {
           );
           await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
 
-          const firstFailure = settled[failedIndices[0]] as PromiseRejectedResult;
-          const failMsg = firstFailure.reason instanceof Error
-            ? firstFailure.reason.message
-            : String(firstFailure.reason ?? "Save failed");
-          if (failMsg.includes("401")) {
+          const newFieldErrors: typeof fieldSaveErrors = {};
+          let has401 = false;
+          settled.forEach((result, i) => {
+            if (result.status === "rejected") {
+              const msg = result.reason instanceof Error ? result.reason.message : String(result.reason ?? "Save failed");
+              if (msg.includes("401")) has401 = true;
+              newFieldErrors[ops[i].field as keyof typeof fieldSaveErrors] = has401
+                ? "Session expired — re-unlock admin access"
+                : "Could not save — check connection";
+            }
+          });
+          setFieldSaveErrors(newFieldErrors);
+          setCommittedFields(prev => {
+            const next = new Set(prev);
+            succeededFields.forEach(f => next.add(f));
+            return next;
+          });
+
+          const fieldLabel: Record<string, string> = {
+            description: "Description",
+            bins: "Bins",
+            barcodes: "Barcodes",
+            keywords: "Keywords",
+            dimensions: "Dimensions",
+            photo: "Photo 1",
+            photo2: "Photo 2",
+          };
+          const savedLabels = [...succeededFields].map(f => fieldLabel[f] ?? f);
+          const failedLabels = Object.keys(newFieldErrors).map(f => fieldLabel[f] ?? f);
+          const parts: Array<string> = [];
+          if (savedLabels.length > 0) parts.push(`${savedLabels.join(", ")} saved`);
+          if (failedLabels.length > 0) parts.push(`${failedLabels.join(", ")} failed`);
+          if (has401) {
             setErrorMsg("Admin session expired. Re-unlock and try again.");
-          } else if (failMsg && failMsg !== "Save failed" && !failMsg.startsWith("HTTP 5")) {
-            setErrorMsg(failMsg);
           } else {
-            setErrorMsg("Could not save changes. Check connection and try again.");
+            setErrorMsg(parts.join(" · ") + " — check connection and retry");
           }
           setSaveStatus("error");
           return;
@@ -825,7 +862,12 @@ export default function EditItemScreen() {
           keyboardShouldPersistTaps="handled"
         >
           {/* Photos */}
-          <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>PHOTOS</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>PHOTOS</Text>
+            {(committedFields.has("photo") || committedFields.has("photo2")) ? (
+              <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+            ) : null}
+          </View>
           <View style={s.photoSlots}>
             <PartPhotoPicker
               slot={1}
@@ -833,16 +875,27 @@ export default function EditItemScreen() {
               value={photoUri1}
               onChange={(uri) => { setPhotoUri1(uri); setSaveStatus("idle"); }}
             />
+            {fieldSaveErrors.photo ? (
+              <Text style={[s.fieldHint, { color: colors.destructive }]}>{fieldSaveErrors.photo}</Text>
+            ) : null}
             <PartPhotoPicker
               slot={2}
               label="Detail / Wire Frame"
               value={photoUri2}
               onChange={(uri) => { setPhotoUri2(uri); setSaveStatus("idle"); }}
             />
+            {fieldSaveErrors.photo2 ? (
+              <Text style={[s.fieldHint, { color: colors.destructive }]}>{fieldSaveErrors.photo2}</Text>
+            ) : null}
           </View>
 
           {/* Description */}
-          <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>DESCRIPTION</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 24 }}>
+            <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
+            {committedFields.has("description") ? (
+              <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+            ) : null}
+          </View>
           <KeyboardDoneInput
             value={description}
             onChangeText={(v) => { setDescription(v); setSaveStatus("idle"); }}
@@ -850,10 +903,13 @@ export default function EditItemScreen() {
             placeholderTextColor={colors.mutedForeground}
             multiline
             numberOfLines={3}
-            style={[s.descInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+            style={[s.descInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.description ? colors.destructive : colors.border, color: colors.foreground }]}
             autoCorrect
             autoCapitalize="sentences"
           />
+          {fieldSaveErrors.description ? (
+            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.description}</Text>
+          ) : null}
 
           {/* Size */}
           <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>SIZE</Text>
@@ -985,9 +1041,14 @@ export default function EditItemScreen() {
 
           {/* Bins */}
           <View onLayout={(e) => { sectionYRef.current.bins = e.nativeEvent.layout.y; }}>
-          <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
-            BIN LOCATIONS ({bins.length})
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 24 }}>
+            <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>
+              BIN LOCATIONS ({bins.length})
+            </Text>
+            {committedFields.has("bins") ? (
+              <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+            ) : null}
+          </View>
           <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>Tap a bin to remove it.</Text>
           <View style={s.chipRow}>
             {bins.map((b) => (
@@ -1026,13 +1087,21 @@ export default function EditItemScreen() {
               </Text>
             </Pressable>
           </View>
+          {fieldSaveErrors.bins ? (
+            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.bins}</Text>
+          ) : null}
           </View>
 
           {/* Barcodes */}
           <View onLayout={(e) => { sectionYRef.current.barcodes = e.nativeEvent.layout.y; }}>
-          <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
-            BARCODES ({barcodes.length})
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 24 }}>
+            <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>
+              BARCODES ({barcodes.length})
+            </Text>
+            {committedFields.has("barcodes") ? (
+              <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+            ) : null}
+          </View>
           <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>Tap a barcode to remove it.</Text>
           <View style={s.chipRow}>
             {barcodes.map((bc) => (
@@ -1081,11 +1150,19 @@ export default function EditItemScreen() {
               </Text>
             </Pressable>
           </View>
+          {fieldSaveErrors.barcodes ? (
+            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.barcodes}</Text>
+          ) : null}
           </View>
 
           {/* Dimensions */}
           <View style={[s.dimHeader, { marginTop: 24 }]}>
-            <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>DIMENSIONS (mm)</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>DIMENSIONS (mm)</Text>
+              {committedFields.has("dimensions") ? (
+                <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+              ) : null}
+            </View>
             {Platform.OS === "ios" ? (
               lidarAvailable ? (
                 <Pressable
@@ -1132,7 +1209,7 @@ export default function EditItemScreen() {
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
                 keyboardType="numeric"
-                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
               />
             </View>
             <View style={s.dimField}>
@@ -1143,7 +1220,7 @@ export default function EditItemScreen() {
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
                 keyboardType="numeric"
-                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
               />
             </View>
             <View style={s.dimField}>
@@ -1154,7 +1231,7 @@ export default function EditItemScreen() {
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
                 keyboardType="numeric"
-                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
               />
             </View>
             <View style={s.dimField}>
@@ -1165,10 +1242,13 @@ export default function EditItemScreen() {
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
                 keyboardType="numeric"
-                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
               />
             </View>
           </View>
+          {fieldSaveErrors.dimensions ? (
+            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.dimensions}</Text>
+          ) : null}
           {(dimLength || dimWidth || dimHeight || dimDiameter) ? (
             <Text style={[s.dimSummary, { color: colors.primary }]}>
               {[
@@ -1180,9 +1260,14 @@ export default function EditItemScreen() {
 
           {/* Keywords */}
           <View onLayout={(e) => { sectionYRef.current.keywords = e.nativeEvent.layout.y; }}>
-          <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
-            AI KEYWORDS ({keywords.length})
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 24 }}>
+            <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>
+              AI KEYWORDS ({keywords.length})
+            </Text>
+            {committedFields.has("keywords") ? (
+              <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+            ) : null}
+          </View>
           <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>Tap a keyword to remove it.</Text>
           <View style={s.chipRow}>
             {keywords.map((kw) => (
@@ -1196,6 +1281,9 @@ export default function EditItemScreen() {
               </Pressable>
             ))}
           </View>
+          {fieldSaveErrors.keywords ? (
+            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.keywords}</Text>
+          ) : null}
           {keywords.length === 0 ? (
             <Text style={[s.emptyHint, { color: colors.mutedForeground }]}>No keywords yet. Add some below.</Text>
           ) : null}

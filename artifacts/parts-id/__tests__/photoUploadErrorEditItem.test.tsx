@@ -318,10 +318,11 @@ describe("EditItemScreen – FileSystem.readAsStringAsync failure surfaces as er
     await act(async () => { saveBtn!.props.onPress(); });
     await flushPromises();
 
-    // An error banner must be visible.
+    // An error banner or inline field error must be visible.
     expect(
       hasText(tree.root, "disk read failed") ||
-      hasText(tree.root, "Could not save changes")
+      hasText(tree.root, "check connection") ||
+      hasText(tree.root, "Photo 1 failed")
     ).toBe(true);
   });
 
@@ -355,7 +356,8 @@ describe("EditItemScreen – FileSystem.readAsStringAsync failure surfaces as er
 
     expect(
       hasText(tree.root, "slot 2 disk error") ||
-      hasText(tree.root, "Could not save changes")
+      hasText(tree.root, "check connection") ||
+      hasText(tree.root, "Photo 2 failed")
     ).toBe(true);
   });
 });
@@ -398,7 +400,8 @@ describe("EditItemScreen – PATCH /photo non-ok response surfaces as error bann
     // The specific error message from the server or generic fallback must appear.
     expect(
       hasText(tree.root, "Unsupported image format") ||
-      hasText(tree.root, "Could not save changes")
+      hasText(tree.root, "check connection") ||
+      hasText(tree.root, "Photo 1 failed")
     ).toBe(true);
   });
 
