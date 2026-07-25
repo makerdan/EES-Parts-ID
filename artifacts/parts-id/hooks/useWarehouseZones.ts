@@ -40,6 +40,17 @@ export type ApiWarehouseZone = {
   updatedAt: string;
 };
 
+/** A saved anchor point mapping an SVG coordinate to a world (zone-space) coordinate. */
+export type MapAnchorRow = {
+  id: number;
+  name: string;
+  svgX: number;
+  svgY: number;
+  worldX: number;
+  worldY: number;
+  updatedAt: string;
+};
+
 /** Global zone-layer calibration offset applied uniformly to every zone. */
 export type ZoneAlignment = {
   translateX: number;
@@ -62,12 +73,14 @@ function normalizeAlignment(v: unknown): ZoneAlignment {
 type ZoneCache = {
   zones: Array<ApiWarehouseZone>;
   alignment?: ZoneAlignment;
+  anchors?: Array<MapAnchorRow>;
 };
 
 export function useWarehouseZones() {
   const [zones, setZones] = useState<Array<ApiWarehouseZone>>([]);
   const [alignment, setAlignment] = useState<ZoneAlignment>(IDENTITY_ALIGNMENT);
   const [alignmentStale, setAlignmentStale] = useState(false);
+  const [anchors, setAnchors] = useState<Array<MapAnchorRow>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const mountedRef = useRef(true);
@@ -102,10 +115,11 @@ export function useWarehouseZones() {
     //     and the error badge should appear.
     const hadToken = getAuthToken() !== null;
     try {
-      // Fetch zones and the global alignment offset in parallel. Zones are the
-      // critical payload (retried); the alignment is best-effort and falls back
-      // to identity if it fails, so a missing offset never breaks the map.
-      const [data, alignmentData] = await Promise.all([
+      // Fetch zones, alignment offset, and anchor points in parallel. Zones are
+      // the critical payload (retried); alignment and anchors are best-effort and
+      // fall back to identity/empty if they fail, so partial failures never
+      // break the map.
+      const [data, alignmentData, anchorsData] = await Promise.all([
         retryAsync(async () => {
           const res = await fetchWithAuth(`${API_BASE}/warehouse-zones`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -121,18 +135,29 @@ export function useWarehouseZones() {
             return { alignment: IDENTITY_ALIGNMENT, stale: false };
           }
         })(),
+        (async (): Promise<Array<MapAnchorRow>> => {
+          try {
+            const res = await fetchWithAuth(`${API_BASE}/warehouse-zones/anchors`);
+            if (!res.ok) return [];
+            const json = (await res.json()) as { anchors: Array<MapAnchorRow> };
+            return Array.isArray(json.anchors) ? json.anchors : [];
+          } catch {
+            return [];
+          }
+        })(),
       ]);
       if (mountedRef.current) {
         setZones(data.zones);
         setAlignment(alignmentData.alignment);
         setAlignmentStale(alignmentData.stale);
+        setAnchors(anchorsData);
         setError(false);
         setLoading(false);
         hasDataRef.current = true;
         tokenExpiredMidSessionRef.current = false;
         lastFetchedAtRef.current = Date.now();
       }
-      const entry: ZoneCache = { zones: data.zones, alignment: alignmentData.alignment };
+      const entry: ZoneCache = { zones: data.zones, alignment: alignmentData.alignment, anchors: anchorsData };
       await AsyncStorage.setItem(ZONES_CACHE_KEY, JSON.stringify(entry)).catch(() => {});
     } catch (err) {
       if (mountedRef.current) {
@@ -174,6 +199,7 @@ export function useWarehouseZones() {
           if (mountedRef.current) {
             setZones(cached.zones);
             setAlignment(normalizeAlignment(cached.alignment));
+            if (Array.isArray(cached.anchors)) setAnchors(cached.anchors);
             setLoading(false);
             hasDataRef.current = true;
           }
@@ -223,5 +249,5 @@ export function useWarehouseZones() {
     return () => unsubscribeFromTokenAvailable(handleTokenAvailable);
   }, [refetch]);
 
-  return { zones, alignment, alignmentStale, loading, error, refetch };
+  return { zones, alignment, alignmentStale, anchors, loading, error, refetch };
 }

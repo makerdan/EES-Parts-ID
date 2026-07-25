@@ -31,9 +31,9 @@ import { WarehouseMapView } from "@/components/WarehouseMapView";
 import { ZoneActionMenu } from "@/components/ZoneActionMenu";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
-import { type ApiWarehouseZone,useWarehouseZones } from "@/hooks/useWarehouseZones";
-import type { WarehouseZone } from "@/lib/aisleHierarchy";
-import { parseBin } from "@/lib/aisleHierarchy";
+import { type ApiWarehouseZone, useWarehouseZones } from "@/hooks/useWarehouseZones";
+import { parseBin, type WarehouseZone } from "@/lib/aisleHierarchy";
+import { computeAnchorTransform, matrixToSvgString } from "@/utils/mapAnchorTransform";
 import { FUSE_CACHE_KEY, parseFuseCacheItems } from "@/utils/offlineBarcode";
 import { swallowOrientationNotAvailable } from "@/utils/orientationLock";
 import { reportStorageError } from "@/utils/storageErrorReporter";
@@ -173,7 +173,23 @@ export default function MapScreen() {
   const [focusSectionNum, setFocusSectionNum] = useState<number | null>(null);
 
   // Zone data — owned at this level so useFocusEffect can trigger refetch
-  const { zones, alignment: zoneAlignment, alignmentStale, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
+  const { zones, alignment: zoneAlignment, alignmentStale, anchors: mapAnchors, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
+
+  // Anchor-point calibration — applies to all authenticated users.
+  // computeAnchorTransform returns null when fewer than 3 anchors are saved,
+  // which signals WarehouseMapView to fall back to ZoneAlignment sliders.
+  const anchorTransform = React.useMemo(() => {
+    if (!mapAnchors || mapAnchors.length < 3) return null;
+    const m = computeAnchorTransform(mapAnchors.map(a => ({
+      id: a.id,
+      name: a.name,
+      svgX: a.svgX,
+      svgY: a.svgY,
+      worldX: a.worldX,
+      worldY: a.worldY,
+    })));
+    return m ? matrixToSvgString(m) : null;
+  }, [mapAnchors]);
 
   /**
    * Zone IDs for primary pins — highlights every zone whose aisle contains
@@ -371,7 +387,14 @@ export default function MapScreen() {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Warehouse Map</Text>
+        <View style={styles.headerTitleRow}>
+          <Text style={[styles.headerTitle, { color: colors.foreground }]}>Warehouse Map</Text>
+          {isAdmin && anchorTransform !== null && (
+            <View style={[styles.anchorActiveBadge, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "50" }]}>
+              <Text style={[styles.anchorActiveBadgeText, { color: colors.primary }]}>Anchors active</Text>
+            </View>
+          )}
+        </View>
         <View style={styles.headerActions}>
           <View style={styles.cycleCountWrapper}>
             <Pressable
@@ -547,6 +570,7 @@ export default function MapScreen() {
         <WarehouseMapView
           zones={zones}
           zoneAlignment={zoneAlignment}
+          anchorTransform={anchorTransform}
           zonesLoading={zonesLoading}
           zonesError={zonesError}
           onZonesRetry={refetchZones}
@@ -625,7 +649,15 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderBottomWidth: 1,
   },
+  headerTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
+  anchorActiveBadge: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  anchorActiveBadgeText: { fontSize: 10, fontFamily: "Inter_600SemiBold" },
   headerActions: {
     flexDirection: "row",
     alignItems: "center",

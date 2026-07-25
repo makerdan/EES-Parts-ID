@@ -86,6 +86,7 @@ jest.mock("@/utils/offlineBarcode", () => ({
 jest.mock("@/hooks/useWarehouseZones", () => ({
   useWarehouseZones: jest.fn(() => ({
     zones:   [],
+    anchors: [],
     loading: false,
     error:   false,
     refetch: jest.fn(),
