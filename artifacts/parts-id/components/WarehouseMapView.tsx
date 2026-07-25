@@ -2109,7 +2109,9 @@ export function WarehouseMapView({
       { translateY: translateY.value },
       { scale: scale.value },
     ],
-    ...(Platform.OS === "web" ? { cursor: "grab" as unknown as "auto" } : {}),
+    // @ts-ignore — `cursor` is a web-only CSS property; the RN StyleSheet type
+    // does not include it, but it is accepted by react-native-web at runtime.
+    ...(Platform.OS === "web" ? { cursor: "grab" } : {}),
   }));
 
   // ── SVG zone overlays (viewBox coordinate space) ───────────────────────────

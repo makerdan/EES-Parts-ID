@@ -41,16 +41,13 @@ export function AuthGate() {
     const atEditItem = seg0 === "edit-item";
 
     if (!isSignedIn) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (!atLogin && !atSignUp && !atSsoCallback) router.replace("/login" as any);
+      if (!atLogin && !atSignUp && !atSsoCallback) router.replace({ pathname: "/login" });
     } else {
       if (approvalStatus === "loading" || approvalStatus === "idle") return;
       if (approvalStatus === "pending" && !atPending) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        router.replace("/pending" as any);
+        router.replace({ pathname: "/pending" });
       } else if (approvalStatus === "banned" && !atBanned) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        router.replace("/banned" as any);
+        router.replace({ pathname: "/banned" });
       } else if (
         approvalStatus === "approved" &&
         !inTabs &&

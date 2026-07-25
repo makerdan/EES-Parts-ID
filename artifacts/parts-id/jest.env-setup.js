@@ -14,3 +14,19 @@ if (!process.env.EXPO_PUBLIC_API_BASE && !process.env.EXPO_PUBLIC_DOMAIN) {
   // origin as "unconfigured dev fallback" and throws in non-dev builds.
   process.env.EXPO_PUBLIC_DOMAIN = "jest-tests.local";
 }
+
+// Suppress the react-test-renderer@19 deprecation console.error that fires
+// on every TestRenderer.create() call.  The warning is purely cosmetic — it
+// does not indicate a test failure — and generates substantial noise across
+// the parts-id suite.  Filter it out globally here so individual test files
+// do not need per-file suppressors.
+const _origConsoleError = console.error.bind(console);
+console.error = (...args) => {
+  if (
+    typeof args[0] === "string" &&
+    args[0].includes("react-test-renderer is deprecated")
+  ) {
+    return;
+  }
+  _origConsoleError(...args);
+};
