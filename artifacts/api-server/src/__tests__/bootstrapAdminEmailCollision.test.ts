@@ -67,24 +67,35 @@ beforeEach(async () => {
   // Reproduce the confirmed broken state: two rows, both admin/approved — one
   // stale bootstrap-admin row with an empty email, and a separate row already
   // holding the admin's real email under a different clerk_user_id.
-  await db.delete(usersTable).where(eq(usersTable.email, ADMIN_EMAIL));
-  await db.delete(usersTable).where(eq(usersTable.clerkUserId, ADMIN_TEST_USER_ID));
+  //
+  // Use upsert (onConflictDoUpdate) instead of delete+insert so this is safe
+  // on a shared DB where parallel suites may also hold the jest-admin-user row.
+  // Delete the FOREIGN row first (it has a unique email that the admin row
+  // needs to be clear of), then upsert both rows atomically.
   await db.delete(usersTable).where(eq(usersTable.clerkUserId, FOREIGN_ROW_ID));
+  // Also clear any stale row that holds ADMIN_EMAIL under a different id.
+  await db.delete(usersTable).where(
+    eq(usersTable.email, ADMIN_EMAIL),
+  );
 
-  await db.insert(usersTable).values([
-    {
-      clerkUserId: ADMIN_TEST_USER_ID,
-      email: "",
-      status: "approved",
-      role: "admin",
-    },
-    {
-      clerkUserId: FOREIGN_ROW_ID,
-      email: ADMIN_EMAIL,
-      status: "approved",
-      role: "admin",
-    },
-  ]);
+  await db.insert(usersTable).values({
+    clerkUserId: ADMIN_TEST_USER_ID,
+    email: "",
+    status: "approved",
+    role: "admin",
+  }).onConflictDoUpdate({
+    target: usersTable.clerkUserId,
+    set: { email: "", status: "approved", role: "admin" },
+  });
+  await db.insert(usersTable).values({
+    clerkUserId: FOREIGN_ROW_ID,
+    email: ADMIN_EMAIL,
+    status: "approved",
+    role: "admin",
+  }).onConflictDoUpdate({
+    target: usersTable.clerkUserId,
+    set: { email: ADMIN_EMAIL, status: "approved", role: "admin" },
+  });
 });
 
 afterAll(async () => {

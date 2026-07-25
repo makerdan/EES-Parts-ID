@@ -391,7 +391,7 @@ describe("SearchScreen – handleShowOnMap calls setPinnedParts", () => {
     await act(async () => { capturedOnShowOnMap!(item); });
 
     expect(mockSetPinnedParts).toHaveBeenCalledWith([
-      { binCode: "05-02-001", label: "WIDGET-A", aisleNum: 5 },
+      { binCode: "05-02-001", label: "WIDGET-A", aisleNum: 5, partId: 1, sizeLabel: "—" },
     ]);
     expect(mockRouterNavigate).toHaveBeenCalledWith("/(tabs)/map");
   });
@@ -407,8 +407,8 @@ describe("SearchScreen – handleShowOnMap calls setPinnedParts", () => {
     await act(async () => { capturedOnShowOnMap!(item); });
 
     expect(mockSetPinnedParts).toHaveBeenCalledWith([
-      { binCode: "03-01-010", label: "MULTI-BIN", aisleNum: 3 },
-      { binCode: "07-04-200", label: "MULTI-BIN", aisleNum: 7 },
+      { binCode: "03-01-010", label: "MULTI-BIN", aisleNum: 3, partId: 2, sizeLabel: "—" },
+      { binCode: "07-04-200", label: "MULTI-BIN", aisleNum: 7, partId: 2, sizeLabel: "—" },
     ]);
   });
 
@@ -450,7 +450,7 @@ describe("SearchScreen – handleShowOnMap calls setPinnedParts", () => {
     await act(async () => { capturedOnShowOnMap!(item); });
 
     expect(mockSetPinnedParts).toHaveBeenCalledWith([
-      { binCode: "00-02-001", label: "AISLE-ZERO", aisleNum: 0 },
+      { binCode: "00-02-001", label: "AISLE-ZERO", aisleNum: 0, partId: 5, sizeLabel: "—" },
     ]);
     expect(mockRouterNavigate).toHaveBeenCalledWith("/(tabs)/map");
   });

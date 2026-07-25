@@ -8,8 +8,8 @@
 // Must match the viewBox attribute of the floor-plan SVG served by
 // /api/floor-plan/svg.  Verify with:
 //   curl .../api/floor-plan/svg | grep -oP 'viewBox="[^"]+"' | head -1
-export const SVG_VIEWBOX_W = 7329.6001;
-export const SVG_VIEWBOX_H = 4997.2798;
+export const SVG_VIEWBOX_W = 3592.55;
+export const SVG_VIEWBOX_H = 2457.41;
 export const SVG_ASPECT = SVG_VIEWBOX_W / SVG_VIEWBOX_H;
 
 export const MIN_SCALE = 0.8;

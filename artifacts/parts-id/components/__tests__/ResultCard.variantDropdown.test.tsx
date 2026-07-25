@@ -49,6 +49,12 @@ jest.mock("@/hooks/useColors", () => ({
 }));
 
 jest.mock("@/components/SizeVariantDropdown", () => ({
+  getSizeLabel: (size: string | null | undefined, description: string | null | undefined): string => {
+    if (size && String(size).trim()) return String(size).trim();
+    const desc = (description ?? "").trim();
+    if (!desc) return "—";
+    return desc.length > 20 ? desc.slice(0, 20).trim() + "…" : desc;
+  },
   SizeVariantDropdown: ({
     onSelect,
     variants,
