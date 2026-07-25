@@ -488,3 +488,82 @@ describe("EditItemScreen – both pending bin and keyword text are carried throu
     });
   });
 });
+
+// =============================================================================
+// 4. Stale-dims regression — itemRef.current?.dimensions is used, not the
+//    render-time existingDims closure
+// =============================================================================
+
+describe("EditItemScreen – stale-dims regression", () => {
+  it("does not fire a dims PATCH when dimensions are unchanged from itemRef", async () => {
+    testItem = makeItem({
+      description:  "Original description",
+      dimensions:   { length: 5, width: 3, height: 2, diameter: null } as unknown as InventoryItem["dimensions"],
+    });
+
+    const tree = await renderScreen();
+    activeTree = tree;
+
+    // Change description so the save has at least one field to commit,
+    // but leave all dim fields at their initial values.
+    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    await act(async () => { descInput!.props.onChangeText("Updated description"); });
+
+    const saveBtn = findPressable(tree.root, "Save Details");
+    await act(async () => { saveBtn!.props.onPress(); });
+
+    // The description PATCH should fire…
+    const dimsPatchCalls = (mockFetch as jest.Mock).mock.calls.filter(
+      (args: unknown[]) => typeof args[0] === "string" && (args[0] as string).endsWith("/dimensions"),
+    );
+    expect(dimsPatchCalls).toHaveLength(0);
+  });
+
+  it("reverts dim fields to itemRef.current dimensions when the dims PATCH fails", async () => {
+    testItem = makeItem({
+      description: "Original description",
+      dimensions:  { length: 5, width: null, height: null, diameter: null } as unknown as InventoryItem["dimensions"],
+    });
+
+    const tree = await renderScreen();
+    activeTree = tree;
+
+    // The dim inputs all share placeholder="–"; find the length input by its
+    // initial value ("5") which matches fmtDim(5).
+    const allDashInputs = tree.root.findAll(
+      n => (n.type as string) === "rn-textinput" && n.props.placeholder === "–",
+      { deep: true },
+    );
+    // length is the first dim field rendered.
+    const lengthInput = allDashInputs.find(n => n.props.value === "5") ?? null;
+    expect(lengthInput).not.toBeNull();
+    await act(async () => { lengthInput!.props.onChangeText("10"); });
+
+    // Make the dims PATCH fail; let other PATCHes succeed.
+    mockFetch.mockImplementation((url: string) => {
+      if (typeof url === "string" && url.endsWith("/dimensions")) {
+        return Promise.resolve({
+          ok:   false,
+          json: jest.fn().mockResolvedValue({ error: "Validation error" }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: jest.fn().mockResolvedValue({}) });
+    });
+
+    // Change description so there is at least one op that succeeds.
+    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    await act(async () => { descInput!.props.onChangeText("Updated description"); });
+
+    const saveBtn = findPressable(tree.root, "Save Details");
+    await act(async () => { saveBtn!.props.onPress(); });
+
+    // After partial failure the dim length field should be reverted to the
+    // original value from itemRef.current.dimensions (5 → "5").
+    const lengthInputAfter = tree.root.findAll(
+      n => (n.type as string) === "rn-textinput" && n.props.placeholder === "–",
+      { deep: true },
+    ).find(n => n.props.value !== "") ?? null;
+    expect(lengthInputAfter).not.toBeNull();
+    expect(lengthInputAfter!.props.value).toBe("5");
+  });
+});
