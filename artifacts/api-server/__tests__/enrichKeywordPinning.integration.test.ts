@@ -75,11 +75,7 @@ afterAll(async () => {
 }, 30_000);
 
 beforeEach(() => {
-  // Restore implementations that resetAllMocks would clear.
-  // callPoeBotWithChain is set per-test via mockResolvedValueOnce.
-  // invalidateReferenceAnswerCache must always return a real Promise.
-  (callPoeBotWithChain as jest.Mock).mockReset();
-  (invalidateReferenceAnswerCache as jest.Mock).mockResolvedValue(undefined);
+  (callPoeBotWithChain as jest.Mock).mockClear();
 });
 
 afterEach(async () => {
