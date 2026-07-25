@@ -495,14 +495,19 @@ describe("GET /api/warehouse-zones/coverage", () => {
       .set("Authorization", `Bearer ${adminToken}`)
       .expect(200);
 
-    const unsortedCount: number = res.body.unsortedCount;
     const uncoveredAisles: string[] = res.body.uncoveredAisles;
 
-    // unsortedCount should have grown by at least 2 (the two no-bin items we
-    // added). Use >= rather than === so concurrent parallel workers inserting
-    // additional no-bin inventory rows during this test window don't flip the
-    // assertion — other workers can only add unsorted rows, never remove ours.
-    expect(unsortedCount).toBeGreaterThanOrEqual(baseUnsorted + 2);
+    // Count only this suite's no-bin fixtures directly from the DB, scoped to
+    // their exact catalog numbers. This avoids the ">=" guard that was needed
+    // when asserting on the global unsortedCount from the API: concurrent
+    // workers can insert their own unsorted rows, making exact equality flaky.
+    const { rows: unsortedRows } = await db.execute(sql`
+      SELECT COUNT(*)::int AS cnt
+      FROM inventory
+      WHERE catalog IN ('JEST-ITG-COV-BAD1', 'JEST-ITG-COV-BAD2')
+    `);
+    const ourUnsortedCount = (unsortedRows[0] as { cnt: number }).cnt;
+    expect(ourUnsortedCount).toBe(2);
 
     // aisle "89" has inventory but no zone → must appear in uncoveredAisles
     expect(uncoveredAisles).toContain("89");

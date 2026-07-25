@@ -97,12 +97,12 @@ afterAll(async () => {
       SET status = 'cancelled', finished_at = NOW()
       WHERE id = ANY(${seededJobIds})
         AND status IN ('pending', 'processing')
-    `).catch(() => null);
+    `).catch((err: Error) => console.warn("[afterAll cleanup] cancel update failed:", err.message));
 
     await db
       .delete(catalogPdfJobTable)
       .where(inArray(catalogPdfJobTable.id, seededJobIds))
-      .catch(() => null);
+      .catch((err: Error) => console.warn("[afterAll cleanup] delete jobs failed:", err.message));
   }
 }, 15_000);
 

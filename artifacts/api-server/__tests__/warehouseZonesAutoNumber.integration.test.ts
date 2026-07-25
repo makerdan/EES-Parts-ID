@@ -94,7 +94,8 @@ async function getSectionNum(id: number): Promise<number> {
     .from(warehouseZoneTable)
     .where(eq(warehouseZoneTable.id, id));
   if (!row) throw new Error(`Zone ${id} not found`);
-  return row.sectionNum!;
+  if (row.sectionNum == null) throw new Error(`Zone ${id} has null sectionNum`);
+  return row.sectionNum;
 }
 
 /**
