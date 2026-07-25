@@ -12,9 +12,30 @@
  */
 
 // ── Env vars — must be set before any module is imported ─────────────────────
+const _origAdminPassword = process.env.ADMIN_PASSWORD;
+const _origAiProvider = process.env.AI_PROVIDER;
+const _origPoeApiKey2 = process.env.POE_API_KEY2;
 process.env.ADMIN_PASSWORD = "jest-pinned-kw-secret";
 process.env.AI_PROVIDER = "poe";
 process.env.POE_API_KEY2 = "test-poe-key";
+
+afterAll(() => {
+  if (_origAdminPassword === undefined) {
+    delete process.env.ADMIN_PASSWORD;
+  } else {
+    process.env.ADMIN_PASSWORD = _origAdminPassword;
+  }
+  if (_origAiProvider === undefined) {
+    delete process.env.AI_PROVIDER;
+  } else {
+    process.env.AI_PROVIDER = _origAiProvider;
+  }
+  if (_origPoeApiKey2 === undefined) {
+    delete process.env.POE_API_KEY2;
+  } else {
+    process.env.POE_API_KEY2 = _origPoeApiKey2;
+  }
+});
 
 // ── Mock the Poe bot client so no real AI calls are made ──────────────────────
 // generateKeywords() calls callPoeBotWithChain internally.

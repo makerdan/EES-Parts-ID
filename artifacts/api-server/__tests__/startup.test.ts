@@ -14,7 +14,16 @@
  */
 
 // ── PORT env var (must be set before index.ts is required) ───────────────────
+const _origPort = process.env.PORT;
 process.env.PORT = "3001";
+
+afterAll(() => {
+  if (_origPort === undefined) {
+    delete process.env.PORT;
+  } else {
+    process.env.PORT = _origPort;
+  }
+});
 
 // ── Logger mock ───────────────────────────────────────────────────────────────
 jest.mock("../src/lib/logger", () => ({

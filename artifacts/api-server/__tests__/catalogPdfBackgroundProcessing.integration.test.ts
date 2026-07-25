@@ -78,6 +78,7 @@ const RESPONSE_DEADLINE_MS = 2_000;
 
 let adminToken: string;
 const seededJobIds: number[] = [];
+const _origAdminPassword = process.env.ADMIN_PASSWORD;
 
 // ── Setup / teardown ──────────────────────────────────────────────────────────
 
@@ -103,6 +104,12 @@ afterAll(async () => {
       .delete(catalogPdfJobTable)
       .where(inArray(catalogPdfJobTable.id, seededJobIds))
       .catch((err: Error) => console.warn("[afterAll cleanup] delete jobs failed:", err.message));
+  }
+
+  if (_origAdminPassword === undefined) {
+    delete process.env.ADMIN_PASSWORD;
+  } else {
+    process.env.ADMIN_PASSWORD = _origAdminPassword;
   }
 }, 15_000);
 

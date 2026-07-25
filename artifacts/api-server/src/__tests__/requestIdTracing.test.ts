@@ -20,7 +20,16 @@
 
 // ── Env — must come before any imports ───────────────────────────────────────
 const BOOTSTRAP_ADMIN_ID = "jest-reqid-bootstrap-admin";
+const _origAdminClerkUserId = process.env.ADMIN_CLERK_USER_ID;
 process.env.ADMIN_CLERK_USER_ID = BOOTSTRAP_ADMIN_ID;
+
+afterAll(() => {
+  if (_origAdminClerkUserId === undefined) {
+    delete process.env.ADMIN_CLERK_USER_ID;
+  } else {
+    process.env.ADMIN_CLERK_USER_ID = _origAdminClerkUserId;
+  }
+});
 
 // ── DB mock ───────────────────────────────────────────────────────────────────
 const mockOnConflictDoUpdate = jest.fn().mockResolvedValue([]);
