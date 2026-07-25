@@ -123,13 +123,7 @@ function setupPdfjsDoc(pages: Array<{ str: string }[]>) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
-  jest.resetAllMocks();
-  // Restore the child_process mock implementation after resetAllMocks
-  const { execFile } = jest.requireMock<{ execFile: jest.Mock }>("child_process");
-  execFile.mockImplementation((...args: unknown[]) => {
-    const cb = args[args.length - 1] as (err: Error) => void;
-    cb(new Error("pdftoppm: command not found"));
-  });
+  jest.clearAllMocks();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
