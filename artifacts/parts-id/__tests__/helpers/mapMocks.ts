@@ -88,7 +88,10 @@ export function createSvgMock(): object {
     Svg:      make("svg"),
     Rect:     make("svg-rect"),
     G:        make("g"),
-    Text:     make("svg-text"),
+    // Use "Text" (not "svg-text") so test-renderer@1.x, which enforces
+    // textComponentTypes:['Text','RCTText'], doesn't throw when SVG Text
+    // elements render string children.
+    Text:     make("Text"),
     // NOTE: elements that WarehouseMapView actually renders must FORWARD their
     // tag (via make()), never return noop.  A noop stub renders nothing, so the
     // component's floor plan / pins / zone shapes silently vanish in tests while
