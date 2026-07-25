@@ -102,7 +102,7 @@ const MONTH_NAMES = [
 function labelForDateKey(dateKey: string, todayKey: string, yesterdayKey: string): string {
   if (dateKey === todayKey) return "Today";
   if (dateKey === yesterdayKey) return "Yesterday";
-  const [, m, d] = dateKey.split("-");
+  const [, m = "", d = ""] = dateKey.split("-");
   const month = MONTH_NAMES[parseInt(m, 10) - 1] ?? m;
   return `${month} ${parseInt(d, 10)}`;
 }

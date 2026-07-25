@@ -93,7 +93,7 @@ describe("runTranslateQuery — fetch failure (network error)", () => {
     await runTranslateQuery("breaker 20A", true, 0, deps);
 
     expect(mocks.setAIZeroResults).toHaveBeenCalledTimes(1);
-    const call = mocks.setAIZeroResults.mock.calls[0][0];
+    const call = mocks.setAIZeroResults.mock.calls[0]![0];
     expect(call.error).toBe("AI unavailable");
     expect(call.loading).toBe(false);
   });
@@ -130,7 +130,7 @@ describe("runTranslateQuery — non-OK HTTP response", () => {
     await runTranslateQuery("conduit 1 inch", true, 0, deps);
 
     expect(mocks.setAIZeroResults).toHaveBeenCalledTimes(1);
-    expect(mocks.setAIZeroResults.mock.calls[0][0].error).toBe("AI unavailable");
+    expect(mocks.setAIZeroResults.mock.calls[0]![0].error).toBe("AI unavailable");
   });
 
   it("sets error:'AI unavailable' for a 503 response when zeroResults=true", async () => {
@@ -140,7 +140,7 @@ describe("runTranslateQuery — non-OK HTTP response", () => {
     await runTranslateQuery("wire gauge 12", true, 0, deps);
 
     expect(mocks.setAIZeroResults).toHaveBeenCalledTimes(1);
-    expect(mocks.setAIZeroResults.mock.calls[0][0].error).toBe("AI unavailable");
+    expect(mocks.setAIZeroResults.mock.calls[0]![0].error).toBe("AI unavailable");
   });
 
   it("does NOT call setAIZeroResults for a non-OK response when zeroResults=false", async () => {
@@ -167,7 +167,7 @@ describe("runTranslateQuery — null response body", () => {
     await runTranslateQuery("switch 240V", true, 0, deps);
 
     expect(mocks.setAIZeroResults).toHaveBeenCalledTimes(1);
-    expect(mocks.setAIZeroResults.mock.calls[0][0].error).toBe("AI unavailable");
+    expect(mocks.setAIZeroResults.mock.calls[0]![0].error).toBe("AI unavailable");
   });
 });
 
@@ -191,7 +191,7 @@ describe("runTranslateQuery — success: zero-results enrichment", () => {
     await runTranslateQuery("20 amp breaker", true, 0, deps);
 
     expect(mocks.setAIZeroResults).toHaveBeenCalledTimes(1);
-    const call = mocks.setAIZeroResults.mock.calls[0][0];
+    const call = mocks.setAIZeroResults.mock.calls[0]![0];
     expect(call.error).toBeNull();
     expect(call.partName).toBe("20A Breaker");
     expect(call.partSpecs).toEqual(["20A", "240V"]);

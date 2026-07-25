@@ -78,7 +78,7 @@ function getStyleProp(src: string, styleName: string, prop: string): string | nu
         const block = src.slice(start, i + 1);
         const propRe = new RegExp(`\\b${prop}\\s*:\\s*([^,\\n}]+)`);
         const m = propRe.exec(block);
-        return m ? m[1].trim() : null;
+        return m && m[1] !== undefined ? m[1].trim() : null;
       }
     }
   }
@@ -197,6 +197,7 @@ describe("filterOverlayWrapper — scroll-blocking overlay guard", () => {
 
     while ((blockMatch = blockRe.exec(src)) !== null) {
       const styleName = blockMatch[1];
+      if (styleName === undefined) continue;
       // Skip non-style-block identifiers by only looking after StyleSheet.create({
       const stylesCreateIdx = src.indexOf("StyleSheet.create(");
       if (blockMatch.index < stylesCreateIdx) continue;

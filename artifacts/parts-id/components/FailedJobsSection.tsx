@@ -95,7 +95,7 @@ export function FailedJobsSection({
     .map(Number)
     .filter(
       (id) =>
-        resumeProgress[id].status === "done" &&
+        resumeProgress[id]?.status === "done" &&
         !failedJobs.find((j) => j.id === id),
     );
 
@@ -130,7 +130,8 @@ export function FailedJobsSection({
 
       {/* In-progress / done / re-failed resume cards */}
       {resumingJobs.map((job) => {
-        const progress = resumeProgress[job.id];
+        // resumingJobs is filtered to ids present in resumeProgress.
+        const progress = resumeProgress[job.id]!;
         return (
           <ResumeProgressCard
             key={`resume-${job.id}`}
@@ -146,7 +147,8 @@ export function FailedJobsSection({
 
       {/* Done cards for jobs already removed from failedJobs */}
       {doneOnlyIds.map((id) => {
-        const progress = resumeProgress[id];
+        // doneOnlyIds is derived from resumeProgress keys.
+        const progress = resumeProgress[id]!;
         return (
           <ResumeProgressCard
             key={`done-${id}`}

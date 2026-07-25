@@ -385,7 +385,7 @@ describe("SearchScreen — search bar visibility by mode", () => {
       { deep: true },
     );
     expect(stub.length).toBeGreaterThan(0);
-    const onClose = (stub[0].props as { onClose?: () => void }).onClose;
+    const onClose = (stub[0]!.props as { onClose?: () => void }).onClose;
     expect(typeof onClose).toBe("function");
 
     await act(async () => {
@@ -418,7 +418,7 @@ describe("SearchScreen — search bar visibility by mode", () => {
       { deep: true },
     );
     expect(stub.length).toBeGreaterThan(0);
-    const onClose = (stub[0].props as { onClose?: () => void }).onClose;
+    const onClose = (stub[0]!.props as { onClose?: () => void }).onClose;
     expect(typeof onClose).toBe("function");
 
     await act(async () => {

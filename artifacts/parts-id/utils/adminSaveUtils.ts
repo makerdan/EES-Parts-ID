@@ -146,10 +146,12 @@ export async function executeSaveOps(ops: Array<SaveOp>): Promise<ExecuteSaveOps
   results.forEach((result, i) => {
     if (result.status === "rejected") {
       anyFailed = true;
-      ops[i].restoreFn();
+      // i indexes into ops since results is a 1:1 map over ops
+      const op = ops[i]!;
+      op.restoreFn();
       const msg =
         result.reason instanceof Error ? result.reason.message : "Save failed";
-      fieldErrors[ops[i].field] = msg.includes("401")
+      fieldErrors[op.field] = msg.includes("401")
         ? "Session expired — re-unlock admin access"
         : "Could not save — check connection";
     }

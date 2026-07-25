@@ -230,9 +230,10 @@ export default function CatalogReviewScreen() {
 
       const [reviewRes, secondRes] = await Promise.all(requests);
 
-      if (reviewRes.status === 401) { logoutAdmin(); return; }
-      if (!reviewRes.ok) throw new Error("Failed to load");
-      const data = await reviewRes.json() as { items: Array<ReviewItem> };
+      // requests always contains at least the review fetch, so reviewRes is defined.
+      if (reviewRes!.status === 401) { logoutAdmin(); return; }
+      if (!reviewRes!.ok) throw new Error("Failed to load");
+      const data = await reviewRes!.json() as { items: Array<ReviewItem> };
 
       // Group by upload session (catalogPdfJobId)
       const groupMap = new Map<number | null, SessionGroup>();

@@ -11,7 +11,7 @@ export type ExpandDescResult = {
   expandedDescription: string | null;
   editedText: string;
   savedStatus: "pending" | "saving" | "saved" | "discarded" | "error" | "retrying";
-  error?: string;
+  error?: string | undefined;
 };
 
 /**

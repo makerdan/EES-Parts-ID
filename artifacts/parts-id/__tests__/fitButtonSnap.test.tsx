@@ -1,6 +1,6 @@
 /**
  * Component-level regression tests: applyFit and applyFitIfReady always snap
- * to ZOOM_STOPS[0].scale (z0) and call computeFitTarget on both phone and iPad.
+ * to ZOOM_STOPS[0]!.scale (z0) and call computeFitTarget on both phone and iPad.
  *
  * These tests mount a real WarehouseMapView instance (with native deps mocked)
  * and trigger the actual callback paths rather than re-implementing the logic.
@@ -267,7 +267,7 @@ function fireOnLayout(
     { deep: true },
   );
   if (nodes.length === 0) throw new Error("No onLayout node found");
-  nodes[0].props.onLayout({
+  nodes[0]!.props.onLayout({
     nativeEvent: { layout: { width, height, x: 0, y: 0 } },
   });
 }
@@ -354,7 +354,7 @@ describe("applyFitIfReady — z0 snap at callback invocation", () => {
   it("phone (390×761): computeFitTarget returns scale === ZOOM_STOPS[0].scale", async () => {
     await mountAndLayout(390, 761);
     const result = computeFitTargetSpy.mock.results.at(-1)!.value as { scale: number; tx: number; ty: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0].scale);
+    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
   });
 
   it("phone (390×761): zoomStopForScale of committed scale === 0 (z0 renderZoom)", async () => {
@@ -371,7 +371,7 @@ describe("applyFitIfReady — z0 snap at callback invocation", () => {
   it("iPad (768×960): computeFitTarget returns scale === ZOOM_STOPS[0].scale", async () => {
     await mountAndLayout(768, 960);
     const result = computeFitTargetSpy.mock.results.at(-1)!.value as { scale: number; tx: number; ty: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0].scale);
+    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
   });
 
   it("iPad (768×960): zoomStopForScale of committed scale === 0 (z0 renderZoom)", async () => {
@@ -388,8 +388,8 @@ describe("applyFitIfReady — z0 snap at callback invocation", () => {
     await mountAndLayout(768, 960);
     const iPadResult = computeFitTargetSpy.mock.results.at(-1)!.value as { scale: number };
 
-    expect(phoneResult.scale).toBe(ZOOM_STOPS[0].scale);
-    expect(iPadResult.scale).toBe(ZOOM_STOPS[0].scale);
+    expect(phoneResult.scale).toBe(ZOOM_STOPS[0]!.scale);
+    expect(iPadResult.scale).toBe(ZOOM_STOPS[0]!.scale);
     expect(phoneResult.scale).toBe(iPadResult.scale);
   });
 });
@@ -426,7 +426,7 @@ describe("applyFit — z0 snap via fit button callback", () => {
   it("phone (390×761): fit button — committed scale === ZOOM_STOPS[0].scale", async () => {
     await mountAndPressfit(390, 761);
     const result = computeFitTargetSpy.mock.results.at(-1)!.value as { scale: number; tx: number; ty: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0].scale);
+    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
   });
 
   it("phone (390×761): fit button — zoomStopForScale of committed scale === 0", async () => {
@@ -443,7 +443,7 @@ describe("applyFit — z0 snap via fit button callback", () => {
   it("iPad (768×960): fit button — committed scale === ZOOM_STOPS[0].scale", async () => {
     await mountAndPressfit(768, 960);
     const result = computeFitTargetSpy.mock.results.at(-1)!.value as { scale: number; tx: number; ty: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0].scale);
+    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
   });
 
   it("iPad (768×960): fit button — zoomStopForScale of committed scale === 0", async () => {
@@ -460,8 +460,8 @@ describe("applyFit — z0 snap via fit button callback", () => {
     await mountAndPressfit(768, 960);
     const iPadScale = (computeFitTargetSpy.mock.results.at(-1)!.value as { scale: number }).scale;
 
-    expect(phoneScale).toBe(ZOOM_STOPS[0].scale);
-    expect(iPadScale).toBe(ZOOM_STOPS[0].scale);
+    expect(phoneScale).toBe(ZOOM_STOPS[0]!.scale);
+    expect(iPadScale).toBe(ZOOM_STOPS[0]!.scale);
     expect(phoneScale).toBe(iPadScale);
   });
 });

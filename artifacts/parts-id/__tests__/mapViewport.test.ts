@@ -204,10 +204,10 @@ describe("makeTileViewBox", () => {
           .split(" ")
           .map(Number);
         const [x, y, w, h] = parts;
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x + w);
-        maxY = Math.max(maxY, y + h);
+        minX = Math.min(minX, x!);
+        minY = Math.min(minY, y!);
+        maxX = Math.max(maxX, x! + w!);
+        maxY = Math.max(maxY, y! + h!);
       }
     }
     expect(minX).toBeCloseTo(0, 5);
@@ -220,7 +220,7 @@ describe("makeTileViewBox", () => {
     // Right edge of tile (0,0) == left edge of tile (1,0)
     const [x00, , w00] = makeTileViewBox(0, 0, 2, SVG_VIEWBOX_W, SVG_VIEWBOX_H).split(" ").map(Number);
     const [x10] = makeTileViewBox(1, 0, 2, SVG_VIEWBOX_W, SVG_VIEWBOX_H).split(" ").map(Number);
-    expect(x00 + w00).toBeCloseTo(x10, 5);
+    expect(x00! + w00!).toBeCloseTo(x10!, 5);
   });
 
   it("regression: halved constants tile only the top-left quarter, missing 75% of the map", () => {
@@ -230,13 +230,13 @@ describe("makeTileViewBox", () => {
     const wrongVb = makeTileViewBox(1, 1, 2, WRONG_W, WRONG_H);
     const parts = wrongVb.split(" ").map(Number);
     const [x, y, w, h] = parts;
-    const wrongMaxX = x + w;
-    const wrongMaxY = y + h;
+    const wrongMaxX = x! + w!;
+    const wrongMaxY = y! + h!;
 
     const correctVb = makeTileViewBox(1, 1, 2, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
     const [cx, cy, cw, ch] = correctVb.split(" ").map(Number);
-    const correctMaxX = cx + cw;
-    const correctMaxY = cy + ch;
+    const correctMaxX = cx! + cw!;
+    const correctMaxY = cy! + ch!;
 
     // Wrong constants stop at ~half the correct extent.
     expect(wrongMaxX).toBeCloseTo(WRONG_W, 2);

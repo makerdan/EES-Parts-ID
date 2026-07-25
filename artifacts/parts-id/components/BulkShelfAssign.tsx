@@ -75,7 +75,11 @@ async function fetchAllInventory(binPrefix?: string): Promise<Array<InventoryIte
         `Inventory fetch exceeded ${FETCH_ALL_MAX_PAGES} pages — aborting to prevent an infinite loop`,
       );
     }
-    const result = await listInventory({ page, limit: pageSize, binPrefix });
+    const result = await listInventory({
+      page,
+      limit: pageSize,
+      ...(binPrefix !== undefined ? { binPrefix } : {}),
+    });
     all.push(...(result.items ?? []));
     if (all.length >= (result.total ?? 0)) break;
     page++;
@@ -113,11 +117,33 @@ async function saveBulkSession(session: BulkSession): Promise<void> {
   }
 }
 
+/**
+ * Validate a parsed bulk-session blob before trusting it. AsyncStorage data
+ * survives app upgrades, so a stale shape must be rejected (returns null and
+ * the stored session is cleared by the caller path via startFresh/clear).
+ */
+function isValidBulkSession(value: unknown): value is BulkSession {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.shelfPrefix === "string" &&
+    Array.isArray(v.shelfItems) &&
+    typeof v.itemRowStates === "object" && v.itemRowStates !== null && !Array.isArray(v.itemRowStates) &&
+    (v.targetItemId === null || typeof v.targetItemId === "number")
+  );
+}
+
 async function loadBulkSession(): Promise<BulkSession | null> {
   try {
     const raw = await AsyncStorage.getItem(BULK_SESSION_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as BulkSession;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isValidBulkSession(parsed)) {
+      // Stale/corrupt persisted shape — discard it so it is not offered again.
+      await AsyncStorage.removeItem(BULK_SESSION_KEY).catch(() => {});
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -236,7 +262,10 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
   // the total field matters; the actual items are not loaded here.
   const previewBinPrefix = shelfPrefix.trim() || undefined;
   const { data: previewCountPage } = useListInventory(
-    { binPrefix: previewBinPrefix, limit: 1 },
+    {
+      limit: 1,
+      ...(previewBinPrefix !== undefined ? { binPrefix: previewBinPrefix } : {}),
+    },
   );
 
   // Snapshot stats for the input step — total comes from the server-side count

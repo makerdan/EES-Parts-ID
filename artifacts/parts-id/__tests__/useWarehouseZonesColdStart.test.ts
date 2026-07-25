@@ -107,7 +107,7 @@ describe("useWarehouseZones — cold-start auth suppression", () => {
       } as Response);
 
       const tokenAvailableHandler =
-        mockSubscribeToTokenAvailable.mock.calls[0][0];
+        mockSubscribeToTokenAvailable.mock.calls[0]![0];
 
       await act(async () => {
         tokenAvailableHandler();
@@ -275,7 +275,7 @@ describe("useWarehouseZones — cleanup on unmount", () => {
 
       // Capture the handler reference that was passed to subscribe.
       expect(mockSubscribeToTokenAvailable).toHaveBeenCalledTimes(1);
-      const subscribedHandler = mockSubscribeToTokenAvailable.mock.calls[0][0];
+      const subscribedHandler = mockSubscribeToTokenAvailable.mock.calls[0]![0];
 
       act(() => {
         unmount();

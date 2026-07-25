@@ -264,7 +264,7 @@ function fireOnLayout(
     { deep: true },
   );
   if (nodes.length === 0) throw new Error("No onLayout node found");
-  nodes[0].props.onLayout({
+  nodes[0]!.props.onLayout({
     nativeEvent: { layout: { width, height, x: 0, y: 0 } },
   });
 }
@@ -286,7 +286,8 @@ function findFloorPlanG(renderer: TestRenderer.ReactTestRenderer) {
       `Expected exactly one floor-plan <g>, found ${matches.length}`,
     );
   }
-  return matches[0];
+  // Length checked to be exactly 1 above.
+  return matches[0]!;
 }
 
 async function mountWeb(scheme: "dark" | "light") {

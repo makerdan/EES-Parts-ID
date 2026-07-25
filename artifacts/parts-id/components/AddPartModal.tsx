@@ -55,7 +55,8 @@ export function AddPartModal({
 
   const handleCopyBin = async () => {
     if (!createdItem?.binLocations?.length) return;
-    await Clipboard.setStringAsync(createdItem.binLocations[0]);
+    // length checked above, so index 0 is present.
+    await Clipboard.setStringAsync(createdItem.binLocations[0]!);
     setCopied(true);
     if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
     copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
@@ -318,7 +319,7 @@ export function AddPartModal({
                       placeholder="e.g. BR120"
                       placeholderTextColor={colors.mutedForeground}
                       value={catalog}
-                      onChangeText={v => { setCatalog(v.toUpperCase()); if (fieldErrors.catalog) setFieldErrors(p => ({ ...p, catalog: undefined })); }}
+                      onChangeText={v => { setCatalog(v.toUpperCase()); if (fieldErrors.catalog) setFieldErrors(({ catalog, ...rest }) => rest); }}
                       autoCapitalize="characters"
                       autoCorrect={false}
                       returnKeyType="next"
@@ -338,7 +339,7 @@ export function AddPartModal({
                       placeholder="e.g. EATON"
                       placeholderTextColor={colors.mutedForeground}
                       value={vendor}
-                      onChangeText={v => { setVendor(v.toUpperCase()); if (fieldErrors.vendor) setFieldErrors(p => ({ ...p, vendor: undefined })); }}
+                      onChangeText={v => { setVendor(v.toUpperCase()); if (fieldErrors.vendor) setFieldErrors(({ vendor, ...rest }) => rest); }}
                       autoCapitalize="characters"
                       autoCorrect={false}
                       returnKeyType="next"
@@ -358,7 +359,7 @@ export function AddPartModal({
                       placeholder="e.g. 01-05-210"
                       placeholderTextColor={colors.mutedForeground}
                       value={binLocation}
-                      onChangeText={v => { setBinLocation(v); if (fieldErrors.bin) setFieldErrors(p => ({ ...p, bin: undefined })); }}
+                      onChangeText={v => { setBinLocation(v); if (fieldErrors.bin) setFieldErrors(({ bin, ...rest }) => rest); }}
                       autoCapitalize="none"
                       autoCorrect={false}
                       returnKeyType="done"

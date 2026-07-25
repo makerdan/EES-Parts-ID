@@ -164,8 +164,8 @@ describe("payload exceeds the 20 MB limit — compression triggered", () => {
     await compressImagesForUpload(images, jest.fn());
 
     expect(mockTotalPayloadBytes).toHaveBeenCalledWith([
-      images[0].base64,
-      images[1].base64,
+      images[0]!.base64,
+      images[1]!.base64,
     ]);
   });
 });
@@ -281,6 +281,6 @@ describe("fallback path — downscaleToFit throws", () => {
     const result = await compressImagesForUpload(images, jest.fn());
 
     expect(result).toHaveLength(3);
-    expect(result[0].uri).toBe("file:///photo0.jpg");
+    expect(result[0]!.uri).toBe("file:///photo0.jpg");
   });
 });

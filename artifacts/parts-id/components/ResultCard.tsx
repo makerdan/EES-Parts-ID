@@ -19,41 +19,41 @@ import { useColors } from "@/hooks/useColors";
 interface ResultCardProps {
   result: SearchResult;
   /** Admin-only: opens the full part details editor. */
-  onEditItem?: (item: InventoryItem) => void;
+  onEditItem?: ((item: InventoryItem) => void) | undefined;
   /** Navigate to warehouse map and open this part's zone. */
-  onShowOnMap?: (item: InventoryItem) => void;
+  onShowOnMap?: ((item: InventoryItem) => void) | undefined;
   /** Admin-only: opens the measurement screen for this unmeasured item. */
-  onMeasure?: (item: InventoryItem) => void;
+  onMeasure?: ((item: InventoryItem) => void) | undefined;
   /**
    * Called when the variants section is expanded or collapsed.
    * Only fires when the result has at least one variant.
    * Receives the full variants array and the new expanded state so the caller
    * can add / remove map location pins grouped by item.
    */
-  onVariantsToggle?: (item: InventoryItem, variants: Array<InventoryItem>, expanded: boolean) => void;
+  onVariantsToggle?: ((item: InventoryItem, variants: Array<InventoryItem>, expanded: boolean) => void) | undefined;
   rank: number;
-  fontScale?: number;
+  fontScale?: number | undefined;
   /** When true, shows a "Size not measured" badge because no dimension data is stored for this item */
-  sizeUnknown?: boolean;
+  sizeUnknown?: boolean | undefined;
   /** When true, the Part Details section auto-expands on mount (used for top Photo ID result). */
-  autoExpandPartCard?: boolean;
+  autoExpandPartCard?: boolean | undefined;
   /**
    * Admin-only: called when the admin taps "Re-enrich keywords".
    * The callback receives the item and returns a promise that resolves to the
    * updated InventoryItem (or throws on failure).
    */
-  onReenrichKeywords?: (item: InventoryItem) => Promise<InventoryItem>;
+  onReenrichKeywords?: ((item: InventoryItem) => Promise<InventoryItem>) | undefined;
   /**
    * Called the first time the card is expanded (collapsed → expanded).
    * Used to record the part in the "Recently Viewed" history.
    */
-  onOpen?: (item: InventoryItem) => void;
+  onOpen?: ((item: InventoryItem) => void) | undefined;
   /**
    * Called when the user switches to a different size variant via the dropdown.
    * Receives the base (primary) item and the newly selected variant so the
    * caller can update any existing map pin for this item.
    */
-  onVariantSelect?: (baseItem: InventoryItem, selectedVariant: InventoryItem) => void;
+  onVariantSelect?: ((baseItem: InventoryItem, selectedVariant: InventoryItem) => void) | undefined;
 }
 
 const CONFIDENCE_COLORS = {

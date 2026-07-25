@@ -324,7 +324,7 @@ function fireOnLayout(
     { includeSelf: true },
   );
   if (nodes.length === 0) throw new Error("No onLayout node found");
-  nodes[0].props.onLayout({
+  nodes[0]!.props.onLayout({
     nativeEvent: { layout: { width, height, x: 0, y: 0 } },
   });
 }
@@ -334,7 +334,7 @@ function pressFitButton(renderer: RenderResult) {
     (n) => n.props.accessibilityLabel === "Fit to screen",
     { includeSelf: true },
   )[0];
-  btn.props.onPress();
+  btn!.props.onPress();
 }
 
 /** Flush microtask queues (enough to resolve Promise chains). */
@@ -425,7 +425,7 @@ describe("startup always fits — no viewport restore on mount", () => {
 
   it("phone (390×761): at least two shared values hold ZOOM_STOPS[0].scale (scale + savedScale)", async () => {
     await mountAndLayout(390, 761);
-    const fitScale = ZOOM_STOPS[0].scale;
+    const fitScale = ZOOM_STOPS[0]!.scale;
     const matches = trackedValues.filter((sv) => sv.value === fitScale);
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
@@ -438,7 +438,7 @@ describe("startup always fits — no viewport restore on mount", () => {
   it("phone (390×761): computeFitTarget returns scale === ZOOM_STOPS[0].scale (z0 fit)", async () => {
     await mountAndLayout(390, 761);
     const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0].scale);
+    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
   });
 
   it("iPad (768×960): computeFitTarget is called on mount", async () => {
@@ -448,7 +448,7 @@ describe("startup always fits — no viewport restore on mount", () => {
 
   it("iPad (768×960): at least two shared values hold ZOOM_STOPS[0].scale", async () => {
     await mountAndLayout(768, 960);
-    const fitScale = ZOOM_STOPS[0].scale;
+    const fitScale = ZOOM_STOPS[0]!.scale;
     const matches = trackedValues.filter((sv) => sv.value === fitScale);
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
@@ -493,12 +493,12 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
   it("phone (390×761): computeFitTarget returns scale === ZOOM_STOPS[0].scale (z0 fit)", async () => {
     await mountFitLayout(390, 761);
     const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0].scale);
+    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
   });
 
   it("phone (390×761): at least two shared values hold ZOOM_STOPS[0].scale after fit", async () => {
     await mountFitLayout(390, 761);
-    const fitScale = ZOOM_STOPS[0].scale;
+    const fitScale = ZOOM_STOPS[0]!.scale;
     const matches = trackedValues.filter((sv) => sv.value === fitScale);
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
@@ -516,7 +516,7 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
   it("iPad (768×960): computeFitTarget returns scale === ZOOM_STOPS[0].scale (z0 fit)", async () => {
     await mountFitLayout(768, 960);
     const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0].scale);
+    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
   });
 });
 
@@ -557,7 +557,7 @@ describe("startup fit — no AsyncStorage.getItem call during mount", () => {
 
   it("phone (390×761): fit-to-screen scale is applied (stored s=4.0 is ignored; ZOOM_STOPS[0].scale is used)", async () => {
     await mountAndLayout(390, 761);
-    const fitScale = ZOOM_STOPS[0].scale;
+    const fitScale = ZOOM_STOPS[0]!.scale;
     // Stored scale (4.0) must NOT appear in tracked shared values.
     const storedScaleMatches = trackedValues.filter((sv) => sv.value === 4.0);
     expect(storedScaleMatches.length).toBe(0);
@@ -848,7 +848,7 @@ describe("device rotation — translate values scale by newW/oldW ratio", () => 
 
   beforeEach(() => {
     computeFitTargetSpy.mockReturnValue({
-      scale: ZOOM_STOPS[0].scale,
+      scale: ZOOM_STOPS[0]!.scale,
       tx:    FIT_TX,
       ty:    FIT_TY,
     });

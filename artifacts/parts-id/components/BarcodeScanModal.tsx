@@ -349,9 +349,9 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
                   barcodeScannerSettings={{
                     barcodeTypes: ["qr", "ean13", "ean8", "code128", "code39", "pdf417", "upc_a", "upc_e", "aztec", "datamatrix", "itf14"],
                   }}
-                  onBarcodeScanned={
-                    scanPhase === "looking" || scanPhase === "found" ? undefined : handleBarcodeScanned
-                  }
+                  {...(scanPhase === "looking" || scanPhase === "found"
+                    ? {}
+                    : { onBarcodeScanned: handleBarcodeScanned })}
                 />
               ) : (
                 <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
@@ -459,7 +459,9 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
       <CatalogPickerModal
         visible={showAdminPicker}
         barcodeCode={notFoundCode ?? ""}
-        initialQuery={adminPickerMode === "create" ? (notFoundCode ?? "") : undefined}
+        {...(adminPickerMode === "create"
+          ? { initialQuery: notFoundCode ?? "" }
+          : {})}
         initialShowCreateForm={adminPickerMode === "create"}
         onAssign={handleAdminAssign}
         onCancel={() => setShowAdminPicker(false)}

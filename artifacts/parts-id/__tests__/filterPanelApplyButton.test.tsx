@@ -188,7 +188,7 @@ function renderExpanded(onApply?: () => void) {
       <FilterPanel
         values={DEFAULT_VALUES}
         onChange={jest.fn()}
-        onApply={onApply}
+        {...(onApply !== undefined ? { onApply } : {})}
       />,
     );
   });
@@ -204,7 +204,7 @@ function renderCollapsed(onApply?: () => void) {
       <FilterPanel
         values={DEFAULT_VALUES}
         onChange={jest.fn()}
-        onApply={onApply}
+        {...(onApply !== undefined ? { onApply } : {})}
       />,
     );
   });
@@ -246,7 +246,7 @@ describe("FilterPanel — Apply buttons", () => {
 
     // Press the first one (top position)
     act(() => {
-      (applyButtons[0].props as { onPress?: () => void }).onPress?.();
+      (applyButtons[0]!.props as { onPress?: () => void }).onPress?.();
     });
     expect(onApply).toHaveBeenCalledTimes(1);
   });
@@ -260,7 +260,7 @@ describe("FilterPanel — Apply buttons", () => {
 
     // Press the last one (bottom position)
     act(() => {
-      (applyButtons[applyButtons.length - 1].props as { onPress?: () => void }).onPress?.();
+      (applyButtons[applyButtons.length - 1]!.props as { onPress?: () => void }).onPress?.();
     });
     expect(onApply).toHaveBeenCalledTimes(1);
   });
@@ -280,7 +280,7 @@ describe("FilterPanel — Apply buttons", () => {
 
     const applyButtons = findPressablesByText(root.root, "Apply");
     act(() => {
-      (applyButtons[0].props as { onPress?: () => void }).onPress?.();
+      (applyButtons[0]!.props as { onPress?: () => void }).onPress?.();
     });
     expect(onApply).toHaveBeenCalledTimes(1);
   });
@@ -291,7 +291,7 @@ describe("FilterPanel — Apply buttons", () => {
 
     const applyButtons = findPressablesByText(root.root, "Apply");
     act(() => {
-      (applyButtons[applyButtons.length - 1].props as { onPress?: () => void }).onPress?.();
+      (applyButtons[applyButtons.length - 1]!.props as { onPress?: () => void }).onPress?.();
     });
     expect(onApply).toHaveBeenCalledTimes(1);
   });

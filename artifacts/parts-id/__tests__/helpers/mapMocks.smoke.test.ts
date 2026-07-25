@@ -141,7 +141,7 @@ function collectReanimatedUsage(files: string[]): ReanimatedUsage {
         if (!usage.namespaceMembers.has(exported)) {
           usage.namespaceMembers.set(exported, new Set());
         }
-        usage.namespaceMembers.get(exported)!.add(mm[1]);
+        usage.namespaceMembers.get(exported)!.add(mm[1]!);
       }
     }
 
@@ -152,7 +152,7 @@ function collectReanimatedUsage(files: string[]): ReanimatedUsage {
       );
       let mm: RegExpExecArray | null;
       while ((mm = memberRe.exec(source)) !== null) {
-        usage.defaultMembers.add(mm[1]);
+        usage.defaultMembers.add(mm[1]!);
       }
     }
   }
@@ -176,7 +176,7 @@ function parseSvgElementImports(source: string): string[] {
   const match = source.match(
     /import\s+(?:\w+\s*,\s*)?\{\s*([^}]+)\s*\}\s*from\s*["']react-native-svg["']/,
   );
-  if (!match) return [];
+  if (!match || match[1] === undefined) return [];
 
   return match[1]
     .split(",")
@@ -199,7 +199,7 @@ function parseExpoAssetMethods(source: string): string[] {
   const re = /\bAsset\.(\w+)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(source)) !== null) {
-    methods.add(m[1]);
+    methods.add(m[1]!);
   }
   return [...methods].sort();
 }
@@ -259,7 +259,7 @@ function parseGestureChainMethods(
         } else if (ch === "." && depth === 0) {
           i++;
           const nameStart = i;
-          while (i < stripped.length && /\w/.test(stripped[i])) i++;
+          while (i < stripped.length && /\w/.test(stripped[i]!)) i++;
           const methodName = stripped.slice(nameStart, i);
           if (methodName.length > 0 && i < stripped.length && stripped[i] === "(") {
             methods.add(methodName);

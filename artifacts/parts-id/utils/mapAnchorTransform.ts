@@ -83,6 +83,7 @@ export function computeAnchorTransform(anchors: Array<AnchorPoint>): AffineMatri
   if (anchors.length < 3) return null;
 
   const [p1, p2, p3] = anchors;
+  if (p1 === undefined || p2 === undefined || p3 === undefined) return null;
 
   // The coefficient matrix is the same for both row-solves (only rhs differs).
   const M: [[number, number, number], [number, number, number], [number, number, number]] = [

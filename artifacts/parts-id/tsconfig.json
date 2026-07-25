@@ -3,12 +3,17 @@
   "compilerOptions": {
     "baseUrl": ".",
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
     "paths": {
       "@/*": [
         "./*"
       ],
       "lidar-measure": [
         "./modules/lidar-measure/src/index"
+      ],
+      "expo-file-system/legacy": [
+        "./node_modules/expo-file-system/build/legacy/index.d.ts"
       ]
     }
   },

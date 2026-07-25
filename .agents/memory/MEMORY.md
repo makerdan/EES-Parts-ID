@@ -41,4 +41,5 @@
 - [Uncancelled Promise.race timeout timers](uncancelled-race-timeout-timers.md) — un-cleared setTimeout in a race keeps Jest workers alive ("Jest did not exit"); clearTimeout in finally + unref fallback timers.
 - [Shared-DB fixture prefix wipe](shared-db-fixture-prefix-wipe.md) — parallel Jest suites on one shared DB must never blanket-delete by fixture prefix; delete only rows the current worker seeded.
 - [Unmount RTR trees before timer flush](rtr-unmount-before-timer-flush.md) — unmount all react-test-renderer trees in afterEach BEFORE runOnlyPendingTimers, or leftover component timers fire in later suites ("Cannot log after tests are done").
+- [expo-file-system source typecheck leak](expo-fs-src-typecheck.md) — package main points at src/*.ts, so strict tsc flags error inside node_modules; alias subpath to build/*.d.ts via tsconfig paths.
 - [vendor_map heap-order tests](vendor-map-heap-order-tests.md) — vendor suites depend on physical page order; winners must sit on later pages than rivals (fillfactor 50 + padded re-insert); serialize shared-DB jest runs.

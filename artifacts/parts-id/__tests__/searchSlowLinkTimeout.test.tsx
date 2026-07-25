@@ -439,7 +439,7 @@ async function mountScreen() {
 // fresh closure per render) is used.
 async function triggerSearch(tree: renderer.ReactTestRenderer) {
   const input = () =>
-    tree.root.findAll((n: ReactTestInstance) => (n.type as unknown as string) === "keyword-input")[0];
+    tree.root.findAll((n: ReactTestInstance) => (n.type as unknown as string) === "keyword-input")[0]!;
   await act(async () => {
     (input().props.onChangeText as (v: string) => void)("wire nut");
   });

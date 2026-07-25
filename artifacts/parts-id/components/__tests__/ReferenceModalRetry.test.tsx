@@ -146,14 +146,14 @@ describe("ReferenceModal — typed question retry", () => {
     const inputs = findQuestionInput(renderer.root);
     expect(inputs).toHaveLength(1);
     await act(async () => {
-      inputs[0].props.onChangeText(QUESTION);
+      inputs[0]!.props.onChangeText(QUESTION);
     });
 
     // Press send → askQuestion() with the typed question.
     const sendButtons = findSendButtons(renderer.root);
     expect(sendButtons).toHaveLength(1);
     await act(async () => {
-      sendButtons[0].props.onPress();
+      sendButtons[0]!.props.onPress();
     });
     await flush();
 
@@ -174,7 +174,7 @@ describe("ReferenceModal — typed question retry", () => {
     });
 
     await act(async () => {
-      retryButtons[0].props.onPress();
+      retryButtons[0]!.props.onPress();
     });
     await flush();
 
@@ -199,10 +199,10 @@ describe("ReferenceModal — typed question retry", () => {
 
     const inputs = findQuestionInput(renderer.root);
     await act(async () => {
-      inputs[0].props.onChangeText(QUESTION);
+      inputs[0]!.props.onChangeText(QUESTION);
     });
     await act(async () => {
-      findSendButtons(renderer.root)[0].props.onPress();
+      findSendButtons(renderer.root)[0]!.props.onPress();
     });
     await flush();
 
@@ -213,7 +213,7 @@ describe("ReferenceModal — typed question retry", () => {
       json: async () => ({ answer: "Recovered." }),
     });
     await act(async () => {
-      findPressableWithText(renderer.root, RETRY_TEXT)[0].props.onPress();
+      findPressableWithText(renderer.root, RETRY_TEXT)[0]!.props.onPress();
     });
     await flush();
 
@@ -241,7 +241,7 @@ describe("ReferenceModal — chip retry", () => {
     const chipButtons = findPressableWithText(renderer.root, CHIP_LABEL);
     expect(chipButtons).toHaveLength(1);
     await act(async () => {
-      chipButtons[0].props.onPress();
+      chipButtons[0]!.props.onPress();
     });
     await flush();
 
@@ -259,7 +259,7 @@ describe("ReferenceModal — chip retry", () => {
     // Retry succeeds this time.
     chipCache.fetchChipAnswer.mockResolvedValueOnce("A GFCI protects against ground faults.");
     await act(async () => {
-      retryButtons[0].props.onPress();
+      retryButtons[0]!.props.onPress();
     });
     await flush();
 

@@ -40,8 +40,9 @@ export function PartPhotoPicker({ value, onChange, label, isAiSourced, onPressPh
       quality: 0.6,
       allowsEditing: false,
     });
-    if (!result.canceled && result.assets.length > 0) {
-      onChange(result.assets[0].uri);
+    const asset = result.canceled ? undefined : result.assets[0];
+    if (asset) {
+      onChange(asset.uri);
     }
   }, [onChange]);
 
@@ -62,8 +63,9 @@ export function PartPhotoPicker({ value, onChange, label, isAiSourced, onPressPh
       quality: 0.6,
       allowsEditing: false,
     });
-    if (!result.canceled && result.assets.length > 0) {
-      onChange(result.assets[0].uri);
+    const asset = result.canceled ? undefined : result.assets[0];
+    if (asset) {
+      onChange(asset.uri);
     }
   }, [onChange]);
 

@@ -16,6 +16,30 @@ export type AsyncStorageLike = {
   setItem(key: string, value: string): Promise<void>;
 };
 
+/**
+ * Parse + validate a persisted offline search cache blob.
+ *
+ * AsyncStorage data survives app upgrades, so the stored shape may be stale.
+ * Each entry must be an object with a numeric `timestamp` and an array
+ * `results`; anything else (or invalid JSON) returns null so callers skip the
+ * cache rather than corrupt downstream state.
+ */
+export function parseStoredQueryCache(raw: string): QueryCache<SearchResult> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  for (const value of Object.values(parsed as Record<string, unknown>)) {
+    if (typeof value !== "object" || value === null) return null;
+    const entry = value as { timestamp?: unknown; results?: unknown };
+    if (typeof entry.timestamp !== "number" || !Array.isArray(entry.results)) return null;
+  }
+  return parsed as QueryCache<SearchResult>;
+}
+
 export type QueryClientLike = {
   invalidateQueries(
     arg:
@@ -49,10 +73,12 @@ export async function invalidateSearchAndEvictItem(opts: {
   try {
     const raw = await opts.asyncStorage.getItem(QUERY_CACHE_KEY);
     if (raw) {
-      const cache = JSON.parse(raw) as QueryCache<SearchResult>;
-      const { pruned, changed } = evictItemFromQueryCache(cache, opts.itemId);
-      if (changed) {
-        await opts.asyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
+      const cache = parseStoredQueryCache(raw);
+      if (cache) {
+        const { pruned, changed } = evictItemFromQueryCache(cache, opts.itemId);
+        if (changed) {
+          await opts.asyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
+        }
       }
     }
   } catch {
@@ -134,7 +160,10 @@ export async function evictDeletedItemFromAllCaches(opts: {
       return {
         ...old,
         results: old.results.filter(r => r.item.id !== itemId),
-        sizeUnknownResults: old.sizeUnknownResults?.filter(r => r.item.id !== itemId),
+        // exactOptionalPropertyTypes: only include the optional key when present
+        ...(old.sizeUnknownResults !== undefined
+          ? { sizeUnknownResults: old.sizeUnknownResults.filter(r => r.item.id !== itemId) }
+          : {}),
       };
     },
   );
@@ -142,9 +171,11 @@ export async function evictDeletedItemFromAllCaches(opts: {
   try {
     const raw = await asyncStorage.getItem(QUERY_CACHE_KEY);
     if (raw) {
-      const cache = JSON.parse(raw) as QueryCache<SearchResult>;
-      const { pruned, changed } = evictItemFromQueryCache(cache, itemId);
-      if (changed) await asyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
+      const cache = parseStoredQueryCache(raw);
+      if (cache) {
+        const { pruned, changed } = evictItemFromQueryCache(cache, itemId);
+        if (changed) await asyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
+      }
     }
   } catch {
     // Non-fatal

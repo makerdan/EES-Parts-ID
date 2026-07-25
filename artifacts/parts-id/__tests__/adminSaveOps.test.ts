@@ -363,8 +363,8 @@ describe("executeSaveOps", () => {
 
     expect(result.anyFailed).toBe(false);
     expect(result.fieldErrors).toEqual({});
-    expect(ops[0].restoreFn).not.toHaveBeenCalled();
-    expect(ops[1].restoreFn).not.toHaveBeenCalled();
+    expect(ops[0]!.restoreFn).not.toHaveBeenCalled();
+    expect(ops[1]!.restoreFn).not.toHaveBeenCalled();
   });
 
   it("calls restoreFn and sets fieldErrors for a failed op", async () => {
@@ -422,9 +422,9 @@ describe("executeSaveOps", () => {
   it("handles all ops failing simultaneously", async () => {
     const restores = [jest.fn(), jest.fn(), jest.fn()];
     const ops: SaveOp[] = [
-      { field: "description", promise: Promise.reject(new Error("err")), restoreFn: restores[0] },
-      { field: "bins", promise: Promise.reject(new Error("err")), restoreFn: restores[1] },
-      { field: "photo", promise: Promise.reject(new Error("err")), restoreFn: restores[2] },
+      { field: "description", promise: Promise.reject(new Error("err")), restoreFn: restores[0]! },
+      { field: "bins", promise: Promise.reject(new Error("err")), restoreFn: restores[1]! },
+      { field: "photo", promise: Promise.reject(new Error("err")), restoreFn: restores[2]! },
     ];
 
     const result = await executeSaveOps(ops);

@@ -100,7 +100,12 @@ export function initPersistRead(): Promise<void> {
           }
         }
         _cachedHash = stored.hash;
-        _cache = { xml: stored.xml, innerXml: stored.innerXml, uri: stored.uri, contentViewBox };
+        _cache = {
+          xml: stored.xml,
+          innerXml: stored.innerXml,
+          uri: stored.uri,
+          ...(contentViewBox !== undefined ? { contentViewBox } : {}),
+        };
       } catch {
         // Corrupted JSON — silently discard; will fall back to network load.
       }

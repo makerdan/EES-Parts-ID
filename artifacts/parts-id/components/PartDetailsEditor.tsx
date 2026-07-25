@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQueryClient } from "@tanstack/react-query";
-import type { InventoryItem, InventoryListResponse, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
+import type { InventoryItem, InventoryListResponse, SearchInventoryResponse } from "@workspace/api-client-react";
 import { useUpdateItemBins, useUpdateItemKeywords } from "@workspace/api-client-react";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import * as Clipboard from "expo-clipboard";
@@ -30,8 +30,7 @@ import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { useColors } from "@/hooks/useColors";
 import { API_BASE } from "@/utils/apiBase";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
-import { evictDeletedItemFromAllCaches, invalidateListCache } from "@/utils/editItemCache";
-import type { QueryCache } from "@/utils/searchHelpers";
+import { evictDeletedItemFromAllCaches, invalidateListCache, parseStoredQueryCache } from "@/utils/editItemCache";
 import { evictItemFromQueryCache,QUERY_CACHE_KEY } from "@/utils/searchHelpers";
 
 interface CapturedPhoto {
@@ -253,7 +252,11 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     setDimHeight(fmtDim(dims.height));
     setDimDiameter(fmtDim(dims.diameter));
     setSaveStatus("idle");
-    setFieldSaveErrors(prev => ({ ...prev, dimensions: undefined }));
+    setFieldSaveErrors(prev => {
+      // exactOptionalPropertyTypes: drop the key to "unset" the field error
+      const { dimensions: _dimensions, ...rest } = prev;
+      return rest;
+    });
     if (!current || !adminToken) return;
     try {
       const res = await fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
@@ -307,7 +310,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           if (!old) return old;
           const patchResult = (r: SearchInventoryResponse["results"][number]) =>
             r.item.id === current.id ? { ...r, item: patchExpandedSave(r.item) } : r;
-          return { ...old, results: old.results.map(patchResult), sizeUnknownResults: old.sizeUnknownResults?.map(patchResult) };
+          return {
+            ...old,
+            results: old.results.map(patchResult),
+            // exactOptionalPropertyTypes: only include the optional key when present
+            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
+          };
         },
       );
       await invalidateListCache({ queryClient });
@@ -352,7 +360,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           if (!old) return old;
           const patchResult = (r: SearchInventoryResponse["results"][number]) =>
             r.item.id === current.id ? { ...r, item: patchExpandedClear(r.item) } : r;
-          return { ...old, results: old.results.map(patchResult), sizeUnknownResults: old.sizeUnknownResults?.map(patchResult) };
+          return {
+            ...old,
+            results: old.results.map(patchResult),
+            // exactOptionalPropertyTypes: only include the optional key when present
+            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
+          };
         },
       );
       await invalidateListCache({ queryClient });
@@ -636,15 +649,17 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
 
     const succeededFields = new Set<string>();
     results.forEach((result, i) => {
+      // results is built from ops.map, so index i always maps to an op.
+      const op = ops[i]!;
       if (result.status === "rejected") {
         anyFailed = true;
         const msg =
           result.reason instanceof Error ? result.reason.message : "Save failed";
-        newFieldErrors[ops[i].field] = msg.includes("401")
+        newFieldErrors[op.field] = msg.includes("401")
           ? "Session expired — re-unlock admin access"
           : "Could not save — check connection";
       } else {
-        succeededFields.add(ops[i].field);
+        succeededFields.add(op.field);
       }
     });
 
@@ -692,7 +707,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
             return {
               ...old,
               results: old.results.map(patchResult),
-              sizeUnknownResults: old.sizeUnknownResults?.map(patchResult),
+              // exactOptionalPropertyTypes: only include the optional key when present
+              ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
             };
           },
         );
@@ -753,7 +769,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           return {
             ...old,
             results: old.results.map(patchResult),
-            sizeUnknownResults: old.sizeUnknownResults?.map(patchResult),
+            // exactOptionalPropertyTypes: only include the optional key when present
+            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
           };
         },
       );
@@ -763,9 +780,11 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       try {
         const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
         if (raw) {
-          const cache = JSON.parse(raw) as QueryCache<SearchResult>;
-          const { pruned, changed } = evictItemFromQueryCache(cache, current.id);
-          if (changed) await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
+          const cache = parseStoredQueryCache(raw);
+          if (cache) {
+            const { pruned, changed } = evictItemFromQueryCache(cache, current.id);
+            if (changed) await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
+          }
         }
       } catch {
         // Non-fatal — worst case the search cache TTL will expire naturally
@@ -894,11 +913,13 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                 value={currentPhotoUri}
                 onChange={handlePhotoChange}
                 isAiSourced={isSlot1AiSourced}
-                onPressPhoto={currentPhotoUri ? () => {
-                  const uris = [currentPhotoUri, ...(currentPhotoUri2 ? [currentPhotoUri2] : [])];
-                  setLightboxUris(uris);
-                  setLightboxIndex(0);
-                } : undefined}
+                {...(currentPhotoUri ? {
+                  onPressPhoto: () => {
+                    const uris = [currentPhotoUri, ...(currentPhotoUri2 ? [currentPhotoUri2] : [])];
+                    setLightboxUris(uris);
+                    setLightboxIndex(0);
+                  },
+                } : {})}
               />
               {fieldSaveErrors.photo ? (
                 <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo}</Text>
@@ -908,11 +929,13 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                 label="Detail / Wire Frame"
                 value={currentPhotoUri2}
                 onChange={handlePhotoChange2}
-                onPressPhoto={currentPhotoUri2 ? () => {
-                  const uris = [...(currentPhotoUri ? [currentPhotoUri] : []), currentPhotoUri2];
-                  setLightboxUris(uris);
-                  setLightboxIndex(currentPhotoUri ? 1 : 0);
-                } : undefined}
+                {...(currentPhotoUri2 ? {
+                  onPressPhoto: () => {
+                    const uris = [...(currentPhotoUri ? [currentPhotoUri] : []), currentPhotoUri2];
+                    setLightboxUris(uris);
+                    setLightboxIndex(currentPhotoUri ? 1 : 0);
+                  },
+                } : {})}
               />
               {fieldSaveErrors.photo2 ? (
                 <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo2}</Text>

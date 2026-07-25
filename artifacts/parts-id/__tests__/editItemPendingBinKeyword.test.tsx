@@ -498,7 +498,7 @@ describe("EditItemScreen – stale-dims regression", () => {
   it("does not fire a dims PATCH when dimensions are unchanged from itemRef", async () => {
     testItem = makeItem({
       description:  "Original description",
-      dimensions:   { length: 5, width: 3, height: 2, diameter: null } as unknown as InventoryItem["dimensions"],
+      dimensions:   { length: 5, width: 3, height: 2, diameter: null } as unknown as Exclude<InventoryItem["dimensions"], undefined>,
     });
 
     const tree = await renderScreen();
@@ -522,7 +522,7 @@ describe("EditItemScreen – stale-dims regression", () => {
   it("reverts dim fields to itemRef.current dimensions when the dims PATCH fails", async () => {
     testItem = makeItem({
       description: "Original description",
-      dimensions:  { length: 5, width: null, height: null, diameter: null } as unknown as InventoryItem["dimensions"],
+      dimensions:  { length: 5, width: null, height: null, diameter: null } as unknown as Exclude<InventoryItem["dimensions"], undefined>,
     });
 
     const tree = await renderScreen();

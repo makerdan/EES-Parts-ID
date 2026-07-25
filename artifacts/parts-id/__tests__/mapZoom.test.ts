@@ -120,8 +120,8 @@ describe("panBounds — translation limits change with scale", () => {
     const scales = [1, 2, 3, 5, 10, 20];
     const bounds = scales.map((s) => panBounds(CW, CH, s, SVG_RENDER_H));
     for (let i = 1; i < bounds.length; i++) {
-      expect(bounds[i].maxX).toBeGreaterThanOrEqual(bounds[i - 1].maxX);
-      expect(bounds[i].maxY).toBeGreaterThanOrEqual(bounds[i - 1].maxY);
+      expect(bounds[i]!.maxX).toBeGreaterThanOrEqual(bounds[i - 1]!.maxX);
+      expect(bounds[i]!.maxY).toBeGreaterThanOrEqual(bounds[i - 1]!.maxY);
     }
   });
 
@@ -157,24 +157,24 @@ describe("zoomStopForScale — maps continuous scale to nearest discrete stop in
   it("returns 0 (z0 overview) for scales at or near MIN_SCALE", () => {
     expect(zoomStopForScale(MIN_SCALE)).toBe(0);
     expect(zoomStopForScale(1.0)).toBe(0);
-    expect(zoomStopForScale(ZOOM_STOPS[0].scale)).toBe(0);
+    expect(zoomStopForScale(ZOOM_STOPS[0]!.scale)).toBe(0);
   });
 
   it("returns 4 (z4 bin) for scales at or near MAX_SCALE", () => {
     expect(zoomStopForScale(MAX_SCALE)).toBe(ZOOM_STOPS.length - 1);
-    expect(zoomStopForScale(ZOOM_STOPS[4].scale)).toBe(4);
+    expect(zoomStopForScale(ZOOM_STOPS[4]!.scale)).toBe(4);
   });
 
   it("uses log-space distance: midpoint between adjacent stops rounds to the nearer one", () => {
     // Between z0 (1.5) and z1 (4): geometric midpoint is sqrt(1.5*4) ≈ 2.45.
     // Scales below the midpoint → z0; above → z1.
-    const mid = Math.sqrt(ZOOM_STOPS[0].scale * ZOOM_STOPS[1].scale);
+    const mid = Math.sqrt(ZOOM_STOPS[0]!.scale * ZOOM_STOPS[1]!.scale);
     expect(zoomStopForScale(mid * 0.99)).toBe(0);
     expect(zoomStopForScale(mid * 1.01)).toBe(1);
   });
 
   it("scales between z1 and z2 resolve to the nearer stop", () => {
-    const mid = Math.sqrt(ZOOM_STOPS[1].scale * ZOOM_STOPS[2].scale);
+    const mid = Math.sqrt(ZOOM_STOPS[1]!.scale * ZOOM_STOPS[2]!.scale);
     expect(zoomStopForScale(mid * 0.99)).toBe(1);
     expect(zoomStopForScale(mid * 1.01)).toBe(2);
   });
@@ -190,7 +190,7 @@ describe("zoomStopForScale — maps continuous scale to nearest discrete stop in
 
   it("is monotonically non-decreasing: higher scales map to same or higher stop", () => {
     const asc = [...ZOOM_STOPS.map(s => s.scale), MIN_SCALE, 2, 6, 15, 30].sort((a, b) => a - b);
-    let prev = zoomStopForScale(asc[0]);
+    let prev = zoomStopForScale(asc[0]!);
     for (const s of asc.slice(1)) {
       const cur = zoomStopForScale(s);
       expect(cur).toBeGreaterThanOrEqual(prev);
@@ -200,7 +200,7 @@ describe("zoomStopForScale — maps continuous scale to nearest discrete stop in
 
   it("regression: wrong stop index would fetch tiles from the wrong API path (/tiles/z/…)", () => {
     // z2 stop (scale≈10) must map to index 2, not 1 or 3.
-    expect(zoomStopForScale(ZOOM_STOPS[2].scale)).toBe(2);
+    expect(zoomStopForScale(ZOOM_STOPS[2]!.scale)).toBe(2);
   });
 });
 
@@ -309,7 +309,7 @@ describe("visibleTileRange — culls N×N grid to only on-screen tiles", () => {
   it("regression: without clamping, an extreme translation could produce c0 < 0 or r1 > N−1", () => {
     const N = 3;
     for (const [tx, ty] of [[999999, 999999], [-999999, -999999]]) {
-      const r = visibleTileRange(N, CW, 3, tx, ty, CW, CH);
+      const r = visibleTileRange(N, CW, 3, tx!, ty!, CW, CH);
       expect(r.c0).toBeGreaterThanOrEqual(0);
       expect(r.c1).toBeLessThanOrEqual(N - 1);
       expect(r.r0).toBeGreaterThanOrEqual(0);
@@ -345,7 +345,7 @@ const WAREHOUSE_VB = { x: 30, y: 40, w: 3530, h: 2397 };
 
 /** Compute the fit scale applyFit targets — always snaps to ZOOM_STOPS[0].scale (z0). */
 function computeFitScale(_containerW: number, _containerH: number): number {
-  return ZOOM_STOPS[0].scale;
+  return ZOOM_STOPS[0]!.scale;
 }
 
 /**
@@ -455,12 +455,12 @@ describe("applyFit / applyFitIfReady — computeFitTarget always snaps to z0", (
 
   it("phone: computeFitTarget returns scale === ZOOM_STOPS[0].scale", () => {
     const { scale } = computeFitTarget(WAREHOUSE_VB, phoneW, phoneH);
-    expect(scale).toBe(ZOOM_STOPS[0].scale);
+    expect(scale).toBe(ZOOM_STOPS[0]!.scale);
   });
 
   it("iPad: computeFitTarget returns scale === ZOOM_STOPS[0].scale", () => {
     const { scale } = computeFitTarget(WAREHOUSE_VB, iPadW, iPadH);
-    expect(scale).toBe(ZOOM_STOPS[0].scale);
+    expect(scale).toBe(ZOOM_STOPS[0]!.scale);
   });
 
   it("phone: renderZoom === 0 (z0 tile grid, 1×1 overview)", () => {
@@ -489,8 +489,8 @@ describe("applyFit / applyFitIfReady — computeFitTarget always snaps to z0", (
     const phoneRaw = fitContentViewport(WAREHOUSE_VB, phoneW, phoneH, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
     const iPadRaw  = fitContentViewport(WAREHOUSE_VB, iPadW,  iPadH,  SVG_VIEWBOX_W, SVG_VIEWBOX_H);
     expect(phoneRaw.scale).not.toBe(iPadRaw.scale); // raw values differ by device
-    expect(computeFitTarget(WAREHOUSE_VB, phoneW, phoneH).scale).toBe(ZOOM_STOPS[0].scale);
-    expect(computeFitTarget(WAREHOUSE_VB, iPadW,  iPadH ).scale).toBe(ZOOM_STOPS[0].scale);
+    expect(computeFitTarget(WAREHOUSE_VB, phoneW, phoneH).scale).toBe(ZOOM_STOPS[0]!.scale);
+    expect(computeFitTarget(WAREHOUSE_VB, iPadW,  iPadH ).scale).toBe(ZOOM_STOPS[0]!.scale);
   });
 
   // ── tx/ty sanity ──────────────────────────────────────────────────────────
@@ -510,7 +510,7 @@ describe("applyFit / applyFitIfReady — computeFitTarget always snaps to z0", (
   // ── ZOOM_STOPS[0] guard ───────────────────────────────────────────────────
 
   it("regression: ZOOM_STOPS[0].scale must be within [MIN_SCALE, ZOOM_STOPS[1].scale] — if this fails the z0 snap is misconfigured", () => {
-    expect(ZOOM_STOPS[0].scale).toBeGreaterThanOrEqual(MIN_SCALE);
-    expect(ZOOM_STOPS[0].scale).toBeLessThanOrEqual(ZOOM_STOPS[1].scale);
+    expect(ZOOM_STOPS[0]!.scale).toBeGreaterThanOrEqual(MIN_SCALE);
+    expect(ZOOM_STOPS[0]!.scale).toBeLessThanOrEqual(ZOOM_STOPS[1]!.scale);
   });
 });

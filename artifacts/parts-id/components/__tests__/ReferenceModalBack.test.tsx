@@ -96,10 +96,10 @@ describe("ReferenceModal — Back button exit path", () => {
 
     const backButtons = findByAccessibilityLabel(renderer.root, "Back");
     expect(backButtons).toHaveLength(1);
-    expect(backButtons[0].props.accessibilityRole).toBe("button");
+    expect(backButtons[0]!.props.accessibilityRole).toBe("button");
 
     act(() => {
-      backButtons[0].props.onPress();
+      backButtons[0]!.props.onPress();
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -117,17 +117,17 @@ describe("ReferenceModal — Back button exit path", () => {
     // ContactSheet starts hidden.
     const sheetBefore = renderer.root.findAllByType("mock-contact-sheet" as never);
     expect(sheetBefore).toHaveLength(1);
-    expect(sheetBefore[0].props.visible).toBe(false);
+    expect(sheetBefore[0]!.props.visible).toBe(false);
 
     const contactButtons = findPressableWithText(renderer.root, "Contact");
     expect(contactButtons).toHaveLength(1);
 
     act(() => {
-      contactButtons[0].props.onPress();
+      contactButtons[0]!.props.onPress();
     });
 
     const sheetAfter = renderer.root.findAllByType("mock-contact-sheet" as never);
-    expect(sheetAfter[0].props.visible).toBe(true);
+    expect(sheetAfter[0]!.props.visible).toBe(true);
   });
 
   it("hides the Clear control until there is chat history", () => {

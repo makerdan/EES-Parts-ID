@@ -381,7 +381,7 @@ describe("PartDetailsEditor – handleSave success path cache patch", () => {
       description:  "Old description",
       binLocations: ["AISLE-01"],
       aiKeywords:   [],
-      dimensions:   { length: 10, width: 5, height: 2, diameter: null } as unknown as InventoryItem["dimensions"],
+      dimensions:   { length: 10, width: 5, height: 2, diameter: null } as unknown as Exclude<InventoryItem["dimensions"], undefined>,
     });
 
     const tree = await renderEditor(
@@ -579,7 +579,7 @@ describe("PartDetailsEditor – handleSave partial-failure path: no partial writ
 
     // The restored data must be exactly the pre-mutation snapshot (old bins).
     const restoredData = invCall![1] as { items: typeof preMutationItems };
-    expect(restoredData.items[0].binLocations).toEqual(["AISLE-01"]);
+    expect(restoredData.items[0]!.binLocations).toEqual(["AISLE-01"]);
   });
 });
 

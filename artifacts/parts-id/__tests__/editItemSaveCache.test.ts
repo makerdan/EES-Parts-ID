@@ -191,12 +191,12 @@ describe("invalidateAllCachesAfterSave — combined list + search invalidation c
     ][];
 
     // First call: predicate-based list query invalidation
-    expect(typeof calls[0][0].predicate).toBe("function");
-    expect(calls[0][0].queryKey).toBeUndefined();
+    expect(typeof calls[0]![0].predicate).toBe("function");
+    expect(calls[0]![0].queryKey).toBeUndefined();
 
     // Second call: exact search key invalidation
-    expect(calls[1][0].queryKey).toEqual(["searchInventory"]);
-    expect(calls[1][0].predicate).toBeUndefined();
+    expect(calls[1]![0].queryKey).toEqual(["searchInventory"]);
+    expect(calls[1]![0].predicate).toBeUndefined();
   });
 
   it("list predicate captured from the real call matches list queries and not search queries", async () => {
@@ -212,7 +212,7 @@ describe("invalidateAllCachesAfterSave — combined list + search invalidation c
     const calls = invalidateQueries.mock.calls as [
       { predicate?: (q: { queryKey: unknown }) => boolean; queryKey?: unknown[] },
     ][];
-    const listPredicate = calls[0][0].predicate!;
+    const listPredicate = calls[0]![0].predicate!;
     expect(typeof listPredicate).toBe("function");
 
     // Must match list queries (with or without params)
@@ -239,7 +239,7 @@ describe("invalidateAllCachesAfterSave — combined list + search invalidation c
     const calls = invalidateQueries.mock.calls as [
       { predicate?: unknown; queryKey?: unknown[] },
     ][];
-    expect(typeof calls[0][0].predicate).toBe("function");
-    expect(calls[1][0].queryKey).toEqual(["searchInventory"]);
+    expect(typeof calls[0]![0].predicate).toBe("function");
+    expect(calls[1]![0].queryKey).toEqual(["searchInventory"]);
   });
 });

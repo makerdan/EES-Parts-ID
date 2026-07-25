@@ -168,7 +168,7 @@ describe("UserAdminButtonRow — button disabled state", () => {
       userActionPending: "some_other_user",
     });
     const [btn] = findMakeAdminButton(tree.root);
-    expect(btn.props.disabled).toBe(true);
+    expect(btn!.props.disabled).toBe(true);
   });
 
   it("Revoke Admin button is disabled when another action is in progress", async () => {
@@ -177,7 +177,7 @@ describe("UserAdminButtonRow — button disabled state", () => {
       userActionPending: "some_other_user",
     });
     const [btn] = findRevokeAdminButton(tree.root);
-    expect(btn.props.disabled).toBe(true);
+    expect(btn!.props.disabled).toBe(true);
   });
 
   it("Make Admin button is enabled when no action is pending", async () => {
@@ -186,6 +186,6 @@ describe("UserAdminButtonRow — button disabled state", () => {
       userActionPending: null,
     });
     const [btn] = findMakeAdminButton(tree.root);
-    expect(btn.props.disabled).toBe(false);
+    expect(btn!.props.disabled).toBe(false);
   });
 });

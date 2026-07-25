@@ -204,8 +204,8 @@ describe("updateQueryCache serialisation lock — concurrent write races", () =>
     // Both keys must be present — the lock serialised the reads/writes
     expect(final).toHaveProperty("searchA");
     expect(final).toHaveProperty("searchB");
-    expect(final.searchA.results).toEqual([{ id: 1 }]);
-    expect(final.searchB.results).toEqual([{ id: 2 }]);
+    expect(final.searchA!.results).toEqual([{ id: 1 }]);
+    expect(final.searchB!.results).toEqual([{ id: 2 }]);
   });
 
   it("the second update sees the first update's write, not the pre-first snapshot", async () => {
@@ -397,7 +397,7 @@ describe("syncAllInventory — post-sync cache pruning of stale search results",
 
     // "bolts query" keeps live-1 and drops deleted-2
     expect(result["bolts query"]).toBeDefined();
-    expect(result["bolts query"].results).toEqual([{ item: { id: "live-1" } }]);
+    expect(result["bolts query"]!.results).toEqual([{ item: { id: "live-1" } }]);
 
     // "nuts query" was fully emptied — it must be absent from the result
     expect(result["nuts query"]).toBeUndefined();

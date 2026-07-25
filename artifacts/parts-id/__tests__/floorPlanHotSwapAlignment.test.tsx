@@ -280,7 +280,7 @@ function fireOnLayout(renderer: TestRenderer.ReactTestRenderer, width: number, h
     { deep: true },
   );
   if (nodes.length === 0) throw new Error("No onLayout node found");
-  nodes[0].props.onLayout({ nativeEvent: { layout: { width, height, x: 0, y: 0 } } });
+  nodes[0]!.props.onLayout({ nativeEvent: { layout: { width, height, x: 0, y: 0 } } });
 }
 
 /** Flush enough microtask ticks to drain async effect chains. */

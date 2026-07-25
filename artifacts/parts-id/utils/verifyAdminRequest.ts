@@ -24,7 +24,7 @@ import { shouldNotifyDemotion } from "@/utils/adminDemotionToast";
 export type VerifyAdminRequestDeps = {
   apiBase: string;
   token: string;
-  signal?: AbortSignal;
+  signal?: AbortSignal | undefined;
   /** Whether the user held admin status before this check. Used for demotion detection. */
   wasAdmin?: boolean;
   setIsAdmin: (v: boolean) => void;
@@ -53,7 +53,7 @@ export async function verifyAdminRequest({
   try {
     const resp = await fetch(`${apiBase}/admin/me`, {
       headers: { Authorization: `Bearer ${token}` },
-      signal,
+      ...(signal !== undefined ? { signal } : {}),
     });
     if (signal?.aborted) return;
     if (resp.ok) {

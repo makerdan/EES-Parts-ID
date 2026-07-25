@@ -226,7 +226,7 @@ describe("useWarehouseZones — mid-session token expiry", () => {
       // The hook must have registered a tokenAvailable subscriber.
       expect(mockSubscribeToTokenAvailable).toHaveBeenCalledTimes(1);
       const tokenAvailableHandler =
-        mockSubscribeToTokenAvailable.mock.calls[0][0];
+        mockSubscribeToTokenAvailable.mock.calls[0]![0];
 
       // Phase 2: background refresh returns 401 (token expired mid-session).
       // onUnauthorized clears the token — getAuthToken() returns null.
