@@ -1,0 +1,46 @@
+name: Scheduled security audit
+
+on:
+  schedule:
+    # Run every day at 08:00 UTC
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    name: Daily dependency audit (low+)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Fail on any advisory at low severity or above.
+      # When a new advisory surfaces, add an entry below and pin a safe override
+      # in the root package.json pnpm.overrides block, then remove the entry
+      # once the transitive dependency tree is clean again.
+      #
+      # Exception log
+      # -------------
+      # (none as of 2026-07-25 baseline — zero advisories at low+ with overrides in place)
+      - name: Audit dependencies (fail on low/moderate/high/critical)
+        run: pnpm audit --audit-level=low
