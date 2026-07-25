@@ -17,7 +17,7 @@
     "seed:barcodes": "tsx src/seed/import-barcodes.ts",
     "lint": "eslint . --ext .ts && knip",
     "dead-exports": "knip",
-    "gen:map": "node scripts/gen-warehouse-map-raw.js"
+    "gen:map": "node ../../scripts/gen-warehouse-map-raw.mjs src/assets/warehouse-map.svg src/assets/warehouse-map-raw.ts"
   },
   "dependencies": {
     "@clerk/express": "^2.1.35",

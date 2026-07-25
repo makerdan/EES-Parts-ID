@@ -13,6 +13,7 @@
     "typecheck": "pnpm -w run typecheck:libs && tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck.tsbuildinfo",
     "test": "node scripts/run-tests.mjs",
     "lint": "eslint . --ext .ts,.tsx",
+    "gen:map": "node ../../scripts/gen-warehouse-map-raw.mjs assets/warehouse-map.svg assets/warehouse-map-raw.ts",
     "check:bundle-domain": "node scripts/check-bundle-domain.js"
   },
   "devDependencies": {

@@ -65,8 +65,8 @@ import {
   runSaveAll,
 } from "@/utils/expandDescHandlers";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
-import { useTrackScreen } from "@/utils/useTrackScreen";
 import { reportStorageError } from "@/utils/storageErrorReporter";
+import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const EXPAND_DESC_DRAFT_KEY = "@expandDesc:draft";
 type ExpandDescDraft = {

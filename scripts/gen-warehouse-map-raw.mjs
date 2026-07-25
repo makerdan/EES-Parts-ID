@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Generates src/assets/warehouse-map-raw.ts — a TypeScript module that exports
- * the warehouse floor plan SVG as a compile-time string constant.
+ * Shared script — generates a TypeScript module that exports the warehouse
+ * floor plan SVG as a compile-time string constant.
  *
  * Optimisations applied at generation time to keep the module small:
  *   1. Strip <color-profile> elements — the base64 ICC colour-profile blob is
@@ -9,17 +9,25 @@
  *   2. Strip XML/SVG comments.
  *   3. Collapse runs of whitespace between tags to a single space.
  *
- * Run after updating src/assets/warehouse-map.svg:
- *   node scripts/gen-warehouse-map-raw.js
+ * Usage (paths are relative to the calling package root / cwd):
+ *   node ../../scripts/gen-warehouse-map-raw.mjs <svgPath> <outPath>
+ *
+ * Example — from artifacts/api-server/:
+ *   node ../../scripts/gen-warehouse-map-raw.mjs \
+ *     src/assets/warehouse-map.svg src/assets/warehouse-map-raw.ts
  */
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const [svgRelPath, outRelPath] = process.argv.slice(2);
 
-const svgPath = path.resolve(__dirname, "../src/assets/warehouse-map.svg");
-const outPath = path.resolve(__dirname, "../src/assets/warehouse-map-raw.ts");
+if (!svgRelPath || !outRelPath) {
+  console.error("Usage: gen-warehouse-map-raw.mjs <svgPath> <outPath>");
+  process.exit(1);
+}
+
+const svgPath = path.resolve(process.cwd(), svgRelPath);
+const outPath = path.resolve(process.cwd(), outRelPath);
 
 let svg = fs.readFileSync(svgPath, "utf8");
 
@@ -40,7 +48,7 @@ svg = svg.trim();
 const escaped = svg.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
 
 const ts = [
-  "// Auto-generated — do not edit. Regenerate with: node scripts/gen-warehouse-map-raw.js",
+  "// Auto-generated — do not edit. Regenerate with: pnpm gen:map",
   `export const WAREHOUSE_MAP_SVG: string = \`${escaped}\`;`,
   "",
 ].join("\n");
