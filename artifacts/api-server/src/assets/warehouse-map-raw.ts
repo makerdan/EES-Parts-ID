@@ -1,4 +1,4 @@
-// Auto-generated — do not edit. Regenerate with: node scripts/gen-warehouse-map-raw.js
+// Auto-generated — do not edit. Regenerate with: pnpm gen:map
 export const WAREHOUSE_MAP_SVG: string = `<?xml version="1.0" encoding="UTF-8" standalone="no"?><svg
    version="1.1"
    id="svg1"
