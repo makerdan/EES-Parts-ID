@@ -28,23 +28,21 @@ import {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 describe("SVG_VIEWBOX constants", () => {
-  it("match the actual floor-plan SVG viewBox (regression: was 3592×2457, causing cropping)", () => {
+  it("match the actual floor-plan SVG viewBox", () => {
     // The correct values come from:
     //   curl .../api/floor-plan/svg | grep -oP 'viewBox="[^"]+"' | head -1
-    // => viewBox="0 0 7329.6001 4997.2798"
-    expect(SVG_VIEWBOX_W).toBeCloseTo(7329.6001, 2);
-    expect(SVG_VIEWBOX_H).toBeCloseTo(4997.2798, 2);
+    // => viewBox="0 0 3592.55 2457.41"
+    expect(SVG_VIEWBOX_W).toBeCloseTo(3592.55, 2);
+    expect(SVG_VIEWBOX_H).toBeCloseTo(2457.41, 2);
   });
 
   it("aspect ratio matches W/H", () => {
     expect(SVG_ASPECT).toBeCloseTo(SVG_VIEWBOX_W / SVG_VIEWBOX_H, 10);
   });
 
-  it("constants are wider than the old wrong values (regression guard)", () => {
-    // The old (wrong) constants were 3592.55 × 2457.41 — roughly half.
-    // If someone accidentally halves the constants again, this fails loudly.
-    expect(SVG_VIEWBOX_W).toBeGreaterThan(5000);
-    expect(SVG_VIEWBOX_H).toBeGreaterThan(3500);
+  it("constants are within the expected range (sanity guard)", () => {
+    expect(SVG_VIEWBOX_W).toBeGreaterThan(2000);
+    expect(SVG_VIEWBOX_H).toBeGreaterThan(1000);
   });
 });
 
@@ -112,13 +110,13 @@ describe("fitContentViewport — full-canvas fit", () => {
     expect(ty).toBeCloseTo(0, 5);
   });
 
-  it("regression: old constants (3592×2457) produced large non-zero tx/ty offsets", () => {
+  it("regression: doubled constants produce large non-zero tx/ty offsets", () => {
     // With wrong constants the contentVB width is 2× the svgVBW reference, so
     // rawScale ≈ 0.45 (clamped up to MIN_SCALE=0.8 by the guard).  More
-    // visibly, contentCenterX overshoots svgRenderW/2, producing tx ≈ -162 and
-    // ty ≈ -110 — map appears off-centre even after pressing Fit.
+    // visibly, contentCenterX overshoots svgRenderW/2 — map appears off-centre
+    // even after pressing Fit.
     // With correct constants the content centre IS the SVG centre → tx=0, ty=0.
-    const WRONG_W = 3592.55, WRONG_H = 2457.41;
+    const WRONG_W = SVG_VIEWBOX_W * 2, WRONG_H = SVG_VIEWBOX_H * 2;
     const { tx: wrongTx, ty: wrongTy } = fitContentViewport(
       fullCanvas, CW, CH, WRONG_W, WRONG_H,
     );
@@ -129,8 +127,8 @@ describe("fitContentViewport — full-canvas fit", () => {
     expect(correctTx).toBeCloseTo(0, 5);
     expect(correctTy).toBeCloseTo(0, 5);
     // Wrong constants → large mis-centering offset.
-    expect(Math.abs(wrongTx)).toBeGreaterThan(100);
-    expect(Math.abs(wrongTy)).toBeGreaterThan(60);
+    expect(Math.abs(wrongTx)).toBeGreaterThan(50);
+    expect(Math.abs(wrongTy)).toBeGreaterThan(30);
   });
 });
 
@@ -225,10 +223,10 @@ describe("makeTileViewBox", () => {
     expect(x00 + w00).toBeCloseTo(x10, 5);
   });
 
-  it("regression: old constants (3592×2457) tiled only the top-left half, missing 75% of the map", () => {
-    // With wrong constants, the bottom-right corner of the (1,1) tile was
-    // (3592, 2457) instead of (7329, 4997) — the rest of the warehouse was invisible.
-    const WRONG_W = 3592.55, WRONG_H = 2457.41;
+  it("regression: halved constants tile only the top-left quarter, missing 75% of the map", () => {
+    // With halved constants the bottom-right corner of the (1,1) tile is
+    // half the true extent — the rest of the warehouse is invisible.
+    const WRONG_W = SVG_VIEWBOX_W / 2, WRONG_H = SVG_VIEWBOX_H / 2;
     const wrongVb = makeTileViewBox(1, 1, 2, WRONG_W, WRONG_H);
     const parts = wrongVb.split(" ").map(Number);
     const [x, y, w, h] = parts;

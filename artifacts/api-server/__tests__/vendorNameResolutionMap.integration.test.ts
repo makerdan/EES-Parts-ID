@@ -27,6 +27,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import { db } from "@workspace/db";
 import { vendorMapTable } from "@workspace/db";
+import { inArray } from "drizzle-orm";
 import { PRIMARY_VENDORS, seedVendors } from "../src/seed/dictionaries";
 
 // ── Resolution algorithm (mirrors inventory.ts) ───────────────────────────────
@@ -88,10 +89,53 @@ const DB_CONFLICT_WINNERS = new Map<string, string>([
 // ── Shared map (built once) ───────────────────────────────────────────────────
 let map: Map<string, string>;
 
+// ── Conflict vendor codes that need deterministic page order ──────────────────
+//
+// seedVendors() uses onConflictDoUpdate (HOT update) which keeps rows on their
+// current heap page, so repeated test runs can leave conflict rows on the same
+// page — breaking last-write-wins semantics.  After seeding we delete and
+// re-insert the conflict vendors in the exact order required by DB_CONFLICT_WINNERS:
+//   Losers inserted first (earlier page/offset), winners inserted last.
+//
+// Required insertion order:
+//   1. ABB  (thomas-betts loser — TAB must come later)
+//   2. BUS  (edison-fuse loser — EDN must come later)
+//   3. EAT  (eaton loser — ETN and CHD must come later)
+//   4. ETN  (wins "eaton corporation" over EAT, but loses to CHD for eaton/cutler)
+//   5. TAB  (wins thomas-betts over ABB)
+//   6. EDN  (wins edison-fuse over BUS)
+//   7. CHD  (wins eaton/cutler-hammer family over ETN and EAT)
+const CONFLICT_CODES = ["ABB", "BUS", "EAT", "ETN", "TAB", "EDN", "CHD"];
+
+async function repairConflictPageOrder(): Promise<void> {
+  const rows = await db
+    .select()
+    .from(vendorMapTable)
+    .where(inArray(vendorMapTable.code, CONFLICT_CODES));
+  const byCode = Object.fromEntries(rows.map((r) => [r.code, r]));
+
+  await db
+    .delete(vendorMapTable)
+    .where(inArray(vendorMapTable.code, CONFLICT_CODES));
+
+  for (const code of CONFLICT_CODES) {
+    const row = byCode[code];
+    if (row) {
+      await db.insert(vendorMapTable).values({
+        code: row.code,
+        names: row.names,
+        notes: row.notes,
+        isPrimary: row.isPrimary,
+      });
+    }
+  }
+}
+
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 beforeAll(async () => {
   await seedVendors();
+  await repairConflictPageOrder();
   map = await buildReverseVendorMap();
 }, 30_000);
 

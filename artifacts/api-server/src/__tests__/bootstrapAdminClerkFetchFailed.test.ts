@@ -62,12 +62,16 @@ let getUserSpy: jest.SpyInstance;
 
 beforeEach(async () => {
   // Seed the bootstrap-admin row with a known stored email.
-  await db.delete(usersTable).where(eq(usersTable.clerkUserId, ADMIN_TEST_USER_ID));
+  // Use upsert so this is safe on a shared DB where parallel suites may also
+  // hold the jest-admin-user row — avoids duplicate key errors on the PK.
   await db.insert(usersTable).values({
     clerkUserId: ADMIN_TEST_USER_ID,
     email: STORED_EMAIL,
     status: "approved",
     role: "admin",
+  }).onConflictDoUpdate({
+    target: usersTable.clerkUserId,
+    set: { email: STORED_EMAIL, status: "approved", role: "admin" },
   });
 
   // Make every Clerk getUser call throw to simulate a network / API failure.

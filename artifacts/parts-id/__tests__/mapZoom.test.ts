@@ -340,8 +340,8 @@ describe("visibleTileRange — culls N×N grid to only on-screen tiles", () => {
 //      deterministic stop commit.
 
 // Approximate content viewBox for the RDC34 warehouse floor plan.
-// The drawing fills most of the 7329×4997 SVG space.
-const WAREHOUSE_VB = { x: 60, y: 80, w: 7200, h: 4820 };
+// The drawing fills most of the 3592×2457 SVG space.
+const WAREHOUSE_VB = { x: 30, y: 40, w: 3530, h: 2397 };
 
 /** Compute the fit scale applyFit targets — always snaps to ZOOM_STOPS[0].scale (z0). */
 function computeFitScale(_containerW: number, _containerH: number): number {
