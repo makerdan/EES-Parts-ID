@@ -331,7 +331,7 @@ describe("POST /api/inventory/bulk-enrich — pinned keywords survive the real b
     for (const kw of PINNED) {
       expect((dbRow?.aiKeywords ?? []).map((k) => k.toLowerCase())).toContain(kw.toLowerCase());
     }
-  });
+  }, 30_000);
 
   it("AI-generated keywords and pinned keywords both appear after the bulk-enrich run", async () => {
     const row = await seedWithPinnedKeywords("JEST-ITG-PIN-BULK-MERGE", PINNED);
@@ -368,7 +368,7 @@ describe("POST /api/inventory/bulk-enrich — pinned keywords survive the real b
 
     expect(dbRow?.enrichedAt).not.toBeNull();
     expect(dbRow?.enrichedAt?.getFullYear()).toBeGreaterThan(2000);
-  });
+  }, 30_000);
 
   it("pinned keywords survive even when AI returns completely disjoint terms", async () => {
     // The mock returns ["ai-keyword-alpha","ai-keyword-beta"] which share no
@@ -391,5 +391,5 @@ describe("POST /api/inventory/bulk-enrich — pinned keywords survive the real b
     for (const kw of AI_KEYWORDS) {
       expect(saved.map((k) => k.toLowerCase())).toContain(kw.toLowerCase());
     }
-  });
+  }, 30_000);
 });

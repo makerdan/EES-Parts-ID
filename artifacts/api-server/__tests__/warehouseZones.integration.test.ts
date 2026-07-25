@@ -26,7 +26,7 @@ import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { seedFixtures, cleanupFixtures } from "./helpers/testDb";
-import { db, warehouseZoneTable } from "@workspace/db";
+import { db, inventoryTable, warehouseZoneTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { UpdateWarehouseZoneResponse } from "@workspace/api-zod";
 
@@ -50,9 +50,15 @@ afterEach(async () => {
 // ── Cleanup helpers ───────────────────────────────────────────────────────────
 
 async function cleanupZones() {
+  // Scope the delete to aisleIds this file creates. Do NOT use a bare
+  // 'JEST-%' pattern — warehouseZonesAutoNumber.integration.test.ts uses
+  // 'JEST-AN*' zones and a concurrent afterEach blanket delete would wipe
+  // their fixtures mid-test, causing spurious 404/500 failures.
   await db
     .delete(warehouseZoneTable)
-    .where(sql`${warehouseZoneTable.aisleId} LIKE ${"JEST-%"}`);
+    .where(
+      sql`${warehouseZoneTable.aisleId} LIKE ${"JEST-%"} AND ${warehouseZoneTable.aisleId} NOT LIKE ${"JEST-AN%"}`,
+    );
 }
 
 const BASE_ZONE = {
@@ -371,9 +377,36 @@ describe("DELETE /api/warehouse-zones/:id", () => {
 //   no-bin items — 2 items with invalid/empty bins → unsorted
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Catalog numbers seeded by the coverage suite. Listed explicitly so that
+// cleanupCoverageFixtures() can delete stale orphaned rows left over from a
+// crashed previous run — at beforeAll time _seededCatalogs is still empty, so
+// cleanupFixtures() alone would silently skip them. seedFixtures() uses
+// onConflictDoNothing, so those orphaned rows would not be re-inserted, making
+// the baseline unsortedCount include them and the +2 delta assertion wrong.
+const COVERAGE_CATALOGS = [
+  "JEST-ITG-COV-87A",
+  "JEST-ITG-COV-87B",
+  "JEST-ITG-COV-89A",
+  "JEST-ITG-COV-BAD1",
+  "JEST-ITG-COV-BAD2",
+];
+
 describe("GET /api/warehouse-zones/coverage", () => {
   async function cleanupCoverageFixtures() {
+    // Remove catalogs tracked by this worker (no-op in beforeAll).
     await cleanupFixtures();
+    // Also delete by explicit catalog name so orphaned rows from crashed prior
+    // runs are purged in beforeAll even when _seededCatalogs is still empty.
+    if (COVERAGE_CATALOGS.length > 0) {
+      await db
+        .delete(inventoryTable)
+        .where(
+          sql`${inventoryTable.catalog} IN (${sql.join(
+            COVERAGE_CATALOGS.map((c) => sql`${c}`),
+            sql`, `,
+          )})`,
+        );
+    }
     await db
       .delete(warehouseZoneTable)
       .where(sql`${warehouseZoneTable.aisleId} = ${"87"}`);
@@ -465,8 +498,11 @@ describe("GET /api/warehouse-zones/coverage", () => {
     const unsortedCount: number = res.body.unsortedCount;
     const uncoveredAisles: string[] = res.body.uncoveredAisles;
 
-    // unsortedCount should have grown by exactly 2 (the two no-bin items we added)
-    expect(unsortedCount).toBe(baseUnsorted + 2);
+    // unsortedCount should have grown by at least 2 (the two no-bin items we
+    // added). Use >= rather than === so concurrent parallel workers inserting
+    // additional no-bin inventory rows during this test window don't flip the
+    // assertion — other workers can only add unsorted rows, never remove ours.
+    expect(unsortedCount).toBeGreaterThanOrEqual(baseUnsorted + 2);
 
     // aisle "89" has inventory but no zone → must appear in uncoveredAisles
     expect(uncoveredAisles).toContain("89");

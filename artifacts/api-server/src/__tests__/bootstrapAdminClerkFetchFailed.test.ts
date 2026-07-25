@@ -45,27 +45,37 @@ import { eq } from "drizzle-orm";
 import { clerkClient } from "@clerk/express";
 
 import app from "../app";
-import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
 import { db, usersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
+
+// Use a dedicated bootstrap-admin ID scoped to this file.
+// The shared jest-admin-user ID is used by many other integration suites whose
+// auth middleware resolves and writes jest-admin-user@test.example — overwriting
+// the STORED_EMAIL we set up in beforeEach, causing false failures.
+// A file-local ID is never sent by any other worker, so STORED_EMAIL is stable.
+const FETCH_FAIL_ADMIN_ID = "jest-fetch-fail-admin";
+
+// Override the env var that requireAppAuth reads at request time so our unique
+// ID is treated as the bootstrap admin for requests in this file.
+process.env.ADMIN_CLERK_USER_ID = FETCH_FAIL_ADMIN_ID;
 
 // An existing email stored on the bootstrap-admin row before the request.
 // After a failed Clerk fetch this value must still be present — it must not
 // be wiped or replaced.
-const STORED_EMAIL = "stored-admin@test.example";
+const STORED_EMAIL = "stored-fetch-fail@test.example";
 
 function adminBearer(): string {
-  return `Bearer ${ADMIN_TEST_USER_ID}`;
+  return `Bearer ${FETCH_FAIL_ADMIN_ID}`;
 }
 
 let getUserSpy: jest.SpyInstance;
 
 beforeEach(async () => {
   // Seed the bootstrap-admin row with a known stored email.
-  // Use upsert so this is safe on a shared DB where parallel suites may also
-  // hold the jest-admin-user row — avoids duplicate key errors on the PK.
+  // FETCH_FAIL_ADMIN_ID is unique to this file, so no concurrent worker will
+  // overwrite STORED_EMAIL between the seed and the assertion.
   await db.insert(usersTable).values({
-    clerkUserId: ADMIN_TEST_USER_ID,
+    clerkUserId: FETCH_FAIL_ADMIN_ID,
     email: STORED_EMAIL,
     status: "approved",
     role: "admin",
@@ -85,7 +95,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await db.delete(usersTable).where(eq(usersTable.clerkUserId, ADMIN_TEST_USER_ID));
+  await db.delete(usersTable).where(eq(usersTable.clerkUserId, FETCH_FAIL_ADMIN_ID));
 }, 15_000);
 
 describe("requireAppAuth — bootstrap admin Clerk fetch failure", () => {
@@ -107,7 +117,7 @@ describe("requireAppAuth — bootstrap admin Clerk fetch failure", () => {
     const rows = await db
       .select()
       .from(usersTable)
-      .where(eq(usersTable.clerkUserId, ADMIN_TEST_USER_ID));
+      .where(eq(usersTable.clerkUserId, FETCH_FAIL_ADMIN_ID));
 
     expect(rows).toHaveLength(1);
     expect(rows[0]!.email).toBe(STORED_EMAIL);
@@ -119,7 +129,7 @@ describe("requireAppAuth — bootstrap admin Clerk fetch failure", () => {
     await db
       .update(usersTable)
       .set({ role: "user", status: "pending" })
-      .where(eq(usersTable.clerkUserId, ADMIN_TEST_USER_ID));
+      .where(eq(usersTable.clerkUserId, FETCH_FAIL_ADMIN_ID));
 
     await supertest(app)
       .get("/api/admin/me")
@@ -129,7 +139,7 @@ describe("requireAppAuth — bootstrap admin Clerk fetch failure", () => {
     const rows = await db
       .select()
       .from(usersTable)
-      .where(eq(usersTable.clerkUserId, ADMIN_TEST_USER_ID));
+      .where(eq(usersTable.clerkUserId, FETCH_FAIL_ADMIN_ID));
 
     expect(rows).toHaveLength(1);
     expect(rows[0]!.role).toBe("admin");
