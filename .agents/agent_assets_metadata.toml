@@ -17,3 +17,15 @@ id = "upIFKTsl-iuEspeuhoF84"
 uri = "file://warehouse_zones_backup_2026-07-05.csv"
 type = "table"
 title = "Zone shapes backup — 819 rows (2026-07-05)"
+
+[[outputs]]
+id = "by8gWjyMiVIzJb-sze6ZR"
+uri = "file://.local/custom_skills/port-authority/SKILL.md"
+type = "text"
+title = "Port Authority Skill"
+
+[[outputs]]
+id = "qLCUJNB0zcz1O89UowrA2"
+uri = "file://.local/custom_skills/port-authority-heavy/SKILL.md"
+type = "text"
+title = "Port Authority - Heavy Skill"
