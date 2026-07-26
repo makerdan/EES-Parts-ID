@@ -110,7 +110,13 @@ jest.mock("@workspace/db", () => {
   };
 });
 
+const _origLogLevel = process.env.LOG_LEVEL;
 process.env.LOG_LEVEL = "silent";
+
+afterAll(() => {
+  if (_origLogLevel === undefined) delete process.env.LOG_LEVEL;
+  else process.env.LOG_LEVEL = _origLogLevel;
+});
 
 // ── Imports (after mocks) ────────────────────────────────────────────────────
 

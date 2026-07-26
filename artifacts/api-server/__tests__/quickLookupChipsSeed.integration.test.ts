@@ -28,7 +28,13 @@ jest.mock("@workspace/integrations-openai-ai-server", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
+const _origLogLevel = process.env.LOG_LEVEL;
 process.env.LOG_LEVEL = "silent";
+
+afterAll(() => {
+  if (_origLogLevel === undefined) delete process.env.LOG_LEVEL;
+  else process.env.LOG_LEVEL = _origLogLevel;
+});
 
 import { db } from "@workspace/db";
 import { quickLookupCacheTable } from "@workspace/db";

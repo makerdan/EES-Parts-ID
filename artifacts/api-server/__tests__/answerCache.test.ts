@@ -15,7 +15,13 @@ jest.mock("@workspace/db", () => ({
   referenceAnswerCacheTable: { questionHash: "questionHash" },
 }));
 
+const _origLogLevel = process.env.LOG_LEVEL;
 process.env.LOG_LEVEL = "silent";
+
+afterAll(() => {
+  if (_origLogLevel === undefined) delete process.env.LOG_LEVEL;
+  else process.env.LOG_LEVEL = _origLogLevel;
+});
 
 import { hashQuestion, normalizeQuestion } from "../src/lib/answerCache";
 

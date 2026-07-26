@@ -20,7 +20,13 @@
 
 // ── Env vars — must be set before any module imports ─────────────────────────
 const BOOTSTRAP_ADMIN_ID = "jest-route-err-bootstrap-admin";
+const _origAdminClerkUserId = process.env.ADMIN_CLERK_USER_ID;
 process.env.ADMIN_CLERK_USER_ID = BOOTSTRAP_ADMIN_ID;
+
+afterAll(() => {
+  if (_origAdminClerkUserId === undefined) delete process.env.ADMIN_CLERK_USER_ID;
+  else process.env.ADMIN_CLERK_USER_ID = _origAdminClerkUserId;
+});
 
 // ── DB mock — must be declared before any module imports ─────────────────────
 // The bootstrap admin path in requireAppAuth calls

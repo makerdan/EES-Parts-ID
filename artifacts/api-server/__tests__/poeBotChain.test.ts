@@ -9,11 +9,29 @@
  */
 
 // ── Env vars — must be set before any require() calls ────────────────────────
+const _origAiProvider = process.env.AI_PROVIDER;
+const _origPoeApiKey2 = process.env.POE_API_KEY2;
+const _origPoeChainRetryDelayMs = process.env.POE_CHAIN_RETRY_DELAY_MS;
+const _origOpenAIBaseUrl = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+const _origOpenAIApiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
 process.env.AI_PROVIDER = "poe";
 process.env.POE_API_KEY2 = "test-poe-key";
 process.env.POE_CHAIN_RETRY_DELAY_MS = "0";
 process.env.AI_INTEGRATIONS_OPENAI_BASE_URL = "https://test.openai.example/v1";
 process.env.AI_INTEGRATIONS_OPENAI_API_KEY = "test-openai-key";
+
+afterAll(() => {
+  if (_origAiProvider === undefined) delete process.env.AI_PROVIDER;
+  else process.env.AI_PROVIDER = _origAiProvider;
+  if (_origPoeApiKey2 === undefined) delete process.env.POE_API_KEY2;
+  else process.env.POE_API_KEY2 = _origPoeApiKey2;
+  if (_origPoeChainRetryDelayMs === undefined) delete process.env.POE_CHAIN_RETRY_DELAY_MS;
+  else process.env.POE_CHAIN_RETRY_DELAY_MS = _origPoeChainRetryDelayMs;
+  if (_origOpenAIBaseUrl === undefined) delete process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+  else process.env.AI_INTEGRATIONS_OPENAI_BASE_URL = _origOpenAIBaseUrl;
+  if (_origOpenAIApiKey === undefined) delete process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+  else process.env.AI_INTEGRATIONS_OPENAI_API_KEY = _origOpenAIApiKey;
+});
 
 // ── OpenAI constructor mock ───────────────────────────────────────────────────
 // poeBot.ts uses both the OpenAI constructor (for getClient()) and the static

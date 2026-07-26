@@ -57,7 +57,13 @@ const FETCH_FAIL_ADMIN_ID = "jest-fetch-fail-admin";
 
 // Override the env var that requireAppAuth reads at request time so our unique
 // ID is treated as the bootstrap admin for requests in this file.
+const _origAdminClerkUserId = process.env.ADMIN_CLERK_USER_ID;
 process.env.ADMIN_CLERK_USER_ID = FETCH_FAIL_ADMIN_ID;
+
+afterAll(() => {
+  if (_origAdminClerkUserId === undefined) delete process.env.ADMIN_CLERK_USER_ID;
+  else process.env.ADMIN_CLERK_USER_ID = _origAdminClerkUserId;
+});
 
 // An existing email stored on the bootstrap-admin row before the request.
 // After a failed Clerk fetch this value must still be present — it must not

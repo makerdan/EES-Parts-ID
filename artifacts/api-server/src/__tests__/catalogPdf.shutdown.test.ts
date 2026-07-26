@@ -12,7 +12,13 @@
  */
 
 // ── Env vars — must be set before any module is imported ──────────────────────
+const _origAdminPassword = process.env.ADMIN_PASSWORD;
 process.env.ADMIN_PASSWORD = "jest-shutdown-secret";
+
+afterAll(() => {
+  if (_origAdminPassword === undefined) delete process.env.ADMIN_PASSWORD;
+  else process.env.ADMIN_PASSWORD = _origAdminPassword;
+});
 
 // ── Mock heavy AI modules pulled in by catalogPdf.ts at import time ───────────
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
