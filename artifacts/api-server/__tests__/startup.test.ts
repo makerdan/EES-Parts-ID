@@ -88,10 +88,6 @@ jest.mock("drizzle-orm", () => ({
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Drain one macrotask turn (setImmediate fires after all pending microtasks). */
-const flushPromises = (): Promise<void> =>
-  new Promise<void>((resolve) => setImmediate(resolve));
-
 /**
  * Build a deferred promise pair.  The caller controls when the returned
  * promise resolves; pass `promise` as the mock return value and call
@@ -161,7 +157,15 @@ describe("server startup sequence (src/index.ts)", () => {
   it("does not call startServer() until initProvider() has resolved", async () => {
     // Hold initProvider() in a pending state that we control.
     const { promise: initGate, resolve: resolveInit } = makeGate();
-    mockInitProvider.mockReturnValueOnce(initGate);
+    // A separate gate that fires the instant initProvider() is invoked.
+    // This replaces the setImmediate-based flushPromises() baseline: we wait
+    // until the startup chain has actually reached initProvider(), which is
+    // robust to any number of extra `await` hops added before that call.
+    const { promise: initCalledGate, resolve: resolveInitCalled } = makeGate();
+    mockInitProvider.mockImplementationOnce(() => {
+      resolveInitCalled(); // signal: initProvider() has been invoked
+      return initGate;     // but keep the startup chain suspended
+    });
 
     // Gate on startServer so the "has fired" assertion is not microtask-depth
     // sensitive even if index.ts gains extra awaits between the two calls.
@@ -170,9 +174,11 @@ describe("server startup sequence (src/index.ts)", () => {
 
     loadIndex();
 
-    // Flush: Promise.all() resolves, initProvider() fires, but initGate is
-    // still pending so the chain is suspended.  startServer must not fire yet.
-    await flushPromises();
+    // Wait until initProvider() has actually been invoked, then verify
+    // startServer() has not yet been called — the chain is still suspended on
+    // initGate, so this assertion cannot be a false-pass regardless of how
+    // many intermediate awaits index.ts has before or after initProvider().
+    await initCalledGate;
     expect(mockStartServer).not.toHaveBeenCalled();
 
     // Release the gate — wait until startServer actually fires rather than
