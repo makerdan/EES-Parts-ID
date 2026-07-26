@@ -21,7 +21,7 @@ import { API_BASE } from "@/utils/apiBase";
 import { fetchWithAuth, getAuthToken, subscribeToTokenAvailable, unsubscribeFromTokenAvailable } from "@/utils/appAuth";
 import { retryAsync } from "@/utils/retryAsync";
 
-const ZONES_CACHE_KEY = "parts_id_warehouse_zones_v1";
+export const ZONES_CACHE_KEY = "parts_id_warehouse_zones_v1";
 
 /** Minimum time between foreground-triggered re-fetches (2 minutes). */
 const FOREGROUND_REFETCH_TTL_MS = 2 * 60 * 1000;
