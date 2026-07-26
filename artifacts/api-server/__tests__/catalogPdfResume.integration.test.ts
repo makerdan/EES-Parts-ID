@@ -180,7 +180,7 @@ beforeAll(async () => {
 }, 15_000);
 
 afterEach(() => {
-  jest.resetAllMocks();
+  jest.clearAllMocks();
 });
 
 afterAll(async () => {

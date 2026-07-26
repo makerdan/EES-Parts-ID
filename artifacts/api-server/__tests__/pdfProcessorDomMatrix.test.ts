@@ -16,7 +16,7 @@ jest.mock("child_process", () => ({
 }));
 
 beforeEach(() => {
-  jest.resetAllMocks();
+  jest.clearAllMocks();
 });
 
 // ── Case 1: DOMMatrix absent at import time ───────────────────────────────────

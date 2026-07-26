@@ -51,7 +51,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
-  mockCreate.mockReset();
+  mockCreate.mockClear();
 });
 
 
