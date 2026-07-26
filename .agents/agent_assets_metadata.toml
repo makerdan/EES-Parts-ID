@@ -29,3 +29,15 @@ id = "qLCUJNB0zcz1O89UowrA2"
 uri = "file://.local/custom_skills/port-authority-heavy/SKILL.md"
 type = "text"
 title = "Port Authority - Heavy Skill"
+
+[[outputs]]
+id = "dOrnfmGXy3yV9pBfaRGWz"
+uri = "file://scripts/port-authority-skill.md"
+type = "text"
+title = "Port Authority Skill"
+
+[[outputs]]
+id = "SNVmILKVjZlCwIfUTu2lJ"
+uri = "file://scripts/port-authority-heavy-skill.md"
+type = "text"
+title = "Port Authority - Heavy Skill"
