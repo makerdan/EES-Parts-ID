@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Guards the synchronous cache-patch (success path) and snapshot-restore
  * (partial-failure path) contracts in PartDetailsEditor.handleSave:
  *
@@ -22,7 +20,8 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 import { Alert } from "react-native";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import type { InventoryItem, InventoryListResponse, SearchInventoryResponse } from "@workspace/api-client-react";
@@ -125,46 +124,28 @@ jest.mock("@/components/KeyboardDoneInput", () => {
   };
 });
 
-// ─── Suppress react-test-renderer deprecation warnings ───────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
 function findPressable(root: Inst, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
 function findPressableByA11yLabel(root: Inst, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => n.props.accessibilityLabel === label) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => n.props.accessibilityLabel === label) ?? null
   );
 }
 
@@ -172,16 +153,15 @@ function findPressableByA11yLabel(root: Inst, label: string): Inst | null {
 function findTextInput(root: Inst, placeholder: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-textinput", { deep: true })
-      .find(n => n.props.testID === placeholder || n.props.placeholder === placeholder)
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-textinput", { includeSelf: true })
+      .find((n: Inst) => n.props.testID === placeholder || n.props.placeholder === placeholder)
     ?? null
   );
 }
 
 async function renderEditor(ui: React.ReactElement) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(ui); });
-  return tree;
+  const result = await render(ui);
+  return result;
 }
 
 function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
@@ -213,11 +193,11 @@ function autoConfirmAlert() {
 
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   jest.clearAllMocks();
@@ -252,28 +232,28 @@ describe("PartDetailsEditor – handleSave success path cache patch", () => {
       binLocations: ["AISLE-01"],
     });
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     // 1. Change description via the KeyboardDoneInput mock.
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     expect(descInput).not.toBeNull();
     await act(async () => { descInput!.props.onChangeText("New description"); });
 
     // 2. Remove the "relay" keyword chip.
-    const relayChip = findPressable(tree.root, "relay");
+    const relayChip = findPressable(result.root!, "relay");
     expect(relayChip).not.toBeNull();
     await act(async () => { relayChip!.props.onPress(); });
 
     // 3. Remove the bin.
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     expect(removeBinBtn).not.toBeNull();
     await act(async () => { removeBinBtn!.props.onPress(); });
 
     // 4. Save — fetch succeeds for description, mutations resolve for bins/keywords.
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
     await act(async () => { saveBtn!.props.onPress(); });
 
@@ -318,21 +298,21 @@ describe("PartDetailsEditor – handleSave success path cache patch", () => {
       binLocations: ["AISLE-01"],
     });
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     await act(async () => { descInput!.props.onChangeText("New description"); });
 
-    const relayChip = findPressable(tree.root, "relay");
+    const relayChip = findPressable(result.root!, "relay");
     await act(async () => { relayChip!.props.onPress(); });
 
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     await act(async () => { removeBinBtn!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     expect(mockSetQueriesData.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -384,18 +364,18 @@ describe("PartDetailsEditor – handleSave success path cache patch", () => {
       dimensions:   { length: 10, width: 5, height: 2, diameter: null } as unknown as Exclude<InventoryItem["dimensions"], undefined>,
     });
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Change bins only — dimensions state is untouched (no change), but
     // patchItem must still carry the existing dimension values forward.
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     expect(removeBinBtn).not.toBeNull();
     await act(async () => { removeBinBtn!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     expect(mockSetQueriesData).toHaveBeenCalledTimes(2);
@@ -425,15 +405,15 @@ describe("PartDetailsEditor – handleSave success path cache patch", () => {
     autoConfirmAlert();
 
     const item = makeItem({ binLocations: ["AISLE-01"] });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     await act(async () => { removeBinBtn!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     const [, inventoryUpdater] = mockSetQueriesData.mock.calls[0] as [
@@ -455,16 +435,16 @@ describe("PartDetailsEditor – handleSave partial-failure path: no partial writ
     autoConfirmAlert();
 
     const item = makeItem({ binLocations: ["AISLE-01"] });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     expect(removeBinBtn).not.toBeNull();
     await act(async () => { removeBinBtn!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
     await act(async () => { saveBtn!.props.onPress(); });
 
@@ -486,21 +466,21 @@ describe("PartDetailsEditor – handleSave partial-failure path: no partial writ
       binLocations: ["AISLE-01"],
     });
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Change description (triggers the fetch PATCH that will fail).
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     expect(descInput).not.toBeNull();
     await act(async () => { descInput!.props.onChangeText("New description"); });
 
     // Change bins too (mutation succeeds) — partial failure scenario.
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     await act(async () => { removeBinBtn!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     // Bins succeeded — setQueriesData MUST be called to re-apply the bins patch
@@ -525,15 +505,15 @@ describe("PartDetailsEditor – handleSave partial-failure path: no partial writ
     autoConfirmAlert();
 
     const item = makeItem({ binLocations: ["AISLE-01"] });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     await act(async () => { removeBinBtn!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     // setQueryData must restore every snapshot entry.
@@ -561,15 +541,15 @@ describe("PartDetailsEditor – handleSave partial-failure path: no partial writ
     autoConfirmAlert();
 
     const item = makeItem({ binLocations: ["AISLE-01"] });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     await act(async () => { removeBinBtn!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     // Find the setQueryData call that restored the inventory snapshot.
@@ -593,23 +573,23 @@ describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
     autoConfirmAlert();
 
     const item = makeItem({ binLocations: ["AISLE-01"] });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Remove the bin so the bins op is enqueued.
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     expect(removeBinBtn).not.toBeNull();
     await act(async () => { removeBinBtn!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
     await act(async () => { saveBtn!.props.onPress(); });
 
     // The rendered tree must contain a Text node with the session-expired copy.
-    const allTexts = tree.root
-      .findAll(n => (n.type as string) === "rn-text", { deep: true })
+    const allTexts = result.root!
+      .queryAll((n: TestInstance) => (n.type as string) === "Text", { includeSelf: true })
       .map(n => instText(n));
     const sessionExpiredNode = allTexts.find(t =>
       t.includes("Session expired") && t.includes("re-unlock admin access")
@@ -628,24 +608,24 @@ describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
     });
 
     const item = makeItem({ description: "Old description" });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Change only the description — no bins/dims change, so description is the sole op.
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     expect(descInput).not.toBeNull();
     await act(async () => { descInput!.props.onChangeText("New description"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
     await act(async () => { saveBtn!.props.onPress(); });
 
     // The rendered tree must contain the session-expired copy (not the generic
     // "check connection" message) because the server returned 401.
-    const allTexts = tree.root
-      .findAll(n => (n.type as string) === "rn-text", { deep: true })
+    const allTexts = result.root!
+      .queryAll((n: TestInstance) => (n.type as string) === "Text", { includeSelf: true })
       .map(n => instText(n));
     const sessionExpiredNode = allTexts.find(t =>
       t.includes("Session expired") && t.includes("re-unlock admin access")
@@ -665,25 +645,25 @@ describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
 
     // Item with no existing dimensions so any typed value is a change.
     const item = makeItem({ description: "Old description" });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Type a length value — all dim inputs share placeholder "–"; find() returns
     // the first one (Length), which is enough to mark dimsChanged = true.
-    const lengthInput = findTextInput(tree.root, "\u2013");
+    const lengthInput = findTextInput(result.root!, "\u2013");
     expect(lengthInput).not.toBeNull();
     await act(async () => { lengthInput!.props.onChangeText("50"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
     await act(async () => { saveBtn!.props.onPress(); });
 
     // Session-expired text must be present for the dimensions op (not the
     // generic "check connection" fallback).
-    const allTexts = tree.root
-      .findAll(n => (n.type as string) === "rn-text", { deep: true })
+    const allTexts = result.root!
+      .queryAll((n: TestInstance) => (n.type as string) === "Text", { includeSelf: true })
       .map(n => instText(n));
     const sessionExpiredNode = allTexts.find(t =>
       t.includes("Session expired") && t.includes("re-unlock admin access")
@@ -699,24 +679,24 @@ describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
     autoConfirmAlert();
 
     const item = makeItem({ binLocations: ["AISLE-01"] });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Remove the bin so the bins op is enqueued.
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     expect(removeBinBtn).not.toBeNull();
     await act(async () => { removeBinBtn!.props.onPress(); });
 
     // First save — mutation rejects with 401.
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
     await act(async () => { saveBtn!.props.onPress(); });
 
     // Confirm the session-expired message is visible.
-    const textsAfterFailure = tree.root
-      .findAll(n => (n.type as string) === "rn-text", { deep: true })
+    const textsAfterFailure = result.root!
+      .queryAll((n: TestInstance) => (n.type as string) === "Text", { includeSelf: true })
       .map(n => instText(n));
     const errorVisible = textsAfterFailure.find(t =>
       t.includes("Session expired") && t.includes("re-unlock admin access")
@@ -728,8 +708,8 @@ describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
     await act(async () => { saveBtn!.props.onPress(); });
 
     // The session-expired Text node must be gone after a successful save.
-    const textsAfterSuccess = tree.root
-      .findAll(n => (n.type as string) === "rn-text", { deep: true })
+    const textsAfterSuccess = result.root!
+      .queryAll((n: TestInstance) => (n.type as string) === "Text", { includeSelf: true })
       .map(n => instText(n));
     const errorStillVisible = textsAfterSuccess.find(t =>
       t.includes("Session expired") && t.includes("re-unlock admin access")

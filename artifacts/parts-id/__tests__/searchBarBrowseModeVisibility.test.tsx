@@ -1,5 +1,4 @@
 /**
- * @jest-environment node
  *
  * Regression guard: the persistent search bar (KeyboardDoneInput + Search/Clear
  * buttons) and the AI "Searched as:" chip row must be hidden when the user
@@ -238,57 +237,38 @@ jest.mock("@/utils/useTrackScreen", () => ({
 // ─── Imports (after all mocks) ────────────────────────────────────────────────
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act, RenderResult } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 import SearchScreen from "../app/(tabs)/index";
-
-// ─── Suppress react-test-renderer deprecation noise ───────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...rest: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...rest);
-    },
-  );
-});
-afterAll(() => {
-  (console.error as jest.Mock).mockRestore?.();
-});
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 const SEARCH_PLACEHOLDER = "Search parts — keyword, catalog #, vendor…";
 
 /** Returns true when the search bar input is present in the tree. */
-function hasSearchBar(root: Inst): boolean {
-  return root.findAll(
+function hasSearchBar(root: NonNullable<RenderResult["root"]>): boolean {
+  return root.queryAll(
     (n) =>
       (n.type as string) === "rn-text-input" &&
       (n.props as { placeholder?: string }).placeholder === SEARCH_PLACEHOLDER,
-    { deep: true },
+    { includeSelf: true },
   ).length > 0;
 }
 
 /**
  * Find the first rn-pressable whose rn-text descendant contains the given label.
  */
-function findPressableByLabel(root: Inst, label: string): Inst | null {
+function findPressableByLabel(root: NonNullable<RenderResult["root"]>, label: string): Inst | null {
   function textOf(node: Inst): string {
-    if ((node.type as string) === "rn-text") {
+    if ((node.type as string) === "Text") {
       const c = (node.props as { children?: unknown }).children;
       if (typeof c === "string") return c;
       if (Array.isArray(c)) return c.filter((x) => typeof x === "string").join("");
     }
     return node.children
-      .filter((ch): ch is Inst => typeof ch !== "string")
+      .filter((ch: Inst | string): ch is Inst => typeof ch !== "string")
       .map(textOf)
       .join("");
   }
@@ -301,10 +281,10 @@ function findPressableByLabel(root: Inst, label: string): Inst | null {
       found = node;
       return;
     }
-    node.children.forEach((ch) => { if (typeof ch !== "string") walk(ch as Inst); });
+    node.children.forEach((ch: Inst | string) => { if (typeof ch !== "string") walk(ch as Inst); });
   }
 
-  walk(root);
+  walk(root as unknown as Inst);
   return found;
 }
 
@@ -312,27 +292,23 @@ function findPressableByLabel(root: Inst, label: string): Inst | null {
 
 describe("SearchScreen — search bar visibility by mode", () => {
   it("renders the search bar in the default search mode", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<SearchScreen />);
-    });
+    let result!: RenderResult;
+    result = await render(<SearchScreen />);
 
-    expect(hasSearchBar(tree.root)).toBe(true);
+    expect(hasSearchBar(result.root!)).toBe(true);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("hides the search bar after switching to aisle mode", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<SearchScreen />);
-    });
+    let result!: RenderResult;
+    result = await render(<SearchScreen />);
 
     // Search bar must be present before the switch.
-    expect(hasSearchBar(tree.root)).toBe(true);
+    expect(hasSearchBar(result.root!)).toBe(true);
 
     // Press the "By Aisle" mode toggle button.
-    const aisleBtn = findPressableByLabel(tree.root, "By Aisle");
+    const aisleBtn = findPressableByLabel(result.root!, "By Aisle");
     expect(aisleBtn).not.toBeNull();
 
     await act(async () => {
@@ -340,49 +316,45 @@ describe("SearchScreen — search bar visibility by mode", () => {
     });
 
     // Search bar must be gone in aisle mode.
-    expect(hasSearchBar(tree.root)).toBe(false);
+    expect(hasSearchBar(result.root!)).toBe(false);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("hides the search bar after switching to category mode", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<SearchScreen />);
-    });
+    let result!: RenderResult;
+    result = await render(<SearchScreen />);
 
-    expect(hasSearchBar(tree.root)).toBe(true);
+    expect(hasSearchBar(result.root!)).toBe(true);
 
-    const categoryBtn = findPressableByLabel(tree.root, "By Category");
+    const categoryBtn = findPressableByLabel(result.root!, "By Category");
     expect(categoryBtn).not.toBeNull();
 
     await act(async () => {
       (categoryBtn!.props as { onPress?: () => void }).onPress?.();
     });
 
-    expect(hasSearchBar(tree.root)).toBe(false);
+    expect(hasSearchBar(result.root!)).toBe(false);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("restores the search bar when BrowseByAisle's onClose is invoked", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<SearchScreen />);
-    });
+    let result!: RenderResult;
+    result = await render(<SearchScreen />);
 
     // Switch to aisle mode — search bar disappears.
-    const aisleBtn = findPressableByLabel(tree.root, "By Aisle");
+    const aisleBtn = findPressableByLabel(result.root!, "By Aisle");
     expect(aisleBtn).not.toBeNull();
     await act(async () => {
       (aisleBtn!.props as { onPress?: () => void }).onPress?.();
     });
-    expect(hasSearchBar(tree.root)).toBe(false);
+    expect(hasSearchBar(result.root!)).toBe(false);
 
     // Find the BrowseByAisle sentinel element and invoke its onClose prop directly.
-    const stub = tree.root.findAll(
+    const stub = result.root!.queryAll(
       (n) => (n.type as string) === "browse-by-aisle-stub",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(stub.length).toBeGreaterThan(0);
     const onClose = (stub[0]!.props as { onClose?: () => void }).onClose;
@@ -393,29 +365,27 @@ describe("SearchScreen — search bar visibility by mode", () => {
     });
 
     // Search bar must be back in the tree now that mode is "search" again.
-    expect(hasSearchBar(tree.root)).toBe(true);
+    expect(hasSearchBar(result.root!)).toBe(true);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("restores the search bar when BrowseByCategory's onClose is invoked", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<SearchScreen />);
-    });
+    let result!: RenderResult;
+    result = await render(<SearchScreen />);
 
     // Switch to category mode — search bar disappears.
-    const categoryBtn = findPressableByLabel(tree.root, "By Category");
+    const categoryBtn = findPressableByLabel(result.root!, "By Category");
     expect(categoryBtn).not.toBeNull();
     await act(async () => {
       (categoryBtn!.props as { onPress?: () => void }).onPress?.();
     });
-    expect(hasSearchBar(tree.root)).toBe(false);
+    expect(hasSearchBar(result.root!)).toBe(false);
 
     // Find the BrowseByCategory sentinel element and invoke its onClose prop directly.
-    const stub = tree.root.findAll(
+    const stub = result.root!.queryAll(
       (n) => (n.type as string) === "browse-by-category-stub",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(stub.length).toBeGreaterThan(0);
     const onClose = (stub[0]!.props as { onClose?: () => void }).onClose;
@@ -426,8 +396,8 @@ describe("SearchScreen — search bar visibility by mode", () => {
     });
 
     // Search bar must be back in the tree now that mode is "search" again.
-    expect(hasSearchBar(tree.root)).toBe(true);
+    expect(hasSearchBar(result.root!)).toBe(true);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 });

@@ -1,7 +1,8 @@
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import React from "react";
-import { act, create } from "react-test-renderer";
-import type { ReactTestInstance } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
+import type { TestInstance as TRTestInstance } from "test-renderer";
 
 import { ResultCard } from "@/components/ResultCard";
 
@@ -110,8 +111,10 @@ function makeResult(item: InventoryItem, variants: InventoryItem[] = []): Search
   } as SearchResult;
 }
 
-function findAllWithTestID(root: ReactTestInstance, testID: string): ReactTestInstance[] {
-  return root.findAll((n: ReactTestInstance) => n.props.testID === testID);
+type TestInstance = TRTestInstance;
+
+function findAllWithTestID(root: NonNullable<RenderResult["root"]>, testID: string): TestInstance[] {
+  return root.queryAll((n) => n.props.testID === testID, { includeSelf: true });
 }
 
 beforeEach(() => {
@@ -119,106 +122,96 @@ beforeEach(() => {
 });
 
 describe("ResultCard — size variant dropdown", () => {
-  it("does not render dropdown when result has no variants", () => {
+  it("does not render dropdown when result has no variants", async () => {
     const result = makeResult(makeItem());
-    let renderer: ReturnType<typeof create>;
-    act(() => {
-      renderer = create(<ResultCard result={result} rank={0} />);
-    });
-    const dropdown = findAllWithTestID(renderer!.root, "size-variant-dropdown");
+    const rendered = await render(<ResultCard result={result} rank={0} />);
+    const dropdown = findAllWithTestID(rendered.root!, "size-variant-dropdown");
     expect(dropdown).toHaveLength(0);
   });
 
-  it("renders dropdown on collapsed card when variants are present", () => {
+  it("renders dropdown on collapsed card when variants are present", async () => {
     const variants = [makeVariant("BOLT-002"), makeVariant("BOLT-003")];
     const result = makeResult(makeItem(), variants);
-    let renderer: ReturnType<typeof create>;
-    act(() => {
-      renderer = create(<ResultCard result={result} rank={0} />);
-    });
-    const dropdown = findAllWithTestID(renderer!.root, "size-variant-dropdown");
+    const rendered = await render(<ResultCard result={result} rank={0} />);
+    const dropdown = findAllWithTestID(rendered.root!, "size-variant-dropdown");
     expect(dropdown.length).toBeGreaterThan(0);
-    const countEls = findAllWithTestID(renderer!.root, "variant-count");
+    const countEls = findAllWithTestID(rendered.root!, "variant-count");
     expect(countEls.length).toBeGreaterThan(0);
   });
 
-  it("switches activeItem when a variant is selected", () => {
+  it("switches activeItem when a variant is selected", async () => {
     const original = makeItem({ catalog: "BOLT-001", vendor: "Acme" });
     const variant = makeVariant("BOLT-002");
     const result = makeResult(original, [variant]);
-    let renderer: ReturnType<typeof create>;
-    act(() => {
-      renderer = create(<ResultCard result={result} rank={0} />);
-    });
+    const rendered = await render(<ResultCard result={result} rank={0} />);
 
     const selectBtns = findAllWithTestID(
-      renderer!.root,
+      rendered.root!,
       `select-variant-${variant.id}`,
     );
     expect(selectBtns.length).toBeGreaterThan(0);
-    act(() => {
+    await act(async () => {
       selectBtns[0]!.props.onPress();
     });
 
-    const catalogTexts = renderer!.root.findAll(
-      (n: ReactTestInstance) =>
+    const catalogTexts = rendered.root!.queryAll(
+      (n) =>
         String(n.props.children) === "BOLT-002",
+      { includeSelf: true },
     );
     expect(catalogTexts.length).toBeGreaterThan(0);
   });
 
-  it("shows back button after selecting a variant", () => {
+  it("shows back button after selecting a variant", async () => {
     const original = makeItem({ catalog: "BOLT-001" });
     const variant = makeVariant("BOLT-002");
     const result = makeResult(original, [variant]);
-    let renderer: ReturnType<typeof create>;
-    act(() => {
-      renderer = create(<ResultCard result={result} rank={0} />);
+    const rendered = await render(<ResultCard result={result} rank={0} />);
+
+    await act(async () => {
+      findAllWithTestID(rendered.root!, `select-variant-${variant.id}`)[0]!.props.onPress();
     });
 
-    act(() => {
-      findAllWithTestID(renderer!.root, `select-variant-${variant.id}`)[0]!.props.onPress();
-    });
-
-    const backBtns = renderer!.root.findAll(
-      (n: ReactTestInstance) =>
+    const backBtns = rendered.root!.queryAll(
+      (n) =>
         typeof n.props.accessibilityLabel === "string" &&
         (n.props.accessibilityLabel as string).startsWith("Back to"),
+      { includeSelf: true },
     );
     expect(backBtns.length).toBeGreaterThan(0);
   });
 
-  it("restores original item and hides back button after pressing back", () => {
+  it("restores original item and hides back button after pressing back", async () => {
     const original = makeItem({ catalog: "BOLT-001" });
     const variant = makeVariant("BOLT-002");
     const result = makeResult(original, [variant]);
-    let renderer: ReturnType<typeof create>;
-    act(() => {
-      renderer = create(<ResultCard result={result} rank={0} />);
+    const rendered = await render(<ResultCard result={result} rank={0} />);
+
+    await act(async () => {
+      findAllWithTestID(rendered.root!, `select-variant-${variant.id}`)[0]!.props.onPress();
     });
 
-    act(() => {
-      findAllWithTestID(renderer!.root, `select-variant-${variant.id}`)[0]!.props.onPress();
-    });
-
-    const backBtn = renderer!.root.findAll(
-      (n: ReactTestInstance) =>
+    const backBtn = rendered.root!.queryAll(
+      (n) =>
         typeof n.props.accessibilityLabel === "string" &&
         (n.props.accessibilityLabel as string).startsWith("Back to"),
-    )[0]!;
-    act(() => {
-      backBtn.props.onPress();
+      { includeSelf: true },
+    )[0];
+    await act(async () => {
+      backBtn!.props.onPress();
     });
 
-    const catalogTexts = renderer!.root.findAll(
-      (n: ReactTestInstance) => String(n.props.children) === "BOLT-001",
+    const catalogTexts = rendered.root!.queryAll(
+      (n) => String(n.props.children) === "BOLT-001",
+      { includeSelf: true },
     );
     expect(catalogTexts.length).toBeGreaterThan(0);
 
-    const backBtnsAfter = renderer!.root.findAll(
-      (n: ReactTestInstance) =>
+    const backBtnsAfter = rendered.root!.queryAll(
+      (n) =>
         typeof n.props.accessibilityLabel === "string" &&
         (n.props.accessibilityLabel as string).startsWith("Back to"),
+      { includeSelf: true },
     );
     expect(backBtnsAfter).toHaveLength(0);
   });

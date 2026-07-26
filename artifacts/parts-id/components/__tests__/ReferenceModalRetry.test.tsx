@@ -30,7 +30,8 @@
 (global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import TestRenderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
 
 // API_BASE guard throws in Jest (__DEV__=false, no env var) unless stubbed.
 jest.mock("@/utils/apiBase", () => ({ API_BASE: "" }));
@@ -71,7 +72,7 @@ const chipCache = require("@/utils/chipCache") as {
   fetchChipAnswer: jest.Mock;
 };
 
-type TestInstance = ReturnType<typeof TestRenderer.create>["root"];
+type TestInstance = NonNullable<RenderResult["root"]>;
 
 const ERROR_TEXT = "No answer — check your connection and try again.";
 const RETRY_TEXT = "↺  Retry";
@@ -86,9 +87,10 @@ async function flush() {
 
 /** Finds host <rn-text> nodes whose (string) child equals `text`. */
 function findTextNodes(root: TestInstance, text: string) {
-  return root.findAll(
+  return root.queryAll(
     (node) =>
-      String(node.type) === "rn-text" && node.props.children === text,
+      String(node.type) === "Text" && node.props.children === text,
+    { includeSelf: true },
   );
 }
 
@@ -102,7 +104,7 @@ function findTextNodes(root: TestInstance, text: string) {
  */
 function findPressableWithText(root: TestInstance, text: string) {
   const textNodes = findTextNodes(root, text);
-  const buttons: Array<ReturnType<TestInstance["find"]>> = [];
+  const buttons: Array<ReturnType<TestInstance["queryAll"]>[0]> = [];
   for (const t of textNodes) {
     let cur = t.parent;
     while (cur && String(cur.type) !== "rn-pressable") cur = cur.parent;
@@ -113,10 +115,11 @@ function findPressableWithText(root: TestInstance, text: string) {
 
 /** Finds the empty-state text input by its placeholder. */
 function findQuestionInput(root: TestInstance) {
-  return root.findAll(
+  return root.queryAll(
     (node) =>
       String(node.type) === "rn-text-input" &&
       node.props.placeholder === "Ask about parts, codes, or the app...",
+    { includeSelf: true },
   );
 }
 
@@ -137,20 +140,17 @@ describe("ReferenceModal — typed question retry", () => {
     // First ask() call fails (non-OK response).
     fetchWithAuth.mockResolvedValueOnce({ ok: false });
 
-    let renderer!: ReturnType<typeof TestRenderer.create>;
-    await act(async () => {
-      renderer = TestRenderer.create(<ReferenceModal open={true} onClose={jest.fn()} />);
-    });
+    const result = await render(<ReferenceModal open={true} onClose={jest.fn()} />);
 
     // Type a question into the empty-state input.
-    const inputs = findQuestionInput(renderer.root);
+    const inputs = findQuestionInput(result.root!);
     expect(inputs).toHaveLength(1);
     await act(async () => {
       inputs[0]!.props.onChangeText(QUESTION);
     });
 
     // Press send → askQuestion() with the typed question.
-    const sendButtons = findSendButtons(renderer.root);
+    const sendButtons = findSendButtons(result.root!);
     expect(sendButtons).toHaveLength(1);
     await act(async () => {
       sendButtons[0]!.props.onPress();
@@ -163,8 +163,8 @@ describe("ReferenceModal — typed question retry", () => {
     expect(firstBody.question).toBe(QUESTION);
 
     // Error bubble + Retry render.
-    expect(findTextNodes(renderer.root, ERROR_TEXT)).toHaveLength(1);
-    const retryButtons = findPressableWithText(renderer.root, RETRY_TEXT);
+    expect(findTextNodes(result.root!, ERROR_TEXT)).toHaveLength(1);
+    const retryButtons = findPressableWithText(result.root!, RETRY_TEXT);
     expect(retryButtons).toHaveLength(1);
 
     // Retry succeeds this time.
@@ -184,42 +184,39 @@ describe("ReferenceModal — typed question retry", () => {
     expect(retryBody.question).toBe(QUESTION);
 
     // Error cleared; answer now visible in history.
-    expect(findTextNodes(renderer.root, ERROR_TEXT)).toHaveLength(0);
-    expect(findPressableWithText(renderer.root, RETRY_TEXT)).toHaveLength(0);
-    expect(findTextNodes(renderer.root, "Use 12 AWG copper.")).toHaveLength(1);
+    expect(findTextNodes(result.root!, ERROR_TEXT)).toHaveLength(0);
+    expect(findPressableWithText(result.root!, RETRY_TEXT)).toHaveLength(0);
+    expect(findTextNodes(result.root!, "Use 12 AWG copper.")).toHaveLength(1);
   });
 
   it("also recovers when the typed request rejects (network error)", async () => {
     fetchWithAuth.mockRejectedValueOnce(new Error("network down"));
 
-    let renderer!: ReturnType<typeof TestRenderer.create>;
-    await act(async () => {
-      renderer = TestRenderer.create(<ReferenceModal open={true} onClose={jest.fn()} />);
-    });
+    const result = await render(<ReferenceModal open={true} onClose={jest.fn()} />);
 
-    const inputs = findQuestionInput(renderer.root);
+    const inputs = findQuestionInput(result.root!);
     await act(async () => {
       inputs[0]!.props.onChangeText(QUESTION);
     });
     await act(async () => {
-      findSendButtons(renderer.root)[0]!.props.onPress();
+      findSendButtons(result.root!)[0]!.props.onPress();
     });
     await flush();
 
-    expect(findTextNodes(renderer.root, ERROR_TEXT)).toHaveLength(1);
+    expect(findTextNodes(result.root!, ERROR_TEXT)).toHaveLength(1);
 
     fetchWithAuth.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ answer: "Recovered." }),
     });
     await act(async () => {
-      findPressableWithText(renderer.root, RETRY_TEXT)[0]!.props.onPress();
+      findPressableWithText(result.root!, RETRY_TEXT)[0]!.props.onPress();
     });
     await flush();
 
     expect(fetchWithAuth).toHaveBeenCalledTimes(2);
     expect(JSON.parse(fetchWithAuth.mock.calls[1][1].body).question).toBe(QUESTION);
-    expect(findTextNodes(renderer.root, ERROR_TEXT)).toHaveLength(0);
+    expect(findTextNodes(result.root!, ERROR_TEXT)).toHaveLength(0);
   });
 });
 
@@ -232,13 +229,10 @@ describe("ReferenceModal — chip retry", () => {
     // First chip fetch fails.
     chipCache.fetchChipAnswer.mockRejectedValueOnce(new Error("boom"));
 
-    let renderer!: ReturnType<typeof TestRenderer.create>;
-    await act(async () => {
-      renderer = TestRenderer.create(<ReferenceModal open={true} onClose={jest.fn()} />);
-    });
+    const result = await render(<ReferenceModal open={true} onClose={jest.fn()} />);
 
     // Tap the GFCI quick-lookup chip.
-    const chipButtons = findPressableWithText(renderer.root, CHIP_LABEL);
+    const chipButtons = findPressableWithText(result.root!, CHIP_LABEL);
     expect(chipButtons).toHaveLength(1);
     await act(async () => {
       chipButtons[0]!.props.onPress();
@@ -251,8 +245,8 @@ describe("ReferenceModal — chip retry", () => {
     expect(chipCache.fetchChipAnswer.mock.calls[0][1]).toBe(CHIP_QUESTION);
 
     // Error bubble + Retry render; the typed-question seam was never touched.
-    expect(findTextNodes(renderer.root, ERROR_TEXT)).toHaveLength(1);
-    const retryButtons = findPressableWithText(renderer.root, RETRY_TEXT);
+    expect(findTextNodes(result.root!, ERROR_TEXT)).toHaveLength(1);
+    const retryButtons = findPressableWithText(result.root!, RETRY_TEXT);
     expect(retryButtons).toHaveLength(1);
     expect(fetchWithAuth).not.toHaveBeenCalled();
 
@@ -271,8 +265,8 @@ describe("ReferenceModal — chip retry", () => {
     expect(fetchWithAuth).not.toHaveBeenCalled();
 
     // Error cleared; answer visible in history.
-    expect(findTextNodes(renderer.root, ERROR_TEXT)).toHaveLength(0);
-    expect(findPressableWithText(renderer.root, RETRY_TEXT)).toHaveLength(0);
-    expect(findTextNodes(renderer.root, "A GFCI protects against ground faults.")).toHaveLength(1);
+    expect(findTextNodes(result.root!, ERROR_TEXT)).toHaveLength(0);
+    expect(findPressableWithText(result.root!, RETRY_TEXT)).toHaveLength(0);
+    expect(findTextNodes(result.root!, "A GFCI protects against ground faults.")).toHaveLength(1);
   });
 });

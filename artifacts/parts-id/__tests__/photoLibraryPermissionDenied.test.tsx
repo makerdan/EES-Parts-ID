@@ -1,5 +1,4 @@
 /**
- * @jest-environment node
  *
  * Behavioral regression test: photo.tsx pickImage("library") permanent-denial flow.
  *
@@ -17,7 +16,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 
 // ─── expo-router ──────────────────────────────────────────────────────────────
 
@@ -291,42 +290,29 @@ const { useApp } = require("@/contexts/AppContext") as { useApp: jest.Mock };
 // ─── Subject under test ───────────────────────────────────────────────────────
 
 import PhotoScreen from "../app/(tabs)/photo";
-
-// ─── Suppress react-test-renderer deprecation noise ──────────────────────────
-
-beforeAll(() => {
-  jest.spyOn(console, "error").mockImplementation((msg: unknown, ...args: unknown[]) => {
-    if (typeof msg === "string" && (
-      msg.includes("react-test-renderer is deprecated") ||
-      msg.includes("Warning:")
-    )) return;
-    // eslint-disable-next-line no-console
-    console.warn(msg, ...args);
-  });
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
+import type { TestInstance } from "test-renderer";
 
 // ─── Tree-walking helpers ─────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
-function findPressable(root: Inst, label: string): Inst | null {
+function findPressable(root: TestInstance, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
-function allTextContent(root: Inst): string {
+function allTextContent(root: TestInstance): string {
   return root
-    .findAll(n => (n.type as string) === "rn-text", { deep: true })
-    .map(n => instText(n))
+    .queryAll((n: TestInstance) => (n.type as string) === "Text", { includeSelf: true })
+    .map((n: Inst) => instText(n))
     .join(" ");
 }
 
@@ -341,7 +327,7 @@ const flushPromises = () =>
 
 // ─── Per-test setup/teardown ──────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 function makeAppMock(overrides: Record<string, unknown> = {}) {
   return {
@@ -381,18 +367,17 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
 });
 
 async function renderPhotoScreen(appOverrides: Record<string, unknown> = {}) {
   useApp.mockReturnValue(makeAppMock(appOverrides));
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(<PhotoScreen />); });
-  activeTree = tree;
+  const result = await render(<PhotoScreen />);
+  activeTree = result;
   await flushPromises();
-  return tree;
+  return result;
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -400,9 +385,9 @@ async function renderPhotoScreen(appOverrides: Record<string, unknown> = {}) {
 describe('PhotoScreen — pickImage("library") with denied photo library permission', () => {
 
   it("calls requestMediaLibraryPermissionsAsync when the Photo Library button is tapped", async () => {
-    const tree = await renderPhotoScreen();
+    const result = await renderPhotoScreen();
 
-    const btn = findPressable(tree.root, "Photo Library");
+    const btn = findPressable(result.root!, "Photo Library");
     expect(btn).not.toBeNull();
 
     await act(async () => {
@@ -414,9 +399,9 @@ describe('PhotoScreen — pickImage("library") with denied photo library permiss
   });
 
   it("shows a Settings-directing error message when permission is denied", async () => {
-    const tree = await renderPhotoScreen();
+    const result = await renderPhotoScreen();
 
-    const btn = findPressable(tree.root, "Photo Library");
+    const btn = findPressable(result.root!, "Photo Library");
     expect(btn).not.toBeNull();
 
     await act(async () => {
@@ -424,15 +409,15 @@ describe('PhotoScreen — pickImage("library") with denied photo library permiss
     });
     await flushPromises();
 
-    const text = allTextContent(tree.root);
+    const text = allTextContent(result.root!);
     expect(text).toMatch(/Settings/i);
     expect(text).toMatch(/denied|access/i);
   });
 
   it("does NOT call launchImageLibraryAsync when permission is denied", async () => {
-    const tree = await renderPhotoScreen();
+    const result = await renderPhotoScreen();
 
-    const btn = findPressable(tree.root, "Photo Library");
+    const btn = findPressable(result.root!, "Photo Library");
     await act(async () => {
       (btn!.props as { onPress?: () => void }).onPress?.();
     });
@@ -442,15 +427,15 @@ describe('PhotoScreen — pickImage("library") with denied photo library permiss
   });
 
   it("error message contains the word 'library' or 'photo' so the user understands what was denied", async () => {
-    const tree = await renderPhotoScreen();
+    const result = await renderPhotoScreen();
 
-    const btn = findPressable(tree.root, "Photo Library");
+    const btn = findPressable(result.root!, "Photo Library");
     await act(async () => {
       (btn!.props as { onPress?: () => void }).onPress?.();
     });
     await flushPromises();
 
-    const text = allTextContent(tree.root).toLowerCase();
+    const text = allTextContent(result.root!).toLowerCase();
     expect(text.includes("library") || text.includes("photo")).toBe(true);
   });
 });
@@ -462,9 +447,9 @@ describe('PhotoScreen — pickImage("library") with granted photo library permis
   });
 
   it("calls launchImageLibraryAsync when permission is granted", async () => {
-    const tree = await renderPhotoScreen();
+    const result = await renderPhotoScreen();
 
-    const btn = findPressable(tree.root, "Photo Library");
+    const btn = findPressable(result.root!, "Photo Library");
     expect(btn).not.toBeNull();
 
     await act(async () => {
@@ -477,15 +462,15 @@ describe('PhotoScreen — pickImage("library") with granted photo library permis
 
   it("does NOT show a denial error when permission is granted", async () => {
     mockLaunchLibrary.mockResolvedValue({ canceled: true, assets: [] });
-    const tree = await renderPhotoScreen();
+    const result = await renderPhotoScreen();
 
-    const btn = findPressable(tree.root, "Photo Library");
+    const btn = findPressable(result.root!, "Photo Library");
     await act(async () => {
       (btn!.props as { onPress?: () => void }).onPress?.();
     });
     await flushPromises();
 
-    const text = allTextContent(tree.root);
+    const text = allTextContent(result.root!);
     expect(text).not.toMatch(/denied/i);
   });
 });

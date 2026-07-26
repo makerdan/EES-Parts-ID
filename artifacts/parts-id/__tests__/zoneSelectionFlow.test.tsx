@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Tests for the Zone action menu selection and navigation flow in MapScreen.
  *
  * Covered:
@@ -20,7 +18,8 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
 import { makeAppMock } from "./helpers/appMocks";
 
 // ─── expo-router ──────────────────────────────────────────────────────────────
@@ -174,30 +173,13 @@ jest.mock("@/utils/mapViewport", () => require("./helpers/mapMocks").createMapVi
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { useApp } = require("@/contexts/AppContext") as { useApp: jest.Mock };
 
-// ─── Suppress react-test-renderer deprecation warnings ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (typeof msg === "string" && (
-        msg.includes("react-test-renderer is deprecated") ||
-        msg.includes("Warning:")
-      )) return;
-      origConsoleError(msg, ...args);
-    },
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: RenderResult | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   capturedMapViewProps        = {};
@@ -241,24 +223,23 @@ const flushPromises = () =>
 
 // ─── Render helper ────────────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = ReturnType<NonNullable<RenderResult["root"]>["queryAll"]>[0];
 
 async function renderMapScreen(appOverrides: Record<string, unknown> = {}) {
   useApp.mockReturnValue(makeAppMock(appOverrides));
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(<MapScreen />); });
+  const tree = await render(<MapScreen />);
   activeTree = tree;
   await flushPromises();
   return tree;
 }
 
-function findByType(root: Inst, type: string): Inst | null {
-  const found = root.findAll(n => (n.type as string) === type, { deep: true });
+function findByType(root: NonNullable<RenderResult["root"]>, type: string): Inst | null {
+  const found = root.queryAll(n => (n.type as string) === type, { includeSelf: true });
   return found[0] ?? null;
 }
 
-function findAllByType(root: Inst, type: string): Inst[] {
-  return root.findAll(n => (n.type as string) === type, { deep: true });
+function findAllByType(root: NonNullable<RenderResult["root"]>, type: string): Inst[] {
+  return root.queryAll(n => (n.type as string) === type, { includeSelf: true });
 }
 
 // =============================================================================
@@ -277,7 +258,7 @@ describe("MapScreen — zone tap sets selectedZone and shows ZoneActionMenu", ()
     });
 
     // ZoneActionMenu should now be in the tree.
-    const menu = findByType(tree.root, "zone-action-menu");
+    const menu = findByType(tree.root!, "zone-action-menu");
     expect(menu).not.toBeNull();
     expect(menu!.props["data-zone-aisleId"]).toBe("7");
   });
@@ -295,7 +276,7 @@ describe("MapScreen — zone tap sets selectedZone and shows ZoneActionMenu", ()
 
   it("does not show ZoneActionMenu before any zone is tapped", async () => {
     const tree = await renderMapScreen();
-    const menu = findByType(tree.root, "zone-action-menu");
+    const menu = findByType(tree.root!, "zone-action-menu");
     expect(menu).toBeNull();
   });
 });
@@ -319,7 +300,7 @@ describe("MapScreen — GoTo Section opens BrowseByAisle with correct aisle and 
     });
 
     // BrowseByAisle should now be in the tree.
-    const browse = findByType(tree.root, "browse-by-aisle");
+    const browse = findByType(tree.root!, "browse-by-aisle");
     expect(browse).not.toBeNull();
 
     // BrowseByAisle receives the correct initialAisle (parsed from aisleId "7" → 7).
@@ -339,7 +320,7 @@ describe("MapScreen — GoTo Section opens BrowseByAisle with correct aisle and 
       (capturedZoneActionMenuProps.onGoToSection as () => void)();
     });
 
-    const menu = findByType(tree.root, "zone-action-menu");
+    const menu = findByType(tree.root!, "zone-action-menu");
     expect(menu).toBeNull();
   });
 
@@ -388,13 +369,13 @@ describe("MapScreen — dismiss button clears selectedZone without navigating", 
     });
 
     // Confirm the menu is showing.
-    expect(findByType(tree.root, "zone-action-menu")).not.toBeNull();
+    expect(findByType(tree.root!, "zone-action-menu")).not.toBeNull();
 
     await act(async () => {
       (capturedZoneActionMenuProps.onDismiss as () => void)();
     });
 
-    expect(findByType(tree.root, "zone-action-menu")).toBeNull();
+    expect(findByType(tree.root!, "zone-action-menu")).toBeNull();
   });
 
   it("does NOT navigate when onDismiss fires", async () => {
@@ -443,7 +424,7 @@ describe("MapScreen — outside-tap overlay clears selectedZone without navigati
 
     // Find the transparent dismiss overlay pressable (it has accessibilityLabel "Dismiss zone menu"
     // and is a sibling of ZoneActionMenu, distinct from the ZoneActionMenu's own dismiss button).
-    const overlays = findAllByType(tree.root, "rn-pressable").filter(
+    const overlays = findAllByType(tree.root!, "rn-pressable").filter(
       (n) => n.props.accessibilityLabel === "Dismiss zone menu",
     );
     // There should be exactly one overlay pressable (not the menu's internal dismiss button
@@ -452,7 +433,7 @@ describe("MapScreen — outside-tap overlay clears selectedZone without navigati
 
     await act(async () => { overlays[0]!.props.onPress(); });
 
-    expect(findByType(tree.root, "zone-action-menu")).toBeNull();
+    expect(findByType(tree.root!, "zone-action-menu")).toBeNull();
   });
 
   it("does NOT navigate when the overlay is tapped", async () => {
@@ -463,7 +444,7 @@ describe("MapScreen — outside-tap overlay clears selectedZone without navigati
       (capturedMapViewProps.onZoneTap as (z: ApiWarehouseZone) => void)(zone);
     });
 
-    const overlays = findAllByType(tree.root, "rn-pressable").filter(
+    const overlays = findAllByType(tree.root!, "rn-pressable").filter(
       (n) => n.props.accessibilityLabel === "Dismiss zone menu",
     );
 
@@ -500,7 +481,7 @@ describe("MapScreen — long-press opens AisleSummarySheet (not zone action menu
       (capturedMapViewProps.onZoneLongPress as (z: ApiWarehouseZone) => void)(zone);
     });
 
-    expect(findByType(tree.root, "zone-action-menu")).toBeNull();
+    expect(findByType(tree.root!, "zone-action-menu")).toBeNull();
   });
 
   it("does NOT navigate after a long-press", async () => {
@@ -529,13 +510,13 @@ describe("MapScreen — map pan-start clears selectedZone", () => {
       (capturedMapViewProps.onZoneTap as (z: ApiWarehouseZone) => void)(zone);
     });
 
-    expect(findByType(tree.root, "zone-action-menu")).not.toBeNull();
+    expect(findByType(tree.root!, "zone-action-menu")).not.toBeNull();
 
     await act(async () => {
       (capturedMapViewProps.onPanStart as () => void)();
     });
 
-    expect(findByType(tree.root, "zone-action-menu")).toBeNull();
+    expect(findByType(tree.root!, "zone-action-menu")).toBeNull();
   });
 
   it("does NOT navigate when onPanStart fires", async () => {

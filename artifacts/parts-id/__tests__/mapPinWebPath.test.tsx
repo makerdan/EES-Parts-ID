@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Web-render-path regression for MapPin3D and MapPinEmoji.
  *
  * Both components call useAnimatedProps() with a worklet returning an SVG
@@ -31,7 +29,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -57,7 +55,7 @@ jest.mock("react-native-svg", () => {
     Ellipse: make("svg-ellipse"),
     Circle:  make("svg-circle"),
     Rect:    make("svg-rect"),
-    Text:    make("svg-text"),
+    Text:    make("Text"),
     SvgUri:  make("svg-uri"),
     SvgXml:  make("svg-xml"),
   };
@@ -69,7 +67,7 @@ jest.mock("react-native", () => ({
   Platform:     { OS: "web", select: (o: Record<string, unknown>) => o.web ?? o.default },
   StyleSheet:   { create: (s: unknown) => s, flatten: (s: unknown) => s },
   View:         ({ children }: { children?: React.ReactNode }) => React.createElement("rn-view", {}, children),
-  Text:         ({ children }: { children?: React.ReactNode }) => React.createElement("rn-text", {}, children),
+  Text:         ({ children }: { children?: React.ReactNode }) => React.createElement("Text", {}, children),
   ActivityIndicator: () => null,
   Pressable:    ({ children, onPress }: { children?: React.ReactNode; onPress?: () => void }) =>
                   React.createElement("rn-pressable", { onPress }, children),
@@ -196,24 +194,6 @@ jest.mock("@/utils/mapViewport", () => ({
 
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
-// ─── Suppress react-test-renderer deprecation warning ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    },
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Runtime imports from react-native-reanimated ────────────────────────────
 //
 // These are intentionally NOT "import type" so the module is resolved and
@@ -298,37 +278,31 @@ describe("react-native-reanimated web mock — exports are callable functions", 
 
 describe("MapPin3D — mounts on web Platform.OS without throwing", () => {
   it("steady state (isNew=false): mounts and renders svg-path elements", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" isNew={false} />,
-      );
-    });
+    const tree = await render(
+      <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" isNew={false} />,
+    );
 
-    const paths = tree.root.findAll(
+    const paths = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-path",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(paths.length).toBeGreaterThan(0);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("entrance animation (isNew=true): mounts without throwing (exercises withSpring on web)", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPin3D cx={50} cy={80} size={15} fill="#8b5cf6" stroke="#6d28d9" isNew={true} />,
-      );
-    });
+    const tree = await render(
+      <MapPin3D cx={50} cy={80} size={15} fill="#8b5cf6" stroke="#6d28d9" isNew={true} />,
+    );
 
-    const paths = tree.root.findAll(
+    const paths = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-path",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(paths.length).toBeGreaterThan(0);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("AnimatedG (svg-g) receives animatedProps.transform — worklet callback was invoked", async () => {
@@ -337,16 +311,13 @@ describe("MapPin3D — mounts on web Platform.OS without throwing", () => {
     // the real web Reanimated would if the Babel plugin were absent) or was
     // never called, animatedProps would be {} / undefined and this assertion
     // would fail.
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" />,
-      );
-    });
+    const tree = await render(
+      <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" />,
+    );
 
-    const groups = tree.root.findAll(
+    const groups = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-g",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(groups.length).toBeGreaterThan(0);
 
@@ -358,29 +329,26 @@ describe("MapPin3D — mounts on web Platform.OS without throwing", () => {
     expect(typeof ap?.transform).toBe("string");
     expect(ap?.transform as string).toMatch(/translate/);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("animatedProps.transform encodes cx/cy — correct coordinate values were captured in closure", async () => {
     // The worklet callback closes over cx and cy.  Asserting their exact
     // values appear in the transform string verifies the closure was not
     // corrupted (another symptom of a bad worklet transform).
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPin3D cx={123} cy={456} size={20} fill="#f59e0b" stroke="#b45309" />,
-      );
-    });
+    const tree = await render(
+      <MapPin3D cx={123} cy={456} size={20} fill="#f59e0b" stroke="#b45309" />,
+    );
 
-    const groups = tree.root.findAll(
+    const groups = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-g",
-      { deep: true },
+      { includeSelf: true },
     );
     const ap = groups[0]?.props.animatedProps as Record<string, unknown> | undefined;
     expect(ap?.transform).toMatch("123");
     expect(ap?.transform).toMatch("456");
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 });
 
@@ -389,51 +357,42 @@ describe("MapPin3D — mounts on web Platform.OS without throwing", () => {
 // =============================================================================
 
 describe("MapPinEmoji — mounts on web Platform.OS without throwing", () => {
-  it("steady state (isNew=false): mounts and renders svg-text emoji element", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" isNew={false} />,
-      );
-    });
+  it("steady state (isNew=false): mounts and renders Text emoji element", async () => {
+    const tree = await render(
+      <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" isNew={false} />,
+    );
 
-    const texts = tree.root.findAll(
-      (n) => (n.type as string) === "svg-text",
-      { deep: true },
+    const texts = tree.root!.queryAll(
+      (n) => (n.type as string) === "Text",
+      { includeSelf: true },
     );
     expect(texts.length).toBeGreaterThan(0);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("entrance animation (isNew=true): mounts without throwing (exercises withSpring on web)", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={50} cy={80} size={15} fill="#8b5cf6" isNew={true} />,
-      );
-    });
+    const tree = await render(
+      <MapPinEmoji cx={50} cy={80} size={15} fill="#8b5cf6" isNew={true} />,
+    );
 
-    const texts = tree.root.findAll(
-      (n) => (n.type as string) === "svg-text",
-      { deep: true },
+    const texts = tree.root!.queryAll(
+      (n) => (n.type as string) === "Text",
+      { includeSelf: true },
     );
     expect(texts.length).toBeGreaterThan(0);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("AnimatedG (svg-g) receives animatedProps.transform — worklet callback was invoked", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
-      );
-    });
+    const tree = await render(
+      <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
+    );
 
-    const groups = tree.root.findAll(
+    const groups = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-g",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(groups.length).toBeGreaterThan(0);
 
@@ -442,43 +401,37 @@ describe("MapPinEmoji — mounts on web Platform.OS without throwing", () => {
     expect(typeof ap?.transform).toBe("string");
     expect(ap?.transform as string).toMatch(/translate/);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("animatedProps.transform encodes cx/cy — correct coordinate values were captured in closure", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={77} cy={88} size={15} fill="#8b5cf6" />,
-      );
-    });
+    const tree = await render(
+      <MapPinEmoji cx={77} cy={88} size={15} fill="#8b5cf6" />,
+    );
 
-    const groups = tree.root.findAll(
+    const groups = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-g",
-      { deep: true },
+      { includeSelf: true },
     );
     const ap = groups[0]?.props.animatedProps as Record<string, unknown> | undefined;
     expect(ap?.transform).toMatch("77");
     expect(ap?.transform).toMatch("88");
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("colour-badge ellipse carries the expected fill colour on web", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
-      );
-    });
+    const tree = await render(
+      <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
+    );
 
-    const ellipses = tree.root.findAll(
+    const ellipses = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-ellipse",
-      { deep: true },
+      { includeSelf: true },
     );
     const amberBadge = ellipses.find((n) => n.props.fill === "#f59e0b");
     expect(amberBadge).toBeDefined();
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 });

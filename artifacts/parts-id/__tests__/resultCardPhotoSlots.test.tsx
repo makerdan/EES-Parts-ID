@@ -1,5 +1,4 @@
 /**
- * @jest-environment node
  *
  * Regression tests: ResultCard must render both photo-slot thumbnails when
  * imageUrl + imageUrl2 are both present, exactly one thumbnail when only one
@@ -15,7 +14,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 
 // ─── react-native ─────────────────────────────────────────────────────────────
 
@@ -41,7 +40,7 @@ jest.mock("react-native", () => {
     View:         ({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) =>
                     React.createElement("rn-view", props, children),
     Text:         ({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) =>
-                    React.createElement("rn-text", props, children),
+                    React.createElement("Text", props, children),
     Pressable:    ({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) =>
                     React.createElement("rn-pressable", props, children),
     Image:        ({ uri, ...props }: { uri?: string; [k: string]: unknown }) =>
@@ -105,24 +104,6 @@ jest.mock("@/components/PinIcon", () => {
 
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
-// ─── Suppress react-test-renderer deprecation warnings ───────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    },
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Subjects under test ──────────────────────────────────────────────────────
 
 import { ResultCard } from "@/components/ResultCard";
@@ -156,94 +137,82 @@ function makeResult(photoOverrides: {
 
 describe("ResultCard — photo slot thumbnails", () => {
   it("renders two thumbnail Pressables when both imageUrl and imageUrl2 are present", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ResultCard
-          result={makeResult({ imageUrl: "https://example.com/img1.jpg", imageUrl2: "https://example.com/img2.jpg" })}
-          rank={0}
-        />,
-      );
-    });
+    const result = await render(
+      <ResultCard
+        result={makeResult({ imageUrl: "https://example.com/img1.jpg", imageUrl2: "https://example.com/img2.jpg" })}
+        rank={0}
+      />,
+    );
 
-    const pressables = tree.root.findAll(
+    const pressables = result.root!.queryAll(
       (n) => (n.type as string) === "rn-pressable" &&
               typeof n.props.accessibilityLabel === "string" &&
               (n.props.accessibilityLabel as string).startsWith("View photo"),
-      { deep: true },
+      { includeSelf: true },
     );
 
     expect(pressables).toHaveLength(2);
     expect(pressables[0]!.props.accessibilityLabel).toBe("View photo 1 for ABC-123");
     expect(pressables[1]!.props.accessibilityLabel).toBe("View photo 2 for ABC-123");
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("renders exactly one thumbnail Pressable when only imageUrl is present", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ResultCard
-          result={makeResult({ imageUrl: "https://example.com/img1.jpg" })}
-          rank={0}
-        />,
-      );
-    });
+    const result = await render(
+      <ResultCard
+        result={makeResult({ imageUrl: "https://example.com/img1.jpg" })}
+        rank={0}
+      />,
+    );
 
-    const pressables = tree.root.findAll(
+    const pressables = result.root!.queryAll(
       (n) => (n.type as string) === "rn-pressable" &&
               typeof n.props.accessibilityLabel === "string" &&
               (n.props.accessibilityLabel as string).startsWith("View photo"),
-      { deep: true },
+      { includeSelf: true },
     );
 
     expect(pressables).toHaveLength(1);
     expect(pressables[0]!.props.accessibilityLabel).toBe("View photo 1 for ABC-123");
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("uses thumbnailUrl2 as slot 2 when imageUrl2 is absent", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ResultCard
-          result={makeResult({ imageUrl: "https://example.com/img1.jpg", thumbnailUrl2: "https://example.com/thumb2.jpg" })}
-          rank={0}
-        />,
-      );
-    });
+    const result = await render(
+      <ResultCard
+        result={makeResult({ imageUrl: "https://example.com/img1.jpg", thumbnailUrl2: "https://example.com/thumb2.jpg" })}
+        rank={0}
+      />,
+    );
 
-    const pressables = tree.root.findAll(
+    const pressables = result.root!.queryAll(
       (n) => (n.type as string) === "rn-pressable" &&
               typeof n.props.accessibilityLabel === "string" &&
               (n.props.accessibilityLabel as string).startsWith("View photo"),
-      { deep: true },
+      { includeSelf: true },
     );
 
     expect(pressables).toHaveLength(2);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("renders two RetryImage instances (one per slot) when both photos are present", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ResultCard
-          result={makeResult({ imageUrl: "https://example.com/img1.jpg", imageUrl2: "https://example.com/img2.jpg" })}
-          rank={0}
-        />,
-      );
-    });
+    const result = await render(
+      <ResultCard
+        result={makeResult({ imageUrl: "https://example.com/img1.jpg", imageUrl2: "https://example.com/img2.jpg" })}
+        rank={0}
+      />,
+    );
 
     // Find only the header-thumbnail retry-images (not inside the expanded section
     // which is not rendered by default). Both slots live inside the thumbnailRow View
     // which is inside the headerRight View.
-    const images = tree.root.findAll(
+    const images = result.root!.queryAll(
       (n) => (n.type as string) === "retry-image",
-      { deep: true },
+      { includeSelf: true },
     );
 
     // At minimum two images must be present (slot 1 + slot 2).
@@ -254,30 +223,27 @@ describe("ResultCard — photo slot thumbnails", () => {
     expect(uris).toContain("https://example.com/img1.jpg");
     expect(uris).toContain("https://example.com/img2.jpg");
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("renders only one RetryImage when only imageUrl is present (no phantom slot)", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ResultCard
-          result={makeResult({ imageUrl: "https://example.com/img1.jpg" })}
-          rank={0}
-        />,
-      );
-    });
+    const result = await render(
+      <ResultCard
+        result={makeResult({ imageUrl: "https://example.com/img1.jpg" })}
+        rank={0}
+      />,
+    );
 
-    const images = tree.root.findAll(
+    const images = result.root!.queryAll(
       (n) => (n.type as string) === "retry-image",
-      { deep: true },
+      { includeSelf: true },
     );
 
     // Only one image in the collapsed card (no second slot, no expanded section).
     expect(images).toHaveLength(1);
     expect(images[0]!.props.uri).toBe("https://example.com/img1.jpg");
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 });
 
@@ -287,83 +253,74 @@ describe("ResultCard — photo slot thumbnails", () => {
 
 describe("PhotoLightbox — navigation and dot indicators", () => {
   it("renders a Next button and dot indicators when two URIs are supplied", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <PhotoLightbox
-          uris={["https://example.com/img1.jpg", "https://example.com/img2.jpg"]}
-          initialIndex={0}
-          onClose={jest.fn()}
-        />,
-      );
-    });
+    const result = await render(
+      <PhotoLightbox
+        uris={["https://example.com/img1.jpg", "https://example.com/img2.jpg"]}
+        initialIndex={0}
+        onClose={jest.fn()}
+      />,
+    );
 
     // Next navigation button must be present (at index 0, hasPrev=false, hasNext=true).
-    const nextBtn = tree.root.findAll(
+    const nextBtn = result.root!.queryAll(
       (n) => (n.type as string) === "rn-pressable" &&
               n.props.accessibilityLabel === "Next photo",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(nextBtn).toHaveLength(1);
 
     // Prev button must NOT be present when initialIndex=0.
-    const prevBtn = tree.root.findAll(
+    const prevBtn = result.root!.queryAll(
       (n) => (n.type as string) === "rn-pressable" &&
               n.props.accessibilityLabel === "Previous photo",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(prevBtn).toHaveLength(0);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("renders a Previous button when initialIndex points to the last URI", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <PhotoLightbox
-          uris={["https://example.com/img1.jpg", "https://example.com/img2.jpg"]}
-          initialIndex={1}
-          onClose={jest.fn()}
-        />,
-      );
-    });
+    const result = await render(
+      <PhotoLightbox
+        uris={["https://example.com/img1.jpg", "https://example.com/img2.jpg"]}
+        initialIndex={1}
+        onClose={jest.fn()}
+      />,
+    );
 
-    const prevBtn = tree.root.findAll(
+    const prevBtn = result.root!.queryAll(
       (n) => (n.type as string) === "rn-pressable" &&
               n.props.accessibilityLabel === "Previous photo",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(prevBtn).toHaveLength(1);
 
     // At last index there is no Next button.
-    const nextBtn = tree.root.findAll(
+    const nextBtn = result.root!.queryAll(
       (n) => (n.type as string) === "rn-pressable" &&
               n.props.accessibilityLabel === "Next photo",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(nextBtn).toHaveLength(0);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("renders dot indicators equal to the number of URIs when more than one is supplied", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <PhotoLightbox
-          uris={["https://example.com/img1.jpg", "https://example.com/img2.jpg"]}
-          initialIndex={0}
-          onClose={jest.fn()}
-        />,
-      );
-    });
+    const result = await render(
+      <PhotoLightbox
+        uris={["https://example.com/img1.jpg", "https://example.com/img2.jpg"]}
+        initialIndex={0}
+        onClose={jest.fn()}
+      />,
+    );
 
     // Each dot is an rn-view whose style prop is an array that includes
     // the `styles.dot` object (width: 7, height: 7, borderRadius: 3.5).
     // StyleSheet.create is mocked to return the object as-is so the full
     // style array is preserved on the node.
-    const dotViews = tree.root.findAll(
+    const dotViews = result.root!.queryAll(
       (n) => {
         if ((n.type as string) !== "rn-view") return false;
         const style = n.props.style;
@@ -376,42 +333,39 @@ describe("PhotoLightbox — navigation and dot indicators", () => {
             (s as Record<string, unknown>).height === 7,
         );
       },
-      { deep: true },
+      { includeSelf: true },
     );
 
     // There are two URIs so two dots must be rendered.
     expect(dotViews).toHaveLength(2);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("renders no navigation buttons or dot indicators when only one URI is supplied", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <PhotoLightbox
-          uris={["https://example.com/img1.jpg"]}
-          initialIndex={0}
-          onClose={jest.fn()}
-        />,
-      );
-    });
+    const result = await render(
+      <PhotoLightbox
+        uris={["https://example.com/img1.jpg"]}
+        initialIndex={0}
+        onClose={jest.fn()}
+      />,
+    );
 
-    const nextBtn = tree.root.findAll(
+    const nextBtn = result.root!.queryAll(
       (n) => (n.type as string) === "rn-pressable" &&
               n.props.accessibilityLabel === "Next photo",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(nextBtn).toHaveLength(0);
 
-    const prevBtn = tree.root.findAll(
+    const prevBtn = result.root!.queryAll(
       (n) => (n.type as string) === "rn-pressable" &&
               n.props.accessibilityLabel === "Previous photo",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(prevBtn).toHaveLength(0);
 
-    const dotViews = tree.root.findAll(
+    const dotViews = result.root!.queryAll(
       (n) => {
         if ((n.type as string) !== "rn-view") return false;
         const style = n.props.style as Record<string, unknown> | undefined;
@@ -419,32 +373,32 @@ describe("PhotoLightbox — navigation and dot indicators", () => {
         const bg = style.backgroundColor as string | undefined;
         return bg === "#fff" || bg === "rgba(255,255,255,0.35)";
       },
-      { deep: true },
+      { includeSelf: true },
     );
     expect(dotViews).toHaveLength(0);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("renders no content (returns null) when uris is empty", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <PhotoLightbox
-          uris={[]}
-          initialIndex={0}
-          onClose={jest.fn()}
-        />,
-      );
-    });
-
-    // Modal visible=false → mock returns null → nothing in the tree.
-    const modal = tree.root.findAll(
-      (n) => (n.type as string) === "rn-modal",
-      { deep: true },
+    const result = await render(
+      <PhotoLightbox
+        uris={[]}
+        initialIndex={0}
+        onClose={jest.fn()}
+      />,
     );
+
+    // Modal visible=false → mock returns null → root is undefined (container has no children).
+    const root = result.root;
+    const modal = root
+      ? root.queryAll(
+          (n) => (n.type as string) === "rn-modal",
+          { includeSelf: true },
+        )
+      : [];
     expect(modal).toHaveLength(0);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 });

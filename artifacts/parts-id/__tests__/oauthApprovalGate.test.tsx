@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Confirms that OAuth sign-in lands pending and banned users on the correct
  * screens, and that the OAuthButtons "/(tabs)" navigation is safely overridden
  * by AuthGate for non-approved users.
@@ -25,7 +23,7 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 import * as fs from "fs";
 import * as path from "path";
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 
 // ── Source paths ──────────────────────────────────────────────────────────────
 
@@ -335,13 +333,13 @@ describe("OAuthButtons — Google sign-in success path", () => {
   });
 
   it("calls setActive() with the new session ID after Google OAuth completes", async () => {
-    let root: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-in" }));
-    });
+    let result!: Awaited<ReturnType<typeof render>>;
+    result = await render(React.createElement(OAuthButtons, { mode: "sign-in" }));
 
     // Find the Google button (first Pressable) and simulate a press.
-    const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
+    // OAuthButtons returns a Fragment so result.root is only the first child;
+    // use result.container to search all Fragment children.
+    const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
     const googleBtn = pressables[0];
     expect(googleBtn).toBeDefined();
 
@@ -350,38 +348,37 @@ describe("OAuthButtons — Google sign-in success path", () => {
     });
 
     expect(mockSetActive).toHaveBeenCalledWith({ session: "session-google" });
+    await result.unmount();
   });
 
   it("calls router.replace('/(tabs)') after Google OAuth setActive resolves", async () => {
-    let root: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-in" }));
-    });
+    let result!: Awaited<ReturnType<typeof render>>;
+    result = await render(React.createElement(OAuthButtons, { mode: "sign-in" }));
 
-    const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
+    const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
     await act(async () => {
       pressables[0]!.props.onPress();
     });
 
     expect(mockReplace).toHaveBeenCalledWith("/(tabs)");
+    await result.unmount();
   });
 
   it("does NOT call router.replace when OAuth returns no session (cancelled)", async () => {
     // @ts-ignore — deliberately passing a falsy sessionId to simulate a cancelled OAuth flow
     mockStartSSO.mockResolvedValueOnce({ createdSessionId: null, setActive: mockSetActive });
 
-    let root: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-in" }));
-    });
+    let result!: Awaited<ReturnType<typeof render>>;
+    result = await render(React.createElement(OAuthButtons, { mode: "sign-in" }));
 
-    const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
+    const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
     await act(async () => {
       pressables[0]!.props.onPress();
     });
 
     expect(mockReplace).not.toHaveBeenCalled();
     expect(mockSetActive).not.toHaveBeenCalled();
+    await result.unmount();
   });
 });
 
@@ -397,13 +394,12 @@ describe("OAuthButtons — Apple sign-in success path", () => {
   });
 
   it("calls setActive() with the new session ID after Apple OAuth completes", async () => {
-    let root: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-in" }));
-    });
+    let result!: Awaited<ReturnType<typeof render>>;
+    result = await render(React.createElement(OAuthButtons, { mode: "sign-in" }));
 
     // On iOS (the mock default), Apple button is the second Pressable.
-    const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
+    // OAuthButtons returns a Fragment — search container to find all Pressables.
+    const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
     const appleBtn = pressables[1];
     expect(appleBtn).toBeDefined();
 
@@ -412,20 +408,20 @@ describe("OAuthButtons — Apple sign-in success path", () => {
     });
 
     expect(mockSetActive).toHaveBeenCalledWith({ session: "session-apple" });
+    await result.unmount();
   });
 
   it("calls router.replace('/(tabs)') after Apple OAuth setActive resolves", async () => {
-    let root: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-in" }));
-    });
+    let result!: Awaited<ReturnType<typeof render>>;
+    result = await render(React.createElement(OAuthButtons, { mode: "sign-in" }));
 
-    const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
+    const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
     await act(async () => {
       pressables[1]!.props.onPress();
     });
 
     expect(mockReplace).toHaveBeenCalledWith("/(tabs)");
+    await result.unmount();
   });
 });
 
@@ -498,51 +494,49 @@ describe("OAuthButtons — Google sign-up flow (new account)", () => {
   });
 
   it("calls setActive() with the new session ID when signing up via Google", async () => {
-    let root: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-up" }));
-    });
+    let result!: Awaited<ReturnType<typeof render>>;
+    result = await render(React.createElement(OAuthButtons, { mode: "sign-up" }));
 
-    const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
+    // OAuthButtons returns a Fragment — search container to find all Pressables.
+    const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
     await act(async () => {
       pressables[0]!.props.onPress();
     });
 
     expect(mockSetActive).toHaveBeenCalledWith({ session: "session-new-user" });
+    await result.unmount();
   });
 
   it("calls router.replace('/(tabs)') after Google OAuth completes in sign-up mode", async () => {
     // OAuthButtons always navigates to /(tabs) — AuthGate overrides this for
     // users who are still pending.
-    let root: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-up" }));
-    });
+    let result!: Awaited<ReturnType<typeof render>>;
+    result = await render(React.createElement(OAuthButtons, { mode: "sign-up" }));
 
-    const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
+    const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
     await act(async () => {
       pressables[0]!.props.onPress();
     });
 
     expect(mockReplace).toHaveBeenCalledWith("/(tabs)");
+    await result.unmount();
   });
 
   it("does NOT call router.replace when OAuth returns no session in sign-up mode (cancelled)", async () => {
     // @ts-ignore — deliberately falsy sessionId to simulate a cancelled OAuth flow
     mockStartSSO.mockResolvedValueOnce({ createdSessionId: null, setActive: mockSetActive });
 
-    let root: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-up" }));
-    });
+    let result!: Awaited<ReturnType<typeof render>>;
+    result = await render(React.createElement(OAuthButtons, { mode: "sign-up" }));
 
-    const pressables = root!.root.findAllByType("rn-pressable" as unknown as React.ComponentType);
+    const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
     await act(async () => {
       pressables[0]!.props.onPress();
     });
 
     expect(mockReplace).not.toHaveBeenCalled();
     expect(mockSetActive).not.toHaveBeenCalled();
+    await result.unmount();
   });
 });
 
@@ -612,23 +606,21 @@ const APPROVAL_NOTE = "You'll still need admin approval after signing up";
 
 describe("OAuthButtons — approval note visibility", () => {
   it("renders the approval note when mode is 'sign-up'", async () => {
-    let root: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-up" }));
-    });
+    let result!: Awaited<ReturnType<typeof render>>;
+    result = await render(React.createElement(OAuthButtons, { mode: "sign-up" }));
 
-    const json = JSON.stringify(root!.toJSON());
+    const json = JSON.stringify(result.toJSON());
     expect(json).toContain(APPROVAL_NOTE);
+    await result.unmount();
   });
 
   it("does NOT render the approval note when mode is 'sign-in'", async () => {
-    let root: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(OAuthButtons, { mode: "sign-in" }));
-    });
+    let result!: Awaited<ReturnType<typeof render>>;
+    result = await render(React.createElement(OAuthButtons, { mode: "sign-in" }));
 
-    const json = JSON.stringify(root!.toJSON());
+    const json = JSON.stringify(result.toJSON());
     expect(json).not.toContain(APPROVAL_NOTE);
+    await result.unmount();
   });
 });
 

@@ -1,13 +1,11 @@
 /**
- * @jest-environment node
- *
  * Regression tests for AddPartForm:
  *   1. Save-and-unmount safety — no setState warning when the component is
  *      unmounted before the async fetch resolves.
  *   2. Rollback path — error state is set when the server returns an error
  *      and the component is still mounted.
  *
- * Uses react-test-renderer + act() following the makeAppMock pattern used
+ * Uses @testing-library/react-native + act() following the makeAppMock pattern used
  * in nearby tests.
  */
 
@@ -16,7 +14,8 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 import { AddPartForm } from "@/components/AddPartForm";
 import { makeAppMock } from "./helpers/appMocks";
 
@@ -59,24 +58,6 @@ jest.mock("@/utils/apiBase", () => ({
 
 const { useApp } = require("@/contexts/AppContext") as { useApp: jest.Mock };
 
-// ─── Suppress react-test-renderer deprecation warning ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Per-test setup ───────────────────────────────────────────────────────────
 
 beforeEach(() => {
@@ -87,39 +68,38 @@ beforeEach(() => {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function renderForm(props: React.ComponentProps<typeof AddPartForm>) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(React.createElement(AddPartForm, props)); });
-  return tree;
+  return await render(React.createElement(AddPartForm, props));
 }
 
-function fillRequiredFields(tree: renderer.ReactTestRenderer) {
-  const catalogInput = tree.root.findAll(
-    (n) => String(n.props?.placeholder ?? "").includes("BR120"),
-    { deep: true },
+function fillRequiredFields(result: Awaited<ReturnType<typeof render>>) {
+  const root = result.root!;
+  const catalogInput = root.queryAll(
+    (n: TestInstance) => String(n.props?.placeholder ?? "").includes("BR120"),
+    { includeSelf: true },
   )[0];
   if (catalogInput) catalogInput.props.onChangeText("WIDGET-42");
 
-  const vendorInput = tree.root.findAll(
-    (n) => String(n.props?.placeholder ?? "").includes("EATON"),
-    { deep: true },
+  const vendorInput = root.queryAll(
+    (n: TestInstance) => String(n.props?.placeholder ?? "").includes("EATON"),
+    { includeSelf: true },
   )[0];
   if (vendorInput) vendorInput.props.onChangeText("ACME");
 
-  const binInput = tree.root.findAll(
-    (n) => String(n.props?.placeholder ?? "").includes("01-05-210"),
-    { deep: true },
+  const binInput = root.queryAll(
+    (n: TestInstance) => String(n.props?.placeholder ?? "").includes("01-05-210"),
+    { includeSelf: true },
   )[0];
   if (binInput) binInput.props.onChangeText("01-02-100");
 }
 
-function getAllTextStrings(root: renderer.ReactTestInstance): string[] {
+function getAllTextStrings(root: TestInstance): string[] {
   const texts: string[] = [];
-  function traverse(node: renderer.ReactTestInstance) {
+  function traverse(node: TestInstance) {
     for (const child of node.children ?? []) {
       if (typeof child === "string") {
         texts.push(child);
       } else if (child && typeof child === "object" && "children" in child) {
-        traverse(child as renderer.ReactTestInstance);
+        traverse(child as TestInstance);
       }
     }
   }
@@ -127,11 +107,12 @@ function getAllTextStrings(root: renderer.ReactTestInstance): string[] {
   return texts;
 }
 
-function findSubmitButton(tree: renderer.ReactTestRenderer) {
-  return tree.root
-    .findAll((n) => (n.type as string) === "rn-pressable", { deep: true })
+function findSubmitButton(result: Awaited<ReturnType<typeof render>>) {
+  const root = result.root!;
+  return root
+    .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
     .find((n) => {
-      const flat = n.findAll((c) => typeof c.children?.[0] === "string", { deep: true });
+      const flat = n.queryAll((c: TestInstance) => typeof c.children?.[0] === "string", { includeSelf: true });
       return flat.some((c) => String(c.children?.[0] ?? "").includes("Add Part"));
     }) ?? null;
 }
@@ -146,22 +127,22 @@ describe("AddPartForm — save-and-unmount (isMounted guard)", () => {
     const pendingFetch = new Promise<Response>((res) => { resolveCreate = res; });
     global.fetch = jest.fn().mockReturnValue(pendingFetch) as jest.Mock;
 
-    const consoleSpy = console.error as jest.Mock;
+    const consoleSpy = jest.spyOn(console, "error");
     consoleSpy.mockClear();
 
-    const tree = await renderForm({
+    const result = await renderForm({
       adminToken: "test-token",
       onSuccess: jest.fn(),
     });
 
     // Fill required fields then submit.
-    await act(async () => { fillRequiredFields(tree); });
-    const submitBtn = findSubmitButton(tree);
+    await act(async () => { fillRequiredFields(result); });
+    const submitBtn = findSubmitButton(result);
     expect(submitBtn).not.toBeNull();
     await act(async () => { submitBtn!.props.onPress(); });
 
     // Unmount the component BEFORE the fetch resolves.
-    await act(async () => { tree.unmount(); });
+    await act(async () => { result.unmount(); });
 
     // Now resolve the fetch — triggers the async continuation with isMounted=false.
     resolveCreate({
@@ -176,6 +157,7 @@ describe("AddPartForm — save-and-unmount (isMounted guard)", () => {
       ([msg]) => typeof msg === "string" && msg.includes("unmounted component"),
     );
     expect(stateUpdateWarning).toBeUndefined();
+    consoleSpy.mockRestore();
   });
 
   it("does not emit a setState warning when unmounted before an error response resolves", async () => {
@@ -183,19 +165,19 @@ describe("AddPartForm — save-and-unmount (isMounted guard)", () => {
     const pendingFetch = new Promise<Response>((res) => { resolveCreate = res; });
     global.fetch = jest.fn().mockReturnValue(pendingFetch) as jest.Mock;
 
-    const consoleSpy = console.error as jest.Mock;
+    const consoleSpy = jest.spyOn(console, "error");
     consoleSpy.mockClear();
 
-    const tree = await renderForm({
+    const result = await renderForm({
       adminToken: "test-token",
       onSuccess: jest.fn(),
     });
 
-    await act(async () => { fillRequiredFields(tree); });
-    const submitBtn = findSubmitButton(tree);
+    await act(async () => { fillRequiredFields(result); });
+    const submitBtn = findSubmitButton(result);
     await act(async () => { submitBtn!.props.onPress(); });
 
-    await act(async () => { tree.unmount(); });
+    await act(async () => { result.unmount(); });
 
     resolveCreate({
       ok: false,
@@ -208,6 +190,7 @@ describe("AddPartForm — save-and-unmount (isMounted guard)", () => {
       ([msg]) => typeof msg === "string" && msg.includes("unmounted component"),
     );
     expect(stateUpdateWarning).toBeUndefined();
+    consoleSpy.mockRestore();
   });
 });
 
@@ -223,46 +206,46 @@ describe("AddPartForm — error rollback (still mounted)", () => {
       json: async () => ({ error: "A part with this vendor and catalog number already exists." }),
     } as unknown as Response) as jest.Mock;
 
-    const tree = await renderForm({
+    const result = await renderForm({
       adminToken: "test-token",
       onSuccess: jest.fn(),
     });
 
-    await act(async () => { fillRequiredFields(tree); });
-    const submitBtn = findSubmitButton(tree);
+    await act(async () => { fillRequiredFields(result); });
+    const submitBtn = findSubmitButton(result);
     expect(submitBtn).not.toBeNull();
     await act(async () => { submitBtn!.props.onPress(); });
     for (let i = 0; i < 5; i++) {
       await act(async () => { await Promise.resolve(); });
     }
 
-    const allTexts = getAllTextStrings(tree.root);
+    const allTexts = getAllTextStrings(result.root!);
     const errorText = allTexts.find((t) => t.includes("already exists") || t.includes("vendor") || t.includes("catalog"));
     expect(errorText).toBeDefined();
 
-    tree.unmount();
+    result.unmount();
   });
 
   it("sets a network error message when fetch rejects and the component is still mounted", async () => {
     global.fetch = jest.fn().mockRejectedValue(new Error("Network failure")) as jest.Mock;
 
-    const tree = await renderForm({
+    const result = await renderForm({
       adminToken: "test-token",
       onSuccess: jest.fn(),
     });
 
-    await act(async () => { fillRequiredFields(tree); });
-    const submitBtn = findSubmitButton(tree);
+    await act(async () => { fillRequiredFields(result); });
+    const submitBtn = findSubmitButton(result);
     expect(submitBtn).not.toBeNull();
     await act(async () => { submitBtn!.props.onPress(); });
     for (let i = 0; i < 5; i++) {
       await act(async () => { await Promise.resolve(); });
     }
 
-    const allTexts = getAllTextStrings(tree.root);
+    const allTexts = getAllTextStrings(result.root!);
     const errorText = allTexts.find((t) => t.toLowerCase().includes("network") || t.toLowerCase().includes("connection") || t.toLowerCase().includes("error"));
     expect(errorText).toBeDefined();
 
-    tree.unmount();
+    result.unmount();
   });
 });

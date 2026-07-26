@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Tests for the admin bridge "Measure Now" flow in PhotoScreen.
  *
  * Covers the end-to-end path:
@@ -29,7 +27,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 
 // ─── expo-router ─────────────────────────────────────────────────────────────
 
@@ -266,44 +264,15 @@ function makeAppMock(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// ─── Suppress react-test-renderer deprecation warning ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (typeof msg === "string" && (
-        msg.includes("react-test-renderer is deprecated") ||
-        msg.includes("Warning:")
-      )) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Render helpers ───────────────────────────────────────────────────────────
 
-async function render(ui: React.ReactElement) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(ui); });
-  return tree;
-}
+import type { TestInstance } from "test-renderer";
 
-const flushPromises = () => act(async () => {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-});
-
-// ─── Instance-tree helpers ────────────────────────────────────────────────────
-
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
 function hasText(root: Inst, text: string): boolean {
@@ -312,18 +281,24 @@ function hasText(root: Inst, text: string): boolean {
 
 function findPressable(root: Inst, label: string): Inst | null {
   return (
-    root.findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-        .find(n => instText(n).includes(label)) ?? null
+    root.queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+        .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
+const flushPromises = () => act(async () => {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+});
+
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   capturedMeasureVisible     = false;
@@ -374,23 +349,23 @@ async function renderAdminWithBridgeCard(itemOverride: typeof itemWithNoDims = i
     ],
   });
 
-  const tree = await render(<PhotoScreen />);
-  activeTree = tree;
+  const result = await render(<PhotoScreen />);
+  activeTree = result;
   await flushPromises();
 
   // Add an image so the Identify button becomes enabled.
-  const libraryBtn = findPressable(tree.root, "Photo Library");
+  const libraryBtn = findPressable(result.root!!, "Photo Library");
   expect(libraryBtn).not.toBeNull();
   await act(async () => { libraryBtn!.props.onPress(); });
   await flushPromises();
 
   // Fire identify — runs the full identify+search pipeline.
-  const identifyBtn = findPressable(tree.root, "Identify Part");
+  const identifyBtn = findPressable(result.root!!, "Identify Part");
   expect(identifyBtn).not.toBeNull();
   await act(async () => { identifyBtn!.props.onPress(); });
   await flushPromises();
 
-  return tree;
+  return result;
 }
 
 // =============================================================================
@@ -399,13 +374,13 @@ async function renderAdminWithBridgeCard(itemOverride: typeof itemWithNoDims = i
 
 describe("PhotoScreen – admin bridge card", () => {
   it("shows the '⚠️ No dimensions on record' card for admins when top result has no dimensions", async () => {
-    const tree = await renderAdminWithBridgeCard();
-    expect(hasText(tree.root, "No dimensions on record")).toBe(true);
+    const result = await renderAdminWithBridgeCard();
+    expect(hasText(result.root!!, "No dimensions on record")).toBe(true);
   });
 
   it("shows the 'Measure Now' button inside the bridge card", async () => {
-    const tree = await renderAdminWithBridgeCard();
-    expect(findPressable(tree.root, "Measure Now")).not.toBeNull();
+    const result = await renderAdminWithBridgeCard();
+    expect(findPressable(result.root!!, "Measure Now")).not.toBeNull();
   });
 
   it("does NOT show the bridge card for non-admin users", async () => {
@@ -424,19 +399,19 @@ describe("PhotoScreen – admin bridge card", () => {
       ],
     });
 
-    const tree = await render(<PhotoScreen />);
-    activeTree = tree;
+    const result = await render(<PhotoScreen />);
+    activeTree = result;
     await flushPromises();
 
-    const libraryBtn = findPressable(tree.root, "Photo Library");
+    const libraryBtn = findPressable(result.root!!, "Photo Library");
     await act(async () => { libraryBtn!.props.onPress(); });
     await flushPromises();
 
-    const identifyBtn = findPressable(tree.root, "Identify Part");
+    const identifyBtn = findPressable(result.root!!, "Identify Part");
     await act(async () => { identifyBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(hasText(tree.root, "No dimensions on record")).toBe(false);
+    expect(hasText(result.root!!, "No dimensions on record")).toBe(false);
   });
 
   it("does NOT show the bridge card when the top result already has dimensions", async () => {
@@ -460,19 +435,19 @@ describe("PhotoScreen – admin bridge card", () => {
       ],
     });
 
-    const tree = await render(<PhotoScreen />);
-    activeTree = tree;
+    const result = await render(<PhotoScreen />);
+    activeTree = result;
     await flushPromises();
 
-    const libraryBtn = findPressable(tree.root, "Photo Library");
+    const libraryBtn = findPressable(result.root!!, "Photo Library");
     await act(async () => { libraryBtn!.props.onPress(); });
     await flushPromises();
 
-    const identifyBtn = findPressable(tree.root, "Identify Part");
+    const identifyBtn = findPressable(result.root!!, "Identify Part");
     await act(async () => { identifyBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(hasText(tree.root, "No dimensions on record")).toBe(false);
+    expect(hasText(result.root!!, "No dimensions on record")).toBe(false);
   });
 });
 
@@ -482,11 +457,11 @@ describe("PhotoScreen – admin bridge card", () => {
 
 describe("PhotoScreen – 'Measure Now' opens MeasurePartScreen", () => {
   it("sets MeasurePartScreen visible=true when 'Measure Now' is tapped", async () => {
-    const tree = await renderAdminWithBridgeCard();
+    const result = await renderAdminWithBridgeCard();
 
     expect(capturedMeasureVisible).toBe(false);
 
-    const measureBtn = findPressable(tree.root, "Measure Now");
+    const measureBtn = findPressable(result.root!!, "Measure Now");
     expect(measureBtn).not.toBeNull();
     await act(async () => { measureBtn!.props.onPress(); });
 
@@ -494,9 +469,9 @@ describe("PhotoScreen – 'Measure Now' opens MeasurePartScreen", () => {
   });
 
   it("passes the bridge item as initialItem to MeasurePartScreen", async () => {
-    const tree = await renderAdminWithBridgeCard();
+    const result = await renderAdminWithBridgeCard();
 
-    const measureBtn = findPressable(tree.root, "Measure Now");
+    const measureBtn = findPressable(result.root!!, "Measure Now");
     await act(async () => { measureBtn!.props.onPress(); });
 
     expect(capturedMeasureInitialItem).not.toBeNull();
@@ -507,14 +482,14 @@ describe("PhotoScreen – 'Measure Now' opens MeasurePartScreen", () => {
   });
 
   it("dismisses the bridge card itself after tapping 'Measure Now'", async () => {
-    const tree = await renderAdminWithBridgeCard();
+    const result = await renderAdminWithBridgeCard();
 
-    const measureBtn = findPressable(tree.root, "Measure Now");
+    const measureBtn = findPressable(result.root!!, "Measure Now");
     await act(async () => { measureBtn!.props.onPress(); });
 
     // The bridge card is now gone (adminBridgeItem was cleared) while the
     // MeasurePartScreen is visible — no stale duplicate prompt visible.
-    expect(hasText(tree.root, "No dimensions on record")).toBe(false);
+    expect(hasText(result.root!!, "No dimensions on record")).toBe(false);
   });
 });
 
@@ -524,9 +499,9 @@ describe("PhotoScreen – 'Measure Now' opens MeasurePartScreen", () => {
 
 describe("PhotoScreen – closing MeasurePartScreen clears adminBridgeMeasureItem", () => {
   it("sets MeasurePartScreen visible=false when onClose is called", async () => {
-    const tree = await renderAdminWithBridgeCard();
+    const result = await renderAdminWithBridgeCard();
 
-    const measureBtn = findPressable(tree.root, "Measure Now");
+    const measureBtn = findPressable(result.root!!, "Measure Now");
     await act(async () => { measureBtn!.props.onPress(); });
     expect(capturedMeasureVisible).toBe(true);
     expect(capturedMeasureOnClose).not.toBeNull();
@@ -540,7 +515,7 @@ describe("PhotoScreen – closing MeasurePartScreen clears adminBridgeMeasureIte
   it("clears initialItem (adminBridgeMeasureItem) when onClose is called", async () => {
     await renderAdminWithBridgeCard();
 
-    const measureBtn = findPressable(activeTree!.root, "Measure Now");
+    const measureBtn = findPressable(activeTree!.root!, "Measure Now");
     await act(async () => { measureBtn!.props.onPress(); });
 
     expect(capturedMeasureInitialItem).not.toBeNull();
@@ -565,9 +540,9 @@ describe("PhotoScreen – closing MeasurePartScreen clears adminBridgeMeasureIte
 
 describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no server write)", () => {
   it("closes MeasurePartScreen (visible=false) after onConfirm is called", async () => {
-    const tree = await renderAdminWithBridgeCard();
+    const result = await renderAdminWithBridgeCard();
 
-    const measureBtn = findPressable(tree.root, "Measure Now");
+    const measureBtn = findPressable(result.root!!, "Measure Now");
     await act(async () => { measureBtn!.props.onPress(); });
     expect(capturedMeasureVisible).toBe(true);
 
@@ -578,9 +553,9 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
   });
 
   it("calls setPendingMeasureSearch with exact min/max params derived from confirmed dimensions", async () => {
-    const tree = await renderAdminWithBridgeCard();
+    const result = await renderAdminWithBridgeCard();
 
-    const measureBtn = findPressable(tree.root, "Measure Now");
+    const measureBtn = findPressable(result.root!!, "Measure Now");
     await act(async () => { measureBtn!.props.onPress(); });
 
     const confirmedDims = { length: 120, width: 85, height: 45, diameter: null };
@@ -596,9 +571,9 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
   });
 
   it("rounds fractional dimension values when building search params", async () => {
-    const tree = await renderAdminWithBridgeCard();
+    const result = await renderAdminWithBridgeCard();
 
-    const measureBtn = findPressable(tree.root, "Measure Now");
+    const measureBtn = findPressable(result.root!!, "Measure Now");
     await act(async () => { measureBtn!.props.onPress(); });
 
     // LiDAR / AI estimates often return sub-mm floats; the handler rounds them.
@@ -614,9 +589,9 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
   });
 
   it("includes diameter in search params when a non-null diameter is confirmed", async () => {
-    const tree = await renderAdminWithBridgeCard();
+    const result = await renderAdminWithBridgeCard();
 
-    const measureBtn = findPressable(tree.root, "Measure Now");
+    const measureBtn = findPressable(result.root!!, "Measure Now");
     await act(async () => { measureBtn!.props.onPress(); });
 
     const confirmedDims = { length: null, width: null, height: null, diameter: 32 };
@@ -633,9 +608,9 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
   it("does NOT call setPendingMeasureSearch when all confirmed dimensions are null", async () => {
     // handleMeasureSearchConfirm only forwards params when at least one value
     // is non-empty — a fully-null result is silently discarded.
-    const tree = await renderAdminWithBridgeCard();
+    const result = await renderAdminWithBridgeCard();
 
-    const measureBtn = findPressable(tree.root, "Measure Now");
+    const measureBtn = findPressable(result.root!!, "Measure Now");
     await act(async () => { measureBtn!.props.onPress(); });
 
     const confirmedDims = { length: null, width: null, height: null, diameter: null };
@@ -645,9 +620,9 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
   });
 
   it("navigates to the root tab ('/') after confirm — not to a server update path", async () => {
-    const tree = await renderAdminWithBridgeCard();
+    const result = await renderAdminWithBridgeCard();
 
-    const measureBtn = findPressable(tree.root, "Measure Now");
+    const measureBtn = findPressable(result.root!!, "Measure Now");
     await act(async () => { measureBtn!.props.onPress(); });
 
     const confirmedDims = { length: 100, width: 60, height: 30, diameter: null };
@@ -667,12 +642,12 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
     // If a future developer adds a PATCH/PUT mutation for dimension persistence
     // they must add a useUpdateInventoryItem (or equivalent) mock here and
     // assert it is called with the right item id and dimension payload.
-    const tree = await renderAdminWithBridgeCard();
+    const result = await renderAdminWithBridgeCard();
 
     const searchCallsBefore   = mockSearchMutateAsync.mock.calls.length;
     const identifyCallsBefore = mockIdentifyMutateAsync.mock.calls.length;
 
-    const measureBtn = findPressable(tree.root, "Measure Now");
+    const measureBtn = findPressable(result.root!!, "Measure Now");
     await act(async () => { measureBtn!.props.onPress(); });
 
     const confirmedDims = { length: 100, width: 60, height: 30, diameter: null };
@@ -684,4 +659,3 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
     expect(mockIdentifyMutateAsync).toHaveBeenCalledTimes(identifyCallsBefore);
   });
 });
-

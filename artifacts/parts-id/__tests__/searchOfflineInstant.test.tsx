@@ -1,5 +1,4 @@
 /**
- * @jest-environment node
  *
  * Truly-offline fast-path regression coverage for the SearchScreen
  * (app/(tabs)/index.tsx — handleSearch, the `if (!isCurrentlyConnected)` branch).
@@ -315,7 +314,8 @@ jest.mock("@/utils/scanHistory", () => ({}));
 // ── Imports (after all mocks) ─────────────────────────────────────────────────
 
 import React from "react";
-import renderer, { act, type ReactTestInstance } from "react-test-renderer";
+import { render, act, RenderResult } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 
 import SearchScreen from "../app/(tabs)/index";
 
@@ -378,9 +378,11 @@ function installSearchMutation() {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function gatherText(root: ReactTestInstance): string {
+type Inst = TestInstance;
+
+function gatherText(root: NonNullable<RenderResult["root"]>): string {
   const texts: Array<string> = [];
-  root.findAll(() => true).forEach((node: ReactTestInstance) => {
+  root.queryAll(() => true, { includeSelf: true }).forEach((node: Inst) => {
     const kids = node.children;
     if (Array.isArray(kids)) {
       kids.forEach((c) => { if (typeof c === "string") texts.push(c); });
@@ -389,7 +391,7 @@ function gatherText(root: ReactTestInstance): string {
   return texts.join(" | ");
 }
 
-function isSpinnerVisible(root: ReactTestInstance): boolean {
+function isSpinnerVisible(root: NonNullable<RenderResult["root"]>): boolean {
   return gatherText(root).includes("Searching dictionaries");
 }
 
@@ -405,21 +407,18 @@ const flushMicrotasks = () =>
 // pending timers; firing the sync-retry backoff timer while still mounted
 // triggers async state updates that outlive the suite and emit "Cannot log
 // after tests are done" warnings.
-const mountedTrees: renderer.ReactTestRenderer[] = [];
+const mountedTrees: RenderResult[] = [];
 
 async function mountScreen() {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => {
-    tree = renderer.create(<SearchScreen />);
-  });
-  mountedTrees.push(tree);
+  const result = await render(<SearchScreen />);
+  mountedTrees.push(result);
   await flushMicrotasks();
-  return tree;
+  return result;
 }
 
-async function triggerSearch(tree: renderer.ReactTestRenderer) {
+async function triggerSearch(result: RenderResult) {
   const input = () =>
-    tree.root.findAll((n: ReactTestInstance) => (n.type as unknown as string) === "keyword-input")[0]!;
+    result.root!.queryAll((n: Inst) => (n.type as unknown as string) === "keyword-input", { includeSelf: true })[0]!;
   await act(async () => {
     (input().props.onChangeText as (v: string) => void)("wire nut");
   });
@@ -428,26 +427,6 @@ async function triggerSearch(tree: renderer.ReactTestRenderer) {
   });
   await flushMicrotasks();
 }
-
-// ── Console-noise suppression ─────────────────────────────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => {
-  (console.error as jest.Mock).mockRestore?.();
-});
 
 beforeEach(() => {
   jest.useFakeTimers();
@@ -464,9 +443,7 @@ afterEach(async () => {
   // search timeout) instead of letting runOnlyPendingTimers fire them.
   while (mountedTrees.length > 0) {
     const t = mountedTrees.pop()!;
-    await act(async () => {
-      t.unmount();
-    });
+    await t.unmount();
   }
   jest.runOnlyPendingTimers();
   jest.useRealTimers();
@@ -499,18 +476,18 @@ describe("SearchScreen truly-offline fast path (isConnected: false)", () => {
       cacheType: "fuse",
     });
 
-    const tree = await mountScreen();
-    await triggerSearch(tree);
+    const result = await mountScreen();
+    await triggerSearch(result);
 
     // The fast path fires synchronously — no timers needed.
     // The network mutation must never have been called.
     expect(mutateFn).not.toHaveBeenCalled();
 
     // No loading spinner — the request was never in flight.
-    expect(isSpinnerVisible(tree.root)).toBe(false);
+    expect(isSpinnerVisible(result.root!)).toBe(false);
 
     // The cached-results offline banner is already visible.
-    expect(gatherText(tree.root)).toContain("Offline — showing cached results");
+    expect(gatherText(result.root!)).toContain("Offline — showing cached results");
 
     // Advance timers by 8 s — nothing should change.
     await act(async () => {
@@ -520,8 +497,8 @@ describe("SearchScreen truly-offline fast path (isConnected: false)", () => {
 
     // State unchanged after fake timer advance — confirms no 8s timeout was scheduled.
     expect(mutateFn).not.toHaveBeenCalled();
-    expect(isSpinnerVisible(tree.root)).toBe(false);
-    expect(gatherText(tree.root)).toContain("Offline — showing cached results");
+    expect(isSpinnerVisible(result.root!)).toBe(false);
+    expect(gatherText(result.root!)).toContain("Offline — showing cached results");
   });
 
   it("shows the no-cache empty state instantly without advancing any timers", async () => {
@@ -530,17 +507,17 @@ describe("SearchScreen truly-offline fast path (isConnected: false)", () => {
     // Offline fallback finds nothing.
     mockResolveOfflineFallback.mockReturnValue({ results: [], cacheType: "fuse" });
 
-    const tree = await mountScreen();
-    await triggerSearch(tree);
+    const result = await mountScreen();
+    await triggerSearch(result);
 
     // Network mutation must never have been called.
     expect(mutateFn).not.toHaveBeenCalled();
 
     // No loading spinner.
-    expect(isSpinnerVisible(tree.root)).toBe(false);
+    expect(isSpinnerVisible(result.root!)).toBe(false);
 
     // No-cache empty state already visible.
-    const textBefore = gatherText(tree.root);
+    const textBefore = gatherText(result.root!);
     expect(textBefore).toContain("Offline search unavailable");
     expect(textBefore).toContain("Connect to the internet and search once to enable offline mode");
 
@@ -552,8 +529,8 @@ describe("SearchScreen truly-offline fast path (isConnected: false)", () => {
 
     // State unchanged — confirms no 8s timeout was scheduled.
     expect(mutateFn).not.toHaveBeenCalled();
-    expect(isSpinnerVisible(tree.root)).toBe(false);
-    const textAfter = gatherText(tree.root);
+    expect(isSpinnerVisible(result.root!)).toBe(false);
+    const textAfter = gatherText(result.root!);
     expect(textAfter).toContain("Offline search unavailable");
     expect(textAfter).toContain("Connect to the internet and search once to enable offline mode");
   });

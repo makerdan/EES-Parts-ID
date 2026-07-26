@@ -129,7 +129,7 @@ jest.mock("@/components/KeyboardDoneInput", () => ({
   },
 }));
 
-// ── Suppress react-test-renderer deprecation warnings ─────────────────────────
+// ── Suppress console errors for act() warnings ────────────────────────────────
 
 let origConsoleError: typeof console.error;
 beforeAll(() => {
@@ -138,7 +138,7 @@ beforeAll(() => {
     (msg: unknown, ...args: unknown[]) => {
       if (
         typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") || msg.includes("Warning:") || msg.includes("act("))
+        (msg.includes("act("))
       ) return;
       origConsoleError(msg, ...args);
     },
@@ -149,7 +149,7 @@ afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
 // ── Imports (after all jest.mock declarations) ────────────────────────────────
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 import { CatalogPdfUpload } from "../components/CatalogPdfUpload";
 
 // ── PDF fixture helpers ────────────────────────────────────────────────────────
@@ -170,18 +170,20 @@ function makeFile(bytes: Uint8Array, name = "catalog.pdf"): File {
 
 // ── Render & interaction helpers ──────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+import type { TestInstance } from "test-renderer";
+
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map((c) => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
-function findPressable(root: Inst, label: string): Inst | null {
+function findPressable(root: TestInstance, label: string): Inst | null {
   return (
     root
-      .findAll((n) => (n.type as string) === "rn-pressable", { deep: true })
-      .find((n) => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
@@ -195,19 +197,15 @@ const flushPromises = () =>
 async function renderUploadCard(
   adminToken = "admin-tok",
   onSessionExpired = jest.fn(),
-): Promise<renderer.ReactTestRenderer> {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => {
-    tree = renderer.create(
-      <CatalogPdfUpload adminToken={adminToken} onSessionExpired={onSessionExpired} />,
-    );
-  });
-  return tree;
+): Promise<Awaited<ReturnType<typeof render>>> {
+  return await render(
+    <CatalogPdfUpload adminToken={adminToken} onSessionExpired={onSessionExpired} />,
+  );
 }
 
 // ── Per-test teardown ─────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
@@ -235,7 +233,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     const tree = await renderUploadCard();
     activeTree = tree;
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     expect(pickBtn).not.toBeNull();
 
     await act(async () => { pickBtn!.props.onPress(); });
@@ -262,7 +260,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     const tree = await renderUploadCard();
     activeTree = tree;
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
@@ -284,7 +282,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     const tree = await renderUploadCard();
     activeTree = tree;
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
@@ -306,7 +304,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     const tree = await renderUploadCard();
     activeTree = tree;
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
@@ -319,7 +317,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     const tree = await renderUploadCard();
     activeTree = tree;
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
@@ -338,11 +336,11 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     const tree = await renderUploadCard();
     activeTree = tree;
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
-    const allText = instText(tree.root);
+    const allText = instText(tree.root!);
     expect(allText).toContain("PDF:");
     expect(allText).toContain("acme.pdf");
   });
@@ -369,7 +367,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
   }
 
   async function pickFileAndSetVendor(
-    tree: renderer.ReactTestRenderer,
+    tree: Awaited<ReturnType<typeof render>>,
     pdfBytes: Uint8Array,
     vendor = "ACME",
   ): Promise<void> {
@@ -380,7 +378,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
     });
     mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
@@ -397,7 +395,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
 
     await pickFileAndSetVendor(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     expect(startBtn).not.toBeNull();
 
     await act(async () => { startBtn!.props.onPress(); });
@@ -414,7 +412,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
 
     await pickFileAndSetVendor(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -434,7 +432,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
 
     await pickFileAndSetVendor(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -451,7 +449,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
 
     await pickFileAndSetVendor(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -468,7 +466,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
 
     await pickFileAndSetVendor(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -485,7 +483,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
 
     await pickFileAndSetVendor(tree, makePdfBytes(), "EATON");
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -510,7 +508,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
 
     await pickFileAndSetVendor(tree, originalBytes);
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -529,7 +527,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
     await act(async () => { capturedOnChangeText?.("ACME"); });
 
     // Start Extraction button is disabled when pdfBytes is null
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     // Even if present, pressing it while disabled should be a no-op
     if (startBtn) {
       await act(async () => { startBtn.props.onPress?.(); });
@@ -559,7 +557,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
   }
 
   async function pickFileWith(
-    tree: renderer.ReactTestRenderer,
+    tree: Awaited<ReturnType<typeof render>>,
     bytes: Uint8Array,
     name = "catalog.pdf",
   ): Promise<void> {
@@ -569,7 +567,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     });
     mockReadPdfAsBytes.mockResolvedValueOnce(bytes);
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
   }
@@ -583,7 +581,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     await pickFileWith(tree, makePdfBytes());
     // Deliberately do NOT set vendor
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     expect(startBtn).not.toBeNull();
     expect(startBtn!.props.disabled).toBe(true);
   });
@@ -594,7 +592,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
 
     await pickFileWith(tree, makePdfBytes());
 
-    const allText = instText(tree.root);
+    const allText = instText(tree.root!);
     expect(allText.toLowerCase()).toContain("vendor name");
   });
 
@@ -607,7 +605,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     await pickFileWith(tree, makePdfBytes());
 
     // Button is disabled; pressing it should be a no-op
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     if (startBtn && !startBtn.props.disabled) {
       await act(async () => { startBtn.props.onPress?.(); });
       await flushPromises();
@@ -630,7 +628,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     await pickFileWith(tree, new Uint8Array(0));
     await act(async () => { capturedOnChangeText!("ACME"); });
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     expect(startBtn).not.toBeNull();
     // Disabled prop must be falsy (button is reachable so the handler fires)
     expect(startBtn!.props.disabled).toBeFalsy();
@@ -645,7 +643,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     await pickFileWith(tree, new Uint8Array(0));
     await act(async () => { capturedOnChangeText!("ACME"); });
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress?.(); });
     await flushPromises();
 
@@ -662,11 +660,11 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     await pickFileWith(tree, new Uint8Array(0));
     await act(async () => { capturedOnChangeText!("ACME"); });
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress?.(); });
     await flushPromises();
 
-    const allText = instText(tree.root);
+    const allText = instText(tree.root!);
     expect(allText.toLowerCase()).toContain("empty");
   });
 
@@ -684,11 +682,11 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
       new Error("The selected file is not a valid PDF. Please choose a PDF file and try again."),
     );
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
-    const allText = instText(tree.root);
+    const allText = instText(tree.root!);
     expect(allText).toContain("not a valid PDF");
   });
 
@@ -706,7 +704,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
       new Error("The selected file is not a valid PDF. Please choose a PDF file and try again."),
     );
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
@@ -714,7 +712,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     await act(async () => { capturedOnChangeText!("ACME"); });
     await flushPromises();
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     if (startBtn && !startBtn.props.disabled) {
       await act(async () => { startBtn.props.onPress?.(); });
       await flushPromises();
@@ -736,14 +734,14 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
       new Error("The selected file is not a valid PDF. Please choose a PDF file and try again."),
     );
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
     // Set vendor — Start button should still be disabled because pdfBytes is null
     await act(async () => { capturedOnChangeText!("ACME"); });
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     expect(startBtn).not.toBeNull();
     expect(startBtn!.props.disabled).toBe(true);
   });
@@ -779,7 +777,7 @@ describe("CatalogPdfUpload — 401 mid-chunk: onSessionExpired is called and loa
   }
 
   async function pickChunkedFileSetVendorAndStart(
-    tree: renderer.ReactTestRenderer,
+    tree: Awaited<ReturnType<typeof render>>,
     vendor = "ACME",
   ): Promise<void> {
     // Return bytes that exceed CHUNK_SIZE_THRESHOLD so handleChunkedUpload fires.
@@ -797,14 +795,14 @@ describe("CatalogPdfUpload — 401 mid-chunk: onSessionExpired is called and loa
     // (a single-chunk result delegates to handleSingleUpload).
     mockSplitPdfIntoChunks.mockResolvedValueOnce(makeChunks(2));
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
     expect(capturedOnChangeText).not.toBeNull();
     await act(async () => { capturedOnChangeText!(vendor); });
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     expect(startBtn).not.toBeNull();
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
@@ -834,9 +832,9 @@ describe("CatalogPdfUpload — 401 mid-chunk: onSessionExpired is called and loa
     // ActivityIndicator is mocked as "rn-activity" in __mocks__/react-native.js.
     // After the 401 is handled, setLoading(false) must have been called so no
     // spinner remains in the tree.
-    const spinners = tree.root.findAll(
+    const spinners = tree.root!.queryAll(
       (n) => (n.type as string) === "rn-activity",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(spinners).toHaveLength(0);
   });
@@ -929,7 +927,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
   });
 
   async function pickFileAndSetVendorWeb(
-    tree: renderer.ReactTestRenderer,
+    tree: Awaited<ReturnType<typeof render>>,
     pdfBytes: Uint8Array,
     vendor = "ACME",
   ): Promise<void> {
@@ -940,7 +938,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     });
     mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
@@ -954,7 +952,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
 
     await pickFileAndSetVendorWeb(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     expect(startBtn).not.toBeNull();
 
     // Press start but do NOT fire XHR events — XHR hangs, letting us assert synchronously
@@ -972,7 +970,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
 
     await pickFileAndSetVendorWeb(tree, makePdfBytes(), "BRIDGEPORT");
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -1000,7 +998,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
 
     await pickFileAndSetVendorWeb(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -1008,7 +1006,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     await act(async () => { mockXhr.fireEvent("error"); });
     await flushPromises();
 
-    const allText = instText(tree.root);
+    const allText = instText(tree.root!);
     expect(allText.toLowerCase()).toContain("network error");
   });
 
@@ -1035,7 +1033,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
 
     await pickFileAndSetVendorWeb(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
 
     // Switch to fake timers BEFORE pressing start so that startPolling's
     // setInterval is registered under the fake clock and can be advanced.
@@ -1073,7 +1071,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
 
     await pickFileAndSetVendorWeb(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     expect(startBtn).not.toBeNull();
 
     // Press start — XHR is created and hangs (no load/error event fired)
@@ -1095,7 +1093,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     await flushPromises();
 
     // The progress bar text must appear in the tree
-    const allText = instText(tree.root);
+    const allText = instText(tree.root!);
     expect(allText).toContain("50% uploaded");
   });
 
@@ -1105,7 +1103,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
 
     await pickFileAndSetVendorWeb(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -1127,7 +1125,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
         await flushPromises();
       }
 
-      let allText = instText(tree.root);
+      let allText = instText(tree.root!);
       expect(allText).not.toMatch(/MB\/s/);
       expect(allText).not.toMatch(/remaining/);
 
@@ -1138,7 +1136,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
       });
       await flushPromises();
 
-      allText = instText(tree.root);
+      allText = instText(tree.root!);
       expect(allText).toMatch(/MB\/s/);
       expect(allText).toMatch(/remaining/);
     } finally {
@@ -1151,7 +1149,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     await act(async () => { mockXhr.fireEvent("load"); });
     await flushPromises();
 
-    const allText = instText(tree.root);
+    const allText = instText(tree.root!);
     expect(allText).not.toMatch(/MB\/s/);
     expect(allText).not.toMatch(/remaining/);
   });
@@ -1162,7 +1160,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
 
     await pickFileAndSetVendorWeb(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -1172,7 +1170,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     });
     await flushPromises();
 
-    const allText = instText(tree.root);
+    const allText = instText(tree.root!);
     expect(allText).toContain("50% uploaded");
     expect(allText).not.toMatch(/MB\/s/);
     expect(allText).not.toMatch(/remaining/);
@@ -1184,7 +1182,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
 
     await pickFileAndSetVendorWeb(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -1219,7 +1217,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
       dateSpy.mockRestore();
     }
 
-    const allText = instText(tree.root);
+    const allText = instText(tree.root!);
     // Speed is still shown (useful even when erratic)
     expect(allText).toMatch(/MB\/s/);
     // ETA is suppressed because CV > 1.5
@@ -1231,7 +1229,6 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
 
     // Queue of XHR mocks — one per chunk
     const xhrQueue: MockXhr[] = [];
-    let xhrIndex = 0;
 
     function makeMockXhr(): MockXhr {
       const xhr: MockXhr = {
@@ -1279,13 +1276,13 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     const tree = await renderUploadCard("web-admin-token");
     activeTree = tree;
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
     await act(async () => { capturedOnChangeText!("ACME"); });
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     expect(startBtn).not.toBeNull();
 
     // Press start — chunk 0 XHR is created and pending
@@ -1395,7 +1392,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
   }
 
   async function pickFileAndSetVendorNative(
-    tree: renderer.ReactTestRenderer,
+    tree: Awaited<ReturnType<typeof render>>,
     pdfBytes: Uint8Array,
     vendor = "ACME",
   ): Promise<void> {
@@ -1406,7 +1403,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
     });
     mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
@@ -1422,7 +1419,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
 
     await pickFileAndSetVendorNative(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -1434,7 +1431,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
     });
     await flushPromises();
 
-    const allText = instText(tree.root);
+    const allText = instText(tree.root!);
     expect(allText).toContain("30% uploaded");
   });
 
@@ -1446,7 +1443,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
 
     await pickFileAndSetVendorNative(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -1468,7 +1465,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
         await flushPromises();
       }
 
-      let allText = instText(tree.root);
+      let allText = instText(tree.root!);
       expect(allText).not.toMatch(/MB\/s/);
       expect(allText).not.toMatch(/remaining/);
 
@@ -1479,7 +1476,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
       });
       await flushPromises();
 
-      allText = instText(tree.root);
+      allText = instText(tree.root!);
       expect(allText).toMatch(/MB\/s/);
       expect(allText).toMatch(/remaining/);
     } finally {
@@ -1492,7 +1489,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
     });
     await flushPromises();
 
-    const allText = instText(tree.root);
+    const allText = instText(tree.root!);
     expect(allText).not.toMatch(/MB\/s/);
     expect(allText).not.toMatch(/remaining/);
   });
@@ -1505,7 +1502,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
 
     await pickFileAndSetVendorNative(tree, makePdfBytes());
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -1518,7 +1515,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
     });
     await flushPromises();
 
-    const allText = instText(tree.root);
+    const allText = instText(tree.root!);
     expect(allText).toContain("50% uploaded");
     expect(allText).not.toMatch(/MB\/s/);
     expect(allText).not.toMatch(/remaining/);
@@ -1605,7 +1602,7 @@ describe("CatalogPdfUpload — poll abort safety on unmount / stopPolling mid-fl
    * Returns the captured AbortSignal passed to fetch() by the polling loop.
    */
   async function startPollingInFlight(
-    tree: renderer.ReactTestRenderer,
+    tree: Awaited<ReturnType<typeof render>>,
     fetchImpl: (url: string, opts: RequestInit) => Promise<unknown>,
   ): Promise<AbortSignal> {
     let capturedSignal: AbortSignal | undefined;
@@ -1625,13 +1622,13 @@ describe("CatalogPdfUpload — poll abort safety on unmount / stopPolling mid-fl
     });
     mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(tree.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
     await act(async () => { capturedOnChangeText!("ACME"); });
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(tree.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -1719,9 +1716,8 @@ describe("CatalogPdfUpload — poll abort safety on unmount / stopPolling mid-fl
     // the stale response did not corrupt any module-level state.
     const freshTree = await renderUploadCard("admin-tok");
     activeTree = freshTree;
-    const freshAllText = instText(freshTree.root);
+    const freshAllText = instText(freshTree.root!);
     expect(freshAllText).not.toContain("done");
     expect(freshAllText).not.toContain("job-abort-test");
   });
 });
-

@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Regression tests for the warehouse map pin markers.
  *
  * MapPin3D (the legacy 3D teardrop SVG) is tested in isolation to guard
@@ -15,7 +13,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, RenderResult } from "@testing-library/react-native";
 
 // ─── react-native-svg ─────────────────────────────────────────────────────────
 // Each SVG primitive is mapped to a unique lowercase string tag so the
@@ -43,7 +41,7 @@ jest.mock("react-native-svg", () => {
     Ellipse: make("svg-ellipse"),
     Circle:  make("svg-circle"),
     Rect:    make("svg-rect"),
-    Text:    make("svg-text"),
+    Text:    make("Text"),
     SvgUri:  make("svg-uri"),
     SvgXml:  make("svg-xml"),
   };
@@ -55,7 +53,7 @@ jest.mock("react-native", () => ({
   Platform:     { OS: "ios", select: (o: Record<string, unknown>) => o.ios ?? o.default },
   StyleSheet:   { create: (s: unknown) => s, flatten: (s: unknown) => s },
   View:         ({ children }: { children?: React.ReactNode }) => React.createElement("rn-view", {}, children),
-  Text:         ({ children }: { children?: React.ReactNode }) => React.createElement("rn-text", {}, children),
+  Text:         ({ children }: { children?: React.ReactNode }) => React.createElement("Text", {}, children),
   ActivityIndicator: () => null,
   Pressable:    ({ children, onPress }: { children?: React.ReactNode; onPress?: () => void }) =>
                   React.createElement("rn-pressable", { onPress }, children),
@@ -171,24 +169,6 @@ jest.mock("@/utils/mapViewport", () => ({
 
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
-// ─── Suppress react-test-renderer deprecation warning ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    },
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Subject under test ───────────────────────────────────────────────────────
 
 import { MapPin3D, MapPinEmoji, ZoneOverlayItem } from "@/components/WarehouseMapView";
@@ -230,56 +210,47 @@ const fakeScale = { value: 1 } as import("react-native-reanimated").SharedValue<
 
 describe("MapPin3D — renders Path, not Circle", () => {
   it("produces at least one svg-path host element (the teardrop body)", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" />,
-      );
-    });
+    const tree = await render(
+      <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" />,
+    );
 
-    const paths = tree.root.findAll(
+    const paths = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-path",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(paths.length).toBeGreaterThan(0);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("does not render any svg-circle host element (regression: was Circle before MapPin3D)", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" />,
-      );
-    });
+    const tree = await render(
+      <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" />,
+    );
 
-    const circles = tree.root.findAll(
+    const circles = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-circle",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(circles).toHaveLength(0);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("renders shadow and gloss ellipses alongside the path (full 3D pin structure)", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPin3D cx={50} cy={80} size={15} fill="#8b5cf6" stroke="#6d28d9" />,
-      );
-    });
+    const tree = await render(
+      <MapPin3D cx={50} cy={80} size={15} fill="#8b5cf6" stroke="#6d28d9" />,
+    );
 
     // MapPin3D renders two Ellipses: drop-shadow below the tip and
     // gloss highlight inside the ball.
-    const ellipses = tree.root.findAll(
+    const ellipses = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-ellipse",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(ellipses.length).toBe(2);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 });
 
@@ -293,41 +264,35 @@ describe("MapPin3D — renders Path, not Circle", () => {
 
 describe("MapPin3D — colour-coding contract", () => {
   it("amber primary result: the teardrop Path carries fill='#f59e0b'", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" />,
-      );
-    });
+    const tree = await render(
+      <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" />,
+    );
 
-    const paths = tree.root.findAll(
+    const paths = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-path",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(paths.length).toBeGreaterThan(0);
     const teardrop = paths.find((n) => n.props.fill === "#f59e0b");
     expect(teardrop).toBeDefined();
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("purple related-size result: the teardrop Path carries fill='#8b5cf6'", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPin3D cx={50} cy={80} size={15} fill="#8b5cf6" stroke="#6d28d9" />,
-      );
-    });
+    const tree = await render(
+      <MapPin3D cx={50} cy={80} size={15} fill="#8b5cf6" stroke="#6d28d9" />,
+    );
 
-    const paths = tree.root.findAll(
+    const paths = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-path",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(paths.length).toBeGreaterThan(0);
     const teardrop = paths.find((n) => n.props.fill === "#8b5cf6");
     expect(teardrop).toBeDefined();
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 });
 
@@ -338,56 +303,47 @@ describe("MapPin3D — colour-coding contract", () => {
 // svg-text element plus a tinted ellipse badge for colour coding.
 // =============================================================================
 
-describe("MapPinEmoji — renders svg-text emoji, not svg-path or svg-circle", () => {
-  it("produces at least one svg-text host element (the 📍 emoji)", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
-      );
-    });
+describe("MapPinEmoji — renders Text emoji, not svg-path or svg-circle", () => {
+  it("produces at least one Text host element (the 📍 emoji)", async () => {
+    const tree = await render(
+      <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
+    );
 
-    const texts = tree.root.findAll(
-      (n) => (n.type as string) === "svg-text",
-      { deep: true },
+    const texts = tree.root!.queryAll(
+      (n) => (n.type as string) === "Text",
+      { includeSelf: true },
     );
     expect(texts.length).toBeGreaterThan(0);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("does not render any svg-circle host element", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
-      );
-    });
+    const tree = await render(
+      <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
+    );
 
-    const circles = tree.root.findAll(
+    const circles = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-circle",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(circles).toHaveLength(0);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("renders a drop-shadow ellipse and a colour-badge ellipse (two ellipses total)", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={50} cy={80} size={15} fill="#8b5cf6" />,
-      );
-    });
+    const tree = await render(
+      <MapPinEmoji cx={50} cy={80} size={15} fill="#8b5cf6" />,
+    );
 
-    const ellipses = tree.root.findAll(
+    const ellipses = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-ellipse",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(ellipses.length).toBe(2);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 });
 
@@ -397,39 +353,33 @@ describe("MapPinEmoji — renders svg-text emoji, not svg-path or svg-circle", (
 
 describe("MapPinEmoji — colour-coding contract", () => {
   it("amber primary: the colour-badge ellipse carries fill='#f59e0b'", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
-      );
-    });
+    const tree = await render(
+      <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
+    );
 
-    const ellipses = tree.root.findAll(
+    const ellipses = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-ellipse",
-      { deep: true },
+      { includeSelf: true },
     );
     const amberBadge = ellipses.find((n) => n.props.fill === "#f59e0b");
     expect(amberBadge).toBeDefined();
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("purple variant: the colour-badge ellipse carries fill='#8b5cf6'", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={50} cy={80} size={15} fill="#8b5cf6" />,
-      );
-    });
+    const tree = await render(
+      <MapPinEmoji cx={50} cy={80} size={15} fill="#8b5cf6" />,
+    );
 
-    const ellipses = tree.root.findAll(
+    const ellipses = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-ellipse",
-      { deep: true },
+      { includeSelf: true },
     );
     const purpleBadge = ellipses.find((n) => n.props.fill === "#8b5cf6");
     expect(purpleBadge).toBeDefined();
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 });
 
@@ -441,113 +391,101 @@ describe("MapPinEmoji — colour-coding contract", () => {
 // (the 📍 emoji) rather than a path or circle.
 // =============================================================================
 
-describe("ZoneOverlayItem — pinned zone renders svg-text emoji marker", () => {
-  it("a pinned zone with no section data renders at least one svg-text (emoji fallback)", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={makeZone()}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={true}
-        />,
-      );
-    });
+describe("ZoneOverlayItem — pinned zone renders Text emoji marker", () => {
+  it("a pinned zone with no section data renders at least one Text (emoji fallback)", async () => {
+    const tree = await render(
+      <ZoneOverlayItem
+        zone={makeZone()}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={true}
+      />,
+    );
 
-    const texts = tree.root.findAll(
-      (n) => (n.type as string) === "svg-text",
-      { deep: true },
+    const texts = tree.root!.queryAll(
+      (n) => (n.type as string) === "Text",
+      { includeSelf: true },
     );
     expect(texts.length).toBeGreaterThan(0);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("a pinned zone does not render any svg-circle", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={makeZone()}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={true}
-        />,
-      );
-    });
+    const tree = await render(
+      <ZoneOverlayItem
+        zone={makeZone()}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={true}
+      />,
+    );
 
-    const circles = tree.root.findAll(
+    const circles = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-circle",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(circles).toHaveLength(0);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
-  it("a pinned zone with section data renders one centered svg-text emoji marker", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={makeZone()}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={true}
-          pinnedSections={[20]}
-        />,
-      );
-    });
+  it("a pinned zone with section data renders one centered Text emoji marker", async () => {
+    const tree = await render(
+      <ZoneOverlayItem
+        zone={makeZone()}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={true}
+        pinnedSections={[20]}
+      />,
+    );
 
     // With section data, one centered MapPinEmoji is rendered.
-    const texts = tree.root.findAll(
-      (n) => (n.type as string) === "svg-text",
-      { deep: true },
+    const texts = tree.root!.queryAll(
+      (n) => (n.type as string) === "Text",
+      { includeSelf: true },
     );
     expect(texts.length).toBeGreaterThanOrEqual(1);
 
-    const circles = tree.root.findAll(
+    const circles = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-circle",
-      { deep: true },
+      { includeSelf: true },
     );
     expect(circles).toHaveLength(0);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("a pinned zone passes the amber palette (#f59e0b) to its colour-badge ellipse", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={makeZone()}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={true}
-        />,
-      );
-    });
+    const tree = await render(
+      <ZoneOverlayItem
+        zone={makeZone()}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={true}
+      />,
+    );
 
-    const ellipses = tree.root.findAll(
+    const ellipses = tree.root!.queryAll(
       (n) => (n.type as string) === "svg-ellipse",
-      { deep: true },
+      { includeSelf: true },
     );
     const amberBadge = ellipses.find((n) => n.props.fill === "#f59e0b");
     expect(amberBadge).toBeDefined();
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 });

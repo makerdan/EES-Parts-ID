@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Behavioral regression tests: MeasurePartScreen permanent camera-permission denial.
  *
  * Two bugs that were fixed:
@@ -21,7 +19,8 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 
 // ─── Stable mock refs for useCameraPermissions ───────────────────────────────
 // Declared at module scope so the same references are returned on every render,
@@ -80,41 +79,27 @@ const { useApp } = require("@/contexts/AppContext") as { useApp: jest.Mock };
 
 import { MeasurePartScreen } from "../components/MeasurePartScreen";
 
-// ─── Suppress react-test-renderer deprecation noise ──────────────────────────
-
-beforeAll(() => {
-  jest.spyOn(console, "error").mockImplementation((msg: unknown, ...args: unknown[]) => {
-    if (typeof msg === "string" && (
-      msg.includes("react-test-renderer is deprecated") ||
-      msg.includes("Warning:")
-    )) return;
-    // eslint-disable-next-line no-console
-    console.warn(msg, ...args);
-  });
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Tree-walking helpers ─────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: TestInstance | string) => instText(c as Inst | string)).join("");
 }
 
 function findPressable(root: Inst, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: TestInstance) => instText(n).includes(label)) ?? null
   );
 }
 
 function allTextContent(root: Inst): string {
   return root
-    .findAll(n => (n.type as string) === "rn-text", { deep: true })
-    .map(n => instText(n))
+    .queryAll((n: TestInstance) => (n.type as string) === "Text", { includeSelf: true })
+    .map((n: TestInstance) => instText(n))
     .join(" ");
 }
 
@@ -122,7 +107,7 @@ function allTextContent(root: Inst): string {
 
 const mockOnClose   = jest.fn();
 const mockOnConfirm = jest.fn();
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -134,7 +119,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
 });
@@ -148,19 +133,16 @@ async function renderScreen(
   requestPermFn   = mockRequestPermission,
 ) {
   (useCameraPermissions as jest.Mock).mockReturnValue([permissionState, requestPermFn]);
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => {
-    tree = renderer.create(
-      <MeasurePartScreen
-        visible={true}
-        onClose={mockOnClose}
-        onConfirm={mockOnConfirm}
-        adminToken="test-admin-token"
-      />,
-    );
-  });
-  activeTree = tree;
-  return tree;
+  const result = await render(
+    <MeasurePartScreen
+      visible={true}
+      onClose={mockOnClose}
+      onConfirm={mockOnConfirm}
+      adminToken="test-admin-token"
+    />,
+  );
+  activeTree = result;
+  return result;
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -173,11 +155,11 @@ describe("MeasurePartScreen — permanent denial: requestPermission is NOT calle
   });
 
   it("does NOT call requestPermission on subsequent re-renders with the same permanent denial", async () => {
-    const tree = await renderScreen();
+    const result = await renderScreen();
 
     // Simulate a state change that would trigger a re-render / re-run of the effect
     await act(async () => {
-      tree.update(
+      result.rerender(
         <MeasurePartScreen
           visible={true}
           onClose={mockOnClose}
@@ -194,22 +176,22 @@ describe("MeasurePartScreen — permanent denial: requestPermission is NOT calle
 describe("MeasurePartScreen — permanent denial: Open Settings UI is shown", () => {
 
   it("renders the 'Open Settings' button when canAskAgain === false", async () => {
-    const tree = await renderScreen();
-    const btn = findPressable(tree.root, "Open Settings");
+    const result = await renderScreen();
+    const btn = findPressable(result.root!, "Open Settings");
     expect(btn).not.toBeNull();
   });
 
   it("renders explanatory text about permanent denial", async () => {
-    const tree = await renderScreen();
-    const text = allTextContent(tree.root);
+    const result = await renderScreen();
+    const text = allTextContent(result.root!);
     expect(text).toMatch(/permanently denied/i);
   });
 
   it("tapping 'Open Settings' calls Linking.openSettings", async () => {
     const { Linking } = require("react-native") as typeof import("react-native");
-    const tree = await renderScreen();
+    const result = await renderScreen();
 
-    const btn = findPressable(tree.root, "Open Settings");
+    const btn = findPressable(result.root!, "Open Settings");
     expect(btn).not.toBeNull();
 
     await act(async () => {
@@ -220,9 +202,9 @@ describe("MeasurePartScreen — permanent denial: Open Settings UI is shown", ()
   });
 
   it("tapping 'Open Settings' does NOT call requestPermission", async () => {
-    const tree = await renderScreen();
+    const result = await renderScreen();
 
-    const btn = findPressable(tree.root, "Open Settings");
+    const btn = findPressable(result.root!, "Open Settings");
     await act(async () => {
       (btn!.props as { onPress?: () => void }).onPress?.();
     });
@@ -231,8 +213,8 @@ describe("MeasurePartScreen — permanent denial: Open Settings UI is shown", ()
   });
 
   it("does NOT render 'Enable Camera' when canAskAgain === false", async () => {
-    const tree = await renderScreen();
-    const text = allTextContent(tree.root);
+    const result = await renderScreen();
+    const text = allTextContent(result.root!);
     expect(text).not.toContain("Enable Camera");
   });
 });
@@ -246,18 +228,18 @@ describe("MeasurePartScreen — non-permanent denial: Enable Camera path", () =>
   });
 
   it("renders 'Enable Camera' (not 'Open Settings') when canAskAgain === true", async () => {
-    const tree = await renderScreen(mockPermDeniedCanAsk, requestPermission2);
-    const btn = findPressable(tree.root, "Enable Camera");
+    const result = await renderScreen(mockPermDeniedCanAsk, requestPermission2);
+    const btn = findPressable(result.root!, "Enable Camera");
     expect(btn).not.toBeNull();
-    expect(findPressable(tree.root, "Open Settings")).toBeNull();
+    expect(findPressable(result.root!, "Open Settings")).toBeNull();
   });
 
   it("tapping 'Enable Camera' calls requestPermission", async () => {
     // Clear the initial call from mount-time effect
     requestPermission2.mockClear();
-    const tree = await renderScreen(mockPermDeniedCanAsk, requestPermission2);
+    const result = await renderScreen(mockPermDeniedCanAsk, requestPermission2);
 
-    const btn = findPressable(tree.root, "Enable Camera");
+    const btn = findPressable(result.root!, "Enable Camera");
     expect(btn).not.toBeNull();
 
     await act(async () => {
@@ -271,9 +253,9 @@ describe("MeasurePartScreen — non-permanent denial: Enable Camera path", () =>
   it("tapping 'Enable Camera' does NOT call Linking.openSettings", async () => {
     const { Linking } = require("react-native") as typeof import("react-native");
     requestPermission2.mockClear();
-    const tree = await renderScreen(mockPermDeniedCanAsk, requestPermission2);
+    const result = await renderScreen(mockPermDeniedCanAsk, requestPermission2);
 
-    const btn = findPressable(tree.root, "Enable Camera");
+    const btn = findPressable(result.root!, "Enable Camera");
     expect(btn).not.toBeNull();
 
     await act(async () => {

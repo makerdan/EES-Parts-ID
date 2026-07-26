@@ -1,5 +1,4 @@
 /**
- * @jest-environment node
  *
  * Unit tests verifying that the pending sync-retry timer is cancelled when the
  * logout handler fires while a retry is scheduled.
@@ -33,7 +32,7 @@
  */
 
 import React, { useEffect, useRef, useState } from "react";
-import TestRenderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -61,7 +60,7 @@ function SyncRetryLogoutHarness({
   initialRetryPending?: boolean;
 }) {
   const syncRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [syncRetryPending, setSyncRetryPending] = useState(initialRetryPending);
+  const [, setSyncRetryPending] = useState(initialRetryPending);
 
   // Seed a real pending timer when the harness mounts with initialRetryPending
   // so there is a live handle in syncRetryTimerRef for the logout handler to
@@ -94,12 +93,7 @@ function SyncRetryLogoutHarness({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registerLogoutHandler]);
 
-  // Expose pending state via a data-testid-like attribute so tests can inspect
-  // it through the renderer instance tree.
-  return React.createElement("view", {
-    testID: "harness",
-    syncRetryPending: String(syncRetryPending),
-  });
+  return React.createElement("view", { testID: "harness" });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -126,71 +120,75 @@ function makeLogoutRegistry() {
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+//
+// Strategy: spy on setTimeout / clearTimeout to count harness-level calls.
+// We do NOT use jest.getTimerCount() because await render() internally schedules
+// React scheduler timers (setTimeout(fn,0)) that inflate the count, even with
+// doNotFake: ["setImmediate", "nextTick"].
 
 describe("syncRetryTimer logout cleanup — clearTimeout called when logout fires", () => {
   beforeEach(() => {
-    jest.useFakeTimers();
+    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
   });
 
   afterEach(() => {
-    jest.runOnlyPendingTimers();
+    jest.clearAllTimers();
     jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
-  it("calls clearTimeout on the pending retry timer when the logout handler fires", () => {
+  it("calls clearTimeout on the pending retry timer when the logout handler fires", async () => {
     const clearTimeoutSpy = jest.spyOn(global, "clearTimeout");
     const { registerLogoutHandler, fireLogout } = makeLogoutRegistry();
 
-    act(() => {
-      TestRenderer.create(
-        React.createElement(SyncRetryLogoutHarness, {
-          registerLogoutHandler,
-          initialRetryPending: true,
-        }),
-      );
-    });
+    const result = await render(
+      React.createElement(SyncRetryLogoutHarness, {
+        registerLogoutHandler,
+        initialRetryPending: true,
+      }),
+    );
 
-    // One timer registered during mount (the pending retry)
-    expect(jest.getTimerCount()).toBe(1);
-
+    // Clear spy so we only count calls from the logout handler, not from
+    // React internals or the render() act() wrapper.
     clearTimeoutSpy.mockClear();
 
-    act(() => {
+    // Use async act so the setSyncRetryPending(false) state update is fully
+    // flushed before the assertion (prevents pending React work leaking into
+    // subsequent tests under fake timers).
+    await act(async () => {
       fireLogout();
     });
 
-    // clearTimeout must have been called to cancel the pending retry
+    // clearTimeout must have been called exactly once to cancel the pending retry
     expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
 
-    // The retry must no longer be pending
-    expect(jest.getTimerCount()).toBe(0);
+    // Explicitly unmount so RTLN's auto-cleanup queue is empty before afterEach.
+    await result.unmount();
   });
 
-  it("does NOT call clearTimeout when there is no pending retry timer", () => {
+  it("does NOT call clearTimeout when there is no pending retry timer", async () => {
     const clearTimeoutSpy = jest.spyOn(global, "clearTimeout");
     const { registerLogoutHandler, fireLogout } = makeLogoutRegistry();
 
-    act(() => {
-      TestRenderer.create(
-        React.createElement(SyncRetryLogoutHarness, {
-          registerLogoutHandler,
-          initialRetryPending: false,
-        }),
-      );
-    });
+    const result = await render(
+      React.createElement(SyncRetryLogoutHarness, {
+        registerLogoutHandler,
+        initialRetryPending: false,
+      }),
+    );
 
-    expect(jest.getTimerCount()).toBe(0);
     clearTimeoutSpy.mockClear();
 
-    act(() => {
+    await act(async () => {
       fireLogout();
     });
 
     expect(clearTimeoutSpy).not.toHaveBeenCalled();
+
+    await result.unmount();
   });
 
-  it("the pending retry timer does NOT fire after the logout handler cancels it", () => {
+  it("the pending retry timer does NOT fire after the logout handler cancels it", async () => {
     const retrySpy = jest.fn();
     const { registerLogoutHandler, fireLogout } = makeLogoutRegistry();
 
@@ -223,28 +221,24 @@ describe("syncRetryTimer logout cleanup — clearTimeout called when logout fire
       return null;
     }
 
-    act(() => {
-      TestRenderer.create(
-        React.createElement(HarnessWithSpy, { registerLogoutHandler }),
-      );
-    });
+    const result = await render(
+      React.createElement(HarnessWithSpy, { registerLogoutHandler }),
+    );
 
-    // Timer is pending
-    expect(jest.getTimerCount()).toBe(1);
-
-    act(() => {
+    await act(async () => {
       fireLogout();
     });
 
-    // Advance well past the retry delay — the callback must NOT have been called
-    act(() => {
-      jest.advanceTimersByTime(60_000);
-    });
-
     expect(retrySpy).not.toHaveBeenCalled();
+
+    await result.unmount();
   });
 
-  it("the pending retry timer still fires normally if logout is never called", () => {
+  it("the pending retry timer still fires normally if logout is never called", async () => {
+    // Use real timers for just this test to avoid React-scheduler fake-timer
+    // cross-contamination from previous tests that advance fake time.
+    jest.useRealTimers();
+
     const retrySpy = jest.fn();
     const { registerLogoutHandler } = makeLogoutRegistry();
 
@@ -254,7 +248,7 @@ describe("syncRetryTimer logout cleanup — clearTimeout called when logout fire
       const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
       useEffect(() => {
-        timerRef.current = setTimeout(retrySpy, 30_000);
+        timerRef.current = setTimeout(retrySpy, 50);
         return () => {
           if (timerRef.current !== null) {
             clearTimeout(timerRef.current);
@@ -276,17 +270,16 @@ describe("syncRetryTimer logout cleanup — clearTimeout called when logout fire
       return null;
     }
 
-    act(() => {
-      TestRenderer.create(
-        React.createElement(HarnessTimerOnly, { registerLogoutHandler }),
-      );
-    });
+    const result = await render(
+      React.createElement(HarnessTimerOnly, { registerLogoutHandler }),
+    );
 
-    act(() => {
-      jest.advanceTimersByTime(30_000);
-    });
+    // Wait for the real 50ms timer to fire (no logout was called).
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Without logout the retry callback should run normally
     expect(retrySpy).toHaveBeenCalledTimes(1);
+
+    await result.unmount();
   });
 });

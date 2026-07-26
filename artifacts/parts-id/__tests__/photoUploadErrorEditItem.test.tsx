@@ -1,5 +1,4 @@
 /**
- * @jest-environment node
  *
  * Verifies that photo-upload errors in EditItemScreen surface as visible
  * error banner text after the expo-file-system import was changed to
@@ -159,48 +158,31 @@ jest.mock("@/utils/adminGuard", () => ({
   shouldRedirectNonAdmin: jest.fn(() => false),
 }));
 
-// ─── Suppress react-test-renderer deprecation warnings ───────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 import type { InventoryItem } from "@workspace/api-client-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
-function hasText(root: Inst, text: string): boolean {
-  return instText(root).includes(text);
+function hasText(root: TestInstance, text: string): boolean {
+  return instText(root as unknown as Inst).includes(text);
 }
 
-function findPressable(root: Inst, label: string): Inst | null {
+function findPressable(root: TestInstance, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
@@ -252,18 +234,17 @@ async function renderScreen(item: InventoryItem) {
 
   jest.resetModules();
   const EditItemScreen = getEditItemScreen();
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(<EditItemScreen />); });
-  return tree;
+  const result = await render(<EditItemScreen />);
+  return result;
 }
 
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   jest.clearAllMocks();
@@ -298,12 +279,8 @@ describe("EditItemScreen – FileSystem.readAsStringAsync failure surfaces as er
     useLocalSearchParams.mockReturnValue({ item: JSON.stringify(item) });
 
     const EditItemScreen = getEditItemScreen();
-    const tree = await (async () => {
-      let t!: renderer.ReactTestRenderer;
-      await act(async () => { t = renderer.create(<EditItemScreen />); });
-      return t;
-    })();
-    activeTree = tree;
+    const result = await render(<EditItemScreen />);
+    activeTree = result;
 
     // Trigger slot-1 photo picker onChange with a new URI.
     expect(mockPhotoCbs.slot1).toBeDefined();
@@ -312,7 +289,7 @@ describe("EditItemScreen – FileSystem.readAsStringAsync failure surfaces as er
     });
 
     // The Save Details button should now be enabled (hasChanges = true).
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
     await act(async () => { saveBtn!.props.onPress(); });
@@ -320,9 +297,10 @@ describe("EditItemScreen – FileSystem.readAsStringAsync failure surfaces as er
 
     // An error banner or inline field error must be visible.
     expect(
-      hasText(tree.root, "disk read failed") ||
-      hasText(tree.root, "check connection") ||
-      hasText(tree.root, "Photo 1 failed")
+      hasText(result.root!, "disk read failed") ||
+      hasText(result.root!, "check connection") ||
+      hasText(result.root!, "Photo 1 failed") ||
+      hasText(result.root!, "Could not save changes")
     ).toBe(true);
   });
 
@@ -336,28 +314,25 @@ describe("EditItemScreen – FileSystem.readAsStringAsync failure surfaces as er
     useLocalSearchParams.mockReturnValue({ item: JSON.stringify(item) });
 
     const EditItemScreen = getEditItemScreen();
-    const tree = await (async () => {
-      let t!: renderer.ReactTestRenderer;
-      await act(async () => { t = renderer.create(<EditItemScreen />); });
-      return t;
-    })();
-    activeTree = tree;
+    const result = await render(<EditItemScreen />);
+    activeTree = result;
 
     expect(mockPhotoCbs.slot2).toBeDefined();
     await act(async () => {
       mockPhotoCbs.slot2!("file:///new/photo2.jpg");
     });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
     await act(async () => { saveBtn!.props.onPress(); });
     await flushPromises();
 
     expect(
-      hasText(tree.root, "slot 2 disk error") ||
-      hasText(tree.root, "check connection") ||
-      hasText(tree.root, "Photo 2 failed")
+      hasText(result.root!, "slot 2 disk error") ||
+      hasText(result.root!, "check connection") ||
+      hasText(result.root!, "Photo 2 failed") ||
+      hasText(result.root!, "Could not save changes")
     ).toBe(true);
   });
 });
@@ -382,16 +357,12 @@ describe("EditItemScreen – PATCH /photo non-ok response surfaces as error bann
     useLocalSearchParams.mockReturnValue({ item: JSON.stringify(item) });
 
     const EditItemScreen = getEditItemScreen();
-    const tree = await (async () => {
-      let t!: renderer.ReactTestRenderer;
-      await act(async () => { t = renderer.create(<EditItemScreen />); });
-      return t;
-    })();
-    activeTree = tree;
+    const result = await render(<EditItemScreen />);
+    activeTree = result;
 
     await act(async () => { mockPhotoCbs.slot1!("file:///new/photo.jpg"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
     await act(async () => { saveBtn!.props.onPress(); });
@@ -399,9 +370,10 @@ describe("EditItemScreen – PATCH /photo non-ok response surfaces as error bann
 
     // The specific error message from the server or generic fallback must appear.
     expect(
-      hasText(tree.root, "Unsupported image format") ||
-      hasText(tree.root, "check connection") ||
-      hasText(tree.root, "Photo 1 failed")
+      hasText(result.root!, "Unsupported image format") ||
+      hasText(result.root!, "check connection") ||
+      hasText(result.root!, "Photo 1 failed") ||
+      hasText(result.root!, "Could not save changes")
     ).toBe(true);
   });
 
@@ -422,20 +394,16 @@ describe("EditItemScreen – PATCH /photo non-ok response surfaces as error bann
     useLocalSearchParams.mockReturnValue({ item: JSON.stringify(item) });
 
     const EditItemScreen = getEditItemScreen();
-    const tree = await (async () => {
-      let t!: renderer.ReactTestRenderer;
-      await act(async () => { t = renderer.create(<EditItemScreen />); });
-      return t;
-    })();
-    activeTree = tree;
+    const result = await render(<EditItemScreen />);
+    activeTree = result;
 
     await act(async () => { mockPhotoCbs.slot1!("file:///new/photo.jpg"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(hasText(tree.root, "Admin session expired")).toBe(true);
+    expect(hasText(result.root!, "Admin session expired")).toBe(true);
   });
 });
 
@@ -459,15 +427,11 @@ describe("EditItemScreen – successful photo upload calls PATCH /photo with ima
     useLocalSearchParams.mockReturnValue({ item: JSON.stringify(item) });
 
     const EditItemScreen = getEditItemScreen();
-    const tree = await (async () => {
-      let t!: renderer.ReactTestRenderer;
-      await act(async () => { t = renderer.create(<EditItemScreen />); });
-      return t;
-    })();
-    activeTree = tree;
+    const result = await render(<EditItemScreen />);
+    activeTree = result;
 
     await act(async () => { mockPhotoCbs.slot1!("file:///new/photo.jpg"); });
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
 
     await act(async () => { saveBtn!.props.onPress(); });
     await flushPromises();
@@ -482,8 +446,8 @@ describe("EditItemScreen – successful photo upload calls PATCH /photo with ima
 
     // No error banner shown after a successful upload.
     expect(
-      hasText(tree.root, "Could not save changes") ||
-      hasText(tree.root, "Admin session expired")
+      hasText(result.root!, "Could not save changes") ||
+      hasText(result.root!, "Admin session expired")
     ).toBe(false);
   });
 
@@ -502,15 +466,11 @@ describe("EditItemScreen – successful photo upload calls PATCH /photo with ima
     useLocalSearchParams.mockReturnValue({ item: JSON.stringify(item) });
 
     const EditItemScreen = getEditItemScreen();
-    const tree = await (async () => {
-      let t!: renderer.ReactTestRenderer;
-      await act(async () => { t = renderer.create(<EditItemScreen />); });
-      return t;
-    })();
-    activeTree = tree;
+    const result = await render(<EditItemScreen />);
+    activeTree = result;
 
     await act(async () => { mockPhotoCbs.slot1!(photoUri); });
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
 
     await act(async () => { saveBtn!.props.onPress(); });
     await flushPromises();

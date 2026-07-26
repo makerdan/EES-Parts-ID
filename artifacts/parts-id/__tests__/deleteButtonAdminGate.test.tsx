@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Regression guard: the "Delete this part" trash-icon button must NEVER appear
  * for non-admin users.
  *
@@ -17,7 +15,9 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import type { InventoryItem } from "@workspace/api-client-react";
 
@@ -110,40 +110,22 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   default: { getItem: jest.fn(), setItem: jest.fn(), removeItem: jest.fn() },
 }));
 
-// ─── Suppress react-test-renderer deprecation warnings ───────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function findByA11yLabel(root: Inst, label: string): Inst | null {
   return (
     root
-      .findAll(n => n.props.accessibilityLabel === label, { deep: true })
+      .queryAll((n: TestInstance) => n.props.accessibilityLabel === label, { includeSelf: true })
       .at(0) ?? null
   );
 }
 
 async function renderUI(ui: React.ReactElement) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(ui); });
-  return tree;
+  let result!: Awaited<ReturnType<typeof render>>;
+  await act(async () => { result = await render(ui); });
+  return result;
 }
 
 function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
@@ -161,7 +143,7 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
 
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
@@ -178,31 +160,31 @@ afterEach(async () => {
 describe("PartDetailsEditor – delete button admin gate", () => {
   it("does NOT render the delete button when adminToken is null", async () => {
     const item = makeItem();
-    const tree = await renderUI(
+    const result = await renderUI(
       <PartDetailsEditor
         item={item}
         adminToken={null}
         onClose={jest.fn()}
       />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const deleteBtn = findByA11yLabel(tree.root, "Delete this part");
+    const deleteBtn = findByA11yLabel(result.root!, "Delete this part");
     expect(deleteBtn).toBeNull();
   });
 
   it("DOES render the delete button when adminToken is provided", async () => {
     const item = makeItem();
-    const tree = await renderUI(
+    const result = await renderUI(
       <PartDetailsEditor
         item={item}
         adminToken="test-admin-token"
         onClose={jest.fn()}
       />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const deleteBtn = findByA11yLabel(tree.root, "Delete this part");
+    const deleteBtn = findByA11yLabel(result.root!, "Delete this part");
     expect(deleteBtn).not.toBeNull();
   });
 });
@@ -236,10 +218,10 @@ describe("EditItemScreen – delete button admin gate", () => {
     useLocalSearchParams.mockReturnValue({ item: JSON.stringify(makeItem()) });
 
     const EditItemScreen = getEditItemScreen();
-    const tree = await renderUI(<EditItemScreen />);
-    activeTree = tree;
+    const result = await renderUI(<EditItemScreen />);
+    activeTree = result;
 
-    const deleteBtn = findByA11yLabel(tree.root, "Delete this part");
+    const deleteBtn = findByA11yLabel(result.root!, "Delete this part");
     expect(deleteBtn).toBeNull();
   });
 
@@ -256,10 +238,10 @@ describe("EditItemScreen – delete button admin gate", () => {
     useLocalSearchParams.mockReturnValue({ item: JSON.stringify(makeItem()) });
 
     const EditItemScreen = getEditItemScreen();
-    const tree = await renderUI(<EditItemScreen />);
-    activeTree = tree;
+    const result = await renderUI(<EditItemScreen />);
+    activeTree = result;
 
-    const deleteBtn = findByA11yLabel(tree.root, "Delete this part");
+    const deleteBtn = findByA11yLabel(result.root!, "Delete this part");
     expect(deleteBtn).not.toBeNull();
   });
 });

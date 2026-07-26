@@ -103,7 +103,7 @@ jest.mock("@/components/KeyboardDoneInput", () => ({
   },
 }));
 
-// ── Suppress react-test-renderer deprecation warnings ─────────────────────────
+// ── Suppress console errors for act() warnings ────────────────────────────────
 
 let origConsoleError: typeof console.error;
 beforeAll(() => {
@@ -112,7 +112,7 @@ beforeAll(() => {
     (msg: unknown, ...args: unknown[]) => {
       if (
         typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") || msg.includes("Warning:") || msg.includes("act("))
+        (msg.includes("act("))
       ) return;
       origConsoleError(msg, ...args);
     },
@@ -123,7 +123,7 @@ afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
 // ── Imports (after all jest.mock declarations) ────────────────────────────────
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act, RenderResult } from "@testing-library/react-native";
 import { CatalogPdfUpload } from "../components/CatalogPdfUpload";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -134,15 +134,18 @@ function makeFile(bytes: Uint8Array): File {
   return new File([bytes.buffer as ArrayBuffer], "catalog.pdf", { type: "application/pdf" });
 }
 
-type Inst = renderer.ReactTestInstance;
+// TestInstance is the resolved node type from the test renderer.
+// RenderResult["root"] is TestInstance | null; we accept a non-null root here.
+type RootInstance = NonNullable<RenderResult["root"]>;
+type Inst = ReturnType<RootInstance["queryAll"]>[0];
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map((c) => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c)).join("");
 }
-function findPressable(root: Inst, label: string): Inst | null {
+function findPressable(root: RootInstance, label: string): Inst | null {
   return (
     root
-      .findAll((n) => (n.type as string) === "rn-pressable", { deep: true })
+      .queryAll((n) => (n.type as string) === "rn-pressable", { includeSelf: true })
       .find((n) => instText(n).includes(label)) ?? null
   );
 }
@@ -177,7 +180,7 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
   let mockXhr: MockXhr;
   let mockAddEventListener: jest.Mock;
   let mockRemoveEventListener: jest.Mock;
-  let activeTree: renderer.ReactTestRenderer | null = null;
+  let activeTree: RenderResult | null = null;
 
   beforeEach(() => {
     const { Platform } = require("react-native") as { Platform: { OS: string } };
@@ -212,7 +215,7 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
 
   afterEach(async () => {
     if (activeTree) {
-      await act(async () => { activeTree!.unmount(); });
+      await activeTree.unmount();
       activeTree = null;
     }
     capturedOnChangeText = null;
@@ -233,15 +236,12 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
     });
     mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <CatalogPdfUpload adminToken="admin-tok" onSessionExpired={jest.fn()} />,
-      );
-    });
-    activeTree = tree;
+    const result = await render(
+      <CatalogPdfUpload adminToken="admin-tok" onSessionExpired={jest.fn()} />,
+    );
+    activeTree = result;
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(result.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
@@ -250,7 +250,7 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
 
     mockXhr.responseText = JSON.stringify({ jobId: "job-1", status: "processing" });
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(result.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -270,22 +270,19 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
     });
     mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <CatalogPdfUpload adminToken="admin-tok" onSessionExpired={jest.fn()} />,
-      );
-    });
-    activeTree = tree;
+    const result = await render(
+      <CatalogPdfUpload adminToken="admin-tok" onSessionExpired={jest.fn()} />,
+    );
+    activeTree = result;
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(result.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
     expect(capturedOnChangeText).not.toBeNull();
     await act(async () => { capturedOnChangeText!("ACME"); });
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(result.root!, "Start Extraction");
     await act(async () => { startBtn!.props.onPress(); });
     await flushPromises();
 
@@ -328,15 +325,12 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
     };
     createUploadTask.mockReturnValueOnce(mockUploadTask);
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <CatalogPdfUpload adminToken="admin-tok" onSessionExpired={jest.fn()} />,
-      );
-    });
-    activeTree = tree;
+    const result = await render(
+      <CatalogPdfUpload adminToken="admin-tok" onSessionExpired={jest.fn()} />,
+    );
+    activeTree = result;
 
-    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    const pickBtn = findPressable(result.root!, "Choose PDF File");
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
@@ -344,7 +338,7 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
       await act(async () => { capturedOnChangeText!("ACME"); });
     }
 
-    const startBtn = findPressable(tree.root, "Start Extraction");
+    const startBtn = findPressable(result.root!, "Start Extraction");
     if (startBtn) {
       await act(async () => { startBtn.props.onPress(); });
       await flushPromises();

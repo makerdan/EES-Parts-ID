@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Verifies that AppProvider initialises the generated API client's setBaseUrl()
  * with the value exported by API_ORIGIN from utils/apiBase on every mount.
  *
@@ -94,12 +92,29 @@ jest.mock("@/constants/colors", () => ({
  * captured at import time).  Returns the setBaseUrl spy so the caller can
  * assert on it after the component has mounted and its useEffect has fired.
  */
-function renderWithApiOrigin(apiOrigin: string): jest.Mock {
+// Capture outer-registry singletons at module scope (before any isolateModules call).
+// Using them outside isolateModules ensures:
+//  1. The same React instance is used by both the renderer and AppProvider.
+//  2. @testing-library/react-native is NOT re-required inside a running test,
+//     which would trigger its top-level beforeAll/afterAll registrations and
+//     cause "Hook cannot be defined inside test" errors.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const outerReact = require("react") as typeof import("react");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { render: rtlRender, act: rtlAct } = require("@testing-library/react-native") as typeof import("@testing-library/react-native");
+
+async function renderWithApiOrigin(apiOrigin: string): Promise<jest.Mock> {
   let setBaseUrlSpy!: jest.Mock;
+  let capturedAppProvider!: React.ComponentType<{ children?: React.ReactNode }>;
 
   jest.isolateModules(() => {
     const mockSetBaseUrl = jest.fn();
     setBaseUrlSpy = mockSetBaseUrl;
+
+    // Redirect "react" in the isolated registry to the outer singleton so that
+    // hooks inside AppProvider share the same ReactSharedInternals dispatcher
+    // as the RTLRN renderer (which also uses the outer React).
+    jest.doMock("react", () => outerReact);
 
     jest.doMock("@workspace/api-client-react", () => ({
       setBaseUrl:          mockSetBaseUrl,
@@ -113,19 +128,18 @@ function renderWithApiOrigin(apiOrigin: string): jest.Mock {
     }));
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const React = require("react") as typeof import("react");
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AppProvider } = require("../contexts/AppContext") as {
       AppProvider: React.ComponentType<{ children?: React.ReactNode }>;
     };
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { act, create } = require("react-test-renderer") as typeof import("react-test-renderer");
-
-    act(() => {
-      create(React.createElement(AppProvider, null));
-    });
+    capturedAppProvider = AppProvider;
+    // Do NOT require @testing-library/react-native here — doing so inside
+    // isolateModules triggers its top-level hook registrations inside a test.
   });
 
+  // render() OUTSIDE isolateModules: uses the outer RTLRN renderer.
+  // outerReact.createElement ensures the element type and hooks all share the
+  // same React instance as the renderer.
+  await rtlRender(outerReact.createElement(capturedAppProvider, null));
   return setBaseUrlSpy;
 }
 
@@ -140,20 +154,18 @@ afterEach(() => {
  * (Promise.all of SecureStore reads inside AppProvider) and any subsequent
  * React state-update effects settle before we interrogate the getter.
  *
- * react-test-renderer is NOT mocked, so the shared `act` works outside
+ * @testing-library/react-native is NOT mocked, so the shared `act` works outside
  * of any isolateModules scope.
  */
 async function flushAsync(): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { act } = require("react-test-renderer") as typeof import("react-test-renderer");
   // First pass: drain Promise.all microtasks so the boot .then() callback runs
   // (appTokenRef.current set directly, setAdminToken/setIsLoading called, etc.)
-  await act(async () => {
+  await rtlAct(async () => {
     await new Promise<void>(resolve => setTimeout(resolve, 0));
   });
   // Second pass: flush the React re-render triggered by setAdminToken so the
   // adminTokenRef sync effect fires (adminTokenRef.current = adminToken).
-  await act(async () => {
+  await rtlAct(async () => {
     await new Promise<void>(resolve => setTimeout(resolve, 0));
   });
 }
@@ -162,7 +174,7 @@ type TokenHandles = {
   /** The spy passed to setAuthTokenGetter — call [0][0]() to invoke the getter. */
   setAuthTokenGetterSpy: jest.Mock;
   /** Unmount the rendered AppProvider (triggers cleanup effect). */
-  unmount: () => void;
+  unmount: () => Promise<void>;
 };
 
 /**
@@ -174,12 +186,12 @@ type TokenHandles = {
  * - clerkToken  — returned by the Clerk useAuth().getToken() mock
  * All default to null so tests that don't care about stored tokens start clean.
  */
-function renderWithTokenGetterCapture(opts: {
+async function renderWithTokenGetterCapture(opts: {
   sessionToken?: string | null;  // kept for compat; no longer used by AppContext
   adminToken?: string | null;
   clerkToken?: string | null;
   apiOrigin?: string;
-} = {}): TokenHandles {
+} = {}): Promise<TokenHandles> {
   const {
     adminToken = null,
     clerkToken = null,
@@ -187,7 +199,7 @@ function renderWithTokenGetterCapture(opts: {
   } = opts;
 
   let setAuthTokenGetterSpy!: jest.Mock;
-  let unmountFn!: () => void;
+  let capturedAppProvider!: React.ComponentType<{ children?: React.ReactNode }>;
 
   jest.isolateModules(() => {
     const mockSetAuthTokenGetter = jest.fn();
@@ -203,26 +215,27 @@ function renderWithTokenGetterCapture(opts: {
       deleteItemAsync: jest.fn(() => Promise.resolve()),
     }));
 
+    // Redirect "react" in the isolated registry to the outer singleton so that
+    // hooks inside AppProvider share the same ReactSharedInternals dispatcher
+    // as the RTLRN renderer (which also uses the outer React).
+    jest.doMock("react", () => outerReact);
+
     // Override @clerk/expo so useAuth().getToken() returns the desired Clerk token.
-    jest.doMock("@clerk/expo", () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const React = require("react");
-      return {
-        useAuth: jest.fn(() => ({
-          isSignedIn: clerkToken !== null,
-          userId: clerkToken !== null ? "mock-user-id" : null,
-          getToken: jest.fn(() => Promise.resolve(clerkToken)),
-          isLoaded: true,
-        })),
-        useClerk: jest.fn(() => ({
-          signOut: jest.fn(() => Promise.resolve()),
-        })),
-        ClerkProvider: ({ children }: { children: React.ReactNode }) =>
-          React.createElement(React.Fragment, null, children),
-        ClerkLoaded: ({ children }: { children: React.ReactNode }) =>
-          React.createElement(React.Fragment, null, children),
-      };
-    });
+    jest.doMock("@clerk/expo", () => ({
+      useAuth: jest.fn(() => ({
+        isSignedIn: clerkToken !== null,
+        userId: clerkToken !== null ? "mock-user-id" : null,
+        getToken: jest.fn(() => Promise.resolve(clerkToken)),
+        isLoaded: true,
+      })),
+      useClerk: jest.fn(() => ({
+        signOut: jest.fn(() => Promise.resolve()),
+      })),
+      ClerkProvider: ({ children }: { children: React.ReactNode }) =>
+        outerReact.createElement(outerReact.Fragment, null, children),
+      ClerkLoaded: ({ children }: { children: React.ReactNode }) =>
+        outerReact.createElement(outerReact.Fragment, null, children),
+    }));
 
     jest.doMock("@workspace/api-client-react", () => ({
       setBaseUrl:             jest.fn(),
@@ -236,21 +249,19 @@ function renderWithTokenGetterCapture(opts: {
     }));
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const React = require("react") as typeof import("react");
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AppProvider } = require("../contexts/AppContext") as {
       AppProvider: React.ComponentType<{ children?: React.ReactNode }>;
     };
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { act, create } = require("react-test-renderer") as typeof import("react-test-renderer");
-
-    let renderer: import("react-test-renderer").ReactTestRenderer;
-    act(() => {
-      renderer = create(React.createElement(AppProvider, null));
-    });
-
-    unmountFn = () => act(() => { renderer.unmount(); });
+    capturedAppProvider = AppProvider;
+    // Do NOT require @testing-library/react-native here — doing so inside
+    // isolateModules triggers its top-level hook registrations inside a test.
   });
+
+  // render() OUTSIDE isolateModules: uses the outer RTLRN renderer.
+  // outerReact.createElement ensures the element type and hooks all share the
+  // same React instance as the renderer.
+  const renderResult = await rtlRender(outerReact.createElement(capturedAppProvider, null));
+  const unmountFn = async () => { await renderResult.unmount(); };
 
   return { setAuthTokenGetterSpy, unmount: unmountFn };
 }
@@ -271,14 +282,14 @@ describe("AppProvider — setAuthTokenGetter initialisation", () => {
     delete global.fetch;
   });
 
-  it("calls setAuthTokenGetter exactly once on mount with a function", () => {
-    const { setAuthTokenGetterSpy } = renderWithTokenGetterCapture();
+  it("calls setAuthTokenGetter exactly once on mount with a function", async () => {
+    const { setAuthTokenGetterSpy } = await renderWithTokenGetterCapture();
     expect(setAuthTokenGetterSpy).toHaveBeenCalledTimes(1);
     expect(typeof setAuthTokenGetterSpy.mock.calls[0][0]).toBe("function");
   });
 
   it("getter resolves to null when no tokens are stored", async () => {
-    const { setAuthTokenGetterSpy } = renderWithTokenGetterCapture({
+    const { setAuthTokenGetterSpy } = await renderWithTokenGetterCapture({
       adminToken: null,
       clerkToken: null,
     });
@@ -287,7 +298,7 @@ describe("AppProvider — setAuthTokenGetter initialisation", () => {
   });
 
   it("getter resolves to Clerk token when only a Clerk token is available", async () => {
-    const { setAuthTokenGetterSpy } = renderWithTokenGetterCapture({
+    const { setAuthTokenGetterSpy } = await renderWithTokenGetterCapture({
       adminToken: null,
       clerkToken: "app-tok-abc123",
     });
@@ -301,7 +312,7 @@ describe("AppProvider — setAuthTokenGetter initialisation", () => {
     // Admin authority is role-based now; the auth getter has a single source
     // (the Clerk session token). Even a legacy admin token lingering in
     // SecureStore must be ignored by the getter.
-    const { setAuthTokenGetterSpy } = renderWithTokenGetterCapture({
+    const { setAuthTokenGetterSpy } = await renderWithTokenGetterCapture({
       clerkToken: "app-tok-xyz",
       adminToken: "legacy-admin-tok-xyz",
     });
@@ -310,9 +321,9 @@ describe("AppProvider — setAuthTokenGetter initialisation", () => {
     expect(await getter()).toBe("app-tok-xyz");
   });
 
-  it("calls setAuthTokenGetter(null) on unmount (cleanup path)", () => {
-    const { setAuthTokenGetterSpy, unmount } = renderWithTokenGetterCapture();
-    unmount();
+  it("calls setAuthTokenGetter(null) on unmount (cleanup path)", async () => {
+    const { setAuthTokenGetterSpy, unmount } = await renderWithTokenGetterCapture();
+    await unmount();
     // The last call must be the cleanup null — not a re-registration.
     const calls = setAuthTokenGetterSpy.mock.calls;
     expect(calls[calls.length - 1][0]).toBeNull();
@@ -320,23 +331,23 @@ describe("AppProvider — setAuthTokenGetter initialisation", () => {
 });
 
 describe("AppProvider — setBaseUrl initialisation", () => {
-  it("calls setBaseUrl with http://localhost:8080 on native-dev (no env vars set)", () => {
-    const setBaseUrl = renderWithApiOrigin("http://localhost:8080");
+  it("calls setBaseUrl with http://localhost:8080 on native-dev (no env vars set)", async () => {
+    const setBaseUrl = await renderWithApiOrigin("http://localhost:8080");
     expect(setBaseUrl).toHaveBeenCalledWith("http://localhost:8080");
   });
 
-  it("calls setBaseUrl with https://<domain> when EXPO_PUBLIC_DOMAIN is set", () => {
-    const setBaseUrl = renderWithApiOrigin("https://my.repl.co");
+  it("calls setBaseUrl with https://<domain> when EXPO_PUBLIC_DOMAIN is set", async () => {
+    const setBaseUrl = await renderWithApiOrigin("https://my.repl.co");
     expect(setBaseUrl).toHaveBeenCalledWith("https://my.repl.co");
   });
 
-  it("calls setBaseUrl exactly once on mount (not on every render)", () => {
-    const setBaseUrl = renderWithApiOrigin("http://localhost:8080");
+  it("calls setBaseUrl exactly once on mount (not on every render)", async () => {
+    const setBaseUrl = await renderWithApiOrigin("http://localhost:8080");
     expect(setBaseUrl).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT call setBaseUrl when API_ORIGIN is empty (web dev / relative-URL mode)", () => {
-    const setBaseUrl = renderWithApiOrigin("");
+  it("does NOT call setBaseUrl when API_ORIGIN is empty (web dev / relative-URL mode)", async () => {
+    const setBaseUrl = await renderWithApiOrigin("");
     expect(setBaseUrl).not.toHaveBeenCalled();
   });
 });

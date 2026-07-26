@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Regression tests: zone label group (aisle ID + section number) is vertically
  * centered as a symmetric block inside the zone rectangle.
  *
@@ -16,7 +14,8 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
 
 // ─── react-native-svg ─────────────────────────────────────────────────────────
 
@@ -29,7 +28,7 @@ jest.mock("react-native", () => ({
   StyleSheet:        { create: (s: unknown) => s, flatten: (s: unknown) => s },
   View:              ({ children, onLayout }: { children?: React.ReactNode; onLayout?: (e: unknown) => void }) =>
                        React.createElement("rn-view", { onLayout }, children),
-  Text:              ({ children }: { children?: React.ReactNode }) => React.createElement("rn-text", {}, children),
+  Text:              ({ children }: { children?: React.ReactNode }) => React.createElement("Text", {}, children),
   ActivityIndicator: () => null,
   Pressable:         ({ children, onPress }: { children?: React.ReactNode; onPress?: () => void }) =>
                        React.createElement("rn-pressable", { onPress }, children),
@@ -79,24 +78,6 @@ jest.mock("@/utils/mapViewport", () => require("./helpers/mapMocks").createMapVi
 
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
-// ─── Suppress react-test-renderer deprecation warning ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    },
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Subject under test ───────────────────────────────────────────────────────
 
 import { ZoneOverlayItem } from "@/components/WarehouseMapView";
@@ -145,13 +126,13 @@ const Y_CENTER = SVG_Y + SVG_HEIGHT / 2;  // 400
  * Return all SVG Text nodes from a rendered tree.
  * createSvgMock() maps react-native-svg's Text component to the host tag
  * "Text" (required by test-renderer@1.x's textComponentTypes allowlist).
- * react-native's own Text component is mapped to "rn-text" by this test's
+ * react-native's own Text component is mapped to "Text" by this test's
  * inline mock, so there is no ambiguity between the two "Text" host elements.
  */
-function getSvgTextNodes(tree: renderer.ReactTestRenderer) {
-  return tree.root.findAll(
+function getSvgTextNodes(tree: Awaited<ReturnType<typeof render>>) {
+  return tree.root!.queryAll(
     (n) => (n.type as string) === "Text",
-    { deep: true },
+    { includeSelf: true },
   );
 }
 
@@ -161,20 +142,17 @@ function getSvgTextNodes(tree: renderer.ReactTestRenderer) {
 
 describe("ZoneOverlayItem — normal mode label centering", () => {
   it("two labels: aisle and section y-values are equidistant from yCenter", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={makeZone({ sectionNum: 3 })}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isSelected={false}
-        />,
-      );
-    });
+    const tree = await render(
+      <ZoneOverlayItem
+        zone={makeZone({ sectionNum: 3 })}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isSelected={false}
+      />,
+    );
 
     const texts = getSvgTextNodes(tree);
     expect(texts.length).toBeGreaterThanOrEqual(2);
@@ -191,24 +169,21 @@ describe("ZoneOverlayItem — normal mode label centering", () => {
     // Both must be on opposite sides of yCenter at equal distances.
     expect(aisleY + sectionY).toBeCloseTo(2 * Y_CENTER, 5);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("one label (sectionNum=0): aisle y-value equals yCenter exactly", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={makeZone({ sectionNum: 0 })}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isSelected={false}
-        />,
-      );
-    });
+    const tree = await render(
+      <ZoneOverlayItem
+        zone={makeZone({ sectionNum: 0 })}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isSelected={false}
+      />,
+    );
 
     const texts = getSvgTextNodes(tree);
     const aisleText = texts.find((n) => n.props.fontWeight === "bold");
@@ -217,7 +192,7 @@ describe("ZoneOverlayItem — normal mode label centering", () => {
     const aisleY = aisleText!.props.y as number;
     expect(aisleY).toBeCloseTo(Y_CENTER, 5);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 });
 
@@ -227,20 +202,17 @@ describe("ZoneOverlayItem — normal mode label centering", () => {
 
 describe("ZoneOverlayItem — cycleMode label centering", () => {
   it("two labels: aisle and section y-values are equidistant from yCenter", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={makeZone({ sectionNum: 3 })}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={true}
-          isCounted={false}
-          isSelected={false}
-        />,
-      );
-    });
+    const tree = await render(
+      <ZoneOverlayItem
+        zone={makeZone({ sectionNum: 3 })}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={true}
+        isCounted={false}
+        isSelected={false}
+      />,
+    );
 
     const texts = getSvgTextNodes(tree);
     expect(texts.length).toBeGreaterThanOrEqual(2);
@@ -256,24 +228,21 @@ describe("ZoneOverlayItem — cycleMode label centering", () => {
 
     expect(aisleY + sectionY).toBeCloseTo(2 * Y_CENTER, 5);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("one label (sectionNum=0): aisle y-value equals yCenter exactly", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={makeZone({ sectionNum: 0 })}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={true}
-          isCounted={false}
-          isSelected={false}
-        />,
-      );
-    });
+    const tree = await render(
+      <ZoneOverlayItem
+        zone={makeZone({ sectionNum: 0 })}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={true}
+        isCounted={false}
+        isSelected={false}
+      />,
+    );
 
     const texts = getSvgTextNodes(tree);
     const aisleText = texts.find((n) => n.props.fontWeight === "bold");
@@ -282,6 +251,6 @@ describe("ZoneOverlayItem — cycleMode label centering", () => {
     const aisleY = aisleText!.props.y as number;
     expect(aisleY).toBeCloseTo(Y_CENTER, 5);
 
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 });

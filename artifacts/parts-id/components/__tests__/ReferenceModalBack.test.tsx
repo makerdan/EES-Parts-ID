@@ -24,7 +24,8 @@
 (global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import TestRenderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
 
 // ContactSheet is mocked to a marker so we can observe its `visible` prop
 // without dragging in AsyncStorage / fetch. It also exposes onClose for
@@ -42,7 +43,7 @@ jest.mock("@/components/ContactSheet", () => ({
 
 import { ReferenceModal } from "@/components/ReferenceModal";
 
-type TestInstance = ReturnType<typeof TestRenderer.create>["root"];
+type TestInstance = NonNullable<RenderResult["root"]>;
 
 /**
  * Finds the host Pressable(s) carrying the given accessibilityLabel.
@@ -51,99 +52,95 @@ type TestInstance = ReturnType<typeof TestRenderer.create>["root"];
  * both the composite and host node for a single Pressable.
  */
 function findByAccessibilityLabel(root: TestInstance, label: string) {
-  return root.findAll(
+  return root.queryAll(
     (node) =>
       String(node.type) === "rn-pressable" &&
       node.props != null &&
       node.props.accessibilityLabel === label,
+    { includeSelf: true },
   );
 }
 
 /** Finds host <rn-text> nodes whose (string) child equals `text`. */
 function findTextNodes(root: TestInstance, text: string) {
-  return root.findAll(
+  return root.queryAll(
     (node) =>
-      String(node.type) === "rn-text" && node.props.children === text,
+      String(node.type) === "Text" && node.props.children === text,
+    { includeSelf: true },
   );
 }
 
 /** Finds the Pressable that renders a child <rn-text> with the given label. */
 function findPressableWithText(root: TestInstance, text: string) {
-  return root.findAll((node) => {
+  return root.queryAll((node) => {
     if (String(node.type) !== "rn-pressable") {
       return false;
     }
     return (
-      node.findAll(
+      node.queryAll(
         (child) =>
-          String(child.type) === "rn-text" &&
+          String(child.type) === "Text" &&
           child.props.children === text,
+        { includeSelf: true },
       ).length > 0
     );
-  });
+  }, { includeSelf: true });
 }
 
 describe("ReferenceModal — Back button exit path", () => {
-  it("invokes onClose when the Back button is pressed", () => {
+  it("invokes onClose when the Back button is pressed", async () => {
     const onClose = jest.fn();
-    let renderer!: ReturnType<typeof TestRenderer.create>;
 
-    act(() => {
-      renderer = TestRenderer.create(
-        <ReferenceModal open={true} onClose={onClose} />,
-      );
-    });
+    const result = await render(
+      <ReferenceModal open={true} onClose={onClose} />,
+    );
 
-    const backButtons = findByAccessibilityLabel(renderer.root, "Back");
+    const backButtons = findByAccessibilityLabel(result.root!, "Back");
     expect(backButtons).toHaveLength(1);
     expect(backButtons[0]!.props.accessibilityRole).toBe("button");
 
-    act(() => {
+    await act(async () => {
       backButtons[0]!.props.onPress();
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
+    await result.unmount();
   });
 
-  it("renders the Contact control and opens the ContactSheet when pressed", () => {
-    let renderer!: ReturnType<typeof TestRenderer.create>;
+  it("renders the Contact control and opens the ContactSheet when pressed", async () => {
+    const result = await render(
+      <ReferenceModal open={true} onClose={jest.fn()} />,
+    );
 
-    act(() => {
-      renderer = TestRenderer.create(
-        <ReferenceModal open={true} onClose={jest.fn()} />,
-      );
-    });
-
-    // ContactSheet starts hidden.
-    const sheetBefore = renderer.root.findAllByType("mock-contact-sheet" as never);
+    // ReferenceModal returns a Fragment (Modal + ContactSheet siblings), so
+    // result.root is only the Modal. Use result.container to reach all children.
+    const sheetBefore = result.container.queryAll(n => n.type === "mock-contact-sheet", { includeSelf: true });
     expect(sheetBefore).toHaveLength(1);
     expect(sheetBefore[0]!.props.visible).toBe(false);
 
-    const contactButtons = findPressableWithText(renderer.root, "Contact");
+    const contactButtons = findPressableWithText(result.root!, "Contact");
     expect(contactButtons).toHaveLength(1);
 
-    act(() => {
+    await act(async () => {
       contactButtons[0]!.props.onPress();
     });
 
-    const sheetAfter = renderer.root.findAllByType("mock-contact-sheet" as never);
+    const sheetAfter = result.container.queryAll(n => n.type === "mock-contact-sheet", { includeSelf: true });
     expect(sheetAfter[0]!.props.visible).toBe(true);
+    await result.unmount();
   });
 
-  it("hides the Clear control until there is chat history", () => {
-    let renderer!: ReturnType<typeof TestRenderer.create>;
-
-    act(() => {
-      renderer = TestRenderer.create(
-        <ReferenceModal open={true} onClose={jest.fn()} />,
-      );
-    });
+  it("hides the Clear control until there is chat history", async () => {
+    const result = await render(
+      <ReferenceModal open={true} onClose={jest.fn()} />,
+    );
 
     // No history on a fresh open → Clear is not rendered, matching prior UX.
-    expect(findTextNodes(renderer.root, "Clear")).toHaveLength(0);
+    expect(findTextNodes(result.root!, "Clear")).toHaveLength(0);
 
     // Back and Contact remain the available exit / support controls.
-    expect(findByAccessibilityLabel(renderer.root, "Back")).toHaveLength(1);
-    expect(findPressableWithText(renderer.root, "Contact")).toHaveLength(1);
+    expect(findByAccessibilityLabel(result.root!, "Back")).toHaveLength(1);
+    expect(findPressableWithText(result.root!, "Contact")).toHaveLength(1);
+    await result.unmount();
   });
 });

@@ -1,5 +1,4 @@
 /**
- * @jest-environment node
  *
  * Verifies that photo-upload errors in PartDetailsEditor surface as visible
  * field-level error text after the expo-file-system import was changed to
@@ -125,56 +124,38 @@ jest.mock("@/components/KeyboardDoneInput", () => {
   };
 });
 
-// ─── Suppress react-test-renderer deprecation warnings ───────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import type { InventoryItem } from "@workspace/api-client-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
-function hasText(root: Inst, text: string): boolean {
-  return instText(root).includes(text);
+function hasText(root: TestInstance, text: string): boolean {
+  return instText(root as unknown as Inst).includes(text);
 }
 
-function findPressable(root: Inst, label: string): Inst | null {
+function findPressable(root: TestInstance, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
 async function renderEditor(ui: React.ReactElement) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(ui); });
-  return tree;
+  const result = await render(ui);
+  return result;
 }
 
 const flushPromises = () =>
@@ -201,11 +182,11 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
 
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   jest.clearAllMocks();
@@ -228,10 +209,10 @@ describe("PartDetailsEditor – FileSystem.readAsStringAsync failure surfaces as
     mockReadAsStringAsync.mockRejectedValueOnce(new Error("disk read failed"));
 
     const item = makeItem();
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Trigger a new photo selection on slot 1.
     expect(mockPhotoCbs.slot1).toBeDefined();
@@ -240,31 +221,31 @@ describe("PartDetailsEditor – FileSystem.readAsStringAsync failure surfaces as
     });
 
     // hasChanges is now true — "Save Details" button should be present.
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
     await act(async () => { saveBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(hasText(tree.root, "Could not save — check connection")).toBe(true);
+    expect(hasText(result.root!, "Could not save — check connection")).toBe(true);
   });
 
   it("does NOT show the error banner (errorMsg) for a photo-slot failure — it uses fieldSaveErrors instead", async () => {
     mockReadAsStringAsync.mockRejectedValueOnce(new Error("permission denied"));
 
     const item = makeItem();
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     await act(async () => { mockPhotoCbs.slot1!("file:///new/photo.jpg"); });
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
     await flushPromises();
 
     // The field-level error must be shown, not an errorMsg banner.
-    expect(hasText(tree.root, "Could not save — check connection")).toBe(true);
+    expect(hasText(result.root!, "Could not save — check connection")).toBe(true);
   });
 });
 
@@ -282,19 +263,19 @@ describe("PartDetailsEditor – PATCH /photo non-ok response surfaces as photo f
     });
 
     const item = makeItem();
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     await act(async () => { mockPhotoCbs.slot1!("file:///new/photo.jpg"); });
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
     await act(async () => { saveBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(hasText(tree.root, "Could not save — check connection")).toBe(true);
+    expect(hasText(result.root!, "Could not save — check connection")).toBe(true);
   });
 
   it("shows session-expired field error when the server returns a 401", async () => {
@@ -308,18 +289,18 @@ describe("PartDetailsEditor – PATCH /photo non-ok response surfaces as photo f
     });
 
     const item = makeItem();
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     await act(async () => { mockPhotoCbs.slot1!("file:///new/photo.jpg"); });
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
 
     await act(async () => { saveBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(hasText(tree.root, "Session expired — re-unlock admin access")).toBe(true);
+    expect(hasText(result.root!, "Session expired — re-unlock admin access")).toBe(true);
   });
 });
 
@@ -337,13 +318,13 @@ describe("PartDetailsEditor – successful photo upload calls PATCH /photo with 
     });
 
     const item = makeItem();
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     await act(async () => { mockPhotoCbs.slot1!("file:///new/photo.jpg"); });
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
 
     await act(async () => { saveBtn!.props.onPress(); });
     await flushPromises();
@@ -358,8 +339,8 @@ describe("PartDetailsEditor – successful photo upload calls PATCH /photo with 
     );
 
     // No error text should be visible.
-    expect(hasText(tree.root, "Could not save — check connection")).toBe(false);
-    expect(hasText(tree.root, "Session expired — re-unlock admin access")).toBe(false);
+    expect(hasText(result.root!, "Could not save — check connection")).toBe(false);
+    expect(hasText(result.root!, "Session expired — re-unlock admin access")).toBe(false);
   });
 
   it("reads from expo-file-system/legacy (readAsStringAsync) with base64 encoding option", async () => {
@@ -371,13 +352,13 @@ describe("PartDetailsEditor – successful photo upload calls PATCH /photo with 
     });
 
     const item = makeItem();
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     await act(async () => { mockPhotoCbs.slot1!(photoUri); });
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
 
     await act(async () => { saveBtn!.props.onPress(); });
     await flushPromises();
@@ -398,22 +379,22 @@ describe("PartDetailsEditor – slot-2 photo upload error surfaces as photo2 fie
     mockReadAsStringAsync.mockRejectedValueOnce(new Error("slot 2 disk error"));
 
     const item = makeItem();
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     expect(mockPhotoCbs.slot2).toBeDefined();
     await act(async () => {
       mockPhotoCbs.slot2!("file:///new/photo2.jpg");
     });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
     await act(async () => { saveBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(hasText(tree.root, "Could not save — check connection")).toBe(true);
+    expect(hasText(result.root!, "Could not save — check connection")).toBe(true);
   });
 });

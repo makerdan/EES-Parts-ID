@@ -3,7 +3,7 @@
  *
  * Contract tests for MeasurePartScreen.
  *
- * Uses renderer.root.findAll() (instance tree API) rather than toJSON() because
+ * Uses result.root!.queryAll() (instance tree API) rather than toJSON() because
  * toJSON() in react-test-renderer@19 can silently drop conditional children
  * that haven't been flushed through act() yet.
  *
@@ -22,10 +22,8 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-// TODO: react-test-renderer is deprecated in React 19 and will be removed in a
-// future release.  Migrate to @testing-library/react-native once the
-// MeasurePartScreen mocking surface stabilises.
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -141,22 +139,22 @@ import {
 
 // ─── Instance-tree helpers ────────────────────────────────────────────────────
 
-type TestInst = renderer.ReactTestInstance;
+type TestInst = TestInstance;
 
 /** Recursively concatenate all string leaf nodes. */
 function instText(node: TestInst | string): string {
   if (typeof node === "string") return node;
-  return node.children.map(c => instText(c as TestInst | string)).join("");
+  return node.children.map((c: TestInst | string) => instText(c as TestInst | string)).join("");
 }
 
 /** Find all host instances of the given tag (e.g. "rn-pressable"). */
 function findByTag(root: TestInst, tag: string): TestInst[] {
-  return root.findAll(n => n.type === tag, { deep: true });
+  return root.queryAll((n: TestInst) => n.type === tag, { includeSelf: true });
 }
 
 /** Find the first "rn-pressable" instance whose text content includes `text`. */
 function findPressable(root: TestInst, text: string): TestInst | null {
-  return findByTag(root, "rn-pressable").find(n => instText(n).includes(text)) ?? null;
+  return findByTag(root, "rn-pressable").find((n: TestInst) => instText(n).includes(text)) ?? null;
 }
 
 /** True if any node in the tree contains `text`. */
@@ -167,8 +165,8 @@ function hasText(root: TestInst, text: string): boolean {
 /** Collect all non-empty `value` props from rn-text-input nodes in the tree. */
 function findInputValues(root: TestInst): string[] {
   return root
-    .findAll(n => (n.type as string) === "rn-text-input", { deep: true })
-    .map(n => String(n.props.value ?? ""))
+    .queryAll((n: TestInst) => (n.type as string) === "rn-text-input", { includeSelf: true })
+    .map((n: TestInst) => String(n.props.value ?? ""))
     .filter(Boolean);
 }
 
@@ -179,33 +177,15 @@ function findInputValues(root: TestInst): string[] {
  * can tear them down.  Unresolved promises and un-removed AppState listeners
  * are the two sources of open-handle warnings / hangs in Jest.
  */
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 let rejectPendingMeasure: ((e: Error) => void) | null = null;
-
-// ─── Suppress react-test-renderer deprecation warning ────────────────────────
-// react-test-renderer is deprecated in React 19.  Suppress the noisy console
-// warning here until this suite is migrated to @testing-library/react-native.
-let originalConsoleError: typeof console.error;
-beforeAll(() => {
-  originalConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation((msg: unknown, ...args: unknown[]) => {
-    if (typeof msg === "string" && msg.includes("react-test-renderer is deprecated")) return;
-    originalConsoleError(msg, ...args);
-  });
-});
-afterAll(() => {
-  (console.error as jest.Mock).mockRestore?.();
-});
 
 // ─── Render helper (wraps in act so effects flush before assertions) ──────────
 
-async function render(ui: React.ReactElement) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => {
-    tree = renderer.create(ui);
-  });
-  activeTree = tree;
-  return tree;
+async function renderComponent(ui: React.ReactElement) {
+  const result = await render(ui);
+  activeTree = result;
+  return result;
 }
 
 // Press a button by label, wrapped in act so resulting state updates flush.
@@ -238,7 +218,7 @@ afterEach(async () => {
   // Unmount the renderer tree so the component's cleanup effects run and the
   // AppState subscription is removed (open-handle source #2).
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   jest.clearAllMocks();
@@ -295,46 +275,46 @@ describe("isLiDARCapableDevice()", () => {
 describe("MeasurePartScreen – preview phase", () => {
   it("renders null when visible=false", async () => {
     expoDevice.modelName = "iPhone 11";
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} visible={false} />
     );
-    expect(tree.toJSON()).toBeNull();
+    expect(result.toJSON()).toBeNull();
   });
 
   it('shows "Measure Part" in the header', async () => {
     expoDevice.modelName = "iPhone 11";
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(hasText(tree.root, "Measure Part")).toBe(true);
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
   });
 
   it("shows LiDAR scan button when lidar is available", async () => {
     // expoDevice.modelName is null (reset by afterEach) → isLiDARCapableDevice() = true
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(findPressable(tree.root, "Scan with LiDAR")).not.toBeNull();
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(findPressable(result.root!, "Scan with LiDAR")).not.toBeNull();
   });
 
   it("does not show LiDAR scan button when lidar is unavailable", async () => {
     expoDevice.modelName = "iPhone 11";
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(findPressable(tree.root, "Scan with LiDAR")).toBeNull();
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(findPressable(result.root!, "Scan with LiDAR")).toBeNull();
   });
 
   it('shows "Enter manually instead" link always', async () => {
     expoDevice.modelName = "iPhone 11";
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(hasText(tree.root, "Enter manually instead")).toBe(true);
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(hasText(result.root!, "Enter manually instead")).toBe(true);
   });
 
   it("shows LiDAR unsupported message when lidar is unavailable", async () => {
     expoDevice.modelName = "iPhone 11";
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(hasText(tree.root, "LiDAR measurement requires a LiDAR-capable device")).toBe(true);
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(hasText(result.root!, "LiDAR measurement requires a LiDAR-capable device")).toBe(true);
   });
 
   it("does not show LiDAR unsupported message when lidar is available", async () => {
     // expoDevice.modelName is null → isLiDARCapableDevice() = true
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(hasText(tree.root, "LiDAR measurement requires a LiDAR-capable device")).toBe(false);
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(hasText(result.root!, "LiDAR measurement requires a LiDAR-capable device")).toBe(false);
   });
 });
 
@@ -343,9 +323,9 @@ describe("MeasurePartScreen – preview phase", () => {
 describe("MeasurePartScreen – manual entry shortcut", () => {
   it('transitions to confirm phase when "Enter manually instead" is pressed', async () => {
     expoDevice.modelName = "iPhone 11";
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(tree.root, "Enter manually instead");
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Enter manually instead");
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
   });
 });
 
@@ -359,11 +339,11 @@ describe("MeasurePartScreen – lidar_scanning → confirm (happy path)", () => 
       new Promise((res, rej) => { resolveScanning = res; rejectPendingMeasure = rej; })
     );
 
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(findPressable(tree.root, "Scan with LiDAR")).not.toBeNull();
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(findPressable(result.root!, "Scan with LiDAR")).not.toBeNull();
 
-    await press(tree.root, "Scan with LiDAR");
-    expect(hasText(tree.root, "LiDAR Scanning")).toBe(true);
+    await press(result.root!, "Scan with LiDAR");
+    expect(hasText(result.root!, "LiDAR Scanning")).toBe(true);
 
     resolveScanning({ length: 200, width: 100, height: 50 });
     rejectPendingMeasure = null;
@@ -373,28 +353,28 @@ describe("MeasurePartScreen – lidar_scanning → confirm (happy path)", () => 
   it('transitions to "Review Dimensions" after measureObject resolves', async () => {
     mockMeasureObject.mockResolvedValue({ length: 200, width: 100, height: 50 });
 
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(tree.root, "Scan with LiDAR");
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
     await flushPromises();
 
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
   });
 
   it("populates dimension fields with values from measureObject", async () => {
     mockMeasureObject.mockResolvedValue({ length: 200, width: 100, height: 50 });
 
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(tree.root, "Scan with LiDAR");
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
     await flushPromises();
 
-    expect(hasText(tree.root, "200 × 100 × 50 mm")).toBe(true);
+    expect(hasText(result.root!, "200 × 100 × 50 mm")).toBe(true);
   });
 
   it("calls measureObject with the 4-second timeout constant", async () => {
     mockMeasureObject.mockResolvedValue({ length: 100, width: 80, height: 60 });
 
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(tree.root, "Scan with LiDAR");
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
     await flushPromises();
 
     expect(mockMeasureObject).toHaveBeenCalledWith(4);
@@ -407,18 +387,18 @@ describe("MeasurePartScreen – lidar_scanning → preview (error path)", () => 
   it("returns to preview phase when measureObject rejects", async () => {
     mockMeasureObject.mockRejectedValue(new Error("ERR_NO_MESH"));
 
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(tree.root, "Scan with LiDAR");
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
     await flushPromises();
 
-    expect(hasText(tree.root, "Measure Part")).toBe(true);
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
   });
 
   it("shows the error message from the native module via Alert", async () => {
     mockMeasureObject.mockRejectedValue(new Error("ERR_NO_MESH"));
 
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(tree.root, "Scan with LiDAR");
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
     await flushPromises();
 
     expect(mockAlert).toHaveBeenCalledWith(
@@ -430,8 +410,8 @@ describe("MeasurePartScreen – lidar_scanning → preview (error path)", () => 
   it("uses a generic fallback message when the rejection is not an Error", async () => {
     mockMeasureObject.mockRejectedValue("non-error string rejection");
 
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(tree.root, "Scan with LiDAR");
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
     await flushPromises();
 
     expect(mockAlert).toHaveBeenCalledWith(
@@ -456,8 +436,8 @@ describe("MeasurePartScreen – lidar_scanning → preview (background interrupt
       new Promise((_, rej) => { rejectPendingMeasure = rej; })
     );
 
-    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(tree.root, "Scan with LiDAR");
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
 
     // The component must now be in lidar_scanning phase and have registered
     // an AppState listener.  Grab the change-handler from the mock.
@@ -470,7 +450,7 @@ describe("MeasurePartScreen – lidar_scanning → preview (background interrupt
       changeHandler(nextState);
     });
 
-    expect(hasText(tree.root, "Measure Part")).toBe(true);
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
   }
 
   it("resets to preview when app moves to background mid-scan", async () => {
@@ -489,12 +469,12 @@ describe("MeasurePartScreen – onConfirm callback", () => {
     const onConfirm = jest.fn();
     mockMeasureObject.mockResolvedValue({ length: 200, width: 100, height: 50 });
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} onConfirm={onConfirm} />
     );
-    await press(tree.root, "Scan with LiDAR");
+    await press(result.root!, "Scan with LiDAR");
     await flushPromises();
-    await press(tree.root, "Save Dimensions");
+    await press(result.root!, "Save Dimensions");
 
     expect(onConfirm).toHaveBeenCalledWith<[PartDimensions]>({
       length: 200,
@@ -508,11 +488,11 @@ describe("MeasurePartScreen – onConfirm callback", () => {
     const onConfirm = jest.fn();
     expoDevice.modelName = "iPhone 11";
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} onConfirm={onConfirm} />
     );
-    await press(tree.root, "Enter manually instead");
-    await press(tree.root, "Save Dimensions");
+    await press(result.root!, "Enter manually instead");
+    await press(result.root!, "Save Dimensions");
 
     expect(onConfirm).toHaveBeenCalledWith<[PartDimensions]>({
       length: null,
@@ -567,11 +547,11 @@ describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
   // ── Initial capture (preview → estimating) ────────────────────────────────
 
   it("initial capture: non-admin fetches /estimate-dimensions/search without Authorization", async () => {
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
     );
 
-    await press(tree.root, "Capture & Estimate");
+    await press(result.root!, "Capture & Estimate");
     await flushPromises();
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -583,11 +563,11 @@ describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
   });
 
   it("initial capture: admin fetches /estimate-dimensions with Authorization header", async () => {
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
     );
 
-    await press(tree.root, "Capture & Estimate");
+    await press(result.root!, "Capture & Estimate");
     await flushPromises();
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -602,15 +582,15 @@ describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
   // ── Re-estimate from confirm screen ──────────────────────────────────────
 
   it("re-estimate from confirm: non-admin fetches /estimate-dimensions/search without Authorization", async () => {
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
     );
 
     // Reach the confirm screen via manual-entry shortcut.
-    await press(tree.root, "Enter manually instead");
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    await press(result.root!, "Enter manually instead");
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
 
-    await press(tree.root, "Photo Estimate");
+    await press(result.root!, "Photo Estimate");
     await flushPromises();
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -622,15 +602,15 @@ describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
   });
 
   it("re-estimate from confirm: admin fetches /estimate-dimensions with Authorization header", async () => {
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
     );
 
     // Reach the confirm screen via manual-entry shortcut.
-    await press(tree.root, "Enter manually instead");
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    await press(result.root!, "Enter manually instead");
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
 
-    await press(tree.root, "Photo Estimate");
+    await press(result.root!, "Photo Estimate");
     await flushPromises();
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -682,18 +662,18 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
       json: () => Promise.resolve({ error: "Internal Server Error" }),
     } as Response);
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
     );
 
-    await press(tree.root, "Capture & Estimate");
+    await press(result.root!, "Capture & Estimate");
     await flushPromises();
 
     expect(mockAlert).toHaveBeenCalledWith(
       "Estimation failed",
       expect.stringContaining("Internal Server Error")
     );
-    expect(hasText(tree.root, "Measure Part")).toBe(true);
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
   });
 
   it("initial capture (admin): non-OK 500 shows Alert and returns to preview", async () => {
@@ -703,18 +683,18 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
       json: () => Promise.resolve({}),
     } as Response);
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
     );
 
-    await press(tree.root, "Capture & Estimate");
+    await press(result.root!, "Capture & Estimate");
     await flushPromises();
 
     expect(mockAlert).toHaveBeenCalledWith(
       "Estimation failed",
       expect.stringContaining("Server error 500")
     );
-    expect(hasText(tree.root, "Measure Part")).toBe(true);
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
   });
 
   // ── handleCapture: network failure (fetch rejection) ──────────────────────
@@ -724,18 +704,18 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
       .spyOn(global, "fetch")
       .mockRejectedValue(new Error("Network request failed"));
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
     );
 
-    await press(tree.root, "Capture & Estimate");
+    await press(result.root!, "Capture & Estimate");
     await flushPromises();
 
     expect(mockAlert).toHaveBeenCalledWith(
       "Estimation failed",
       expect.stringContaining("Network request failed")
     );
-    expect(hasText(tree.root, "Measure Part")).toBe(true);
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
   });
 
   it("initial capture (admin): network error shows Alert and returns to preview", async () => {
@@ -743,18 +723,18 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
       .spyOn(global, "fetch")
       .mockRejectedValue(new Error("Network request failed"));
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
     );
 
-    await press(tree.root, "Capture & Estimate");
+    await press(result.root!, "Capture & Estimate");
     await flushPromises();
 
     expect(mockAlert).toHaveBeenCalledWith(
       "Estimation failed",
       expect.stringContaining("Network request failed")
     );
-    expect(hasText(tree.root, "Measure Part")).toBe(true);
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
   });
 
   // ── handleCaptureOnConfirm: non-OK HTTP response → inline error ───────────
@@ -774,22 +754,22 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
         json: () => Promise.resolve({ error: "Re-estimate server error" }),
       } as Response);
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
     );
 
     // Reach confirm screen via the initial capture path.
-    await press(tree.root, "Capture & Estimate");
+    await press(result.root!, "Capture & Estimate");
     await flushPromises();
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
 
     // Trigger re-estimation which will fail.
-    await press(tree.root, "Photo Estimate");
+    await press(result.root!, "Photo Estimate");
     await flushPromises();
 
-    expect(hasText(tree.root, "Re-estimate server error")).toBe(true);
+    expect(hasText(result.root!, "Re-estimate server error")).toBe(true);
     // Screen stays on confirm, not preview.
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
   });
 
   it("re-estimate (admin): non-OK 500 shows inline error on confirm screen", async () => {
@@ -806,19 +786,19 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
         json: () => Promise.resolve({}),
       } as Response);
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
     );
 
-    await press(tree.root, "Capture & Estimate");
+    await press(result.root!, "Capture & Estimate");
     await flushPromises();
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
 
-    await press(tree.root, "Photo Estimate");
+    await press(result.root!, "Photo Estimate");
     await flushPromises();
 
-    expect(hasText(tree.root, "Server error 500")).toBe(true);
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    expect(hasText(result.root!, "Server error 500")).toBe(true);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
   });
 
   // ── handleCaptureOnConfirm: network failure → inline error ────────────────
@@ -833,19 +813,19 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
       } as Response)
       .mockRejectedValueOnce(new Error("Network request failed"));
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
     );
 
-    await press(tree.root, "Capture & Estimate");
+    await press(result.root!, "Capture & Estimate");
     await flushPromises();
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
 
-    await press(tree.root, "Photo Estimate");
+    await press(result.root!, "Photo Estimate");
     await flushPromises();
 
-    expect(hasText(tree.root, "Network request failed")).toBe(true);
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    expect(hasText(result.root!, "Network request failed")).toBe(true);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
   });
 
   it("re-estimate (admin): network error shows inline error on confirm screen", async () => {
@@ -858,19 +838,19 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
       } as Response)
       .mockRejectedValueOnce(new Error("Network request failed"));
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
     );
 
-    await press(tree.root, "Capture & Estimate");
+    await press(result.root!, "Capture & Estimate");
     await flushPromises();
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
 
-    await press(tree.root, "Photo Estimate");
+    await press(result.root!, "Photo Estimate");
     await flushPromises();
 
-    expect(hasText(tree.root, "Network request failed")).toBe(true);
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    expect(hasText(result.root!, "Network request failed")).toBe(true);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
   });
 });
 
@@ -893,7 +873,7 @@ describe("MeasurePartScreen – initialItem dimension seeding", () => {
       dimensions: { length: 200, width: 100, height: 50, diameter: null },
     };
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen
         {...DEFAULT_PROPS}
         initialDims={null}
@@ -901,11 +881,11 @@ describe("MeasurePartScreen – initialItem dimension seeding", () => {
       />
     );
 
-    await press(tree.root, "Enter manually instead");
+    await press(result.root!, "Enter manually instead");
 
-    expect(hasText(tree.root, "200")).toBe(true);
-    expect(hasText(tree.root, "100")).toBe(true);
-    expect(hasText(tree.root, "50")).toBe(true);
+    expect(hasText(result.root!, "200")).toBe(true);
+    expect(hasText(result.root!, "100")).toBe(true);
+    expect(hasText(result.root!, "50")).toBe(true);
   });
 
   it("seeds the diameter field when initialItem.dimensions contains only a diameter", async () => {
@@ -919,7 +899,7 @@ describe("MeasurePartScreen – initialItem dimension seeding", () => {
       dimensions: { length: null, width: null, height: null, diameter: 38 },
     };
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen
         {...DEFAULT_PROPS}
         initialDims={null}
@@ -927,11 +907,11 @@ describe("MeasurePartScreen – initialItem dimension seeding", () => {
       />
     );
 
-    await press(tree.root, "Enter manually instead");
+    await press(result.root!, "Enter manually instead");
 
     // diameter-only: L/W/H are empty so the dimPreview text node is absent;
     // check the TextInput value prop directly instead.
-    expect(findInputValues(tree.root)).toContain("38");
+    expect(findInputValues(result.root!)).toContain("38");
   });
 
   it("prefers explicit initialDims over initialItem.dimensions when both are provided", async () => {
@@ -945,7 +925,7 @@ describe("MeasurePartScreen – initialItem dimension seeding", () => {
       dimensions: { length: 999, width: 888, height: 777, diameter: null },
     };
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen
         {...DEFAULT_PROPS}
         initialDims={{ length: 200, width: 100, height: 50, diameter: null }}
@@ -953,12 +933,12 @@ describe("MeasurePartScreen – initialItem dimension seeding", () => {
       />
     );
 
-    await press(tree.root, "Enter manually instead");
+    await press(result.root!, "Enter manually instead");
 
-    expect(hasText(tree.root, "200")).toBe(true);
-    expect(hasText(tree.root, "100")).toBe(true);
-    expect(hasText(tree.root, "50")).toBe(true);
-    expect(hasText(tree.root, "999")).toBe(false);
+    expect(hasText(result.root!, "200")).toBe(true);
+    expect(hasText(result.root!, "100")).toBe(true);
+    expect(hasText(result.root!, "50")).toBe(true);
+    expect(hasText(result.root!, "999")).toBe(false);
   });
 
   it("leaves fields empty when both initialDims and initialItem.dimensions are null", async () => {
@@ -972,7 +952,7 @@ describe("MeasurePartScreen – initialItem dimension seeding", () => {
       dimensions: null,
     };
 
-    const tree = await render(
+    const result = await renderComponent(
       <MeasurePartScreen
         {...DEFAULT_PROPS}
         initialDims={null}
@@ -980,9 +960,9 @@ describe("MeasurePartScreen – initialItem dimension seeding", () => {
       />
     );
 
-    await press(tree.root, "Enter manually instead");
+    await press(result.root!, "Enter manually instead");
 
-    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
-    expect(hasText(tree.root, "200")).toBe(false);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+    expect(hasText(result.root!, "200")).toBe(false);
   });
 });

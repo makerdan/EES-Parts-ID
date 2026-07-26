@@ -37,13 +37,27 @@ module.exports = {
   View: make("rn-view"),
   Animated,
   Easing,
-  Text: make("rn-text"),
+  Text: make("Text"),
   Pressable: make("rn-pressable"),
   TouchableOpacity: make("rn-touchable"),
   TouchableHighlight: make("rn-touchable-highlight"),
   TouchableWithoutFeedback: make("rn-touchable-nofeedback"),
   SafeAreaView: make("rn-safe-area"),
-  ScrollView: make("rn-scroll"),
+  ScrollView: (() => {
+    const React = require("react");
+    const noop = () => {};
+    const ScrollViewMock = React.forwardRef(function ScrollView({ children, ...props }, ref) {
+      React.useImperativeHandle(ref, () => ({
+        scrollToEnd: noop,
+        scrollTo: noop,
+        scrollToOffset: noop,
+        flashScrollIndicators: noop,
+      }));
+      return React.createElement("rn-scroll", props, children);
+    });
+    ScrollViewMock.displayName = "rn-scroll";
+    return ScrollViewMock;
+  })(),
   ActivityIndicator: make("rn-activity"),
   Image: function Image() { return null; },
   TextInput: make("rn-text-input"),

@@ -1,5 +1,4 @@
 /**
- * @jest-environment node
  *
  * Tests that ImageReadError thrown by resizeImage during the photo-capture flow
  * surfaces as a visible error banner instead of producing a silent empty-result
@@ -248,35 +247,18 @@ function makeAppMock(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// ─── Suppress react-test-renderer deprecation warning ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") || msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 import PhotoScreen from "../app/(tabs)/photo";
 
 // ─── Render / flush helpers ───────────────────────────────────────────────────
 
 async function renderScreen(ui: React.ReactElement) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(ui); });
-  return tree;
+  const result = await render(ui);
+  return result;
 }
 
 const flushPromises = () =>
@@ -288,32 +270,32 @@ const flushPromises = () =>
 
 // ─── Instance-tree helpers ────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map((c) => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
-function hasText(root: Inst, text: string): boolean {
-  return instText(root).includes(text);
+function hasText(root: TestInstance, text: string): boolean {
+  return instText(root as unknown as Inst).includes(text);
 }
 
-function findPressable(root: Inst, label: string): Inst | null {
+function findPressable(root: TestInstance, label: string): Inst | null {
   return (
     root
-      .findAll((n) => (n.type as string) === "rn-pressable", { deep: true })
-      .find((n) => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
 // ─── Teardown ─────────────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   jest.clearAllMocks();
@@ -344,16 +326,16 @@ describe("PhotoScreen – ImageReadError during library pick", () => {
     );
     mockResizeImage.mockRejectedValueOnce(staleError);
 
-    const tree = await renderScreen(<PhotoScreen />);
-    activeTree = tree;
+    const result = await renderScreen(<PhotoScreen />);
+    activeTree = result;
 
-    const libraryBtn = findPressable(tree.root, "Photo Library");
+    const libraryBtn = findPressable(result.root!, "Photo Library");
     expect(libraryBtn).not.toBeNull();
 
     await act(async () => { libraryBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(hasText(tree.root, "Could not process the selected photo")).toBe(true);
+    expect(hasText(result.root!, "Could not process the selected photo")).toBe(true);
   });
 
   it("shows the ⚠ prefix on the error banner", async () => {
@@ -363,14 +345,14 @@ describe("PhotoScreen – ImageReadError during library pick", () => {
       new ImageReadError("Could not read the image file — it may be corrupt, deleted, or inaccessible.")
     );
 
-    const tree = await renderScreen(<PhotoScreen />);
-    activeTree = tree;
+    const result = await renderScreen(<PhotoScreen />);
+    activeTree = result;
 
-    const libraryBtn = findPressable(tree.root, "Photo Library");
+    const libraryBtn = findPressable(result.root!, "Photo Library");
     await act(async () => { libraryBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(hasText(tree.root, "⚠")).toBe(true);
+    expect(hasText(result.root!, "⚠")).toBe(true);
   });
 });
 
@@ -389,16 +371,16 @@ describe("PhotoScreen – ImageReadError during camera pick", () => {
       )
     );
 
-    const tree = await renderScreen(<PhotoScreen />);
-    activeTree = tree;
+    const result = await renderScreen(<PhotoScreen />);
+    activeTree = result;
 
-    const cameraBtn = findPressable(tree.root, "Camera");
+    const cameraBtn = findPressable(result.root!, "Camera");
     expect(cameraBtn).not.toBeNull();
 
     await act(async () => { cameraBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(hasText(tree.root, "Could not process the selected photo")).toBe(true);
+    expect(hasText(result.root!, "Could not process the selected photo")).toBe(true);
   });
 });
 
@@ -416,10 +398,10 @@ describe("PhotoScreen – no silent AI identify after ImageReadError", () => {
       )
     );
 
-    const tree = await renderScreen(<PhotoScreen />);
-    activeTree = tree;
+    const result = await renderScreen(<PhotoScreen />);
+    activeTree = result;
 
-    const libraryBtn = findPressable(tree.root, "Photo Library");
+    const libraryBtn = findPressable(result.root!, "Photo Library");
     await act(async () => { libraryBtn!.props.onPress(); });
     await flushPromises();
 
@@ -437,10 +419,10 @@ describe("PhotoScreen – no silent AI identify after ImageReadError", () => {
       )
     );
 
-    const tree = await renderScreen(<PhotoScreen />);
-    activeTree = tree;
+    const result = await renderScreen(<PhotoScreen />);
+    activeTree = result;
 
-    const libraryBtn = findPressable(tree.root, "Photo Library");
+    const libraryBtn = findPressable(result.root!, "Photo Library");
     await act(async () => { libraryBtn!.props.onPress(); });
     await flushPromises();
 
@@ -462,21 +444,21 @@ describe("PhotoScreen – results list empty after ImageReadError", () => {
       )
     );
 
-    const tree = await renderScreen(<PhotoScreen />);
-    activeTree = tree;
+    const result = await renderScreen(<PhotoScreen />);
+    activeTree = result;
 
-    const libraryBtn = findPressable(tree.root, "Photo Library");
+    const libraryBtn = findPressable(result.root!, "Photo Library");
     await act(async () => { libraryBtn!.props.onPress(); });
     await flushPromises();
 
     // The error banner is present — the user is never left staring at a blank
     // results area with no explanation.
-    expect(hasText(tree.root, "Could not process the selected photo")).toBe(true);
+    expect(hasText(result.root!, "Could not process the selected photo")).toBe(true);
 
     // No ResultCard instances should be rendered (nothing was identified).
-    const resultCards = tree.root.findAll(
-      (n) => (n.type as unknown) === "ResultCard" || instText(n).includes("confidence"),
-      { deep: true }
+    const resultCards = result.root!.queryAll(
+      (n: TestInstance) => (n.type as unknown) === "ResultCard" || instText(n).includes("confidence"),
+      { includeSelf: true }
     );
     expect(resultCards).toHaveLength(0);
   });

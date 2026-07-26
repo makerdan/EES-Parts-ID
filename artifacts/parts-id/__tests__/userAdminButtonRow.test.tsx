@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * UI-level guard tests for UserAdminButtonRow.
  *
  * The server-side /admin/users/:id/promote endpoint returns 400 for non-approved
@@ -20,7 +18,9 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 
 import { UserAdminButtonRow } from "../components/UserAdminButtonRow";
 import type { UserRow } from "../utils/adminUserActions";
@@ -29,36 +29,13 @@ import type { UserRow } from "../utils/adminUserActions";
 
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
-// ─── Suppress react-test-renderer deprecation noise ──────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      )
-        return;
-      origConsoleError(msg, ...args);
-    },
-  );
-});
-afterAll(() => {
-  (console.error as jest.Mock).mockRestore?.();
-});
-
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: RenderResult | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => {
-      activeTree!.unmount();
-    });
+    await activeTree.unmount();
     activeTree = null;
   }
   jest.clearAllMocks();
@@ -79,42 +56,43 @@ function makeUser(overrides: Partial<UserRow> = {}): UserRow {
 
 // ─── Render helper ────────────────────────────────────────────────────────────
 
+type Inst = TestInstance | null | undefined;
+
 async function renderRow(props: {
   user: UserRow;
   userActionPending?: string | null;
   onPromote?: () => void;
   onDemote?: () => void;
 }) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => {
-    tree = renderer.create(
-      <UserAdminButtonRow
-        user={props.user}
-        userActionPending={props.userActionPending ?? null}
-        onPromote={props.onPromote ?? jest.fn()}
-        onDemote={props.onDemote ?? jest.fn()}
-      />,
-    );
-  });
-  activeTree = tree;
-  return tree;
+  const result = await render(
+    <UserAdminButtonRow
+      user={props.user}
+      userActionPending={props.userActionPending ?? null}
+      onPromote={props.onPromote ?? jest.fn()}
+      onDemote={props.onDemote ?? jest.fn()}
+    />,
+  );
+  activeTree = result;
+  return result;
 }
 
-function findMakeAdminButton(root: renderer.ReactTestInstance) {
-  return root.findAll(
-    (n) =>
+function findMakeAdminButton(root: Inst) {
+  if (!root) return [];
+  return root.queryAll(
+    (n: TestInstance) =>
       (n.type as string) === "rn-pressable" &&
       n.props.accessibilityLabel === "Make Admin",
-    { deep: true },
+    { includeSelf: true },
   );
 }
 
-function findRevokeAdminButton(root: renderer.ReactTestInstance) {
-  return root.findAll(
-    (n) =>
+function findRevokeAdminButton(root: Inst) {
+  if (!root) return [];
+  return root.queryAll(
+    (n: TestInstance) =>
       (n.type as string) === "rn-pressable" &&
       n.props.accessibilityLabel === "Revoke Admin",
-    { deep: true },
+    { includeSelf: true },
   );
 }
 
@@ -124,68 +102,68 @@ function findRevokeAdminButton(root: renderer.ReactTestInstance) {
 
 describe("UserAdminButtonRow — Make Admin button guard", () => {
   it("(A) does NOT render Make Admin for a pending user", async () => {
-    const tree = await renderRow({
+    const result = await renderRow({
       user: makeUser({ status: "pending", role: "user" }),
     });
-    expect(findMakeAdminButton(tree.root)).toHaveLength(0);
+    expect(findMakeAdminButton(result.root)).toHaveLength(0);
   });
 
   it("(B) does NOT render Make Admin for a banned user", async () => {
-    const tree = await renderRow({
+    const result = await renderRow({
       user: makeUser({ status: "banned", role: "user" }),
     });
-    expect(findMakeAdminButton(tree.root)).toHaveLength(0);
+    expect(findMakeAdminButton(result.root)).toHaveLength(0);
   });
 
   it("(C) renders Make Admin for an approved non-admin user", async () => {
-    const tree = await renderRow({
+    const result = await renderRow({
       user: makeUser({ status: "approved", role: "user" }),
     });
-    expect(findMakeAdminButton(tree.root)).toHaveLength(1);
+    expect(findMakeAdminButton(result.root)).toHaveLength(1);
   });
 
   it("(D) renders Revoke Admin (not Make Admin) for an approved admin user", async () => {
-    const tree = await renderRow({
+    const result = await renderRow({
       user: makeUser({ status: "approved", role: "admin" }),
     });
-    expect(findMakeAdminButton(tree.root)).toHaveLength(0);
-    expect(findRevokeAdminButton(tree.root)).toHaveLength(1);
+    expect(findMakeAdminButton(result.root)).toHaveLength(0);
+    expect(findRevokeAdminButton(result.root)).toHaveLength(1);
   });
 
   it("(E) admin role takes precedence — shows Revoke Admin even for a pending admin", async () => {
-    const tree = await renderRow({
+    const result = await renderRow({
       user: makeUser({ status: "pending", role: "admin" }),
     });
-    expect(findMakeAdminButton(tree.root)).toHaveLength(0);
-    expect(findRevokeAdminButton(tree.root)).toHaveLength(1);
+    expect(findMakeAdminButton(result.root)).toHaveLength(0);
+    expect(findRevokeAdminButton(result.root)).toHaveLength(1);
   });
 });
 
 describe("UserAdminButtonRow — button disabled state", () => {
   it("Make Admin button is disabled when another action is in progress", async () => {
-    const tree = await renderRow({
+    const result = await renderRow({
       user: makeUser({ status: "approved", role: "user" }),
       userActionPending: "some_other_user",
     });
-    const [btn] = findMakeAdminButton(tree.root);
+    const [btn] = findMakeAdminButton(result.root);
     expect(btn!.props.disabled).toBe(true);
   });
 
   it("Revoke Admin button is disabled when another action is in progress", async () => {
-    const tree = await renderRow({
+    const result = await renderRow({
       user: makeUser({ status: "approved", role: "admin" }),
       userActionPending: "some_other_user",
     });
-    const [btn] = findRevokeAdminButton(tree.root);
+    const [btn] = findRevokeAdminButton(result.root);
     expect(btn!.props.disabled).toBe(true);
   });
 
   it("Make Admin button is enabled when no action is pending", async () => {
-    const tree = await renderRow({
+    const result = await renderRow({
       user: makeUser({ status: "approved", role: "user" }),
       userActionPending: null,
     });
-    const [btn] = findMakeAdminButton(tree.root);
+    const [btn] = findMakeAdminButton(result.root);
     expect(btn!.props.disabled).toBe(false);
   });
 });

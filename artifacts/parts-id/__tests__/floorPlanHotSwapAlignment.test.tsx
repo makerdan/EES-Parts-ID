@@ -32,7 +32,7 @@
 (global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import TestRenderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 
 // ─── react-native-reanimated ──────────────────────────────────────────────────
 // __esModule: true is required (Trap 1 in memory): without it ts-jest's CJS
@@ -274,10 +274,10 @@ const BASE_PROPS = {
   onZoneTap: NOOP,
 };
 
-function fireOnLayout(renderer: TestRenderer.ReactTestRenderer, width: number, height: number) {
-  const nodes = renderer.root.findAll(
+function fireOnLayout(result: Awaited<ReturnType<typeof render>>, width: number, height: number) {
+  const nodes = result.root!.queryAll(
     (n) => typeof n.props.onLayout === "function",
-    { deep: true },
+    { includeSelf: true },
   );
   if (nodes.length === 0) throw new Error("No onLayout node found");
   nodes[0]!.props.onLayout({ nativeEvent: { layout: { width, height, x: 0, y: 0 } } });
@@ -291,18 +291,18 @@ async function flushPromises(ticks = 12) {
 }
 
 /** Find the zone overlay <Svg> element by its absoluteFill style. */
-function findOverlaySvgViewBox(renderer: TestRenderer.ReactTestRenderer): string | undefined {
-  const svgs = renderer.root.findAll((n) => n.type === "svg", { deep: true });
+function findOverlaySvgViewBox(result: Awaited<ReturnType<typeof render>>): string | undefined {
+  const svgs = result.root!.queryAll((n) => n.type === "svg", { includeSelf: true });
   // The zone overlay Svg has StyleSheet.absoluteFill + viewBox prop.
   const overlay = svgs.find((n) => n.props.viewBox !== undefined);
   return overlay?.props.viewBox as string | undefined;
 }
 
 /** Return the xml prop from the most-recently-rendered SvgXml probe element. */
-function findSvgXmlProp(renderer: TestRenderer.ReactTestRenderer): string | undefined {
-  const probes = renderer.root.findAll(
+function findSvgXmlProp(result: Awaited<ReturnType<typeof render>>): string | undefined {
+  const probes = result.root!.queryAll(
     (n) => (n.type as unknown) === "svgxml-probe",
-    { deep: true },
+    { includeSelf: true },
   );
   if (probes.length === 0) return undefined;
   return probes[probes.length - 1]!.props.xml as string;
@@ -357,7 +357,7 @@ describe("floor-plan hot-swap — zone overlay stays aligned after mid-session r
    * tree is visible (containerW > 0), then simulate an admin uploading a new
    * floor plan (hash-b → SVG B with a non-zero viewBox origin).
    *
-   * Returns the renderer after the hot-swap has settled.
+   * Returns the result after the hot-swap has settled.
    */
   async function mountAndHotSwap() {
     // ETag poll sequence:
@@ -390,13 +390,9 @@ describe("floor-plan hot-swap — zone overlay stays aligned after mid-session r
       // Fallback: any further calls fail gracefully
       .mockResolvedValue({ ok: false });
 
-    let renderer!: TestRenderer.ReactTestRenderer;
-
     // Mount — hasCachedData() = true so the SVG load effect returns early (no
     // network fetch needed).  The ETag poll fires its first checkServerHash.
-    await act(async () => {
-      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
+    const result = await render(<WarehouseMapView {...BASE_PROPS} />);
 
     // Drain the initial ETag poll microtasks (call 1 → establishes baseline).
     await flushPromises(6);
@@ -404,7 +400,7 @@ describe("floor-plan hot-swap — zone overlay stays aligned after mid-session r
     // Fire onLayout so containerW > 0; the full render tree (SvgXml + Svg
     // overlay) becomes visible.
     await act(async () => {
-      fireOnLayout(renderer, 390, 761);
+      fireOnLayout(result, 390, 761);
     });
 
     // Advance fake time by 60 s to trigger the setInterval ETag poll (call 2
@@ -418,15 +414,15 @@ describe("floor-plan hot-swap — zone overlay stays aligned after mid-session r
     // setCached → setSvgXml → contentVB parse effect → setContentVB.
     await flushPromises(16);
 
-    return renderer;
+    return result;
   }
 
   // ── Test 1 ─────────────────────────────────────────────────────────────────
 
   it("zone overlay <Svg> viewBox uses SVG B's dimensions after hot-swap", async () => {
-    const renderer = await mountAndHotSwap();
+    const result = await mountAndHotSwap();
 
-    const viewBox = findOverlaySvgViewBox(renderer);
+    const viewBox = findOverlaySvgViewBox(result);
     expect(viewBox).toBeDefined();
     // SVG B has contentVB.w=5000 and contentVB.h=3000.
     expect(viewBox).toBe(`0 0 ${SVG_B_CONTENT_VB.w} ${SVG_B_CONTENT_VB.h}`);
@@ -435,9 +431,9 @@ describe("floor-plan hot-swap — zone overlay stays aligned after mid-session r
   // ── Test 2 ─────────────────────────────────────────────────────────────────
 
   it("zone overlay <Svg> viewBox does NOT still use SVG A's dimensions after hot-swap", async () => {
-    const renderer = await mountAndHotSwap();
+    const result = await mountAndHotSwap();
 
-    const viewBox = findOverlaySvgViewBox(renderer);
+    const viewBox = findOverlaySvgViewBox(result);
     // Must NOT still be SVG A's dimensions.
     expect(viewBox).not.toBe(`0 0 ${SVG_A_CONTENT_VB.w} ${SVG_A_CONTENT_VB.h}`);
   });
@@ -445,9 +441,9 @@ describe("floor-plan hot-swap — zone overlay stays aligned after mid-session r
   // ── Test 3 ─────────────────────────────────────────────────────────────────
 
   it("SvgXml receives the origin-normalised string for SVG B after hot-swap", async () => {
-    const renderer = await mountAndHotSwap();
+    const result = await mountAndHotSwap();
 
-    const xml = findSvgXmlProp(renderer);
+    const xml = findSvgXmlProp(result);
     expect(xml).toBeDefined();
     // The viewBox rewrite must be present: "100 200 5000 3000" → "0 0 5000 3000".
     expect(xml).toContain('viewBox="0 0 5000 3000"');
@@ -456,9 +452,9 @@ describe("floor-plan hot-swap — zone overlay stays aligned after mid-session r
   // ── Test 4 ─────────────────────────────────────────────────────────────────
 
   it("SvgXml does not receive SVG A's xml string after hot-swap", async () => {
-    const renderer = await mountAndHotSwap();
+    const result = await mountAndHotSwap();
 
-    const xml = findSvgXmlProp(renderer);
+    const xml = findSvgXmlProp(result);
     // Must not be SVG A's content.
     expect(xml).not.toContain("floor-plan-a");
   });
@@ -466,9 +462,9 @@ describe("floor-plan hot-swap — zone overlay stays aligned after mid-session r
   // ── Test 5 ─────────────────────────────────────────────────────────────────
 
   it("SvgXml receives the SVG B content body after hot-swap", async () => {
-    const renderer = await mountAndHotSwap();
+    const result = await mountAndHotSwap();
 
-    const xml = findSvgXmlProp(renderer);
+    const xml = findSvgXmlProp(result);
     expect(xml).toBeDefined();
     // The SVG B content must be present (body text survives the viewBox rewrite).
     expect(xml).toContain("floor-plan-b");
@@ -477,12 +473,12 @@ describe("floor-plan hot-swap — zone overlay stays aligned after mid-session r
   // ── Test 6 ─────────────────────────────────────────────────────────────────
 
   it("contentVB is re-derived from SVG B, not left stale from SVG A", async () => {
-    const renderer = await mountAndHotSwap();
+    const result = await mountAndHotSwap();
 
     // Both the zone overlay viewBox and the SvgXml xml must reflect SVG B's
     // dimensions, confirming contentVB was not left stale mid-session.
-    const viewBox = findOverlaySvgViewBox(renderer);
-    const xml = findSvgXmlProp(renderer);
+    const viewBox = findOverlaySvgViewBox(result);
+    const xml = findSvgXmlProp(result);
 
     expect(viewBox).toBe(`0 0 ${SVG_B_CONTENT_VB.w} ${SVG_B_CONTENT_VB.h}`);
     expect(xml).toContain(`viewBox="0 0 ${SVG_B_CONTENT_VB.w} ${SVG_B_CONTENT_VB.h}"`);

@@ -129,7 +129,7 @@ jest.mock("@/components/KeyboardDoneInput", () => ({
   },
 }));
 
-// ── Suppress react-test-renderer deprecation warnings ─────────────────────────
+// ── Suppress console errors for act() warnings ────────────────────────────────
 
 let origConsoleError: typeof console.error;
 beforeAll(() => {
@@ -138,7 +138,7 @@ beforeAll(() => {
     (msg: unknown, ...args: unknown[]) => {
       if (
         typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") || msg.includes("Warning:") || msg.includes("act("))
+        (msg.includes("act("))
       ) return;
       origConsoleError(msg, ...args);
     },
@@ -149,7 +149,7 @@ afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
 // ── Imports (after all jest.mock declarations) ────────────────────────────────
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 import { CatalogPdfUpload } from "../components/CatalogPdfUpload";
 
 // ── PDF fixture helpers ────────────────────────────────────────────────────────
@@ -169,18 +169,20 @@ function makeFile(bytes: Uint8Array, name = "catalog.pdf"): File {
 
 // ── Render & interaction helpers ──────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+import type { TestInstance } from "test-renderer";
+
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map((c) => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
-function findPressable(root: Inst, label: string): Inst | null {
+function findPressable(root: TestInstance, label: string): Inst | null {
   return (
     root
-      .findAll((n) => (n.type as string) === "rn-pressable", { deep: true })
-      .find((n) => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
@@ -194,19 +196,15 @@ const flushPromises = () =>
 async function renderUploadCard(
   adminToken = "admin-tok",
   onSessionExpired = jest.fn(),
-): Promise<renderer.ReactTestRenderer> {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => {
-    tree = renderer.create(
-      <CatalogPdfUpload adminToken={adminToken} onSessionExpired={onSessionExpired} />,
-    );
-  });
-  return tree;
+): Promise<Awaited<ReturnType<typeof render>>> {
+  return await render(
+    <CatalogPdfUpload adminToken={adminToken} onSessionExpired={onSessionExpired} />,
+  );
 }
 
 // ── Per-test setup / teardown ─────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 let originalPlatformOS: string;
 
 beforeEach(() => {
@@ -263,7 +261,7 @@ function installImmediateUploadTask(jobId = "test-job-1"): void {
  * is taken (FileSystem.createUploadTask → uploadAsync resolves → startPolling).
  */
 async function pickFileSetVendorAndStart(
-  tree: renderer.ReactTestRenderer,
+  tree: Awaited<ReturnType<typeof render>>,
   vendor = "ACME",
 ): Promise<void> {
   const pdfBytes = makePdfBytes();
@@ -275,14 +273,14 @@ async function pickFileSetVendorAndStart(
   });
   mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
 
-  const pickBtn = findPressable(tree.root, "Choose PDF File");
+  const pickBtn = findPressable(tree.root!, "Choose PDF File");
   await act(async () => { pickBtn!.props.onPress(); });
   await flushPromises();
 
   expect(capturedOnChangeText).not.toBeNull();
   await act(async () => { capturedOnChangeText!(vendor); });
 
-  const startBtn = findPressable(tree.root, "Start Extraction");
+  const startBtn = findPressable(tree.root!, "Start Extraction");
   expect(startBtn).not.toBeNull();
   await act(async () => { startBtn!.props.onPress(); });
   await flushPromises();
@@ -319,11 +317,11 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
 
     // Vendor must be non-empty and AI log must have entries before reset
     expect(capturedVendorValue).toBe("ACME");
-    const textBefore = instText(tree.root);
+    const textBefore = instText(tree.root!);
     expect(textBefore).toContain("AI Raw · 2");
 
     // Press "Start new extraction"
-    const resetBtn = findPressable(tree.root, "Start new extraction");
+    const resetBtn = findPressable(tree.root!, "Start new extraction");
     expect(resetBtn).not.toBeNull();
     await act(async () => { resetBtn!.props.onPress(); });
     await flushPromises();
@@ -353,14 +351,14 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
 
     await pickFileSetVendorAndStart(tree);
 
-    expect(instText(tree.root)).toContain("AI Raw · 2");
+    expect(instText(tree.root!)).toContain("AI Raw · 2");
 
-    const resetBtn = findPressable(tree.root, "Start new extraction");
+    const resetBtn = findPressable(tree.root!, "Start new extraction");
     expect(resetBtn).not.toBeNull();
     await act(async () => { resetBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(instText(tree.root)).not.toContain("AI Raw ·");
+    expect(instText(tree.root!)).not.toContain("AI Raw ·");
   });
 
   // ── Exit path 2: "Start new job" (cancelled) ─────────────────────────────
@@ -388,9 +386,9 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
     await pickFileSetVendorAndStart(tree);
 
     expect(capturedVendorValue).toBe("ACME");
-    expect(instText(tree.root)).toContain("AI Raw · 2");
+    expect(instText(tree.root!)).toContain("AI Raw · 2");
 
-    const resetBtn = findPressable(tree.root, "Start new job");
+    const resetBtn = findPressable(tree.root!, "Start new job");
     expect(resetBtn).not.toBeNull();
     await act(async () => { resetBtn!.props.onPress(); });
     await flushPromises();
@@ -420,14 +418,14 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
 
     await pickFileSetVendorAndStart(tree);
 
-    expect(instText(tree.root)).toContain("AI Raw · 2");
+    expect(instText(tree.root!)).toContain("AI Raw · 2");
 
-    const resetBtn = findPressable(tree.root, "Start new job");
+    const resetBtn = findPressable(tree.root!, "Start new job");
     expect(resetBtn).not.toBeNull();
     await act(async () => { resetBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(instText(tree.root)).not.toContain("AI Raw ·");
+    expect(instText(tree.root!)).not.toContain("AI Raw ·");
   });
 
   // ── Exit path 3: "Try again" (failed, no stored chunks) ──────────────────
@@ -456,9 +454,9 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
     await pickFileSetVendorAndStart(tree);
 
     expect(capturedVendorValue).toBe("ACME");
-    expect(instText(tree.root)).toContain("AI Raw · 2");
+    expect(instText(tree.root!)).toContain("AI Raw · 2");
 
-    const resetBtn = findPressable(tree.root, "Try again");
+    const resetBtn = findPressable(tree.root!, "Try again");
     expect(resetBtn).not.toBeNull();
     await act(async () => { resetBtn!.props.onPress(); });
     await flushPromises();
@@ -489,13 +487,13 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
 
     await pickFileSetVendorAndStart(tree);
 
-    expect(instText(tree.root)).toContain("AI Raw · 2");
+    expect(instText(tree.root!)).toContain("AI Raw · 2");
 
-    const resetBtn = findPressable(tree.root, "Try again");
+    const resetBtn = findPressable(tree.root!, "Try again");
     expect(resetBtn).not.toBeNull();
     await act(async () => { resetBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(instText(tree.root)).not.toContain("AI Raw ·");
+    expect(instText(tree.root!)).not.toContain("AI Raw ·");
   });
 });

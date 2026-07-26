@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Regression hardening for two cache-patch contracts added to PartDetailsEditor:
  *
  *   A. EXPANDED DESCRIPTION SAVE (handleSaveExpandedDesc)
@@ -25,7 +23,8 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import type {
   InventoryItem,
@@ -140,31 +139,13 @@ jest.mock("@/components/KeyboardDoneInput", () => {
   };
 });
 
-// ─── Suppress deprecation warnings ───────────────────────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    },
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Per-test cleanup ─────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   jest.clearAllMocks();
@@ -180,50 +161,49 @@ afterEach(async () => {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
 function findPressable(root: Inst, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
 function findPressableByA11yLabel(root: Inst, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => n.props.accessibilityLabel === label) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => n.props.accessibilityLabel === label) ?? null
   );
 }
 
 function findPressableByTestID(root: Inst, testID: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => n.props.testID === testID) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => n.props.testID === testID) ?? null
   );
 }
 
 function findTextInput(root: Inst, placeholder: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-textinput", { deep: true })
-      .find(n => n.props.testID === placeholder || n.props.placeholder === placeholder)
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-textinput", { includeSelf: true })
+      .find((n: Inst) => n.props.testID === placeholder || n.props.placeholder === placeholder)
     ?? null
   );
 }
 
 async function renderEditor(ui: React.ReactElement) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(ui); });
-  return tree;
+  const result = await render(ui);
+  return result;
 }
 
 function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
@@ -250,17 +230,17 @@ describe("PartDetailsEditor – handleSaveExpandedDesc cache patch", () => {
   it("calls setQueriesData twice (list + search) after a successful PATCH", async () => {
     const item = makeItem();
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Type text into the expanded-description field to enable the save button.
-    const expandedInput = findTextInput(tree.root, "No expanded description yet\u2026");
+    const expandedInput = findTextInput(result.root!, "No expanded description yet\u2026");
     expect(expandedInput).not.toBeNull();
     await act(async () => { expandedInput!.props.onChangeText("Full details here."); });
 
-    const saveExpandedBtn = findPressable(tree.root, "Save Expanded Description");
+    const saveExpandedBtn = findPressable(result.root!, "Save Expanded Description");
     expect(saveExpandedBtn).not.toBeNull();
     await act(async () => { saveExpandedBtn!.props.onPress(); });
 
@@ -270,15 +250,15 @@ describe("PartDetailsEditor – handleSaveExpandedDesc cache patch", () => {
   it("list-cache updater patches expandedDescription to the saved text", async () => {
     const item = makeItem();
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const expandedInput = findTextInput(tree.root, "No expanded description yet\u2026");
+    const expandedInput = findTextInput(result.root!, "No expanded description yet\u2026");
     await act(async () => { expandedInput!.props.onChangeText("Full details here."); });
 
-    const saveExpandedBtn = findPressable(tree.root, "Save Expanded Description");
+    const saveExpandedBtn = findPressable(result.root!, "Save Expanded Description");
     await act(async () => { saveExpandedBtn!.props.onPress(); });
 
     const [, listUpdater] = mockSetQueriesData.mock.calls[0] as [
@@ -306,15 +286,15 @@ describe("PartDetailsEditor – handleSaveExpandedDesc cache patch", () => {
   it("search-cache updater patches expandedDescription in results and sizeUnknownResults", async () => {
     const item = makeItem();
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const expandedInput = findTextInput(tree.root, "No expanded description yet\u2026");
+    const expandedInput = findTextInput(result.root!, "No expanded description yet\u2026");
     await act(async () => { expandedInput!.props.onChangeText("Full details here."); });
 
-    const saveExpandedBtn = findPressable(tree.root, "Save Expanded Description");
+    const saveExpandedBtn = findPressable(result.root!, "Save Expanded Description");
     await act(async () => { saveExpandedBtn!.props.onPress(); });
 
     const [, searchUpdater] = mockSetQueriesData.mock.calls[1] as [
@@ -348,15 +328,15 @@ describe("PartDetailsEditor – handleSaveExpandedDesc cache patch", () => {
   it("calls invalidateQueries for [\"searchInventory\"] after save", async () => {
     const item = makeItem();
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const expandedInput = findTextInput(tree.root, "No expanded description yet\u2026");
+    const expandedInput = findTextInput(result.root!, "No expanded description yet\u2026");
     await act(async () => { expandedInput!.props.onChangeText("Full details here."); });
 
-    const saveExpandedBtn = findPressable(tree.root, "Save Expanded Description");
+    const saveExpandedBtn = findPressable(result.root!, "Save Expanded Description");
     await act(async () => { saveExpandedBtn!.props.onPress(); });
 
     const searchInvalidateCalls = (mockInvalidateQueries.mock.calls as Array<[{ queryKey?: unknown[] }]>)
@@ -368,15 +348,15 @@ describe("PartDetailsEditor – handleSaveExpandedDesc cache patch", () => {
   it("list-cache updater returns old unchanged when called with undefined", async () => {
     const item = makeItem();
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const expandedInput = findTextInput(tree.root, "No expanded description yet\u2026");
+    const expandedInput = findTextInput(result.root!, "No expanded description yet\u2026");
     await act(async () => { expandedInput!.props.onChangeText("Full details here."); });
 
-    const saveExpandedBtn = findPressable(tree.root, "Save Expanded Description");
+    const saveExpandedBtn = findPressable(result.root!, "Save Expanded Description");
     await act(async () => { saveExpandedBtn!.props.onPress(); });
 
     const [, listUpdater] = mockSetQueriesData.mock.calls[0] as [
@@ -396,15 +376,15 @@ describe("PartDetailsEditor – handleSaveExpandedDesc cache patch", () => {
 
     const item = makeItem();
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const expandedInput = findTextInput(tree.root, "No expanded description yet\u2026");
+    const expandedInput = findTextInput(result.root!, "No expanded description yet\u2026");
     await act(async () => { expandedInput!.props.onChangeText("Full details here."); });
 
-    const saveExpandedBtn = findPressable(tree.root, "Save Expanded Description");
+    const saveExpandedBtn = findPressable(result.root!, "Save Expanded Description");
     await act(async () => { saveExpandedBtn!.props.onPress(); });
 
     expect(mockSetQueriesData).not.toHaveBeenCalled();
@@ -419,12 +399,12 @@ describe("PartDetailsEditor – handleClearExpandedDesc cache patch", () => {
   it("calls setQueriesData twice (list + search) after clearing", async () => {
     const item = makeItem({ expandedDescription: "Existing long text" } as Partial<InventoryItem>);
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const clearBtn = findPressableByA11yLabel(tree.root, "Clear expanded description");
+    const clearBtn = findPressableByA11yLabel(result.root!, "Clear expanded description");
     expect(clearBtn).not.toBeNull();
     await act(async () => { clearBtn!.props.onPress(); });
 
@@ -434,12 +414,12 @@ describe("PartDetailsEditor – handleClearExpandedDesc cache patch", () => {
   it("list-cache updater sets expandedDescription: null for the target item", async () => {
     const item = makeItem({ expandedDescription: "Existing long text" } as Partial<InventoryItem>);
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const clearBtn = findPressableByA11yLabel(tree.root, "Clear expanded description");
+    const clearBtn = findPressableByA11yLabel(result.root!, "Clear expanded description");
     await act(async () => { clearBtn!.props.onPress(); });
 
     const [, listUpdater] = mockSetQueriesData.mock.calls[0] as [
@@ -466,12 +446,12 @@ describe("PartDetailsEditor – handleClearExpandedDesc cache patch", () => {
   it("search-cache updater sets expandedDescription: null in results and sizeUnknownResults", async () => {
     const item = makeItem({ expandedDescription: "Existing long text" } as Partial<InventoryItem>);
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const clearBtn = findPressableByA11yLabel(tree.root, "Clear expanded description");
+    const clearBtn = findPressableByA11yLabel(result.root!, "Clear expanded description");
     await act(async () => { clearBtn!.props.onPress(); });
 
     const [, searchUpdater] = mockSetQueriesData.mock.calls[1] as [
@@ -498,12 +478,12 @@ describe("PartDetailsEditor – handleClearExpandedDesc cache patch", () => {
   it("calls invalidateQueries for [\"searchInventory\"] after clearing", async () => {
     const item = makeItem({ expandedDescription: "Existing long text" } as Partial<InventoryItem>);
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const clearBtn = findPressableByA11yLabel(tree.root, "Clear expanded description");
+    const clearBtn = findPressableByA11yLabel(result.root!, "Clear expanded description");
     await act(async () => { clearBtn!.props.onPress(); });
 
     const searchInvalidateCalls = (mockInvalidateQueries.mock.calls as Array<[{ queryKey?: unknown[] }]>)
@@ -521,12 +501,12 @@ describe("PartDetailsEditor – handleClearExpandedDesc cache patch", () => {
 
     const item = makeItem({ expandedDescription: "Existing long text" } as Partial<InventoryItem>);
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const clearBtn = findPressableByA11yLabel(tree.root, "Clear expanded description");
+    const clearBtn = findPressableByA11yLabel(result.root!, "Clear expanded description");
     await act(async () => { clearBtn!.props.onPress(); });
 
     expect(mockSetQueriesData).not.toHaveBeenCalled();
@@ -550,18 +530,18 @@ describe("PartDetailsEditor – patchItem thumbnailUrl cleared on photo save", (
       thumbnailUrl: "https://cdn.example.com/old-thumb.jpg",
     } as Partial<InventoryItem>);
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Select a photo via the mocked PartPhotoPicker (slot 1).
-    const photoPicker = findPressableByTestID(tree.root, "photo-picker-1");
+    const photoPicker = findPressableByTestID(result.root!, "photo-picker-1");
     expect(photoPicker).not.toBeNull();
     await act(async () => { photoPicker!.props.onPress(); });
 
     // Save.
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
     await act(async () => { saveBtn!.props.onPress(); });
 
@@ -608,17 +588,17 @@ describe("PartDetailsEditor – patchItem thumbnailUrl cleared on photo save", (
       thumbnailUrl2: "https://cdn.example.com/old2-thumb.jpg",
     } as Partial<InventoryItem>);
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Select a photo via the mocked PartPhotoPicker (slot 2).
-    const photoPicker2 = findPressableByTestID(tree.root, "photo-picker-2");
+    const photoPicker2 = findPressableByTestID(result.root!, "photo-picker-2");
     expect(photoPicker2).not.toBeNull();
     await act(async () => { photoPicker2!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
     await act(async () => { saveBtn!.props.onPress(); });
 
@@ -659,15 +639,15 @@ describe("PartDetailsEditor – patchItem thumbnailUrl cleared on photo save", (
       thumbnailUrl: "https://cdn.example.com/old-thumb.jpg",
     } as Partial<InventoryItem>);
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const photoPicker = findPressableByTestID(tree.root, "photo-picker-1");
+    const photoPicker = findPressableByTestID(result.root!, "photo-picker-1");
     await act(async () => { photoPicker!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     const [, listUpdater] = mockSetQueriesData.mock.calls[0] as [
