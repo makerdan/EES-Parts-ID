@@ -563,6 +563,239 @@ describe("AnchorCalibration — save payload", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 5. Mutual exclusion — only one slot in picking mode at a time
+// ---------------------------------------------------------------------------
+
+describe("AnchorCalibration — mutual exclusion of picking mode", () => {
+  beforeEach(() => {
+    global.fetch = stubFetchOk();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("clicking Place for slot 1 while slot 0 is active leaves only slot 1 picking", async () => {
+    const { container } = await renderCalibration();
+
+    const placeBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^Place$/i.test(b.textContent?.trim() ?? ""),
+    );
+
+    // Activate slot 0 — its button should become "Cancel"
+    await act(async () => { fireEvent.click(placeBtns[0]!); });
+
+    // Slot 0 is now in picking mode — its button is "Cancel"
+    await waitFor(() => {
+      const cancelBtns = Array.from(container.querySelectorAll("button")).filter(
+        (b) => /^Cancel$/i.test(b.textContent?.trim() ?? ""),
+      );
+      expect(cancelBtns.length).toBe(1);
+    });
+
+    // The pick banner should mention "Anchor 1"
+    expect(screen.getByText(/click the map to place anchor 1/i)).toBeTruthy();
+
+    // Now click Place for slot 1 — slot 1's Place button is now the first "Place" button
+    // since slot 0's button changed to "Cancel"
+    const placeBtnsAfter = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^Place$/i.test(b.textContent?.trim() ?? ""),
+    );
+    await act(async () => { fireEvent.click(placeBtnsAfter[0]!); });
+
+    // Banner should now reference Anchor 2
+    await waitFor(() => {
+      expect(screen.getByText(/click the map to place anchor 2/i)).toBeTruthy();
+    });
+
+    // Still exactly one Cancel button (slot 1), slot 0 reverted to Place
+    const cancelBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^Cancel$/i.test(b.textContent?.trim() ?? ""),
+    );
+    expect(cancelBtns.length).toBe(1);
+  });
+
+  it("a map click after switching to slot 1 places the anchor in slot 1, not slot 0", async () => {
+    const { container } = await renderCalibration();
+
+    const svg = container.querySelector("svg")!;
+    vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: 800, bottom: 600,
+      width: 800, height: 600, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    let placeBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^Place$/i.test(b.textContent?.trim() ?? ""),
+    );
+
+    // Activate slot 0, then immediately switch to slot 1
+    await act(async () => { fireEvent.click(placeBtns[0]!); });
+    placeBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^Place$/i.test(b.textContent?.trim() ?? ""),
+    );
+    await act(async () => { fireEvent.click(placeBtns[0]!); }); // slot 1's Place
+
+    // Click the map
+    await act(async () => {
+      fireEvent.mouseDown(svg, { button: 0, clientX: 300, clientY: 200 });
+      fireEvent.mouseUp(svg, { clientX: 300, clientY: 200 });
+    });
+
+    // Slot 0 should still show "Not placed"; slot 1 should show a coordinate
+    await waitFor(() => {
+      // At least 2 "Not placed" labels: slots 0 and 2 (slot 1 has coord now)
+      const notPlaced = screen.getAllByText(/not placed/i);
+      expect(notPlaced.length).toBe(2);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. Save-error DOM test — 500 response surfaces error in the slot
+// ---------------------------------------------------------------------------
+
+describe("AnchorCalibration — save error display", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("shows the server error message in the slot when PUT returns 500", async () => {
+    global.fetch = vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === "PUT")
+        return makeJsonResponse(500, { error: "Internal server error" });
+      return makeJsonResponse(200, { anchors: [] });
+    }) as unknown as typeof global.fetch;
+
+    const { container } = await renderCalibration();
+
+    const svg = container.querySelector("svg")!;
+    vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: 800, bottom: 600,
+      width: 800, height: 600, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    const placeBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^Place$/i.test(b.textContent?.trim() ?? ""),
+    );
+    await act(async () => { fireEvent.click(placeBtns[0]!); });
+    await act(async () => {
+      fireEvent.mouseDown(svg, { button: 0, clientX: 200, clientY: 150 });
+      fireEvent.mouseUp(svg, { clientX: 200, clientY: 150 });
+    });
+
+    const inputs = container.querySelectorAll("input");
+    await act(async () => {
+      fireEvent.change(inputs[0]!, { target: { value: "TestAnchor" } });
+      fireEvent.change(inputs[1]!, { target: { value: "5.0" } });
+      fireEvent.change(inputs[2]!, { target: { value: "10.0" } });
+    });
+
+    const saveBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^(Save|Update)$/i.test(b.textContent?.trim() ?? ""),
+    );
+    await act(async () => { fireEvent.click(saveBtns[0]!); });
+
+    await waitFor(() => {
+      expect(screen.getByText(/internal server error/i)).toBeTruthy();
+    });
+  });
+
+  it("dismiss button clears the error and resets slot to idle", async () => {
+    global.fetch = vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === "PUT")
+        return makeJsonResponse(500, { error: "Oops" });
+      return makeJsonResponse(200, { anchors: [] });
+    }) as unknown as typeof global.fetch;
+
+    const { container } = await renderCalibration();
+
+    const svg = container.querySelector("svg")!;
+    vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: 800, bottom: 600,
+      width: 800, height: 600, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    const placeBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^Place$/i.test(b.textContent?.trim() ?? ""),
+    );
+    await act(async () => { fireEvent.click(placeBtns[0]!); });
+    await act(async () => {
+      fireEvent.mouseDown(svg, { button: 0, clientX: 200, clientY: 150 });
+      fireEvent.mouseUp(svg, { clientX: 200, clientY: 150 });
+    });
+
+    const inputs = container.querySelectorAll("input");
+    await act(async () => {
+      fireEvent.change(inputs[0]!, { target: { value: "X" } });
+      fireEvent.change(inputs[1]!, { target: { value: "1" } });
+      fireEvent.change(inputs[2]!, { target: { value: "2" } });
+    });
+
+    const saveBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^(Save|Update)$/i.test(b.textContent?.trim() ?? ""),
+    );
+    await act(async () => { fireEvent.click(saveBtns[0]!); });
+
+    // Wait for error to appear
+    await waitFor(() => {
+      expect(screen.getByText(/oops/i)).toBeTruthy();
+    });
+
+    // Click the dismiss button
+    const dismissBtn = screen.getByRole("button", { name: /dismiss error for anchor 1/i });
+    await act(async () => { fireEvent.click(dismissBtn); });
+
+    // Error message should be gone
+    await waitFor(() => {
+      expect(screen.queryByText(/oops/i)).toBeNull();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. ARIA attributes
+// ---------------------------------------------------------------------------
+
+describe("AnchorCalibration — ARIA attributes", () => {
+  beforeEach(() => {
+    global.fetch = stubFetchOk();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("per-slot status divs have aria-live=polite and aria-atomic=true", async () => {
+    const { container } = await renderCalibration();
+
+    const statusDivs = Array.from(container.querySelectorAll("[aria-live='polite']"));
+    // One per slot
+    expect(statusDivs.length).toBeGreaterThanOrEqual(3);
+    for (const div of statusDivs) {
+      expect(div.getAttribute("aria-atomic")).toBe("true");
+    }
+  });
+
+  it("Save button aria-label says 'Save Anchor N' in idle phase", async () => {
+    const { container } = await renderCalibration();
+
+    const saveBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^(Save|Update)$/i.test(b.textContent?.trim() ?? ""),
+    );
+    // Slot 0 Save button idle label
+    expect(saveBtns[0]!.getAttribute("aria-label")).toBe("Save Anchor 1");
+    expect(saveBtns[1]!.getAttribute("aria-label")).toBe("Save Anchor 2");
+    expect(saveBtns[2]!.getAttribute("aria-label")).toBe("Save Anchor 3");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 4. Clear API round-trip
 // ---------------------------------------------------------------------------
 

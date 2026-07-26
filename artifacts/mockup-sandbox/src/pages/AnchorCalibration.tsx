@@ -395,6 +395,10 @@ export function AnchorCalibration() {
     [refetchAnchors, setSlotPhase, clearSuccessTimer],
   );
 
+  const handleDismissError = useCallback((idx: 0 | 1 | 2) => {
+    setSlotPhase(idx, "idle", "");
+  }, [setSlotPhase]);
+
   const isSaved = useCallback(
     (idx: number) => anchors.some((a) => a.id === idx + 1),
     [anchors],
@@ -546,6 +550,13 @@ export function AnchorCalibration() {
                     type="button"
                     onClick={() => void handleSave(idx)}
                     disabled={isBusy}
+                    aria-label={
+                      phase === "busy"
+                        ? `Saving Anchor ${idx + 1}…`
+                        : phase === "success"
+                          ? `Anchor ${idx + 1} saved`
+                          : `Save Anchor ${idx + 1}`
+                    }
                     style={{
                       ...styles.saveBtn,
                       background: saveBtnBg,
@@ -579,7 +590,11 @@ export function AnchorCalibration() {
                 </div>
 
                 {/* Per-slot status text */}
-                <div style={styles.slotStatusRow}>
+                <div
+                  style={styles.slotStatusRow}
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
                   {phase === "busy" && (
                     <span style={{ color: "#888" }}>⟳ Saving…</span>
                   )}
@@ -587,7 +602,17 @@ export function AnchorCalibration() {
                     <span style={{ color: "#16a34a" }}>✓ {slotMsg}</span>
                   )}
                   {phase === "error" && (
-                    <span style={{ color: "#dc2626" }}>✕ {slotMsg}</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ color: "#dc2626" }}>✕ {slotMsg}</span>
+                      <button
+                        type="button"
+                        aria-label={`Dismiss error for Anchor ${idx + 1}`}
+                        onClick={() => handleDismissError(idx)}
+                        style={styles.dismissBtn}
+                      >
+                        ✕
+                      </button>
+                    </span>
                   )}
                 </div>
               </div>
@@ -835,6 +860,18 @@ const styles = {
     background: "#fff",
     color: "#e11d48",
     cursor: "pointer",
+  },
+  dismissBtn: {
+    fontSize: 10,
+    fontWeight: 700,
+    lineHeight: 1,
+    padding: "1px 5px",
+    borderRadius: 4,
+    border: "1px solid #dc2626",
+    background: "transparent",
+    color: "#dc2626",
+    cursor: "pointer",
+    flexShrink: 0,
   },
   statusText: {
     fontSize: 12,
