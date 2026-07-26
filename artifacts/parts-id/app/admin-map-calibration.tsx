@@ -10,7 +10,7 @@
  */
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -116,19 +116,46 @@ export default function AdminMapCalibrationScreen() {
     return () => { cancelled = true; };
   }, []);
 
-  // Sync forms from loaded anchors
+  // Track which anchor slots were previously saved so we can detect deletions.
+  const prevAnchorIdsRef = useRef<Set<number>>(new Set());
+
+  // Sync forms from loaded anchors.
+  // Only touch slots that are present in the server response OR were previously
+  // saved (to detect deletions). Unsaved local edits are left intact so a
+  // refetch triggered by saving another slot doesn't wipe a pending placement.
   useEffect(() => {
-    const next: [SlotForm, SlotForm, SlotForm] = [emptySlot(), emptySlot(), emptySlot()];
-    const nextCoords: [{ x: number; y: number } | null, { x: number; y: number } | null, { x: number; y: number } | null] = [null, null, null];
-    for (const a of anchors) {
-      const idx = a.id - 1;
-      if (idx >= 0 && idx <= 2) {
-        next[idx] = anchorToForm(a);
-        nextCoords[idx] = { x: a.svgX, y: a.svgY };
+    const anchorMap = new Map(anchors.map((a) => [a.id, a]));
+    const prevIds = prevAnchorIdsRef.current;
+
+    setForms((prev) => {
+      const next = [...prev] as typeof prev;
+      for (let i = 0; i < 3; i++) {
+        const slot = i + 1;
+        const serverAnchor = anchorMap.get(slot);
+        if (serverAnchor) {
+          next[i] = anchorToForm(serverAnchor);  // saved → sync from server
+        } else if (prevIds.has(slot)) {
+          next[i] = emptySlot();                  // was saved, now gone → deleted
+        }
+        // not saved + not previously saved → leave local state intact
       }
-    }
-    setForms(next);
-    setSvgCoords(nextCoords);
+      return next;
+    });
+    setSvgCoords((prev) => {
+      const next = [...prev] as typeof prev;
+      for (let i = 0; i < 3; i++) {
+        const slot = i + 1;
+        const serverAnchor = anchorMap.get(slot);
+        if (serverAnchor) {
+          next[i] = { x: serverAnchor.svgX, y: serverAnchor.svgY };
+        } else if (prevIds.has(slot)) {
+          next[i] = null;                         // deleted → clear
+        }
+      }
+      return next;
+    });
+
+    prevAnchorIdsRef.current = new Set(anchors.map((a) => a.id));
   }, [anchors]);
 
   // Compute anchor transform from current state (mix of saved anchors + pending form values)
@@ -200,6 +227,7 @@ export default function AdminMapCalibrationScreen() {
   }, [pickingSlot, mapW, mapH, vbW, vbH, contentVB, zones, zoneAlignment]);
 
   const tapGesture = Gesture.Tap()
+    .runOnJS(true)
     .onEnd((e) => {
       if (pickingSlot === null) return;
       const x = e.x;
@@ -386,9 +414,12 @@ export default function AdminMapCalibrationScreen() {
                     })}
                   </Svg>
 
-                  {/* Pick-mode overlay */}
+                  {/* Pick-mode overlay — box-none lets the GestureDetector's tap
+                      reach through the overlay on web (where an absolute-fill
+                      <div> would otherwise swallow all pointer events). The
+                      cancel Pressable child still receives its own touches. */}
                   {pickingSlot !== null && (
-                    <View style={[styles.pickOverlay, { borderColor: ANCHOR_COLORS[pickingSlot] }]}>
+                    <View style={[styles.pickOverlay, { borderColor: ANCHOR_COLORS[pickingSlot] }]} pointerEvents="box-none">
                       <View style={[styles.pickBanner, { backgroundColor: ANCHOR_COLORS[pickingSlot] + "cc" }]}>
                         <Text style={styles.pickBannerText}>
                           Tap to place Anchor {pickingSlot + 1}
