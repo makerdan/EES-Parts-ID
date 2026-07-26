@@ -47,3 +47,9 @@ id = "-8JJQzoe_MRlgdHwBe_Mt"
 uri = "file://scripts/port-authority-skills.zip"
 type = "unspecified"
 title = "Port Authority Skills"
+
+[[outputs]]
+id = "app3bxOEk54AmepISGVqN"
+uri = "file://artifacts/failure-gate-skill.zip"
+type = "unspecified"
+title = "Failure Gate — SKILL.md"
