@@ -53,3 +53,9 @@ id = "app3bxOEk54AmepISGVqN"
 uri = "file://artifacts/failure-gate-skill.zip"
 type = "unspecified"
 title = "Failure Gate — SKILL.md"
+
+[[outputs]]
+id = "dm8G808uNohnX-004O9KQ"
+uri = "file://artifacts/task-triage-skill.zip"
+type = "unspecified"
+title = "Task Triage — SKILL.md"
