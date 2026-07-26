@@ -687,7 +687,9 @@ describe("AnchorCalibration — clear behaviour", () => {
   it("shows error status when DELETE fails", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (init?.method === "DELETE") return makeJsonResponse(500, {});
+      // Return a JSON error body so the component can surface the server message.
+      if (init?.method === "DELETE")
+        return makeJsonResponse(500, { error: "Clear failed" });
       return makeJsonResponse(200, {
         anchors: [{
           id: 1, name: "A", svgX: 100, svgY: 200,
@@ -700,6 +702,7 @@ describe("AnchorCalibration — clear behaviour", () => {
     const clearBtn = screen.getByText(/^clear$/i);
     await act(async () => { fireEvent.click(clearBtn); });
 
+    // Error message now appears in the per-slot status row (✕ <message>).
     await waitFor(() => {
       expect(screen.getByText(/clear failed/i)).toBeTruthy();
     });
