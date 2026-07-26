@@ -24,31 +24,7 @@ import { render, act, RenderResult } from "@testing-library/react-native";
 
 // ─── react-native-svg ─────────────────────────────────────────────────────────
 
-jest.mock("react-native-svg", () => {
-  const React = require("react");
-  function make(tag: string) {
-    return function SVGMock({
-      children,
-      ...props
-    }: {
-      children?: React.ReactNode;
-      [k: string]: unknown;
-    }) {
-      return React.createElement(tag, props, children);
-    };
-  }
-  return {
-    Svg:     make("svg-svg"),
-    G:       make("svg-g"),
-    Path:    make("svg-path"),
-    Ellipse: make("svg-ellipse"),
-    Circle:  make("svg-circle"),
-    Rect:    make("svg-rect"),
-    Text:    make("Text"),
-    SvgUri:  make("svg-uri"),
-    SvgXml:  make("svg-xml"),
-  };
-});
+jest.mock("react-native-svg", () => require("./helpers/mapMocks").createSvgMock());
 
 // ─── react-native ─────────────────────────────────────────────────────────────
 
@@ -67,20 +43,11 @@ jest.mock("react-native", () => ({
 
 // ─── @expo/vector-icons ──────────────────────────────────────────────────────
 
-jest.mock("@expo/vector-icons", () => ({
-  Feather: () => null,
-  MaterialCommunityIcons: () => null,
-}));
+jest.mock("@expo/vector-icons", () => require("./helpers/mapMocks").createVectorIconsMock());
 
-// ─── expo-asset ───────────────────────────────────────────────────────────────
+// ─── expo-asset ─────────────────────────────────────────────────────────────
 
-jest.mock("expo-asset", () => ({
-  Asset: {
-    fromModule: () => ({ downloadAsync: async () => {}, localUri: "" }),
-    loadAsync:  async () => [{ hash: "test", localUri: "", uri: "" }],
-  },
-}));
-
+jest.mock("expo-asset", () => require("./helpers/mapMocks").createExpoAssetMock());
 // ─── @react-native-async-storage/async-storage ───────────────────────────────
 
 jest.mock("@react-native-async-storage/async-storage", () => ({
@@ -90,86 +57,20 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 }));
 
 // ─── react-native-reanimated ──────────────────────────────────────────────────
-//
-// withTiming is a jest.fn() so tests can assert whether the fill-opacity
-// animation was triggered and with what arguments.
 
-jest.mock("react-native-reanimated", () => {
-  const React = require("react");
-  const makeShared = (v: unknown) => ({ value: v });
-  const AnimatedView = ({ children, style }: { children?: React.ReactNode; style?: unknown }) =>
-    React.createElement("rn-animated-view", { style }, children);
-  const createAnimatedComponent = (C: unknown) => C;
-  return {
-    __esModule:           true,
-    useSharedValue:       makeShared,
-    useAnimatedStyle:     () => ({}),
-    useAnimatedProps:     () => ({}),
-    useAnimatedReaction:  () => {},
-    withSpring:           (v: unknown) => v,
-    withRepeat:           (a: unknown) => a,
-    withTiming:           jest.fn((v: unknown) => v),
-    runOnJS:              (fn: unknown) => fn,
-    cancelAnimation:      () => {},
-    Animated: { createAnimatedComponent, View: AnimatedView },
-    default:  { createAnimatedComponent, View: AnimatedView },
-  };
-});
+jest.mock("react-native-reanimated", () => require("./helpers/mapMocks").createReanimatedMockWithTimingSpy());
 
 // ─── react-native-gesture-handler ────────────────────────────────────────────
 
-jest.mock("react-native-gesture-handler", () => {
-  const React = require("react");
-  const chain = () => {
-    const c: Record<string, unknown> = {};
-    ["minPointers", "minDistance", "onUpdate", "onEnd", "numberOfTaps"].forEach(
-      (m) => { c[m] = () => c; },
-    );
-    return c;
-  };
-  return {
-    Gesture: {
-      Pan:          chain,
-      Pinch:        chain,
-      Tap:          chain,
-      Simultaneous: (...args: unknown[]) => args[0],
-      Exclusive:    (...args: unknown[]) => args[0],
-    },
-    GestureDetector: ({ children }: { children: React.ReactNode }) =>
-      React.createElement(React.Fragment, null, children),
-  };
-});
+jest.mock("react-native-gesture-handler", () => require("./helpers/mapMocks").createGestureHandlerMock());
 
-// ─── @/utils/floorPlanCache ───────────────────────────────────────────────────
+// ─── @/utils/floorPlanCache ─────────────────────────────────────────────────
 
-jest.mock("@/utils/floorPlanCache", () => ({
-  getCachedData:        jest.fn().mockReturnValue(null),
-  getCachedHash:        jest.fn().mockReturnValue(null),
-  getIfValid:           jest.fn().mockReturnValue(null),
-  hasCachedData:        jest.fn().mockReturnValue(false),
-  initPersistRead:      jest.fn().mockReturnValue(Promise.resolve()),
-  resetForServerUpdate: jest.fn(),
-  setCached:            jest.fn(),
-  setFallbackEmpty:     jest.fn(),
-}));
+jest.mock("@/utils/floorPlanCache", () => require("./helpers/mapMocks").createFloorPlanCacheMock());
 
 // ─── @/utils/mapViewport ─────────────────────────────────────────────────────
 
-jest.mock("@/utils/mapViewport", () => ({
-  SVG_VIEWBOX_W:       7329.6001,
-  SVG_VIEWBOX_H:       4997.2798,
-  SVG_ASPECT:          7329.6001 / 4997.2798,
-  MIN_SCALE:           0.8,
-  MAX_SCALE:           50,
-  FIT_PADDING:         16,
-  ZOOM_STOPS:          [{ scale: 1.5 }, { scale: 4 }, { scale: 10 }, { scale: 22 }, { scale: 45 }],
-  parseContentViewBox: jest.fn().mockReturnValue(null),
-  fitContentViewport:  jest.fn().mockReturnValue({ scale: 1, tx: 0, ty: 0 }),
-  makeTileViewBox:     jest.fn().mockReturnValue("0 0 100 100"),
-  computeFocusPan:     jest.fn().mockReturnValue({ tx: 0, ty: 0 }),
-  tileGridSize:        jest.fn().mockReturnValue(1),
-  zoomStopForScale:    jest.fn().mockReturnValue(0),
-}));
+jest.mock("@/utils/mapViewport", () => require("./helpers/mapMocks").createMapViewportMock());
 
 // ─── @/hooks/useColors ───────────────────────────────────────────────────────
 

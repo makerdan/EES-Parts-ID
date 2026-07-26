@@ -327,7 +327,7 @@ jest.mock("@/utils/scanHistory", () => ({}));
 // ── Imports (after all mocks) ─────────────────────────────────────────────────
 
 import React from "react";
-import { render, act, RenderResult } from "@testing-library/react-native";
+import { render, act, RenderResult, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 
 import SearchScreen from "../app/(tabs)/index";
@@ -440,7 +440,7 @@ async function triggerSearch(result: RenderResult) {
   const input = () =>
     result.root!.queryAll((n: Inst) => (n.type as unknown as string) === "keyword-input", { includeSelf: true })[0]!;
   await act(async () => {
-    (input().props.onChangeText as (v: string) => void)("wire nut");
+    fireEvent.changeText(input(), "wire nut");
   });
   await act(async () => {
     await (input().props.onSubmitEditing as () => Promise<void> | void)();

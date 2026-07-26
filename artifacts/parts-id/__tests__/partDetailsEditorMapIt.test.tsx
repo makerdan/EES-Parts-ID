@@ -23,7 +23,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import type { InventoryItem } from "@workspace/api-client-react";
@@ -188,7 +188,7 @@ describe('PartDetailsEditor – "Map it!" button', () => {
     const btn = findPressable(result.root!, "Map it!");
     expect(btn).not.toBeNull();
 
-    await act(async () => { btn!.props.onPress(); });
+    await act(async () => { fireEvent.press(btn!); });
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onShowOnMap).toHaveBeenCalledTimes(1);
@@ -215,7 +215,7 @@ describe('PartDetailsEditor – "Map it!" button', () => {
     // is shown by the caller's handleShowOnMap, not by PartDetailsEditor itself.
     expect(btn).not.toBeNull();
 
-    await act(async () => { btn!.props.onPress(); });
+    await act(async () => { fireEvent.press(btn!); });
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onShowOnMap).toHaveBeenCalledTimes(1);
@@ -269,7 +269,7 @@ describe("PartDetailsEditor – expanded-description save path", () => {
     const saveBtn = findPressable(result.root!, "Save Expanded Description");
     expect(saveBtn).not.toBeNull();
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
@@ -310,7 +310,7 @@ describe("PartDetailsEditor – expanded-description save path", () => {
     activeTree = result;
 
     const saveBtn = findPressable(result.root!, "Save Expanded Description");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({
@@ -343,7 +343,7 @@ describe("PartDetailsEditor – expanded-description save path", () => {
     const clearBtn = findPressableByA11yLabel(result.root!, "Clear expanded description");
     expect(clearBtn).not.toBeNull();
 
-    await act(async () => { clearBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(clearBtn!); });
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
@@ -384,7 +384,7 @@ describe("PartDetailsEditor – expanded-description save path", () => {
     const saveBtn = findPressable(result.root!, "Save Expanded Description");
     expect(saveBtn).not.toBeNull();
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
 

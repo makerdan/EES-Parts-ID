@@ -27,7 +27,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 
 // ─── expo-router ─────────────────────────────────────────────────────────────
 
@@ -356,13 +356,13 @@ async function renderAdminWithBridgeCard(itemOverride: typeof itemWithNoDims = i
   // Add an image so the Identify button becomes enabled.
   const libraryBtn = findPressable(result.root!!, "Photo Library");
   expect(libraryBtn).not.toBeNull();
-  await act(async () => { libraryBtn!.props.onPress(); });
+  await act(async () => { fireEvent.press(libraryBtn!); });
   await flushPromises();
 
   // Fire identify — runs the full identify+search pipeline.
   const identifyBtn = findPressable(result.root!!, "Identify Part");
   expect(identifyBtn).not.toBeNull();
-  await act(async () => { identifyBtn!.props.onPress(); });
+  await act(async () => { fireEvent.press(identifyBtn!); });
   await flushPromises();
 
   return result;
@@ -404,11 +404,11 @@ describe("PhotoScreen – admin bridge card", () => {
     await flushPromises();
 
     const libraryBtn = findPressable(result.root!!, "Photo Library");
-    await act(async () => { libraryBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(libraryBtn!); });
     await flushPromises();
 
     const identifyBtn = findPressable(result.root!!, "Identify Part");
-    await act(async () => { identifyBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(identifyBtn!); });
     await flushPromises();
 
     expect(hasText(result.root!!, "No dimensions on record")).toBe(false);
@@ -440,11 +440,11 @@ describe("PhotoScreen – admin bridge card", () => {
     await flushPromises();
 
     const libraryBtn = findPressable(result.root!!, "Photo Library");
-    await act(async () => { libraryBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(libraryBtn!); });
     await flushPromises();
 
     const identifyBtn = findPressable(result.root!!, "Identify Part");
-    await act(async () => { identifyBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(identifyBtn!); });
     await flushPromises();
 
     expect(hasText(result.root!!, "No dimensions on record")).toBe(false);
@@ -463,7 +463,7 @@ describe("PhotoScreen – 'Measure Now' opens MeasurePartScreen", () => {
 
     const measureBtn = findPressable(result.root!!, "Measure Now");
     expect(measureBtn).not.toBeNull();
-    await act(async () => { measureBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(measureBtn!); });
 
     expect(capturedMeasureVisible).toBe(true);
   });
@@ -472,7 +472,7 @@ describe("PhotoScreen – 'Measure Now' opens MeasurePartScreen", () => {
     const result = await renderAdminWithBridgeCard();
 
     const measureBtn = findPressable(result.root!!, "Measure Now");
-    await act(async () => { measureBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(measureBtn!); });
 
     expect(capturedMeasureInitialItem).not.toBeNull();
     expect(capturedMeasureInitialItem).toMatchObject({
@@ -485,7 +485,7 @@ describe("PhotoScreen – 'Measure Now' opens MeasurePartScreen", () => {
     const result = await renderAdminWithBridgeCard();
 
     const measureBtn = findPressable(result.root!!, "Measure Now");
-    await act(async () => { measureBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(measureBtn!); });
 
     // The bridge card is now gone (adminBridgeItem was cleared) while the
     // MeasurePartScreen is visible — no stale duplicate prompt visible.
@@ -502,7 +502,7 @@ describe("PhotoScreen – closing MeasurePartScreen clears adminBridgeMeasureIte
     const result = await renderAdminWithBridgeCard();
 
     const measureBtn = findPressable(result.root!!, "Measure Now");
-    await act(async () => { measureBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(measureBtn!); });
     expect(capturedMeasureVisible).toBe(true);
     expect(capturedMeasureOnClose).not.toBeNull();
 
@@ -516,7 +516,7 @@ describe("PhotoScreen – closing MeasurePartScreen clears adminBridgeMeasureIte
     await renderAdminWithBridgeCard();
 
     const measureBtn = findPressable(activeTree!.root!, "Measure Now");
-    await act(async () => { measureBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(measureBtn!); });
 
     expect(capturedMeasureInitialItem).not.toBeNull();
 
@@ -543,7 +543,7 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
     const result = await renderAdminWithBridgeCard();
 
     const measureBtn = findPressable(result.root!!, "Measure Now");
-    await act(async () => { measureBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(measureBtn!); });
     expect(capturedMeasureVisible).toBe(true);
 
     const confirmedDims = { length: 120, width: 85, height: 45, diameter: null };
@@ -556,7 +556,7 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
     const result = await renderAdminWithBridgeCard();
 
     const measureBtn = findPressable(result.root!!, "Measure Now");
-    await act(async () => { measureBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(measureBtn!); });
 
     const confirmedDims = { length: 120, width: 85, height: 45, diameter: null };
     await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });
@@ -574,7 +574,7 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
     const result = await renderAdminWithBridgeCard();
 
     const measureBtn = findPressable(result.root!!, "Measure Now");
-    await act(async () => { measureBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(measureBtn!); });
 
     // LiDAR / AI estimates often return sub-mm floats; the handler rounds them.
     const confirmedDims = { length: 119.7, width: 84.4, height: 45.5, diameter: null };
@@ -592,7 +592,7 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
     const result = await renderAdminWithBridgeCard();
 
     const measureBtn = findPressable(result.root!!, "Measure Now");
-    await act(async () => { measureBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(measureBtn!); });
 
     const confirmedDims = { length: null, width: null, height: null, diameter: 32 };
     await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });
@@ -611,7 +611,7 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
     const result = await renderAdminWithBridgeCard();
 
     const measureBtn = findPressable(result.root!!, "Measure Now");
-    await act(async () => { measureBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(measureBtn!); });
 
     const confirmedDims = { length: null, width: null, height: null, diameter: null };
     await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });
@@ -623,7 +623,7 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
     const result = await renderAdminWithBridgeCard();
 
     const measureBtn = findPressable(result.root!!, "Measure Now");
-    await act(async () => { measureBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(measureBtn!); });
 
     const confirmedDims = { length: 100, width: 60, height: 30, diameter: null };
     await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });
@@ -648,7 +648,7 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
     const identifyCallsBefore = mockIdentifyMutateAsync.mock.calls.length;
 
     const measureBtn = findPressable(result.root!!, "Measure Now");
-    await act(async () => { measureBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(measureBtn!); });
 
     const confirmedDims = { length: 100, width: 60, height: 30, diameter: null };
     await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });

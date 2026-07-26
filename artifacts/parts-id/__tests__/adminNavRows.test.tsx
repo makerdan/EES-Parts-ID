@@ -34,7 +34,7 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 import * as fs from "fs";
 import * as path from "path";
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 
 // ── Source path ───────────────────────────────────────────────────────────────
@@ -280,7 +280,7 @@ async function renderAdminPeopleSection() {
   useApp.mockReturnValue(makeAppMock({ isAdmin: true, adminToken: "tok-abc" }));
   activeTree = await renderComponent(React.createElement(UploadScreen));
   const peopleCard = findPressable(activeTree!.root!!, "People & System");
-  await act(async () => { peopleCard!.props.onPress(); });
+  await act(async () => { fireEvent.press(peopleCard!); });
   await flushPromises();
   return activeTree;
 }
@@ -351,21 +351,21 @@ describe("UploadScreen — admin nav rows navigate to correct routes", () => {
   it("tapping 'Admin Dashboard' calls router.push('/admin')", async () => {
     const result = await renderAdminPeopleSection();
     const row = findPressable(result.root!, "Admin Dashboard");
-    await act(async () => { row!.props.onPress(); });
+    await act(async () => { fireEvent.press(row!); });
     expect(mockRouterPush).toHaveBeenCalledWith("/admin");
   });
 
   it("tapping 'Inbox' calls router.push('/admin-inbox')", async () => {
     const result = await renderAdminPeopleSection();
     const row = findPressable(result.root!, "Inbox");
-    await act(async () => { row!.props.onPress(); });
+    await act(async () => { fireEvent.press(row!); });
     expect(mockRouterPush).toHaveBeenCalledWith("/admin-inbox");
   });
 
   it("tapping 'AI Log' calls router.push('/ai-log')", async () => {
     const result = await renderAdminPeopleSection();
     const row = findPressable(result.root!, "AI Log");
-    await act(async () => { row!.props.onPress(); });
+    await act(async () => { fireEvent.press(row!); });
     expect(mockRouterPush).toHaveBeenCalledWith("/ai-log");
   });
 });

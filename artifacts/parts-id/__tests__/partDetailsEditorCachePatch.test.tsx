@@ -20,7 +20,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 import { Alert } from "react-native";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
@@ -240,22 +240,22 @@ describe("PartDetailsEditor – handleSave success path cache patch", () => {
     // 1. Change description via the KeyboardDoneInput mock.
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     expect(descInput).not.toBeNull();
-    await act(async () => { descInput!.props.onChangeText("New description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "New description"); });
 
     // 2. Remove the "relay" keyword chip.
     const relayChip = findPressable(result.root!, "relay");
     expect(relayChip).not.toBeNull();
-    await act(async () => { relayChip!.props.onPress(); });
+    await act(async () => { fireEvent.press(relayChip!); });
 
     // 3. Remove the bin.
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     expect(removeBinBtn).not.toBeNull();
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     // 4. Save — fetch succeeds for description, mutations resolve for bins/keywords.
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // setQueriesData must have been called twice: once for inventory-list,
     // once for searchInventory.
@@ -304,16 +304,16 @@ describe("PartDetailsEditor – handleSave success path cache patch", () => {
     activeTree = result;
 
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
-    await act(async () => { descInput!.props.onChangeText("New description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "New description"); });
 
     const relayChip = findPressable(result.root!, "relay");
-    await act(async () => { relayChip!.props.onPress(); });
+    await act(async () => { fireEvent.press(relayChip!); });
 
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockSetQueriesData.mock.calls.length).toBeGreaterThanOrEqual(2);
 
@@ -373,10 +373,10 @@ describe("PartDetailsEditor – handleSave success path cache patch", () => {
     // patchItem must still carry the existing dimension values forward.
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     expect(removeBinBtn).not.toBeNull();
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockSetQueriesData).toHaveBeenCalledTimes(2);
 
@@ -411,10 +411,10 @@ describe("PartDetailsEditor – handleSave success path cache patch", () => {
     activeTree = result;
 
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     const [, inventoryUpdater] = mockSetQueriesData.mock.calls[0] as [
       unknown,
@@ -442,11 +442,11 @@ describe("PartDetailsEditor – handleSave partial-failure path: no partial writ
 
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     expect(removeBinBtn).not.toBeNull();
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // The synchronous patch must never run when any op fails.
     expect(mockSetQueriesData).not.toHaveBeenCalled();
@@ -474,14 +474,14 @@ describe("PartDetailsEditor – handleSave partial-failure path: no partial writ
     // Change description (triggers the fetch PATCH that will fail).
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     expect(descInput).not.toBeNull();
-    await act(async () => { descInput!.props.onChangeText("New description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "New description"); });
 
     // Change bins too (mutation succeeds) — partial failure scenario.
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // Bins succeeded — setQueriesData MUST be called to re-apply the bins patch
     // so the list view reflects the committed server state even though description
@@ -511,10 +511,10 @@ describe("PartDetailsEditor – handleSave partial-failure path: no partial writ
     activeTree = result;
 
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // setQueryData must restore every snapshot entry.
     const restoredKeys = (mockSetQueryData.mock.calls as Array<[unknown, unknown]>).map(
@@ -547,10 +547,10 @@ describe("PartDetailsEditor – handleSave partial-failure path: no partial writ
     activeTree = result;
 
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // Find the setQueryData call that restored the inventory snapshot.
     const calls = mockSetQueryData.mock.calls as Array<[unknown, unknown]>;
@@ -581,11 +581,11 @@ describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
     // Remove the bin so the bins op is enqueued.
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     expect(removeBinBtn).not.toBeNull();
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // The rendered tree must contain a Text node with the session-expired copy.
     const allTexts = result.root!
@@ -616,11 +616,11 @@ describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
     // Change only the description — no bins/dims change, so description is the sole op.
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     expect(descInput).not.toBeNull();
-    await act(async () => { descInput!.props.onChangeText("New description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "New description"); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // The rendered tree must contain the session-expired copy (not the generic
     // "check connection" message) because the server returned 401.
@@ -654,11 +654,11 @@ describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
     // the first one (Length), which is enough to mark dimsChanged = true.
     const lengthInput = findTextInput(result.root!, "\u2013");
     expect(lengthInput).not.toBeNull();
-    await act(async () => { lengthInput!.props.onChangeText("50"); });
+    await act(async () => { fireEvent.changeText(lengthInput!, "50"); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // Session-expired text must be present for the dimensions op (not the
     // generic "check connection" fallback).
@@ -687,12 +687,12 @@ describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
     // Remove the bin so the bins op is enqueued.
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     expect(removeBinBtn).not.toBeNull();
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     // First save — mutation rejects with 401.
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // Confirm the session-expired message is visible.
     const textsAfterFailure = result.root!
@@ -705,7 +705,7 @@ describe("PartDetailsEditor – handleSave 401 session-expired error", () => {
 
     // Re-mock the mutation to succeed, then save again.
     mockBinsMutateAsync.mockResolvedValue(undefined);
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // The session-expired Text node must be gone after a successful save.
     const textsAfterSuccess = result.root!

@@ -18,7 +18,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { RenderResult } from "@testing-library/react-native";
 import { makeAppMock } from "./helpers/appMocks";
 
@@ -431,7 +431,7 @@ describe("MapScreen — outside-tap overlay clears selectedZone without navigati
     // since ZoneActionMenu itself is mocked out).
     expect(overlays.length).toBeGreaterThan(0);
 
-    await act(async () => { overlays[0]!.props.onPress(); });
+    await act(async () => { fireEvent.press(overlays[0]!); });
 
     expect(findByType(tree.root!, "zone-action-menu")).toBeNull();
   });
@@ -448,7 +448,7 @@ describe("MapScreen — outside-tap overlay clears selectedZone without navigati
       (n) => n.props.accessibilityLabel === "Dismiss zone menu",
     );
 
-    await act(async () => { overlays[0]!.props.onPress(); });
+    await act(async () => { fireEvent.press(overlays[0]!); });
 
     expect(mockRouterNavigate).not.toHaveBeenCalled();
     expect(mockRouterPush).not.toHaveBeenCalled();

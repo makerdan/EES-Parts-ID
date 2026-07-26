@@ -14,7 +14,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 import { AddPartForm } from "@/components/AddPartForm";
 import { makeAppMock } from "./helpers/appMocks";
@@ -139,7 +139,7 @@ describe("AddPartForm — save-and-unmount (isMounted guard)", () => {
     await act(async () => { fillRequiredFields(result); });
     const submitBtn = findSubmitButton(result);
     expect(submitBtn).not.toBeNull();
-    await act(async () => { submitBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(submitBtn!); });
 
     // Unmount the component BEFORE the fetch resolves.
     await act(async () => { result.unmount(); });
@@ -175,7 +175,7 @@ describe("AddPartForm — save-and-unmount (isMounted guard)", () => {
 
     await act(async () => { fillRequiredFields(result); });
     const submitBtn = findSubmitButton(result);
-    await act(async () => { submitBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(submitBtn!); });
 
     await act(async () => { result.unmount(); });
 
@@ -214,7 +214,7 @@ describe("AddPartForm — error rollback (still mounted)", () => {
     await act(async () => { fillRequiredFields(result); });
     const submitBtn = findSubmitButton(result);
     expect(submitBtn).not.toBeNull();
-    await act(async () => { submitBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(submitBtn!); });
     for (let i = 0; i < 5; i++) {
       await act(async () => { await Promise.resolve(); });
     }
@@ -237,7 +237,7 @@ describe("AddPartForm — error rollback (still mounted)", () => {
     await act(async () => { fillRequiredFields(result); });
     const submitBtn = findSubmitButton(result);
     expect(submitBtn).not.toBeNull();
-    await act(async () => { submitBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(submitBtn!); });
     for (let i = 0; i < 5; i++) {
       await act(async () => { await Promise.resolve(); });
     }

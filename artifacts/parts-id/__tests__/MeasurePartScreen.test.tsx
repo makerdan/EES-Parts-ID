@@ -22,7 +22,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
@@ -193,7 +193,7 @@ async function press(root: TestInst, label: string) {
   const btn = findPressable(root, label);
   if (!btn) throw new Error(`Button "${label}" not found`);
   await act(async () => {
-    (btn.props.onPress as () => void)();
+    fireEvent.press(btn);
   });
 }
 

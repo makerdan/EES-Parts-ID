@@ -23,7 +23,7 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 import * as fs from "fs";
 import * as path from "path";
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 
 // ── Source paths ──────────────────────────────────────────────────────────────
 
@@ -343,9 +343,7 @@ describe("OAuthButtons — Google sign-in success path", () => {
     const googleBtn = pressables[0];
     expect(googleBtn).toBeDefined();
 
-    await act(async () => {
-      googleBtn!.props.onPress();
-    });
+    await act(async () => { fireEvent.press(googleBtn!); });
 
     expect(mockSetActive).toHaveBeenCalledWith({ session: "session-google" });
     await result.unmount();
@@ -356,9 +354,7 @@ describe("OAuthButtons — Google sign-in success path", () => {
     result = await render(React.createElement(OAuthButtons, { mode: "sign-in" }));
 
     const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
-    await act(async () => {
-      pressables[0]!.props.onPress();
-    });
+    await act(async () => { fireEvent.press(pressables[0]!); });
 
     expect(mockReplace).toHaveBeenCalledWith("/(tabs)");
     await result.unmount();
@@ -372,9 +368,7 @@ describe("OAuthButtons — Google sign-in success path", () => {
     result = await render(React.createElement(OAuthButtons, { mode: "sign-in" }));
 
     const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
-    await act(async () => {
-      pressables[0]!.props.onPress();
-    });
+    await act(async () => { fireEvent.press(pressables[0]!); });
 
     expect(mockReplace).not.toHaveBeenCalled();
     expect(mockSetActive).not.toHaveBeenCalled();
@@ -403,9 +397,7 @@ describe("OAuthButtons — Apple sign-in success path", () => {
     const appleBtn = pressables[1];
     expect(appleBtn).toBeDefined();
 
-    await act(async () => {
-      appleBtn!.props.onPress();
-    });
+    await act(async () => { fireEvent.press(appleBtn!); });
 
     expect(mockSetActive).toHaveBeenCalledWith({ session: "session-apple" });
     await result.unmount();
@@ -416,9 +408,7 @@ describe("OAuthButtons — Apple sign-in success path", () => {
     result = await render(React.createElement(OAuthButtons, { mode: "sign-in" }));
 
     const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
-    await act(async () => {
-      pressables[1]!.props.onPress();
-    });
+    await act(async () => { fireEvent.press(pressables[1]!); });
 
     expect(mockReplace).toHaveBeenCalledWith("/(tabs)");
     await result.unmount();
@@ -499,9 +489,7 @@ describe("OAuthButtons — Google sign-up flow (new account)", () => {
 
     // OAuthButtons returns a Fragment — search container to find all Pressables.
     const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
-    await act(async () => {
-      pressables[0]!.props.onPress();
-    });
+    await act(async () => { fireEvent.press(pressables[0]!); });
 
     expect(mockSetActive).toHaveBeenCalledWith({ session: "session-new-user" });
     await result.unmount();
@@ -514,9 +502,7 @@ describe("OAuthButtons — Google sign-up flow (new account)", () => {
     result = await render(React.createElement(OAuthButtons, { mode: "sign-up" }));
 
     const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
-    await act(async () => {
-      pressables[0]!.props.onPress();
-    });
+    await act(async () => { fireEvent.press(pressables[0]!); });
 
     expect(mockReplace).toHaveBeenCalledWith("/(tabs)");
     await result.unmount();
@@ -530,9 +516,7 @@ describe("OAuthButtons — Google sign-up flow (new account)", () => {
     result = await render(React.createElement(OAuthButtons, { mode: "sign-up" }));
 
     const pressables = result.container.queryAll(n => n.type === "rn-pressable", { includeSelf: true });
-    await act(async () => {
-      pressables[0]!.props.onPress();
-    });
+    await act(async () => { fireEvent.press(pressables[0]!); });
 
     expect(mockReplace).not.toHaveBeenCalled();
     expect(mockSetActive).not.toHaveBeenCalled();

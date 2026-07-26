@@ -161,7 +161,7 @@ jest.mock("@/utils/adminGuard", () => ({
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 import type { InventoryItem } from "@workspace/api-client-react";
 
@@ -292,7 +292,7 @@ describe("EditItemScreen – FileSystem.readAsStringAsync failure surfaces as er
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     // An error banner or inline field error must be visible.
@@ -325,7 +325,7 @@ describe("EditItemScreen – FileSystem.readAsStringAsync failure surfaces as er
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     expect(
@@ -365,7 +365,7 @@ describe("EditItemScreen – PATCH /photo non-ok response surfaces as error bann
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     // The specific error message from the server or generic fallback must appear.
@@ -400,7 +400,7 @@ describe("EditItemScreen – PATCH /photo non-ok response surfaces as error bann
     await act(async () => { mockPhotoCbs.slot1!("file:///new/photo.jpg"); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     expect(hasText(result.root!, "Admin session expired")).toBe(true);
@@ -433,7 +433,7 @@ describe("EditItemScreen – successful photo upload calls PATCH /photo with ima
     await act(async () => { mockPhotoCbs.slot1!("file:///new/photo.jpg"); });
     const saveBtn = findPressable(result.root!, "Save Details");
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     expect(mockFetch).toHaveBeenCalledWith(
@@ -472,7 +472,7 @@ describe("EditItemScreen – successful photo upload calls PATCH /photo with ima
     await act(async () => { mockPhotoCbs.slot1!(photoUri); });
     const saveBtn = findPressable(result.root!, "Save Details");
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     expect(mockReadAsStringAsync).toHaveBeenCalledWith(
