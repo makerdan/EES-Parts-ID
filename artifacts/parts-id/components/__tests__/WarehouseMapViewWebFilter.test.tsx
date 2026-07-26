@@ -30,7 +30,8 @@
 (global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import TestRenderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
 
 // ─── react-native-reanimated ──────────────────────────────────────────────────
 
@@ -255,13 +256,13 @@ const flushPromises = () =>
   });
 
 function fireOnLayout(
-  renderer: TestRenderer.ReactTestRenderer,
+  result: Awaited<ReturnType<typeof render>>,
   width: number,
   height: number,
 ) {
-  const nodes = renderer.root.findAll(
+  const nodes = result.root!.queryAll(
     (n) => typeof n.props.onLayout === "function",
-    { deep: true },
+    { includeSelf: true },
   );
   if (nodes.length === 0) throw new Error("No onLayout node found");
   nodes[0]!.props.onLayout({
@@ -273,13 +274,13 @@ function fireOnLayout(
  * Locate the web floor-plan <g> — the only host <g> that carries
  * dangerouslySetInnerHTML (the zone-overlay <g> elements do not).
  */
-function findFloorPlanG(renderer: TestRenderer.ReactTestRenderer) {
-  const matches = renderer.root.findAll(
+function findFloorPlanG(result: Awaited<ReturnType<typeof render>>) {
+  const matches = result.root!.queryAll(
     (n) =>
       n.type === "g" &&
       n.props != null &&
       n.props.dangerouslySetInnerHTML != null,
-    { deep: true },
+    { includeSelf: true },
   );
   if (matches.length !== 1) {
     throw new Error(
@@ -295,15 +296,12 @@ async function mountWeb(scheme: "dark" | "light") {
   rn.Platform.OS = "web";
   rn.useColorScheme = () => scheme;
 
-  let renderer!: TestRenderer.ReactTestRenderer;
-  await act(async () => {
-    renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-  });
+  const result = await render(<WarehouseMapView {...BASE_PROPS} />);
   await flushPromises();
   await act(async () => {
-    fireOnLayout(renderer, 390, 761);
+    fireOnLayout(result, 390, 761);
   });
-  return renderer;
+  return result;
 }
 
 // ─── Setup / teardown ─────────────────────────────────────────────────────────
@@ -334,27 +332,27 @@ afterEach(() => {
 
 describe("web floor-plan filter — invert only in dark mode", () => {
   it("dark mode: floor-plan <g> has filter 'invert(1) brightness(0.88)'", async () => {
-    const renderer = await mountWeb("dark");
-    const g = findFloorPlanG(renderer);
+    const result = await mountWeb("dark");
+    const g = findFloorPlanG(result);
     expect(g.props.style.filter).toBe("invert(1) brightness(0.88)");
   });
 
   it("light mode: floor-plan <g> has filter 'none' (no invert)", async () => {
-    const renderer = await mountWeb("light");
-    const g = findFloorPlanG(renderer);
+    const result = await mountWeb("light");
+    const g = findFloorPlanG(result);
     expect(g.props.style.filter).toBe("none");
   });
 
   it("light mode: the invert filter must NOT be applied", async () => {
-    const renderer = await mountWeb("light");
-    const g = findFloorPlanG(renderer);
+    const result = await mountWeb("light");
+    const g = findFloorPlanG(result);
     // Guards against a future edit reintroducing the unconditional filter.
     expect(g.props.style.filter).not.toContain("invert");
   });
 
   it("dark mode: sanitized innerXml is embedded in the floor-plan <g>", async () => {
-    const renderer = await mountWeb("dark");
-    const g = findFloorPlanG(renderer);
+    const result = await mountWeb("dark");
+    const g = findFloorPlanG(result);
     expect(g.props.dangerouslySetInnerHTML.__html).toBe(MOCK_INNER_XML);
   });
 });

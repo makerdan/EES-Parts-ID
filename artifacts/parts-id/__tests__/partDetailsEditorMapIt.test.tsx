@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Tests for PartDetailsEditor covering two independent save paths:
  *
  *  A. "Map it!" button
@@ -25,7 +23,8 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import type { InventoryItem } from "@workspace/api-client-react";
 
@@ -106,55 +105,36 @@ jest.mock("@expo/vector-icons", () => ({
   Feather: () => null,
 }));
 
-// ─── Suppress react-test-renderer deprecation warning ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Instance-tree helpers ────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
 function findPressable(root: Inst, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
 function findPressableByA11yLabel(root: Inst, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => n.props.accessibilityLabel === label) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => n.props.accessibilityLabel === label) ?? null
   );
 }
 
 // ─── Render helper ────────────────────────────────────────────────────────────
 
 async function renderEditor(ui: React.ReactElement) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(ui); });
-  return tree;
+  const result = await render(ui);
+  return result;
 }
 
 // ─── Item fixture ─────────────────────────────────────────────────────────────
@@ -174,11 +154,11 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
 
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   mockMeasureOnConfirm = null;
@@ -195,7 +175,7 @@ describe('PartDetailsEditor – "Map it!" button', () => {
     const onShowOnMap = jest.fn();
     const item = makeItem({ binLocations: ["05-02-001"] });
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor
         item={item}
         adminToken="test-token"
@@ -203,9 +183,9 @@ describe('PartDetailsEditor – "Map it!" button', () => {
         onShowOnMap={onShowOnMap}
       />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const btn = findPressable(tree.root, "Map it!");
+    const btn = findPressable(result.root!, "Map it!");
     expect(btn).not.toBeNull();
 
     await act(async () => { btn!.props.onPress(); });
@@ -220,7 +200,7 @@ describe('PartDetailsEditor – "Map it!" button', () => {
     const onShowOnMap = jest.fn();
     const item = makeItem({ binLocations: [] });
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor
         item={item}
         adminToken="test-token"
@@ -228,9 +208,9 @@ describe('PartDetailsEditor – "Map it!" button', () => {
         onShowOnMap={onShowOnMap}
       />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const btn = findPressable(tree.root, "Map it!");
+    const btn = findPressable(result.root!, "Map it!");
     // Button must be present regardless of bin count — the toast for empty bins
     // is shown by the caller's handleShowOnMap, not by PartDetailsEditor itself.
     expect(btn).not.toBeNull();
@@ -246,16 +226,16 @@ describe('PartDetailsEditor – "Map it!" button', () => {
     const onClose = jest.fn();
     const item = makeItem();
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor
         item={item}
         adminToken="test-token"
         onClose={onClose}
       />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const btn = findPressable(tree.root, "Map it!");
+    const btn = findPressable(result.root!, "Map it!");
     expect(btn).toBeNull();
   });
 });
@@ -277,16 +257,16 @@ describe("PartDetailsEditor – expanded-description save path", () => {
       expandedDescription: "Original AI-generated notes about this part",
     } as unknown as Partial<InventoryItem>);
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor
         item={item}
         adminToken="test-token"
         onClose={jest.fn()}
       />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const saveBtn = findPressable(tree.root, "Save Expanded Description");
+    const saveBtn = findPressable(result.root!, "Save Expanded Description");
     expect(saveBtn).not.toBeNull();
 
     await act(async () => { saveBtn!.props.onPress(); });
@@ -320,16 +300,16 @@ describe("PartDetailsEditor – expanded-description save path", () => {
       expandedDescription: "  padded text with spaces  ",
     } as unknown as Partial<InventoryItem>);
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor
         item={item}
         adminToken="test-token"
         onClose={jest.fn()}
       />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const saveBtn = findPressable(tree.root, "Save Expanded Description");
+    const saveBtn = findPressable(result.root!, "Save Expanded Description");
     await act(async () => { saveBtn!.props.onPress(); });
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
@@ -351,16 +331,16 @@ describe("PartDetailsEditor – expanded-description save path", () => {
       expandedDescription: "Some existing description to clear",
     } as unknown as Partial<InventoryItem>);
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor
         item={item}
         adminToken="test-token"
         onClose={jest.fn()}
       />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const clearBtn = findPressableByA11yLabel(tree.root, "Clear expanded description");
+    const clearBtn = findPressableByA11yLabel(result.root!, "Clear expanded description");
     expect(clearBtn).not.toBeNull();
 
     await act(async () => { clearBtn!.props.onPress(); });
@@ -392,25 +372,25 @@ describe("PartDetailsEditor – expanded-description save path", () => {
       expandedDescription: "Some text",
     } as unknown as Partial<InventoryItem>);
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor
         item={item}
         adminToken="test-token"
         onClose={jest.fn()}
       />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const saveBtn = findPressable(tree.root, "Save Expanded Description");
+    const saveBtn = findPressable(result.root!, "Save Expanded Description");
     expect(saveBtn).not.toBeNull();
 
     await act(async () => { saveBtn!.props.onPress(); });
 
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
 
-    const errorNodes = tree.root.findAll(
-      n => typeof n.children?.[0] === "string" && (n.children[0] as string).includes("Unauthorized"),
-      { deep: true },
+    const errorNodes = result.root!.queryAll(
+      (n: TestInstance) => typeof n.children?.[0] === "string" && (n.children[0] as string).includes("Unauthorized"),
+      { includeSelf: true },
     );
     expect(errorNodes.length).toBeGreaterThan(0);
 
@@ -433,14 +413,14 @@ describe("PartDetailsEditor – dimensions save path", () => {
 
     const item = makeItem({ binLocations: [] });
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor
         item={item}
         adminToken="test-token"
         onClose={jest.fn()}
       />
     );
-    activeTree = tree;
+    activeTree = result;
 
     expect(mockMeasureOnConfirm).not.toBeNull();
 
@@ -471,14 +451,14 @@ describe("PartDetailsEditor – dimensions save path", () => {
 
     const item = makeItem({ binLocations: [] });
 
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor
         item={item}
         adminToken="test-token"
         onClose={jest.fn()}
       />
     );
-    activeTree = tree;
+    activeTree = result;
 
     expect(mockMeasureOnConfirm).not.toBeNull();
 
@@ -487,10 +467,10 @@ describe("PartDetailsEditor – dimensions save path", () => {
     expect(mockInvalidateListCache).not.toHaveBeenCalled();
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
 
-    const errorNodes = tree.root.findAll(
-      n => typeof n.children?.[0] === "string" &&
+    const errorNodes = result.root!.queryAll(
+      (n: TestInstance) => typeof n.children?.[0] === "string" &&
         (n.children[0] as string).includes("Could not save dimensions"),
-      { deep: true },
+      { includeSelf: true },
     );
     expect(errorNodes.length).toBeGreaterThan(0);
 

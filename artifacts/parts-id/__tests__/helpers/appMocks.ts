@@ -4,7 +4,7 @@
  * Usage:
  *   import { makeAppMock, flushPromises } from "./helpers/appMocks";
  *
- * In component tests that use act() from react-test-renderer, wrap flushPromises:
+ * In component tests that use act() from @testing-library/react-native, wrap flushPromises:
  *   const flush = () => act(async () => { await flushPromises(); });
  */
 
@@ -60,7 +60,7 @@ export function makeAppMock(overrides: Partial<AppContextValue> = {}): AppContex
  * Raw flush helper — drains the microtask queue without advancing timers,
  * so it works correctly whether fake or real timers are active.
  *
- * Wrap in `act()` from react-test-renderer when calling from component tests:
+ * Wrap in `act()` from @testing-library/react-native when calling from component tests:
  *   const flushPromises = () => act(async () => { await fp(); });
  */
 export const flushPromises = async (): Promise<void> => {

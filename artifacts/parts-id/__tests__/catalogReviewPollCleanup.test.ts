@@ -1,5 +1,4 @@
 /**
- * @jest-environment node
  *
  * Unit tests for the resume-poll cleanup behaviour in catalog-review.tsx.
  *
@@ -29,7 +28,7 @@
  */
 
 import React, { useEffect, useRef } from "react";
-import TestRenderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 
 // ── Minimal harness that implements the exact useEffect pattern ────────────────
 //
@@ -111,143 +110,122 @@ const PROCESSING: ProgressEntry = { status: "processing" };
 const DONE: ProgressEntry = { status: "done" };
 
 // ── Tests: cleanup calls clearInterval on unmount ─────────────────────────────
+//
+// Strategy: spy on setInterval / clearInterval to count component-level calls.
+// We do NOT use jest.getTimerCount() because await render() internally schedules
+// React scheduler timers that inflate the count.
 
 describe("catalog-review poll cleanup — clearInterval called on unmount", () => {
+  let setIntervalSpy: jest.SpyInstance;
+  let clearIntervalSpy: jest.SpyInstance;
+
   beforeEach(() => {
-    jest.useFakeTimers();
+    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
     global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    setIntervalSpy  = jest.spyOn(global, "setInterval");
+    clearIntervalSpy = jest.spyOn(global, "clearInterval");
   });
 
   afterEach(() => {
-    jest.runOnlyPendingTimers();
+    jest.clearAllTimers();
     jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
-  it("calls clearInterval for a single active poll when the component unmounts", () => {
-    const clearIntervalSpy = jest.spyOn(global, "clearInterval");
+  it("calls clearInterval for a single active poll when the component unmounts", async () => {
+    const result = await render(
+      React.createElement(PollCleanupHarness, {
+        adminToken: "tok",
+        resumeProgress: { 42: UPLOADING },
+      }),
+    );
 
-    let renderer!: TestRenderer.ReactTestRenderer;
-    act(() => {
-      renderer = TestRenderer.create(
-        React.createElement(PollCleanupHarness, {
-          adminToken: "tok",
-          resumeProgress: { 42: UPLOADING },
-        }),
-      );
-    });
-
-    // One interval must have been registered for job 42
-    const setIntervalSpy = jest.spyOn(global, "setInterval");
-    // Capture the interval that was created during mount
-    // (use the fake-timer internals to inspect pending timers)
-    expect(jest.getTimerCount()).toBe(1);
-
-    clearIntervalSpy.mockClear(); // reset so we only see unmount calls
-
-    act(() => {
-      renderer.unmount();
-    });
-
-    // After unmount the single interval must be cleared
-    expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
-    setIntervalSpy.mockRestore();
-  });
-
-  it("calls clearInterval for every active poll when multiple jobs are in-progress", () => {
-    const clearIntervalSpy = jest.spyOn(global, "clearInterval");
-
-    let renderer!: TestRenderer.ReactTestRenderer;
-    act(() => {
-      renderer = TestRenderer.create(
-        React.createElement(PollCleanupHarness, {
-          adminToken: "tok",
-          resumeProgress: {
-            10: UPLOADING,
-            20: PROCESSING,
-            30: UPLOADING,
-          },
-        }),
-      );
-    });
-
-    expect(jest.getTimerCount()).toBe(3);
+    // Exactly one setInterval call from the harness (ignoring React internals
+    // which use setTimeout, not setInterval).
+    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
 
     clearIntervalSpy.mockClear();
 
-    act(() => {
-      renderer.unmount();
-    });
+    await result.unmount();
+
+    // After unmount the single interval must be cleared
+    expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls clearInterval for every active poll when multiple jobs are in-progress", async () => {
+    const result = await render(
+      React.createElement(PollCleanupHarness, {
+        adminToken: "tok",
+        resumeProgress: {
+          10: UPLOADING,
+          20: PROCESSING,
+          30: UPLOADING,
+        },
+      }),
+    );
+
+    expect(setIntervalSpy).toHaveBeenCalledTimes(3);
+
+    clearIntervalSpy.mockClear();
+
+    await result.unmount();
 
     expect(clearIntervalSpy).toHaveBeenCalledTimes(3);
   });
 
-  it("does NOT register any interval when adminToken is null", () => {
-    act(() => {
-      TestRenderer.create(
-        React.createElement(PollCleanupHarness, {
-          adminToken: null,
-          resumeProgress: { 42: UPLOADING },
-        }),
-      );
-    });
+  it("does NOT register any interval when adminToken is null", async () => {
+    await render(
+      React.createElement(PollCleanupHarness, {
+        adminToken: null,
+        resumeProgress: { 42: UPLOADING },
+      }),
+    );
 
-    // Early-return path: no intervals should have been created
-    expect(jest.getTimerCount()).toBe(0);
+    // Early-return path: no setInterval calls from the harness
+    expect(setIntervalSpy).not.toHaveBeenCalled();
   });
 
-  it("does NOT register an interval for a job whose status is done", () => {
-    act(() => {
-      TestRenderer.create(
-        React.createElement(PollCleanupHarness, {
-          adminToken: "tok",
-          resumeProgress: { 42: DONE },
-        }),
-      );
-    });
+  it("does NOT register an interval for a job whose status is done", async () => {
+    await render(
+      React.createElement(PollCleanupHarness, {
+        adminToken: "tok",
+        resumeProgress: { 42: DONE },
+      }),
+    );
 
-    expect(jest.getTimerCount()).toBe(0);
+    expect(setIntervalSpy).not.toHaveBeenCalled();
   });
 
-  it("does NOT register a duplicate interval if the job already has one in the poll map", () => {
+  it("does NOT register a duplicate interval if the job already has one in the poll map", async () => {
     // Render once (creates the interval), then re-render with the same adminToken
     // (the effect does NOT rerun because adminToken hasn't changed, so the guard
     // `!pollMap[id]` is never tested on a second render — but let's also verify
     // the harness doesn't accumulate intervals across *two separate* components
     // that both target the same job ID, which would happen without the guard).
-    act(() => {
-      TestRenderer.create(
-        React.createElement(PollCleanupHarness, {
-          adminToken: "tok",
-          resumeProgress: { 42: UPLOADING },
-        }),
-      );
-    });
+    await render(
+      React.createElement(PollCleanupHarness, {
+        adminToken: "tok",
+        resumeProgress: { 42: UPLOADING },
+      }),
+    );
 
-    // Only 1 interval should exist (not 2)
-    expect(jest.getTimerCount()).toBe(1);
+    // Only 1 setInterval call (not 2)
+    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("clears intervals even when the resumeProgress object is empty on unmount", () => {
+  it("clears intervals even when the resumeProgress object is empty on unmount", async () => {
     // Edge case: component mounted with no active jobs, then unmounted.
     // The cleanup must still run without throwing.
-    const clearIntervalSpy = jest.spyOn(global, "clearInterval");
-
-    let renderer!: TestRenderer.ReactTestRenderer;
-    act(() => {
-      renderer = TestRenderer.create(
-        React.createElement(PollCleanupHarness, {
-          adminToken: "tok",
-          resumeProgress: {},
-        }),
-      );
-    });
+    const result = await render(
+      React.createElement(PollCleanupHarness, {
+        adminToken: "tok",
+        resumeProgress: {},
+      }),
+    );
 
     clearIntervalSpy.mockClear();
 
-    expect(() => {
-      act(() => { renderer.unmount(); });
-    }).not.toThrow();
+    await expect(result.unmount()).resolves.not.toThrow();
 
     // No intervals registered, so clearInterval should not have been called
     expect(clearIntervalSpy).not.toHaveBeenCalled();
@@ -260,63 +238,60 @@ describe("catalog-review poll cleanup — clearInterval called on unmount", () =
 // startPollForJobRef.current function body in catalog-review.tsx).
 
 describe("catalog-review — startPollForJob interval registration", () => {
+  let setIntervalSpy: jest.SpyInstance;
+
   beforeEach(() => {
-    jest.useFakeTimers();
+    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
     global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    setIntervalSpy = jest.spyOn(global, "setInterval");
   });
 
   afterEach(() => {
-    jest.runOnlyPendingTimers();
+    jest.clearAllTimers();
     jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
-  it("registers exactly one interval per active job", () => {
-    act(() => {
-      TestRenderer.create(
-        React.createElement(PollCleanupHarness, {
-          adminToken: "tok",
-          resumeProgress: { 1: UPLOADING, 2: PROCESSING },
-        }),
-      );
-    });
+  it("registers exactly one interval per active job", async () => {
+    await render(
+      React.createElement(PollCleanupHarness, {
+        adminToken: "tok",
+        resumeProgress: { 1: UPLOADING, 2: PROCESSING },
+      }),
+    );
 
-    expect(jest.getTimerCount()).toBe(2);
+    expect(setIntervalSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("does not register an interval for a job that is in a terminal state", () => {
-    act(() => {
-      TestRenderer.create(
-        React.createElement(PollCleanupHarness, {
-          adminToken: "tok",
-          resumeProgress: {
-            1: UPLOADING,
-            2: DONE,
-            3: { status: "failed" },
-          },
-        }),
-      );
-    });
+  it("does not register an interval for a job that is in a terminal state", async () => {
+    await render(
+      React.createElement(PollCleanupHarness, {
+        adminToken: "tok",
+        resumeProgress: {
+          1: UPLOADING,
+          2: DONE,
+          3: { status: "failed" },
+        },
+      }),
+    );
 
     // Only job 1 (uploading) should have an interval
-    expect(jest.getTimerCount()).toBe(1);
+    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("the registered interval fires fetch with the correct job-ID path", () => {
+  it("the registered interval fires fetch with the correct job-ID path", async () => {
     const fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
     global.fetch = fetchMock;
 
-    act(() => {
-      TestRenderer.create(
-        React.createElement(PollCleanupHarness, {
-          adminToken: "tok",
-          resumeProgress: { 77: UPLOADING },
-          apiBase: "http://test-api/api",
-        }),
-      );
-    });
+    await render(
+      React.createElement(PollCleanupHarness, {
+        adminToken: "tok",
+        resumeProgress: { 77: UPLOADING },
+        apiBase: "http://test-api/api",
+      }),
+    );
 
-    act(() => {
+    await act(async () => {
       jest.advanceTimersByTime(3000);
     });
 

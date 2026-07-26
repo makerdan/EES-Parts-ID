@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Tests that the Zone Editor button in MapScreen is guarded by the `isAdmin`
  * flag from AppContext.
  *
@@ -20,7 +18,8 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
 import { makeAppMock } from "./helpers/appMocks";
 
 // ─── expo-router ──────────────────────────────────────────────────────────────
@@ -148,30 +147,13 @@ jest.mock("@/utils/mapViewport", () => require("./helpers/mapMocks").createMapVi
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { useApp } = require("@/contexts/AppContext") as { useApp: jest.Mock };
 
-// ─── Suppress react-test-renderer deprecation warnings ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") || msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    },
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   jest.clearAllMocks();
@@ -192,19 +174,18 @@ const flushPromises = () =>
 
 async function renderMapScreen(isAdmin: boolean) {
   useApp.mockReturnValue(makeAppMock({ isAdmin }));
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(<MapScreen />); });
+  const tree = await render(<MapScreen />);
   activeTree = tree;
   await flushPromises();
   return tree;
 }
 
-function findZoneEditorButton(root: renderer.ReactTestInstance) {
-  return root.findAll(
+function findZoneEditorButton(root: Awaited<ReturnType<typeof render>>["root"]) {
+  return root!.queryAll(
     (n) =>
       (n.type as string) === "rn-pressable" &&
       n.props.accessibilityLabel === "Open Zone Editor",
-    { deep: true },
+    { includeSelf: true },
   );
 }
 

@@ -1,5 +1,4 @@
 /**
- * @jest-environment node
  *
  * Verifies that MapPin3D, MapPinEmoji, and ZoneOverlayItem each call
  * cancelAnimation on their Reanimated shared values when:
@@ -12,8 +11,8 @@
  * Strategy
  * --------
  * cancelAnimation is exposed as jest.fn() from the Reanimated mock so
- * each call can be detected and inspected.  react-test-renderer drives
- * mount/unmount/update inside act() so useEffect cleanup runs synchronously.
+ * each call can be detected and inspected.  @testing-library/react-native
+ * drives mount/unmount/update inside act() so useEffect cleanup runs synchronously.
  */
 
 // Required for act() to work correctly in the node test environment.
@@ -21,7 +20,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 
 // ─── react-native-svg ─────────────────────────────────────────────────────────
 
@@ -45,7 +44,7 @@ jest.mock("react-native-svg", () => {
     Ellipse: make("svg-ellipse"),
     Circle:  make("svg-circle"),
     Rect:    make("svg-rect"),
-    Text:    make("svg-text"),
+    Text:    make("Text"),
     SvgUri:  make("svg-uri"),
     SvgXml:  make("svg-xml"),
   };
@@ -57,7 +56,7 @@ jest.mock("react-native", () => ({
   Platform:          { OS: "ios", select: (o: Record<string, unknown>) => o.ios ?? o.default },
   StyleSheet:        { create: (s: unknown) => s, flatten: (s: unknown) => s },
   View:              ({ children }: { children?: React.ReactNode }) => React.createElement("rn-view", {}, children),
-  Text:              ({ children }: { children?: React.ReactNode }) => React.createElement("rn-text", {}, children),
+  Text:              ({ children }: { children?: React.ReactNode }) => React.createElement("Text", {}, children),
   ActivityIndicator: () => null,
   Pressable:         ({ children, onPress }: { children?: React.ReactNode; onPress?: () => void }) =>
                        React.createElement("rn-pressable", { onPress }, children),
@@ -177,24 +176,6 @@ jest.mock("@/utils/mapViewport", () => ({
 
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
-// ─── Suppress react-test-renderer deprecation warning ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    },
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Subject under test ───────────────────────────────────────────────────────
 
 import { MapPin3D, MapPinEmoji, ZoneOverlayItem } from "@/components/WarehouseMapView";
@@ -244,39 +225,31 @@ describe("MapPin3D — cancelAnimation stops the spring on cleanup", () => {
   beforeEach(() => { cancelAnimationMock.mockClear(); });
 
   it("calls cancelAnimation when unmounted while isNew=true", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" isNew={true} />,
-      );
-    });
+    const result = await render(
+      <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" isNew={true} />,
+    );
 
     // cancelAnimation is called once as the effect cleanup runs on mount
     // (React 18 strict mode fires effects once in test env; cleanup fires on unmount).
     cancelAnimationMock.mockClear();
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
 
     // After unmount the cleanup must have fired cancelAnimation.
     expect(cancelAnimationMock).toHaveBeenCalledTimes(1);
   });
 
   it("calls cancelAnimation when isNew flips false→true→false", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" isNew={false} />,
-      );
-    });
+    const result = await render(
+      <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" isNew={false} />,
+    );
 
     cancelAnimationMock.mockClear();
 
     // Flip to isNew=true — effect fires (and its prior cleanup runs first).
-    await act(async () => {
-      tree.update(
-        <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" isNew={true} />,
-      );
-    });
+    await result.rerender(
+      <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" isNew={true} />,
+    );
 
     // At least one cancelAnimation call (the cleanup of the previous effect run).
     const countAfterTrue = cancelAnimationMock.mock.calls.length;
@@ -284,28 +257,23 @@ describe("MapPin3D — cancelAnimation stops the spring on cleanup", () => {
     cancelAnimationMock.mockClear();
 
     // Flip back to isNew=false — cleanup of the isNew=true effect must cancel.
-    await act(async () => {
-      tree.update(
-        <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" isNew={false} />,
-      );
-    });
+    await result.rerender(
+      <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" isNew={false} />,
+    );
 
     expect(cancelAnimationMock).toHaveBeenCalledTimes(1);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("calls cancelAnimation when unmounted while isNew=false", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPin3D cx={50} cy={80} size={15} fill="#8b5cf6" stroke="#6d28d9" isNew={false} />,
-      );
-    });
+    const result = await render(
+      <MapPin3D cx={50} cy={80} size={15} fill="#8b5cf6" stroke="#6d28d9" isNew={false} />,
+    );
 
     cancelAnimationMock.mockClear();
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
 
     // Even when no spring was running, cleanup must still call cancelAnimation
     // (a no-op on the native side but the JS cleanup must execute).
@@ -321,62 +289,49 @@ describe("MapPinEmoji — cancelAnimation stops the spring on cleanup", () => {
   beforeEach(() => { cancelAnimationMock.mockClear(); });
 
   it("calls cancelAnimation when unmounted while isNew=true", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" isNew={true} />,
-      );
-    });
+    const result = await render(
+      <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" isNew={true} />,
+    );
 
     cancelAnimationMock.mockClear();
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
 
     expect(cancelAnimationMock).toHaveBeenCalledTimes(1);
   });
 
   it("calls cancelAnimation when isNew flips false→true→false", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" isNew={false} />,
-      );
-    });
+    const result = await render(
+      <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" isNew={false} />,
+    );
 
     cancelAnimationMock.mockClear();
 
-    await act(async () => {
-      tree.update(
-        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" isNew={true} />,
-      );
-    });
+    await result.rerender(
+      <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" isNew={true} />,
+    );
 
     const countAfterTrue = cancelAnimationMock.mock.calls.length;
     expect(countAfterTrue).toBeGreaterThanOrEqual(1);
     cancelAnimationMock.mockClear();
 
-    await act(async () => {
-      tree.update(
-        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" isNew={false} />,
-      );
-    });
+    await result.rerender(
+      <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" isNew={false} />,
+    );
 
     expect(cancelAnimationMock).toHaveBeenCalledTimes(1);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("calls cancelAnimation when unmounted while isNew=false", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MapPinEmoji cx={50} cy={80} size={15} fill="#8b5cf6" isNew={false} />,
-      );
-    });
+    const result = await render(
+      <MapPinEmoji cx={50} cy={80} size={15} fill="#8b5cf6" isNew={false} />,
+    );
 
     cancelAnimationMock.mockClear();
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
 
     expect(cancelAnimationMock).toHaveBeenCalledTimes(1);
   });
@@ -392,24 +347,21 @@ describe("ZoneOverlayItem — cancelAnimation stops the fillOpacity animation on
   beforeEach(() => { cancelAnimationMock.mockClear(); });
 
   it("calls cancelAnimation when unmounted while isPinned=true", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={zone}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={true}
-        />,
-      );
-    });
+    const result = await render(
+      <ZoneOverlayItem
+        zone={zone}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={true}
+      />,
+    );
 
     cancelAnimationMock.mockClear();
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
 
     // The fillOpacity useEffect cleanup must call cancelAnimation on fillOpacitySV.
     // Count may be >1 because the mock useSharedValue is not a stable ref (it
@@ -418,104 +370,91 @@ describe("ZoneOverlayItem — cancelAnimation stops the fillOpacity animation on
   });
 
   it("calls cancelAnimation when unmounted while isPinned=false", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={zone}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={false}
-        />,
-      );
-    });
+    const result = await render(
+      <ZoneOverlayItem
+        zone={zone}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={false}
+      />,
+    );
 
     cancelAnimationMock.mockClear();
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
 
     expect(cancelAnimationMock).toHaveBeenCalledTimes(1);
   });
 
   it("calls cancelAnimation when isPinned transitions true→false (results cleared)", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={zone}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={true}
-        />,
-      );
-    });
+    const result = await render(
+      <ZoneOverlayItem
+        zone={zone}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={true}
+      />,
+    );
 
     cancelAnimationMock.mockClear();
 
     // Clearing results: isPinned goes back to false.
-    await act(async () => {
-      tree.update(
-        <ZoneOverlayItem
-          zone={zone}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={false}
-        />,
-      );
-    });
+    await result.rerender(
+      <ZoneOverlayItem
+        zone={zone}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={false}
+      />,
+    );
 
     // The effect re-ran because isPinnedNow changed; the previous cleanup
     // (from the isPinned=true run) must have called cancelAnimation.
     // Count may be >1 due to mock useSharedValue creating a new object each render.
     expect(cancelAnimationMock.mock.calls.length).toBeGreaterThanOrEqual(1);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("calls cancelAnimation when isVariantPinned transitions true→false", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={zone}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isVariantPinned={true}
-        />,
-      );
-    });
+    const result = await render(
+      <ZoneOverlayItem
+        zone={zone}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isVariantPinned={true}
+      />,
+    );
 
     cancelAnimationMock.mockClear();
 
-    await act(async () => {
-      tree.update(
-        <ZoneOverlayItem
-          zone={zone}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isVariantPinned={false}
-        />,
-      );
-    });
+    await result.rerender(
+      <ZoneOverlayItem
+        zone={zone}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isVariantPinned={false}
+      />,
+    );
 
     // Count may be >1 due to mock useSharedValue creating a new object each render.
     expect(cancelAnimationMock.mock.calls.length).toBeGreaterThanOrEqual(1);
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 });

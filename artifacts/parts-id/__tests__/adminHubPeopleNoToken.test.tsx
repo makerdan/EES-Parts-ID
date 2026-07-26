@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Regression test: tapping the "People & System" hub card with isAdmin=true
  * but adminToken=null must NOT crash, and must open the People section showing
  * a graceful empty state.
@@ -32,7 +30,7 @@
  *
  * ## Component mount (§ 2–3)
  *
- * Uses react-test-renderer in a node environment (same pattern as
+ * Uses @testing-library/react-native in a node environment (same pattern as
  * adminBridgeMeasureNow.test.tsx) with all external dependencies mocked.
  */
 
@@ -43,7 +41,8 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 import * as fs from "fs";
 import * as path from "path";
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 
 // ── Source paths ──────────────────────────────────────────────────────────────
 
@@ -236,34 +235,12 @@ function makeAppMock(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// ── Suppress react-test-renderer deprecation warnings ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (typeof msg === "string" && (
-        msg.includes("react-test-renderer is deprecated") ||
-        msg.includes("Warning:") ||
-        // Background effects in UploadScreen (fetchEnrichSummary, load initial job
-        // status) fire on mount and try to reach the real API server — they are
-        // caught internally and produce logged errors, not unhandled rejections.
-        msg.includes("[upload]")
-      )) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ── Render helpers ────────────────────────────────────────────────────────────
 
 async function renderComponent(ui: React.ReactElement) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(ui); });
+  const result = await render(ui);
   await act(async () => { await Promise.resolve(); });
-  return tree;
+  return result;
 }
 
 const flushPromises = () => act(async () => {
@@ -274,31 +251,33 @@ const flushPromises = () => act(async () => {
 
 // ── Instance-tree helpers ─────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: TestInstance | string) => instText(c as Inst | string)).join("");
 }
 
-function hasText(root: Inst, text: string): boolean {
+function hasText(root: Inst | undefined | null, text: string): boolean {
+  if (!root) return false;
   return instText(root).includes(text);
 }
 
-function findPressable(root: Inst, label: string): Inst | null {
+function findPressable(root: Inst | undefined | null, label: string): Inst | null {
+  if (!root) return null;
   return (
-    root.findAll(n => (n.type as string) === "rn-pressable", { deep: true })
+    root.queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
         .find(n => instText(n).includes(label)) ?? null
   );
 }
 
 // ── Per-test teardown ─────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   mockFetchAdminUsers.mockReset();
@@ -363,9 +342,7 @@ describe("UploadScreen — People card tap with isAdmin=true, adminToken=null", 
     const peopleCard = findPressable(activeTree.root, "People & System");
     expect(peopleCard).not.toBeNull();
 
-    await expect(
-      act(async () => { peopleCard!.props.onPress(); })
-    ).resolves.not.toThrow();
+    await act(async () => { peopleCard!.props.onPress(); });
 
     await flushPromises();
   });

@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Regression tests for DismissKeyboard keyboard-dismissal behavior.
  *
  * DismissKeyboard now uses react-native-gesture-handler's Gesture.Tap()
@@ -50,7 +48,7 @@ jest.mock("react-native", () => {
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 import { __resetTap, __simulateTap } from "../__mocks__/react-native-gesture-handler";
 import { DismissKeyboard } from "../components/DismissKeyboard";
 
@@ -65,13 +63,11 @@ beforeEach(() => {
 
 describe("DismissKeyboard — tap dismisses keyboard", () => {
   it("calls Keyboard.dismiss when a tap fires", async () => {
-    await act(async () => {
-      renderer.create(
-        <DismissKeyboard>
-          <React.Fragment />
-        </DismissKeyboard>,
-      );
-    });
+    await render(
+      <DismissKeyboard>
+        <React.Fragment />
+      </DismissKeyboard>,
+    );
 
     __simulateTap();
 
@@ -79,13 +75,11 @@ describe("DismissKeyboard — tap dismisses keyboard", () => {
   });
 
   it("calls Keyboard.dismiss on each tap", async () => {
-    await act(async () => {
-      renderer.create(
-        <DismissKeyboard>
-          <React.Fragment />
-        </DismissKeyboard>,
-      );
-    });
+    await render(
+      <DismissKeyboard>
+        <React.Fragment />
+      </DismissKeyboard>,
+    );
 
     __simulateTap();
     __simulateTap();
@@ -98,13 +92,11 @@ describe("DismissKeyboard — suppressDismissRef opt-out", () => {
   it("suppresses Keyboard.dismiss when suppressDismissRef.current is true", async () => {
     const suppressRef = { current: true };
 
-    await act(async () => {
-      renderer.create(
-        <DismissKeyboard suppressDismissRef={suppressRef as React.RefObject<boolean>}>
-          <React.Fragment />
-        </DismissKeyboard>,
-      );
-    });
+    await render(
+      <DismissKeyboard suppressDismissRef={suppressRef as React.RefObject<boolean>}>
+        <React.Fragment />
+      </DismissKeyboard>,
+    );
 
     __simulateTap();
 
@@ -114,13 +106,11 @@ describe("DismissKeyboard — suppressDismissRef opt-out", () => {
   it("allows Keyboard.dismiss when suppressDismissRef.current is false", async () => {
     const suppressRef = { current: false };
 
-    await act(async () => {
-      renderer.create(
-        <DismissKeyboard suppressDismissRef={suppressRef as React.RefObject<boolean>}>
-          <React.Fragment />
-        </DismissKeyboard>,
-      );
-    });
+    await render(
+      <DismissKeyboard suppressDismissRef={suppressRef as React.RefObject<boolean>}>
+        <React.Fragment />
+      </DismissKeyboard>,
+    );
 
     __simulateTap();
 
@@ -128,13 +118,11 @@ describe("DismissKeyboard — suppressDismissRef opt-out", () => {
   });
 
   it("behaves normally when no suppressDismissRef is provided", async () => {
-    await act(async () => {
-      renderer.create(
-        <DismissKeyboard>
-          <React.Fragment />
-        </DismissKeyboard>,
-      );
-    });
+    await render(
+      <DismissKeyboard>
+        <React.Fragment />
+      </DismissKeyboard>,
+    );
 
     __simulateTap();
 
@@ -144,13 +132,11 @@ describe("DismissKeyboard — suppressDismissRef opt-out", () => {
   it("respects suppressDismissRef.current at tap time, not at render time", async () => {
     const suppressRef = { current: false };
 
-    await act(async () => {
-      renderer.create(
-        <DismissKeyboard suppressDismissRef={suppressRef as React.RefObject<boolean>}>
-          <React.Fragment />
-        </DismissKeyboard>,
-      );
-    });
+    await render(
+      <DismissKeyboard suppressDismissRef={suppressRef as React.RefObject<boolean>}>
+        <React.Fragment />
+      </DismissKeyboard>,
+    );
 
     suppressRef.current = true;
     __simulateTap();
@@ -166,17 +152,14 @@ describe("DismissKeyboard — style prop is forwarded to inner View", () => {
   it("applies the style prop to the wrapper View", async () => {
     const customStyle = { backgroundColor: "red" };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <DismissKeyboard style={customStyle}>
-          <React.Fragment />
-        </DismissKeyboard>,
-      );
-    });
+    const result = await render(
+      <DismissKeyboard style={customStyle}>
+        <React.Fragment />
+      </DismissKeyboard>,
+    );
 
-    const view = tree.root.findByType("rn-view" as unknown as React.ElementType);
-    const style = view.props.style as Array<unknown>;
+    const view = result.root!.queryAll(n => n.type === "rn-view", { includeSelf: true })[0];
+    const style = view!.props.style as Array<unknown>;
     expect(style).toContainEqual(customStyle);
   });
 });

@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Behavioral regression tests: BarcodeScanModal permanent camera-permission denial.
  *
  * When `useCameraPermissions` returns `{ granted: false, canAskAgain: false }`
@@ -17,7 +15,9 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 
 // ─── Stable mock refs for useCameraPermissions ───────────────────────────────
 // Must be declared at module scope so the same object/function references are
@@ -87,34 +87,20 @@ const { useApp } = require("@/contexts/AppContext") as { useApp: jest.Mock };
 
 import { BarcodeScanModal } from "../components/BarcodeScanModal";
 
-// ─── Suppress react-test-renderer deprecation noise ──────────────────────────
-
-beforeAll(() => {
-  jest.spyOn(console, "error").mockImplementation((msg: unknown, ...args: unknown[]) => {
-    if (typeof msg === "string" && (
-      msg.includes("react-test-renderer is deprecated") ||
-      msg.includes("Warning:")
-    )) return;
-    // eslint-disable-next-line no-console
-    console.warn(msg, ...args);
-  });
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Tree-walking helpers ─────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: TestInstance | string) => instText(c as Inst | string)).join("");
 }
 
 function findPressable(root: Inst, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: TestInstance) => instText(n).includes(label)) ?? null
   );
 }
 
@@ -122,10 +108,10 @@ function allTextStrings(root: Inst): string[] {
   const out: string[] = [];
   function walk(node: Inst | string) {
     if (typeof node === "string") { if (node.trim()) out.push(node.trim()); return; }
-    if ((node.type as string) === "rn-text") {
+    if ((node.type as string) === "Text") {
       out.push(instText(node));
     }
-    (node.children ?? []).forEach(c => walk(c as Inst | string));
+    (node.children ?? []).forEach((c: TestInstance | string) => walk(c as Inst | string));
   }
   walk(root);
   return out;
@@ -135,7 +121,7 @@ function allTextStrings(root: Inst): string[] {
 
 const mockOnClose = jest.fn();
 const mockOnFound = jest.fn();
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -144,7 +130,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
 });
@@ -158,14 +144,11 @@ async function renderModal(
   requestPermFn = mockRequestPermission,
 ) {
   (useCameraPermissions as jest.Mock).mockReturnValue([permissionState, requestPermFn]);
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => {
-    tree = renderer.create(
-      <BarcodeScanModal visible={true} onClose={mockOnClose} onFound={mockOnFound} />,
-    );
-  });
-  activeTree = tree;
-  return tree;
+  const result = await render(
+    <BarcodeScanModal visible={true} onClose={mockOnClose} onFound={mockOnFound} />,
+  );
+  activeTree = result;
+  return result;
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -173,22 +156,22 @@ async function renderModal(
 describe("BarcodeScanModal — permanent camera denial (canAskAgain === false)", () => {
 
   it("renders 'Open Settings' when camera permission is permanently denied", async () => {
-    const tree = await renderModal();
-    const texts = allTextStrings(tree.root).join(" ");
+    const result = await renderModal();
+    const texts = allTextStrings(result.root!).join(" ");
     expect(texts).toContain("Open Settings");
   });
 
   it("does NOT render 'Allow Camera Access' when canAskAgain is false", async () => {
-    const tree = await renderModal();
-    const texts = allTextStrings(tree.root).join(" ");
+    const result = await renderModal();
+    const texts = allTextStrings(result.root!).join(" ");
     expect(texts).not.toContain("Allow Camera Access");
   });
 
   it("tapping 'Open Settings' calls Linking.openSettings", async () => {
     const { Linking } = require("react-native") as typeof import("react-native");
-    const tree = await renderModal();
+    const result = await renderModal();
 
-    const btn = findPressable(tree.root, "Open Settings");
+    const btn = findPressable(result.root!, "Open Settings");
     expect(btn).not.toBeNull();
 
     await act(async () => {
@@ -199,9 +182,9 @@ describe("BarcodeScanModal — permanent camera denial (canAskAgain === false)",
   });
 
   it("tapping 'Open Settings' does NOT call requestPermission", async () => {
-    const tree = await renderModal();
+    const result = await renderModal();
 
-    const btn = findPressable(tree.root, "Open Settings");
+    const btn = findPressable(result.root!, "Open Settings");
     expect(btn).not.toBeNull();
 
     await act(async () => {
@@ -217,14 +200,14 @@ describe("BarcodeScanModal — permanent camera denial (canAskAgain === false)",
   });
 
   it("includes an explanatory message about permanent denial", async () => {
-    const tree = await renderModal();
-    const texts = allTextStrings(tree.root).join(" ");
+    const result = await renderModal();
+    const texts = allTextStrings(result.root!).join(" ");
     expect(texts).toMatch(/permanently denied/i);
   });
 
   it("mentions Settings in the denial explanation so the user knows where to go", async () => {
-    const tree = await renderModal();
-    const texts = allTextStrings(tree.root).join(" ");
+    const result = await renderModal();
+    const texts = allTextStrings(result.root!).join(" ");
     expect(texts).toMatch(/Settings/);
   });
 });
@@ -233,16 +216,16 @@ describe("BarcodeScanModal — non-permanent denial (canAskAgain === true)", () 
   const mockRequestPermission2 = jest.fn();
 
   it("renders 'Allow Camera Access' (not 'Open Settings') when canAskAgain is true", async () => {
-    const tree = await renderModal(mockPermissionCanAsk, mockRequestPermission2);
-    const texts = allTextStrings(tree.root).join(" ");
+    const result = await renderModal(mockPermissionCanAsk, mockRequestPermission2);
+    const texts = allTextStrings(result.root!).join(" ");
     expect(texts).toContain("Allow Camera Access");
     expect(texts).not.toContain("Open Settings");
   });
 
   it("tapping 'Allow Camera Access' calls requestPermission", async () => {
-    const tree = await renderModal(mockPermissionCanAsk, mockRequestPermission2);
+    const result = await renderModal(mockPermissionCanAsk, mockRequestPermission2);
 
-    const btn = findPressable(tree.root, "Allow Camera Access");
+    const btn = findPressable(result.root!, "Allow Camera Access");
     expect(btn).not.toBeNull();
 
     await act(async () => {
@@ -254,9 +237,9 @@ describe("BarcodeScanModal — non-permanent denial (canAskAgain === true)", () 
 
   it("tapping 'Allow Camera Access' does NOT call Linking.openSettings", async () => {
     const { Linking } = require("react-native") as typeof import("react-native");
-    const tree = await renderModal(mockPermissionCanAsk, mockRequestPermission2);
+    const result = await renderModal(mockPermissionCanAsk, mockRequestPermission2);
 
-    const btn = findPressable(tree.root, "Allow Camera Access");
+    const btn = findPressable(result.root!, "Allow Camera Access");
     expect(btn).not.toBeNull();
 
     await act(async () => {

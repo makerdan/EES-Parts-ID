@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Verifies the snapshot/rollback behaviour added to PartDetailsEditor.handleSave:
  *
  *   A. On mutation failure, queryClient.invalidateQueries is called for both
@@ -20,7 +18,8 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 import { Alert } from "react-native";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import type { InventoryItem } from "@workspace/api-client-react";
@@ -81,53 +80,34 @@ jest.mock("@/utils/apiBase", () => ({
   API_ORIGIN: "http://localhost:8080",
 }));
 
-// ─── Suppress react-test-renderer deprecation warning ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
 function findPressable(root: Inst, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
 function findPressableByA11yLabel(root: Inst, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => n.props.accessibilityLabel === label) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => n.props.accessibilityLabel === label) ?? null
   );
 }
 
 async function renderEditor(ui: React.ReactElement) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(ui); });
-  return tree;
+  const result = await render(ui);
+  return result;
 }
 
 function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
@@ -145,11 +125,11 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
 
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   jest.clearAllMocks();
@@ -184,22 +164,22 @@ describe("PartDetailsEditor – handleSave rollback on mutation failure", () => 
     autoConfirmAlert();
 
     const item = makeItem({ binLocations: ["AISLE-01"] });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor
         item={item}
         adminToken="test-token"
         onClose={jest.fn()}
       />
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Remove the existing bin via Alert auto-confirm so bins state ≠ item.binLocations.
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     expect(removeBinBtn).not.toBeNull();
     await act(async () => { removeBinBtn!.props.onPress(); });
 
     // Now bins state is [] but item.binLocations is ["AISLE-01"] → hasChanges = true.
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
     await act(async () => { saveBtn!.props.onPress(); });
@@ -229,15 +209,15 @@ describe("PartDetailsEditor – handleSave rollback on mutation failure", () => 
     autoConfirmAlert();
 
     const item = makeItem({ binLocations: ["AISLE-01"] });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     await act(async () => { removeBinBtn!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     // setQueryData must have been called to restore each snapshot entry.
@@ -261,15 +241,15 @@ describe("PartDetailsEditor – handleSave rollback on mutation failure", () => 
     autoConfirmAlert();
 
     const item = makeItem({ binLocations: ["AISLE-01"] });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     await act(async () => { removeBinBtn!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     // getQueriesData must have been called for inventory and searchInventory.
@@ -304,29 +284,29 @@ describe("PartDetailsEditor – selective cache rollback on partial failure", ()
     }) as jest.Mock;
 
     const item = makeItem({ description: "Original" });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Find description input by its placeholder (works regardless of type string).
-    const descInput = tree.root.findAll(
-      (n) => n.props?.placeholder === "Brief description of the part…",
-      { deep: true },
+    const descInput = result.root!.queryAll(
+      (n: TestInstance) => n.props?.placeholder === "Brief description of the part…",
+      { includeSelf: true },
     )[0];
     expect(descInput).toBeDefined();
     await act(async () => { descInput!.props.onChangeText("New description"); });
 
     // Find first dimension TextInput (numeric keyboard) and change it.
-    const dimInput = tree.root.findAll(
-      (n) => n.props?.keyboardType === "numeric" && typeof n.props?.onChangeText === "function",
-      { deep: true },
+    const dimInput = result.root!.queryAll(
+      (n: TestInstance) => n.props?.keyboardType === "numeric" && typeof n.props?.onChangeText === "function",
+      { includeSelf: true },
     )[0];
     expect(dimInput).toBeDefined();
     await act(async () => { dimInput!.props.onChangeText("5"); });
 
     // Press Save.
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
     await act(async () => { saveBtn!.props.onPress(); });
 
@@ -344,20 +324,20 @@ describe("PartDetailsEditor – selective cache rollback on partial failure", ()
     autoConfirmAlert();
 
     const item = makeItem({ binLocations: ["AISLE-01"] });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Only remove the bin (triggers bins mutation) — no description change,
     // so no fetch PATCH is attempted. Bins mutation rejects → only op is bins
     // → no succeeded fields → setQueriesData should NOT be called.
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     await act(async () => { removeBinBtn!.props.onPress(); });
 
     mockSetQueriesData.mockClear();
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     // All ops failed — setQueriesData should NOT be called in the failure path
@@ -383,7 +363,7 @@ describe("PartDetailsEditor – stale existingDims bug (itemRef fix)", () => {
    *  1. Mounting with null dims, then having the user type "12" into dimLength.
    *  2. Capturing the save-button's onPress from that render (which closes over
    *     existingDims = null — the old server value).
-   *  3. Simulating a background refetch via tree.update() so that
+   *  3. Simulating a background refetch via result.rerender() so that
    *     itemRef.current.dimensions becomes { length: 12 } (server caught up).
    *  4. Calling the stale handler.
    *
@@ -400,29 +380,29 @@ describe("PartDetailsEditor – stale existingDims bug (itemRef fix)", () => {
 
     // Step 1: mount with no server dims; dim inputs initialise as "".
     const item = makeItem({ description: "Original" });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
     // Step 2a: user types "12" into the first numeric dim input.
-    const dimInput = tree.root.findAll(
-      (n) => n.props?.keyboardType === "numeric" && typeof n.props?.onChangeText === "function",
-      { deep: true },
+    const dimInput = result.root!.queryAll(
+      (n: TestInstance) => n.props?.keyboardType === "numeric" && typeof n.props?.onChangeText === "function",
+      { includeSelf: true },
     )[0];
     expect(dimInput).toBeDefined();
     await act(async () => { dimInput!.props.onChangeText("12"); });
 
     // Step 2b: change description so there is always at least one op queued —
     // without this handleSave returns early before reaching the dims check.
-    const descInput = tree.root.findAll(
-      (n) => n.props?.placeholder === "Brief description of the part…",
-      { deep: true },
+    const descInput = result.root!.queryAll(
+      (n: TestInstance) => n.props?.placeholder === "Brief description of the part…",
+      { includeSelf: true },
     )[0];
     await act(async () => { descInput!.props.onChangeText("Updated description"); });
 
     // Step 2c: capture the stale save handler NOW (closure has existingDims = null).
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
     const staleSaveHandler = saveBtn!.props.onPress as () => void;
 
@@ -434,7 +414,7 @@ describe("PartDetailsEditor – stale existingDims bug (itemRef fix)", () => {
       dimensions: { length: 12, width: null, height: null, diameter: null },
     });
     await act(async () => {
-      tree.update(
+      result.rerender(
         <PartDetailsEditor item={updatedItem} adminToken="test-token" onClose={jest.fn()} />
       );
     });
@@ -463,15 +443,15 @@ describe("PartDetailsEditor – handleSave onSettled invalidation on success", (
     autoConfirmAlert();
 
     const item = makeItem({ binLocations: ["AISLE-01"] });
-    const tree = await renderEditor(
+    const result = await renderEditor(
       <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
     );
-    activeTree = tree;
+    activeTree = result;
 
-    const removeBinBtn = findPressableByA11yLabel(tree.root, "Remove bin AISLE-01");
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     await act(async () => { removeBinBtn!.props.onPress(); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     expect(mockInvalidateListCache).toHaveBeenCalledTimes(1);

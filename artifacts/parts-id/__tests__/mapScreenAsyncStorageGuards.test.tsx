@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Tests for AsyncStorage guard logic in MapScreen (app/(tabs)/map.tsx, lines 252–290).
  *
  * Three scenarios are covered:
@@ -36,7 +34,8 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
 import { makeAppMock, flushPromises as rawFlush } from "./helpers/appMocks";
 
 // ─── expo-router ──────────────────────────────────────────────────────────────
@@ -205,10 +204,6 @@ beforeAll(() => {
   warnSpy  = jest.spyOn(console, "warn").mockImplementation(() => {});
   errorSpy = jest.spyOn(console, "error").mockImplementation(
     (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") || msg.includes("Warning:"))
-      ) return;
       (console.error as unknown as { _original?: (...a: unknown[]) => void })
         ._original?.(msg, ...args);
     },
@@ -222,7 +217,7 @@ afterAll(() => {
 
 // ─── Per-test setup / teardown ───────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 beforeEach(() => {
   useApp.mockReturnValue(makeAppMock());
@@ -236,7 +231,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
 });
@@ -268,17 +263,13 @@ describe("MapScreen — unmount before AsyncStorage resolves", () => {
       return Promise.resolve(null);
     });
 
-    await act(async () => {
-      activeTree = renderer.create(<MapScreen />);
-    });
+    activeTree = await render(<MapScreen />);
 
     const renderCountBeforeUnmount = mapViewRenderCount;
     expect(renderCountBeforeUnmount).toBeGreaterThan(0);
 
-    await act(async () => {
-      activeTree!.unmount();
-      activeTree = null;
-    });
+    await activeTree.unmount();
+    activeTree = null;
 
     // Clear any mount-time console output so we only see post-unmount calls.
     warnSpy.mockClear();
@@ -324,9 +315,7 @@ describe("MapScreen — corrupt CYCLE_COUNTED_KEY (non-array value)", () => {
       return Promise.resolve(null);
     });
 
-    await act(async () => {
-      activeTree = renderer.create(<MapScreen />);
-    });
+    activeTree = await render(<MapScreen />);
     await flushPromises();
 
     const relevant = warnSpy.mock.calls.filter(
@@ -347,9 +336,7 @@ describe("MapScreen — corrupt CYCLE_COUNTED_KEY (non-array value)", () => {
       return Promise.resolve(null);
     });
 
-    await act(async () => {
-      activeTree = renderer.create(<MapScreen />);
-    });
+    activeTree = await render(<MapScreen />);
     await flushPromises();
 
     const relevant = warnSpy.mock.calls.filter(
@@ -369,9 +356,7 @@ describe("MapScreen — corrupt CYCLE_COUNTED_KEY (non-array value)", () => {
       return Promise.resolve(null);
     });
 
-    await act(async () => {
-      activeTree = renderer.create(<MapScreen />);
-    });
+    activeTree = await render(<MapScreen />);
     await flushPromises();
 
     const relevant = warnSpy.mock.calls.filter(
@@ -399,9 +384,7 @@ describe("MapScreen — corrupt FUSE_CACHE_KEY (non-array value)", () => {
       return Promise.resolve(null);
     });
 
-    await act(async () => {
-      activeTree = renderer.create(<MapScreen />);
-    });
+    activeTree = await render(<MapScreen />);
     await flushPromises();
 
     const relevant = warnSpy.mock.calls.filter(
@@ -422,9 +405,7 @@ describe("MapScreen — corrupt FUSE_CACHE_KEY (non-array value)", () => {
       return Promise.resolve(null);
     });
 
-    await act(async () => {
-      activeTree = renderer.create(<MapScreen />);
-    });
+    activeTree = await render(<MapScreen />);
     await flushPromises();
 
     const relevant = warnSpy.mock.calls.filter(
@@ -445,9 +426,7 @@ describe("MapScreen — corrupt FUSE_CACHE_KEY (non-array value)", () => {
       return Promise.resolve(null);
     });
 
-    await act(async () => {
-      activeTree = renderer.create(<MapScreen />);
-    });
+    activeTree = await render(<MapScreen />);
     await flushPromises();
 
     const relevant = warnSpy.mock.calls.filter(

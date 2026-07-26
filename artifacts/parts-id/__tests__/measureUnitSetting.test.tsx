@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Regression tests for the Measure unit persistent setting.
  * Covers:
  *   - loadSettings: no stored key defaults to "mm" AND writes defaults immediately
@@ -121,7 +119,7 @@ jest.mock("react-native", () => ({
 // ── Imports (after mocks) ─────────────────────────────────────────────────────
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 
 import {
   loadSettings,
@@ -226,7 +224,7 @@ describe("updateSetting via AppContext provider", () => {
     }
 
     await act(async () => {
-      renderer.create(
+      render(
         <AppProvider>
           <Consumer />
         </AppProvider>,

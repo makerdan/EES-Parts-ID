@@ -1,5 +1,4 @@
 /**
- * @jest-environment node
  *
  * Regression tests: ResultCard must render `description` as the primary text
  * block for all users when present, and must fall back to `expandedDescription`
@@ -17,7 +16,9 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 
 // ─── react-native ─────────────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ jest.mock("react-native", () => {
     View:         ({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) =>
                     React.createElement("rn-view", props, children),
     Text:         ({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) =>
-                    React.createElement("rn-text", props, children),
+                    React.createElement("Text", props, children),
     Pressable:    ({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) =>
                     React.createElement("rn-pressable", props, children),
     Image:        ({ uri, ...props }: { uri?: string; [k: string]: unknown }) =>
@@ -108,24 +109,6 @@ jest.mock("@/components/PartCard", () => ({
 
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
-// ─── Suppress react-test-renderer deprecation warnings ───────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    },
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Subject under test ───────────────────────────────────────────────────────
 
 import { ResultCard } from "@/components/ResultCard";
@@ -151,10 +134,10 @@ function makeResult(overrides: {
 }
 
 /** Collect the text content of all rn-text nodes whose children is a string. */
-function allTextStrings(root: renderer.ReactTestInstance): string[] {
-  return root
-    .findAll((n) => (n.type as string) === "rn-text", { deep: true })
-    .map((n) => (typeof n.props.children === "string" ? n.props.children : ""))
+function allTextStrings(root: RenderResult["root"]): string[] {
+  return root!
+    .queryAll((n: TestInstance) => (n.type as string) === "Text", { includeSelf: true })
+    .map((n: TestInstance) => (typeof n.props.children === "string" ? n.props.children : ""))
     .filter(Boolean);
 }
 
@@ -164,105 +147,90 @@ function allTextStrings(root: renderer.ReactTestInstance): string[] {
 
 describe("ResultCard — description display priority", () => {
   it("renders description as the primary text when both description and expandedDescription are present", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ResultCard
-          result={makeResult({
-            description: "Primary description text",
-            expandedDescription: "Expanded description that is a fallback only",
-          })}
-          rank={0}
-        />,
-      );
-    });
+    const result = await render(
+      <ResultCard
+        result={makeResult({
+          description: "Primary description text",
+          expandedDescription: "Expanded description that is a fallback only",
+        })}
+        rank={0}
+      />,
+    );
 
-    const texts = allTextStrings(tree.root);
+    const texts = allTextStrings(result.root);
     // description must appear in the card
     expect(texts).toContain("Primary description text");
     // expandedDescription must NOT be rendered when description is present
     expect(texts).not.toContain("Expanded description that is a fallback only");
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("SITG6: shows the full description text, not the shorter expandedDescription, when description is the longer field", async () => {
     // Reproduces the original bug: item.description holds the full/long text,
     // item.expandedDescription holds a shorter snippet — the card must display
     // the full description, not the snippet.
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ResultCard
-          result={makeResult({
-            description: "Full detailed description of the relay with all specifications included",
-            expandedDescription: "Relay",
-          })}
-          rank={0}
-        />,
-      );
-    });
+    const result = await render(
+      <ResultCard
+        result={makeResult({
+          description: "Full detailed description of the relay with all specifications included",
+          expandedDescription: "Relay",
+        })}
+        rank={0}
+      />,
+    );
 
-    const texts = allTextStrings(tree.root);
+    const texts = allTextStrings(result.root);
     expect(texts).toContain("Full detailed description of the relay with all specifications included");
     // The short snippet must not appear as the primary description text
     expect(texts).not.toContain("Relay");
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("renders only the plain description when expandedDescription is absent", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ResultCard
-          result={makeResult({ description: "Plain description only" })}
-          rank={0}
-        />,
-      );
-    });
+    const result = await render(
+      <ResultCard
+        result={makeResult({ description: "Plain description only" })}
+        rank={0}
+      />,
+    );
 
-    const texts = allTextStrings(tree.root);
+    const texts = allTextStrings(result.root);
     expect(texts).toContain("Plain description only");
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("falls back to expandedDescription when description is absent, instead of showing 'No description'", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ResultCard
-          result={makeResult({
-            description: "",
-            expandedDescription: "Fallback expanded text shown when description is empty",
-          })}
-          rank={0}
-        />,
-      );
-    });
+    const result = await render(
+      <ResultCard
+        result={makeResult({
+          description: "",
+          expandedDescription: "Fallback expanded text shown when description is empty",
+        })}
+        rank={0}
+      />,
+    );
 
-    const texts = allTextStrings(tree.root);
+    const texts = allTextStrings(result.root);
     expect(texts).toContain("Fallback expanded text shown when description is empty");
     expect(texts).not.toContain("No description");
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 
   it("renders the fallback text when both description and expandedDescription are absent", async () => {
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ResultCard
-          result={makeResult({ description: "" })}
-          rank={0}
-        />,
-      );
-    });
+    const result = await render(
+      <ResultCard
+        result={makeResult({ description: "" })}
+        rank={0}
+      />,
+    );
 
-    const texts = allTextStrings(tree.root);
+    const texts = allTextStrings(result.root);
     expect(texts).toContain("No description");
 
-    await act(async () => { tree.unmount(); });
+    await result.unmount();
   });
 });

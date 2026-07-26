@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Tests that the three admin nav rows in the "People & System" section
  * of UploadScreen render correctly and navigate to the right routes.
  *
@@ -36,7 +34,8 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 import * as fs from "fs";
 import * as path from "path";
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 
 // ── Source path ───────────────────────────────────────────────────────────────
 
@@ -223,31 +222,12 @@ function makeAppMock(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// ── Suppress react-test-renderer deprecation warnings ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (typeof msg === "string" && (
-        msg.includes("react-test-renderer is deprecated") ||
-        msg.includes("Warning:") ||
-        msg.includes("[upload]")
-      )) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ── Render helpers ────────────────────────────────────────────────────────────
 
 async function renderComponent(ui: React.ReactElement) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(ui); });
+  const result = await render(ui);
   await act(async () => { await Promise.resolve(); });
-  return tree;
+  return result;
 }
 
 const flushPromises = () => act(async () => {
@@ -258,11 +238,11 @@ const flushPromises = () => act(async () => {
 
 // ── Instance-tree helpers ─────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
 function hasText(root: Inst, text: string): boolean {
@@ -271,14 +251,14 @@ function hasText(root: Inst, text: string): boolean {
 
 function findPressable(root: Inst, label: string): Inst | null {
   return (
-    root.findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-        .find(n => instText(n).includes(label)) ?? null
+    root.queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+        .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
 // ── Per-test teardown ─────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
@@ -299,7 +279,7 @@ const UploadScreen = (require("../app/(tabs)/upload") as { default: React.Compon
 async function renderAdminPeopleSection() {
   useApp.mockReturnValue(makeAppMock({ isAdmin: true, adminToken: "tok-abc" }));
   activeTree = await renderComponent(React.createElement(UploadScreen));
-  const peopleCard = findPressable(activeTree.root, "People & System");
+  const peopleCard = findPressable(activeTree!.root!!, "People & System");
   await act(async () => { peopleCard!.props.onPress(); });
   await flushPromises();
   return activeTree;
@@ -341,25 +321,25 @@ describe("UploadScreen source — admin nav row routes", () => {
 
 describe("UploadScreen — admin nav rows visible when isAdmin=true", () => {
   it("shows 'Admin Dashboard' row in the People section", async () => {
-    const tree = await renderAdminPeopleSection();
-    expect(hasText(tree.root, "Admin Dashboard")).toBe(true);
+    const result = await renderAdminPeopleSection();
+    expect(hasText(result.root!, "Admin Dashboard")).toBe(true);
   });
 
   it("shows 'Inbox' row in the People section", async () => {
-    const tree = await renderAdminPeopleSection();
-    expect(hasText(tree.root, "Inbox")).toBe(true);
+    const result = await renderAdminPeopleSection();
+    expect(hasText(result.root!, "Inbox")).toBe(true);
   });
 
   it("shows 'AI Log' row in the People section", async () => {
-    const tree = await renderAdminPeopleSection();
-    expect(hasText(tree.root, "AI Log")).toBe(true);
+    const result = await renderAdminPeopleSection();
+    expect(hasText(result.root!, "AI Log")).toBe(true);
   });
 
   it("all three rows are pressable (findPressable returns non-null)", async () => {
-    const tree = await renderAdminPeopleSection();
-    expect(findPressable(tree.root, "Admin Dashboard")).not.toBeNull();
-    expect(findPressable(tree.root, "Inbox")).not.toBeNull();
-    expect(findPressable(tree.root, "AI Log")).not.toBeNull();
+    const result = await renderAdminPeopleSection();
+    expect(findPressable(result.root!, "Admin Dashboard")).not.toBeNull();
+    expect(findPressable(result.root!, "Inbox")).not.toBeNull();
+    expect(findPressable(result.root!, "AI Log")).not.toBeNull();
   });
 });
 
@@ -369,22 +349,22 @@ describe("UploadScreen — admin nav rows visible when isAdmin=true", () => {
 
 describe("UploadScreen — admin nav rows navigate to correct routes", () => {
   it("tapping 'Admin Dashboard' calls router.push('/admin')", async () => {
-    const tree = await renderAdminPeopleSection();
-    const row = findPressable(tree.root, "Admin Dashboard");
+    const result = await renderAdminPeopleSection();
+    const row = findPressable(result.root!, "Admin Dashboard");
     await act(async () => { row!.props.onPress(); });
     expect(mockRouterPush).toHaveBeenCalledWith("/admin");
   });
 
   it("tapping 'Inbox' calls router.push('/admin-inbox')", async () => {
-    const tree = await renderAdminPeopleSection();
-    const row = findPressable(tree.root, "Inbox");
+    const result = await renderAdminPeopleSection();
+    const row = findPressable(result.root!, "Inbox");
     await act(async () => { row!.props.onPress(); });
     expect(mockRouterPush).toHaveBeenCalledWith("/admin-inbox");
   });
 
   it("tapping 'AI Log' calls router.push('/ai-log')", async () => {
-    const tree = await renderAdminPeopleSection();
-    const row = findPressable(tree.root, "AI Log");
+    const result = await renderAdminPeopleSection();
+    const row = findPressable(result.root!, "AI Log");
     await act(async () => { row!.props.onPress(); });
     expect(mockRouterPush).toHaveBeenCalledWith("/ai-log");
   });
@@ -399,27 +379,27 @@ describe("UploadScreen — non-admin sees lock screen, not nav rows", () => {
     useApp.mockReturnValue(makeAppMock({ isAdmin: false, adminToken: null }));
     activeTree = await renderComponent(React.createElement(UploadScreen));
     await flushPromises();
-    expect(hasText(activeTree.root, "Admin Access Required")).toBe(true);
+    expect(hasText(activeTree!.root!, "Admin Access Required")).toBe(true);
   });
 
   it("does NOT show the 'Admin Dashboard' nav row when isAdmin=false", async () => {
     useApp.mockReturnValue(makeAppMock({ isAdmin: false, adminToken: null }));
     activeTree = await renderComponent(React.createElement(UploadScreen));
     await flushPromises();
-    expect(hasText(activeTree.root, "Admin Dashboard")).toBe(false);
+    expect(hasText(activeTree!.root!, "Admin Dashboard")).toBe(false);
   });
 
   it("does NOT show the 'Inbox' nav row when isAdmin=false", async () => {
     useApp.mockReturnValue(makeAppMock({ isAdmin: false, adminToken: null }));
     activeTree = await renderComponent(React.createElement(UploadScreen));
     await flushPromises();
-    expect(hasText(activeTree.root, "Inbox")).toBe(false);
+    expect(hasText(activeTree!.root!, "Inbox")).toBe(false);
   });
 
   it("does NOT show the 'AI Log' nav row when isAdmin=false", async () => {
     useApp.mockReturnValue(makeAppMock({ isAdmin: false, adminToken: null }));
     activeTree = await renderComponent(React.createElement(UploadScreen));
     await flushPromises();
-    expect(hasText(activeTree.root, "AI Log")).toBe(false);
+    expect(hasText(activeTree!.root!, "AI Log")).toBe(false);
   });
 });

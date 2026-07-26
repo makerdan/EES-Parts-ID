@@ -39,7 +39,7 @@
 (global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import TestRenderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 
 // ─── react-native-reanimated ──────────────────────────────────────────────────
 
@@ -258,13 +258,13 @@ const BASE_PROPS = {
  * once containerW is non-zero it renders the full map tree.
  */
 function fireOnLayout(
-  renderer: TestRenderer.ReactTestRenderer,
+  result: Awaited<ReturnType<typeof render>>,
   width: number,
   height: number,
 ) {
-  const nodes = renderer.root.findAll(
+  const nodes = result.root!.queryAll(
     (n) => typeof n.props.onLayout === "function",
-    { deep: true },
+    { includeSelf: true },
   );
   if (nodes.length === 0) throw new Error("No onLayout node found");
   nodes[0]!.props.onLayout({
@@ -275,25 +275,26 @@ function fireOnLayout(
 /**
  * Press the "Fit to screen" button (accessibilityLabel).
  */
-function pressFitButton(renderer: TestRenderer.ReactTestRenderer) {
-  const btn = renderer.root.find(
+function pressFitButton(result: Awaited<ReturnType<typeof render>>) {
+  const btn = result.root!.queryAll(
     (n) => n.props.accessibilityLabel === "Fit to screen",
-  );
-  btn.props.onPress();
+    { includeSelf: true },
+  )[0];
+  btn!.props.onPress();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 let computeFitTargetSpy: jest.SpyInstance;
 
-// Track every renderer created so afterEach can unmount them all. Without
+// Track every result created so afterEach can unmount them all. Without
 // unmounting, WarehouseMapView's pending timers (e.g. the 3 s empty-state
 // auto-dismiss) fire after the suite finishes and emit "Cannot log after
 // tests are done" warnings during later suites in the same process.
-const mountedRenderers: TestRenderer.ReactTestRenderer[] = [];
+const mountedResults: Awaited<ReturnType<typeof render>>[] = [];
 
-function trackRenderer(r: TestRenderer.ReactTestRenderer) {
-  mountedRenderers.push(r);
+function trackResult(r: Awaited<ReturnType<typeof render>>) {
+  mountedResults.push(r);
   return r;
 }
 
@@ -317,11 +318,9 @@ beforeEach(() => {
 afterEach(async () => {
   // Unmount every tree mounted during the test so component cleanup effects
   // clear all pending timers before the next test/suite runs.
-  while (mountedRenderers.length > 0) {
-    const r = mountedRenderers.pop()!;
-    await act(async () => {
-      r.unmount();
-    });
+  while (mountedResults.length > 0) {
+    const r = mountedResults.pop()!;
+    await r.unmount();
   }
   computeFitTargetSpy.mockRestore();
 });
@@ -336,14 +335,11 @@ afterEach(async () => {
 
 describe("applyFitIfReady — z0 snap at callback invocation", () => {
   async function mountAndLayout(containerW: number, containerH: number) {
-    let renderer!: TestRenderer.ReactTestRenderer;
+    const result = trackResult(await render(<WarehouseMapView {...BASE_PROPS} />));
     await act(async () => {
-      renderer = trackRenderer(TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />));
+      fireOnLayout(result, containerW, containerH);
     });
-    await act(async () => {
-      fireOnLayout(renderer, containerW, containerH);
-    });
-    return renderer;
+    return result;
   }
 
   it("phone (390×761): computeFitTarget is called when applyFitIfReady fires", async () => {
@@ -403,19 +399,16 @@ describe("applyFitIfReady — z0 snap at callback invocation", () => {
 
 describe("applyFit — z0 snap via fit button callback", () => {
   async function mountAndPressfit(containerW: number, containerH: number) {
-    let renderer!: TestRenderer.ReactTestRenderer;
+    const result = trackResult(await render(<WarehouseMapView {...BASE_PROPS} />));
     await act(async () => {
-      renderer = trackRenderer(TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />));
-    });
-    await act(async () => {
-      fireOnLayout(renderer, containerW, containerH);
+      fireOnLayout(result, containerW, containerH);
     });
     // Clear calls from applyFitIfReady so only applyFit calls are asserted below.
     computeFitTargetSpy.mockClear();
     await act(async () => {
-      pressFitButton(renderer);
+      pressFitButton(result);
     });
-    return renderer;
+    return result;
   }
 
   it("phone (390×761): pressing fit button calls computeFitTarget", async () => {

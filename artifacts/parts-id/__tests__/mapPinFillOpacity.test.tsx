@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Regression tests for the fill-opacity animation in ZoneOverlayItem.
  *
  * The useEffect at WarehouseMapView.tsx ~line 282 animates fillOpacitySV 0→1
@@ -12,8 +10,8 @@
  * Strategy
  * --------
  * withTiming is exposed as jest.fn() from the Reanimated mock so calls can be
- * counted and inspected.  ZoneOverlayItem is mounted via react-test-renderer;
- * renderer.update() drives prop changes without unmounting, and act() flushes
+ * counted and inspected.  ZoneOverlayItem is mounted via @testing-library/react-native;
+ * result.rerender() drives prop changes without unmounting, and act() flushes
  * the useEffect queue after each render.
  */
 
@@ -22,7 +20,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act, RenderResult } from "@testing-library/react-native";
 
 // ─── react-native-svg ─────────────────────────────────────────────────────────
 
@@ -46,7 +44,7 @@ jest.mock("react-native-svg", () => {
     Ellipse: make("svg-ellipse"),
     Circle:  make("svg-circle"),
     Rect:    make("svg-rect"),
-    Text:    make("svg-text"),
+    Text:    make("Text"),
     SvgUri:  make("svg-uri"),
     SvgXml:  make("svg-xml"),
   };
@@ -58,7 +56,7 @@ jest.mock("react-native", () => ({
   Platform:     { OS: "ios", select: (o: Record<string, unknown>) => o.ios ?? o.default },
   StyleSheet:   { create: (s: unknown) => s, flatten: (s: unknown) => s },
   View:         ({ children }: { children?: React.ReactNode }) => React.createElement("rn-view", {}, children),
-  Text:         ({ children }: { children?: React.ReactNode }) => React.createElement("rn-text", {}, children),
+  Text:         ({ children }: { children?: React.ReactNode }) => React.createElement("Text", {}, children),
   ActivityIndicator: () => null,
   Pressable:    ({ children, onPress }: { children?: React.ReactNode; onPress?: () => void }) =>
                   React.createElement("rn-pressable", { onPress }, children),
@@ -177,24 +175,6 @@ jest.mock("@/utils/mapViewport", () => ({
 
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
-// ─── Suppress react-test-renderer deprecation warning ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    },
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Subject under test ───────────────────────────────────────────────────────
 
 import { ZoneOverlayItem } from "@/components/WarehouseMapView";
@@ -239,7 +219,7 @@ const withTimingMock = (require("react-native-reanimated") as { withTiming: jest
 // =============================================================================
 
 describe("ZoneOverlayItem fill-opacity animation — new pin placement", () => {
-  let tree!: renderer.ReactTestRenderer;
+  let tree!: RenderResult;
   const zone = makeZone();
 
   beforeEach(() => {
@@ -247,30 +227,28 @@ describe("ZoneOverlayItem fill-opacity animation — new pin placement", () => {
   });
 
   afterEach(async () => {
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("calls withTiming(1, { duration: 250 }) when isPinned transitions false→true", async () => {
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={zone}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={false}
-        />,
-      );
-    });
+    tree = await render(
+      <ZoneOverlayItem
+        zone={zone}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={false}
+      />,
+    );
 
     // No animation should have fired while the zone is unpinned.
     expect(withTimingMock).not.toHaveBeenCalled();
 
     // Transition to pinned — the fill-opacity animation should fire.
     await act(async () => {
-      tree.update(
+      tree.rerender(
         <ZoneOverlayItem
           zone={zone}
           scale={fakeScale}
@@ -287,22 +265,20 @@ describe("ZoneOverlayItem fill-opacity animation — new pin placement", () => {
   });
 
   it("animates to opacity 1 (not 0) — fill-opacity ends at fully visible", async () => {
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={zone}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={false}
-        />,
-      );
-    });
+    tree = await render(
+      <ZoneOverlayItem
+        zone={zone}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={false}
+      />,
+    );
 
     await act(async () => {
-      tree.update(
+      tree.rerender(
         <ZoneOverlayItem
           zone={zone}
           scale={fakeScale}
@@ -327,7 +303,7 @@ describe("ZoneOverlayItem fill-opacity animation — new pin placement", () => {
 // =============================================================================
 
 describe("ZoneOverlayItem fill-opacity animation — already pinned on mount", () => {
-  let tree!: renderer.ReactTestRenderer;
+  let tree!: RenderResult;
   const zone = makeZone();
 
   beforeEach(() => {
@@ -335,42 +311,38 @@ describe("ZoneOverlayItem fill-opacity animation — already pinned on mount", (
   });
 
   afterEach(async () => {
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("does NOT call withTiming when the zone is already pinned on first render", async () => {
     // Simulates a restored search result where isPinned=true from the start.
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={zone}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={true}
-        />,
-      );
-    });
+    tree = await render(
+      <ZoneOverlayItem
+        zone={zone}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={true}
+      />,
+    );
 
     expect(withTimingMock).not.toHaveBeenCalled();
   });
 
   it("does NOT call withTiming when isVariantPinned is already true on first render", async () => {
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={zone}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isVariantPinned={true}
-        />,
-      );
-    });
+    tree = await render(
+      <ZoneOverlayItem
+        zone={zone}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isVariantPinned={true}
+      />,
+    );
 
     expect(withTimingMock).not.toHaveBeenCalled();
   });
@@ -381,7 +353,7 @@ describe("ZoneOverlayItem fill-opacity animation — already pinned on mount", (
 // =============================================================================
 
 describe("ZoneOverlayItem fill-opacity animation — no re-animation while already pinned", () => {
-  let tree!: renderer.ReactTestRenderer;
+  let tree!: RenderResult;
   const zone = makeZone();
 
   beforeEach(() => {
@@ -389,28 +361,26 @@ describe("ZoneOverlayItem fill-opacity animation — no re-animation while alrea
   });
 
   afterEach(async () => {
-    await act(async () => { tree.unmount(); });
+    await tree.unmount();
   });
 
   it("does NOT call withTiming again when re-rendered with isPinned still true", async () => {
     // Mount unpinned.
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={zone}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={false}
-        />,
-      );
-    });
+    tree = await render(
+      <ZoneOverlayItem
+        zone={zone}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={false}
+      />,
+    );
 
     // First pin — animation fires once.
     await act(async () => {
-      tree.update(
+      tree.rerender(
         <ZoneOverlayItem
           zone={zone}
           scale={fakeScale}
@@ -428,7 +398,7 @@ describe("ZoneOverlayItem fill-opacity animation — no re-animation while alrea
 
     // Re-render with a different prop (e.g. binLabel arrives) while still pinned.
     await act(async () => {
-      tree.update(
+      tree.rerender(
         <ZoneOverlayItem
           zone={zone}
           scale={fakeScale}
@@ -447,25 +417,23 @@ describe("ZoneOverlayItem fill-opacity animation — no re-animation while alrea
 
   it("does NOT call withTiming again on a second unrelated re-render while pinned", async () => {
     // Mount pinned from the start (e.g. search result page restore).
-    await act(async () => {
-      tree = renderer.create(
-        <ZoneOverlayItem
-          zone={zone}
-          scale={fakeScale}
-          colors={fakeColors}
-          onZoneTap={jest.fn()}
-          cycleMode={false}
-          isCounted={false}
-          isPinned={true}
-        />,
-      );
-    });
+    tree = await render(
+      <ZoneOverlayItem
+        zone={zone}
+        scale={fakeScale}
+        colors={fakeColors}
+        onZoneTap={jest.fn()}
+        cycleMode={false}
+        isCounted={false}
+        isPinned={true}
+      />,
+    );
 
     withTimingMock.mockClear();
 
     // Trigger an unrelated re-render (scale object identity stays the same).
     await act(async () => {
-      tree.update(
+      tree.rerender(
         <ZoneOverlayItem
           zone={zone}
           scale={fakeScale}

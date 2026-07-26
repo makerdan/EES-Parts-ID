@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Regression guard: Apply buttons in FilterPanel.
  *
  * Verifies:
@@ -31,7 +29,7 @@ jest.mock("react-native", () => {
       return React.createElement("rn-view", props, children);
     },
     Text: function Text({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) {
-      return React.createElement("rn-text", props, children);
+      return React.createElement("Text", props, children);
     },
     Pressable: function Pressable({ children, onPress, ...props }: { children?: React.ReactNode; onPress?: () => void; [k: string]: unknown }) {
       return React.createElement("rn-pressable", { onPress, ...props }, children);
@@ -109,32 +107,36 @@ jest.mock("@/hooks/usePersistedCollapse", () => ({
 // ─── Subject under test ───────────────────────────────────────────────────────
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 import { FilterPanel } from "@/components/FilterPanel";
 import type { FilterValues } from "@/components/FilterPanel";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type Inst = ReturnType<typeof renderer.create>["root"];
+type Inst = TestInstance;
 
 /** Walk the tree and return all pressable elements whose text children include `text`. */
 function findPressablesByText(root: Inst, text: string): Inst[] {
   const pressables: Inst[] = [];
 
   function hasText(node: Inst): boolean {
-    if ((node.type as string) === "rn-text") {
+    if (!node) return false;
+    if ((node.type as string) === "Text") {
       const c = (node.props as { children?: unknown }).children;
       if (typeof c === "string" && c.includes(text)) return true;
       if (Array.isArray(c)) return c.some((x) => typeof x === "string" && x.includes(text));
     }
-    return node.children.some((ch) => typeof ch !== "string" && hasText(ch as Inst));
+    return node.children.some((ch: TestInstance | string) => typeof ch !== "string" && ch != null && hasText(ch as Inst));
   }
 
   function walk(node: Inst) {
+    if (!node) return;
     if ((node.type as string) === "rn-pressable" && hasText(node)) {
       pressables.push(node);
     }
-    node.children.forEach((ch) => { if (typeof ch !== "string") walk(ch as Inst); });
+    node.children.forEach((ch: TestInstance | string) => { if (typeof ch !== "string") walk(ch as Inst); });
   }
 
   walk(root);
@@ -180,55 +182,28 @@ const DEFAULT_VALUES: FilterValues = {
 };
 
 /** Render FilterPanel with the panel expanded (dimCollapsed = false). */
-function renderExpanded(onApply?: () => void) {
+async function renderExpanded(onApply?: () => void) {
   mockUsePersistedCollapse.mockReturnValue([false, jest.fn(), jest.fn(), true]);
-  let root!: renderer.ReactTestRenderer;
-  act(() => {
-    root = renderer.create(
-      <FilterPanel
-        values={DEFAULT_VALUES}
-        onChange={jest.fn()}
-        {...(onApply !== undefined ? { onApply } : {})}
-      />,
-    );
-  });
-  return root;
+  return await render(
+    <FilterPanel
+      values={DEFAULT_VALUES}
+      onChange={jest.fn()}
+      onApply={onApply}
+    />,
+  );
 }
 
 /** Render FilterPanel with the panel collapsed (dimCollapsed = true, the default). */
-function renderCollapsed(onApply?: () => void) {
+async function renderCollapsed(onApply?: () => void) {
   mockUsePersistedCollapse.mockReturnValue([true, jest.fn(), jest.fn(), true]);
-  let root!: renderer.ReactTestRenderer;
-  act(() => {
-    root = renderer.create(
-      <FilterPanel
-        values={DEFAULT_VALUES}
-        onChange={jest.fn()}
-        {...(onApply !== undefined ? { onApply } : {})}
-      />,
-    );
-  });
-  return root;
-}
-
-// ─── Suppress react-test-renderer deprecation noise ──────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...rest: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") || msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...rest);
-    },
+  return await render(
+    <FilterPanel
+      values={DEFAULT_VALUES}
+      onChange={jest.fn()}
+      onApply={onApply}
+    />,
   );
-});
-afterAll(() => {
-  (console.error as jest.Mock).mockRestore?.();
-});
+}
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -236,61 +211,61 @@ describe("FilterPanel — Apply buttons", () => {
 
   // ── 1. Both buttons call onApply ───────────────────────────────────────────
 
-  it("top Apply button calls onApply when pressed (panel expanded)", () => {
+  it("top Apply button calls onApply when pressed (panel expanded)", async () => {
     const onApply = jest.fn();
-    const root = renderExpanded(onApply);
+    const result = await renderExpanded(onApply);
 
-    const applyButtons = findPressablesByText(root.root, "Apply");
+    const applyButtons = findPressablesByText(result.root!, "Apply");
     // Expect at least 2 (top + bottom)
     expect(applyButtons.length).toBeGreaterThanOrEqual(2);
 
     // Press the first one (top position)
-    act(() => {
+    await act(async () => {
       (applyButtons[0]!.props as { onPress?: () => void }).onPress?.();
     });
     expect(onApply).toHaveBeenCalledTimes(1);
   });
 
-  it("bottom Apply button calls onApply when pressed (panel expanded)", () => {
+  it("bottom Apply button calls onApply when pressed (panel expanded)", async () => {
     const onApply = jest.fn();
-    const root = renderExpanded(onApply);
+    const result = await renderExpanded(onApply);
 
-    const applyButtons = findPressablesByText(root.root, "Apply");
+    const applyButtons = findPressablesByText(result.root!, "Apply");
     expect(applyButtons.length).toBeGreaterThanOrEqual(2);
 
     // Press the last one (bottom position)
-    act(() => {
+    await act(async () => {
       (applyButtons[applyButtons.length - 1]!.props as { onPress?: () => void }).onPress?.();
     });
     expect(onApply).toHaveBeenCalledTimes(1);
   });
 
-  it("both Apply buttons are distinct pressable elements", () => {
+  it("both Apply buttons are distinct pressable elements", async () => {
     const onApply = jest.fn();
-    const root = renderExpanded(onApply);
+    const result = await renderExpanded(onApply);
 
-    const applyButtons = findPressablesByText(root.root, "Apply");
+    const applyButtons = findPressablesByText(result.root!, "Apply");
     expect(applyButtons.length).toBeGreaterThanOrEqual(2);
     expect(applyButtons[0]).not.toBe(applyButtons[applyButtons.length - 1]);
   });
 
-  it("pressing top Apply button does not call onApply more than once", () => {
+  it("pressing top Apply button does not call onApply more than once", async () => {
     const onApply = jest.fn();
-    const root = renderExpanded(onApply);
+    const result = await renderExpanded(onApply);
 
-    const applyButtons = findPressablesByText(root.root, "Apply");
-    act(() => {
+    const applyButtons = findPressablesByText(result.root!, "Apply");
+    await act(async () => {
       (applyButtons[0]!.props as { onPress?: () => void }).onPress?.();
     });
     expect(onApply).toHaveBeenCalledTimes(1);
   });
 
-  it("pressing bottom Apply button does not call onApply more than once", () => {
+  it("pressing bottom Apply button does not call onApply more than once", async () => {
     const onApply = jest.fn();
-    const root = renderExpanded(onApply);
+    const result = await renderExpanded(onApply);
 
-    const applyButtons = findPressablesByText(root.root, "Apply");
-    act(() => {
+    const applyButtons = findPressablesByText(result.root!, "Apply");
+    await act(async () => {
       (applyButtons[applyButtons.length - 1]!.props as { onPress?: () => void }).onPress?.();
     });
     expect(onApply).toHaveBeenCalledTimes(1);
@@ -298,27 +273,27 @@ describe("FilterPanel — Apply buttons", () => {
 
   // ── 2. Buttons absent when onApply is not provided ─────────────────────────
 
-  it("no Apply button appears when onApply is not provided (panel expanded)", () => {
-    const root = renderExpanded(undefined);
+  it("no Apply button appears when onApply is not provided (panel expanded)", async () => {
+    const result = await renderExpanded(undefined);
 
-    const applyButtons = findPressablesByText(root.root, "Apply");
+    const applyButtons = findPressablesByText(result.root!, "Apply");
     expect(applyButtons).toHaveLength(0);
   });
 
   // ── 3. Buttons absent when the panel is collapsed ──────────────────────────
 
-  it("no Apply button appears when the panel is collapsed (onApply provided)", () => {
+  it("no Apply button appears when the panel is collapsed (onApply provided)", async () => {
     const onApply = jest.fn();
-    const root = renderCollapsed(onApply);
+    const result = await renderCollapsed(onApply);
 
-    const applyButtons = findPressablesByText(root.root, "Apply");
+    const applyButtons = findPressablesByText(result.root!, "Apply");
     expect(applyButtons).toHaveLength(0);
   });
 
-  it("no Apply button appears when panel is collapsed and onApply is absent", () => {
-    const root = renderCollapsed(undefined);
+  it("no Apply button appears when panel is collapsed and onApply is absent", async () => {
+    const result = await renderCollapsed(undefined);
 
-    const applyButtons = findPressablesByText(root.root, "Apply");
+    const applyButtons = findPressablesByText(result.root!, "Apply");
     expect(applyButtons).toHaveLength(0);
   });
 });

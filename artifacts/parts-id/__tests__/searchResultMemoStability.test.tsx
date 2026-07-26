@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Reference-stability tests for the flatListData memo inside the real
  * SearchScreen component (app/(tabs)/index.tsx lines 1016–1026).
  *
@@ -16,7 +14,7 @@
  * Covered scenarios
  * ─────────────────
  * 1. flatListData is the same reference after an unrelated re-render
- *    (tree.update with unchanged search mutation data)
+ *    (result.rerender with unchanged search mutation data)
  * 2. flatListData is a NEW reference when searchMutation.data changes
  *    (memo correctly invalidates when its dep changes)
  */
@@ -275,7 +273,7 @@ jest.mock("@/utils/scanHistory", () => ({}));
 // ── Imports (after all mocks) ─────────────────────────────────────────────────
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act, RenderResult } from "@testing-library/react-native";
 // Use require() (not import *) to get the raw CJS module.exports object.
 // The ESM namespace created by `import *` has getter-only properties; the
 // CJS object returned by require() has plain writable properties so we can
@@ -387,26 +385,6 @@ const flushPromises = () =>
     await Promise.resolve();
   });
 
-// ── Suppress deprecation noise ────────────────────────────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => {
-  (console.error as jest.Mock).mockRestore?.();
-});
-
 beforeEach(() => {
   lastFlatListData = undefined;
   useApp.mockReturnValue(makeAppContext());
@@ -416,9 +394,9 @@ beforeEach(() => {
 // clear pending timers (e.g. the sync-retry backoff) before the suite ends;
 // otherwise those timers fire later in the process and emit "Cannot log after
 // tests are done" warnings.
-const mountedTrees: renderer.ReactTestRenderer[] = [];
+const mountedTrees: RenderResult[] = [];
 
-function trackTree(t: renderer.ReactTestRenderer) {
+function trackTree(t: RenderResult) {
   mountedTrees.push(t);
   return t;
 }
@@ -426,9 +404,7 @@ function trackTree(t: renderer.ReactTestRenderer) {
 afterEach(async () => {
   while (mountedTrees.length > 0) {
     const t = mountedTrees.pop()!;
-    await act(async () => {
-      t.unmount();
-    });
+    await t.unmount();
   }
 });
 
@@ -439,10 +415,8 @@ describe("flatListData memo in SearchScreen — reference stability", () => {
     const searchData = makeSearchData(3);
     mockUseSearchInventory.mockReturnValue(makeSearchMutation(searchData));
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = trackTree(renderer.create(<SearchScreen />));
-    });
+    let result!: RenderResult;
+    result = trackTree(await render(<SearchScreen />));
 
     // Let on-mount effects run (queryCache load, keyboard listeners, etc.).
     // These cause internal state updates — "unrelated" re-renders — without
@@ -455,9 +429,7 @@ describe("flatListData memo in SearchScreen — reference stability", () => {
     // Force another re-render with the same search mutation (simulates any
     // subsequent unrelated state change: keyboard open/close, layout event,
     // etc.).  The FlatList data reference must remain identical.
-    await act(async () => {
-      tree.update(<SearchScreen />);
-    });
+    await result.rerender(<SearchScreen />);
 
     const after = lastFlatListData;
 
@@ -470,10 +442,8 @@ describe("flatListData memo in SearchScreen — reference stability", () => {
 
     mockUseSearchInventory.mockReturnValue(makeSearchMutation(searchDataA));
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = trackTree(renderer.create(<SearchScreen />));
-    });
+    let result!: RenderResult;
+    result = trackTree(await render(<SearchScreen />));
 
     await flushPromises();
 
@@ -483,9 +453,7 @@ describe("flatListData memo in SearchScreen — reference stability", () => {
     // Switch the mutation to return different results
     mockUseSearchInventory.mockReturnValue(makeSearchMutation(searchDataB));
 
-    await act(async () => {
-      tree.update(<SearchScreen />);
-    });
+    await result.rerender(<SearchScreen />);
 
     const after = lastFlatListData;
 

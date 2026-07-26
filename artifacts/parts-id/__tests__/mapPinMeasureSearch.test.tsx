@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Component-level tests for the map-pin and Measure-to-Search cross-tab flows.
  *
  * Exercises the real callbacks and effects inside SearchScreen (index.tsx) and
@@ -30,7 +28,9 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
 import { makeAppMock, flushPromises as rawFlush } from "./helpers/appMocks";
 
 // ─── expo-router: capture useFocusEffect callback and router calls ────────────
@@ -289,28 +289,10 @@ function makeTestAppMock(overrides: Record<string, unknown> = {}) {
   });
 }
 
-// ─── Suppress react-test-renderer deprecation warning ────────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (typeof msg === "string" && (
-        msg.includes("react-test-renderer is deprecated") ||
-        msg.includes("Warning:")
-      )) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Render helpers ───────────────────────────────────────────────────────────
 
-async function render(ui: React.ReactElement) {
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(ui); });
+async function renderUI(ui: React.ReactElement) {
+  const tree = await render(ui);
   return tree;
 }
 
@@ -318,31 +300,31 @@ const flushPromises = () => act(async () => { await rawFlush(); });
 
 // ─── Instance-tree helpers ────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: TestInstance | string) => instText(c as Inst | string)).join("");
 }
 
-function hasText(root: Inst, text: string): boolean {
-  return instText(root).includes(text);
+function hasText(root: RenderResult["root"], text: string): boolean {
+  return instText(root!).includes(text);
 }
 
-function findPressable(root: Inst, label: string): Inst | null {
+function findPressable(root: RenderResult["root"], label: string): Inst | null {
   return (
-    root.findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-        .find(n => instText(n).includes(label)) ?? null
+    root!.queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+        .find((n: TestInstance) => instText(n).includes(label)) ?? null
   );
 }
 
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<RenderResult> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
-    await act(async () => { activeTree!.unmount(); });
+    await activeTree.unmount();
     activeTree = null;
   }
   capturedOnShowOnMap    = null;
@@ -361,7 +343,7 @@ import { WarehouseMapView } from "../components/WarehouseMapView";
 
 async function renderSearch(appOverrides: Record<string, unknown> = {}) {
   useApp.mockReturnValue(makeTestAppMock(appOverrides));
-  const tree = await render(<SearchScreen />);
+  const tree = await renderUI(<SearchScreen />);
   activeTree = tree;
   await flushPromises();
   return tree;
@@ -369,7 +351,7 @@ async function renderSearch(appOverrides: Record<string, unknown> = {}) {
 
 async function renderPhoto(appOverrides: Record<string, unknown> = {}) {
   useApp.mockReturnValue(makeTestAppMock(appOverrides));
-  const tree = await render(<PhotoScreen />);
+  const tree = await renderUI(<PhotoScreen />);
   activeTree = tree;
   await flushPromises();
   return tree;
@@ -688,30 +670,27 @@ describe("WarehouseMapView – focusAisleNum effect calls onFocusConsumed when n
       },
     ];
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <WarehouseMapView
-          zones={zones}
-          zonesLoading={false}
-          zonesError={false}
-          onZonesRetry={jest.fn()}
-          onZoneTap={jest.fn()}
-          focusAisleNum={1}
-          onFocusConsumed={onFocusConsumed}
-          onFocusFailed={onFocusFailed}
-        />
-      );
-    });
+    const tree = await render(
+      <WarehouseMapView
+        zones={zones}
+        zonesLoading={false}
+        zonesError={false}
+        onZonesRetry={jest.fn()}
+        onZoneTap={jest.fn()}
+        focusAisleNum={1}
+        onFocusConsumed={onFocusConsumed}
+        onFocusFailed={onFocusFailed}
+      />
+    );
     activeTree = tree;
     await flushPromises();
 
     // containerWRef starts at 0 — the guard (w === 0) blocks the zone lookup.
     // Simulate a layout event on the outer View to give the component real
     // dimensions, which re-runs the focusAisleNum effect past the guard.
-    const viewWithLayout = tree.root.findAll(
-      (n) => typeof n.props.onLayout === "function",
-      { deep: true }
+    const viewWithLayout = tree.root!.queryAll(
+      (n: TestInstance) => typeof n.props.onLayout === "function",
+      { includeSelf: true }
     )[0];
     expect(viewWithLayout).toBeDefined();
 

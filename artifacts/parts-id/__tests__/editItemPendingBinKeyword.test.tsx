@@ -1,6 +1,4 @@
 /**
- * @jest-environment node
- *
  * Guards the auto-pending bin/keyword logic in EditItemScreen.handleSave:
  *
  *   When the admin types text into the newBin or newKeyword input field but
@@ -22,8 +20,9 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import renderer, { act } from "react-test-renderer";
+import { render, act } from "@testing-library/react-native";
 import type { InventoryItem } from "@workspace/api-client-react";
+import type { TestInstance } from "test-renderer";
 
 // ─── Stable spies ────────────────────────────────────────────────────────────
 
@@ -180,60 +179,40 @@ jest.mock("@/components/KeyboardDoneInput", () => {
   };
 });
 
-// ─── Suppress react-test-renderer deprecation warnings ───────────────────────
-
-let origConsoleError: typeof console.error;
-beforeAll(() => {
-  origConsoleError = console.error.bind(console);
-  jest.spyOn(console, "error").mockImplementation(
-    (msg: unknown, ...args: unknown[]) => {
-      if (
-        typeof msg === "string" &&
-        (msg.includes("react-test-renderer is deprecated") ||
-          msg.includes("Warning:"))
-      ) return;
-      origConsoleError(msg, ...args);
-    }
-  );
-});
-afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-type Inst = renderer.ReactTestInstance;
+type Inst = TestInstance;
 
 function instText(node: Inst | string): string {
   if (typeof node === "string") return node;
-  return (node.children ?? []).map(c => instText(c as Inst | string)).join("");
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
 }
 
 function findPressable(root: Inst, label: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
-      .find(n => instText(n).includes(label)) ?? null
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => instText(n).includes(label)) ?? null
   );
 }
 
 function findTextInput(root: Inst, placeholder: string): Inst | null {
   return (
     root
-      .findAll(n => (n.type as string) === "rn-textinput", { deep: true })
-      .find(n => n.props.testID === placeholder || n.props.placeholder === placeholder)
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-textinput", { includeSelf: true })
+      .find((n: Inst) => n.props.testID === placeholder || n.props.placeholder === placeholder)
     ?? null
   );
 }
 
 async function renderScreen() {
   const EditItemScreen = (await import("../app/edit-item")).default;
-  let tree!: renderer.ReactTestRenderer;
-  await act(async () => { tree = renderer.create(<EditItemScreen />); });
-  return tree;
+  return await render(<EditItemScreen />);
 }
 
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 afterEach(async () => {
   if (activeTree) {
@@ -275,20 +254,20 @@ describe("EditItemScreen – pending bin text is carried through on Save", () =>
     // Start with a different description so hasChanges is true once we change it.
     testItem = makeItem({ binLocations: [], description: "Original description" });
 
-    const tree = await renderScreen();
-    activeTree = tree;
+    const result = await renderScreen();
+    activeTree = result;
 
     // Change description to make hasChanges = true.
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     expect(descInput).not.toBeNull();
     await act(async () => { descInput!.props.onChangeText("New description"); });
 
     // Type a bin but do NOT press Add.
-    const binInput = findTextInput(tree.root, "e.g. A1-04");
+    const binInput = findTextInput(result.root!, "e.g. A1-04");
     expect(binInput).not.toBeNull();
     await act(async () => { binInput!.props.onChangeText("B2-07"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
     await act(async () => { saveBtn!.props.onPress(); });
 
@@ -302,17 +281,17 @@ describe("EditItemScreen – pending bin text is carried through on Save", () =>
   it("appends pending bin to existing bins in the mutation payload", async () => {
     testItem = makeItem({ binLocations: ["AISLE-01"], description: "Original description" });
 
-    const tree = await renderScreen();
-    activeTree = tree;
+    const result = await renderScreen();
+    activeTree = result;
 
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     await act(async () => { descInput!.props.onChangeText("Updated description"); });
 
-    const binInput = findTextInput(tree.root, "e.g. A1-04");
+    const binInput = findTextInput(result.root!, "e.g. A1-04");
     expect(binInput).not.toBeNull();
     await act(async () => { binInput!.props.onChangeText("C3-12"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     expect(mockBinsMutateAsync).toHaveBeenCalledTimes(1);
@@ -325,17 +304,17 @@ describe("EditItemScreen – pending bin text is carried through on Save", () =>
   it("does NOT duplicate a pending bin that already exists (case-insensitive)", async () => {
     testItem = makeItem({ binLocations: ["AISLE-01"], description: "Original description" });
 
-    const tree = await renderScreen();
-    activeTree = tree;
+    const result = await renderScreen();
+    activeTree = result;
 
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     await act(async () => { descInput!.props.onChangeText("Updated description"); });
 
     // Type the same bin as already exists, different case.
-    const binInput = findTextInput(tree.root, "e.g. A1-04");
+    const binInput = findTextInput(result.root!, "e.g. A1-04");
     await act(async () => { binInput!.props.onChangeText("aisle-01"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     // The duplicate is discarded: finalBins === bins (same reference, already equal
@@ -346,16 +325,16 @@ describe("EditItemScreen – pending bin text is carried through on Save", () =>
   it("ignores whitespace-only pending bin text (does not fire the bins mutation)", async () => {
     testItem = makeItem({ binLocations: [], description: "Original description" });
 
-    const tree = await renderScreen();
-    activeTree = tree;
+    const result = await renderScreen();
+    activeTree = result;
 
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     await act(async () => { descInput!.props.onChangeText("Updated description"); });
 
-    const binInput = findTextInput(tree.root, "e.g. A1-04");
+    const binInput = findTextInput(result.root!, "e.g. A1-04");
     await act(async () => { binInput!.props.onChangeText("   "); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     // finalBins === [] === item.binLocations → no bin mutation fires.
@@ -371,17 +350,17 @@ describe("EditItemScreen – pending keyword text is carried through on Save", (
   it("includes typed keyword text (lowercased) in the keywords mutation when Save is pressed without pressing Add", async () => {
     testItem = makeItem({ aiKeywords: [], description: "Original description" });
 
-    const tree = await renderScreen();
-    activeTree = tree;
+    const result = await renderScreen();
+    activeTree = result;
 
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     await act(async () => { descInput!.props.onChangeText("New description"); });
 
-    const kwInput = findTextInput(tree.root, "Type keyword and press Add\u2026");
+    const kwInput = findTextInput(result.root!, "Type keyword and press Add\u2026");
     expect(kwInput).not.toBeNull();
     await act(async () => { kwInput!.props.onChangeText("Motor"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     expect(mockKeywordsMutateAsync).toHaveBeenCalledTimes(1);
@@ -394,16 +373,16 @@ describe("EditItemScreen – pending keyword text is carried through on Save", (
   it("appends pending keyword to existing keywords in the mutation payload", async () => {
     testItem = makeItem({ aiKeywords: ["relay"], description: "Original description" });
 
-    const tree = await renderScreen();
-    activeTree = tree;
+    const result = await renderScreen();
+    activeTree = result;
 
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     await act(async () => { descInput!.props.onChangeText("New description"); });
 
-    const kwInput = findTextInput(tree.root, "Type keyword and press Add\u2026");
+    const kwInput = findTextInput(result.root!, "Type keyword and press Add\u2026");
     await act(async () => { kwInput!.props.onChangeText("Breaker"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     expect(mockKeywordsMutateAsync).toHaveBeenCalledTimes(1);
@@ -416,16 +395,16 @@ describe("EditItemScreen – pending keyword text is carried through on Save", (
   it("does NOT duplicate a pending keyword that already exists in the list", async () => {
     testItem = makeItem({ aiKeywords: ["motor"], description: "Original description" });
 
-    const tree = await renderScreen();
-    activeTree = tree;
+    const result = await renderScreen();
+    activeTree = result;
 
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     await act(async () => { descInput!.props.onChangeText("New description"); });
 
-    const kwInput = findTextInput(tree.root, "Type keyword and press Add\u2026");
+    const kwInput = findTextInput(result.root!, "Type keyword and press Add\u2026");
     await act(async () => { kwInput!.props.onChangeText("Motor"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     // The duplicate is discarded: finalKeywords === keywords (same reference,
@@ -436,16 +415,16 @@ describe("EditItemScreen – pending keyword text is carried through on Save", (
   it("ignores whitespace-only pending keyword text (does not fire the keywords mutation)", async () => {
     testItem = makeItem({ aiKeywords: [], description: "Original description" });
 
-    const tree = await renderScreen();
-    activeTree = tree;
+    const result = await renderScreen();
+    activeTree = result;
 
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     await act(async () => { descInput!.props.onChangeText("Updated description"); });
 
-    const kwInput = findTextInput(tree.root, "Type keyword and press Add\u2026");
+    const kwInput = findTextInput(result.root!, "Type keyword and press Add\u2026");
     await act(async () => { kwInput!.props.onChangeText("   "); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     expect(mockKeywordsMutateAsync).not.toHaveBeenCalled();
@@ -460,19 +439,19 @@ describe("EditItemScreen – both pending bin and keyword text are carried throu
   it("includes both pending bin and keyword in their respective mutation payloads in the same save", async () => {
     testItem = makeItem({ binLocations: [], aiKeywords: [], description: "Original description" });
 
-    const tree = await renderScreen();
-    activeTree = tree;
+    const result = await renderScreen();
+    activeTree = result;
 
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     await act(async () => { descInput!.props.onChangeText("New description"); });
 
-    const binInput = findTextInput(tree.root, "e.g. A1-04");
+    const binInput = findTextInput(result.root!, "e.g. A1-04");
     await act(async () => { binInput!.props.onChangeText("D4-22"); });
 
-    const kwInput = findTextInput(tree.root, "Type keyword and press Add\u2026");
+    const kwInput = findTextInput(result.root!, "Type keyword and press Add\u2026");
     await act(async () => { kwInput!.props.onChangeText("Contactor"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     expect(mockBinsMutateAsync).toHaveBeenCalledTimes(1);
@@ -501,15 +480,15 @@ describe("EditItemScreen – stale-dims regression", () => {
       dimensions:   { length: 5, width: 3, height: 2, diameter: null } as unknown as Exclude<InventoryItem["dimensions"], undefined>,
     });
 
-    const tree = await renderScreen();
-    activeTree = tree;
+    const result = await renderScreen();
+    activeTree = result;
 
     // Change description so the save has at least one field to commit,
     // but leave all dim fields at their initial values.
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     await act(async () => { descInput!.props.onChangeText("Updated description"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     // The description PATCH should fire…
@@ -525,17 +504,17 @@ describe("EditItemScreen – stale-dims regression", () => {
       dimensions:  { length: 5, width: null, height: null, diameter: null } as unknown as Exclude<InventoryItem["dimensions"], undefined>,
     });
 
-    const tree = await renderScreen();
-    activeTree = tree;
+    const result = await renderScreen();
+    activeTree = result;
 
     // The dim inputs all share placeholder="–"; find the length input by its
     // initial value ("5") which matches fmtDim(5).
-    const allDashInputs = tree.root.findAll(
-      n => (n.type as string) === "rn-textinput" && n.props.placeholder === "–",
-      { deep: true },
+    const allDashInputs = result.root!!.queryAll(
+      (n: TestInstance) => (n.type as string) === "rn-textinput" && n.props.placeholder === "–",
+      { includeSelf: true },
     );
     // length is the first dim field rendered.
-    const lengthInput = allDashInputs.find(n => n.props.value === "5") ?? null;
+    const lengthInput = allDashInputs.find((n: TestInstance) => n.props.value === "5") ?? null;
     expect(lengthInput).not.toBeNull();
     await act(async () => { lengthInput!.props.onChangeText("10"); });
 
@@ -551,18 +530,18 @@ describe("EditItemScreen – stale-dims regression", () => {
     });
 
     // Change description so there is at least one op that succeeds.
-    const descInput = findTextInput(tree.root, "Brief description of the part\u2026");
+    const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     await act(async () => { descInput!.props.onChangeText("Updated description"); });
 
-    const saveBtn = findPressable(tree.root, "Save Details");
+    const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { saveBtn!.props.onPress(); });
 
     // After partial failure the dim length field should be reverted to the
     // original value from itemRef.current.dimensions (5 → "5").
-    const lengthInputAfter = tree.root.findAll(
-      n => (n.type as string) === "rn-textinput" && n.props.placeholder === "–",
-      { deep: true },
-    ).find(n => n.props.value !== "") ?? null;
+    const lengthInputAfter = result.root!!.queryAll(
+      (n: TestInstance) => (n.type as string) === "rn-textinput" && n.props.placeholder === "–",
+      { includeSelf: true },
+    ).find((n: TestInstance) => n.props.value !== "") ?? null;
     expect(lengthInputAfter).not.toBeNull();
     expect(lengthInputAfter!.props.value).toBe("5");
   });
