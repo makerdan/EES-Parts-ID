@@ -63,7 +63,13 @@ const COLLISION_ADMIN_ID = "jest-collision-admin";
 // Override the env var that requireAppAuth reads at request time. The
 // helpers/adminAuth import side-effect sets it to jest-admin-user; we
 // override it here so our unique ID is treated as the bootstrap admin.
+const _origAdminClerkUserId = process.env.ADMIN_CLERK_USER_ID;
 process.env.ADMIN_CLERK_USER_ID = COLLISION_ADMIN_ID;
+
+afterAll(() => {
+  if (_origAdminClerkUserId === undefined) delete process.env.ADMIN_CLERK_USER_ID;
+  else process.env.ADMIN_CLERK_USER_ID = _origAdminClerkUserId;
+});
 
 // The email the Clerk mock resolves for the bootstrap admin.
 const ADMIN_EMAIL = `${COLLISION_ADMIN_ID}@test.example`;

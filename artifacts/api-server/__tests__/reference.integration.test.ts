@@ -61,7 +61,13 @@ jest.mock("../src/lib/answerCache", () => ({
   invalidateReferenceAnswerCache: jest.fn(),
 }));
 
+const _origLogLevel = process.env.LOG_LEVEL;
 process.env.LOG_LEVEL = "silent";
+
+afterAll(() => {
+  if (_origLogLevel === undefined) delete process.env.LOG_LEVEL;
+  else process.env.LOG_LEVEL = _origLogLevel;
+});
 
 import supertest from "supertest";
 import app from "../src/app";

@@ -11,7 +11,13 @@
  */
 
 // ── Env vars — must be set before any module is imported ──────────────────────
+const _origAdminPassword = process.env.ADMIN_PASSWORD;
 process.env.ADMIN_PASSWORD = "jest-revert-secret";
+
+afterAll(() => {
+  if (_origAdminPassword === undefined) delete process.env.ADMIN_PASSWORD;
+  else process.env.ADMIN_PASSWORD = _origAdminPassword;
+});
 
 // ── Mock heavy modules imported by catalogPdf.ts that the revert handler never
 //    calls. Without these, the OpenAI / Gemini constructors would attempt real
