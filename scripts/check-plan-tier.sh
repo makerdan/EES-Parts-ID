@@ -133,6 +133,13 @@ echo "✓ Plan tier is valid: $declared_tier ($PLAN_FILE)"
 # ---------------------------------------------------------------------------
 
 HARD_FAIL_KEYWORDS="migration|migrate|drizzle"
+# File-path patterns that indicate a DB migration even without explicit keywords.
+# These are matched as fixed strings anywhere in the plan body.
+HARD_FAIL_PATH_PATTERNS=(
+  "lib/db/drizzle/"
+  "lib/db/migrations/"
+  ".sql"
+)
 SOFT_WARN_KEYWORDS="schema|auth|route|contract|security|push"
 UNDER_TIER_TIERS=("fast" "standard")
 
@@ -159,6 +166,35 @@ if [[ "$is_under_tier" -eq 1 ]]; then
     echo "   schema-push operation (migration, migrate, drizzle). These require"
     echo "   the 'standard-plus' tier so that schema-check, api-server-coverage,"
     echo "   and post-merge-health-test all run as part of validation."
+    echo ""
+    echo "   Update the tier to 'standard-plus' (or 'heavy') before calling"
+    echo "   bulkCreateProjectTasks."
+    echo ""
+    exit 1
+  fi
+
+  # Check hard-fail file-path patterns (content-aware, keyword-independent).
+  matched_path=""
+  for pattern in "${HARD_FAIL_PATH_PATTERNS[@]}"; do
+    if grep -qF "$pattern" "$PLAN_FILE" 2>/dev/null; then
+      matched_path="$pattern"
+      break
+    fi
+  done
+
+  if [[ -n "$matched_path" ]]; then
+    echo ""
+    echo "✗  UNDER-TIER ERROR (hard fail)"
+    echo ""
+    echo "   Declared tier   : $declared_tier"
+    echo "   Matched pattern : $matched_path"
+    echo "   File            : $PLAN_FILE"
+    echo ""
+    echo "   The plan body references a file path that indicates a DB migration"
+    echo "   or SQL schema change (e.g. lib/db/drizzle/, lib/db/migrations/,"
+    echo "   or a .sql file). These require the 'standard-plus' tier so that"
+    echo "   schema-check, api-server-coverage, and post-merge-health-test all"
+    echo "   run as part of validation."
     echo ""
     echo "   Update the tier to 'standard-plus' (or 'heavy') before calling"
     echo "   bulkCreateProjectTasks."

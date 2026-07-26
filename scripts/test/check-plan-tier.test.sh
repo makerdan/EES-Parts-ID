@@ -195,6 +195,80 @@ assert_exit "mixed keywords under fast exits 1 (hard fail wins)" 1 "$rc"
 assert_output_contains "mixed fast: hard error shown" "UNDER-TIER ERROR" "$out"
 assert_output_not_contains "mixed fast: no soft warning" "UNDER-TIER WARNING" "$out"
 
+# --- 7. File-path patterns: hard-fail even without migration/drizzle keywords ---
+echo ""
+echo "Group: file-path pattern hard-fail"
+
+# lib/db/drizzle/ path under standard → exit 1
+# Note: "drizzle" keyword fires first (it appears in the path itself), so the
+# keyword error is shown rather than the path-pattern error. Both are correct
+# hard-fails; we just verify exit 1 and the error message.
+f="$TMPDIR_BASE/path-drizzle-dir-standard.md"
+make_plan "$f" "standard" "Edit the file at lib/db/drizzle/schema.ts to add a column."
+out=$(bash "$SCRIPT" "$f" 2>&1) || rc=$?; rc=${rc:-0}
+assert_exit "lib/db/drizzle/ path under standard exits 1" 1 "$rc"
+assert_output_contains "lib/db/drizzle/ standard: hard error shown" "UNDER-TIER ERROR" "$out"
+
+# lib/db/drizzle/ path under fast → exit 1
+f="$TMPDIR_BASE/path-drizzle-dir-fast.md"
+make_plan "$f" "fast" "Edit the file at lib/db/drizzle/schema.ts to add a column."
+out=$(bash "$SCRIPT" "$f" 2>&1) || rc=$?; rc=${rc:-0}
+assert_exit "lib/db/drizzle/ path under fast exits 1" 1 "$rc"
+assert_output_contains "lib/db/drizzle/ fast: hard error shown" "UNDER-TIER ERROR" "$out"
+
+# lib/db/migrations/ path under standard → exit 1
+# Note: "migration" keyword fires first (it appears in "migrations"), so the
+# keyword error is shown rather than the path-pattern error.
+f="$TMPDIR_BASE/path-migrations-dir-standard.md"
+make_plan "$f" "standard" "Create lib/db/migrations/0012_add_index.sql."
+out=$(bash "$SCRIPT" "$f" 2>&1) || rc=$?; rc=${rc:-0}
+assert_exit "lib/db/migrations/ path under standard exits 1" 1 "$rc"
+assert_output_contains "lib/db/migrations/ standard: hard error shown" "UNDER-TIER ERROR" "$out"
+
+# .sql file reference under standard → exit 1
+f="$TMPDIR_BASE/path-sql-standard.md"
+make_plan "$f" "standard" "Add a hand-written 0013_add_col.sql file to the repo."
+out=$(bash "$SCRIPT" "$f" 2>&1) || rc=$?; rc=${rc:-0}
+assert_exit ".sql reference under standard exits 1" 1 "$rc"
+assert_output_contains ".sql standard: hard error shown" "UNDER-TIER ERROR" "$out"
+assert_output_contains ".sql standard: matched pattern shown" ".sql" "$out"
+
+# .sql file reference under fast → exit 1
+f="$TMPDIR_BASE/path-sql-fast.md"
+make_plan "$f" "fast" "Add a hand-written 0013_add_col.sql file to the repo."
+out=$(bash "$SCRIPT" "$f" 2>&1) || rc=$?; rc=${rc:-0}
+assert_exit ".sql reference under fast exits 1" 1 "$rc"
+assert_output_contains ".sql fast: hard error shown" "UNDER-TIER ERROR" "$out"
+
+# File-path pattern at standard-plus → no error (tier is sufficient)
+f="$TMPDIR_BASE/path-drizzle-dir-stdplus.md"
+make_plan "$f" "standard-plus" "Edit the file at lib/db/drizzle/schema.ts to add a column."
+out=$(bash "$SCRIPT" "$f" 2>&1); rc=$?
+assert_exit "lib/db/drizzle/ at standard-plus exits 0" 0 "$rc"
+assert_output_not_contains "lib/db/drizzle/ standard-plus: no error" "UNDER-TIER ERROR" "$out"
+assert_output_not_contains "lib/db/drizzle/ standard-plus: no warning" "WARNING" "$out"
+
+f="$TMPDIR_BASE/path-sql-stdplus.md"
+make_plan "$f" "standard-plus" "Add a hand-written 0013_add_col.sql file to the repo."
+out=$(bash "$SCRIPT" "$f" 2>&1); rc=$?
+assert_exit ".sql at standard-plus exits 0" 0 "$rc"
+assert_output_not_contains ".sql standard-plus: no error" "UNDER-TIER ERROR" "$out"
+
+# File-path pattern at heavy → no error
+f="$TMPDIR_BASE/path-drizzle-dir-heavy.md"
+make_plan "$f" "heavy" "Edit the file at lib/db/drizzle/schema.ts to add a column."
+out=$(bash "$SCRIPT" "$f" 2>&1); rc=$?
+assert_exit "lib/db/drizzle/ at heavy exits 0" 0 "$rc"
+assert_output_not_contains "lib/db/drizzle/ heavy: no error" "UNDER-TIER ERROR" "$out"
+
+# File-path pattern without migration keyword: confirm keyword check alone would have missed it
+f="$TMPDIR_BASE/path-sql-no-keyword.md"
+make_plan "$f" "standard" "Update the ORM model and add 0014_rename_col.sql for the rename."
+# This body has no 'migration'/'migrate'/'drizzle' keywords but does have .sql
+out=$(bash "$SCRIPT" "$f" 2>&1) || rc=$?; rc=${rc:-0}
+assert_exit ".sql no-keyword plan under standard exits 1" 1 "$rc"
+assert_output_contains ".sql no-keyword: hard error shown" "UNDER-TIER ERROR" "$out"
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
