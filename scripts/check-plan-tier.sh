@@ -115,34 +115,60 @@ fi
 echo "✓ Plan tier is valid: $declared_tier ($PLAN_FILE)"
 
 # ---------------------------------------------------------------------------
-# Heuristic under-tier check (non-blocking — exits 0 even when it warns)
+# Heuristic under-tier check
 #
-# If the plan body contains keywords that signal DB/auth/API-contract work but
-# the declared tier is below standard-plus, emit a visible warning so the plan
-# author can decide whether to upgrade the tier.
+# Keywords are split into two groups:
 #
-# Keywords that suggest standard-plus or higher:
-#   schema, migration, migrate, auth, route, contract, security, drizzle, push
+#   HARD-FAIL keywords (migration, migrate, drizzle):
+#     These represent the highest-risk operations. If any match and the tier
+#     is below standard-plus, the script exits 1 with an actionable error.
+#     schema-check, api-server-coverage, and post-merge-health-test do not
+#     run below standard-plus, so silently under-tiering these plans is
+#     dangerous.
 #
-# This check is intentionally non-blocking. It is a nudge, not a gate.
+#   SOFT-WARN keywords (schema, auth, route, contract, security, push):
+#     These suggest elevated risk but may appear legitimately in lower-tier
+#     plans (e.g. the word "schema" in a comment, or "route" in a UI task).
+#     A warning is emitted but the script continues to exit 0.
 # ---------------------------------------------------------------------------
 
-RISKY_KEYWORDS="schema|migration|migrate|auth|route|contract|security|drizzle|push"
+HARD_FAIL_KEYWORDS="migration|migrate|drizzle"
+SOFT_WARN_KEYWORDS="schema|auth|route|contract|security|push"
 UNDER_TIER_TIERS=("fast" "standard")
 
-needs_warning=0
+is_under_tier=0
 for t in "${UNDER_TIER_TIERS[@]}"; do
   if [[ "$declared_tier" == "$t" ]]; then
-    needs_warning=1
+    is_under_tier=1
     break
   fi
 done
 
-if [[ "$needs_warning" -eq 1 ]]; then
-  # Grep the whole plan body (case-insensitive) for any risky keyword.
-  # We intentionally include the heading lines so even a "## schema" heading triggers it.
-  if grep -qiE "$RISKY_KEYWORDS" "$PLAN_FILE" 2>/dev/null; then
-    matched=$(grep -oiE "$RISKY_KEYWORDS" "$PLAN_FILE" | sort -u | tr '\n' ' ')
+if [[ "$is_under_tier" -eq 1 ]]; then
+  # Check hard-fail keywords first.
+  if grep -qiE "$HARD_FAIL_KEYWORDS" "$PLAN_FILE" 2>/dev/null; then
+    matched=$(grep -oiE "$HARD_FAIL_KEYWORDS" "$PLAN_FILE" | sort -u | tr '\n' ' ')
+    echo ""
+    echo "✗  UNDER-TIER ERROR (hard fail)"
+    echo ""
+    echo "   Declared tier : $declared_tier"
+    echo "   Matched words : $matched"
+    echo "   File          : $PLAN_FILE"
+    echo ""
+    echo "   The plan body contains keywords that indicate a DB migration or"
+    echo "   schema-push operation (migration, migrate, drizzle). These require"
+    echo "   the 'standard-plus' tier so that schema-check, api-server-coverage,"
+    echo "   and post-merge-health-test all run as part of validation."
+    echo ""
+    echo "   Update the tier to 'standard-plus' (or 'heavy') before calling"
+    echo "   bulkCreateProjectTasks."
+    echo ""
+    exit 1
+  fi
+
+  # Check soft-warn keywords (non-blocking).
+  if grep -qiE "$SOFT_WARN_KEYWORDS" "$PLAN_FILE" 2>/dev/null; then
+    matched=$(grep -oiE "$SOFT_WARN_KEYWORDS" "$PLAN_FILE" | sort -u | tr '\n' ' ')
     echo ""
     echo "⚠  UNDER-TIER WARNING"
     echo ""
