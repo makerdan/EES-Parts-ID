@@ -28,6 +28,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated from "react-native-reanimated";
 import { Circle, G, Rect, Svg, SvgXml, Text as SvgText } from "react-native-svg";
 
+import { prefetchSvgAsset } from "@/components/WarehouseMapView";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { type MapAnchor, type UpsertAnchorPayload, useMapAnchors } from "@/hooks/useMapAnchors";
@@ -102,6 +103,17 @@ export default function AdminMapCalibrationScreen() {
   // Floor-plan SVG layout
   const [mapW, setMapW] = useState(0);
   const [mapH, setMapH] = useState(0);
+
+  // Floor-plan SVG fetch — the cache may be empty if the user navigated here
+  // without visiting the Map tab first; prefetch it so the map still renders.
+  const [svgLoading, setSvgLoading] = useState(() => !hasCachedData());
+  useEffect(() => {
+    let cancelled = false;
+    prefetchSvgAsset().finally(() => {
+      if (!cancelled) setSvgLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Sync forms from loaded anchors
   useEffect(() => {
@@ -380,9 +392,18 @@ export default function AdminMapCalibrationScreen() {
               </GestureDetector>
             ) : (
               <View style={styles.mapPlaceholder}>
-                <Text style={[styles.mapPlaceholderText, { color: colors.mutedForeground }]}>
-                  {hasCachedData() ? "Loading floor plan…" : "Floor plan not yet loaded. Open the Map tab first."}
-                </Text>
+                {svgLoading ? (
+                  <>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                    <Text style={[styles.mapPlaceholderText, { color: colors.mutedForeground, marginTop: 8 }]}>
+                      Loading floor plan…
+                    </Text>
+                  </>
+                ) : (
+                  <Text style={[styles.mapPlaceholderText, { color: colors.mutedForeground }]}>
+                    {hasCachedData() ? "Loading floor plan…" : "Floor plan could not be loaded."}
+                  </Text>
+                )}
               </View>
             )}
           </View>
