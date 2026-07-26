@@ -7,7 +7,7 @@ The api-server `vendorNameResolutionMap.integration.test.ts` asserts last-write-
 
 **Why:** `seedVendors()` uses `onConflictDoUpdate` (HOT update) which appends updated tuples within the same heap page, so repeated seeding can leave conflict rows co-located — breaking the last-row-wins semantic. Winners must be on strictly *later pages* (or at higher offsets on the same page) than their rivals.
 
-**Self-healing fix (now in the test):** `repairConflictPageOrder()` runs in `beforeAll` after `seedVendors()`. It deletes the 7 conflict vendors (ABB, BUS, EAT, ETN, TAB, EDN, CHD) and re-inserts them in the correct order — losers first, winners last — so page/offset ordering is always correct at test time. No manual DB surgery needed.
+**STALE NOTE (July 2026):** `repairConflictPageOrder()` no longer exists in the repo — the self-heal was removed/renamed away. When these tests fail, repair the DB manually: in one transaction, copy the 7 conflict rows (ABB, BUS, EAT, ETN, TAB, EDN, CHD) to a temp table, DELETE them from vendor_map, then re-insert losers first, winners last. `vendorFilterResolution.integration.test.ts` also depends on this order (EATON→CHD) and has NO self-heal.
 
 Required insertion order: ABB → BUS → EAT → ETN → TAB → EDN → CHD.
 
