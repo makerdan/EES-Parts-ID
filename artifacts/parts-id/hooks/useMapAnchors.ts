@@ -32,10 +32,13 @@ export interface UpsertAnchorPayload {
   worldY: number;
 }
 
+export type AnchorMutationResult = { ok: boolean; mfaRequired?: boolean };
+
 export function useMapAnchors(adminToken: string | null) {
   const [anchors, setAnchors] = useState<Array<MapAnchor>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [mfaRequired, setMfaRequired] = useState(false);
   const mountedRef = useRef(true);
 
   const refetch = useCallback(async () => {
@@ -46,11 +49,23 @@ export function useMapAnchors(adminToken: string | null) {
       const res = await fetch(`${API_BASE}/admin/map-anchors`, {
         headers: { Authorization: `Bearer ${adminToken}` },
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        if (res.status === 403) {
+          try {
+            const body = (await res.json()) as { code?: string };
+            if (body.code === "MFA_REQUIRED") {
+              if (mountedRef.current) setMfaRequired(true);
+              return;
+            }
+          } catch { /* ignore parse errors */ }
+        }
+        throw new Error(`HTTP ${res.status}`);
+      }
       const data = (await res.json()) as { anchors: Array<MapAnchor> };
       if (mountedRef.current) {
         setAnchors(data.anchors);
         setError(false);
+        setMfaRequired(false);
       }
     } catch {
       if (mountedRef.current) setError(true);
@@ -66,8 +81,8 @@ export function useMapAnchors(adminToken: string | null) {
   }, [adminToken, refetch]);
 
   const upsertAnchor = useCallback(
-    async (slot: 1 | 2 | 3, payload: UpsertAnchorPayload): Promise<boolean> => {
-      if (!adminToken || !API_BASE) return false;
+    async (slot: 1 | 2 | 3, payload: UpsertAnchorPayload): Promise<AnchorMutationResult> => {
+      if (!adminToken || !API_BASE) return { ok: false };
       try {
         const res = await fetch(`${API_BASE}/admin/map-anchors/${slot}`, {
           method: "PUT",
@@ -77,33 +92,53 @@ export function useMapAnchors(adminToken: string | null) {
           },
           body: JSON.stringify(payload),
         });
-        if (!res.ok) return false;
+        if (!res.ok) {
+          if (res.status === 403) {
+            try {
+              const body = (await res.json()) as { code?: string };
+              if (body.code === "MFA_REQUIRED") {
+                return { ok: false, mfaRequired: true };
+              }
+            } catch { /* ignore parse errors */ }
+          }
+          return { ok: false };
+        }
         await refetch();
-        return true;
+        return { ok: true };
       } catch {
-        return false;
+        return { ok: false };
       }
     },
     [adminToken, refetch],
   );
 
   const deleteAnchor = useCallback(
-    async (slot: 1 | 2 | 3): Promise<boolean> => {
-      if (!adminToken || !API_BASE) return false;
+    async (slot: 1 | 2 | 3): Promise<AnchorMutationResult> => {
+      if (!adminToken || !API_BASE) return { ok: false };
       try {
         const res = await fetch(`${API_BASE}/admin/map-anchors/${slot}`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${adminToken}` },
         });
-        if (!res.ok) return false;
+        if (!res.ok) {
+          if (res.status === 403) {
+            try {
+              const body = (await res.json()) as { code?: string };
+              if (body.code === "MFA_REQUIRED") {
+                return { ok: false, mfaRequired: true };
+              }
+            } catch { /* ignore parse errors */ }
+          }
+          return { ok: false };
+        }
         await refetch();
-        return true;
+        return { ok: true };
       } catch {
-        return false;
+        return { ok: false };
       }
     },
     [adminToken, refetch],
   );
 
-  return { anchors, loading, error, refetch, upsertAnchor, deleteAnchor };
+  return { anchors, loading, error, mfaRequired, refetch, upsertAnchor, deleteAnchor };
 }
