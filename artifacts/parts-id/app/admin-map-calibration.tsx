@@ -9,6 +9,7 @@
  *
  * Route: /admin-map-calibration
  */
+import { useClerk } from "@clerk/expo";
 import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
@@ -83,9 +84,12 @@ export default function AdminMapCalibrationScreen() {
   "use no memo";
   const colors = useColors();
   const { isLoading, adminToken, isAdmin } = useApp();
+  const clerk = useClerk();
+  const clerkRef = useRef(clerk);
+  useEffect(() => { clerkRef.current = clerk; }, [clerk]);
   const router = useRouter();
 
-  const { anchors, upsertAnchor, deleteAnchor } = useMapAnchors(adminToken);
+  const { anchors, upsertAnchor, deleteAnchor, mfaRequired: anchorsMfaRequired } = useMapAnchors(adminToken);
   const { zones, alignment: zoneAlignment, refetch: refetchZones } = useWarehouseZones();
 
   // Slot form state (indexed 0–2 for slots 1–3)
@@ -323,10 +327,25 @@ export default function AdminMapCalibrationScreen() {
         worldX: pt.worldX,
         worldY: pt.worldY,
       };
-      const ok = await upsertAnchor(slot, payload);
-      if (!ok) {
+      const result = await upsertAnchor(slot, payload);
+      if (!result.ok) {
         confirmingRef.current = false;
         setIsConfirming(false);
+        if (result.mfaRequired) {
+          confirmedSnapshotRef.current = null;
+          Alert.alert(
+            "Two-Factor Authentication Required",
+            "Admin access requires two-factor authentication (2FA). Enable it in your account settings under Security → Two-step verification.",
+            [
+              { text: "Dismiss", style: "cancel" },
+              {
+                text: "Open Account Settings",
+                onPress: () => { clerkRef.current?.openUserProfile(); },
+              },
+            ],
+          );
+          return;
+        }
         setConfirmError("Could not save all anchors. Check your connection and try again.");
         // Do NOT clear confirmedSnapshotRef — the admin can retry with the same reviewed set.
         return;
@@ -354,8 +373,21 @@ export default function AdminMapCalibrationScreen() {
           style: "destructive",
           onPress: async () => {
             setDeleting((prev) => { const next = [...prev]; next[idx] = true; return next; });
-            await deleteAnchor(slot);
+            const result = await deleteAnchor(slot);
             setDeleting((prev) => { const next = [...prev]; next[idx] = false; return next; });
+            if (!result.ok && result.mfaRequired) {
+              Alert.alert(
+                "Two-Factor Authentication Required",
+                "Admin access requires two-factor authentication (2FA). Enable it in your account settings under Security → Two-step verification.",
+                [
+                  { text: "Dismiss", style: "cancel" },
+                  {
+                    text: "Open Account Settings",
+                    onPress: () => { clerkRef.current?.openUserProfile(); },
+                  },
+                ],
+              );
+            }
           },
         },
       ],
@@ -644,6 +676,25 @@ export default function AdminMapCalibrationScreen() {
         </View>
 
         <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          {/* MFA required banner */}
+          {anchorsMfaRequired && (
+            <Pressable
+              onPress={() => { clerkRef.current?.openUserProfile(); }}
+              style={[styles.mfaBanner, { backgroundColor: "#fef3c7", borderColor: "#fbbf24" }]}
+              accessibilityRole="button"
+              accessibilityLabel="Open Account Settings to enable two-factor authentication"
+            >
+              <Feather name="lock" size={14} color="#92400e" style={{ marginTop: 1 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.mfaBannerTitle, { color: "#92400e" }]}>Two-factor authentication required</Text>
+                <Text style={[styles.mfaBannerBody, { color: "#78350f" }]}>
+                  Anchor data cannot be loaded or saved until 2FA is enabled. Tap to open Account Settings → Security → Two-step verification.
+                </Text>
+              </View>
+              <Feather name="chevron-right" size={14} color="#92400e" />
+            </Pressable>
+          )}
+
           {/* Info banner */}
           <View style={[styles.infoBanner, { backgroundColor: colors.muted, borderColor: colors.border }]}>
             <Feather name="info" size={14} color={colors.mutedForeground} style={{ marginTop: 1 }} />
@@ -864,6 +915,24 @@ const styles = StyleSheet.create({
   },
   activeBadgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   content: { padding: 16, gap: 12 },
+  mfaBanner: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "flex-start",
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  mfaBannerTitle: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    marginBottom: 2,
+  },
+  mfaBannerBody: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 18,
+  },
   infoBanner: {
     flexDirection: "row",
     gap: 8,

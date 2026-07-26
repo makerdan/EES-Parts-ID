@@ -95,8 +95,9 @@ jest.mock("@/utils/nearestZoneCorner", () => ({
 // ─── @/hooks/useMapAnchors ───────────────────────────────────────────────────
 
 // Stable function refs so useEffect deps never cycle.
-const mockUpsertAnchor   = jest.fn<Promise<boolean>, [number, unknown]>().mockResolvedValue(true);
-const mockDeleteAnchor   = jest.fn<Promise<boolean>, [number]>().mockResolvedValue(true);
+type AnchorMutResult = { ok: boolean; mfaRequired?: boolean };
+const mockUpsertAnchor   = jest.fn<Promise<AnchorMutResult>, [number, unknown]>().mockResolvedValue({ ok: true });
+const mockDeleteAnchor   = jest.fn<Promise<AnchorMutResult>, [number]>().mockResolvedValue({ ok: true });
 const mockAnchorsRefetch = jest.fn<Promise<void>, []>().mockResolvedValue(undefined);
 
 let _mockAnchors: unknown[] = [];
@@ -106,6 +107,7 @@ jest.mock("@/hooks/useMapAnchors", () => ({
     anchors:      _mockAnchors,
     loading:      false,
     error:        false,
+    mfaRequired:  false,
     refetch:      mockAnchorsRefetch,
     upsertAnchor: mockUpsertAnchor,
     deleteAnchor: mockDeleteAnchor,
@@ -207,8 +209,8 @@ afterEach(async () => {
   _mockAnchors = [];
   // Restore defaults (clearAllMocks only clears call history + once-queues,
   // not default implementations/return values — these are explicit restores.)
-  mockUpsertAnchor.mockResolvedValue(true);
-  mockDeleteAnchor.mockResolvedValue(true);
+  mockUpsertAnchor.mockResolvedValue({ ok: true });
+  mockDeleteAnchor.mockResolvedValue({ ok: true });
   mockAnchorsRefetch.mockResolvedValue(undefined);
   // Restore never-resolving promise so the .finally() in prefetchSvgAsset
   // useEffect never fires async state updates between tests.
@@ -349,9 +351,9 @@ describe("Mid-confirm network failure", () => {
   it("shows retry-able error and does NOT invalidate AsyncStorage when slot 2 fails", async () => {
     // Slot 1 succeeds, slot 2 fails, slot 3 never reached.
     mockUpsertAnchor
-      .mockResolvedValueOnce(true)   // slot 1 ✓
-      .mockResolvedValueOnce(false)  // slot 2 ✗
-      .mockResolvedValue(true);      // (slot 3 would succeed but never called)
+      .mockResolvedValueOnce({ ok: true })   // slot 1 ✓
+      .mockResolvedValueOnce({ ok: false })  // slot 2 ✗
+      .mockResolvedValue({ ok: true });      // (slot 3 would succeed but never called)
 
     activeTree = await renderScreen([...VALID_ANCHORS]);
     await goToReview(activeTree);
@@ -366,7 +368,7 @@ describe("Mid-confirm network failure", () => {
   });
 
   it("Confirm button is re-enabled after failure (retry is possible)", async () => {
-    mockUpsertAnchor.mockResolvedValueOnce(false);
+    mockUpsertAnchor.mockResolvedValueOnce({ ok: false });
 
     activeTree = await renderScreen([...VALID_ANCHORS]);
     await goToReview(activeTree);
@@ -379,10 +381,10 @@ describe("Mid-confirm network failure", () => {
   it("retrying after failure calls all 3 slots again", async () => {
     // First attempt: slot 1 succeeds, slot 2 fails
     mockUpsertAnchor
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false })
       // Second attempt (retry): all succeed
-      .mockResolvedValue(true);
+      .mockResolvedValue({ ok: true });
 
     activeTree = await renderScreen([...VALID_ANCHORS]);
     await goToReview(activeTree);
@@ -419,9 +421,9 @@ describe("Snapshot preservation during mid-confirm refetch", () => {
 
     // Slot 1 succeeds, slot 2 fails on first attempt; all 3 succeed on retry.
     mockUpsertAnchor
-      .mockResolvedValueOnce(true)   // slot 1, first attempt ✓
-      .mockResolvedValueOnce(false)  // slot 2, first attempt ✗
-      .mockResolvedValue(true);      // slots 1-3 on retry ✓
+      .mockResolvedValueOnce({ ok: true })   // slot 1, first attempt ✓
+      .mockResolvedValueOnce({ ok: false })  // slot 2, first attempt ✗
+      .mockResolvedValue({ ok: true });      // slots 1-3 on retry ✓
 
     activeTree = await renderScreen([...VALID_ANCHORS]);
     await goToReview(activeTree);
@@ -500,8 +502,8 @@ describe("Double-tap guard", () => {
   it("issues only one batch of 3 PUT calls when Confirm is tapped rapidly twice", async () => {
     // Make the first slot's upsertAnchor return a never-resolving promise so
     // isConfirming stays true long enough to block the second tap.
-    let resolveSlot1!: (v: boolean) => void;
-    const pendingSlot1 = new Promise<boolean>((resolve) => { resolveSlot1 = resolve; });
+    let resolveSlot1!: (v: AnchorMutResult) => void;
+    const pendingSlot1 = new Promise<AnchorMutResult>((resolve) => { resolveSlot1 = resolve; });
 
     mockUpsertAnchor.mockReturnValueOnce(pendingSlot1);
 
@@ -517,7 +519,7 @@ describe("Double-tap guard", () => {
 
     // Resolve the pending call and flush remaining work
     await act(async () => {
-      resolveSlot1(true);
+      resolveSlot1({ ok: true });
       await rawFlush();
     });
 

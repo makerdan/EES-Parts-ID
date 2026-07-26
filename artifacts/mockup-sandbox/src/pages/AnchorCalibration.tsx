@@ -78,6 +78,7 @@ export function AnchorCalibration() {
 
   const [anchors, setAnchors] = useState<Array<MapAnchor>>([]);
   const [loadError, setLoadError] = useState("");
+  const [loadMfaRequired, setLoadMfaRequired] = useState(false);
   const [forms, setForms] = useState<[SlotForm, SlotForm, SlotForm]>([
     emptySlot(),
     emptySlot(),
@@ -153,9 +154,22 @@ export function AnchorCalibration() {
       const res = await fetch(`${API_BASE}/admin/map-anchors`, {
         credentials: "include",
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        if (res.status === 403) {
+          try {
+            const body = (await res.json()) as { code?: string };
+            if (body.code === "MFA_REQUIRED") {
+              setLoadMfaRequired(true);
+              setLoadError("");
+              return;
+            }
+          } catch { /* ignore parse errors */ }
+        }
+        throw new Error(`HTTP ${res.status}`);
+      }
       const data = (await res.json()) as { anchors: Array<MapAnchor> };
       setAnchors(data.anchors ?? []);
+      setLoadMfaRequired(false);
       setLoadError("");
     } catch {
       setLoadError("Failed to load anchors");
@@ -333,11 +347,17 @@ export function AnchorCalibration() {
           }),
         });
         if (!res.ok) {
+          let mfaFlag = false;
           let errMsg = `HTTP ${res.status}`;
           try {
-            const body = await res.json() as { error?: string };
-            if (body.error) errMsg = body.error;
+            const body = await res.json() as { code?: string; error?: string };
+            if (body.code === "MFA_REQUIRED") mfaFlag = true;
+            else if (body.error) errMsg = body.error;
           } catch { /* ignore parse errors */ }
+          if (mfaFlag) {
+            setSlotPhase(idx, "error", "MFA_REQUIRED");
+            return;
+          }
           throw new Error(errMsg);
         }
         await refetchAnchors();
@@ -375,11 +395,17 @@ export function AnchorCalibration() {
           credentials: "include",
         });
         if (!res.ok) {
+          let mfaFlag = false;
           let errMsg = `HTTP ${res.status}`;
           try {
-            const body = await res.json() as { error?: string };
-            if (body.error) errMsg = body.error;
+            const body = await res.json() as { code?: string; error?: string };
+            if (body.code === "MFA_REQUIRED") mfaFlag = true;
+            else if (body.error) errMsg = body.error;
           } catch { /* ignore parse errors */ }
+          if (mfaFlag) {
+            setSlotPhase(idx, "error", "MFA_REQUIRED");
+            return;
+          }
           throw new Error(errMsg);
         }
         await refetchAnchors();
@@ -435,6 +461,19 @@ export function AnchorCalibration() {
           ⚠ DEV TOOL — Anchor Calibration — internal use only
         </span>
         {loadError && <span style={styles.errorPill}>⚠ {loadError}</span>}
+        {loadMfaRequired && (
+          <span style={styles.mfaPill}>
+            🔐 Two-factor authentication required —{" "}
+            <a
+              href={`${window.location.origin}/user-profile`}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "#fff", textDecoration: "underline", fontWeight: 600 }}
+            >
+              Enable 2FA →
+            </a>
+          </span>
+        )}
         <span style={styles.hint}>
           {anchors.length}/3 saved · scroll to zoom · drag to pan ·{" "}
           {(tf.s * 100).toFixed(0)}%
@@ -601,7 +640,38 @@ export function AnchorCalibration() {
                   {phase === "success" && (
                     <span style={{ color: "#16a34a" }}>✓ {slotMsg}</span>
                   )}
-                  {phase === "error" && (
+                  {phase === "error" && slotMsg === "MFA_REQUIRED" && (
+                    <span style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" as const }}>
+                      <span style={{ color: "#92400e" }}>🔐 Two-factor authentication required.</span>
+                      <a
+                        href={`${window.location.origin}/user-profile`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          color: "#92400e",
+                          fontWeight: 700,
+                          textDecoration: "underline",
+                          fontSize: 11,
+                          padding: "1px 5px",
+                          borderRadius: 4,
+                          border: "1px solid #d97706",
+                          background: "#fef3c7",
+                          whiteSpace: "nowrap" as const,
+                        }}
+                      >
+                        Enable 2FA →
+                      </a>
+                      <button
+                        type="button"
+                        aria-label={`Dismiss error for Anchor ${idx + 1}`}
+                        onClick={() => handleDismissError(idx)}
+                        style={styles.dismissBtn}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+                  {phase === "error" && slotMsg !== "MFA_REQUIRED" && (
                     <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <span style={{ color: "#dc2626" }}>✕ {slotMsg}</span>
                       <button
@@ -734,6 +804,13 @@ const styles = {
     borderRadius: 4,
     fontSize: 11,
     whiteSpace: "nowrap" as const,
+  },
+  mfaPill: {
+    background: "rgba(251,191,36,0.25)",
+    padding: "1px 10px",
+    borderRadius: 4,
+    fontSize: 11,
+    color: "white",
   },
   hint: {
     marginLeft: "auto",
