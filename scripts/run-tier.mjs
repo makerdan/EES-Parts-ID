@@ -22,6 +22,7 @@ import { spawnSync } from "node:child_process";
 // [name, shell command] — mirrors the individually registered validation
 // commands, which remain available for targeted runs.
 const FAST = [
+  ["gate-guard", "bash scripts/check-gate-integrity.sh"],
   ["tsc", 'pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck'],
   ["lint", "node scripts/check-db-reachability.mjs && pnpm --filter @workspace/parts-id run lint && pnpm --filter @workspace/api-server run lint && pnpm --filter @workspace/mockup-sandbox run lint && pnpm run lint:libs"],
   ["lint-mocks", "pnpm --filter @workspace/scripts run lint:mocks"],
@@ -62,6 +63,19 @@ const steps = TIERS[tier];
 if (!steps) {
   console.error(`Usage: run-tier.mjs <fast|standard|standard-plus|heavy> (got: ${tier ?? "nothing"})`);
   process.exit(2);
+}
+
+// Startup assertions: guard against silent empty-tier or typo bugs caused by
+// merge conflicts or destructuring errors in the tier arrays above.
+if (steps.length === 0) {
+  console.error(`[run-tier] FATAL: tier "${tier}" resolved to an empty step array. This is a bug — check FAST / STANDARD_EXTRA / STANDARD_PLUS_EXTRA / HEAVY_EXTRA in run-tier.mjs.`);
+  process.exit(2);
+}
+for (const entry of steps) {
+  if (!Array.isArray(entry) || entry.length < 2 || typeof entry[0] !== "string" || !entry[0] || typeof entry[1] !== "string" || !entry[1]) {
+    console.error(`[run-tier] FATAL: malformed step entry in tier "${tier}": ${JSON.stringify(entry)}. Each step must be [name, command] with non-empty strings.`);
+    process.exit(2);
+  }
 }
 
 const waitSecs = process.env.SERIAL_LOCK_WAIT_SECS ?? "0";

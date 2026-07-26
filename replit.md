@@ -64,6 +64,56 @@ Seed: `node --import tsx/esm --no-warnings src/seed/run.ts` from `artifacts/api-
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
 
+## Validation tier conventions
+
+Every task plan must declare exactly one validation tier. This prevents all four tiers from firing simultaneously during task validation and makes the validation screen readable.
+
+### Tier names and coverage
+
+| Tier | Runner command | What it covers | Typical duration |
+|---|---|---|---|
+| `fast` | `test-fast` | Static checks only: `gate-guard`, `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check` | ~5 min |
+| `standard` | `test-standard` | fast + `codegen-check`, `spec-check`, `env-check`, `spec-check-tests`, `test` | ~20 min |
+| `standard-plus` | `test-standard-plus` | standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test` | ~30 min |
+| `heavy` | `test-heavy` | Same as standard-plus (currently identical steps) | ~30 min |
+
+**Picking a tier (defaults unless the plan clearly implies otherwise):**
+- `fast` — pure config or refactor with no logic change
+- `standard` — most feature/bug-fix work; tasks touching only tests, mocks, or doc changes
+- `standard-plus` — DB schema, auth, or API contract changes
+- `heavy` — reserved for future use; currently same as standard-plus
+
+### Plan file format
+
+Every task plan markdown file must include a `## Validation tier` section with exactly one of the four tier names on the next non-blank line:
+
+```markdown
+## Validation tier
+standard
+```
+
+Before calling `bulkCreateProjectTasks`, run the plan linter:
+
+```bash
+bash scripts/check-plan-tier.sh .local/tasks/my-plan.md
+```
+
+The script exits 0 if the tier is valid, 1 with a clear error otherwise.
+
+### Agent completion convention
+
+When a task agent finishes work:
+
+1. **`fast`-tier tasks**: The Project gate (`test-fast`) runs automatically on merge. No manual `startValidationRun` call is needed — pass `skip_validation_reason` to `markTaskComplete` citing that the gate covers it.
+2. **Heavier tiers (`standard`, `standard-plus`, `heavy`)**: Call `startValidationRun({ commandIds: ["test-standard"] })` (or the appropriate tier command) before marking complete. Then pass `skip_validation_reason` to `markTaskComplete` with the run ID, e.g. `"Ran test-standard (run-abc123); gate covers fast tier on merge."`.
+
+### `gate-guard` check
+
+`gate-guard` (`scripts/check-gate-integrity.sh`) is the first step in every tier. It fails immediately if the Project CI gate contains anything other than `test-fast`. If it fails:
+
+1. Check `.replit` — the `[[workflows.workflow]]` block named `"Project"` must have exactly one `[[workflows.workflow.tasks]]` entry: `task = "workflow.run"` / `args = "test-fast"`.
+2. Remove any extra entries and re-run.
+
 ## Checks: validation commands (formerly workflows)
 
 Only long-running services are ordinary workflows: `artifacts/api-server: API Server`, `artifacts/parts-id: expo`, `artifacts/mockup-sandbox: Component Preview Server`. Every one-off check is a **registered validation command** (run via validation runs; these do not consume workflow slots). Names with colons were renamed to dashes; all commands are unchanged.
@@ -72,7 +122,7 @@ Only long-running services are ordinary workflows: `artifacts/api-server: API Se
 
 Four tier commands run subsets of the checks below sequentially via `scripts/run-tier.mjs`, wrapped in `node scripts/serial-lock.mjs --` so tier runs (and any check that internally takes the same lock, like `test`) **cannot race each other** — concurrent invocations queue and run one at a time. Per-step timing starts after lock acquisition, so queue-wait time never counts against a step. Tiers are cumulative: standard includes fast, standard-plus includes standard, heavy includes standard-plus.
 
-- **`test-fast`** — static checks only: `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check`. For pure UI/copy changes. (~5 min)
+- **`test-fast`** — static checks only: `gate-guard`, `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check`. For pure UI/copy changes. (~5 min)
 - **`test-standard`** — fast + `codegen-check`, `spec-check`, `env-check`, `spec-check-tests`, `test`. For most feature/bug-fix work. (~20 min)
 - **`test-standard-plus`** — standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test`. Full quality signal without Playwright browser automation. (~30 min)
 - **`test-heavy`** — standard-plus (same steps, no Playwright currently). For schema migrations, new API routes, auth/security changes, multi-package refactors. (~30 min)
@@ -81,6 +131,7 @@ Individual check commands remain registered for targeted runs. Tier membership l
 
 | Old workflow name | Validation command | Tier |
 |---|---|---|
+| _(new)_ | `gate-guard` | fast (first step in every tier) |
 | `api-server-coverage` | `api-server-coverage` | standard-plus / heavy |
 | `api-server-typecheck` | `api-server-typecheck` | fast (via `tsc`) |
 | `bundle:domain-check` | `bundle-domain-check` | fast |
