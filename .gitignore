@@ -1,15 +1,23 @@
 # See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
 
 # compiled output
-dist
-tmp
-out-tsc
+dist/
+tmp/
+out-tsc/
 *.tsbuildinfo
-.expo
-.expo-shared
+.expo/
+.expo-shared/
 
 # dependencies
-node_modules
+node_modules/
+
+# environment & secrets
+.env
+.env.*
+!.env.example
+
+# test coverage
+coverage/
 
 # IDEs and editors
 /.idea
@@ -30,20 +38,20 @@ node_modules
 # misc
 /.sass-cache
 /connect.lock
-coverage/
 /libpeerconnection.log
 npm-debug.log
 yarn-error.log
 testem.log
 /typings
 
-# System Files
+# OS files
 .DS_Store
 Thumbs.db
 
-.cursor/rules/nx-rules.mdc
-.github/instructions/nx.instructions.md
-
-# Replit
+# Replit internals
 .cache/
 .local/
+
+# Legacy NX/Angular artefacts (not used)
+.cursor/rules/nx-rules.mdc
+.github/instructions/nx.instructions.md
