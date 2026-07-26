@@ -3,17 +3,20 @@
  *
  * Allows an admin to place up to 3 named anchor points on the warehouse
  * floor-plan SVG.  Each anchor maps an SVG tap coordinate to a zone-data
- * (world) coordinate.  When all 3 are saved the app computes a full 6-DOF
- * affine transform that aligns the zone overlay with the floor plan.
+ * (world) coordinate.  When all 3 are drafted the admin enters a review step
+ * that shows the zone overlay with the computed affine transform.  Only after
+ * the admin confirms are all three anchors written to the server atomically.
  *
  * Route: /admin-map-calibration
  */
 import { Feather } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -32,7 +35,7 @@ import { prefetchSvgAsset } from "@/components/WarehouseMapView";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { type MapAnchor, type UpsertAnchorPayload, useMapAnchors } from "@/hooks/useMapAnchors";
-import { useWarehouseZones } from "@/hooks/useWarehouseZones";
+import { useWarehouseZones, ZONES_CACHE_KEY } from "@/hooks/useWarehouseZones";
 import {
   getCachedData,
   hasCachedData,
@@ -70,10 +73,6 @@ function anchorToForm(a: MapAnchor): SlotForm {
   };
 }
 
-// ── Pick-mode overlay ────────────────────────────────────────────────────────
-// Renders a transparent overlay that captures a tap and converts it to SVG
-// viewBox coordinates.
-
 function safeParseFloat(s: string): number | null {
   const n = parseFloat(s.trim());
   return isFinite(n) ? n : null;
@@ -87,7 +86,7 @@ export default function AdminMapCalibrationScreen() {
   const router = useRouter();
 
   const { anchors, upsertAnchor, deleteAnchor } = useMapAnchors(adminToken);
-  const { zones, alignment: zoneAlignment } = useWarehouseZones();
+  const { zones, alignment: zoneAlignment, refetch: refetchZones } = useWarehouseZones();
 
   // Slot form state (indexed 0–2 for slots 1–3)
   const [forms, setForms] = useState<[SlotForm, SlotForm, SlotForm]>([emptySlot(), emptySlot(), emptySlot()]);
@@ -95,10 +94,22 @@ export default function AdminMapCalibrationScreen() {
   const [svgCoords, setSvgCoords] = useState<[{ x: number; y: number } | null, { x: number; y: number } | null, { x: number; y: number } | null]>([null, null, null]);
   // Which slot is in pick mode (null = none)
   const [pickingSlot, setPickingSlot] = useState<0 | 1 | 2 | null>(null);
-  // Preview: show zone overlay on top of floor plan
-  const [previewOverlay, setPreviewOverlay] = useState(false);
-  // Per-slot saving/deleting state
-  const [saving, setSaving] = useState<Array<boolean>>([false, false, false]);
+
+  // Review step state
+  const [step, setStep] = useState<"edit" | "review">("edit");
+  const [isConfirming, setIsConfirming] = useState(false);
+  // Ref-based guard prevents double-taps from both starting a confirm in the
+  // same synchronous event batch before React has flushed the isConfirming state.
+  const confirmingRef = useRef(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  // Snapshot of the reviewed draft anchors.  Taken on the FIRST Confirm press
+  // and reused on retries so that mid-confirm refetch calls (triggered by each
+  // successful upsertAnchor inside useMapAnchors) cannot overwrite forms/svgCoords
+  // and corrupt the pending slot writes before they complete.  Cleared on full
+  // success or when the admin explicitly goes back to the edit step to re-adjust.
+  const confirmedSnapshotRef = useRef<Array<AnchorPoint> | null>(null);
+
+  // Per-slot deleting state
   const [deleting, setDeleting] = useState<Array<boolean>>([false, false, false]);
 
   // Floor-plan SVG layout
@@ -121,7 +132,7 @@ export default function AdminMapCalibrationScreen() {
 
   // Sync forms from loaded anchors.
   // Only touch slots that are present in the server response OR were previously
-  // saved (to detect deletions). Unsaved local edits are left intact so a
+  // saved (to detect deletions). Unsaved local drafts are left intact so a
   // refetch triggered by saving another slot doesn't wipe a pending placement.
   useEffect(() => {
     const anchorMap = new Map(anchors.map((a) => [a.id, a]));
@@ -158,23 +169,67 @@ export default function AdminMapCalibrationScreen() {
     prevAnchorIdsRef.current = new Set(anchors.map((a) => a.id));
   }, [anchors]);
 
-  // Compute anchor transform from current state (mix of saved anchors + pending form values)
-  const anchorTransformStr = useMemo((): string | null => {
+  // ── Draft anchor computation ─────────────────────────────────────────────
+  // All three slots must have a valid coord + finite worldX/worldY to be ready.
+  const draftAnchors = useMemo((): Array<AnchorPoint> | null => {
     const pts: Array<AnchorPoint> = [];
     for (let i = 0; i < 3; i++) {
+      const coord = svgCoords[i];
+      const form = forms[i];
+      if (!form || !coord) return null;
+      const wx = safeParseFloat(form.worldXStr);
+      const wy = safeParseFloat(form.worldYStr);
+      if (wx === null || wy === null) return null;
+      pts.push({
+        id: i + 1,
+        name: form.name || `Anchor ${i + 1}`,
+        svgX: coord.x,
+        svgY: coord.y,
+        worldX: wx,
+        worldY: wy,
+      });
+    }
+    return pts;
+  }, [svgCoords, forms]);
+
+  const draftTransformMatrix = useMemo(() => {
+    if (!draftAnchors) return null;
+    return computeAnchorTransform(draftAnchors);
+  }, [draftAnchors]);
+
+  const draftTransformStr = useMemo(() => {
+    if (!draftTransformMatrix) return null;
+    return matrixToSvgString(draftTransformMatrix);
+  }, [draftTransformMatrix]);
+
+  // All 3 slots filled but points are collinear / degenerate
+  const hasDegenerate = draftAnchors !== null && draftTransformMatrix === null;
+
+  // Whether any local draft differs from the server state (used for back-guard)
+  const hasDraftChanges = useMemo(() => {
+    if (step === "review") return true;
+    for (let i = 0; i < 3; i++) {
+      const serverAnchor = anchors.find((a) => a.id === i + 1);
       const coord = svgCoords[i];
       const form = forms[i];
       if (!form) continue;
       const wx = safeParseFloat(form.worldXStr);
       const wy = safeParseFloat(form.worldYStr);
-      if (coord && wx !== null && wy !== null) {
-        pts.push({ id: i + 1, name: form.name, svgX: coord.x, svgY: coord.y, worldX: wx, worldY: wy });
+      if (serverAnchor) {
+        // Local coord placed and differs from server
+        if (coord && (
+          Math.abs(coord.x - serverAnchor.svgX) > 0.5 ||
+          Math.abs(coord.y - serverAnchor.svgY) > 0.5 ||
+          wx !== serverAnchor.worldX || wy !== serverAnchor.worldY ||
+          form.name.trim() !== serverAnchor.name
+        )) return true;
+      } else {
+        // Slot not on server — any local coord is a draft change
+        if (coord !== null) return true;
       }
     }
-    if (pts.length < 3) return null;
-    const m = computeAnchorTransform(pts);
-    return m ? matrixToSvgString(m) : null;
-  }, [svgCoords, forms]);
+    return false;
+  }, [step, forms, svgCoords, anchors]);
 
   const svgData = getCachedData();
   const svgXml = svgData?.xml ?? "";
@@ -185,8 +240,6 @@ export default function AdminMapCalibrationScreen() {
   // Convert a screen tap (in the map view) → SVG viewBox coordinates
   function screenToSvgCoords(screenX: number, screenY: number): { x: number; y: number } {
     if (mapW <= 0 || mapH <= 0) return { x: 0, y: 0 };
-    // The SVG is rendered to fill mapW × mapH with preserveAspectRatio=xMidYMid meet.
-    // Effective scale factors:
     const scaleX = mapW / vbW;
     const scaleY = mapH / vbH;
     const scale = Math.min(scaleX, scaleY);
@@ -208,8 +261,6 @@ export default function AdminMapCalibrationScreen() {
       next[pickingSlot] = svgPt;
       return next;
     });
-    // Auto-suggest world coordinates from the nearest zone corner (if one is
-    // close enough). The admin can still edit the fields before saving.
     const match = findNearestZoneCorner(svgPt, zones, zoneAlignment);
     if (match) {
       setForms((prev) => {
@@ -230,42 +281,66 @@ export default function AdminMapCalibrationScreen() {
     .runOnJS(true)
     .onEnd((e) => {
       if (pickingSlot === null) return;
-      const x = e.x;
-      const y = e.y;
-      handleMapTap(x, y);
+      handleMapTap(e.x, e.y);
     });
 
-  const handleSaveSlot = useCallback(async (idx: number) => {
-    const coord = svgCoords[idx];
-    const form = forms[idx];
-    if (!form) return;
-    const wx = safeParseFloat(form.worldXStr);
-    const wy = safeParseFloat(form.worldYStr);
+  // ── Atomic confirm ───────────────────────────────────────────────────────
+  // Writes all three draft anchors to the server sequentially. On any failure
+  // Helper: return from review step back to edit, discarding the confirm cycle.
+  // Clears confirmedSnapshotRef so the next Confirm session takes a fresh snapshot.
+  const goBackToEdit = useCallback(() => {
+    confirmedSnapshotRef.current = null;
+    setStep("edit");
+  }, []);
 
-    if (!coord) {
-      Alert.alert("No point placed", "Tap 'Place' to pick a point on the floor plan first.");
-      return;
+  // the operation stops and shows a retry-able error — no partial set is applied
+  // to the live cache. Only on full success is AsyncStorage invalidated so the
+  // Map tab reloads with the new alignment.
+  const handleConfirm = useCallback(async () => {
+    // confirmingRef guards synchronous double-taps (before the re-render that
+    // would flip isConfirming); isConfirming guards subsequent renders.
+    if (!draftAnchors || !draftTransformMatrix || confirmingRef.current || isConfirming) return;
+
+    // Take a snapshot of the reviewed draft on the first Confirm press and reuse
+    // it on every retry.  This prevents the anchor-sync useEffect (triggered by
+    // each upsertAnchor's internal refetch) from overwriting forms/svgCoords for
+    // not-yet-saved slots between the partial write and the retry Confirm press.
+    if (!confirmedSnapshotRef.current) {
+      confirmedSnapshotRef.current = [...draftAnchors];
     }
-    if (wx === null || wy === null) {
-      Alert.alert("Invalid coordinates", "Enter valid world X and Y coordinates.");
-      return;
+    const snapshot = confirmedSnapshotRef.current;
+
+    confirmingRef.current = true;
+    setIsConfirming(true);
+    setConfirmError(null);
+
+    for (const pt of snapshot) {
+      const slot = pt.id as 1 | 2 | 3;
+      const payload: UpsertAnchorPayload = {
+        name: pt.name,
+        svgX: pt.svgX,
+        svgY: pt.svgY,
+        worldX: pt.worldX,
+        worldY: pt.worldY,
+      };
+      const ok = await upsertAnchor(slot, payload);
+      if (!ok) {
+        confirmingRef.current = false;
+        setIsConfirming(false);
+        setConfirmError("Could not save all anchors. Check your connection and try again.");
+        // Do NOT clear confirmedSnapshotRef — the admin can retry with the same reviewed set.
+        return;
+      }
     }
 
-    const slot = (idx + 1) as 1 | 2 | 3;
-    const payload: UpsertAnchorPayload = {
-      name: form.name.trim(),
-      svgX: coord.x,
-      svgY: coord.y,
-      worldX: wx,
-      worldY: wy,
-    };
-
-    setSaving((prev) => { const next = [...prev]; next[idx] = true; return next; });
-    const ok = await upsertAnchor(slot, payload);
-    setSaving((prev) => { const next = [...prev]; next[idx] = false; return next; });
-
-    if (!ok) Alert.alert("Save failed", "Could not save anchor. Please try again.");
-  }, [svgCoords, forms, upsertAnchor]);
+    // All 3 saved — invalidate zones cache so Map tab reloads fresh alignment
+    await AsyncStorage.removeItem(ZONES_CACHE_KEY).catch(() => {});
+    refetchZones();
+    confirmedSnapshotRef.current = null;
+    confirmingRef.current = false;
+    setIsConfirming(false);
+    setStep("edit");
+  }, [draftAnchors, draftTransformMatrix, isConfirming, upsertAnchor, refetchZones]);
 
   const handleDeleteSlot = useCallback(async (idx: number) => {
     const slot = (idx + 1) as 1 | 2 | 3;
@@ -291,6 +366,53 @@ export default function AdminMapCalibrationScreen() {
     return anchors.some((a) => a.id === idx + 1);
   }, [anchors]);
 
+  // ── Back navigation guard ────────────────────────────────────────────────
+  const handleBack = useCallback(() => {
+    if (step === "review") {
+      // Go back to editing — drafts remain, snapshot cleared for next session.
+      goBackToEdit();
+      return;
+    }
+    if (!hasDraftChanges) {
+      router.back();
+      return;
+    }
+    Alert.alert(
+      "Unsaved changes",
+      "You have unsaved anchor edits. Leave without applying them?",
+      [
+        { text: "Stay", style: "cancel" },
+        { text: "Leave", style: "destructive", onPress: () => router.back() },
+      ],
+    );
+  }, [step, hasDraftChanges, router, goBackToEdit]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (step === "review") {
+        goBackToEdit();
+        return true;
+      }
+      if (hasDraftChanges) {
+        handleBack();
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, [step, hasDraftChanges, handleBack, goBackToEdit]);
+
+  // ── Slot readiness ───────────────────────────────────────────────────────
+  const slotReady = useMemo(() => ([0, 1, 2] as const).map((i) => {
+    const coord = svgCoords[i];
+    const form = forms[i];
+    if (!coord || !form) return false;
+    return safeParseFloat(form.worldXStr) !== null && safeParseFloat(form.worldYStr) !== null;
+  }), [svgCoords, forms]);
+
+  const allThreeDraftReady = slotReady[0] && slotReady[1] && slotReady[2];
+
+  // ── Early returns ────────────────────────────────────────────────────────
   if (isLoading) {
     return <View style={{ flex: 1, backgroundColor: colors.background }} />;
   }
@@ -305,19 +427,216 @@ export default function AdminMapCalibrationScreen() {
     );
   }
 
-  const allThreeSaved = anchors.length >= 3;
-  const anchorTransformActive = anchorTransformStr !== null;
+  const allThreeConfirmed = anchors.length >= 3;
 
+  // ── Shared map card (used in both edit and review steps) ─────────────────
+  const renderMapCard = (overlayTransformStr: string | null, heightStyle?: object) => (
+    <View
+      style={[styles.mapCard, { borderColor: colors.border, backgroundColor: colors.card }, heightStyle]}
+      onLayout={(e) => {
+        setMapW(e.nativeEvent.layout.width - 2);
+        setMapH(e.nativeEvent.layout.height - 2);
+      }}
+    >
+      {svgXml ? (
+        <GestureDetector gesture={tapGesture}>
+          <Animated.View style={{ width: "100%", height: "100%" }}>
+            <Svg
+              width="100%"
+              height="100%"
+              viewBox={contentVB ? `${contentVB.x} ${contentVB.y} ${contentVB.w} ${contentVB.h}` : `0 0 ${SVG_VIEWBOX_W} ${SVG_VIEWBOX_H}`}
+              preserveAspectRatio="xMidYMid meet"
+            >
+              {/* Floor plan */}
+              <SvgXml
+                xml={svgXml}
+                x={contentVB?.x ?? 0}
+                y={contentVB?.y ?? 0}
+                width={vbW}
+                height={vbH}
+              />
+              {/* Zone overlay — shown when a valid transform string is provided */}
+              {overlayTransformStr && (
+                <G transform={overlayTransformStr}>
+                  <G transform={`translate(${zoneAlignment.translateX}, ${zoneAlignment.translateY}) scale(${zoneAlignment.scale})`}>
+                    {zones.slice(0, 200).map((zone) => (
+                      <Rect
+                        key={zone.id}
+                        x={zone.svgX}
+                        y={zone.svgY}
+                        width={zone.svgWidth}
+                        height={zone.svgHeight}
+                        fill="rgba(0,112,255,0.10)"
+                        stroke="#0070ff"
+                        strokeWidth={8}
+                      />
+                    ))}
+                  </G>
+                </G>
+              )}
+              {/* Anchor point markers */}
+              {([0, 1, 2] as const).map((idx) => {
+                const coord = svgCoords[idx];
+                if (!coord) return null;
+                const color = ANCHOR_COLORS[idx];
+                const r = Math.max(vbW, vbH) * 0.012;
+                return (
+                  <G key={idx}>
+                    <Circle
+                      cx={coord.x}
+                      cy={coord.y}
+                      r={r * 1.4}
+                      fill={color + "30"}
+                      stroke={color}
+                      strokeWidth={r * 0.25}
+                    />
+                    <Circle
+                      cx={coord.x}
+                      cy={coord.y}
+                      r={r * 0.5}
+                      fill={color}
+                    />
+                    <SvgText
+                      x={coord.x + r * 1.6}
+                      y={coord.y - r * 0.3}
+                      fontSize={r * 1.2}
+                      fill={color}
+                      fontWeight="bold"
+                    >
+                      {ANCHOR_LABELS[idx]}
+                    </SvgText>
+                  </G>
+                );
+              })}
+            </Svg>
+
+            {/* Pick-mode overlay */}
+            {pickingSlot !== null && (
+              <View style={[styles.pickOverlay, { borderColor: ANCHOR_COLORS[pickingSlot] }]} pointerEvents="box-none">
+                <View style={[styles.pickBanner, { backgroundColor: ANCHOR_COLORS[pickingSlot] + "cc" }]}>
+                  <Text style={styles.pickBannerText}>
+                    Tap to place Anchor {pickingSlot + 1}
+                  </Text>
+                  <Pressable
+                    onPress={() => setPickingSlot(null)}
+                    style={styles.pickCancelBtn}
+                    hitSlop={8}
+                  >
+                    <Feather name="x" size={16} color="#fff" />
+                  </Pressable>
+                </View>
+              </View>
+            )}
+          </Animated.View>
+        </GestureDetector>
+      ) : (
+        <View style={styles.mapPlaceholder}>
+          {svgLoading ? (
+            <>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={[styles.mapPlaceholderText, { color: colors.mutedForeground, marginTop: 8 }]}>
+                Loading floor plan…
+              </Text>
+            </>
+          ) : (
+            <Text style={[styles.mapPlaceholderText, { color: colors.mutedForeground }]}>
+              {hasCachedData() ? "Loading floor plan…" : "Floor plan could not be loaded."}
+            </Text>
+          )}
+        </View>
+      )}
+    </View>
+  );
+
+  // ── Review step ──────────────────────────────────────────────────────────
+  if (step === "review") {
+    return (
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+        {/* Review header */}
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Pressable
+            onPress={goBackToEdit}
+            style={styles.backBtn}
+            hitSlop={8}
+            accessibilityLabel="Go back to adjust"
+          >
+            <Feather name="arrow-left" size={20} color={colors.foreground} />
+          </Pressable>
+          <Text style={[styles.headerTitle, { color: colors.foreground }]}>Review Alignment</Text>
+        </View>
+
+        <View style={{ flex: 1, padding: 16, gap: 12 }}>
+          {/* Floor plan + overlay preview */}
+          {renderMapCard(draftTransformStr, { flex: 1 })}
+
+          {/* Degenerate warning */}
+          {hasDegenerate && (
+            <View style={[styles.warnCard, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "50" }]}>
+              <Feather name="alert-triangle" size={15} color={colors.destructive} />
+              <Text style={[styles.warnText, { color: colors.destructive }]}>
+                Anchor points are collinear or overlap — cannot compute a valid transform.
+                Go back and adjust their positions.
+              </Text>
+            </View>
+          )}
+
+          {/* Confirm error */}
+          {confirmError && (
+            <View style={[styles.warnCard, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "50" }]}>
+              <Feather name="wifi-off" size={15} color={colors.destructive} />
+              <Text style={[styles.warnText, { color: colors.destructive }]}>{confirmError}</Text>
+            </View>
+          )}
+
+          {/* Action buttons */}
+          <View style={styles.reviewActions}>
+            <Pressable
+              onPress={goBackToEdit}
+              style={[styles.reviewBackBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
+              disabled={isConfirming}
+            >
+              <Feather name="edit-2" size={14} color={colors.foreground} />
+              <Text style={[styles.reviewBackBtnText, { color: colors.foreground }]}>Adjust anchors</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={handleConfirm}
+              disabled={hasDegenerate || isConfirming}
+              style={[
+                styles.confirmBtn,
+                {
+                  backgroundColor: hasDegenerate ? colors.muted : colors.primary,
+                  opacity: (hasDegenerate || isConfirming) ? 0.6 : 1,
+                },
+              ]}
+              accessibilityLabel="Confirm and apply anchors"
+            >
+              {isConfirming ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Feather name="check" size={14} color="#fff" />
+                  <Text style={styles.confirmBtnText}>Confirm & Apply</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Edit step ────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
+          <Pressable onPress={handleBack} style={styles.backBtn} hitSlop={8}>
             <Feather name="arrow-left" size={20} color={colors.foreground} />
           </Pressable>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>Map Calibration</Text>
-          {allThreeSaved && (
+          {allThreeConfirmed && (
             <View style={[styles.activeBadge, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "50" }]}>
               <Text style={[styles.activeBadgeText, { color: colors.primary }]}>Anchors active</Text>
             </View>
@@ -329,157 +648,13 @@ export default function AdminMapCalibrationScreen() {
           <View style={[styles.infoBanner, { backgroundColor: colors.muted, borderColor: colors.border }]}>
             <Feather name="info" size={14} color={colors.mutedForeground} style={{ marginTop: 1 }} />
             <Text style={[styles.infoText, { color: colors.mutedForeground }]}>
-              Place 3 anchor points to enable full affine calibration (translation, scale, rotation, shear).
-              With fewer than 3, the ZoneAlignment sliders are used unchanged.
+              Place 3 anchor points, then tap "Review Alignment" to preview the zone overlay and confirm.
+              Changes only take effect after you confirm.
             </Text>
           </View>
 
-          {/* Floor-plan preview with pick overlay */}
-          <View
-            style={[styles.mapCard, { borderColor: colors.border, backgroundColor: colors.card }]}
-            onLayout={(e) => {
-              setMapW(e.nativeEvent.layout.width - 2); // -2 for border
-              setMapH(e.nativeEvent.layout.height - 2);
-            }}
-          >
-            {svgXml ? (
-              <GestureDetector gesture={tapGesture}>
-                <Animated.View style={{ width: "100%", height: "100%" }}>
-                  <Svg
-                    width="100%"
-                    height="100%"
-                    viewBox={contentVB ? `${contentVB.x} ${contentVB.y} ${contentVB.w} ${contentVB.h}` : `0 0 ${SVG_VIEWBOX_W} ${SVG_VIEWBOX_H}`}
-                    preserveAspectRatio="xMidYMid meet"
-                  >
-                    {/* Floor plan */}
-                    <SvgXml
-                      xml={svgXml}
-                      x={contentVB?.x ?? 0}
-                      y={contentVB?.y ?? 0}
-                      width={vbW}
-                      height={vbH}
-                    />
-                    {/* Zone overlay preview (when toggled on and transform available) */}
-                    {previewOverlay && anchorTransformStr && (
-                      <G transform={anchorTransformStr}>
-                        <G transform={`translate(${zoneAlignment.translateX}, ${zoneAlignment.translateY}) scale(${zoneAlignment.scale})`}>
-                          {zones.slice(0, 200).map((zone) => (
-                            <Rect
-                              key={zone.id}
-                              x={zone.svgX}
-                              y={zone.svgY}
-                              width={zone.svgWidth}
-                              height={zone.svgHeight}
-                              fill="rgba(0,112,255,0.10)"
-                              stroke="#0070ff"
-                              strokeWidth={8}
-                            />
-                          ))}
-                        </G>
-                      </G>
-                    )}
-                    {/* Anchor point markers */}
-                    {([0, 1, 2] as const).map((idx) => {
-                      const coord = svgCoords[idx];
-                      if (!coord) return null;
-                      const color = ANCHOR_COLORS[idx];
-                      const r = Math.max(vbW, vbH) * 0.012;
-                      return (
-                        <G key={idx}>
-                          <Circle
-                            cx={coord.x}
-                            cy={coord.y}
-                            r={r * 1.4}
-                            fill={color + "30"}
-                            stroke={color}
-                            strokeWidth={r * 0.25}
-                          />
-                          <Circle
-                            cx={coord.x}
-                            cy={coord.y}
-                            r={r * 0.5}
-                            fill={color}
-                          />
-                          <SvgText
-                            x={coord.x + r * 1.6}
-                            y={coord.y - r * 0.3}
-                            fontSize={r * 1.2}
-                            fill={color}
-                            fontWeight="bold"
-                          >
-                            {ANCHOR_LABELS[idx]}
-                          </SvgText>
-                        </G>
-                      );
-                    })}
-                  </Svg>
-
-                  {/* Pick-mode overlay — box-none lets the GestureDetector's tap
-                      reach through the overlay on web (where an absolute-fill
-                      <div> would otherwise swallow all pointer events). The
-                      cancel Pressable child still receives its own touches. */}
-                  {pickingSlot !== null && (
-                    <View style={[styles.pickOverlay, { borderColor: ANCHOR_COLORS[pickingSlot] }]} pointerEvents="box-none">
-                      <View style={[styles.pickBanner, { backgroundColor: ANCHOR_COLORS[pickingSlot] + "cc" }]}>
-                        <Text style={styles.pickBannerText}>
-                          Tap to place Anchor {pickingSlot + 1}
-                        </Text>
-                        <Pressable
-                          onPress={() => setPickingSlot(null)}
-                          style={styles.pickCancelBtn}
-                          hitSlop={8}
-                        >
-                          <Feather name="x" size={16} color="#fff" />
-                        </Pressable>
-                      </View>
-                    </View>
-                  )}
-                </Animated.View>
-              </GestureDetector>
-            ) : (
-              <View style={styles.mapPlaceholder}>
-                {svgLoading ? (
-                  <>
-                    <ActivityIndicator size="small" color={colors.primary} />
-                    <Text style={[styles.mapPlaceholderText, { color: colors.mutedForeground, marginTop: 8 }]}>
-                      Loading floor plan…
-                    </Text>
-                  </>
-                ) : (
-                  <Text style={[styles.mapPlaceholderText, { color: colors.mutedForeground }]}>
-                    {hasCachedData() ? "Loading floor plan…" : "Floor plan could not be loaded."}
-                  </Text>
-                )}
-              </View>
-            )}
-          </View>
-
-          {/* Preview toggle */}
-          <Pressable
-            style={[
-              styles.previewToggle,
-              {
-                backgroundColor: previewOverlay ? colors.primary + "14" : colors.card,
-                borderColor: previewOverlay ? colors.primary + "60" : colors.border,
-              },
-            ]}
-            onPress={() => setPreviewOverlay((v) => !v)}
-            disabled={!anchorTransformActive}
-          >
-            <Feather
-              name={previewOverlay ? "eye-off" : "eye"}
-              size={14}
-              color={anchorTransformActive ? (previewOverlay ? colors.primary : colors.foreground) : colors.mutedForeground}
-            />
-            <Text
-              style={[
-                styles.previewToggleText,
-                { color: anchorTransformActive ? (previewOverlay ? colors.primary : colors.foreground) : colors.mutedForeground },
-              ]}
-            >
-              {anchorTransformActive ? (previewOverlay ? "Hide zone preview" : "Show zone preview") : "Zone preview (need all 3 anchors)"}
-            </Text>
-          </Pressable>
+          {/* Floor-plan preview (edit mode — no overlay) */}
+          {renderMapCard(null)}
 
           {/* Anchor slots */}
           {([0, 1, 2] as const).map((idx) => {
@@ -488,9 +663,9 @@ export default function AdminMapCalibrationScreen() {
             const coord = svgCoords[idx];
             const form = forms[idx];
             const saved = isAnchorSaved(idx);
-            const isSaving = saving[idx] ?? false;
             const isDeleting = deleting[idx] ?? false;
             const isPicking = pickingSlot === idx;
+            const ready = slotReady[idx];
 
             return (
               <View
@@ -498,7 +673,7 @@ export default function AdminMapCalibrationScreen() {
                 style={[
                   styles.slotCard,
                   {
-                    borderColor: isPicking ? color : (saved ? color + "80" : colors.border),
+                    borderColor: isPicking ? color : (ready ? color + "80" : colors.border),
                     backgroundColor: colors.card,
                   },
                 ]}
@@ -510,8 +685,8 @@ export default function AdminMapCalibrationScreen() {
                   </View>
                   <Text style={[styles.slotTitle, { color: colors.foreground }]}>
                     Anchor {slot}
-                    {saved && (
-                      <Text style={[styles.savedTag, { color: color }]}> ✓ saved</Text>
+                    {ready && (
+                      <Text style={[styles.readyTag, { color: color }]}> ✓ ready</Text>
                     )}
                   </Text>
                   {saved && (
@@ -604,30 +779,43 @@ export default function AdminMapCalibrationScreen() {
                     />
                   </View>
                 </View>
-
-                {/* Save button */}
-                <Pressable
-                  onPress={() => handleSaveSlot(idx)}
-                  disabled={isSaving || !coord}
-                  style={({ pressed }) => [
-                    styles.saveBtn,
-                    {
-                      backgroundColor: coord ? color : colors.muted,
-                      opacity: (isSaving || !coord) ? 0.6 : pressed ? 0.8 : 1,
-                    },
-                  ]}
-                >
-                  {isSaving
-                    ? <ActivityIndicator size="small" color="#fff" />
-                    : <Text style={styles.saveBtnText}>Save Anchor {slot}</Text>
-                  }
-                </Pressable>
               </View>
             );
           })}
 
+          {/* Degenerate warning (edit step) */}
+          {hasDegenerate && (
+            <View style={[styles.warnCard, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "50" }]}>
+              <Feather name="alert-triangle" size={15} color={colors.destructive} />
+              <Text style={[styles.warnText, { color: colors.destructive }]}>
+                Anchor points appear collinear or overlapping. Adjust their positions before reviewing.
+              </Text>
+            </View>
+          )}
+
+          {/* Review Alignment button — shown when all 3 drafts are ready */}
+          {allThreeDraftReady && !hasDegenerate && (
+            <Pressable
+              onPress={() => {
+                setConfirmError(null);
+                setStep("review");
+              }}
+              style={({ pressed }) => [
+                styles.reviewBtn,
+                {
+                  backgroundColor: colors.primary,
+                  opacity: pressed ? 0.85 : 1,
+                },
+              ]}
+              accessibilityLabel="Review alignment"
+            >
+              <Feather name="eye" size={15} color="#fff" />
+              <Text style={styles.reviewBtnText}>Review Alignment →</Text>
+            </Pressable>
+          )}
+
           {/* Status summary */}
-          {anchorTransformActive ? (
+          {allThreeConfirmed ? (
             <View style={[styles.statusCard, { backgroundColor: colors.primary + "0e", borderColor: colors.primary + "40" }]}>
               <Feather name="check-circle" size={15} color={colors.primary} />
               <Text style={[styles.statusText, { color: colors.primary }]}>
@@ -707,16 +895,6 @@ const styles = StyleSheet.create({
   },
   pickBannerText: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold", flex: 1 },
   pickCancelBtn: { marginLeft: 8 },
-  previewToggle: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
-  previewToggleText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   slotCard: {
     borderWidth: 1,
     borderRadius: 12,
@@ -733,7 +911,7 @@ const styles = StyleSheet.create({
   },
   slotNumText: { color: "#fff", fontSize: 13, fontFamily: "Inter_700Bold" },
   slotTitle: { flex: 1, fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  savedTag: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  readyTag: { fontSize: 12, fontFamily: "Inter_500Medium" },
   deleteBtn: { marginLeft: 4 },
   svgRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   fieldLabel: { fontSize: 11, fontFamily: "Inter_500Medium", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 },
@@ -758,13 +936,49 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
   },
   worldRow: { flexDirection: "row" },
-  saveBtn: {
-    paddingVertical: 10,
-    borderRadius: 8,
+  warnCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  warnText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  reviewBtn: {
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 8,
+    paddingVertical: 13,
+    borderRadius: 10,
   },
-  saveBtnText: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  reviewBtnText: { color: "#fff", fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  reviewActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  reviewBackBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 13,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  reviewBackBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  confirmBtn: {
+    flex: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 13,
+    borderRadius: 10,
+  },
+  confirmBtnText: { color: "#fff", fontSize: 14, fontFamily: "Inter_600SemiBold" },
   statusCard: {
     flexDirection: "row",
     alignItems: "flex-start",
