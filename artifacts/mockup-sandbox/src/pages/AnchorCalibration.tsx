@@ -89,12 +89,18 @@ export function AnchorCalibration() {
     null,
   ]);
   const [pickingSlot, setPickingSlot] = useState<0 | 1 | 2 | null>(null);
-  const [busy, setBusy] = useState<[boolean, boolean, boolean]>([
-    false,
-    false,
-    false,
+  type SlotPhase = "idle" | "busy" | "success" | "error";
+  interface SlotStatus {
+    phase: SlotPhase;
+    message: string;
+  }
+  const [slotStatus, setSlotStatus] = useState<[SlotStatus, SlotStatus, SlotStatus]>([
+    { phase: "idle", message: "" },
+    { phase: "idle", message: "" },
+    { phase: "idle", message: "" },
   ]);
   const [status, setStatus] = useState("");
+  const successTimers = useRef<[ReturnType<typeof setTimeout> | null, ReturnType<typeof setTimeout> | null, ReturnType<typeof setTimeout> | null]>([null, null, null]);
 
   const panRef = useRef<{
     active: boolean;
@@ -266,12 +272,32 @@ export function AnchorCalibration() {
 
   // ── Save / clear ────────────────────────────────────────────────────────────
 
-  const setSlotBusy = useCallback((idx: number, value: boolean) => {
-    setBusy((prev) => {
-      const next = [...prev] as typeof prev;
-      next[idx] = value;
-      return next;
-    });
+  const setSlotPhase = useCallback(
+    (idx: number, phase: "idle" | "busy" | "success" | "error", message = "") => {
+      setSlotStatus((prev) => {
+        const next = [...prev] as typeof prev;
+        next[idx] = { phase, message };
+        return next;
+      });
+    },
+    [],
+  );
+
+  // Clear timer for a slot and cancel any pending auto-reset.
+  const clearSuccessTimer = useCallback((idx: 0 | 1 | 2) => {
+    const t = successTimers.current[idx];
+    if (t !== null) {
+      clearTimeout(t);
+      successTimers.current[idx] = null;
+    }
+  }, []);
+
+  // Cleanup all timers on unmount.
+  useEffect(() => {
+    const timers = successTimers.current;
+    return () => {
+      timers.forEach((t) => { if (t !== null) clearTimeout(t); });
+    };
   }, []);
 
   const handleSave = useCallback(
@@ -290,7 +316,8 @@ export function AnchorCalibration() {
         return;
       }
 
-      setSlotBusy(idx, true);
+      clearSuccessTimer(idx);
+      setSlotPhase(idx, "busy");
       setStatus("");
       try {
         const res = await fetch(`${API_BASE}/admin/map-anchors/${idx + 1}`, {
@@ -305,16 +332,29 @@ export function AnchorCalibration() {
             worldY: wy,
           }),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          let errMsg = `HTTP ${res.status}`;
+          try {
+            const body = await res.json() as { error?: string };
+            if (body.error) errMsg = body.error;
+          } catch { /* ignore parse errors */ }
+          throw new Error(errMsg);
+        }
         await refetchAnchors();
-        setStatus(`Anchor ${idx + 1} saved.`);
-      } catch {
-        setStatus(`Anchor ${idx + 1}: save failed. Please try again.`);
-      } finally {
-        setSlotBusy(idx, false);
+        setSlotPhase(idx, "success", `Anchor ${idx + 1} saved.`);
+        successTimers.current[idx] = setTimeout(() => {
+          setSlotPhase(idx, "idle");
+          successTimers.current[idx] = null;
+        }, 2500);
+      } catch (err) {
+        const msg =
+          err instanceof Error && err.message
+            ? err.message
+            : "Save failed — please try again.";
+        setSlotPhase(idx, "error", msg);
       }
     },
-    [svgCoords, forms, refetchAnchors, setSlotBusy],
+    [svgCoords, forms, refetchAnchors, setSlotPhase, clearSuccessTimer],
   );
 
   const handleClear = useCallback(
@@ -326,23 +366,33 @@ export function AnchorCalibration() {
       ) {
         return;
       }
-      setSlotBusy(idx, true);
+      clearSuccessTimer(idx);
+      setSlotPhase(idx, "busy");
       setStatus("");
       try {
         const res = await fetch(`${API_BASE}/admin/map-anchors/${idx + 1}`, {
           method: "DELETE",
           credentials: "include",
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          let errMsg = `HTTP ${res.status}`;
+          try {
+            const body = await res.json() as { error?: string };
+            if (body.error) errMsg = body.error;
+          } catch { /* ignore parse errors */ }
+          throw new Error(errMsg);
+        }
         await refetchAnchors();
-        setStatus(`Anchor ${idx + 1} cleared.`);
-      } catch {
-        setStatus(`Anchor ${idx + 1}: clear failed. Please try again.`);
-      } finally {
-        setSlotBusy(idx, false);
+        setSlotPhase(idx, "idle");
+      } catch (err) {
+        const msg =
+          err instanceof Error && err.message
+            ? err.message
+            : "Clear failed — please try again.";
+        setSlotPhase(idx, "error", msg);
       }
     },
-    [refetchAnchors, setSlotBusy],
+    [refetchAnchors, setSlotPhase, clearSuccessTimer],
   );
 
   const isSaved = useCallback(
@@ -366,6 +416,14 @@ export function AnchorCalibration() {
 
   return (
     <div style={styles.root}>
+      {/* Keyframe animations */}
+      <style>{`
+        @keyframes anchorSavePulse {
+          0%   { opacity: 1; }
+          50%  { opacity: 0.65; }
+          100% { opacity: 1; }
+        }
+      `}</style>
       {/* ── Banner ──────────────────────────────────────────────────────────── */}
       <div style={styles.banner}>
         <a href="/__mockup" style={styles.backLink}>← Internal Tools</a>
@@ -393,8 +451,17 @@ export function AnchorCalibration() {
             const coord = svgCoords[idx];
             const form = forms[idx];
             const saved = isSaved(idx);
-            const isBusy = busy[idx];
+            const phase = slotStatus[idx].phase;
+            const slotMsg = slotStatus[idx].message;
+            const isBusy = phase === "busy";
             const isPicking = pickingSlot === idx;
+
+            const saveBtnBg =
+              phase === "success"
+                ? "#16a34a"
+                : phase === "error"
+                  ? "#dc2626"
+                  : "#0070ff";
 
             return (
               <div
@@ -481,10 +548,20 @@ export function AnchorCalibration() {
                     disabled={isBusy}
                     style={{
                       ...styles.saveBtn,
-                      opacity: isBusy ? 0.6 : 1,
+                      background: saveBtnBg,
+                      transition: "background 0.25s, color 0.25s",
+                      animation: isBusy
+                        ? "anchorSavePulse 0.9s ease-in-out infinite"
+                        : "none",
                     }}
                   >
-                    {isBusy ? "Working…" : saved ? "Update" : "Save"}
+                    {phase === "busy"
+                      ? "Saving…"
+                      : phase === "success"
+                        ? "✓ Saved"
+                        : saved
+                          ? "Update"
+                          : "Save"}
                   </button>
                   {saved && (
                     <button
@@ -498,6 +575,19 @@ export function AnchorCalibration() {
                     >
                       Clear
                     </button>
+                  )}
+                </div>
+
+                {/* Per-slot status text */}
+                <div style={styles.slotStatusRow}>
+                  {phase === "busy" && (
+                    <span style={{ color: "#888" }}>⟳ Saving…</span>
+                  )}
+                  {phase === "success" && (
+                    <span style={{ color: "#16a34a" }}>✓ {slotMsg}</span>
+                  )}
+                  {phase === "error" && (
+                    <span style={{ color: "#dc2626" }}>✕ {slotMsg}</span>
                   )}
                 </div>
               </div>
@@ -718,6 +808,12 @@ const styles = {
     display: "flex",
     gap: 8,
     marginTop: 4,
+  },
+  slotStatusRow: {
+    minHeight: 18,
+    fontSize: 11,
+    marginTop: 4,
+    lineHeight: 1.4,
   },
   saveBtn: {
     flex: 1,
