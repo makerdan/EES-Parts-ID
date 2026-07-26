@@ -46,6 +46,7 @@ import {
   SVG_VIEWBOX_H,
   SVG_VIEWBOX_W,
 } from "@/utils/mapViewport";
+import { findNearestZoneCorner } from "@/utils/nearestZoneCorner";
 
 const ANCHOR_COLORS = ["#f59e0b", "#0ea5e9", "#10b981"] as const;
 const ANCHOR_LABELS = ["1", "2", "3"] as const;
@@ -180,9 +181,23 @@ export default function AdminMapCalibrationScreen() {
       next[pickingSlot] = svgPt;
       return next;
     });
+    // Auto-suggest world coordinates from the nearest zone corner (if one is
+    // close enough). The admin can still edit the fields before saving.
+    const match = findNearestZoneCorner(svgPt, zones, zoneAlignment);
+    if (match) {
+      setForms((prev) => {
+        const next = [...prev] as typeof prev;
+        next[pickingSlot] = {
+          ...next[pickingSlot],
+          worldXStr: String(match.worldX),
+          worldYStr: String(match.worldY),
+        };
+        return next;
+      });
+    }
     setPickingSlot(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickingSlot, mapW, mapH, vbW, vbH, contentVB]);
+  }, [pickingSlot, mapW, mapH, vbW, vbH, contentVB, zones, zoneAlignment]);
 
   const tapGesture = Gesture.Tap()
     .onEnd((e) => {
