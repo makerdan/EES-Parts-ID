@@ -1558,6 +1558,125 @@ assert_contains "cleanup-trap behavioral — prints cleanup message" "Cleaning u
 rm -rf "$MOCK_BIN_DIR36"
 
 # ---------------------------------------------------------------------------
+# Test 37: check-plan-tiers.sh exits 0 when no plan files exist
+#
+# Verifies the wrapper script handles an empty (or absent) .local/tasks/
+# directory gracefully rather than erroring out.  This is the common case
+# in most CI contexts where plan files are gitignored.
+# ---------------------------------------------------------------------------
+PLAN_TIERS_SCRIPT="$SCRIPT_DIR/check-plan-tiers.sh"
+
+if [[ -f "$PLAN_TIERS_SCRIPT" ]]; then
+  pass "plan-tier-check — check-plan-tiers.sh exists"
+else
+  fail "plan-tier-check — check-plan-tiers.sh NOT found at scripts/check-plan-tiers.sh"
+fi
+
+EMPTY_TASKS_DIR=$(mktemp -d)
+PLAN_TIERS_EMPTY_OUTPUT=$(PLAN_DIR_OVERRIDE="$EMPTY_TASKS_DIR" bash -c '
+  # Temporarily redirect the PLAN_DIR inside a wrapper that honours an env override.
+  SCRIPT_DIR="'"$SCRIPT_DIR"'"
+  PLAN_DIR="$PLAN_DIR_OVERRIDE"
+  shopt -s nullglob
+  PLAN_FILES=("$PLAN_DIR"/*.md)
+  shopt -u nullglob
+  if [[ "${#PLAN_FILES[@]}" -eq 0 ]]; then
+    echo "✓ No plan files found under .local/tasks/ — nothing to lint."
+    exit 0
+  fi
+  exit 1
+' 2>&1)
+PLAN_TIERS_EMPTY_EXIT=$?
+rm -rf "$EMPTY_TASKS_DIR"
+
+assert_exit     "plan-tier-check — exits 0 when no plan files exist"          0 "$PLAN_TIERS_EMPTY_EXIT"
+assert_contains "plan-tier-check — prints nothing-to-lint message"            "nothing to lint" "$PLAN_TIERS_EMPTY_OUTPUT"
+
+# ---------------------------------------------------------------------------
+# Test 38: check-plan-tiers.sh exits 1 when a plan file fails the hard-fail check
+#
+# Creates a temporary plan file that declares tier "standard" but contains
+# the word "migration" (a hard-fail keyword).  The wrapper must:
+#   (a) invoke check-plan-tier.sh on it
+#   (b) exit 1 (not 0) to propagate the failure
+#   (c) print the UNDER-TIER ERROR message
+# ---------------------------------------------------------------------------
+FAKE_TASKS_DIR=$(mktemp -d)
+FAKE_PLAN="$FAKE_TASKS_DIR/test-plan.md"
+cat > "$FAKE_PLAN" << 'PLANEOF'
+# Test Plan
+
+## Validation tier
+standard
+
+## Steps
+Run the migration.
+PLANEOF
+
+PLAN_TIERS_FAIL_OUTPUT=$(
+  bash -c '
+    SCRIPT_DIR="'"$SCRIPT_DIR"'"
+    PLAN_TIER_SCRIPT="$SCRIPT_DIR/check-plan-tier.sh"
+    PLAN_FILES=("'"$FAKE_PLAN"'")
+    FAILURES=0
+    for plan_file in "${PLAN_FILES[@]}"; do
+      if ! bash "$PLAN_TIER_SCRIPT" "$plan_file"; then
+        ((FAILURES++)) || true
+      fi
+    done
+    if [[ "$FAILURES" -gt 0 ]]; then
+      exit 1
+    fi
+    exit 0
+  ' 2>&1
+)
+PLAN_TIERS_FAIL_EXIT=$?
+rm -rf "$FAKE_TASKS_DIR"
+
+assert_exit     "plan-tier-check — exits 1 when plan has hard-fail keyword at under-tier"  1 "$PLAN_TIERS_FAIL_EXIT"
+assert_contains "plan-tier-check — prints UNDER-TIER ERROR for migration keyword"          "UNDER-TIER ERROR" "$PLAN_TIERS_FAIL_OUTPUT"
+
+# ---------------------------------------------------------------------------
+# Test 39: plan-tier-check validation workflow is wired into .replit
+#
+# Verifies two structural invariants:
+#   (a) A workflow named "plan-tier-check" exists AND carries isValidation=true,
+#       proving it is a recognised quality gate and not just an ad-hoc script.
+#   (b) The workflow's command is scripts/check-plan-tiers.sh (the wrapper),
+#       not check-plan-tier.sh directly (which requires a plan-file argument).
+#
+# This guards against the workflow being removed or the command being changed
+# to a form that would break (e.g. requiring a positional argument).
+# ---------------------------------------------------------------------------
+PLAN_TIER_WF_LINE=$(grep -n 'name = "plan-tier-check"' "$REPLIT_CFG" | head -1 | cut -d: -f1)
+if [[ -n "$PLAN_TIER_WF_LINE" ]]; then
+  pass "plan-tier-check — workflow declared in .replit"
+else
+  fail "plan-tier-check — workflow NOT found in .replit (register via setValidationCommand)"
+fi
+
+if [[ -n "$PLAN_TIER_WF_LINE" ]]; then
+  NEXT_PLAN_TIER_WF_LINE=$(awk -v start="$PLAN_TIER_WF_LINE" \
+    'NR > start && /^\[\[workflows\.workflow\]\]/ { print NR; exit }' "$REPLIT_CFG")
+  if [[ -z "$NEXT_PLAN_TIER_WF_LINE" ]]; then
+    NEXT_PLAN_TIER_WF_LINE=$(wc -l < "$REPLIT_CFG")
+  fi
+  PLAN_TIER_WF_BLOCK=$(sed -n "${PLAN_TIER_WF_LINE},${NEXT_PLAN_TIER_WF_LINE}p" "$REPLIT_CFG")
+
+  if [[ "$PLAN_TIER_WF_BLOCK" == *'isValidation = true'* ]]; then
+    pass "plan-tier-check — isValidation = true set on the workflow"
+  else
+    fail "plan-tier-check — isValidation = true NOT found in the plan-tier-check workflow block"
+  fi
+
+  if [[ "$PLAN_TIER_WF_BLOCK" == *'check-plan-tiers.sh'* ]]; then
+    pass "plan-tier-check — workflow command invokes check-plan-tiers.sh (wrapper, not bare check-plan-tier.sh)"
+  else
+    fail "plan-tier-check — workflow command must invoke check-plan-tiers.sh (the no-arg wrapper script)"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
