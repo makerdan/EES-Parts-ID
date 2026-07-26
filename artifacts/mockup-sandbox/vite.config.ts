@@ -27,6 +27,24 @@ if (!basePath) {
   );
 }
 
+// Target for the /api proxy. Override via VITE_API_SERVER env var if the API
+// server is running on a different port or host in your dev environment.
+const apiServerTarget = process.env.VITE_API_SERVER ?? "http://localhost:8080";
+
+// Proxy config shared between the dev server and `vite preview`.
+// Forwards every /api/** request to the API server so that Clerk session
+// cookies are sent to the same origin and admin endpoints are reachable.
+const apiProxy = {
+  "/api": {
+    target: apiServerTarget,
+    changeOrigin: true,
+    secure: false,
+    // Rewrite Set-Cookie domain so Clerk session cookies are not dropped when
+    // Vite rewrites the response from the API server back to the browser.
+    cookieDomainRewrite: "",
+  },
+};
+
 export default defineConfig({
   base: basePath,
   plugins: [
@@ -62,10 +80,12 @@ export default defineConfig({
     fs: {
       strict: true,
     },
+    proxy: apiProxy,
   },
   preview: {
     port,
     host: "0.0.0.0",
     allowedHosts: true,
+    proxy: apiProxy,
   },
 });
