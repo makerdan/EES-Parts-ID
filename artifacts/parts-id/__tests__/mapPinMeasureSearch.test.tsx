@@ -28,7 +28,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { RenderResult } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 import { makeAppMock, flushPromises as rawFlush } from "./helpers/appMocks";
@@ -540,13 +540,13 @@ describe("PhotoScreen – mapPromptBins set after identify+search with binned to
     // Add an image so the Identify button is enabled.
     const libraryBtn = findPressable(tree.root, "Photo Library");
     expect(libraryBtn).not.toBeNull();
-    await act(async () => { libraryBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(libraryBtn!); });
     await flushPromises();
 
     // Press Identify — fires handleIdentify which awaits both mutations.
     const identifyBtn = findPressable(tree.root, "Identify Part");
     expect(identifyBtn).not.toBeNull();
-    await act(async () => { identifyBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(identifyBtn!); });
     await flushPromises();
 
     // "Part pinned on map" inline banner should now be visible.
@@ -579,11 +579,11 @@ describe("PhotoScreen – mapPromptBins set after identify+search with binned to
     const tree = await renderPhoto();
 
     const libraryBtn = findPressable(tree.root, "Photo Library");
-    await act(async () => { libraryBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(libraryBtn!); });
     await flushPromises();
 
     const identifyBtn = findPressable(tree.root, "Identify Part");
-    await act(async () => { identifyBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(identifyBtn!); });
     await flushPromises();
 
     expect(hasText(tree.root, "Part pinned on map")).toBe(false);

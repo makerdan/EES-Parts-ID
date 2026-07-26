@@ -41,7 +41,7 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 import * as fs from "fs";
 import * as path from "path";
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 
 // ── Source paths ──────────────────────────────────────────────────────────────
@@ -342,7 +342,7 @@ describe("UploadScreen — People card tap with isAdmin=true, adminToken=null", 
     const peopleCard = findPressable(activeTree.root, "People & System");
     expect(peopleCard).not.toBeNull();
 
-    await act(async () => { peopleCard!.props.onPress(); });
+    await act(async () => { fireEvent.press(peopleCard!); });
 
     await flushPromises();
   });
@@ -353,7 +353,7 @@ describe("UploadScreen — People card tap with isAdmin=true, adminToken=null", 
     activeTree = await renderComponent(React.createElement(UploadScreen));
 
     const peopleCard = findPressable(activeTree.root, "People & System");
-    await act(async () => { peopleCard!.props.onPress(); });
+    await act(async () => { fireEvent.press(peopleCard!); });
     await flushPromises();
 
     expect(mockFetchAdminUsers).not.toHaveBeenCalled();
@@ -365,7 +365,7 @@ describe("UploadScreen — People card tap with isAdmin=true, adminToken=null", 
     activeTree = await renderComponent(React.createElement(UploadScreen));
 
     const peopleCard = findPressable(activeTree.root, "People & System");
-    await act(async () => { peopleCard!.props.onPress(); });
+    await act(async () => { fireEvent.press(peopleCard!); });
     await flushPromises();
 
     // The hub section cards (Data Import, AI & Enrichment, Warehouse) are gone;
@@ -379,7 +379,7 @@ describe("UploadScreen — People card tap with isAdmin=true, adminToken=null", 
     activeTree = await renderComponent(React.createElement(UploadScreen));
 
     const peopleCard = findPressable(activeTree.root, "People & System");
-    await act(async () => { peopleCard!.props.onPress(); });
+    await act(async () => { fireEvent.press(peopleCard!); });
     await flushPromises();
 
     expect(hasText(activeTree.root, "No users yet. Tap Refresh to load.")).toBe(true);
@@ -391,7 +391,7 @@ describe("UploadScreen — People card tap with isAdmin=true, adminToken=null", 
     activeTree = await renderComponent(React.createElement(UploadScreen));
 
     const peopleCard = findPressable(activeTree.root, "People & System");
-    await act(async () => { peopleCard!.props.onPress(); });
+    await act(async () => { fireEvent.press(peopleCard!); });
     await flushPromises();
 
     // usersError remains null because the guard prevented any fetch attempt
@@ -414,7 +414,7 @@ describe("UploadScreen — People card tap with valid adminToken (positive path)
     const peopleCard = findPressable(activeTree.root, "People & System");
     expect(peopleCard).not.toBeNull();
 
-    await act(async () => { peopleCard!.props.onPress(); });
+    await act(async () => { fireEvent.press(peopleCard!); });
     await flushPromises();
 
     expect(mockFetchAdminUsers).toHaveBeenCalledTimes(1);

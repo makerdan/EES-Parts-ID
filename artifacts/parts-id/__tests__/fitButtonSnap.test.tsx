@@ -39,7 +39,7 @@
 (global as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 
 // ─── react-native-reanimated ──────────────────────────────────────────────────
 
@@ -280,7 +280,7 @@ function pressFitButton(result: Awaited<ReturnType<typeof render>>) {
     (n) => n.props.accessibilityLabel === "Fit to screen",
     { includeSelf: true },
   )[0];
-  btn!.props.onPress();
+  fireEvent.press(btn!);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

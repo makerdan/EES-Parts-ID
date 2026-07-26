@@ -127,7 +127,7 @@ jest.mock("@/components/KeyboardDoneInput", () => {
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import type { InventoryItem } from "@workspace/api-client-react";
@@ -224,7 +224,7 @@ describe("PartDetailsEditor – FileSystem.readAsStringAsync failure surfaces as
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     expect(hasText(result.root!, "Could not save — check connection")).toBe(true);
@@ -241,7 +241,7 @@ describe("PartDetailsEditor – FileSystem.readAsStringAsync failure surfaces as
 
     await act(async () => { mockPhotoCbs.slot1!("file:///new/photo.jpg"); });
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     // The field-level error must be shown, not an errorMsg banner.
@@ -272,7 +272,7 @@ describe("PartDetailsEditor – PATCH /photo non-ok response surfaces as photo f
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     expect(hasText(result.root!, "Could not save — check connection")).toBe(true);
@@ -297,7 +297,7 @@ describe("PartDetailsEditor – PATCH /photo non-ok response surfaces as photo f
     await act(async () => { mockPhotoCbs.slot1!("file:///new/photo.jpg"); });
     const saveBtn = findPressable(result.root!, "Save Details");
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     expect(hasText(result.root!, "Session expired — re-unlock admin access")).toBe(true);
@@ -326,7 +326,7 @@ describe("PartDetailsEditor – successful photo upload calls PATCH /photo with 
     await act(async () => { mockPhotoCbs.slot1!("file:///new/photo.jpg"); });
     const saveBtn = findPressable(result.root!, "Save Details");
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     // fetch must have been called with the PATCH /photo endpoint.
@@ -360,7 +360,7 @@ describe("PartDetailsEditor – successful photo upload calls PATCH /photo with 
     await act(async () => { mockPhotoCbs.slot1!(photoUri); });
     const saveBtn = findPressable(result.root!, "Save Details");
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     expect(mockReadAsStringAsync).toHaveBeenCalledWith(
@@ -392,7 +392,7 @@ describe("PartDetailsEditor – slot-2 photo upload error surfaces as photo2 fie
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
     expect(hasText(result.root!, "Could not save — check connection")).toBe(true);

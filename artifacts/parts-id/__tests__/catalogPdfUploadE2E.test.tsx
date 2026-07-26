@@ -149,7 +149,7 @@ afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
 // ── Imports (after all jest.mock declarations) ────────────────────────────────
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import { CatalogPdfUpload } from "../components/CatalogPdfUpload";
 
 // ── PDF fixture helpers ────────────────────────────────────────────────────────
@@ -236,7 +236,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
     expect(pickBtn).not.toBeNull();
 
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     expect(mockGetDocumentAsync).toHaveBeenCalledTimes(1);
@@ -261,7 +261,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     activeTree = tree;
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     expect(mockReadPdfAsBytes).toHaveBeenCalledTimes(1);
@@ -283,7 +283,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     activeTree = tree;
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     // The File reference forwarded must be the exact same object the picker returned.
@@ -305,7 +305,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     activeTree = tree;
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     expect(mockReadPdfAsBytes).toHaveBeenCalledWith(uri, undefined, expect.any(Function));
@@ -318,7 +318,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     activeTree = tree;
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     expect(mockReadPdfAsBytes).not.toHaveBeenCalled();
@@ -337,7 +337,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     activeTree = tree;
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     const allText = instText(tree.root!);
@@ -379,7 +379,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
     mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     // Set vendor via the captured onChangeText from KeyboardDoneInput
@@ -398,7 +398,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
     const startBtn = findPressable(tree.root!, "Start Extraction");
     expect(startBtn).not.toBeNull();
 
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     expect(mockWriteAsStringAsync).toHaveBeenCalledTimes(1);
@@ -413,7 +413,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
     await pickFileAndSetVendor(tree, makePdfBytes());
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     expect(mockCreateUploadTask).toHaveBeenCalledTimes(1);
@@ -433,7 +433,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
     await pickFileAndSetVendor(tree, makePdfBytes());
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     const firstCallArgs = mockCreateUploadTask.mock.calls[0] as unknown[];
@@ -450,7 +450,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
     await pickFileAndSetVendor(tree, makePdfBytes());
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     const firstCallArgs = mockCreateUploadTask.mock.calls[0] as unknown[];
@@ -467,7 +467,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
     await pickFileAndSetVendor(tree, makePdfBytes());
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     const firstCallArgs = mockCreateUploadTask.mock.calls[0] as unknown[];
@@ -484,7 +484,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
     await pickFileAndSetVendor(tree, makePdfBytes(), "EATON");
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     expect(mockWriteAsStringAsync).toHaveBeenCalled();
@@ -509,7 +509,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
     await pickFileAndSetVendor(tree, originalBytes);
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     const bodyString = mockWriteAsStringAsync.mock.calls[0]?.[1] as string;
@@ -530,7 +530,7 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
     const startBtn = findPressable(tree.root!, "Start Extraction");
     // Even if present, pressing it while disabled should be a no-op
     if (startBtn) {
-      await act(async () => { startBtn.props.onPress?.(); });
+      await act(async () => { fireEvent.press(startBtn); });
     }
     await flushPromises();
 
@@ -568,7 +568,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     mockReadPdfAsBytes.mockResolvedValueOnce(bytes);
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
   }
 
@@ -607,7 +607,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     // Button is disabled; pressing it should be a no-op
     const startBtn = findPressable(tree.root!, "Start Extraction");
     if (startBtn && !startBtn.props.disabled) {
-      await act(async () => { startBtn.props.onPress?.(); });
+      await act(async () => { fireEvent.press(startBtn); });
       await flushPromises();
     }
 
@@ -644,7 +644,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     await act(async () => { capturedOnChangeText!("ACME"); });
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress?.(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     expect(mockWriteAsStringAsync).not.toHaveBeenCalled();
@@ -661,7 +661,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     await act(async () => { capturedOnChangeText!("ACME"); });
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress?.(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     const allText = instText(tree.root!);
@@ -683,7 +683,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     );
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     const allText = instText(tree.root!);
@@ -705,7 +705,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     );
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     // pdfBytes was never set, so Start remains disabled even with a vendor
@@ -714,7 +714,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
     if (startBtn && !startBtn.props.disabled) {
-      await act(async () => { startBtn.props.onPress?.(); });
+      await act(async () => { fireEvent.press(startBtn); });
       await flushPromises();
     }
 
@@ -735,7 +735,7 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
     );
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     // Set vendor — Start button should still be disabled because pdfBytes is null
@@ -796,7 +796,7 @@ describe("CatalogPdfUpload — 401 mid-chunk: onSessionExpired is called and loa
     mockSplitPdfIntoChunks.mockResolvedValueOnce(makeChunks(2));
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     expect(capturedOnChangeText).not.toBeNull();
@@ -804,7 +804,7 @@ describe("CatalogPdfUpload — 401 mid-chunk: onSessionExpired is called and loa
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
     expect(startBtn).not.toBeNull();
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
   }
 
@@ -939,7 +939,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     expect(capturedOnChangeText).not.toBeNull();
@@ -956,7 +956,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     expect(startBtn).not.toBeNull();
 
     // Press start but do NOT fire XHR events — XHR hangs, letting us assert synchronously
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     expect(mockWriteAsStringAsync).not.toHaveBeenCalled();
@@ -971,7 +971,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     await pickFileAndSetVendorWeb(tree, makePdfBytes(), "BRIDGEPORT");
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     // URL
@@ -999,7 +999,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     await pickFileAndSetVendorWeb(tree, makePdfBytes());
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     // Simulate XHR network error
@@ -1039,7 +1039,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     // setInterval is registered under the fake clock and can be advanced.
     jest.useFakeTimers();
     try {
-      await act(async () => { startBtn!.props.onPress(); });
+      await act(async () => { fireEvent.press(startBtn!); });
 
       // Fire the XHR load event — this triggers onSuccess → startPolling
       await act(async () => { mockXhr.fireEvent("load"); });
@@ -1075,7 +1075,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     expect(startBtn).not.toBeNull();
 
     // Press start — XHR is created and hangs (no load/error event fired)
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     // XHR must have been created and onprogress must have been attached
@@ -1104,7 +1104,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     await pickFileAndSetVendorWeb(tree, makePdfBytes());
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     expect(mockXhr.upload.onprogress).not.toBeNull();
@@ -1161,7 +1161,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     await pickFileAndSetVendorWeb(tree, makePdfBytes());
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     // Single progress event — too few samples
@@ -1183,7 +1183,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     await pickFileAndSetVendorWeb(tree, makePdfBytes());
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     const totalBytes = 100 * 1024 * 1024;
@@ -1277,7 +1277,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     activeTree = tree;
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     await act(async () => { capturedOnChangeText!("ACME"); });
@@ -1286,7 +1286,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     expect(startBtn).not.toBeNull();
 
     // Press start — chunk 0 XHR is created and pending
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     expect(xhrQueue.length).toBe(1);
@@ -1404,7 +1404,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
     mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     expect(capturedOnChangeText).not.toBeNull();
@@ -1420,7 +1420,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
     await pickFileAndSetVendorNative(tree, makePdfBytes());
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     const cb = getProgressCallback();
@@ -1444,7 +1444,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
     await pickFileAndSetVendorNative(tree, makePdfBytes());
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     const cb = getProgressCallback();
@@ -1503,7 +1503,7 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
     await pickFileAndSetVendorNative(tree, makePdfBytes());
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     const cb = getProgressCallback();
@@ -1623,13 +1623,13 @@ describe("CatalogPdfUpload — poll abort safety on unmount / stopPolling mid-fl
     mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
 
     const pickBtn = findPressable(tree.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     await act(async () => { capturedOnChangeText!("ACME"); });
 
     const startBtn = findPressable(tree.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     // Fire the upload XHR load → onSuccess → startPolling → fetch (polling)

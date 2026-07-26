@@ -23,7 +23,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import type {
@@ -238,11 +238,11 @@ describe("PartDetailsEditor – handleSaveExpandedDesc cache patch", () => {
     // Type text into the expanded-description field to enable the save button.
     const expandedInput = findTextInput(result.root!, "No expanded description yet\u2026");
     expect(expandedInput).not.toBeNull();
-    await act(async () => { expandedInput!.props.onChangeText("Full details here."); });
+    await act(async () => { fireEvent.changeText(expandedInput!, "Full details here."); });
 
     const saveExpandedBtn = findPressable(result.root!, "Save Expanded Description");
     expect(saveExpandedBtn).not.toBeNull();
-    await act(async () => { saveExpandedBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveExpandedBtn!); });
 
     expect(mockSetQueriesData).toHaveBeenCalledTimes(2);
   });
@@ -256,10 +256,10 @@ describe("PartDetailsEditor – handleSaveExpandedDesc cache patch", () => {
     activeTree = result;
 
     const expandedInput = findTextInput(result.root!, "No expanded description yet\u2026");
-    await act(async () => { expandedInput!.props.onChangeText("Full details here."); });
+    await act(async () => { fireEvent.changeText(expandedInput!, "Full details here."); });
 
     const saveExpandedBtn = findPressable(result.root!, "Save Expanded Description");
-    await act(async () => { saveExpandedBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveExpandedBtn!); });
 
     const [, listUpdater] = mockSetQueriesData.mock.calls[0] as [
       unknown,
@@ -292,10 +292,10 @@ describe("PartDetailsEditor – handleSaveExpandedDesc cache patch", () => {
     activeTree = result;
 
     const expandedInput = findTextInput(result.root!, "No expanded description yet\u2026");
-    await act(async () => { expandedInput!.props.onChangeText("Full details here."); });
+    await act(async () => { fireEvent.changeText(expandedInput!, "Full details here."); });
 
     const saveExpandedBtn = findPressable(result.root!, "Save Expanded Description");
-    await act(async () => { saveExpandedBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveExpandedBtn!); });
 
     const [, searchUpdater] = mockSetQueriesData.mock.calls[1] as [
       unknown,
@@ -334,10 +334,10 @@ describe("PartDetailsEditor – handleSaveExpandedDesc cache patch", () => {
     activeTree = result;
 
     const expandedInput = findTextInput(result.root!, "No expanded description yet\u2026");
-    await act(async () => { expandedInput!.props.onChangeText("Full details here."); });
+    await act(async () => { fireEvent.changeText(expandedInput!, "Full details here."); });
 
     const saveExpandedBtn = findPressable(result.root!, "Save Expanded Description");
-    await act(async () => { saveExpandedBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveExpandedBtn!); });
 
     const searchInvalidateCalls = (mockInvalidateQueries.mock.calls as Array<[{ queryKey?: unknown[] }]>)
       .filter(([arg]) => Array.isArray(arg.queryKey) && arg.queryKey[0] === "searchInventory");
@@ -354,10 +354,10 @@ describe("PartDetailsEditor – handleSaveExpandedDesc cache patch", () => {
     activeTree = result;
 
     const expandedInput = findTextInput(result.root!, "No expanded description yet\u2026");
-    await act(async () => { expandedInput!.props.onChangeText("Full details here."); });
+    await act(async () => { fireEvent.changeText(expandedInput!, "Full details here."); });
 
     const saveExpandedBtn = findPressable(result.root!, "Save Expanded Description");
-    await act(async () => { saveExpandedBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveExpandedBtn!); });
 
     const [, listUpdater] = mockSetQueriesData.mock.calls[0] as [
       unknown,
@@ -382,10 +382,10 @@ describe("PartDetailsEditor – handleSaveExpandedDesc cache patch", () => {
     activeTree = result;
 
     const expandedInput = findTextInput(result.root!, "No expanded description yet\u2026");
-    await act(async () => { expandedInput!.props.onChangeText("Full details here."); });
+    await act(async () => { fireEvent.changeText(expandedInput!, "Full details here."); });
 
     const saveExpandedBtn = findPressable(result.root!, "Save Expanded Description");
-    await act(async () => { saveExpandedBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveExpandedBtn!); });
 
     expect(mockSetQueriesData).not.toHaveBeenCalled();
   });
@@ -406,7 +406,7 @@ describe("PartDetailsEditor – handleClearExpandedDesc cache patch", () => {
 
     const clearBtn = findPressableByA11yLabel(result.root!, "Clear expanded description");
     expect(clearBtn).not.toBeNull();
-    await act(async () => { clearBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(clearBtn!); });
 
     expect(mockSetQueriesData).toHaveBeenCalledTimes(2);
   });
@@ -420,7 +420,7 @@ describe("PartDetailsEditor – handleClearExpandedDesc cache patch", () => {
     activeTree = result;
 
     const clearBtn = findPressableByA11yLabel(result.root!, "Clear expanded description");
-    await act(async () => { clearBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(clearBtn!); });
 
     const [, listUpdater] = mockSetQueriesData.mock.calls[0] as [
       unknown,
@@ -452,7 +452,7 @@ describe("PartDetailsEditor – handleClearExpandedDesc cache patch", () => {
     activeTree = result;
 
     const clearBtn = findPressableByA11yLabel(result.root!, "Clear expanded description");
-    await act(async () => { clearBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(clearBtn!); });
 
     const [, searchUpdater] = mockSetQueriesData.mock.calls[1] as [
       unknown,
@@ -484,7 +484,7 @@ describe("PartDetailsEditor – handleClearExpandedDesc cache patch", () => {
     activeTree = result;
 
     const clearBtn = findPressableByA11yLabel(result.root!, "Clear expanded description");
-    await act(async () => { clearBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(clearBtn!); });
 
     const searchInvalidateCalls = (mockInvalidateQueries.mock.calls as Array<[{ queryKey?: unknown[] }]>)
       .filter(([arg]) => Array.isArray(arg.queryKey) && arg.queryKey[0] === "searchInventory");
@@ -507,7 +507,7 @@ describe("PartDetailsEditor – handleClearExpandedDesc cache patch", () => {
     activeTree = result;
 
     const clearBtn = findPressableByA11yLabel(result.root!, "Clear expanded description");
-    await act(async () => { clearBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(clearBtn!); });
 
     expect(mockSetQueriesData).not.toHaveBeenCalled();
   });
@@ -538,12 +538,12 @@ describe("PartDetailsEditor – patchItem thumbnailUrl cleared on photo save", (
     // Select a photo via the mocked PartPhotoPicker (slot 1).
     const photoPicker = findPressableByTestID(result.root!, "photo-picker-1");
     expect(photoPicker).not.toBeNull();
-    await act(async () => { photoPicker!.props.onPress(); });
+    await act(async () => { fireEvent.press(photoPicker!); });
 
     // Save.
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // At least one setQueriesData call must have occurred.
     expect(mockSetQueriesData).toHaveBeenCalled();
@@ -596,11 +596,11 @@ describe("PartDetailsEditor – patchItem thumbnailUrl cleared on photo save", (
     // Select a photo via the mocked PartPhotoPicker (slot 2).
     const photoPicker2 = findPressableByTestID(result.root!, "photo-picker-2");
     expect(photoPicker2).not.toBeNull();
-    await act(async () => { photoPicker2!.props.onPress(); });
+    await act(async () => { fireEvent.press(photoPicker2!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockSetQueriesData).toHaveBeenCalled();
 
@@ -645,10 +645,10 @@ describe("PartDetailsEditor – patchItem thumbnailUrl cleared on photo save", (
     activeTree = result;
 
     const photoPicker = findPressableByTestID(result.root!, "photo-picker-1");
-    await act(async () => { photoPicker!.props.onPress(); });
+    await act(async () => { fireEvent.press(photoPicker!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     const [, listUpdater] = mockSetQueriesData.mock.calls[0] as [
       unknown,

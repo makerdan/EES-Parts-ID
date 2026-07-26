@@ -123,7 +123,7 @@ afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
 // ── Imports (after all jest.mock declarations) ────────────────────────────────
 
 import React from "react";
-import { render, act, RenderResult } from "@testing-library/react-native";
+import { render, act, RenderResult, fireEvent } from "@testing-library/react-native";
 import { CatalogPdfUpload } from "../components/CatalogPdfUpload";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -242,7 +242,7 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
     activeTree = result;
 
     const pickBtn = findPressable(result.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     expect(capturedOnChangeText).not.toBeNull();
@@ -251,7 +251,7 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
     mockXhr.responseText = JSON.stringify({ jobId: "job-1", status: "processing" });
 
     const startBtn = findPressable(result.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     const beforeunloadCalls = (mockAddEventListener.mock.calls as [string, unknown][]).filter(
@@ -276,14 +276,14 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
     activeTree = result;
 
     const pickBtn = findPressable(result.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     expect(capturedOnChangeText).not.toBeNull();
     await act(async () => { capturedOnChangeText!("ACME"); });
 
     const startBtn = findPressable(result.root!, "Start Extraction");
-    await act(async () => { startBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(startBtn!); });
     await flushPromises();
 
     const beforeunloadCalls = (mockAddEventListener.mock.calls as [string, unknown][]).filter(
@@ -331,7 +331,7 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
     activeTree = result;
 
     const pickBtn = findPressable(result.root!, "Choose PDF File");
-    await act(async () => { pickBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(pickBtn!); });
     await flushPromises();
 
     if (capturedOnChangeText) {
@@ -340,7 +340,7 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
 
     const startBtn = findPressable(result.root!, "Start Extraction");
     if (startBtn) {
-      await act(async () => { startBtn.props.onPress(); });
+      await act(async () => { fireEvent.press(startBtn); });
       await flushPromises();
     }
 

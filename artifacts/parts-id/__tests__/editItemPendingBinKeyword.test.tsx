@@ -20,7 +20,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { InventoryItem } from "@workspace/api-client-react";
 import type { TestInstance } from "test-renderer";
 
@@ -260,16 +260,16 @@ describe("EditItemScreen – pending bin text is carried through on Save", () =>
     // Change description to make hasChanges = true.
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
     expect(descInput).not.toBeNull();
-    await act(async () => { descInput!.props.onChangeText("New description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "New description"); });
 
     // Type a bin but do NOT press Add.
     const binInput = findTextInput(result.root!, "e.g. A1-04");
     expect(binInput).not.toBeNull();
-    await act(async () => { binInput!.props.onChangeText("B2-07"); });
+    await act(async () => { fireEvent.changeText(binInput!, "B2-07"); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockBinsMutateAsync).toHaveBeenCalledTimes(1);
     expect(mockBinsMutateAsync).toHaveBeenCalledWith({
@@ -285,14 +285,14 @@ describe("EditItemScreen – pending bin text is carried through on Save", () =>
     activeTree = result;
 
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
-    await act(async () => { descInput!.props.onChangeText("Updated description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "Updated description"); });
 
     const binInput = findTextInput(result.root!, "e.g. A1-04");
     expect(binInput).not.toBeNull();
-    await act(async () => { binInput!.props.onChangeText("C3-12"); });
+    await act(async () => { fireEvent.changeText(binInput!, "C3-12"); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockBinsMutateAsync).toHaveBeenCalledTimes(1);
     expect(mockBinsMutateAsync).toHaveBeenCalledWith({
@@ -308,14 +308,14 @@ describe("EditItemScreen – pending bin text is carried through on Save", () =>
     activeTree = result;
 
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
-    await act(async () => { descInput!.props.onChangeText("Updated description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "Updated description"); });
 
     // Type the same bin as already exists, different case.
     const binInput = findTextInput(result.root!, "e.g. A1-04");
-    await act(async () => { binInput!.props.onChangeText("aisle-01"); });
+    await act(async () => { fireEvent.changeText(binInput!, "aisle-01"); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // The duplicate is discarded: finalBins === bins (same reference, already equal
     // to item.binLocations) so no bins mutation fires at all.
@@ -329,13 +329,13 @@ describe("EditItemScreen – pending bin text is carried through on Save", () =>
     activeTree = result;
 
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
-    await act(async () => { descInput!.props.onChangeText("Updated description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "Updated description"); });
 
     const binInput = findTextInput(result.root!, "e.g. A1-04");
-    await act(async () => { binInput!.props.onChangeText("   "); });
+    await act(async () => { fireEvent.changeText(binInput!, "   "); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // finalBins === [] === item.binLocations → no bin mutation fires.
     expect(mockBinsMutateAsync).not.toHaveBeenCalled();
@@ -354,14 +354,14 @@ describe("EditItemScreen – pending keyword text is carried through on Save", (
     activeTree = result;
 
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
-    await act(async () => { descInput!.props.onChangeText("New description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "New description"); });
 
     const kwInput = findTextInput(result.root!, "Type keyword and press Add\u2026");
     expect(kwInput).not.toBeNull();
-    await act(async () => { kwInput!.props.onChangeText("Motor"); });
+    await act(async () => { fireEvent.changeText(kwInput!, "Motor"); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockKeywordsMutateAsync).toHaveBeenCalledTimes(1);
     expect(mockKeywordsMutateAsync).toHaveBeenCalledWith({
@@ -377,13 +377,13 @@ describe("EditItemScreen – pending keyword text is carried through on Save", (
     activeTree = result;
 
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
-    await act(async () => { descInput!.props.onChangeText("New description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "New description"); });
 
     const kwInput = findTextInput(result.root!, "Type keyword and press Add\u2026");
-    await act(async () => { kwInput!.props.onChangeText("Breaker"); });
+    await act(async () => { fireEvent.changeText(kwInput!, "Breaker"); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockKeywordsMutateAsync).toHaveBeenCalledTimes(1);
     expect(mockKeywordsMutateAsync).toHaveBeenCalledWith({
@@ -399,13 +399,13 @@ describe("EditItemScreen – pending keyword text is carried through on Save", (
     activeTree = result;
 
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
-    await act(async () => { descInput!.props.onChangeText("New description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "New description"); });
 
     const kwInput = findTextInput(result.root!, "Type keyword and press Add\u2026");
-    await act(async () => { kwInput!.props.onChangeText("Motor"); });
+    await act(async () => { fireEvent.changeText(kwInput!, "Motor"); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // The duplicate is discarded: finalKeywords === keywords (same reference,
     // already equal to item.aiKeywords) so no keywords mutation fires at all.
@@ -419,13 +419,13 @@ describe("EditItemScreen – pending keyword text is carried through on Save", (
     activeTree = result;
 
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
-    await act(async () => { descInput!.props.onChangeText("Updated description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "Updated description"); });
 
     const kwInput = findTextInput(result.root!, "Type keyword and press Add\u2026");
-    await act(async () => { kwInput!.props.onChangeText("   "); });
+    await act(async () => { fireEvent.changeText(kwInput!, "   "); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockKeywordsMutateAsync).not.toHaveBeenCalled();
   });
@@ -443,16 +443,16 @@ describe("EditItemScreen – both pending bin and keyword text are carried throu
     activeTree = result;
 
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
-    await act(async () => { descInput!.props.onChangeText("New description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "New description"); });
 
     const binInput = findTextInput(result.root!, "e.g. A1-04");
-    await act(async () => { binInput!.props.onChangeText("D4-22"); });
+    await act(async () => { fireEvent.changeText(binInput!, "D4-22"); });
 
     const kwInput = findTextInput(result.root!, "Type keyword and press Add\u2026");
-    await act(async () => { kwInput!.props.onChangeText("Contactor"); });
+    await act(async () => { fireEvent.changeText(kwInput!, "Contactor"); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockBinsMutateAsync).toHaveBeenCalledTimes(1);
     expect(mockBinsMutateAsync).toHaveBeenCalledWith({
@@ -486,10 +486,10 @@ describe("EditItemScreen – stale-dims regression", () => {
     // Change description so the save has at least one field to commit,
     // but leave all dim fields at their initial values.
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
-    await act(async () => { descInput!.props.onChangeText("Updated description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "Updated description"); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // The description PATCH should fire…
     const dimsPatchCalls = (mockFetch as jest.Mock).mock.calls.filter(
@@ -516,7 +516,7 @@ describe("EditItemScreen – stale-dims regression", () => {
     // length is the first dim field rendered.
     const lengthInput = allDashInputs.find((n: TestInstance) => n.props.value === "5") ?? null;
     expect(lengthInput).not.toBeNull();
-    await act(async () => { lengthInput!.props.onChangeText("10"); });
+    await act(async () => { fireEvent.changeText(lengthInput!, "10"); });
 
     // Make the dims PATCH fail; let other PATCHes succeed.
     mockFetch.mockImplementation((url: string) => {
@@ -531,10 +531,10 @@ describe("EditItemScreen – stale-dims regression", () => {
 
     // Change description so there is at least one op that succeeds.
     const descInput = findTextInput(result.root!, "Brief description of the part\u2026");
-    await act(async () => { descInput!.props.onChangeText("Updated description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "Updated description"); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // After partial failure the dim length field should be reverted to the
     // original value from itemRef.current.dimensions (5 → "5").

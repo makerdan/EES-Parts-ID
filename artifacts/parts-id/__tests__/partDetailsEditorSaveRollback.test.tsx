@@ -18,7 +18,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 import { Alert } from "react-native";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
@@ -176,13 +176,13 @@ describe("PartDetailsEditor – handleSave rollback on mutation failure", () => 
     // Remove the existing bin via Alert auto-confirm so bins state ≠ item.binLocations.
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
     expect(removeBinBtn).not.toBeNull();
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     // Now bins state is [] but item.binLocations is ["AISLE-01"] → hasChanges = true.
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
 
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // onSettled must fire even on failure — both query keys must be invalidated.
     const invalidateCalls = mockInvalidateQueries.mock.calls.map(
@@ -215,10 +215,10 @@ describe("PartDetailsEditor – handleSave rollback on mutation failure", () => 
     activeTree = result;
 
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // setQueryData must have been called to restore each snapshot entry.
     const setQueryDataCalls = mockSetQueryData.mock.calls as Array<[unknown, unknown]>;
@@ -247,10 +247,10 @@ describe("PartDetailsEditor – handleSave rollback on mutation failure", () => 
     activeTree = result;
 
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // getQueriesData must have been called for inventory and searchInventory.
     expect(callLog.filter(e => e === "getQueriesData").length).toBeGreaterThanOrEqual(2);
@@ -295,7 +295,7 @@ describe("PartDetailsEditor – selective cache rollback on partial failure", ()
       { includeSelf: true },
     )[0];
     expect(descInput).toBeDefined();
-    await act(async () => { descInput!.props.onChangeText("New description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "New description"); });
 
     // Find first dimension TextInput (numeric keyboard) and change it.
     const dimInput = result.root!.queryAll(
@@ -303,12 +303,12 @@ describe("PartDetailsEditor – selective cache rollback on partial failure", ()
       { includeSelf: true },
     )[0];
     expect(dimInput).toBeDefined();
-    await act(async () => { dimInput!.props.onChangeText("5"); });
+    await act(async () => { fireEvent.changeText(dimInput!, "5"); });
 
     // Press Save.
     const saveBtn = findPressable(result.root!, "Save Details");
     expect(saveBtn).not.toBeNull();
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // setQueriesData MUST be called in the failure path — description succeeded
     // so its patch must be re-applied after the full-snapshot restore.
@@ -333,12 +333,12 @@ describe("PartDetailsEditor – selective cache rollback on partial failure", ()
     // so no fetch PATCH is attempted. Bins mutation rejects → only op is bins
     // → no succeeded fields → setQueriesData should NOT be called.
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     mockSetQueriesData.mockClear();
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     // All ops failed — setQueriesData should NOT be called in the failure path
     // (no succeeded fields to re-apply).
@@ -391,7 +391,7 @@ describe("PartDetailsEditor – stale existingDims bug (itemRef fix)", () => {
       { includeSelf: true },
     )[0];
     expect(dimInput).toBeDefined();
-    await act(async () => { dimInput!.props.onChangeText("12"); });
+    await act(async () => { fireEvent.changeText(dimInput!, "12"); });
 
     // Step 2b: change description so there is always at least one op queued —
     // without this handleSave returns early before reaching the dims check.
@@ -399,7 +399,7 @@ describe("PartDetailsEditor – stale existingDims bug (itemRef fix)", () => {
       (n: TestInstance) => n.props?.placeholder === "Brief description of the part…",
       { includeSelf: true },
     )[0];
-    await act(async () => { descInput!.props.onChangeText("Updated description"); });
+    await act(async () => { fireEvent.changeText(descInput!, "Updated description"); });
 
     // Step 2c: capture the stale save handler NOW (closure has existingDims = null).
     const saveBtn = findPressable(result.root!, "Save Details");
@@ -449,10 +449,10 @@ describe("PartDetailsEditor – handleSave onSettled invalidation on success", (
     activeTree = result;
 
     const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
-    await act(async () => { removeBinBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(removeBinBtn!); });
 
     const saveBtn = findPressable(result.root!, "Save Details");
-    await act(async () => { saveBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockInvalidateListCache).toHaveBeenCalledTimes(1);
     const invalidateCalls = mockInvalidateQueries.mock.calls.map(

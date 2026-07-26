@@ -149,7 +149,7 @@ afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
 // ── Imports (after all jest.mock declarations) ────────────────────────────────
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import { CatalogPdfUpload } from "../components/CatalogPdfUpload";
 
 // ── PDF fixture helpers ────────────────────────────────────────────────────────
@@ -274,7 +274,7 @@ async function pickFileSetVendorAndStart(
   mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
 
   const pickBtn = findPressable(tree.root!, "Choose PDF File");
-  await act(async () => { pickBtn!.props.onPress(); });
+  await act(async () => { fireEvent.press(pickBtn!); });
   await flushPromises();
 
   expect(capturedOnChangeText).not.toBeNull();
@@ -282,7 +282,7 @@ async function pickFileSetVendorAndStart(
 
   const startBtn = findPressable(tree.root!, "Start Extraction");
   expect(startBtn).not.toBeNull();
-  await act(async () => { startBtn!.props.onPress(); });
+  await act(async () => { fireEvent.press(startBtn!); });
   await flushPromises();
 }
 
@@ -323,7 +323,7 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
     // Press "Start new extraction"
     const resetBtn = findPressable(tree.root!, "Start new extraction");
     expect(resetBtn).not.toBeNull();
-    await act(async () => { resetBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(resetBtn!); });
     await flushPromises();
 
     expect(capturedVendorValue).toBe("");
@@ -355,7 +355,7 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
 
     const resetBtn = findPressable(tree.root!, "Start new extraction");
     expect(resetBtn).not.toBeNull();
-    await act(async () => { resetBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(resetBtn!); });
     await flushPromises();
 
     expect(instText(tree.root!)).not.toContain("AI Raw ·");
@@ -390,7 +390,7 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
 
     const resetBtn = findPressable(tree.root!, "Start new job");
     expect(resetBtn).not.toBeNull();
-    await act(async () => { resetBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(resetBtn!); });
     await flushPromises();
 
     expect(capturedVendorValue).toBe("");
@@ -422,7 +422,7 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
 
     const resetBtn = findPressable(tree.root!, "Start new job");
     expect(resetBtn).not.toBeNull();
-    await act(async () => { resetBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(resetBtn!); });
     await flushPromises();
 
     expect(instText(tree.root!)).not.toContain("AI Raw ·");
@@ -458,7 +458,7 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
 
     const resetBtn = findPressable(tree.root!, "Try again");
     expect(resetBtn).not.toBeNull();
-    await act(async () => { resetBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(resetBtn!); });
     await flushPromises();
 
     expect(capturedVendorValue).toBe("");
@@ -491,7 +491,7 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
 
     const resetBtn = findPressable(tree.root!, "Try again");
     expect(resetBtn).not.toBeNull();
-    await act(async () => { resetBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(resetBtn!); });
     await flushPromises();
 
     expect(instText(tree.root!)).not.toContain("AI Raw ·");

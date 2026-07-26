@@ -250,7 +250,7 @@ function makeAppMock(overrides: Record<string, unknown> = {}) {
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import React from "react";
-import { render, act } from "@testing-library/react-native";
+import { render, act, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 import PhotoScreen from "../app/(tabs)/photo";
 
@@ -332,7 +332,7 @@ describe("PhotoScreen – ImageReadError during library pick", () => {
     const libraryBtn = findPressable(result.root!, "Photo Library");
     expect(libraryBtn).not.toBeNull();
 
-    await act(async () => { libraryBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(libraryBtn!); });
     await flushPromises();
 
     expect(hasText(result.root!, "Could not process the selected photo")).toBe(true);
@@ -349,7 +349,7 @@ describe("PhotoScreen – ImageReadError during library pick", () => {
     activeTree = result;
 
     const libraryBtn = findPressable(result.root!, "Photo Library");
-    await act(async () => { libraryBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(libraryBtn!); });
     await flushPromises();
 
     expect(hasText(result.root!, "⚠")).toBe(true);
@@ -377,7 +377,7 @@ describe("PhotoScreen – ImageReadError during camera pick", () => {
     const cameraBtn = findPressable(result.root!, "Camera");
     expect(cameraBtn).not.toBeNull();
 
-    await act(async () => { cameraBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(cameraBtn!); });
     await flushPromises();
 
     expect(hasText(result.root!, "Could not process the selected photo")).toBe(true);
@@ -402,7 +402,7 @@ describe("PhotoScreen – no silent AI identify after ImageReadError", () => {
     activeTree = result;
 
     const libraryBtn = findPressable(result.root!, "Photo Library");
-    await act(async () => { libraryBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(libraryBtn!); });
     await flushPromises();
 
     // The failed pick must not have triggered identification — there is nothing
@@ -423,7 +423,7 @@ describe("PhotoScreen – no silent AI identify after ImageReadError", () => {
     activeTree = result;
 
     const libraryBtn = findPressable(result.root!, "Photo Library");
-    await act(async () => { libraryBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(libraryBtn!); });
     await flushPromises();
 
     expect(mockSearchMutateAsync).not.toHaveBeenCalled();
@@ -448,7 +448,7 @@ describe("PhotoScreen – results list empty after ImageReadError", () => {
     activeTree = result;
 
     const libraryBtn = findPressable(result.root!, "Photo Library");
-    await act(async () => { libraryBtn!.props.onPress(); });
+    await act(async () => { fireEvent.press(libraryBtn!); });
     await flushPromises();
 
     // The error banner is present — the user is never left staring at a blank

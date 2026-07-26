@@ -84,10 +84,10 @@ export function createSvgMock(): object {
     ({ children, ...rest }: Record<string, unknown>) =>
       React.createElement(tag, rest, children);
   return {
-    default:  make("svg"),
-    Svg:      make("svg"),
+    default:  make("svg-svg"),
+    Svg:      make("svg-svg"),
     Rect:     make("svg-rect"),
-    G:        make("g"),
+    G:        make("svg-g"),
     // Use "Text" (not "svg-text") so test-renderer@1.x, which enforces
     // textComponentTypes:['Text','RCTText'], doesn't throw when SVG Text
     // elements render string children.
@@ -202,4 +202,42 @@ export function createMapViewportMock(): object {
     zoomStopForScale:    jest.fn().mockReturnValue(0),
     visibleTileRange:    jest.fn().mockReturnValue({ c0: 0, c1: 0, r0: 0, r1: 0 }),
   };
+}
+
+/**
+ * react-native-reanimated — withTiming exposed as jest.fn() for animation-spy tests.
+ * Identical to createReanimatedMock() but replaces withTiming with a spy so
+ * tests can assert it was called with the correct target value and config.
+ */
+export function createReanimatedMockWithTimingSpy(): object {
+  const mock = createReanimatedMock() as Record<string, unknown>;
+  mock["withTiming"] = jest.fn((v: unknown) => v);
+  return mock;
+}
+
+/**
+ * react-native-reanimated — useAnimatedProps / useAnimatedStyle invoke their
+ * callback.  Used for web render-path tests where the worklet must actually run
+ * so that (a) any runtime error in the callback body fails the test
+ * immediately and (b) the return value flows through to the rendered element.
+ */
+export function createReanimatedMockWithPropsCallback(): object {
+  const mock = createReanimatedMock() as Record<string, unknown>;
+  mock["useAnimatedStyle"] = (cb: () => unknown) =>
+    (typeof cb === "function" ? cb() ?? {} : {});
+  mock["useAnimatedProps"] = (cb: () => unknown) =>
+    (typeof cb === "function" ? cb() ?? {} : {});
+  return mock;
+}
+
+/**
+ * react-native-reanimated — cancelAnimation and withTiming both exposed as
+ * jest.fn() for cleanup-spy tests that assert animations are stopped on unmount
+ * or prop transition.
+ */
+export function createReanimatedMockWithCancelSpy(): object {
+  const mock = createReanimatedMock() as Record<string, unknown>;
+  mock["withTiming"]      = jest.fn((v: unknown) => v);
+  mock["cancelAnimation"] = jest.fn();
+  return mock;
 }

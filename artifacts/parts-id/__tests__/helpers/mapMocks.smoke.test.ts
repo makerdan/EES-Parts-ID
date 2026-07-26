@@ -28,7 +28,18 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { createExpoAssetMock, createFloorPlanCacheMock, createGestureHandlerMock, createMapViewportMock, createReanimatedMock, createSvgMock, createUseColorsMock } from "./mapMocks";
+import {
+  createExpoAssetMock,
+  createFloorPlanCacheMock,
+  createGestureHandlerMock,
+  createMapViewportMock,
+  createReanimatedMock,
+  createReanimatedMockWithCancelSpy,
+  createReanimatedMockWithPropsCallback,
+  createReanimatedMockWithTimingSpy,
+  createSvgMock,
+  createUseColorsMock,
+} from "./mapMocks";
 
 const WAREHOUSE_MAP_VIEW_PATH = path.resolve(
   __dirname,
@@ -807,6 +818,65 @@ describe("createSvgMock() smoke — every react-native-svg element used in Wareh
  *      in mapMocks.ts.
  * That's it.  The test itself never needs updating.
  */
+/**
+ * Export-coverage guard for the three reanimated variant factories.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * The four pin test files (mapPin3D, mapPinFillOpacity, mapPinWebPath,
+ * pinAnimationCancelCleanup) each need a slightly different reanimated mock:
+ * one needs withTiming as a spy, one invokes its useAnimatedProps callback,
+ * one needs cancelAnimation as a spy.  Each of those needs was extracted into
+ * a named factory in mapMocks.ts.  If a future refactor removes or renames
+ * one of those factories, the pin test file that imports it will fail with a
+ * confusing "not a function" error rather than a clear import error.
+ *
+ * This test ensures all three variant factories are exported and return objects
+ * with the distinguishing properties that make them different from the base
+ * createReanimatedMock().
+ *
+ * HOW TO FIX A FAILURE
+ * --------------------
+ * If "not a function" fails: restore or re-export the missing factory from
+ * mapMocks.ts.
+ * If "withTiming not a jest.fn()" fails: the TimingSpy factory must expose
+ * withTiming as a jest.fn() so pin fill-opacity tests can assert on it.
+ * If "cancelAnimation not a jest.fn()" fails: the CancelSpy factory must
+ * expose cancelAnimation as a jest.fn() for cleanup tests.
+ * If "useAnimatedProps invokes callback" fails: the PropsCallback factory must
+ * invoke its callback argument so worklet bodies are exercised during render.
+ */
+describe("reanimated variant factory export coverage", () => {
+  it("createReanimatedMockWithTimingSpy is exported and exposes withTiming as jest.fn()", () => {
+    expect(typeof createReanimatedMockWithTimingSpy).toBe("function");
+    const mock = createReanimatedMockWithTimingSpy() as Record<string, unknown>;
+    expect(typeof mock["withTiming"]).toBe("function");
+    expect((mock["withTiming"] as jest.Mock).mock).toBeDefined();   // jest.fn() has .mock
+    // withTiming should pass the value through so animations resolve synchronously
+    expect((mock["withTiming"] as (v: number) => number)(42)).toBe(42);
+  });
+
+  it("createReanimatedMockWithPropsCallback is exported and useAnimatedProps invokes callback", () => {
+    expect(typeof createReanimatedMockWithPropsCallback).toBe("function");
+    const mock = createReanimatedMockWithPropsCallback() as Record<string, unknown>;
+    const useAnimatedProps = mock["useAnimatedProps"] as (cb: () => unknown) => unknown;
+    expect(typeof useAnimatedProps).toBe("function");
+    // The callback must actually be invoked (worklet execution path)
+    const sentinel = Symbol("sentinel");
+    const result = useAnimatedProps(() => sentinel);
+    expect(result).toBe(sentinel);
+  });
+
+  it("createReanimatedMockWithCancelSpy is exported and exposes cancelAnimation as jest.fn()", () => {
+    expect(typeof createReanimatedMockWithCancelSpy).toBe("function");
+    const mock = createReanimatedMockWithCancelSpy() as Record<string, unknown>;
+    expect(typeof mock["cancelAnimation"]).toBe("function");
+    expect((mock["cancelAnimation"] as jest.Mock).mock).toBeDefined();
+    expect(typeof mock["withTiming"]).toBe("function");
+    expect((mock["withTiming"] as jest.Mock).mock).toBeDefined();
+  });
+});
+
 describe("createExpoAssetMock() smoke — every Asset method used in WarehouseMapView is mocked", () => {
   let asset: Record<string, unknown>;
   let usedMethods: string[];
