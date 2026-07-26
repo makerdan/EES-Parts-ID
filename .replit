@@ -365,6 +365,17 @@ args = "bash scripts/check-gate-integrity.sh"
 [workflows.workflow.metadata]
 isValidation = true
 
+[[workflows.workflow]]
+name = "plan-tier-check"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/check-plan-tiers.sh"
+
+[workflows.workflow.metadata]
+isValidation = true
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
