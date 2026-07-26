@@ -941,3 +941,181 @@ describe("AnchorCalibration — clear behaviour", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// 8. MFA error surfacing
+// ---------------------------------------------------------------------------
+
+describe("AnchorCalibration — MFA error surfacing", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Helper: render with slot 1 pre-populated (saved anchor) and a fetch stub
+   * that routes DELETE to the provided handler.
+   */
+  async function renderWithSavedAnchorMfa(
+    deleteFetch: (url: string, init?: RequestInit) => ReturnType<typeof makeJsonResponse>,
+  ) {
+    const savedAnchor = {
+      id: 1,
+      name: "A",
+      svgX: 100,
+      svgY: 200,
+      worldX: 10,
+      worldY: 20,
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    global.fetch = vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") return deleteFetch(url, init);
+      return makeJsonResponse(200, { anchors: [savedAnchor] });
+    }) as unknown as typeof global.fetch;
+
+    let result!: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<AnchorCalibration />);
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/clear/i)).toBeTruthy();
+    });
+    return result;
+  }
+
+  // (a) GET → 403 MFA_REQUIRED ────────────────────────────────────────────────
+
+  it("(a) shows page-level MFA banner and NOT the generic error pill when GET returns 403 MFA_REQUIRED", async () => {
+    global.fetch = vi.fn(() =>
+      makeJsonResponse(403, { code: "MFA_REQUIRED" }),
+    ) as unknown as typeof global.fetch;
+
+    await renderCalibration();
+
+    // MFA banner must appear in the page header area
+    await waitFor(() => {
+      // The "Enable 2FA →" link is a direct child text node — easy to target
+      expect(screen.getByText(/Enable 2FA →/i)).toBeTruthy();
+    });
+
+    // Generic "Failed to load anchors" error pill must NOT appear
+    expect(screen.queryByText(/failed to load anchors/i)).toBeNull();
+  });
+
+  // (b) PUT → 403 MFA_REQUIRED ────────────────────────────────────────────────
+
+  it("(b) shows MFA-specific slot status when PUT returns 403 MFA_REQUIRED", async () => {
+    global.fetch = vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === "PUT")
+        return makeJsonResponse(403, { code: "MFA_REQUIRED" });
+      return makeJsonResponse(200, { anchors: [] });
+    }) as unknown as typeof global.fetch;
+
+    const { container } = await renderCalibration();
+
+    const svg = container.querySelector("svg")!;
+    vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: 800, bottom: 600,
+      width: 800, height: 600, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    // Place anchor for slot 0 (required to pass the coord validation)
+    const placeBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^Place$/i.test(b.textContent?.trim() ?? ""),
+    );
+    await act(async () => { fireEvent.click(placeBtns[0]!); });
+    await act(async () => {
+      fireEvent.mouseDown(svg, { button: 0, clientX: 200, clientY: 150 });
+      fireEvent.mouseUp(svg, { clientX: 200, clientY: 150 });
+    });
+
+    // Fill in required world coordinates
+    const inputs = container.querySelectorAll("input");
+    await act(async () => {
+      fireEvent.change(inputs[0]!, { target: { value: "Entry" } });
+      fireEvent.change(inputs[1]!, { target: { value: "5" } });
+      fireEvent.change(inputs[2]!, { target: { value: "10" } });
+    });
+
+    const saveBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^(Save|Update)$/i.test(b.textContent?.trim() ?? ""),
+    );
+    await act(async () => { fireEvent.click(saveBtns[0]!); });
+
+    // MFA-specific status must appear in the slot (the link text is unambiguous)
+    await waitFor(() => {
+      expect(screen.getAllByText(/Enable 2FA →/i).length).toBeGreaterThanOrEqual(1);
+    });
+
+    // Two-factor text must be visible in the slot status row
+    expect(screen.queryByText(/two-factor authentication required\./i)).toBeTruthy();
+  });
+
+  // (c) DELETE → 403 MFA_REQUIRED ─────────────────────────────────────────────
+
+  it("(c) shows MFA-specific slot status when DELETE returns 403 MFA_REQUIRED", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    await renderWithSavedAnchorMfa(() =>
+      makeJsonResponse(403, { code: "MFA_REQUIRED" }),
+    );
+
+    const clearBtn = screen.getByText(/^clear$/i);
+    await act(async () => { fireEvent.click(clearBtn); });
+
+    // MFA status must appear in the slot
+    await waitFor(() => {
+      expect(screen.queryByText(/two-factor authentication required\./i)).toBeTruthy();
+    });
+  });
+
+  // (d) PUT → bare 403 WITHOUT MFA_REQUIRED code ───────────────────────────────
+
+  it("(d) shows a generic error (not MFA message) when PUT returns 403 without MFA_REQUIRED code", async () => {
+    global.fetch = vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === "PUT")
+        return makeJsonResponse(403, { error: "Permission denied" });
+      return makeJsonResponse(200, { anchors: [] });
+    }) as unknown as typeof global.fetch;
+
+    const { container } = await renderCalibration();
+
+    const svg = container.querySelector("svg")!;
+    vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: 800, bottom: 600,
+      width: 800, height: 600, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    const placeBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^Place$/i.test(b.textContent?.trim() ?? ""),
+    );
+    await act(async () => { fireEvent.click(placeBtns[0]!); });
+    await act(async () => {
+      fireEvent.mouseDown(svg, { button: 0, clientX: 200, clientY: 150 });
+      fireEvent.mouseUp(svg, { clientX: 200, clientY: 150 });
+    });
+
+    const inputs = container.querySelectorAll("input");
+    await act(async () => {
+      fireEvent.change(inputs[0]!, { target: { value: "Entry" } });
+      fireEvent.change(inputs[1]!, { target: { value: "5" } });
+      fireEvent.change(inputs[2]!, { target: { value: "10" } });
+    });
+
+    const saveBtns = Array.from(container.querySelectorAll("button")).filter(
+      (b) => /^(Save|Update)$/i.test(b.textContent?.trim() ?? ""),
+    );
+    await act(async () => { fireEvent.click(saveBtns[0]!); });
+
+    // Generic error (not MFA) must appear
+    await waitFor(() => {
+      expect(screen.getByText(/permission denied/i)).toBeTruthy();
+    });
+
+    // MFA-specific text must NOT appear anywhere
+    expect(screen.queryByText(/two-factor authentication required\./i)).toBeNull();
+    expect(screen.queryByText(/Enable 2FA →/i)).toBeNull();
+  });
+});
