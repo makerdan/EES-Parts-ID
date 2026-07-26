@@ -113,3 +113,54 @@ if [[ "$valid" -eq 0 ]]; then
 fi
 
 echo "✓ Plan tier is valid: $declared_tier ($PLAN_FILE)"
+
+# ---------------------------------------------------------------------------
+# Heuristic under-tier check (non-blocking — exits 0 even when it warns)
+#
+# If the plan body contains keywords that signal DB/auth/API-contract work but
+# the declared tier is below standard-plus, emit a visible warning so the plan
+# author can decide whether to upgrade the tier.
+#
+# Keywords that suggest standard-plus or higher:
+#   schema, migration, migrate, auth, route, contract, security, drizzle, push
+#
+# This check is intentionally non-blocking. It is a nudge, not a gate.
+# ---------------------------------------------------------------------------
+
+RISKY_KEYWORDS="schema|migration|migrate|auth|route|contract|security|drizzle|push"
+UNDER_TIER_TIERS=("fast" "standard")
+
+needs_warning=0
+for t in "${UNDER_TIER_TIERS[@]}"; do
+  if [[ "$declared_tier" == "$t" ]]; then
+    needs_warning=1
+    break
+  fi
+done
+
+if [[ "$needs_warning" -eq 1 ]]; then
+  # Grep the whole plan body (case-insensitive) for any risky keyword.
+  # We intentionally include the heading lines so even a "## schema" heading triggers it.
+  if grep -qiE "$RISKY_KEYWORDS" "$PLAN_FILE" 2>/dev/null; then
+    matched=$(grep -oiE "$RISKY_KEYWORDS" "$PLAN_FILE" | sort -u | tr '\n' ' ')
+    echo ""
+    echo "⚠  UNDER-TIER WARNING"
+    echo ""
+    echo "   Declared tier : $declared_tier"
+    echo "   Matched words : $matched"
+    echo "   File          : $PLAN_FILE"
+    echo ""
+    echo "   The plan body contains keywords associated with DB schema changes,"
+    echo "   authentication, or API contract work. These typically require the"
+    echo "   'standard-plus' tier so that schema-check, api-server-coverage,"
+    echo "   and post-merge-health-test run as part of validation."
+    echo ""
+    echo "   If this is intentional (e.g. the keywords appear only in comments"
+    echo "   or the task genuinely requires no schema/auth/contract validation),"
+    echo "   you can ignore this warning. Otherwise update the tier to"
+    echo "   'standard-plus' before calling bulkCreateProjectTasks."
+    echo ""
+    echo "   This warning is non-blocking — the script exits 0."
+    echo ""
+  fi
+fi
