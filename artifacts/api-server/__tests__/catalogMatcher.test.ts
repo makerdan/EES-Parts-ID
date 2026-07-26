@@ -27,8 +27,8 @@ import { matchCatalogNumber } from "../src/utils/catalogMatcher";
 // ─────────────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
-  jest.resetAllMocks();
-  // Re-wire the chainable mock after reset
+  jest.clearAllMocks();
+  // Re-wire the chainable mock after clear
   mockOrderByFn.mockReturnValue({ limit: mockLimitFn });
   mockWhereFn.mockReturnValue({ limit: mockLimitFn, orderBy: mockOrderByFn });
   mockFromFn.mockReturnValue({ where: mockWhereFn });
