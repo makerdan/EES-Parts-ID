@@ -27,6 +27,12 @@ const WarehouseMapViewerPage = lazy(() =>
   }))
 );
 
+const AnchorCalibrationPage = lazy(() =>
+  import("./pages/AnchorCalibration").then((m) => ({
+    default: m.AnchorCalibration,
+  }))
+);
+
 import { modules as discoveredModules } from "./.generated/mockup-components";
 
 type ModuleMap = Record<string, () => Promise<Record<string, unknown>>>;
@@ -127,6 +133,12 @@ const TOOLS = [
       "Read-only pan/zoom view of the warehouse floor plan SVG. Useful for reviewing the layout without editing zones.",
     path: "/warehouse-map",
   },
+  {
+    name: "Anchor Calibration",
+    description:
+      "Place up to 3 named anchor points on the floor plan to align the zone overlay. Anchors are shared with the mobile app's calibration.",
+    path: "/anchor-calibration",
+  },
 ];
 
 function Gallery() {
@@ -200,6 +212,16 @@ function WarehouseMapRoute() {
   );
 }
 
+function AnchorCalibrationRoute() {
+  return (
+    <AdminGate requireAdmin>
+      <Suspense fallback={null}>
+        <AnchorCalibrationPage />
+      </Suspense>
+    </AdminGate>
+  );
+}
+
 function AdminRoutes() {
   const [, setLocation] = useLocation();
 
@@ -224,6 +246,7 @@ function AdminRoutes() {
         <Route path="/sign-up/*?" component={SignUpPage} />
         <Route path="/zone-editor" component={ZoneEditorRoute} />
         <Route path="/warehouse-map" component={WarehouseMapRoute} />
+        <Route path="/anchor-calibration" component={AnchorCalibrationRoute} />
         <Route component={Gallery} />
       </Switch>
     </ClerkProvider>
