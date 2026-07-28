@@ -562,15 +562,36 @@ describe("Double-tap guard", () => {
     activeTree = await renderScreen([...VALID_ANCHORS]);
     await goToReview(activeTree);
 
-    const confirmBtn = activeTree.queryByText(/Confirm & Apply/i);
-    if (!confirmBtn) throw new Error("Confirm button not found");
+    const confirmBtnText = activeTree.queryByText(/Confirm & Apply/i);
+    if (!confirmBtnText) throw new Error("Confirm button not found");
 
-    // Both presses happen synchronously — confirmingRef.current is set true by
-    // the first press before the second press evaluates the guard, so the second
-    // press is blocked without any React render cycle needed between them.
+    // ── Why we call onPress directly instead of fireEvent.press ──────────────
+    // In RTLRN 14, fireEvent.press is *async* and wraps the call in its own
+    // inner act().  Each such inner act pushes React's actScopeDepth counter.
+    // When two fireEvent.press calls are made without await inside an outer
+    // await act(), React 19 ends up with three concurrently-open act scopes
+    // (outer + A1 + A2) whose depths are 1, 2, 3.  When A1 pops, the current
+    // depth is still 3 (A2 is open), so React's depth-equality guard fires:
+    //   prevActScopeDepth(1) !== actScopeDepth(3) - 1
+    // producing one "overlapping act() calls" warning per mismatched pop — three
+    // total for two inner acts plus the outer cleanup.
+    //
+    // Calling element.props.onPress() directly never creates an inner act scope,
+    // so the entire double-tap sequence lives inside the single outer act() with
+    // no depth mismatch.  The double-tap semantics are preserved because
+    // confirmingRef.current is set synchronously by the first call before the
+    // second call evaluates the guard.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let pressable: any = confirmBtnText.parent;
+    while (pressable && !pressable.props?.onPress) {
+      pressable = pressable.parent;
+    }
+    if (!pressable?.props?.onPress) throw new Error("Confirm Pressable not found in tree");
+    const onPress = pressable.props.onPress as () => void;
+
     await act(async () => {
-      fireEvent.press(confirmBtn);   // First tap: sets confirmingRef.current = true
-      fireEvent.press(confirmBtn);   // Second tap: blocked by confirmingRef guard
+      onPress();   // First tap: sets confirmingRef.current = true
+      onPress();   // Second tap: blocked by confirmingRef guard
       // Resolve slot 1 with failure so handleConfirm exits without continuing to
       // slots 2 and 3.  This drains all async work in the same act() scope.
       resolveSlot1({ ok: false });
