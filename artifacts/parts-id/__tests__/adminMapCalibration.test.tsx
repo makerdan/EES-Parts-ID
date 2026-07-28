@@ -54,8 +54,8 @@ jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColo
 jest.mock("react-native-reanimated", () => require("./helpers/mapMocks").createReanimatedMock());
 
 // ─── react-native-gesture-handler ────────────────────────────────────────────
-
-jest.mock("react-native-gesture-handler", () => require("./helpers/mapMocks").createGestureHandlerMock());
+// jest.config.js moduleNameMapper routes this to __mocks__/react-native-gesture-handler.js
+// automatically.  __simulateTap() / __resetTap() are available via require().
 
 // ─── react-native-svg ────────────────────────────────────────────────────────
 
@@ -679,13 +679,7 @@ describe("Source-level regression guards — pick overlay and tapGesture", () =>
 // though the user had already placed a point there.
 
 describe("Multi-slot save isolation — refetch must not wipe unsaved local coords", () => {
-  // Ref to the latest onEnd callback registered by the tapGesture, captured by
-  // the Gesture.Tap spy below so tests can fire tap events programmatically.
-  let fireTap: (e: { x: number; y: number }) => void = () => {};
-
   beforeEach(() => {
-    fireTap = () => {};
-
     // Provide cached SVG data so the component mounts the GestureDetector
     // (it only renders when svgXml is truthy).
     const floorPlanCache = require("@/utils/floorPlanCache") as {
@@ -698,25 +692,9 @@ describe("Multi-slot save isolation — refetch must not wipe unsaved local coor
       hash: "test",
     });
     floorPlanCache.hasCachedData.mockReturnValue(true);
-
-    // Spy on Gesture.Tap to intercept the onEnd callback before the no-op
-    // chain discards it.  This lets tests simulate tap events by calling fireTap.
-    const gestureModule = require("react-native-gesture-handler") as {
-      Gesture: { Tap: () => Record<string, (...args: unknown[]) => unknown> };
-    };
-    const originalTap = gestureModule.Gesture.Tap.bind(gestureModule.Gesture);
-    jest.spyOn(gestureModule.Gesture, "Tap").mockImplementation(() => {
-      const chain = originalTap();
-      const origOnEnd = chain["onEnd"]!;
-      // Use `any` for cb so the assignment satisfies the Record's (...args: unknown[]) => unknown
-      // type signature; fireTap is cast to the concrete event type for callers.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      chain["onEnd"] = (cb: any) => {
-        fireTap = cb as (e: { x: number; y: number }) => void;
-        return origOnEnd(cb);
-      };
-      return chain;
-    });
+    // The unified file mock captures the latest Gesture.Tap().onEnd() callback
+    // automatically — no spy needed.  __resetTap() clears it between tests.
+    require("react-native-gesture-handler").__resetTap();
   });
 
   afterEach(() => {
@@ -728,7 +706,7 @@ describe("Multi-slot save isolation — refetch must not wipe unsaved local coor
     };
     floorPlanCache.getCachedData.mockReturnValue(null);
     floorPlanCache.hasCachedData.mockReturnValue(false);
-    jest.restoreAllMocks();
+    require("react-native-gesture-handler").__resetTap();
   });
 
   it("locally-placed coord on slot 2 survives a refetch that only returns slot 1", async () => {
@@ -745,13 +723,13 @@ describe("Multi-slot save isolation — refetch must not wipe unsaved local coor
       await rawFlush();
     });
     // After the press, the component re-renders with pickingSlot = 1 and the
-    // tapGesture re-registers its onEnd callback — fireTap now captures that
-    // closure which holds the correct pickingSlot value.
+    // tapGesture re-registers its onEnd callback — the file mock captures the
+    // latest callback automatically in _lastOnEnd.
 
     // Simulate a tap on the map.  mapW/mapH are 0 in tests (no layout event),
     // so screenToSvgCoords returns {x:0, y:0} regardless of the input.
     await act(async () => {
-      fireTap({ x: 50, y: 50 });
+      require("react-native-gesture-handler").__simulateTap({ x: 50, y: 50 });
       await rawFlush();
     });
 

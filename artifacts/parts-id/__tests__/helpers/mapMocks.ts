@@ -43,7 +43,18 @@ export function createReanimatedMock(): object {
   };
 }
 
-/** react-native-gesture-handler — full chainable version (covers all gesture methods). */
+/**
+ * react-native-gesture-handler — full chainable version (covers all gesture methods).
+ *
+ * @deprecated Use the file-based mock at `__mocks__/react-native-gesture-handler.js`
+ * instead.  In your test file, call `jest.mock("react-native-gesture-handler")`
+ * (without a factory) and access `__simulateTap` / `__resetTap` via
+ * `require("react-native-gesture-handler")`.  The file mock is the single
+ * source of truth and supports tap simulation without any additional spy setup.
+ *
+ * This factory is kept for backward compatibility while existing callers are
+ * migrated.  Do NOT use it in new test files.
+ */
 export function createGestureHandlerMock(): object {
   const React = require("react");
   function makeChainable() {
