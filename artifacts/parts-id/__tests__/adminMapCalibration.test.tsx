@@ -549,7 +549,11 @@ describe("MFA_REQUIRED during confirm", () => {
 describe("Double-tap guard", () => {
   it("issues only one batch of 3 PUT calls when Confirm is tapped rapidly twice", async () => {
     // Make the first slot's upsertAnchor return a never-resolving promise so
-    // isConfirming stays true long enough to block the second tap.
+    // isConfirming stays true long enough to block the second tap.  Slot 1 is
+    // resolved with { ok: false } inside the same act() so that handleConfirm
+    // returns immediately (avoids continuing to slots 2 and 3) and all async
+    // work completes before the test ends — preventing "overlapping act() calls"
+    // warnings from leaking pending state updates into the next test.
     let resolveSlot1!: (v: AnchorMutResult) => void;
     const pendingSlot1 = new Promise<AnchorMutResult>((resolve) => { resolveSlot1 = resolve; });
 
@@ -558,16 +562,18 @@ describe("Double-tap guard", () => {
     activeTree = await renderScreen([...VALID_ANCHORS]);
     await goToReview(activeTree);
 
-    // First tap — kicks off the in-flight confirm
     const confirmBtn = activeTree.queryByText(/Confirm & Apply/i);
     if (!confirmBtn) throw new Error("Confirm button not found");
-    fireEvent.press(confirmBtn);
-    // Second tap immediately after (guard must block this)
-    fireEvent.press(confirmBtn);
 
-    // Resolve the pending call and flush remaining work
+    // Both presses happen synchronously — confirmingRef.current is set true by
+    // the first press before the second press evaluates the guard, so the second
+    // press is blocked without any React render cycle needed between them.
     await act(async () => {
-      resolveSlot1({ ok: true });
+      fireEvent.press(confirmBtn);   // First tap: sets confirmingRef.current = true
+      fireEvent.press(confirmBtn);   // Second tap: blocked by confirmingRef guard
+      // Resolve slot 1 with failure so handleConfirm exits without continuing to
+      // slots 2 and 3.  This drains all async work in the same act() scope.
+      resolveSlot1({ ok: false });
       await rawFlush();
     });
 
@@ -575,5 +581,203 @@ describe("Double-tap guard", () => {
     expect(mockUpsertAnchor.mock.calls.length).toBeLessThanOrEqual(3);
     // And at least 1 call happened
     expect(mockUpsertAnchor).toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// Source-level regression guards — pick overlay pointerEvents and tapGesture
+// =============================================================================
+// These tests read the raw source of the calibration screen and assert that
+// two critical props can't be silently removed by a future refactor.
+//
+//  1. tapGesture must call .runOnJS(true) — ensures the onEnd callback runs on
+//     the JS thread under Reanimated 4; without it state updates inside onEnd
+//     can be silently dropped on native.
+//
+//  2. The pickOverlay View must carry pointerEvents="box-none" — without it the
+//     absolutely-positioned overlay intercepts tap events on web, preventing
+//     placed coordinates from being registered (Save button stays disabled).
+
+describe("Source-level regression guards — pick overlay and tapGesture", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fsModule  = require("fs")   as typeof import("fs");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const pathModule = require("path") as typeof import("path");
+  const calibSrc: string = fsModule.readFileSync(
+    pathModule.resolve(__dirname, "../app/admin-map-calibration.tsx"),
+    "utf-8",
+  );
+
+  /** Walk forward from startIdx until the closing `>` of a JSX opening tag. */
+  function extractOpeningTag(src: string, startIdx: number): string {
+    let i = startIdx;
+    let depth = 0;
+    while (i < src.length) {
+      const ch = src[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      else if (ch === ">" && depth === 0) return src.slice(startIdx, i + 1);
+      i++;
+    }
+    return src.slice(startIdx, i);
+  }
+
+  it("tapGesture chain includes .runOnJS(true) before .onEnd(", () => {
+    // Locate the Gesture.Tap() call that builds the tap gesture.
+    const tapGestureIdx = calibSrc.indexOf("Gesture.Tap()");
+    expect(tapGestureIdx).toBeGreaterThan(-1);
+
+    // The .onEnd( must come after .runOnJS(true) in the same gesture chain.
+    const onEndIdx = calibSrc.indexOf(".onEnd(", tapGestureIdx);
+    expect(onEndIdx).toBeGreaterThan(-1);
+
+    const between = calibSrc.slice(tapGestureIdx, onEndIdx);
+    expect(between).toMatch(/\.runOnJS\s*\(\s*true\s*\)/);
+  });
+
+  it("pickOverlay View carries pointerEvents=\"box-none\"", () => {
+    // Scan for every <View that references styles.pickOverlay.
+    const tagStartRe = /<View\b/g;
+    let match: RegExpExecArray | null;
+    let found = false;
+
+    while ((match = tagStartRe.exec(calibSrc)) !== null) {
+      const tag = extractOpeningTag(calibSrc, match.index);
+      if (!tag.includes("pickOverlay")) continue;
+      found = true;
+
+      const hasBoxNone = /pointerEvents\s*=\s*["']box-none["']/.test(tag);
+      if (!hasBoxNone) {
+        throw new Error(
+          `The pickOverlay <View> is missing pointerEvents="box-none".\n` +
+          `Without it the overlay intercepts tap events on web, preventing\n` +
+          `placed coordinates from being registered and the Save button remaining disabled.\n` +
+          `Add  pointerEvents="box-none"  to the <View style={[styles.pickOverlay, …]}> tag\n` +
+          `in app/admin-map-calibration.tsx.`,
+        );
+      }
+      expect(hasBoxNone).toBe(true);
+    }
+
+    if (!found) {
+      throw new Error(
+        `Could not find a <View> that references styles.pickOverlay ` +
+        `in app/admin-map-calibration.tsx. ` +
+        `The overlay may have been renamed — update this test to match.`,
+      );
+    }
+  });
+});
+
+// =============================================================================
+// Multi-slot save isolation
+// =============================================================================
+// Saving slot A triggers upsertAnchor → which calls refetch() internally →
+// which causes the anchor-sync useEffect to fire.  Without the prevAnchorIdsRef
+// guard, any slot NOT present in the new server response would have its locally-
+// placed svgCoord wiped back to null, re-disabling that slot's Save button even
+// though the user had already placed a point there.
+
+describe("Multi-slot save isolation — refetch must not wipe unsaved local coords", () => {
+  // Ref to the latest onEnd callback registered by the tapGesture, captured by
+  // the Gesture.Tap spy below so tests can fire tap events programmatically.
+  let fireTap: (e: { x: number; y: number }) => void = () => {};
+
+  beforeEach(() => {
+    fireTap = () => {};
+
+    // Provide cached SVG data so the component mounts the GestureDetector
+    // (it only renders when svgXml is truthy).
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock;
+      hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue({
+      xml: "<svg/>",
+      contentViewBox: null,
+      hash: "test",
+    });
+    floorPlanCache.hasCachedData.mockReturnValue(true);
+
+    // Spy on Gesture.Tap to intercept the onEnd callback before the no-op
+    // chain discards it.  This lets tests simulate tap events by calling fireTap.
+    const gestureModule = require("react-native-gesture-handler") as {
+      Gesture: { Tap: () => Record<string, (...args: unknown[]) => unknown> };
+    };
+    const originalTap = gestureModule.Gesture.Tap.bind(gestureModule.Gesture);
+    jest.spyOn(gestureModule.Gesture, "Tap").mockImplementation(() => {
+      const chain = originalTap();
+      const origOnEnd = chain["onEnd"]!;
+      // Use `any` for cb so the assignment satisfies the Record's (...args: unknown[]) => unknown
+      // type signature; fireTap is cast to the concrete event type for callers.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      chain["onEnd"] = (cb: any) => {
+        fireTap = cb as (e: { x: number; y: number }) => void;
+        return origOnEnd(cb);
+      };
+      return chain;
+    });
+  });
+
+  afterEach(() => {
+    // Restore the floorPlanCache to its default (null) so subsequent tests
+    // that expect svgXml="" are unaffected.
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock;
+      hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue(null);
+    floorPlanCache.hasCachedData.mockReturnValue(false);
+    jest.restoreAllMocks();
+  });
+
+  it("locally-placed coord on slot 2 survives a refetch that only returns slot 1", async () => {
+    // Start with no server anchors — all 3 slots show "Not placed".
+    activeTree = await renderScreen([]);
+    expect(activeTree.queryAllByText("Not placed")).toHaveLength(3);
+
+    // Enter pick mode for slot 2 (index 1) by pressing its "Place" button.
+    // All 3 slots start as "Place" buttons; the second one belongs to slot 2.
+    const placeButtons = activeTree.getAllByText("Place");
+    expect(placeButtons).toHaveLength(3);
+    await act(async () => {
+      fireEvent.press(placeButtons[1]!);
+      await rawFlush();
+    });
+    // After the press, the component re-renders with pickingSlot = 1 and the
+    // tapGesture re-registers its onEnd callback — fireTap now captures that
+    // closure which holds the correct pickingSlot value.
+
+    // Simulate a tap on the map.  mapW/mapH are 0 in tests (no layout event),
+    // so screenToSvgCoords returns {x:0, y:0} regardless of the input.
+    await act(async () => {
+      fireTap({ x: 50, y: 50 });
+      await rawFlush();
+    });
+
+    // Slot 2 now has a coord ({x:0, y:0}); slots 1 and 3 remain "Not placed".
+    expect(activeTree.queryAllByText("Not placed")).toHaveLength(2);
+
+    // Simulate the refetch that fires when slot 1 is saved: the server now
+    // returns only slot 1.  The sync useEffect must NOT wipe slot 2's local draft.
+    _mockAnchors = [VALID_ANCHORS[0]];
+    await act(async () => {
+      await activeTree!.rerender(<AdminMapCalibrationScreen />);
+      await rawFlush();
+    });
+
+    // After the refetch:
+    //   Slot 1 — synced from server (svgX:100)
+    //   Slot 2 — local draft PRESERVED (never saved, never in prevAnchorIdsRef)
+    //   Slot 3 — still "Not placed" (untouched)
+    //
+    // BUG (before fix): the effect wiped every slot not in the server response
+    //   → slot 2 would become "Not placed" → 2 "Not placed" texts.
+    // FIX: only previously-saved-and-now-deleted slots are cleared
+    //   → slot 2 is left intact → 1 "Not placed" text.
+    expect(activeTree.queryAllByText("Not placed")).toHaveLength(1);
+
+    // Slot 1 must show the server-synced SVG coordinate (svgX = 100).
+    expect(activeTree.queryByText(/x:\s*100\.0/)).not.toBeNull();
   });
 });
