@@ -7,11 +7,11 @@
  *
  * Native: loads SVG text via Asset + fetch, renders with SvgXml
  *         inside a ScrollView so the user can pinch-to-zoom.
- *         Falls back to the bundled string constant if localUri/uri
- *         are both unavailable (e.g. Expo Go cold start).
- * Web:    lazily imports WAREHOUSE_MAP_SVG from warehouse-map-raw
- *         (avoids the broken require("*.svg") → relative path that
- *         the Replit proxy cannot resolve) and renders it inline.
+ *         Falls back to the bundled warehouse-map-raw string if
+ *         Asset.loadAsync returns no usable URI (common in Expo Go).
+ * Web:    dynamically imports WAREHOUSE_MAP_SVG from warehouse-map-raw
+ *         and inlines it via dangerouslySetInnerHTML so the SVG is
+ *         rendered by the browser engine (not proxied as an <img>).
  */
 import { Asset } from "expo-asset";
 import React, { useEffect, useState } from "react";
@@ -45,19 +45,29 @@ export default function Map2Screen() {
 }
 
 // ── Web renderer ──────────────────────────────────────────────────────────────
+//
+// On web, require("*.svg") via Expo's Metro config returns an asset URL that
+// only works when the Metro dev server is reachable.  Behind the Replit proxy
+// the path doesn't resolve, so the <img> renders nothing.  Instead we import
+// the pre-bundled SVG string directly from warehouse-map-raw.ts — the same
+// pattern used by WarehouseMapView — and inline it via dangerouslySetInnerHTML
+// so the browser engine renders it at full fidelity.
 
 function Map2Web({ colors }: { colors: ReturnType<typeof useColors> }) {
   const [svgXml, setSvgXml] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
-    // Lazy import avoids parsing the large module until the Map2 tab is opened.
-    // Using the pre-bundled string constant sidesteps the broken
-    // require("*.svg") → relative path that the Replit proxy cannot resolve.
-    void import("../../assets/warehouse-map-raw").then(({ WAREHOUSE_MAP_SVG }) => {
-      if (alive) setSvgXml(WAREHOUSE_MAP_SVG);
-    });
-    return () => { alive = false; };
+    import("../../assets/warehouse-map-raw")
+      .then(({ WAREHOUSE_MAP_SVG }) => {
+        if (alive) setSvgXml(WAREHOUSE_MAP_SVG);
+      })
+      .catch(() => {
+        // import failure is silent; the spinner stays visible
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   if (!svgXml) {
@@ -74,7 +84,6 @@ function Map2Web({ colors }: { colors: ReturnType<typeof useColors> }) {
     .replace(/\bheight="[^"]*"/, 'height="auto"');
 
   return (
-    // overflow-y: auto lets the browser handle vertical scroll natively.
     <div
       style={{
         width: "100%",
@@ -105,13 +114,14 @@ function Map2Native({ colors }: { colors: ReturnType<typeof useColors> }) {
         if (!alive) return;
         if (!asset) throw new Error("Asset failed to load");
 
-        const uri = asset.localUri ?? asset.uri;
+        const uri = asset.localUri ?? asset.uri ?? "";
 
         if (!uri) {
-          // localUri is not yet written to disk (common on first cold start in
-          // Expo Go).  Fall back to the pre-bundled string constant so the
-          // user sees the floor plan immediately instead of a permanent spinner.
-          const { WAREHOUSE_MAP_SVG } = await import("../../assets/warehouse-map-raw");
+          // Both localUri and uri are empty (common in Expo Go cold start).
+          // Fall back to the bundled SVG string so the map is always visible.
+          const { WAREHOUSE_MAP_SVG } = await import(
+            "../../assets/warehouse-map-raw"
+          );
           if (!alive) return;
           setSvgXml(WAREHOUSE_MAP_SVG);
           return;
@@ -128,7 +138,9 @@ function Map2Native({ colors }: { colors: ReturnType<typeof useColors> }) {
         setError(err instanceof Error ? err.message : String(err));
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const screenW = Dimensions.get("window").width;
