@@ -90,7 +90,7 @@ export type ToastVariant = "info" | "success" | "error";
 export const DEFAULT_SETTINGS: AppSettings = {
   textSize: "normal",
   defaultConfidenceThreshold: 50,
-  themeMode: "system",
+  themeMode: "light",
   shelfViewEnabled: true,
   scanSound: true,
   dimensionUnit: "mm",

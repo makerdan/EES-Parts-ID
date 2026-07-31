@@ -46,7 +46,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  useColorScheme,
+
   View,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -65,7 +65,7 @@ import Animated, {
 import { Ellipse,G, Path, Rect, Svg, SvgUri, SvgXml, Text as SvgText } from "react-native-svg";
 import { z } from "zod";
 
-import { useColors } from "@/hooks/useColors";
+import { useColors, useIsDark } from "@/hooks/useColors";
 import { useMapZoomSteps } from "@/hooks/useMapInteraction";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { API_BASE } from "@/utils/apiBase";
@@ -1024,8 +1024,7 @@ export function WarehouseMapView({
 }: WarehouseMapViewProps) {
   "use no memo";
   const colors = useColors();
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === "dark";
+  const isDark = useIsDark();
 
   // JS state for rendering (drives SVG dimensions)
   const [containerW, setContainerW] = useState(0);
