@@ -164,6 +164,16 @@ jest.mock("react-native-svg", () => {
   };
 });
 
+// ─── dompurify ────────────────────────────────────────────────────────────────
+// Pass the input through unchanged so web-floor-plan tests can inspect the
+// raw innerXml content without needing a real browser DOMPurify implementation.
+jest.mock("dompurify", () => ({
+  __esModule: true,
+  default: {
+    sanitize: jest.fn((input: string, _opts?: unknown) => input),
+  },
+}));
+
 // ─── @/utils/apiBase ─────────────────────────────────────────────────────────
 // Return an empty API_BASE so the server-hash polling setInterval in
 // WarehouseMapView (guarded by `if (!API_BASE) return`) is never registered.
@@ -1019,5 +1029,99 @@ describe("_applyFocus — zone found / not found / section disambiguation", () =
 
     expect(trackedValues.some((sv) => sv.value === expectedCxS2)).toBe(true);
     expect(trackedValues.some((sv) => sv.value === unexpectedCxS1)).toBe(false);
+  });
+});
+
+// =============================================================================
+// Suite 8 — Web floor-plan layer: non-empty after SVG load,
+//           DOMPurify expanded config, and viewBox origin offset correction
+//
+// Verifies:
+//   1. When Platform.OS === "web" and innerXml is non-empty, the floor-plan
+//      <g> element with dangerouslySetInnerHTML is rendered with non-empty HTML.
+//   2. When contentVB has a non-zero origin (x, y), the <g> gets a
+//      translate(−x, −y) transform so paths align with the outer SVG's
+//      normalised "0 0 W H" viewport.
+//   3. When contentVB has a zero origin, no transform is applied.
+// =============================================================================
+
+describe("web floor-plan layer — non-empty and correctly transformed after SVG load", () => {
+  const WEB_INNER_XML = '<path d="M0 0 L100 100"/>';
+  const WEB_VB_OFFSET = { x: 50, y: 30, w: 7200, h: 4820 };
+  const WEB_CACHED_DATA_OFFSET = {
+    uri: "",
+    innerXml: WEB_INNER_XML,
+    xml: `<svg viewBox="50 30 7200 4820">${WEB_INNER_XML}</svg>`,
+    contentViewBox: WEB_VB_OFFSET,
+  };
+
+  beforeEach(() => {
+    // Run web platform tests in web mode.
+    (require("react-native").Platform as { OS: string }).OS = "web";
+
+    const fpc = require("@/utils/floorPlanCache");
+    fpc.getCachedData.mockReturnValue(WEB_CACHED_DATA_OFFSET);
+    fpc.hasCachedData.mockReturnValue(true);
+    fpc.getCachedHash.mockReturnValue("web-hash");
+  });
+
+  // afterEach from the outer scope already restores Platform.OS = "ios" via
+  // jest.useRealTimers(), but the Platform.OS write lives inside the outer
+  // beforeEach — this inner afterEach ensures the restore happens even when
+  // a test throws before the outer afterEach fires.
+  afterEach(() => {
+    (require("react-native").Platform as { OS: string }).OS = "ios";
+  });
+
+  async function mountAndLayout(w: number, h: number) {
+    const renderer = await render(<WarehouseMapView {...BASE_PROPS} />);
+    await flushPromises();
+    await act(async () => { fireOnLayout(renderer, w, h); });
+    return renderer;
+  }
+
+  it("renders a <g> element with non-empty dangerouslySetInnerHTML.__html", async () => {
+    const renderer = await mountAndLayout(800, 600);
+    // The floor-plan <g> is the only node with dangerouslySetInnerHTML.
+    const gNodes = renderer.root!.queryAll(
+      (n) => n.type === "g" && n.props.dangerouslySetInnerHTML != null,
+      { includeSelf: true },
+    );
+    expect(gNodes.length).toBeGreaterThanOrEqual(1);
+    const html = gNodes[0]!.props.dangerouslySetInnerHTML.__html as string;
+    expect(typeof html).toBe("string");
+    expect(html.length).toBeGreaterThan(0);
+  });
+
+  it("applies translate(−x, −y) transform when contentVB has non-zero origin", async () => {
+    const renderer = await mountAndLayout(800, 600);
+    const gNodes = renderer.root!.queryAll(
+      (n) => n.type === "g" && n.props.dangerouslySetInnerHTML != null,
+      { includeSelf: true },
+    );
+    expect(gNodes.length).toBeGreaterThanOrEqual(1);
+    const transform = gNodes[0]!.props.transform as string | undefined;
+    expect(transform).toBe(
+      `translate(${-WEB_VB_OFFSET.x}, ${-WEB_VB_OFFSET.y})`,
+    );
+  });
+
+  it("does NOT apply a translate transform when contentVB has zero origin", async () => {
+    const fpc = require("@/utils/floorPlanCache");
+    const zeroOriginVB = { x: 0, y: 0, w: 7200, h: 4820 };
+    fpc.getCachedData.mockReturnValue({
+      ...WEB_CACHED_DATA_OFFSET,
+      contentViewBox: zeroOriginVB,
+    });
+
+    const renderer = await mountAndLayout(800, 600);
+    const gNodes = renderer.root!.queryAll(
+      (n) => n.type === "g" && n.props.dangerouslySetInnerHTML != null,
+      { includeSelf: true },
+    );
+    expect(gNodes.length).toBeGreaterThanOrEqual(1);
+    const transform = gNodes[0]!.props.transform as string | undefined;
+    // No correction needed when the viewBox origin is already (0, 0).
+    expect(transform).toBeUndefined();
   });
 });

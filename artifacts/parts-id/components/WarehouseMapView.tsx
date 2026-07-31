@@ -2393,10 +2393,47 @@ export function WarehouseMapView({
                   {
                     dangerouslySetInnerHTML: {
                       __html: DOMPurify.sanitize(innerXml, {
+                        // The svg profile is too restrictive for real warehouse
+                        // SVGs: it strips <image>, <pattern>, <linearGradient>,
+                        // <radialGradient>, <clipPath>, <mask>, <symbol>, <use>
+                        // and their key attributes.  We keep the profile for its
+                        // allow-by-default safety, then explicitly re-add every
+                        // tag and attribute that a typical floor-plan SVG needs.
                         USE_PROFILES: { svg: true, svgFilters: true },
                         FORCE_BODY: false,
+                        ADD_TAGS: [
+                          "image",
+                          "pattern",
+                          "linearGradient",
+                          "radialGradient",
+                          "clipPath",
+                          "mask",
+                          "symbol",
+                          "use",
+                        ],
+                        ADD_ATTR: [
+                          "xlink:href",
+                          "href",
+                          "preserveAspectRatio",
+                          "patternUnits",
+                          "patternTransform",
+                          "gradientUnits",
+                          "gradientTransform",
+                          "clip-path",
+                          "mask",
+                          "filter",
+                        ],
                       }),
                     },
+                    // Correct for non-zero viewBox origin.  The outer <Svg>
+                    // uses viewBox "0 0 W H" (normalised), but innerXml paths
+                    // reference the original coordinate space whose origin may
+                    // be (x, y) ≠ (0, 0).  Translating by (−x, −y) maps the
+                    // original origin onto the outer canvas (0, 0) so all paths
+                    // appear in the correct visual position.
+                    ...(contentVB && (contentVB.x !== 0 || contentVB.y !== 0)
+                      ? { transform: `translate(${-contentVB.x}, ${-contentVB.y})` }
+                      : {}),
                     style: {
                       filter: isDark ? "invert(1) brightness(0.88)" : "none",
                     },
