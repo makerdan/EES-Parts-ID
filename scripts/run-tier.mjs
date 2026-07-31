@@ -29,6 +29,7 @@ const FAST = [
   ["tsconfig-check", "pnpm --filter @workspace/scripts run tsconfig:check"],
   ["port-guard", "bash scripts/check-hardcoded-ports.sh"],
   ["bundle-domain-check", "pnpm --filter @workspace/parts-id run check:bundle-domain"],
+  ["light-mode-config", "bash scripts/check-light-mode-config.sh"],
 ];
 
 const STANDARD_EXTRA = [

@@ -46,7 +46,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-
   View,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";

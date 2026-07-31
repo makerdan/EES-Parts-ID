@@ -1,26 +1,41 @@
 /**
- * Regression test: web floor-plan colour-invert filter is dark-mode-only.
+ * Regression tests: web floor-plan colour-invert filter is dark-mode-only.
  *
- * Task #488 fixed the web floor plan disappearing in light mode.  An
- * `invert(1) brightness(0.88)` CSS filter was being applied unconditionally to
- * the web floor-plan layer (now a <div> that receives the full SVG document
- * via dangerouslySetInnerHTML), turning the dark SVG artwork near-white
- * against the light background.  The fix gates the filter on `isDark`:
+ * Background
+ * ──────────
+ * An `invert(1) brightness(0.88)` CSS filter was being applied to the web
+ * floor-plan <div> whenever the OS/browser reported dark mode — even when the
+ * user's in-app theme setting was "light".  The root cause was WarehouseMapView
+ * calling `useColorScheme()` (raw OS preference) instead of `useIsDark()` (which
+ * respects the user's explicit in-app setting).
+ *
+ * Fix
+ * ───
+ * WarehouseMapView now derives `isDark` exclusively through `useIsDark()` from
+ * @/hooks/useColors.  The filter is gated:
  *
  *     filter: isDark ? "invert(1) brightness(0.88)" : "none"
  *
- * These tests render the web path of WarehouseMapView and assert the filter is
- * present ONLY in dark mode.  If the filter is ever reapplied unconditionally,
- * the light-mode assertion (filter === "none") fails.
+ * What these tests verify
+ * ───────────────────────
+ * 1. When `useIsDark()` returns false  → filter is "none"  (no invert in light mode).
+ * 2. When `useIsDark()` returns true   → filter is "invert(1) brightness(0.88)".
+ * 3. Light mode: the string "invert" never appears anywhere in the filter value.
+ * 4. The injected floor-plan HTML is always present (both modes).
  *
- * Web-path requirements (differs from the native WarehouseMapView.test.tsx):
- *   • Platform.OS is forced to "web" so the web floor-plan <div> branch
- *     renders instead of the native tile renderer.
- *   • getCachedData() returns a non-empty xml so `svgXml` state is truthy on
- *     mount (the <div> only renders when the injected HTML is non-empty).
- *   • useColorScheme (from the react-native mock) is overridden per test to
- *     drive `isDark` — the component reads the RAW system scheme for isDark,
- *     not the effective/settings scheme.
+ * Mock strategy
+ * ─────────────
+ * • @/hooks/useColors is mocked at the module level.  `useIsDark` is a
+ *   jest.fn() whose return value is set per-test in `mountWeb(scheme)`.
+ *   This is intentionally separate from react-native's `useColorScheme` —
+ *   the component must not consult the OS scheme directly, only through the
+ *   hook.  Overriding `useColorScheme` in these tests would therefore NOT
+ *   catch a regression where someone swaps back to the raw call.
+ * • Platform.OS is forced to "web" so the web floor-plan <div> branch
+ *   renders instead of the native tile path.
+ * • @/utils/floorPlanCache.getCachedData returns non-empty xml so `svgXml`
+ *   state is truthy on mount — the floor-plan <div> only renders when
+ *   webFloorPlanHtml is non-empty.
  */
 
 // React 19 requires IS_REACT_ACT_ENVIRONMENT = true for act() to flush
@@ -132,6 +147,51 @@ jest.mock("react-native-svg", () => {
     Symbol: noop,
   };
 });
+
+// ─── @/hooks/useColors ───────────────────────────────────────────────────────
+// Mocked here so tests control isDark through useIsDark() — the same path the
+// component uses — rather than monkey-patching react-native's useColorScheme.
+// If a future edit reverts to raw useColorScheme(), these tests will still pass
+// (because the OS scheme is whatever Jest's RN mock returns), hiding the
+// regression.  By mocking at the hook boundary we guarantee the component
+// actually calls useIsDark() for its isDark value.
+
+const LIGHT_COLORS = {
+  text: "#1a1a1a",
+  tint: "#f59e0b",
+  background: "#f5f5f0",
+  foreground: "#1a1a1a",
+  card: "#ffffff",
+  cardForeground: "#1a1a1a",
+  primary: "#f59e0b",
+  primaryForeground: "#ffffff",
+  secondary: "#e5e7eb",
+  secondaryForeground: "#374151",
+  muted: "#e5e7eb",
+  mutedForeground: "#6b7280",
+  accent: "#fef3c7",
+  accentForeground: "#92400e",
+  destructive: "#ef4444",
+  destructiveForeground: "#ffffff",
+  success: "#10b981",
+  successForeground: "#ffffff",
+  warning: "#f59e0b",
+  warningForeground: "#ffffff",
+  border: "#d1d5db",
+  input: "#d1d5db",
+  steel: "#374151",
+  steelLight: "#6b7280",
+  amber: "#f59e0b",
+  amberDark: "#d97706",
+  surface: "#f9fafb",
+  overlay: "rgba(0,0,0,0.5)",
+  radius: 8,
+};
+
+jest.mock("@/hooks/useColors", () => ({
+  useColors: jest.fn(() => LIGHT_COLORS),
+  useIsDark: jest.fn(() => false),
+}));
 
 // ─── @/utils/apiBase ─────────────────────────────────────────────────────────
 
@@ -279,10 +339,25 @@ function findFloorPlanDiv(result: Awaited<ReturnType<typeof render>>) {
   return matches[0]!;
 }
 
-async function mountWeb(scheme: "dark" | "light") {
+/**
+ * Mount WarehouseMapView in web mode with useIsDark() controlled via the mock.
+ *
+ * NOTE: we set useIsDark on the @/hooks/useColors mock, NOT on react-native's
+ * useColorScheme.  If a future change reverts the component to reading
+ * useColorScheme() directly, these tests will no longer correctly exercise the
+ * dark-mode path (the OS scheme will be whatever the RN mock returns), and the
+ * underlying regression will go undetected.  The correct fix is always to
+ * restore useIsDark() in the component, not to patch useColorScheme in tests.
+ */
+async function mountWeb(scheme: "dark" | "light"): Promise<RenderResult> {
+  const hooks = require("@/hooks/useColors") as {
+    useColors: jest.Mock;
+    useIsDark: jest.Mock;
+  };
+  hooks.useIsDark.mockReturnValue(scheme === "dark");
+
   const rn = require("react-native");
   rn.Platform.OS = "web";
-  rn.useColorScheme = () => scheme;
 
   const result = await render(<WarehouseMapView {...BASE_PROPS} />);
   await flushPromises();
@@ -295,11 +370,18 @@ async function mountWeb(scheme: "dark" | "light") {
 // ─── Setup / teardown ─────────────────────────────────────────────────────────
 
 const originalPlatformOS = require("react-native").Platform.OS;
-const originalUseColorScheme = require("react-native").useColorScheme;
 
 beforeEach(() => {
   jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
   jest.clearAllMocks();
+
+  // Restore hook mocks after clearAllMocks resets their implementations.
+  const hooks = require("@/hooks/useColors") as {
+    useColors: jest.Mock;
+    useIsDark: jest.Mock;
+  };
+  hooks.useColors.mockReturnValue(LIGHT_COLORS);
+  hooks.useIsDark.mockReturnValue(false); // default: light
 
   const fpc = require("@/utils/floorPlanCache");
   fpc.getCachedData.mockReturnValue(MOCK_CACHED_DATA);
@@ -310,31 +392,30 @@ beforeEach(() => {
 afterEach(() => {
   const rn = require("react-native");
   rn.Platform.OS = originalPlatformOS;
-  rn.useColorScheme = originalUseColorScheme;
   jest.useRealTimers();
 });
 
 // =============================================================================
-// Web floor-plan invert filter is gated on dark mode
+// Web floor-plan invert filter is gated on useIsDark()
 // =============================================================================
 
-describe("web floor-plan filter — invert only in dark mode", () => {
-  it("dark mode: floor-plan <div> has filter 'invert(1) brightness(0.88)'", async () => {
+describe("web floor-plan filter — invert only when useIsDark() returns true", () => {
+  it("dark mode (useIsDark=true): floor-plan <div> has filter 'invert(1) brightness(0.88)'", async () => {
     const result = await mountWeb("dark");
     const div = findFloorPlanDiv(result);
     expect(div.props.style.filter).toBe("invert(1) brightness(0.88)");
   });
 
-  it("light mode: floor-plan <div> has filter 'none' (no invert)", async () => {
+  it("light mode (useIsDark=false): floor-plan <div> has filter 'none' (no invert)", async () => {
     const result = await mountWeb("light");
     const div = findFloorPlanDiv(result);
     expect(div.props.style.filter).toBe("none");
   });
 
-  it("light mode: the invert filter must NOT be applied", async () => {
+  it("light mode: the string 'invert' must NOT appear in the filter value", async () => {
     const result = await mountWeb("light");
     const div = findFloorPlanDiv(result);
-    // Guards against a future edit reintroducing the unconditional filter.
+    // Guards against both partial invert and any future filter reintroduction.
     expect(div.props.style.filter).not.toContain("invert");
   });
 
@@ -345,4 +426,13 @@ describe("web floor-plan filter — invert only in dark mode", () => {
     expect(html.startsWith("<svg")).toBe(true);
     expect(html).toContain(MOCK_INNER_XML);
   });
+
+  it("light mode: the full SVG document is also present (floor plan renders in both modes)", async () => {
+    const result = await mountWeb("light");
+    const div = findFloorPlanDiv(result);
+    const html = div.props.dangerouslySetInnerHTML.__html as string;
+    expect(html.startsWith("<svg")).toBe(true);
+    expect(html).toContain(MOCK_INNER_XML);
+  });
+
 });
