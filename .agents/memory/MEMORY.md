@@ -46,5 +46,5 @@
 - [vendor_map heap-order tests](vendor-map-heap-order-tests.md) — vendor suites depend on physical page order; winners must sit on later pages than rivals (fillfactor 50 + padded re-insert); serialize shared-DB jest runs.
 - [ts-ignore leaks into inferred return type](ts-ignore-worklet-return-leak.md) — @ts-ignore silences its line but the property still enters the object's inferred type and errors at the use site; cast the value instead.
 - [parts-id e2e via Clerk approval gate](parts-id-e2e-clerk-approval.md) — fresh sign-ins land users.status='pending' (403 + pending screen); approve the row via SQL before the tester runs; throwaway users via Clerk backend API.
-- [pnpm lockfile drift on main](pnpm-lockfile-drift.md) — lockfile out of sync with package.jsons; any install/remove rewrites ~12k lines; revert lockfile if it happens; no dep changes until reconciled.
+- [pnpm lockfile drift on main](pnpm-lockfile-drift.md) — RESOLVED; dep changes surgical again. If drift recurs: revert lockfile, re-link, reconcile via lockfile-only install in isolated commit.
 - [Completion validation pitfalls](completion-validation-pitfalls.md) — validation runs ALL workflows concurrently (unlocked `test` scrambles vendor_map) and gate-guard vs post-merge Tests 34/35 are mutually exclusive → full green impossible until reconciled.
