@@ -3,26 +3,24 @@
  *
  * Task #488 fixed the web floor plan disappearing in light mode.  An
  * `invert(1) brightness(0.88)` CSS filter was being applied unconditionally to
- * the web floor-plan `<g>` element (rendered via dangerouslySetInnerHTML inside
- * the zone-overlay <Svg>), turning the dark SVG artwork near-white against the
- * light background.  The fix gates the filter on the `isDark` flag:
+ * the web floor-plan layer (now a <div> that receives the full SVG document
+ * via dangerouslySetInnerHTML), turning the dark SVG artwork near-white
+ * against the light background.  The fix gates the filter on `isDark`:
  *
- *     style: { filter: isDark ? "invert(1) brightness(0.88)" : "none" }
+ *     filter: isDark ? "invert(1) brightness(0.88)" : "none"
  *
  * These tests render the web path of WarehouseMapView and assert the filter is
  * present ONLY in dark mode.  If the filter is ever reapplied unconditionally,
  * the light-mode assertion (filter === "none") fails.
  *
  * Web-path requirements (differs from the native WarehouseMapView.test.tsx):
- *   • Platform.OS is forced to "web" so the `Platform.OS === "web" && innerXml`
- *     branch renders the floor-plan <g>.
- *   • getCachedData() returns a non-empty innerXml so `innerXml` state is truthy
- *     on mount (the <g> only renders when innerXml is non-empty).
+ *   • Platform.OS is forced to "web" so the web floor-plan <div> branch
+ *     renders instead of the native tile renderer.
+ *   • getCachedData() returns a non-empty xml so `svgXml` state is truthy on
+ *     mount (the <div> only renders when the injected HTML is non-empty).
  *   • useColorScheme (from the react-native mock) is overridden per test to
  *     drive `isDark` — the component reads the RAW system scheme for isDark,
  *     not the effective/settings scheme.
- *   • dompurify is mocked with a passthrough sanitize so it works in the node
- *     (non-jsdom) test environment.
  */
 
 // React 19 requires IS_REACT_ACT_ENVIRONMENT = true for act() to flush
@@ -135,16 +133,6 @@ jest.mock("react-native-svg", () => {
   };
 });
 
-// ─── dompurify ───────────────────────────────────────────────────────────────
-// The component calls DOMPurify.sanitize on the floor-plan innerXml.  In the
-// node (non-jsdom) test environment the real default export is a window-less
-// factory whose .sanitize is not callable, so mock it with a passthrough.
-
-jest.mock("dompurify", () => ({
-  __esModule: true,
-  default: { sanitize: (s: string) => s },
-}));
-
 // ─── @/utils/apiBase ─────────────────────────────────────────────────────────
 
 jest.mock("@/utils/apiBase", () => ({ API_BASE: "" }));
@@ -211,7 +199,7 @@ jest.mock("@/utils/tilePyramidCache", () => ({
 }));
 
 // ─── @/utils/floorPlanCache ──────────────────────────────────────────────────
-// innerXml is non-empty so the web floor-plan <g> renders on mount.
+// xml is non-empty so the web floor-plan <div> renders on mount.
 
 const MOCK_CONTENT_VB = { x: 60, y: 80, w: 7200, h: 4820 };
 const MOCK_INNER_XML = "<path d='M0 0 L10 10' />";
@@ -271,20 +259,20 @@ function fireOnLayout(
 }
 
 /**
- * Locate the web floor-plan <g> — the only host <g> that carries
- * dangerouslySetInnerHTML (the zone-overlay <g> elements do not).
+ * Locate the web floor-plan <div> — the only host node that carries
+ * dangerouslySetInnerHTML (the injected floor-plan SVG document).
  */
-function findFloorPlanG(result: Awaited<ReturnType<typeof render>>) {
+function findFloorPlanDiv(result: Awaited<ReturnType<typeof render>>) {
   const matches = result.root!.queryAll(
     (n) =>
-      n.type === "g" &&
+      n.type === "div" &&
       n.props != null &&
       n.props.dangerouslySetInnerHTML != null,
     { includeSelf: true },
   );
   if (matches.length !== 1) {
     throw new Error(
-      `Expected exactly one floor-plan <g>, found ${matches.length}`,
+      `Expected exactly one floor-plan <div>, found ${matches.length}`,
     );
   }
   // Length checked to be exactly 1 above.
@@ -331,28 +319,30 @@ afterEach(() => {
 // =============================================================================
 
 describe("web floor-plan filter — invert only in dark mode", () => {
-  it("dark mode: floor-plan <g> has filter 'invert(1) brightness(0.88)'", async () => {
+  it("dark mode: floor-plan <div> has filter 'invert(1) brightness(0.88)'", async () => {
     const result = await mountWeb("dark");
-    const g = findFloorPlanG(result);
-    expect(g.props.style.filter).toBe("invert(1) brightness(0.88)");
+    const div = findFloorPlanDiv(result);
+    expect(div.props.style.filter).toBe("invert(1) brightness(0.88)");
   });
 
-  it("light mode: floor-plan <g> has filter 'none' (no invert)", async () => {
+  it("light mode: floor-plan <div> has filter 'none' (no invert)", async () => {
     const result = await mountWeb("light");
-    const g = findFloorPlanG(result);
-    expect(g.props.style.filter).toBe("none");
+    const div = findFloorPlanDiv(result);
+    expect(div.props.style.filter).toBe("none");
   });
 
   it("light mode: the invert filter must NOT be applied", async () => {
     const result = await mountWeb("light");
-    const g = findFloorPlanG(result);
+    const div = findFloorPlanDiv(result);
     // Guards against a future edit reintroducing the unconditional filter.
-    expect(g.props.style.filter).not.toContain("invert");
+    expect(div.props.style.filter).not.toContain("invert");
   });
 
-  it("dark mode: sanitized innerXml is embedded in the floor-plan <g>", async () => {
+  it("dark mode: the full SVG document is embedded in the floor-plan <div>", async () => {
     const result = await mountWeb("dark");
-    const g = findFloorPlanG(result);
-    expect(g.props.dangerouslySetInnerHTML.__html).toBe(MOCK_INNER_XML);
+    const div = findFloorPlanDiv(result);
+    const html = div.props.dangerouslySetInnerHTML.__html as string;
+    expect(html.startsWith("<svg")).toBe(true);
+    expect(html).toContain(MOCK_INNER_XML);
   });
 });

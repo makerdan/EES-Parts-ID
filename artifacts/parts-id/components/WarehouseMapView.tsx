@@ -10,12 +10,16 @@
  * Empty zones       → instructional empty state card over the map
  *
  * Floor-plan rendering strategy (crisp at any zoom level):
- *   Web    — The fetched SVG XML is stripped of its outer <svg> wrapper and the
- *            inner content is injected via dangerouslySetInnerHTML into a <g>
- *            element that lives inside the zone-overlay <Svg>.  Both the floor
- *            plan and the zone rectangles therefore share one SVG viewport;
- *            no separate CSS-scaled layer exists, so there is no rasterisation
- *            blur however far the user zooms in.
+ *   Web    — The fetched SVG XML (outer viewBox normalised to "0 0 W H",
+ *            width/height rewritten to the render size) is injected via
+ *            dangerouslySetInnerHTML into an absolutely-positioned <div>
+ *            layered underneath the zone-overlay <Svg>.  Because the injected
+ *            string starts with an <svg> tag the browser parses it in SVG
+ *            namespace — injecting bare <g>/<path> content into an existing
+ *            SVG element goes through the HTML fragment parser instead, which
+ *            treats SVG tags as unknown HTML elements and renders nothing.
+ *            Both layers share the same viewBox and pixel dimensions, so the
+ *            zone overlays align exactly with the floor plan.
  *   Native — Adaptive tiling: the floor plan is split into numTiles×numTiles
  *            tiles where numTiles = ceil(zoom).  Each tile renders
  *            svgRenderW×svgRenderH pt of SvgXml with a viewBox cropped to its
@@ -30,7 +34,6 @@
  */
 import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import DOMPurify from "dompurify";
 import { Asset } from "expo-asset";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -125,6 +128,11 @@ const _persistReadPromise = initPersistRead();
 // Single in-flight asset-load promise so concurrent mounts don't issue
 // duplicate network requests.
 let _svgLoadPromise: Promise<void> | null = null;
+// True once _svgLoadPromise has settled.  Lets loadSvgAsset() distinguish a
+// dead resolved promise (whose completed load may have left unusable data —
+// e.g. a prefetch that finished while the cache held a stale entry) from an
+// in-flight load that concurrent mounts should keep sharing.
+let _svgLoadSettled = false;
 
 // AbortController for the active SVG fetch.  Aborted before each new fetch
 // so stale in-flight requests don't overwrite state after a floor-plan upload.
@@ -144,28 +152,86 @@ export function prefetchSvgAsset(): Promise<void> {
  * a stale server response cannot overwrite state after a floor-plan upload.
  */
 function loadSvgAsset(): Promise<void> {
-  if (_svgLoadPromise) return _svgLoadPromise;
+  if (_svgLoadPromise) {
+    // Self-heal a stale singleton.  If a previous load has already settled
+    // but the cache still lacks renderable web data (a failed load, or a
+    // stale entry written by an older build), the resolved promise is dead —
+    // returning it would leave the map blank for the rest of the session.
+    // Null it out and fall through to start a fresh fetch.  In-flight loads
+    // are returned as-is so concurrent mounts share one request.
+    const cached = getCachedData();
+    const webDataUnusable = Platform.OS === "web" && !cached?.xml;
+    if (!(_svgLoadSettled && webDataUnusable)) return _svgLoadPromise;
+    _svgLoadPromise = null;
+  }
 
   // Abort any previous in-flight fetch before starting a new one.
   _svgLoadAbortController?.abort();
   const controller = new AbortController();
   _svgLoadAbortController = controller;
 
+  _svgLoadSettled = false;
   _svgLoadPromise = _loadFloorPlanFromServer(controller.signal)
     .catch(() => _loadFloorPlanFromBundle(controller.signal))
-    .catch(() => { if (!controller.signal.aborted) setFallbackEmpty(); });
+    .catch(() => { if (!controller.signal.aborted) setFallbackEmpty(); })
+    .finally(() => { _svgLoadSettled = true; });
   return _svgLoadPromise;
 }
 
 /**
- * Strip the outer <svg>…</svg> wrapper from SVG XML so the inner content can
- * be injected directly into an existing SVG canvas as a child <g> element.
- * Used on web to embed the floor plan inside the zone-overlay SVG viewport.
+ * Strip the outer <svg>…</svg> wrapper from SVG XML.
+ * Web rendering injects the full <svg> document into a <div> (see
+ * webFloorPlanHtml in WarehouseMapView), but the stripped innerXml is still
+ * written to the cache so persisted entries keep their expected shape.
  */
 function stripSvgWrapper(xml: string): string {
   return xml
     .replace(/^[\s\S]*?<svg[^>]*>/, "")
     .replace(/<\/svg>\s*$/, "");
+}
+
+/**
+ * Conservative string-based SVG sanitizer — mirrors the server's sanitizeSvg
+ * (artifacts/api-server/src/routes/floorPlan.ts) as defence-in-depth for the
+ * web dangerouslySetInnerHTML injection path.  Server-side sanitization has
+ * already run on uploaded plans, so this is a lightweight double-check.
+ * Deliberately NOT DOMPurify: DOMPurify parses fragment input through the
+ * HTML parser, which mangles SVG-only elements/attributes and previously
+ * left the floor plan blank on web.
+ */
+function sanitizeSvgForWeb(svg: string): string {
+  let s = svg;
+  // Remove <script>…</script> blocks (case-insensitive) and self-closing <script/>.
+  s = s.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "");
+  s = s.replace(/<script\b[^/]*\/>/gi, "");
+  // Remove <foreignObject>…</foreignObject> blocks and self-closing variants.
+  s = s.replace(/<foreignObject\b[^>]*>[\s\S]*?<\/foreignObject\s*>/gi, "");
+  s = s.replace(/<foreignObject\b[^/]*\/>/gi, "");
+  // Strip event-handler attributes: on<word>=("…"|'…'|unquoted).
+  s = s.replace(/\s+on[a-z][a-z0-9]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, "");
+  // Normalise link-like attributes, then blank javascript:/data: URI values.
+  s = s.replace(/\b(href|src|xlink:href|action)\s*=\s*/gi, (_m, attr: string) => `${attr}=`);
+  s = s.replace(
+    /\b(href|src|xlink:href|action)=\s*(?:"(?:javascript:|data:)[^"]*"|'(?:javascript:|data:)[^']*'|(?:javascript:|data:)\S*)/gi,
+    '$1=""',
+  );
+  return s;
+}
+
+/**
+ * Rewrite the width/height attributes on the opening <svg> tag so the
+ * injected floor plan renders at exactly the given pixel size (matching the
+ * Animated.View and the zone-overlay <Svg> dimensions).  The leading \s in
+ * the attribute patterns avoids touching stroke-width etc.  When an attribute
+ * is absent the browser default (100%) already fills the wrapping <div>,
+ * which has the same dimensions.
+ */
+function sizeSvgRoot(xml: string, w: number, h: number): string {
+  return xml.replace(/<svg\b[^>]*>/i, (tag) =>
+    tag
+      .replace(/\swidth\s*=\s*"[^"]*"/i, ` width="${w}"`)
+      .replace(/\sheight\s*=\s*"[^"]*"/i, ` height="${h}"`),
+  );
 }
 
 async function _loadFloorPlanFromServer(signal: AbortSignal): Promise<void> {
@@ -175,11 +241,11 @@ async function _loadFloorPlanFromServer(signal: AbortSignal): Promise<void> {
   const { hash } = FloorPlanMetaSchema.parse(await metaRes.json());
   if (signal.aborted) throw new Error("aborted");
   // Cache hit — skip re-fetching the SVG bytes entirely.
-  // On web we also require a non-empty innerXml: a stale entry written before
-  // the web SVG-strip fix (innerXml: "") must be treated as a miss so the floor
-  // plan is fetched and the cache self-heals on first load.
+  // On web we also require a non-empty xml: web renders the floor plan from
+  // the full SVG text, so a stale entry without it (written by an older
+  // build) must be treated as a miss so the cache self-heals on first load.
   const cached = getIfValid(hash);
-  if (cached !== null && (Platform.OS !== "web" || Boolean(cached.innerXml))) return;
+  if (cached !== null && (Platform.OS !== "web" || Boolean(cached.xml))) return;
   // Bail out early if the fetch was cancelled between the meta check and the SVG fetch.
   if (signal?.aborted) throw new Error("aborted");
 
@@ -215,9 +281,9 @@ async function _loadFloorPlanFromBundle(signal: AbortSignal): Promise<void> {
   if (!asset) throw new Error("floor-plan asset failed to load");
   const currentHash = asset.hash ?? "";
   // Cache hit — persisted hash matches; skip the URI fetch entirely.
-  // On web, also require a non-empty innerXml so a stale "" entry self-heals.
+  // On web, also require a non-empty xml so a stale "" entry self-heals.
   const cachedBundle = getIfValid(currentHash);
-  if (cachedBundle !== null && (Platform.OS !== "web" || Boolean(cachedBundle.innerXml))) return;
+  if (cachedBundle !== null && (Platform.OS !== "web" || Boolean(cachedBundle.xml))) return;
 
   const uri = asset.localUri ?? asset.uri ?? "";
   let newData: SvgData;
@@ -485,7 +551,9 @@ export function ZoneOverlayItem({
         height={zone.svgHeight}
         fill={pinFillColor}
         stroke={strokeColor}
-        strokeDasharray={(!isPinned && !isVariantPinned && !isActive) ? "20 10" : undefined}
+        {...((!isPinned && !isVariantPinned && !isActive)
+          ? { strokeDasharray: "20 10" }
+          : {})}
         animatedProps={rectPinAnimatedProps}
       />
       {(isPinned || isVariantPinned) ? (() => {
@@ -1533,10 +1601,10 @@ export function WarehouseMapView({
 
   // Resolve the bundled SVG asset.
   //
-  // Web path  — fetches the SVG text, strips the outer <svg> wrapper, and
-  //             stores the inner content via floorPlanCache.  The content is
-  //             injected via dangerouslySetInnerHTML into a <g> element inside
-  //             the main SVG canvas so everything shares one viewport.
+  // Web path  — fetches the SVG text and stores it via floorPlanCache.  The
+  //             full <svg> markup (viewBox normalised, width/height rewritten
+  //             to the render size) is injected via dangerouslySetInnerHTML
+  //             into a <div> layered beneath the zone-overlay <Svg>.
   // Native path — stores only the local file URI; <SvgUri> reads it directly.
   //
   // getCachedData() reads the module-level cache in utils/floorPlanCache.
@@ -1544,8 +1612,8 @@ export function WarehouseMapView({
   // state initialises with cached values and svgLoading starts as false —
   // no skeleton, no fetch.
   const [svgUri, setSvgUri] = useState(() => getCachedData()?.uri ?? "");
-  const [innerXml, setInnerXml] = useState(() => getCachedData()?.innerXml ?? "");
-  // svgXml: full SVG text used by the tile renderer (SvgXml + modified viewBox)
+  // svgXml: full SVG text — the native tile renderer (SvgXml + cropped
+  // viewBox) and the web floor-plan <div> injection both render from this.
   const [svgXml, setSvgXml] = useState(() => getCachedData()?.xml ?? "");
   const [svgLoading, setSvgLoading] = useState(() => !hasCachedData());
 
@@ -1571,6 +1639,18 @@ export function WarehouseMapView({
       `viewBox="0 0 ${contentVB.w} ${contentVB.h}"`,
     );
   }, [svgXml, contentVB]);
+
+  // Web floor-plan HTML — the (normalised) full SVG text with its root
+  // width/height rewritten to the exact render dimensions, passed through the
+  // conservative sanitizer.  Injected into an absolutely-positioned <div>
+  // beneath the zone-overlay <Svg>; both layers resolve to the same
+  // "0 0 W H" viewBox and identical pixel dimensions, so zones align exactly.
+  const webFloorPlanHtml = useMemo(() => {
+    if (Platform.OS !== "web" || !normalizedSvgXml) return "";
+    return sanitizeSvgForWeb(
+      sizeSvgRoot(normalizedSvgXml, svgRenderW, svgRenderH),
+    );
+  }, [normalizedSvgXml, svgRenderW, svgRenderH]);
 
   // ── Server floor-plan ETag wiring ────────────────────────────────────────
   // Poll /floor-plan/meta every 60 s while mounted.  When the server returns a
@@ -1613,11 +1693,11 @@ export function WarehouseMapView({
     const isServerUpdate = serverHashChanged > 0;
 
     // Fast-path: skip the load if we already have adequate cached data.
-    // On web, "adequate" requires a non-empty innerXml — a stale entry written
-    // before the web SVG-strip fix (innerXml: "") must not suppress the reload.
+    // On web, "adequate" requires a non-empty xml — web renders from the full
+    // SVG text, so a stale entry without it must not suppress the reload.
     const cached = getCachedData();
     const isAdequate = cached !== null &&
-      (Platform.OS !== "web" || Boolean(cached.innerXml));
+      (Platform.OS !== "web" || Boolean(cached.xml));
     if (!isServerUpdate && isAdequate) return;
 
     if (isServerUpdate) {
@@ -1626,7 +1706,7 @@ export function WarehouseMapView({
       // a fresh fetch instead of returning the stale cached entry.
       resetForServerUpdate();
       _svgLoadPromise = null;
-      setSvgUri(""); setInnerXml(""); setSvgXml("");
+      setSvgUri(""); setSvgXml("");
       setSvgLoading(true);
     }
 
@@ -1643,7 +1723,6 @@ export function WarehouseMapView({
         // Persisted data available — update state right away so the skeleton
         // never appears for returning users.
         setSvgUri(afterPersist.uri);
-        setInnerXml(afterPersist.innerXml);
         setSvgXml(afterPersist.xml);
         setSvgHash(getCachedHash() ?? "");
         setSvgLoading(false);
@@ -1658,7 +1737,6 @@ export function WarehouseMapView({
       const afterLoad = getCachedData();
       if (afterLoad) {
         setSvgUri(afterLoad.uri);
-        setInnerXml(afterLoad.innerXml);
         setSvgXml(afterLoad.xml);
         setSvgHash(getCachedHash() ?? "");
       }
@@ -2143,9 +2221,15 @@ export function WarehouseMapView({
       { translateY: translateY.value },
       { scale: scale.value },
     ],
-    // @ts-ignore — `cursor` is a web-only CSS property; the RN StyleSheet type
-    // does not include it, but it is accepted by react-native-web at runtime.
-    ...(Platform.OS === "web" ? { cursor: "grab" } : {}),
+    // `cursor: "grab"` is valid CSS that react-native-web passes through at
+    // runtime, but RN's CursorValue type only allows "auto" | "pointer".
+    // Cast the value so the worklet's inferred return type stays assignable
+    // at the style= use site — a @ts-ignore here does NOT work: it silences
+    // this line but still leaks `cursor?: string` into the inferred return
+    // type, which then fails where `animatedStyle` is passed to style=.
+    ...(Platform.OS === "web"
+      ? { cursor: "grab" as unknown as "pointer" }
+      : {}),
   }));
 
   // ── SVG zone overlays (viewBox coordinate space) ───────────────────────────
@@ -2198,9 +2282,9 @@ export function WarehouseMapView({
       <GestureDetector gesture={mainGesture}>
         <Animated.View style={[{ width: svgRenderW, height: svgRenderH }, animatedStyle]}>
           {/* ── Native floor plan layer ──────────────────────────────────────
-              On web the floor plan is embedded inside the SVG canvas below so
-              that both layers share one SVG viewport (no separate CSS-scaled
-              div, therefore no rasterisation blur at any zoom level).
+              On web the floor plan is instead injected as a complete <svg>
+              document into an absolutely-positioned <div> (web branch below);
+              browser-native SVG rendering stays vector-crisp at any zoom.
               On native, <SvgUri> is rendered directly at svgRenderW × svgRenderH;
               the SVG's own viewBox handles coordinate scaling.  This avoids
               exceeding iOS's maximum GPU texture size which caused patchwork
@@ -2295,9 +2379,27 @@ export function WarehouseMapView({
               <View style={{ width: svgRenderW, height: svgRenderH }} />
             )
           ) : (
-            /* Web: no separate floor plan div — floor plan is inside the SVG
-               below.  Show "Map unavailable" only if the fetch failed. */
-            !svgLoading && !innerXml ? (
+            /* Web: floor plan injected as a complete <svg> document into an
+               absolutely-positioned <div> so the browser parses it in SVG
+               namespace.  The zone-overlay <Svg> below is absoluteFill with
+               the same normalised viewBox + pixel dimensions, so zones sit
+               exactly on top.  "Map unavailable" only when the load failed. */
+            webFloorPlanHtml ? (
+              React.createElement("div", {
+                dangerouslySetInnerHTML: { __html: webFloorPlanHtml },
+                style: {
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: svgRenderW,
+                  height: svgRenderH,
+                  overflow: "hidden",
+                  // Colour-invert the artwork in dark mode ONLY — an
+                  // unconditional invert blanked the map in light mode.
+                  filter: isDark ? "invert(1) brightness(0.88)" : "none",
+                },
+              })
+            ) : !svgLoading ? (
               <View
                 style={[
                   styles.svgFallback,
@@ -2369,9 +2471,9 @@ export function WarehouseMapView({
 
           {/* Zone overlay SVG — shares the same viewBox as the floor plan so
               zone coordinates align exactly.
-              On web: the floor plan inner content is embedded here as the first
-              child <g> element (dangerouslySetInnerHTML), keeping floor plan
-              and zones in one SVG viewport for crisp rendering at any zoom.
+              On web: layered (absoluteFill) on top of the floor-plan <div>
+              rendered above; both resolve to the same normalised "0 0 W H"
+              viewBox and identical pixel dimensions.
               On native: the zone rects are layered on top of the <SvgUri>
               rendered above via absoluteFill.
               Each ZoneOverlayItem drives its own strokeWidth and fontSize via
@@ -2387,59 +2489,6 @@ export function WarehouseMapView({
             width={svgRenderW}
             height={svgRenderH}
           >
-            {Platform.OS === "web" && innerXml
-              ? React.createElement(
-                  "g" as unknown as React.ElementType,
-                  {
-                    dangerouslySetInnerHTML: {
-                      __html: DOMPurify.sanitize(innerXml, {
-                        // The svg profile is too restrictive for real warehouse
-                        // SVGs: it strips <image>, <pattern>, <linearGradient>,
-                        // <radialGradient>, <clipPath>, <mask>, <symbol>, <use>
-                        // and their key attributes.  We keep the profile for its
-                        // allow-by-default safety, then explicitly re-add every
-                        // tag and attribute that a typical floor-plan SVG needs.
-                        USE_PROFILES: { svg: true, svgFilters: true },
-                        FORCE_BODY: false,
-                        ADD_TAGS: [
-                          "image",
-                          "pattern",
-                          "linearGradient",
-                          "radialGradient",
-                          "clipPath",
-                          "mask",
-                          "symbol",
-                          "use",
-                        ],
-                        ADD_ATTR: [
-                          "xlink:href",
-                          "href",
-                          "preserveAspectRatio",
-                          "patternUnits",
-                          "patternTransform",
-                          "gradientUnits",
-                          "gradientTransform",
-                          "clip-path",
-                          "mask",
-                          "filter",
-                        ],
-                      }),
-                    },
-                    // Correct for non-zero viewBox origin.  The outer <Svg>
-                    // uses viewBox "0 0 W H" (normalised), but innerXml paths
-                    // reference the original coordinate space whose origin may
-                    // be (x, y) ≠ (0, 0).  Translating by (−x, −y) maps the
-                    // original origin onto the outer canvas (0, 0) so all paths
-                    // appear in the correct visual position.
-                    ...(contentVB && (contentVB.x !== 0 || contentVB.y !== 0)
-                      ? { transform: `translate(${-contentVB.x}, ${-contentVB.y})` }
-                      : {}),
-                    style: {
-                      filter: isDark ? "invert(1) brightness(0.88)" : "none",
-                    },
-                  },
-                )
-              : null}
             {anchorTransform ? (
               <G transform={anchorTransform}>
                 <G transform={(() => { const a = safeZoneAlignment(zoneAlignment); return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`; })()}>

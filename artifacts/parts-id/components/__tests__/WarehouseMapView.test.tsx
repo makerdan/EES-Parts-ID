@@ -164,16 +164,6 @@ jest.mock("react-native-svg", () => {
   };
 });
 
-// ─── dompurify ────────────────────────────────────────────────────────────────
-// Pass the input through unchanged so web-floor-plan tests can inspect the
-// raw innerXml content without needing a real browser DOMPurify implementation.
-jest.mock("dompurify", () => ({
-  __esModule: true,
-  default: {
-    sanitize: jest.fn((input: string, _opts?: unknown) => input),
-  },
-}));
-
 // ─── @/utils/apiBase ─────────────────────────────────────────────────────────
 // Return an empty API_BASE so the server-hash polling setInterval in
 // WarehouseMapView (guarded by `if (!API_BASE) return`) is never registered.
@@ -1033,25 +1023,31 @@ describe("_applyFocus — zone found / not found / section disambiguation", () =
 });
 
 // =============================================================================
-// Suite 8 — Web floor-plan layer: non-empty after SVG load,
-//           DOMPurify expanded config, and viewBox origin offset correction
+// Suite 8 — Web floor-plan layer: full <svg> document injected into a <div>,
+//           viewBox origin normalisation, width/height rewrite, sanitizer.
 //
 // Verifies:
-//   1. When Platform.OS === "web" and innerXml is non-empty, the floor-plan
-//      <g> element with dangerouslySetInnerHTML is rendered with non-empty HTML.
-//   2. When contentVB has a non-zero origin (x, y), the <g> gets a
-//      translate(−x, −y) transform so paths align with the outer SVG's
-//      normalised "0 0 W H" viewport.
-//   3. When contentVB has a zero origin, no transform is applied.
+//   1. When Platform.OS === "web" and cached xml is non-empty, the floor plan
+//      renders as a <div> with dangerouslySetInnerHTML whose __html is a
+//      complete <svg> document.  (A complete document is parsed by the
+//      browser in SVG namespace; bare <g>/<path> fragments injected inside an
+//      existing SVG element go through the HTML parser and render nothing —
+//      the bug that left the Map tab blank on web.)
+//   2. A non-zero contentVB origin is normalised: the injected document's
+//      viewBox is rewritten to "0 0 W H" (matching the zone-overlay <Svg>)
+//      and the root width/height are rewritten to the render dimensions.
+//   3. A zero contentVB origin leaves the original viewBox untouched.
+//   4. No floor-plan content is injected inside the zone-overlay <Svg>.
+//   5. The conservative sanitizer strips <script> blocks and on* handlers.
 // =============================================================================
 
-describe("web floor-plan layer — non-empty and correctly transformed after SVG load", () => {
+describe("web floor-plan layer — <svg> document injected into a <div>", () => {
   const WEB_INNER_XML = '<path d="M0 0 L100 100"/>';
   const WEB_VB_OFFSET = { x: 50, y: 30, w: 7200, h: 4820 };
   const WEB_CACHED_DATA_OFFSET = {
     uri: "",
     innerXml: WEB_INNER_XML,
-    xml: `<svg viewBox="50 30 7200 4820">${WEB_INNER_XML}</svg>`,
+    xml: `<svg width="7250" height="4850" viewBox="50 30 7200 4820">${WEB_INNER_XML}</svg>`,
     contentViewBox: WEB_VB_OFFSET,
   };
 
@@ -1080,33 +1076,40 @@ describe("web floor-plan layer — non-empty and correctly transformed after SVG
     return renderer;
   }
 
-  it("renders a <g> element with non-empty dangerouslySetInnerHTML.__html", async () => {
-    const renderer = await mountAndLayout(800, 600);
-    // The floor-plan <g> is the only node with dangerouslySetInnerHTML.
-    const gNodes = renderer.root!.queryAll(
-      (n) => n.type === "g" && n.props.dangerouslySetInnerHTML != null,
+  /** The floor-plan <div> is the only host node with dangerouslySetInnerHTML. */
+  function getFloorPlanHtml(renderer: Awaited<ReturnType<typeof render>>): string {
+    const divNodes = renderer.root!.queryAll(
+      (n) => n.type === "div" && n.props.dangerouslySetInnerHTML != null,
       { includeSelf: true },
     );
-    expect(gNodes.length).toBeGreaterThanOrEqual(1);
-    const html = gNodes[0]!.props.dangerouslySetInnerHTML.__html as string;
-    expect(typeof html).toBe("string");
-    expect(html.length).toBeGreaterThan(0);
-  });
+    expect(divNodes.length).toBe(1);
+    return divNodes[0]!.props.dangerouslySetInnerHTML.__html as string;
+  }
 
-  it("applies translate(−x, −y) transform when contentVB has non-zero origin", async () => {
+  it("renders a <div> whose dangerouslySetInnerHTML is a complete <svg> document", async () => {
     const renderer = await mountAndLayout(800, 600);
-    const gNodes = renderer.root!.queryAll(
-      (n) => n.type === "g" && n.props.dangerouslySetInnerHTML != null,
-      { includeSelf: true },
-    );
-    expect(gNodes.length).toBeGreaterThanOrEqual(1);
-    const transform = gNodes[0]!.props.transform as string | undefined;
-    expect(transform).toBe(
-      `translate(${-WEB_VB_OFFSET.x}, ${-WEB_VB_OFFSET.y})`,
-    );
+    const html = getFloorPlanHtml(renderer);
+    expect(html.startsWith("<svg")).toBe(true);
+    expect(html).toContain(WEB_INNER_XML);
   });
 
-  it("does NOT apply a translate transform when contentVB has zero origin", async () => {
+  it("normalises a non-zero viewBox origin to '0 0 W H' and rewrites width/height", async () => {
+    const renderer = await mountAndLayout(800, 600);
+    const html = getFloorPlanHtml(renderer);
+    // viewBox normalised so the floor plan and the zone-overlay <Svg>
+    // (which uses "0 0 W H") share one coordinate frame.
+    expect(html).toContain('viewBox="0 0 7200 4820"');
+    expect(html).not.toContain('viewBox="50 30');
+    // Root width/height rewritten to the exact render dimensions
+    // (svgRenderW = containerW; svgRenderH = containerW / (vb.w / vb.h)).
+    const expectedH = 800 / (WEB_VB_OFFSET.w / WEB_VB_OFFSET.h);
+    expect(html).toContain('width="800"');
+    expect(html).toContain(`height="${expectedH}"`);
+    expect(html).not.toContain('width="7250"');
+    expect(html).not.toContain('height="4850"');
+  });
+
+  it("keeps the original viewBox when contentVB origin is already (0, 0)", async () => {
     const fpc = require("@/utils/floorPlanCache");
     const zeroOriginVB = { x: 0, y: 0, w: 7200, h: 4820 };
     fpc.getCachedData.mockReturnValue({
@@ -1115,13 +1118,34 @@ describe("web floor-plan layer — non-empty and correctly transformed after SVG
     });
 
     const renderer = await mountAndLayout(800, 600);
+    const html = getFloorPlanHtml(renderer);
+    // No normalisation applied — the original viewBox passes through.
+    expect(html).toContain('viewBox="50 30 7200 4820"');
+  });
+
+  it("does NOT inject floor-plan content inside the zone-overlay <Svg>", async () => {
+    // Regression guard for the HTML-namespace bug: a <g> carrying
+    // dangerouslySetInnerHTML inside the zone-overlay <Svg> is parsed as an
+    // unknown HTML element by the browser and renders nothing on web.
+    const renderer = await mountAndLayout(800, 600);
     const gNodes = renderer.root!.queryAll(
       (n) => n.type === "g" && n.props.dangerouslySetInnerHTML != null,
       { includeSelf: true },
     );
-    expect(gNodes.length).toBeGreaterThanOrEqual(1);
-    const transform = gNodes[0]!.props.transform as string | undefined;
-    // No correction needed when the viewBox origin is already (0, 0).
-    expect(transform).toBeUndefined();
+    expect(gNodes.length).toBe(0);
+  });
+
+  it("strips <script> blocks and on* event handlers from the injected document", async () => {
+    const fpc = require("@/utils/floorPlanCache");
+    fpc.getCachedData.mockReturnValue({
+      ...WEB_CACHED_DATA_OFFSET,
+      xml: `<svg viewBox="50 30 7200 4820" onload="evil()"><script>alert(1)</script>${WEB_INNER_XML}</svg>`,
+    });
+
+    const renderer = await mountAndLayout(800, 600);
+    const html = getFloorPlanHtml(renderer);
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("onload=");
+    expect(html).toContain(WEB_INNER_XML);
   });
 });
