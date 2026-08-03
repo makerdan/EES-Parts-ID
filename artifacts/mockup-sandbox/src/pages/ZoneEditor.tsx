@@ -645,6 +645,7 @@ export function ZoneEditor() {
   const formRef = useRef<FormState>({ aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0 });
   const setForm = useCallback((f: FormState) => { formRef.current = f; setFormState(f); }, []);
   const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"clean" | "dirty" | "saving" | "error">("clean");
 
   // Crash-recovery draft offer: set when the selected zone has a localStorage
   // draft that differs from the current server state.
@@ -822,6 +823,10 @@ export function ZoneEditor() {
     () => zones.filter((z) => selectedIds.has(z.id)),
     [zones, selectedIds],
   );
+
+  // Reset save status whenever the selected zone changes (new zone or deselected).
+  // Must live after `selectedId` is derived above.
+  useEffect(() => { setSaveStatus("clean"); }, [selectedId]);
 
   // Inline validation for the Aisle ID field (only when a value is present;
   // empty string is handled at save-time as "required").
@@ -1310,16 +1315,19 @@ export function ZoneEditor() {
       isInventory: committedForm.isInventory,
       sortOrder: committedForm.sortOrder,
     };
+    setSaveStatus("saving");
     try {
       await patchZone(zoneId, afterMeta);
       clearDraft(zoneId);
       pushUndo({ type: "edit", id: zoneId, before: beforeMeta, after: afterMeta });
+      setSaveStatus("clean");
       toast.success("Saved");
       await fetchZones();
     } catch (e) {
       // Persist the unsaved form to localStorage so it can be recovered when
       // the server comes back online and the user re-selects this zone.
       writeDraft(zoneId, committedForm);
+      setSaveStatus("error");
       toast.error(e instanceof Error ? e.message : String(e));
       // Do not restore lastSavedFormRef on failure — selection may have already
       // changed, overwriting it with a different zone's baseline.
@@ -1801,12 +1809,14 @@ export function ZoneEditor() {
     if (!isValidAisleId(form.aisleId)) return;
     if (JSON.stringify(form) === JSON.stringify(lastSavedFormRef.current)) return;
 
+    setSaveStatus("dirty");
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     // Capture mutable values for the timer closure.
     const capturedId = selectedId;
     const capturedForm = form;
     autoSaveTimerRef.current = setTimeout(async () => {
       const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
+      setSaveStatus("saving");
       try {
         const afterMeta: MetaSnap = {
           aisleId: normalizeAisleId(capturedForm.aisleId),
@@ -1818,11 +1828,13 @@ export function ZoneEditor() {
         clearDraft(capturedId);
         pushUndo({ type: "edit", id: capturedId, before: beforeMeta, after: afterMeta });
         lastSavedFormRef.current = { ...capturedForm };
+        setSaveStatus("clean");
         toast.success("Saved");
         await fetchZones();
       } catch (e) {
         // Server unreachable — save the form locally so the user can recover it.
         writeDraft(capturedId, capturedForm);
+        setSaveStatus("error");
         toast.error(e instanceof Error ? e.message : String(e));
       }
     }, 600);
@@ -2443,6 +2455,8 @@ export function ZoneEditor() {
 
       {/* ── Dev-tool banner ─────────────────────────────────────────────────── */}
       <div style={styles.banner}>
+        {/* ── Row 1: mode buttons + controls ────────────────────────────────── */}
+        <div style={styles.bannerRow}>
         <a href="/__mockup" style={styles.backLink}>← Internal Tools</a>
         <span style={{ fontWeight: 600 }}>
           ⚠ DEV TOOL — Warehouse Zone Editor — internal use only
@@ -2733,6 +2747,64 @@ export function ZoneEditor() {
               : "drag to draw"}
           {" "}· {(tf.s * 100).toFixed(0)}%
         </span>
+        </div>
+        {/* ── Row 2: global save status (hidden in Calibrate mode) ─────────── */}
+        {mode !== "calibrate" && (() => {
+          const labelText =
+            saveStatus === "dirty"   ? "Unsaved changes ●" :
+            saveStatus === "saving"  ? "Saving…" :
+            saveStatus === "error"   ? "Save failed — retry" :
+            "All changes saved";
+          const labelColor =
+            saveStatus === "dirty"   ? "#fbbf24" :
+            saveStatus === "error"   ? "#f87171" :
+            "rgba(255,255,255,0.55)";
+          const btnDisabled = saveStatus === "clean" || saveStatus === "saving" || !selectedId;
+          const btnLabel = saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Retry" : "Save";
+          const btnBg =
+            saveStatus === "dirty" && selectedId  ? "#16a34a" :
+            saveStatus === "error" && selectedId  ? "#dc2626" :
+            "transparent";
+          return (
+            <div
+              data-testid="save-status-row"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 10,
+                padding: "3px 16px",
+                borderTop: "1px solid rgba(255,255,255,0.15)",
+              }}
+            >
+              <span style={{
+                fontSize: 11,
+                color: labelColor,
+                fontStyle: saveStatus === "saving" ? "italic" : "normal",
+              }}>
+                {labelText}
+              </span>
+              <button
+                disabled={btnDisabled}
+                onClick={() => {
+                  if (selectedId) void flushSave(formRef.current, selectedId);
+                }}
+                style={{
+                  padding: "2px 10px",
+                  borderRadius: 4,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  background: btnBg,
+                  color: btnDisabled ? "rgba(255,255,255,0.3)" : "#fff",
+                  border: `1px solid ${btnDisabled ? "rgba(255,255,255,0.2)" : saveStatus === "error" ? "#dc2626" : saveStatus === "dirty" ? "#16a34a" : "rgba(255,255,255,0.2)"}`,
+                  cursor: btnDisabled ? "default" : "pointer",
+                }}
+              >
+                {btnLabel}
+              </button>
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Content area (below banner) ─────────────────────────────────────── */}
@@ -3723,14 +3795,18 @@ const styles = {
   },
   banner: {
     display: "flex",
-    alignItems: "center",
-    gap: 12,
-    padding: "6px 16px",
+    flexDirection: "column" as const,
     background: "#7c3aed",
     color: "white",
     fontSize: 12,
     flexShrink: 0,
     zIndex: 10,
+  },
+  bannerRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "6px 16px",
   },
   backLink: {
     color: "rgba(255,255,255,0.85)",
