@@ -1893,12 +1893,25 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
         let autoSaved = false;
         if (confidence != null && confidence > 70) {
           try {
-            await db
+            // Guard: only write if expandedDescription is still NULL in the DB.
+            // This prevents a second batch run from silently overwriting a
+            // description that an admin has already hand-edited and saved.
+            const result = await db
               .update(inventoryTable)
               .set({ expandedDescription, updatedAt: new Date() })
-              .where(eq(inventoryTable.id, item.id));
-            invalidateReferenceAnswerCache().catch(() => {});
-            autoSaved = true;
+              .where(
+                and(
+                  eq(inventoryTable.id, item.id),
+                  sql`${inventoryTable.expandedDescription} IS NULL`,
+                ),
+              )
+              .returning({ id: inventoryTable.id });
+            if (result.length > 0) {
+              invalidateReferenceAnswerCache().catch(() => {});
+              autoSaved = true;
+            }
+            // If result is empty the row already had a description — autoSaved
+            // stays false so the SSE event signals the admin to review manually.
           } catch (dbErr) {
             reqLogger.warn({ err: dbErr, id: item.id }, "[expand-descriptions] auto-save failed");
           }
