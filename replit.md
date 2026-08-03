@@ -72,7 +72,7 @@ Every task plan must declare exactly one validation tier. This prevents all four
 
 | Tier | Runner command | What it covers | Typical duration |
 |---|---|---|---|
-| `fast` | `test-fast` | Static checks only: `gate-guard`, `plan-gate-fix`, `plan-gate-check`, `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check` | ~5 min |
+| `fast` | `test-fast` | Static checks only: `gate-guard`, `plan-gate-fix`, `plan-gate-check`, `plan-gate-stubs`, `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check` | ~5 min |
 | `standard` | `test-standard` | fast + `codegen-check`, `spec-check`, `env-check`, `spec-check-tests`, `test` | ~20 min |
 | `standard-plus` | `test-standard-plus` | standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test` | ~30 min |
 | `heavy` | `test-heavy` | Same as standard-plus (currently identical steps) | ~30 min |
@@ -173,7 +173,7 @@ Only long-running services are ordinary workflows: `artifacts/api-server: API Se
 
 Four tier commands run subsets of the checks below sequentially via `scripts/run-tier.mjs`, wrapped in `node scripts/serial-lock.mjs --` so tier runs (and any check that internally takes the same lock, like `test`) **cannot race each other** — concurrent invocations queue and run one at a time. Per-step timing starts after lock acquisition, so queue-wait time never counts against a step. Tiers are cumulative: standard includes fast, standard-plus includes standard, heavy includes standard-plus.
 
-- **`test-fast`** — static checks only: `gate-guard`, `plan-gate-fix`, `plan-gate-check`, `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check`. For pure UI/copy changes. (~5 min)
+- **`test-fast`** — static checks only: `gate-guard`, `plan-gate-fix`, `plan-gate-check`, `plan-gate-stubs`, `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check`. For pure UI/copy changes. (~5 min)
 - **`test-standard`** — fast + `codegen-check`, `spec-check`, `env-check`, `spec-check-tests`, `test`. For most feature/bug-fix work. (~20 min)
 - **`test-standard-plus`** — standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test`. Full quality signal without Playwright browser automation. (~30 min)
 - **`test-heavy`** — standard-plus (same steps, no Playwright currently). For schema migrations, new API routes, auth/security changes, multi-package refactors. (~30 min)
@@ -185,6 +185,7 @@ Individual check commands remain registered for targeted runs. Tier membership l
 | _(new)_ | `gate-guard` | fast (first step in every tier) |
 | _(new)_ | `plan-gate-fix` | fast (auto-remediate; always exits 0) |
 | _(new)_ | `plan-gate-check` | fast (strict Failure Gate lint) |
+| _(new)_ | `plan-gate-stubs` | fast (stub-placeholder warning count; always exits 0) |
 | `api-server-coverage` | `api-server-coverage` | standard-plus / heavy |
 | `api-server-typecheck` | `api-server-typecheck` | fast (via `tsc`) |
 | `bundle:domain-check` | `bundle-domain-check` | fast |
