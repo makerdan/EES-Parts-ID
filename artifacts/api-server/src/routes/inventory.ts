@@ -68,7 +68,8 @@ const enrichSystemPrompt =
   "You are an electrical supplies identifier with a degree in English language specializing in keyword and abbreviation expansion. Convert a single catalog description line into one clear, inventory-friendly sentence. Requirements:\n" +
   "- Use imperial units where applicable (inches, feet, pounds, \u00b0F).\n" +
   "- Fix spacing errors (add missing spaces after commas and around units).\n" +
-  "- Expand all abbreviations and jargon into plain language (e.g., kVA, XFMR \u2192 transformer; 3PH \u2192 three-phase; V \u2192 volts; Y \u2192 wye; FPT/MPT \u2192 female/male pipe thread; AWG \u2192 American Wire Gauge).\n" +
+  "- Expand all abbreviations and jargon into plain language (e.g., kVA, XFMR \u2192 transformer; 3PH \u2192 three-phase; Y \u2192 wye; FPT/MPT \u2192 female/male pipe thread; AWG \u2192 American Wire Gauge).\n" +
+  "- Express electrical quantities with standard compact notation \u2014 no space between the number and unit: volts as V (e.g. 120V), amps as A (e.g. 10A), watts as W (e.g. 500W), hertz as Hz (e.g. 60Hz). For slash-separated voltages, apply the unit to each segment (e.g. 120/240V \u2192 120V/240V). Wye notation such as 208Y/120V is already correct \u2014 leave it unchanged.\n" +
   "- Include essential keywords where present: capacity, phase, primary voltage, secondary voltage, connection (delta/wye), efficiency standard, temperature rise (report both \u00b0C and \u00b0F), enclosure/venting if stated, and any ratings (A, kVA, etc.).\n" +
   "- Do not add unsupported technical specs or assumptions. If you must infer a missing spec, put the inference in parentheses.\n" +
   "- Do not include the phrase 'inventory item' or any meta commentary.\n" +
@@ -102,7 +103,7 @@ const enrichSystemPrompt =
   "- MHF: MHF{phase}{neutral}{ground}{footage} \u2192 '[footage] ft of MHF aluminum mobile home feeder cable.'\n\n" +
   "Example\n" +
   "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
-  "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.\n\n" +
+  "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480V, secondary 208Y/120V, 302 \u00b0F (150 \u00b0C) temperature rise.\n\n" +
   "OUTPUT FORMAT\n" +
   "Always respond with a single JSON object on one line. No markdown fences, no extra text.\n" +
   '{ "expandedDescription": "<one sentence>", "confidence": <integer 0-100> }\n' +
@@ -128,9 +129,39 @@ const enrichSystemPrompt =
   'Output: { "expandedDescription": "1500 ft reel of 4 AWG aluminum TRIPLEX 3-conductor cable.", "confidence": 95 }\n\n' +
   "Example\n" +
   "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
-  'Output: { "expandedDescription": "225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 °F (150 °C) temperature rise.", "confidence": 95 }';
+  'Output: { "expandedDescription": "225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480V, secondary 208Y/120V, 302 °F (150 °C) temperature rise.", "confidence": 95 }';
 
 const router = Router();
+
+/**
+ * Normalise electrical unit notation in AI-generated descriptions.
+ * Collapses spelt-out or spaced unit forms to compact notation:
+ *   120 volts -> 120V, 10 amps -> 10A, 500 watts -> 500W, 60 hertz -> 60Hz
+ *   120 V -> 120V, 10 A -> 10A
+ *   120/240V -> 120V/240V  (slash-separated voltages)
+ *   208Y/120V is left unchanged (wye notation, not a plain slash)
+ */
+function normalizeElectricalUnits(text: string): string {
+  // Collapse spelled-out unit names to compact abbreviations
+  let result = text
+    .replace(/(\d+(?:\.\d+)?)\s+volts?\b/gi, "$1V")
+    .replace(/(\d+(?:\.\d+)?)\s+amps?\b/gi, "$1A")
+    .replace(/(\d+(?:\.\d+)?)\s+watts?\b/gi, "$1W")
+    .replace(/(\d+(?:\.\d+)?)\s+hertz\b/gi, "$1Hz");
+
+  // Collapse spaced-unit forms: '120 V' -> '120V', '10 A' -> '10A'
+  // Guard A against AWG: only collapse standalone A (not followed by W or G)
+  result = result
+    .replace(/(\d+(?:\.\d+)?)\s+V\b/g, "$1V")
+    .replace(/(\d+(?:\.\d+)?)\s+A\b(?![WG])/g, "$1A");
+
+  // Normalise slash-separated voltages: 120/240V -> 120V/240V
+  // The left segment is pure digits, so wye notation like 208Y/120V is
+  // unaffected (its left part ends with 'Y', not matched by \d+\/\d+V).
+  result = result.replace(/(\d+)\/(\d+V)\b/g, "$1V/$2");
+
+  return result;
+}
 
 // ── Module-level dictionary cache ─────────────────────────────────────────────
 // These tables are static lookup data that never changes at runtime.  Loading
@@ -1857,6 +1888,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
           expandedDescription = rawText || item.description;
           confidence = null;
         }
+        expandedDescription = normalizeElectricalUnits(expandedDescription);
 
         let autoSaved = false;
         if (confidence != null && confidence > 70) {
@@ -1971,6 +2003,7 @@ router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
       expandedDescription = rawText || item.description;
       confidence = null;
     }
+    expandedDescription = normalizeElectricalUnits(expandedDescription);
 
     res.json({
       id: item.id,
