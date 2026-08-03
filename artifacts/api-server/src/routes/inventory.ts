@@ -103,21 +103,32 @@ const enrichSystemPrompt =
   "Example\n" +
   "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
   "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.\n\n" +
+  "OUTPUT FORMAT\n" +
+  "Always respond with a single JSON object on one line. No markdown fences, no extra text.\n" +
+  '{ "expandedDescription": "<one sentence>", "confidence": <integer 0-100> }\n' +
+  "`confidence` is your estimate (0–100) of how accurate and complete the expansion is:\n" +
+  "- 90–100: catalog code is unambiguous; all specs decoded directly.\n" +
+  "- 70–89: minor inference required (e.g., implied conductor material).\n" +
+  "- 50–69: significant assumptions made or ambiguous abbreviations.\n" +
+  "- 0–49: description is too vague to expand reliably.\n\n" +
   "Example\n" +
   "Input: THHN12SOLBL500\n" +
-  "Output: 500' spool of blue THHN-insulated solid copper wire, 12 AWG.\n\n" +
+  'Output: { "expandedDescription": "500\' spool of blue THHN-insulated solid copper wire, 12 AWG.", "confidence": 98 }\n\n' +
   "Example\n" +
   "Input: XHHW40BK1000\n" +
-  "Output: 1000' spool of black XHHW-insulated aluminum wire, 4/0 AWG.\n\n" +
+  'Output: { "expandedDescription": "1000\' spool of black XHHW-insulated aluminum wire, 4/0 AWG.", "confidence": 97 }\n\n' +
   "Example\n" +
   "Input: THHN350OR2500\n" +
-  "Output: 2500' spool of orange THHN-insulated copper wire, 350 KCMIL.\n\n" +
+  'Output: { "expandedDescription": "2500\' spool of orange THHN-insulated copper wire, 350 KCMIL.", "confidence": 97 }\n\n' +
   "Example\n" +
   "Input: RX122WG1000\n" +
-  "Output: 1000 ft roll of 12/2 with ground Romex (NM-B) cable.\n\n" +
+  'Output: { "expandedDescription": "1000 ft roll of 12/2 with ground Romex (NM-B) cable.", "confidence": 96 }\n\n' +
   "Example\n" +
   "Input: 4TRIPLEX1500\n" +
-  "Output: 1500 ft reel of 4 AWG aluminum TRIPLEX 3-conductor cable.";
+  'Output: { "expandedDescription": "1500 ft reel of 4 AWG aluminum TRIPLEX 3-conductor cable.", "confidence": 95 }\n\n' +
+  "Example\n" +
+  "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
+  'Output: { "expandedDescription": "225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 °F (150 °C) temperature rise.", "confidence": 95 }';
 
 const router = Router();
 
@@ -1816,7 +1827,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
 
     for (const item of itemsToExpand) {
       try {
-        const expandedDescription = (
+        const rawText = (
           useOpenAiFallback
             ? await (async () => {
                 const resp = await getOpenAIFallbackClient().chat.completions.create({
@@ -1835,12 +1846,40 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
                 `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`,
               )
         ) || item.description;
+
+        let expandedDescription: string = item.description;
+        let confidence: number | null = null;
+        try {
+          const parsed = JSON.parse(rawText) as { expandedDescription?: string; confidence?: number };
+          expandedDescription = parsed.expandedDescription?.trim() || item.description;
+          confidence = typeof parsed.confidence === "number" ? parsed.confidence : null;
+        } catch {
+          expandedDescription = rawText || item.description;
+          confidence = null;
+        }
+
+        let autoSaved = false;
+        if (confidence != null && confidence > 70) {
+          try {
+            await db
+              .update(inventoryTable)
+              .set({ expandedDescription, updatedAt: new Date() })
+              .where(eq(inventoryTable.id, item.id));
+            invalidateReferenceAnswerCache().catch(() => {});
+            autoSaved = true;
+          } catch (dbErr) {
+            reqLogger.warn({ err: dbErr, id: item.id }, "[expand-descriptions] auto-save failed");
+          }
+        }
+
         processed++;
         send({
           id: item.id,
           partNumber: item.catalog,
           originalDescription: item.description,
           expandedDescription,
+          confidence,
+          autoSaved,
           progress: processed,
           total,
         });
@@ -1906,7 +1945,7 @@ router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
     const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
     const userPrompt = `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`;
 
-    const expandedDescription = (
+    const rawText = (
       useOpenAiFallback
         ? await (async () => {
             const resp = await getOpenAIFallbackClient().chat.completions.create({
@@ -1922,11 +1961,23 @@ router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
         : await callPoeBotWithChain("enrich", enrichSystemPrompt, userPrompt)
     ) || item.description;
 
+    let expandedDescription: string = item.description;
+    let confidence: number | null = null;
+    try {
+      const parsed = JSON.parse(rawText) as { expandedDescription?: string; confidence?: number };
+      expandedDescription = parsed.expandedDescription?.trim() || item.description;
+      confidence = typeof parsed.confidence === "number" ? parsed.confidence : null;
+    } catch {
+      expandedDescription = rawText || item.description;
+      confidence = null;
+    }
+
     res.json({
       id: item.id,
       partNumber: item.catalog,
       originalDescription: item.description,
       expandedDescription,
+      confidence,
       model: getEnrichModel(),
     });
   } catch (err) {

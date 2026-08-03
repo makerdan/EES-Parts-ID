@@ -218,6 +218,8 @@ const SseExpandDescDataSchema = z.object({
   error: z.string().optional(),
   progress: z.number().optional(),
   model: z.string().optional(),
+  confidence: z.number().nullable().optional(),
+  autoSaved: z.boolean().optional(),
 });
 const BinDiffSummarySchema = z.object({
   willReplaceBins: z.number(),
@@ -484,9 +486,27 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
           : colors.primary + "33";
   return (
     <View style={{ borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 0, marginTop: 10, backgroundColor: cardBg, borderColor: cardBorder }}>
-      <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.mutedForeground }}>
-        {result.partNumber}
-      </Text>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.mutedForeground }}>
+          {result.partNumber}
+        </Text>
+        {result.confidence != null && (
+          <View style={{
+            borderRadius: 4,
+            paddingHorizontal: 6,
+            paddingVertical: 2,
+            backgroundColor: result.confidence > 70 ? colors.success + "22" : "#f59e0b22",
+          }}>
+            <Text style={{
+              fontSize: 10,
+              fontFamily: "Inter_600SemiBold",
+              color: result.confidence > 70 ? colors.success : "#d97706",
+            }}>
+              {result.confidence} % confidence
+            </Text>
+          </View>
+        )}
+      </View>
       <Text style={{ fontSize: 12, color: colors.mutedForeground, fontFamily: "Inter_400Regular" }}>
         Original: {result.originalDescription}
       </Text>
@@ -572,7 +592,11 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
         </View>
       ) : (
         <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: result.savedStatus === "saved" ? colors.success : colors.mutedForeground }}>
-          {result.savedStatus === "saved" ? "✓ Saved" : "— Discarded"}
+          {result.savedStatus === "saved"
+            ? result.autoSaved && result.confidence != null
+              ? `✓ Auto-saved (${result.confidence} %)`
+              : "✓ Saved"
+            : "— Discarded"}
         </Text>
       )}
     </View>
@@ -1219,8 +1243,10 @@ export default function UploadScreen() {
               originalDescription: data.originalDescription ?? "",
               expandedDescription: data.expandedDescription ?? null,
               editedText: data.expandedDescription ?? "",
-              savedStatus: data.error ? "discarded" : "pending",
+              savedStatus: data.error ? "discarded" : data.autoSaved ? "saved" : "pending",
               error: data.error,
+              confidence: data.confidence ?? null,
+              autoSaved: data.autoSaved ?? false,
             }]);
             if (data.progress != null && data.total != null) {
               setExpandDescProgress({ done: data.progress, total: data.total });
