@@ -526,6 +526,7 @@ function SectionShelfView({
   const listFooter = selectedPart ? (
     <View style={{ marginHorizontal: 12, marginTop: 12 }}>
       <ResultCard
+        key={selectedKey}
         result={{
           item: selectedPart.item,
           confidence: 1,
