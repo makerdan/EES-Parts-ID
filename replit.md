@@ -123,6 +123,10 @@ Every Planner and Build agent must follow the Failure Gate skill at
 templates, and lint-guard documentation live there. The summary below is the
 session-mandate checklist that must be satisfied before any plan is written.
 
+#### Scaffolding helper
+
+When creating a new plan file, always use `node scripts/new-task-plan.mjs <slug>` — it writes a Failure-Gate-compliant skeleton to `.local/tasks/<slug>.md` (all required sections pre-filled) and immediately confirms compliance via `check-failure-gate.mjs --fix-stub`.
+
 #### HARD-GATE checklist (Planner — complete before writing any plan)
 
 1. **Memory scan** — Open `.agents/memory/MEMORY.md`; check for known-flaky
