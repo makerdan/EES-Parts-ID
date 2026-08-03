@@ -72,7 +72,7 @@ Every task plan must declare exactly one validation tier. This prevents all four
 
 | Tier | Runner command | What it covers | Typical duration |
 |---|---|---|---|
-| `fast` | `test-fast` | Static checks only: `gate-guard`, `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check` | ~5 min |
+| `fast` | `test-fast` | Static checks only: `gate-guard`, `plan-gate-fix`, `plan-gate-check`, `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check` | ~5 min |
 | `standard` | `test-standard` | fast + `codegen-check`, `spec-check`, `env-check`, `spec-check-tests`, `test` | ~20 min |
 | `standard-plus` | `test-standard-plus` | standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test` | ~30 min |
 | `heavy` | `test-heavy` | Same as standard-plus (currently identical steps) | ~30 min |
@@ -114,6 +114,57 @@ When a task agent finishes work:
 1. Check `.replit` — the `[[workflows.workflow]]` block named `"Project"` must have exactly one `[[workflows.workflow.tasks]]` entry: `task = "workflow.run"` / `args = "test-fast"`.
 2. Remove any extra entries and re-run.
 
+## Agent rules
+
+### Failure Gate (always active)
+
+Every Planner and Build agent must follow the Failure Gate skill at
+`.agents/skills/failure-gate/SKILL.md`. The full decision tree, section
+templates, and lint-guard documentation live there. The summary below is the
+session-mandate checklist that must be satisfied before any plan is written.
+
+#### HARD-GATE checklist (Planner — complete before writing any plan)
+
+1. **Memory scan** — Open `.agents/memory/MEMORY.md`; check for known-flaky
+   entries touching suites or files this task modifies.
+   Known categories: `reverseVendorMap row-order flake`, `vendor-map
+   heap-order tests`, `concurrent effects consume fetchWithAuth mocks out of
+   order`, `jest.clearAllMocks clears ALL mock implementations`.
+
+2. **Recent task scan** — Search recently merged task descriptions for
+   "pre-existing", "known failure", "flaky", or suite names this task touches.
+
+3. **Spot-run** — If the task touches `artifacts/api-server` code, run the
+   api-server test suite once before any changes and record failures as
+   pre-existing. Skip otherwise (expensive; benefit only applies to server
+   code).
+
+4. **Write `## Pre-existing failures to ignore`** — Place after "Steps",
+   before "Relevant files". Mandatory even when empty.
+
+5. **Write `## Validation`** — Immediately after the pre-existing section.
+   Must contain all three lines:
+   - `**Command:**` — one of `test-fast`, `test-standard`,
+     `test-standard-plus`, `test-heavy`
+   - `**Why:**` — non-placeholder justification
+   - `**Do not escalate:**` — non-placeholder text
+
+#### Required Planner announcement line
+
+Before writing the first heading of any plan, emit this exact line:
+
+```
+[FAILURE-GATE] Discovery checklist complete. Pre-existing failures documented: <N>. Validation command: `<command>`.
+```
+
+#### Build agent ceiling rule
+
+The `## Validation` command is the **ceiling**. Never run a heavier tier for
+any reason — including pre-existing failures, flaky retries, or
+self-classification outcomes.
+
+---
+
 ## Checks: validation commands (formerly workflows)
 
 Only long-running services are ordinary workflows: `artifacts/api-server: API Server`, `artifacts/parts-id: expo`, `artifacts/mockup-sandbox: Component Preview Server`. Every one-off check is a **registered validation command** (run via validation runs; these do not consume workflow slots). Names with colons were renamed to dashes; all commands are unchanged.
@@ -122,7 +173,7 @@ Only long-running services are ordinary workflows: `artifacts/api-server: API Se
 
 Four tier commands run subsets of the checks below sequentially via `scripts/run-tier.mjs`, wrapped in `node scripts/serial-lock.mjs --` so tier runs (and any check that internally takes the same lock, like `test`) **cannot race each other** — concurrent invocations queue and run one at a time. Per-step timing starts after lock acquisition, so queue-wait time never counts against a step. Tiers are cumulative: standard includes fast, standard-plus includes standard, heavy includes standard-plus.
 
-- **`test-fast`** — static checks only: `gate-guard`, `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check`. For pure UI/copy changes. (~5 min)
+- **`test-fast`** — static checks only: `gate-guard`, `plan-gate-fix`, `plan-gate-check`, `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check`. For pure UI/copy changes. (~5 min)
 - **`test-standard`** — fast + `codegen-check`, `spec-check`, `env-check`, `spec-check-tests`, `test`. For most feature/bug-fix work. (~20 min)
 - **`test-standard-plus`** — standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test`. Full quality signal without Playwright browser automation. (~30 min)
 - **`test-heavy`** — standard-plus (same steps, no Playwright currently). For schema migrations, new API routes, auth/security changes, multi-package refactors. (~30 min)
@@ -132,6 +183,8 @@ Individual check commands remain registered for targeted runs. Tier membership l
 | Old workflow name | Validation command | Tier |
 |---|---|---|
 | _(new)_ | `gate-guard` | fast (first step in every tier) |
+| _(new)_ | `plan-gate-fix` | fast (auto-remediate; always exits 0) |
+| _(new)_ | `plan-gate-check` | fast (strict Failure Gate lint) |
 | `api-server-coverage` | `api-server-coverage` | standard-plus / heavy |
 | `api-server-typecheck` | `api-server-typecheck` | fast (via `tsc`) |
 | `bundle:domain-check` | `bundle-domain-check` | fast |

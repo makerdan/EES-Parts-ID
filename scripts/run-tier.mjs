@@ -23,6 +23,8 @@ import { spawnSync } from "node:child_process";
 // commands, which remain available for targeted runs.
 const FAST = [
   ["gate-guard", "bash scripts/check-gate-integrity.sh"],
+  ["plan-gate-fix",   "node scripts/check-failure-gate.mjs --fix-stub"],
+  ["plan-gate-check", "node scripts/check-failure-gate.mjs"],
   ["tsc", 'pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck'],
   ["lint", "node scripts/check-db-reachability.mjs && pnpm --filter @workspace/parts-id run lint && pnpm --filter @workspace/api-server run lint && pnpm --filter @workspace/mockup-sandbox run lint && pnpm run lint:libs"],
   ["lint-mocks", "pnpm --filter @workspace/scripts run lint:mocks"],
