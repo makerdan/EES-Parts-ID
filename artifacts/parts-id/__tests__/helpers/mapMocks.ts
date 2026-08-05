@@ -4,7 +4,6 @@
  * Usage in a test file (jest.mock factories are hoisted, so reference via require()):
  *
  *   jest.mock("react-native-reanimated",      () => require("./helpers/mapMocks").createReanimatedMock());
- *   jest.mock("react-native-gesture-handler", () => require("./helpers/mapMocks").createGestureHandlerMock());
  *   jest.mock("react-native-svg",             () => require("./helpers/mapMocks").createSvgMock());
  *   jest.mock("expo-asset",                   () => require("./helpers/mapMocks").createExpoAssetMock());
  *   jest.mock("@expo/vector-icons",           () => require("./helpers/mapMocks").createVectorIconsMock());
@@ -40,50 +39,6 @@ export function createReanimatedMock(): object {
     withRepeat:          passThrough,
     Easing: { bezier: () => 0, inOut: passThrough, ease: 0, linear: 0 },
     createAnimatedComponent,
-  };
-}
-
-/**
- * react-native-gesture-handler — full chainable version (covers all gesture methods).
- *
- * @deprecated Use the file-based mock at `__mocks__/react-native-gesture-handler.js`
- * instead.  In your test file, call `jest.mock("react-native-gesture-handler")`
- * (without a factory) and access `__simulateTap` / `__resetTap` via
- * `require("react-native-gesture-handler")`.  The file mock is the single
- * source of truth and supports tap simulation without any additional spy setup.
- *
- * This factory is kept for backward compatibility while existing callers are
- * migrated.  Do NOT use it in new test files.
- */
-export function createGestureHandlerMock(): object {
-  const React = require("react");
-  function makeChainable() {
-    const obj: Record<string, (...args: unknown[]) => typeof obj> = {};
-    [
-      "onBegin", "onUpdate", "onEnd", "onFinalize",
-      "onTouchesDown", "onTouchesUp", "onTouchesCancelled", "onTouchesMoved",
-      "minDistance", "maxDistance", "minPointers", "maxPointers",
-      "averageTouches", "enableTrackpadTwoFingerGesture",
-      "simultaneousWithExternalGesture", "requireExternalGestureToFail",
-      "blocksExternalGesture", "withTestId", "enabled",
-      "shouldCancelWhenOutside", "hitSlop", "activeCursor",
-      "runOnJS", "manualActivation", "numberOfTaps", "maxDuration",
-      "maxDelay", "minNumberOfPointers",
-    ].forEach((m) => { obj[m] = () => obj; });
-    return obj;
-  }
-  return {
-    Gesture: {
-      Pan:          makeChainable,
-      Pinch:        makeChainable,
-      Tap:          makeChainable,
-      LongPress:    makeChainable,
-      Simultaneous: (..._args: unknown[]) => makeChainable(),
-      Exclusive:    (..._args: unknown[]) => makeChainable(),
-      Race:         (..._args: unknown[]) => makeChainable(),
-    },
-    GestureDetector: ({ children }: { children: React.ReactNode }) =>
-      React.createElement(React.Fragment, null, children),
   };
 }
 
