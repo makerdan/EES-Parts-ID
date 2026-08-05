@@ -1350,7 +1350,7 @@ export function WarehouseMapView({
     const h = containerHRef.current;
     if (!vb || w === 0) return;
     pendingFit.current = false;
-    const { scale: s, tx, ty } = computeFitTarget(vb, w, h);
+    const { scale: s, tx, ty } = computeFitTarget(vb, w, h, { snapToOverview: false });
     scale.value = s;
     savedScale.value = s;
     translateX.value = tx;

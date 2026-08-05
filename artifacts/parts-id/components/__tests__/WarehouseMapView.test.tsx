@@ -423,10 +423,10 @@ describe("startup always fits — no viewport restore on mount", () => {
     expect(call[0]).toEqual(MOCK_CONTENT_VB);
   });
 
-  it("phone (390×761): at least two shared values hold ZOOM_STOPS[0].scale (scale + savedScale)", async () => {
+  it("phone (390×761): at least two shared values hold the natural fit scale (scale + savedScale)", async () => {
     await mountAndLayout(390, 761);
-    const fitScale = ZOOM_STOPS[0]!.scale;
-    const matches = trackedValues.filter((sv) => sv.value === fitScale);
+    const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
+    const matches = trackedValues.filter((sv) => sv.value === result.scale);
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -435,10 +435,13 @@ describe("startup always fits — no viewport restore on mount", () => {
     expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
   });
 
-  it("phone (390×761): computeFitTarget returns scale === ZOOM_STOPS[0].scale (z0 fit)", async () => {
+  it("phone (390×761): computeFitTarget returns the natural fit scale (not snapped to z0 overview)", async () => {
     await mountAndLayout(390, 761);
     const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
+    // With snapToOverview:false the initial fit returns the raw fitContentViewport
+    // scale (≤ MIN_SCALE for this large MOCK_CONTENT_VB), not ZOOM_STOPS[0].scale.
+    expect(result.scale).not.toBe(ZOOM_STOPS[0]!.scale);
+    expect(result.scale).toBeGreaterThan(0);
   });
 
   it("iPad (768×960): computeFitTarget is called on mount", async () => {
@@ -446,10 +449,10 @@ describe("startup always fits — no viewport restore on mount", () => {
     expect(computeFitTargetSpy).toHaveBeenCalled();
   });
 
-  it("iPad (768×960): at least two shared values hold ZOOM_STOPS[0].scale", async () => {
+  it("iPad (768×960): at least two shared values hold the natural fit scale", async () => {
     await mountAndLayout(768, 960);
-    const fitScale = ZOOM_STOPS[0]!.scale;
-    const matches = trackedValues.filter((sv) => sv.value === fitScale);
+    const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
+    const matches = trackedValues.filter((sv) => sv.value === result.scale);
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -490,16 +493,19 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
     expect(call[0]).toEqual(MOCK_CONTENT_VB);
   });
 
-  it("phone (390×761): computeFitTarget returns scale === ZOOM_STOPS[0].scale (z0 fit)", async () => {
+  it("phone (390×761): computeFitTarget returns the natural fit scale (not snapped to z0 overview)", async () => {
     await mountFitLayout(390, 761);
     const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
+    // With snapToOverview:false the initial fit returns the raw fitContentViewport
+    // scale (≤ MIN_SCALE for this large MOCK_CONTENT_VB), not ZOOM_STOPS[0].scale.
+    expect(result.scale).not.toBe(ZOOM_STOPS[0]!.scale);
+    expect(result.scale).toBeGreaterThan(0);
   });
 
-  it("phone (390×761): at least two shared values hold ZOOM_STOPS[0].scale after fit", async () => {
+  it("phone (390×761): at least two shared values hold the natural fit scale after fit", async () => {
     await mountFitLayout(390, 761);
-    const fitScale = ZOOM_STOPS[0]!.scale;
-    const matches = trackedValues.filter((sv) => sv.value === fitScale);
+    const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
+    const matches = trackedValues.filter((sv) => sv.value === result.scale);
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -513,10 +519,13 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
     expect(computeFitTargetSpy).toHaveBeenCalled();
   });
 
-  it("iPad (768×960): computeFitTarget returns scale === ZOOM_STOPS[0].scale (z0 fit)", async () => {
+  it("iPad (768×960): computeFitTarget returns the natural fit scale (not snapped to z0 overview)", async () => {
     await mountFitLayout(768, 960);
     const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
+    // With snapToOverview:false the initial fit returns the raw fitContentViewport
+    // scale (≤ MIN_SCALE for this large MOCK_CONTENT_VB), not ZOOM_STOPS[0].scale.
+    expect(result.scale).not.toBe(ZOOM_STOPS[0]!.scale);
+    expect(result.scale).toBeGreaterThan(0);
   });
 });
 
@@ -555,14 +564,14 @@ describe("startup fit — no AsyncStorage.getItem call during mount", () => {
     expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
   });
 
-  it("phone (390×761): fit-to-screen scale is applied (stored s=4.0 is ignored; ZOOM_STOPS[0].scale is used)", async () => {
+  it("phone (390×761): fit-to-screen scale is applied (stored s=4.0 is ignored; natural fit scale is used)", async () => {
     await mountAndLayout(390, 761);
-    const fitScale = ZOOM_STOPS[0]!.scale;
     // Stored scale (4.0) must NOT appear in tracked shared values.
     const storedScaleMatches = trackedValues.filter((sv) => sv.value === 4.0);
     expect(storedScaleMatches.length).toBe(0);
-    // Fit scale must appear (scale + savedScale).
-    const fitScaleMatches = trackedValues.filter((sv) => sv.value === fitScale);
+    // The natural fit scale (snapToOverview:false) must appear (scale + savedScale).
+    const fitResult = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
+    const fitScaleMatches = trackedValues.filter((sv) => sv.value === fitResult.scale);
     expect(fitScaleMatches.length).toBeGreaterThanOrEqual(2);
   });
 });
