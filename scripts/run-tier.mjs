@@ -63,11 +63,20 @@ const TIERS = {
 };
 
 const tier = process.argv[2];
-const steps = TIERS[tier];
-if (!steps) {
+if (!TIERS[tier]) {
   console.error(`Usage: run-tier.mjs <fast|standard|standard-plus|heavy> (got: ${tier ?? "nothing"})`);
   process.exit(2);
 }
+
+// Inject --declared-tier into plan-gate-check so it enforces the ceiling rule:
+// any plan file whose **Command:** tier is lighter than what we're running will
+// be flagged as a ceiling violation (agent escalated beyond the plan's ceiling).
+const declaredTierFlag = `--declared-tier test-${tier}`;
+const steps = TIERS[tier].map(([name, cmd]) =>
+  name === "plan-gate-check"
+    ? [name, `${cmd} ${declaredTierFlag}`]
+    : [name, cmd]
+);
 
 // Startup assertions: guard against silent empty-tier or typo bugs caused by
 // merge conflicts or destructuring errors in the tier arrays above.

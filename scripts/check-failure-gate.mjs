@@ -15,6 +15,13 @@
  *       — that is --stubs-only's job.
  *       Exits 1 if any non-compliant files found.
  *
+ *       Optional flag: --declared-tier <tier>
+ *           When provided, also errors if any plan file's **Command:** tier is
+ *           lighter than the declared tier. This enforces the ceiling rule:
+ *           an agent must never run a heavier tier than the plan allows.
+ *           Accepted values: test-fast, test-standard, test-standard-plus, test-heavy
+ *           Example: node scripts/check-failure-gate.mjs --declared-tier test-standard
+ *
  *   --fix-stub
  *       Appends missing sections / inserts missing required inner lines.
  *       Cannot fix invalid tier values — those require human intervention.
@@ -26,7 +33,7 @@
  *       lines. Exits 0 (warnings only).
  *
  * Usage:
- *   node scripts/check-failure-gate.mjs [--fix-stub | --stubs-only]
+ *   node scripts/check-failure-gate.mjs [--fix-stub | --stubs-only] [--declared-tier <tier>]
  */
 
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
@@ -43,6 +50,9 @@ const VALID_TIERS = new Set([
   "test-standard-plus",
   "test-heavy",
 ]);
+
+// Ordered lightest → heaviest. Used to detect ceiling violations.
+const TIER_ORDER = ["test-fast", "test-standard", "test-standard-plus", "test-heavy"];
 
 const STUB_PREEXISTING = `\n## Pre-existing failures to ignore\nNone known at plan time. Treat every failure as a potential regression.\n\n**Flaky-test rule:** If a test fails, retry it 3× in isolation before concluding\nit is a regression you caused. Only treat a consistent 3/3 failure as your\nresponsibility.\n`;
 
@@ -69,6 +79,19 @@ const MODE =
     : args.includes("--stubs-only")
     ? "stubs-only"
     : "strict";
+
+// --declared-tier <tier>: when set in strict mode, any plan whose **Command:**
+// tier is lighter than this value is flagged as a ceiling violation.
+const declaredTierArgIdx = args.indexOf("--declared-tier");
+const DECLARED_TIER =
+  declaredTierArgIdx >= 0 ? (args[declaredTierArgIdx + 1] ?? null) : null;
+
+if (DECLARED_TIER !== null && !VALID_TIERS.has(DECLARED_TIER)) {
+  console.error(
+    `[check-failure-gate] --declared-tier value "${DECLARED_TIER}" is not a valid tier. Must be one of: ${TIER_ORDER.join(", ")}`
+  );
+  process.exit(2);
+}
 
 // ---------------------------------------------------------------------------
 // File discovery
@@ -257,6 +280,24 @@ function analyseFile(filePath, mode) {
         `## Validation has invalid tier value "${found}" — must be one of: ${[...VALID_TIERS].join(", ")}`
       );
     }
+
+    // Ceiling check: if --declared-tier was given, the plan's **Command:** must
+    // not be lighter than the tier being run. A lighter plan tier means the
+    // agent escalated beyond what the plan allows.
+    if (DECLARED_TIER && !invalidTier) {
+      const tierMatch = sectionBody.match(/\*\*Command:\*\*\s*`?([^`\n]+)`?/);
+      const planTier = tierMatch ? tierMatch[1].trim() : null;
+      if (planTier && VALID_TIERS.has(planTier)) {
+        const planIdx = TIER_ORDER.indexOf(planTier);
+        const declaredIdx = TIER_ORDER.indexOf(DECLARED_TIER);
+        if (planIdx < declaredIdx) {
+          issues.push(
+            `ceiling violation: plan declares "${planTier}" but agent is running "${DECLARED_TIER}" (heavier) — never escalate beyond the plan's **Command:** ceiling`
+          );
+        }
+      }
+    }
+
     return issues;
   }
 
