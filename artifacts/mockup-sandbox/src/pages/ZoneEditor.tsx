@@ -736,6 +736,9 @@ export function ZoneEditor() {
   const tfRef = useRef(tf);
   const zonesRef = useRef(zones);
   const dragZoneRef = useRef<Zone | null>(null);
+  const isDraggingRef = useRef<boolean>(false);
+  const dragBaseRef = useRef<Zone | null>(null);
+  const fetchIdRef = useRef(0);
   const modeRef = useRef(mode);
   const selectedIdsRef = useRef(selectedIds);
   const svgInnerRef = useRef(svgInner);
@@ -899,12 +902,18 @@ export function ZoneEditor() {
   );
 
   const fetchZones = useCallback(async () => {
+    // Stamp this request so stale responses can be detected and discarded.
+    const myId = ++fetchIdRef.current;
     setLoading(true);
     setLoadError("");
     try {
       const res = await fetch(`${API_BASE}/warehouse-zones`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      // Discard the response if a newer fetch has already started, or if a
+      // drag/commit is still in-flight (isDraggingRef covers both the gesture
+      // window and the PATCH commit window up to the authoritative refetch).
+      if (myId !== fetchIdRef.current || isDraggingRef.current) return;
       setZones(data.zones ?? []);
       setDragZone(null);
       // Also refresh coverage stats (non-critical — suppress errors)
@@ -915,9 +924,11 @@ export function ZoneEditor() {
         })
         .catch(() => {});
     } catch {
-      setLoadError("Failed to load zones — is the API server running?");
+      if (myId === fetchIdRef.current) {
+        setLoadError("Failed to load zones — is the API server running?");
+      }
     } finally {
-      setLoading(false);
+      if (myId === fetchIdRef.current) setLoading(false);
     }
   }, []);
 
@@ -2057,7 +2068,7 @@ export function ZoneEditor() {
       }
 
       if (state.t === "move") {
-        const base = zonesRef.current.find((z) => z.id === state.id);
+        const base = dragBaseRef.current ?? zonesRef.current.find((z) => z.id === state.id);
         if (!base) return;
         const updated = { ...base, svgX: p.x - state.ox, svgY: p.y - state.oy };
         dragZoneRef.current = updated;
@@ -2066,7 +2077,7 @@ export function ZoneEditor() {
       }
 
       if (state.t === "resize") {
-        const base = zonesRef.current.find((z) => z.id === state.id);
+        const base = dragBaseRef.current ?? zonesRef.current.find((z) => z.id === state.id);
         if (!base) return;
         const minSvg = MIN_ZONE_PX / tfRef.current.s;
         let updated: Zone;
@@ -2140,9 +2151,25 @@ export function ZoneEditor() {
         return;
       }
 
-      if ((state.t === "move" || state.t === "resize") && dragZoneRef.current) {
+      if (state.t === "move" || state.t === "resize") {
+        // Capture and clear geometry refs synchronously.
+        const base = dragBaseRef.current;
+        dragBaseRef.current = null;
         const zone = dragZoneRef.current;
-        const original = zonesRef.current.find((z) => z.id === zone.id);
+        dragZoneRef.current = null;
+
+        if (!zone) {
+          // No mousemove occurred (plain click) — clear the guard immediately.
+          isDraggingRef.current = false;
+          return;
+        }
+
+        // Keep isDraggingRef=true through the entire PATCH + commit window so
+        // any stale in-flight fetchZones response cannot overwrite the overlay
+        // while the PATCH is pending or between the PATCH and the authoritative
+        // refetch. The generation counter inside fetchZones rejects responses
+        // that are older than the final authoritative call.
+        const original = base ?? zonesRef.current.find((z) => z.id === zone.id);
         try {
           if (state.t === "move") {
             await patchZone(zone.id, { svgX: zone.svgX, svgY: zone.svgY });
@@ -2153,13 +2180,17 @@ export function ZoneEditor() {
             if (original) pushUndo({ type: "resize", id: zone.id, before: { svgX: original.svgX, svgY: original.svgY, svgWidth: original.svgWidth, svgHeight: original.svgHeight }, after: { svgX: zone.svgX, svgY: zone.svgY, svgWidth: zone.svgWidth, svgHeight: zone.svgHeight } });
             toast.success("Size saved");
           }
-          await fetch(`${API_BASE}/warehouse-zones`)
-            .then((r) => r.json())
-            .then((d) => {
-              setZones(d.zones ?? []);
-              setDragZone(null);
-            });
+          // Optimistically commit the dragged geometry so the zone stays in
+          // place even if the authoritative refetch is slow.
+          setZones((prev) => prev.map((z) => z.id === zone.id ? { ...z, svgX: zone.svgX, svgY: zone.svgY, svgWidth: zone.svgWidth, svgHeight: zone.svgHeight } : z));
+          setDragZone(null);
+          // Clear the guard just before the authoritative refetch so fetchZones
+          // can update zones. Any older in-flight response is rejected by the
+          // generation counter (myId !== fetchIdRef.current) inside fetchZones.
+          isDraggingRef.current = false;
+          await fetchZones();
         } catch (err) {
+          isDraggingRef.current = false;
           setDragZone(null);
           toast.error(err instanceof Error ? err.message : String(err));
         }
@@ -2218,7 +2249,7 @@ export function ZoneEditor() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp as EventListener);
     };
-  }, [getSvgPt, patchZone, pushUndo, setForm]);
+  }, [fetchZones, getSvgPt, patchZone, pushUndo, setForm]);
 
   // ── React event handlers (attached to SVG element) ──────────────────────────
   const onSvgMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -2308,6 +2339,8 @@ export function ZoneEditor() {
     setSelectionOrder([zone.id]);
     setPendingRect(null);
     const p = getSvgPt(e.clientX, e.clientY);
+    dragBaseRef.current = zone;
+    isDraggingRef.current = true;
     ixRef.current = {
       t: "move",
       id: zone.id,
@@ -2325,6 +2358,8 @@ export function ZoneEditor() {
     if (e.button !== 0) return;
     // Cancel any pending auto-save so the resize PATCH doesn't interleave with it
     if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
+    dragBaseRef.current = zone;
+    isDraggingRef.current = true;
     const anchor = ANCHOR[handle](zone);
     ixRef.current = {
       t: "resize",
