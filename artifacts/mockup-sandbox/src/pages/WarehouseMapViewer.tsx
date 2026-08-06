@@ -270,7 +270,7 @@ const styles = {
     zIndex: 10,
   },
   backLink: {
-    color: "#7dd3fc",
+    color: "#1e3a5f",
     textDecoration: "none",
     fontSize: 12,
     fontWeight: 500,
