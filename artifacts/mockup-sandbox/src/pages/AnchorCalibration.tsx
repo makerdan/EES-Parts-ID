@@ -456,9 +456,9 @@ export function AnchorCalibration() {
       `}</style>
       {/* ── Banner ──────────────────────────────────────────────────────────── */}
       <div style={styles.banner}>
-        <a href="/__mockup" style={styles.backLink}>← Internal Tools</a>
+        <a href="/__mockup" style={styles.backLink}>← Admin Tools</a>
         <span style={{ fontWeight: 600 }}>
-          ⚠ DEV TOOL — Anchor Calibration — internal use only
+          Admin — Anchor Calibration
         </span>
         {loadError && <span style={styles.errorPill}>⚠ {loadError}</span>}
         {loadMfaRequired && (
@@ -784,21 +784,21 @@ const styles = {
     alignItems: "center",
     gap: 12,
     padding: "6px 16px",
-    background: "#7c3aed",
+    background: "#1e293b",
     color: "white",
     fontSize: 12,
     flexShrink: 0,
     zIndex: 10,
   },
   backLink: {
-    color: "#1e3a5f",
+    color: "#cbd5e1",
     textDecoration: "none",
     fontSize: 12,
     fontWeight: 500,
     padding: "2px 8px",
     borderRadius: 4,
-    border: "1px solid #38bdf8",
-    background: "#ffffff",
+    border: "1px solid #475569",
+    background: "rgba(255,255,255,0.08)",
     whiteSpace: "nowrap" as const,
     marginRight: 4,
   },

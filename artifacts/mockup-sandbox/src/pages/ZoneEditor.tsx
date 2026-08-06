@@ -2488,13 +2488,13 @@ export function ZoneEditor() {
         </div>
       )}
 
-      {/* ── Dev-tool banner ─────────────────────────────────────────────────── */}
+      {/* ── Admin banner ────────────────────────────────────────────────────── */}
       <div style={styles.banner}>
         {/* ── Row 1: mode buttons + controls ────────────────────────────────── */}
         <div style={styles.bannerRow}>
-        <a href="/__mockup" style={styles.backLink}>← Internal Tools</a>
+        <a href="/__mockup" style={styles.backLink}>← Admin Tools</a>
         <span style={{ fontWeight: 600 }}>
-          ⚠ DEV TOOL — Warehouse Zone Editor — internal use only
+          Admin — Zone Editor
         </span>
         <div style={styles.modeBar}>
           <ModeBtn active={mode === "pan"} onClick={() => { setMode("pan"); }}>
@@ -3831,7 +3831,7 @@ const styles = {
   banner: {
     display: "flex",
     flexDirection: "column" as const,
-    background: "#7c3aed",
+    background: "#1e293b",
     color: "white",
     fontSize: 12,
     flexShrink: 0,
@@ -3844,14 +3844,14 @@ const styles = {
     padding: "6px 16px",
   },
   backLink: {
-    color: "#1e3a5f",
+    color: "#cbd5e1",
     textDecoration: "none",
     fontSize: 12,
     fontWeight: 500,
     padding: "2px 8px",
     borderRadius: 4,
-    border: "1px solid #38bdf8",
-    background: "#ffffff",
+    border: "1px solid #475569",
+    background: "rgba(255,255,255,0.08)",
     whiteSpace: "nowrap" as const,
     marginRight: 4,
   },
