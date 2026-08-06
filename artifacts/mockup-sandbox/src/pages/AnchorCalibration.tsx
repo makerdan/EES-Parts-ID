@@ -583,6 +583,9 @@ export function AnchorCalibration() {
                     />
                   </div>
                 </div>
+                <p style={styles.fieldHint}>
+                  Click the map near a zone corner to auto-fill. If the fields stay blank after placing the pin, try a spot closer to a corner.
+                </p>
 
                 <div style={styles.actionRow}>
                   <button
@@ -906,6 +909,12 @@ const styles = {
   worldRow: {
     display: "flex",
     gap: 8,
+  },
+  fieldHint: {
+    margin: "4px 0 8px",
+    fontSize: 11,
+    color: "#888",
+    lineHeight: 1.5,
   },
   actionRow: {
     display: "flex",

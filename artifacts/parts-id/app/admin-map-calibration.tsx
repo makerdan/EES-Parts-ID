@@ -910,6 +910,9 @@ export default function AdminMapCalibrationScreen() {
                     />
                   </View>
                 </View>
+                <Text style={[styles.hint, { color: colors.mutedForeground }]}>
+                  Tap the map near a zone corner to auto-fill. If the fields stay blank after placing the pin, try a spot closer to a corner.
+                </Text>
 
                 {/* Per-slot Save button — shown when slot is ready */}
                 {ready && (
@@ -1125,6 +1128,7 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
   },
   worldRow: { flexDirection: "row" },
+  hint: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 15, marginTop: 6 },
   warnCard: {
     flexDirection: "row",
     alignItems: "flex-start",
