@@ -577,6 +577,24 @@ export default function AdminMapCalibrationScreen() {
                   </G>
                 </G>
               )}
+              {/* Faint zone overlay in edit mode — helps the admin aim near a corner */}
+              {!overlayTransformStr && zones.length > 0 && (
+                <G transform={`translate(${zoneAlignment.translateX}, ${zoneAlignment.translateY}) scale(${zoneAlignment.scale})`}>
+                  {zones.slice(0, 200).map((zone) => (
+                    <Rect
+                      key={zone.id}
+                      x={zone.svgX}
+                      y={zone.svgY}
+                      width={zone.svgWidth}
+                      height={zone.svgHeight}
+                      fill="rgba(0,112,255,0.06)"
+                      stroke="#0070ff"
+                      strokeWidth={6}
+                      strokeOpacity={0.3}
+                    />
+                  ))}
+                </G>
+              )}
               {/* Anchor point markers */}
               {([0, 1, 2] as const).map((idx) => {
                 const coord = svgCoords[idx];
@@ -914,6 +932,13 @@ export default function AdminMapCalibrationScreen() {
                   Tap the map near a zone corner to auto-fill. If the fields stay blank after placing the pin, try a spot closer to a corner.
                 </Text>
 
+                {/* No-snap helper — shown when a pin is placed but Zone X/Y weren't auto-filled */}
+                {coord !== null && (form.worldXStr === "" || form.worldYStr === "") && (
+                  <Text style={[styles.noSnapHint, { color: colors.mutedForeground }]}>
+                    No nearby zone corner found — type the Zone X / Zone Y coordinates from your Zone Editor.
+                  </Text>
+                )}
+
                 {/* Per-slot Save button — shown when slot is ready */}
                 {ready && (
                   <View style={styles.saveSlotRow}>
@@ -1194,4 +1219,5 @@ const styles = StyleSheet.create({
   },
   saveSlotBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   saveSlotError: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+  noSnapHint: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 16 },
 });

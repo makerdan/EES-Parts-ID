@@ -780,3 +780,178 @@ describe("Multi-slot save isolation — refetch must not wipe unsaved local coor
     expect(activeTree.queryByText(/x:\s*100\.0/)).not.toBeNull();
   });
 });
+
+// =============================================================================
+// Zone corner snap — non-empty zones pre-fill Zone X/Y on tap
+// =============================================================================
+
+describe("Zone corner snap — tap near a corner fills Zone X/Y", () => {
+  const { findNearestZoneCorner: mockFindNearest } = require("@/utils/nearestZoneCorner") as {
+    findNearestZoneCorner: jest.Mock;
+  };
+  const { useWarehouseZones: mockUseWarehouseZones } = require("@/hooks/useWarehouseZones") as {
+    useWarehouseZones: jest.Mock;
+  };
+
+  const TEST_ZONE = {
+    id: 1, aisleId: "A", sectionNum: 1, isInventory: true,
+    svgX: 100, svgY: 100, svgWidth: 50, svgHeight: 50,
+    sortOrder: 0, createdAt: "", updatedAt: "",
+  };
+
+  beforeEach(() => {
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock; hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue({ xml: "<svg/>", contentViewBox: null, hash: "test" });
+    floorPlanCache.hasCachedData.mockReturnValue(true);
+    mockUseWarehouseZones.mockReturnValue({
+      zones: [TEST_ZONE],
+      alignment: { translateX: 0, translateY: 0, scale: 1 },
+      alignmentStale: false, anchors: [], loading: false, error: false,
+      refetch: mockRefetchZones,
+    });
+    require("react-native-gesture-handler").__resetTap();
+  });
+
+  afterEach(() => {
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock; hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue(null);
+    floorPlanCache.hasCachedData.mockReturnValue(false);
+    mockUseWarehouseZones.mockReturnValue({
+      zones: [],
+      alignment: { translateX: 0, translateY: 0, scale: 1 },
+      alignmentStale: false, anchors: [], loading: false, error: false,
+      refetch: mockRefetchZones,
+    });
+    require("react-native-gesture-handler").__resetTap();
+  });
+
+  it("fills Zone X and Zone Y inputs when findNearestZoneCorner returns a match", async () => {
+    // Override findNearestZoneCorner for this test only.
+    // We get the mock via require() so we reference the same jest.fn() instance
+    // that was registered in the top-level jest.mock() call.
+    const { findNearestZoneCorner: findNearestMock } = require("@/utils/nearestZoneCorner") as {
+      findNearestZoneCorner: jest.Mock;
+    };
+    findNearestMock.mockReturnValueOnce({ worldX: 150, worldY: 200, distance: 5, zone: TEST_ZONE });
+
+    activeTree = await renderScreen([]);
+
+    // Enter pick mode for slot 1
+    const placeButtons = activeTree.getAllByText("Place");
+    await act(async () => { fireEvent.press(placeButtons[0]!); await rawFlush(); });
+
+    // Simulate a tap on the map
+    await act(async () => {
+      require("react-native-gesture-handler").__simulateTap({ x: 50, y: 50 });
+      await rawFlush();
+    });
+
+    // findNearestZoneCorner must have been called (confirms tap fired through handleMapTap)
+    expect(findNearestMock).toHaveBeenCalled();
+
+    // When snap succeeds both worldXStr and worldYStr are valid numbers,
+    // so the slot transitions to "ready" and shows the "✓ ready" badge.
+    // This is a reliable proxy for the form state being updated.
+    expect(activeTree.queryByText(/✓ ready/)).not.toBeNull();
+  });
+
+  it("does NOT fill Zone X/Y when findNearestZoneCorner returns null", async () => {
+    // mockFindNearest defaults to null — no extra setup needed
+
+    activeTree = await renderScreen([]);
+
+    const placeButtons = activeTree.getAllByText("Place");
+    await act(async () => { fireEvent.press(placeButtons[0]!); await rawFlush(); });
+
+    await act(async () => {
+      require("react-native-gesture-handler").__simulateTap({ x: 50, y: 50 });
+      await rawFlush();
+    });
+
+    // Slot should NOT be ready (Zone X/Y fields still empty)
+    expect(activeTree.queryByText(/✓ ready/)).toBeNull();
+    // No snapped display values
+    expect(activeTree.queryByDisplayValue("150")).toBeNull();
+  });
+});
+
+// =============================================================================
+// Inline hint — no nearby zone corner after pin placement
+// =============================================================================
+
+describe("Inline hint when Zone X/Y empty after pin placement", () => {
+  beforeEach(() => {
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock; hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue({ xml: "<svg/>", contentViewBox: null, hash: "test" });
+    floorPlanCache.hasCachedData.mockReturnValue(true);
+    require("react-native-gesture-handler").__resetTap();
+  });
+
+  afterEach(() => {
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock; hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue(null);
+    floorPlanCache.hasCachedData.mockReturnValue(false);
+    require("react-native-gesture-handler").__resetTap();
+  });
+
+  it("shows hint after pin placement when no zone corner is nearby (findNearestZoneCorner returns null)", async () => {
+    activeTree = await renderScreen([]);
+
+    const placeButtons = activeTree.getAllByText("Place");
+    await act(async () => { fireEvent.press(placeButtons[0]!); await rawFlush(); });
+
+    await act(async () => {
+      require("react-native-gesture-handler").__simulateTap({ x: 50, y: 50 });
+      await rawFlush();
+    });
+
+    expect(activeTree.queryByText(/No nearby zone corner found/i)).not.toBeNull();
+  });
+
+  it("hint disappears once snap fills both Zone X and Zone Y", async () => {
+    activeTree = await renderScreen([]);
+
+    // First tap: findNearestZoneCorner returns null (default) → hint appears
+    const placeButtons = activeTree.getAllByText("Place");
+    await act(async () => { fireEvent.press(placeButtons[0]!); await rawFlush(); });
+    await act(async () => {
+      require("react-native-gesture-handler").__simulateTap({ x: 50, y: 50 });
+      await rawFlush();
+    });
+
+    expect(activeTree.queryByText(/No nearby zone corner found/i)).not.toBeNull();
+
+    // Second tap: snap succeeds → both worldXStr and worldYStr are filled → hint gone.
+    // Re-enter pick mode first (slot 1 now shows "Re-place").
+    const rePlaceBtn = activeTree.queryByText("Re-place");
+    expect(rePlaceBtn).not.toBeNull();
+
+    const { findNearestZoneCorner: findNearestMock } = require("@/utils/nearestZoneCorner") as {
+      findNearestZoneCorner: jest.Mock;
+    };
+    findNearestMock.mockReturnValueOnce({ worldX: 100, worldY: 200, distance: 3, zone: { id: 99 } });
+
+    await act(async () => { fireEvent.press(rePlaceBtn!); await rawFlush(); });
+    await act(async () => {
+      require("react-native-gesture-handler").__simulateTap({ x: 50, y: 50 });
+      await rawFlush();
+    });
+
+    // Hint must be gone — both fields are now non-empty (snap filled them)
+    expect(activeTree.queryByText(/No nearby zone corner found/i)).toBeNull();
+  });
+
+  it("hint not shown before any pin is placed", async () => {
+    activeTree = await renderScreen([]);
+    // No tap — coord is null for all slots
+    expect(activeTree.queryByText(/No nearby zone corner found/i)).toBeNull();
+  });
+});
