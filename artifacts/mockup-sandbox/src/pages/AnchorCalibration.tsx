@@ -795,7 +795,7 @@ const styles = {
     padding: "2px 8px",
     borderRadius: 4,
     border: "1px solid #38bdf8",
-    background: "rgba(56,189,248,0.10)",
+    background: "#ffffff",
     whiteSpace: "nowrap" as const,
     marginRight: 4,
   },
