@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   Pressable,
   RefreshControl,
@@ -166,6 +167,14 @@ export default function AdminDashboardScreen() {
   "use no memo";
   const colors = useColors();
   const { isLoading, adminToken } = useApp();
+
+  // Derived at render time so that tests can control EXPO_PUBLIC_DOMAIN via process.env.
+  const zoneEditorUrl: string | null = process.env.EXPO_PUBLIC_DOMAIN
+    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/__mockup/zone-editor`
+    : null;
+  const warehouseMapUrl: string | null = process.env.EXPO_PUBLIC_DOMAIN
+    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/__mockup/warehouse-map`
+    : null;
   const { reportNetworkFailure } = useApiHealth();
   const router = useRouter();
 
@@ -373,6 +382,45 @@ export default function AdminDashboardScreen() {
             </Text>
             <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
           </Pressable>
+
+          {/* Map Tools — only shown when EXPO_PUBLIC_DOMAIN is configured */}
+          {(zoneEditorUrl !== null || warehouseMapUrl !== null) && (
+            <>
+              <SectionHeader title="Map Tools" colors={colors} />
+              {zoneEditorUrl !== null && (
+                <Pressable
+                  onPress={() => Linking.openURL(zoneEditorUrl!)}
+                  style={({ pressed }) => [
+                    styles.calibrationBtn,
+                    { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+                  ]}
+                  accessibilityLabel="Open Zone Editor"
+                >
+                  <Feather name="edit-2" size={16} color={colors.foreground} />
+                  <Text style={[styles.calibrationBtnText, { color: colors.foreground }]}>
+                    Zone Editor
+                  </Text>
+                  <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+                </Pressable>
+              )}
+              {warehouseMapUrl !== null && (
+                <Pressable
+                  onPress={() => Linking.openURL(warehouseMapUrl!)}
+                  style={({ pressed }) => [
+                    styles.calibrationBtn,
+                    { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+                  ]}
+                  accessibilityLabel="Open Warehouse Map"
+                >
+                  <Feather name="map" size={16} color={colors.foreground} />
+                  <Text style={[styles.calibrationBtnText, { color: colors.foreground }]}>
+                    Warehouse Map
+                  </Text>
+                  <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+                </Pressable>
+              )}
+            </>
+          )}
 
           <View style={{ height: 32 }} />
         </ScrollView>
