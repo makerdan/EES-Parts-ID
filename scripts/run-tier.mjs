@@ -41,6 +41,7 @@ const STANDARD_EXTRA = [
   ["env-check", "pnpm --filter @workspace/scripts env:check"],
   ["spec-check-tests", "pnpm --filter @workspace/api-spec test"],
   ["test", "pnpm test"],
+  ["serve-proxy-smoke", "pnpm --filter @workspace/parts-id run test:serve-proxy"],
 ];
 
 const STANDARD_PLUS_EXTRA = [
