@@ -599,6 +599,83 @@ describe("createUseColorsMock() smoke — every key from the real useColors hook
 });
 
 /**
+ * Smoke test for createUseColorsMock() — named export coverage.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * createUseColorsMock() must expose a function for every named export of
+ * hooks/useColors.ts.  When `useIsDark` was added to the hook it was not
+ * immediately added to the mock, silently breaking three map test suites with
+ * confusing "useIsDark is not a function" errors deep inside unrelated files.
+ *
+ * The palette-key test above guards against color-token drift, but it only
+ * inspects the *return value* of useColors() — it cannot catch a missing
+ * top-level export like useIsDark that is never called in the test itself.
+ *
+ * HOW IT WORKS
+ * ------------
+ * This test loads the real @/hooks/useColors module via jest.requireActual and
+ * enumerates every export whose runtime value is a function.  Those names
+ * become the expected set.  The mock is loaded via createUseColorsMock() and
+ * each expected name is asserted to be a function.  This covers all TypeScript
+ * export forms — `export function`, `export const`, `export { … }`, re-exports
+ * — not just literal `export function` declarations.  When a developer adds a
+ * new exported hook to useColors.ts, this test fails immediately at the mock
+ * layer with a clear message — no manual update to this test is required.
+ *
+ * HOW TO FIX A FAILURE
+ * --------------------
+ * If this test fails with "Missing function exports in createUseColorsMock(): [X, ...]":
+ *   1. Add X as a function (e.g. `X: () => <sensible default>`) to the object
+ *      returned by createUseColorsMock() in mapMocks.ts.
+ * That's it.  The test itself never needs updating.
+ */
+describe("createUseColorsMock() named-export coverage — every function exported by useColors.ts is present in the mock", () => {
+  let mock: Record<string, unknown>;
+  let expectedFnNames: string[];
+
+  beforeAll(() => {
+    const actual = jest.requireActual<Record<string, unknown>>(
+      "@/hooks/useColors",
+    );
+
+    expectedFnNames = Object.entries(actual)
+      .filter(([, v]) => typeof v === "function")
+      .map(([k]) => k);
+
+    mock = createUseColorsMock() as Record<string, unknown>;
+  });
+
+  it("hooks/useColors.ts exports at least one function (sanity check)", () => {
+    expect(expectedFnNames.length).toBeGreaterThan(0);
+  });
+
+  it("createUseColorsMock() returns an object (sanity check)", () => {
+    expect(typeof mock).toBe("object");
+    expect(mock).not.toBeNull();
+  });
+
+  it("mock has a function for every named export of hooks/useColors.ts", () => {
+    const missing = expectedFnNames.filter(
+      (name) => typeof mock[name] !== "function",
+    );
+
+    if (missing.length > 0) {
+      throw new Error(
+        `The following hooks/useColors.ts function exports are missing or not a ` +
+          `function in createUseColorsMock():\n` +
+          missing.map((n) => `  • ${n} (got: ${typeof mock[n]})`).join("\n") +
+          `\n\nFix: add each missing export as a function to the object returned ` +
+          `by createUseColorsMock() in mapMocks.ts.\n` +
+          `Example: ${missing[0]}: () => false`,
+      );
+    }
+
+    expect(missing).toEqual([]);
+  });
+});
+
+/**
  * Smoke test for createFloorPlanCacheMock().
  *
  * WHY THIS EXISTS
