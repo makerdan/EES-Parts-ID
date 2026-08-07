@@ -96,6 +96,8 @@ export default function EditItemScreen() {
   const [keywords, setKeywords] = useState<Array<string>>(item?.aiKeywords ?? []);
   const [newKeyword, setNewKeyword] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteErrorMsg, setDeleteErrorMsg] = useState<string | null>(null);
   const [fieldSaveErrors, setFieldSaveErrors] = useState<{
     description?: string;
     bins?: string;
@@ -358,9 +360,9 @@ export default function EditItemScreen() {
 
   const handleDeleteItem = useCallback(() => {
     const current = itemRef.current;
+    setDeleteErrorMsg(null);
     if (!current || !adminToken) {
-      setErrorMsg("Admin session expired. Re-unlock and try again.");
-      setSaveStatus("error");
+      setDeleteErrorMsg("Admin session expired. Re-unlock and try again.");
       return;
     }
     Alert.alert(
@@ -372,6 +374,7 @@ export default function EditItemScreen() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
+            setDeleting(true);
             try {
               const res = await fetch(`${API_BASE}/inventory/${current.id}`, {
                 method: "DELETE",
@@ -379,8 +382,8 @@ export default function EditItemScreen() {
               });
               if (!res.ok) {
                 const data = await res.json().catch(() => ({})) as { error?: string };
-                setErrorMsg(data.error ?? `Could not delete part (HTTP ${res.status}).`);
-                setSaveStatus("error");
+                setDeleteErrorMsg(data.error ?? `Could not delete part (HTTP ${res.status}).`);
+                setDeleting(false);
                 return;
               }
               // Synchronously remove the item from all in-memory caches so
@@ -393,8 +396,8 @@ export default function EditItemScreen() {
               });
               router.back();
             } catch {
-              setErrorMsg("Could not delete the part. Check your connection and try again.");
-              setSaveStatus("error");
+              setDeleteErrorMsg("Could not delete the part. Check your connection and try again.");
+              setDeleting(false);
             }
           },
         },
@@ -1342,15 +1345,18 @@ export default function EditItemScreen() {
         </ScrollView>
 
         {/* Footer */}
-        <View style={[s.footer, { borderTopColor: colors.border }]}>
+        <View style={{ borderTopWidth: 1, borderTopColor: colors.border }}>
+          <View style={s.footer}>
           {adminToken ? (
             <Pressable
               onPress={handleDeleteItem}
-              disabled={isSaving}
-              style={[s.deleteBtn, { backgroundColor: colors.destructive + "18", borderColor: colors.destructive + "44", opacity: isSaving ? 0.4 : 1 }]}
+              disabled={isSaving || deleting}
+              style={[s.deleteBtn, { backgroundColor: colors.destructive + "18", borderColor: colors.destructive + "44", opacity: isSaving || deleting ? 0.4 : 1 }]}
               accessibilityLabel="Delete this part"
             >
-              <Feather name="trash-2" size={14} color={colors.destructive} />
+              {deleting
+                ? <ActivityIndicator size="small" color={colors.destructive} />
+                : <Feather name="trash-2" size={14} color={colors.destructive} />}
             </Pressable>
           ) : null}
           <Pressable
@@ -1380,6 +1386,10 @@ export default function EditItemScreen() {
               </Text>
             )}
           </Pressable>
+          </View>
+          {deleteErrorMsg ? (
+            <Text style={[s.deleteErrorText, { color: colors.destructive }]}>{deleteErrorMsg}</Text>
+          ) : null}
         </View>
       </KeyboardAvoidingView>
 
@@ -1553,7 +1563,8 @@ const s = StyleSheet.create({
   },
   errorBanner: { marginTop: 16, borderRadius: 8, borderWidth: 1, padding: 12 },
   errorText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
-  footer: { flexDirection: "row", padding: 16, borderTopWidth: 1, gap: 10 },
+  footer: { flexDirection: "row", padding: 16, gap: 10 },
+  deleteErrorText: { fontSize: 12, fontFamily: "Inter_500Medium", textAlign: "center", paddingHorizontal: 16, paddingBottom: 10 },
   deleteBtn: { alignItems: "center", justifyContent: "center", borderWidth: 1, borderRadius: 8, paddingVertical: 14, paddingHorizontal: 12 },
   cancelBtn: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 14, alignItems: "center" },
   cancelBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
