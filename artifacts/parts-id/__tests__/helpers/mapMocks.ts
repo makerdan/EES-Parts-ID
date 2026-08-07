@@ -110,7 +110,8 @@ export function createUseColorsMock(): object {
     };
   }>("@/constants/colors").default;
   return {
-    useColors: () => ({ ...colors.light, radius: colors.radius }),
+    useColors:  () => ({ ...colors.light, radius: colors.radius }),
+    useIsDark:  () => false,
   };
 }
 
