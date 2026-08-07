@@ -1388,7 +1388,7 @@ export default function EditItemScreen() {
           </Pressable>
           </View>
           {deleteErrorMsg ? (
-            <Text style={[s.deleteErrorText, { color: colors.destructive }]}>{deleteErrorMsg}</Text>
+            <Text testID="delete-error-msg" style={[s.deleteErrorText, { color: colors.destructive }]}>{deleteErrorMsg}</Text>
           ) : null}
         </View>
       </KeyboardAvoidingView>

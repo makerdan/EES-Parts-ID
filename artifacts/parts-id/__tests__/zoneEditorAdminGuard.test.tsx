@@ -236,7 +236,7 @@ describe("MapScreen — Zone Editor button with domain set and isAdmin=true", ()
   it("pressing the button calls Linking.openURL with the correct URL", async () => {
     const tree = await renderMapScreen(true);
     const [btn] = findZoneEditorButton(tree.root);
-    await act(async () => { btn.props.onPress(); });
+    await act(async () => { btn!.props.onPress(); });
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Linking } = require("react-native") as typeof import("react-native");
     expect(Linking.openURL).toHaveBeenCalledWith(
@@ -250,7 +250,7 @@ describe("MapScreen — Zone Editor button with domain set and isAdmin=true", ()
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { setStringAsync } = require("expo-clipboard") as { setStringAsync: jest.Mock };
     setStringAsync.mockClear();
-    await act(async () => { btn.props.onPress(); });
+    await act(async () => { btn!.props.onPress(); });
     expect(setStringAsync).not.toHaveBeenCalled();
   });
 });
