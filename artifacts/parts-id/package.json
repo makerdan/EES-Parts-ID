@@ -14,7 +14,8 @@
     "test": "node scripts/run-tests.mjs",
     "lint": "eslint . --ext .ts,.tsx",
     "gen:map": "node ../../scripts/gen-warehouse-map-raw.mjs assets/warehouse-map.svg assets/warehouse-map-raw.ts",
-    "check:bundle-domain": "node scripts/check-bundle-domain.js"
+    "check:bundle-domain": "node scripts/check-bundle-domain.js",
+    "test:serve-proxy": "node scripts/test-serve-proxy.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
