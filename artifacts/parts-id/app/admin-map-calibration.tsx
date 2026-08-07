@@ -583,6 +583,7 @@ export default function AdminMapCalibrationScreen() {
                   {zones.slice(0, 200).map((zone) => (
                     <Rect
                       key={zone.id}
+                      testID="edit-zone-overlay-rect"
                       x={zone.svgX}
                       y={zone.svgY}
                       width={zone.svgWidth}

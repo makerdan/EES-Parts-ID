@@ -955,3 +955,75 @@ describe("Inline hint when Zone X/Y empty after pin placement", () => {
     expect(activeTree.queryByText(/No nearby zone corner found/i)).toBeNull();
   });
 });
+
+// =============================================================================
+// Edit-mode faint zone overlay — regression guard
+// =============================================================================
+// renderMapCard(null) is called in the edit step, so overlayTransformStr is
+// null.  The faint overlay (<Rect> per zone, mocked as "svg-rect") must render
+// when zones is non-empty and must NOT render when zones is empty.
+// Without this guard a refactor of renderMapCard could silently remove the
+// overlay and no existing test would catch it.
+
+describe("Edit-mode faint zone overlay", () => {
+  const { useWarehouseZones: mockUseWarehouseZones } = require("@/hooks/useWarehouseZones") as {
+    useWarehouseZones: jest.Mock;
+  };
+
+  const EDIT_OVERLAY_ZONE = {
+    id: 42, aisleId: "B", sectionNum: 2, isInventory: true,
+    svgX: 50, svgY: 80, svgWidth: 100, svgHeight: 60,
+    sortOrder: 0, createdAt: "", updatedAt: "",
+  };
+
+  beforeEach(() => {
+    // Provide cached SVG so svgXml is truthy and the SVG tree (including zone
+    // overlay Rect elements) actually renders.  Without this, the component
+    // shows the "Loading floor plan…" placeholder and no SVG children exist.
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock; hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue({ xml: "<svg/>", contentViewBox: null, hash: "test-overlay" });
+    floorPlanCache.hasCachedData.mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock; hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue(null);
+    floorPlanCache.hasCachedData.mockReturnValue(false);
+    // Restore the default empty-zones return value so subsequent tests that
+    // rely on the top-level mock behaviour are unaffected.
+    mockUseWarehouseZones.mockReturnValue({
+      zones: [],
+      alignment: { translateX: 0, translateY: 0, scale: 1 },
+      alignmentStale: false, anchors: [], loading: false, error: false,
+      refetch: mockRefetchZones,
+    });
+  });
+
+  it("renders an svg-rect for each zone in the faint overlay when zones is non-empty", async () => {
+    mockUseWarehouseZones.mockReturnValue({
+      zones: [EDIT_OVERLAY_ZONE],
+      alignment: { translateX: 0, translateY: 0, scale: 1 },
+      alignmentStale: false, anchors: [], loading: false, error: false,
+      refetch: mockRefetchZones,
+    });
+
+    activeTree = await renderScreen([]);
+
+    // The faint edit-mode overlay stamps testID="edit-zone-overlay-rect" on each
+    // <Rect> so we can find them without UNSAFE_queryAllByType (not in RTLRN 14).
+    const rects = activeTree.queryAllByTestId("edit-zone-overlay-rect");
+    expect(rects.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders no zone overlay rects when zones is empty", async () => {
+    // Top-level mock already returns zones:[] by default; no extra setup needed.
+    activeTree = await renderScreen([]);
+
+    const rects = activeTree.queryAllByTestId("edit-zone-overlay-rect");
+    expect(rects).toHaveLength(0);
+  });
+});
