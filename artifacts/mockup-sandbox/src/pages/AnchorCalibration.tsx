@@ -49,6 +49,20 @@ export interface MapAnchor {
   updatedAt: string;
 }
 
+interface ApiWarehouseZone {
+  id: number;
+  svgX: number;
+  svgY: number;
+  svgWidth: number;
+  svgHeight: number;
+}
+
+interface ZoneAlignment {
+  translateX: number;
+  translateY: number;
+  scale: number;
+}
+
 interface SlotForm {
   name: string;
   worldXStr: string;
@@ -75,6 +89,9 @@ export function AnchorCalibration() {
   const floorPlanRef = useRef<SVGGElement>(null);
   const [svgInner, setSvgInner] = useState<string>(svgFallbackInner);
   const [tf, setTf] = useState<Transform>({ x: 40, y: 40, s: INITIAL_SCALE });
+
+  const [zones, setZones] = useState<Array<ApiWarehouseZone>>([]);
+  const [zoneAlignment, setZoneAlignment] = useState<ZoneAlignment>({ translateX: 0, translateY: 0, scale: 1 });
 
   const [anchors, setAnchors] = useState<Array<MapAnchor>>([]);
   const [loadError, setLoadError] = useState("");
@@ -179,6 +196,31 @@ export function AnchorCalibration() {
   useEffect(() => {
     void refetchAnchors();
   }, [refetchAnchors]);
+
+  // Fetch zone rectangles and alignment on mount (silently swallow errors).
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [zonesRes, alignRes] = await Promise.all([
+          fetch(`${API_BASE}/warehouse-zones`, { credentials: "include" }),
+          fetch(`${API_BASE}/warehouse-zones/alignment`, { credentials: "include" }),
+        ]);
+        if (zonesRes.ok) {
+          const data = (await zonesRes.json()) as { zones: Array<ApiWarehouseZone> };
+          if (Array.isArray(data.zones)) setZones(data.zones);
+        }
+        if (alignRes.ok) {
+          const data = (await alignRes.json()) as Partial<ZoneAlignment>;
+          const tx = typeof data.translateX === "number" && isFinite(data.translateX) ? data.translateX : 0;
+          const ty = typeof data.translateY === "number" && isFinite(data.translateY) ? data.translateY : 0;
+          const s = typeof data.scale === "number" && isFinite(data.scale) && data.scale > 0 ? data.scale : 1;
+          setZoneAlignment({ translateX: tx, translateY: ty, scale: s });
+        }
+      } catch {
+        /* silently ignore — zones are best-effort */
+      }
+    })();
+  }, []);
 
   // Sync forms + placed coordinates from the saved anchors.
   useEffect(() => {
@@ -725,6 +767,28 @@ export function AnchorCalibration() {
           >
             <g transform={`translate(${tf.x},${tf.y}) scale(${tf.s})`}>
               <g ref={floorPlanRef} pointerEvents="none" />
+
+              {/* Zone overlay — rendered beneath anchor markers */}
+              {zones.length > 0 && (
+                <g
+                  transform={`translate(${zoneAlignment.translateX},${zoneAlignment.translateY}) scale(${zoneAlignment.scale})`}
+                  pointerEvents="none"
+                >
+                  {zones.slice(0, 300).map((z) => (
+                    <rect
+                      key={z.id}
+                      x={z.svgX}
+                      y={z.svgY}
+                      width={z.svgWidth}
+                      height={z.svgHeight}
+                      fill="rgba(0,112,255,0.06)"
+                      stroke="#0070ff"
+                      strokeWidth={1 / tf.s}
+                      pointerEvents="none"
+                    />
+                  ))}
+                </g>
+              )}
 
               {/* Anchor markers */}
               {([0, 1, 2] as const).map((idx) => {
