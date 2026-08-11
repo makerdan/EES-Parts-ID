@@ -10,6 +10,7 @@
 
 import "buffer";
 
+import { useQueryClient } from "@tanstack/react-query";
 import * as DocumentPicker from "expo-document-picker";
 import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -42,6 +43,7 @@ import { performAddToInventory } from "@/utils/addToInventory";
 import { buildResumeHeaders } from "@/utils/aiFallbackHeaders";
 import { API_BASE } from "@/utils/apiBase";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
+import { invalidateListCache } from "@/utils/editItemCache";
 import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
 import { PAGES_PER_CHUNK, splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
 import { performUpdateDescription } from "@/utils/updateDescription";
@@ -108,6 +110,7 @@ export default function CatalogReviewScreen() {
   const { jobId } = useLocalSearchParams<{ jobId?: string }>();
   const { adminToken, logoutAdmin, resumeProgress, setResumeProgress, setPendingInventorySearch } = useApp();
   const { reportNetworkFailure } = useApiHealth();
+  const queryClient = useQueryClient();
 
   type JobSummary = {
     vendor: string;
@@ -377,6 +380,8 @@ export default function CatalogReviewScreen() {
           setResumingId((prev) => (prev === id ? null : prev));
           if (body.status === "done") {
             setFailedJobs((prev) => prev.filter((j) => j.id !== id));
+            void invalidateListCache({ queryClient });
+            void queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
           }
           fetchItems();
         }

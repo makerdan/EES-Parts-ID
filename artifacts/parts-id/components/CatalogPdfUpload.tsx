@@ -24,6 +24,7 @@
 import "buffer";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useQueryClient } from "@tanstack/react-query";
 import { Buffer } from "buffer";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -47,6 +48,7 @@ import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
 import { shouldUseFallback } from "@/utils/aiFallbackHeaders";
 import { API_BASE } from "@/utils/apiBase";
+import { invalidateListCache } from "@/utils/editItemCache";
 import {
   clearPdfPickLogs,
   formatPdfPickLogs,
@@ -189,6 +191,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [hasStoredChunks, setHasStoredChunks] = useState(false);
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+
+  const queryClient = useQueryClient();
+  const queryClientRef = useRef(queryClient);
+  useEffect(() => { queryClientRef.current = queryClient; }, [queryClient]);
   // Set to true when retrying with OpenAI fallback after poe_chain_exhausted.
   const withFallbackRef = useRef(false);
   // Prevents showing the poe_chain_exhausted Alert more than once per job.
@@ -448,7 +454,14 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
                   setAiRawLog(prev => [...prev, ...newEntries].sort((a, b) => a.page - b.page));
                 }
               }
-              if (data.status === "done" || data.status === "failed" || data.status === "cancelled") return;
+              if (data.status === "done" || data.status === "failed" || data.status === "cancelled") {
+                if (data.status === "done") {
+                  const qc = queryClientRef.current;
+                  void invalidateListCache({ queryClient: qc });
+                  void qc.invalidateQueries({ queryKey: ["searchInventory"] });
+                }
+                return;
+              }
             }
           }
         } catch {
