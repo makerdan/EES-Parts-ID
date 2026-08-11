@@ -114,6 +114,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const [dimHeight, setDimHeight] = useState(fmtDim(existingDims?.height));
   const [dimDiameter, setDimDiameter] = useState(fmtDim(existingDims?.diameter));
   const [measureOpen, setMeasureOpen] = useState(false);
+  const [dimensionSaving, setDimensionSaving] = useState(false);
   const [lidarAvailable, setLidarAvailable] = useState(false);
 
   useEffect(() => {
@@ -245,6 +246,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   };
 
   const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
+    if (dimensionSaving) return;
     const current = itemRef.current;
     setMeasureOpen(false);
     setDimLength(fmtDim(dims.length));
@@ -258,6 +260,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       return rest;
     });
     if (!current || !adminToken) return;
+    setDimensionSaving(true);
     try {
       const res = await fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
         method: "PATCH",
@@ -275,8 +278,10 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
     } catch {
       setFieldSaveErrors(prev => ({ ...prev, dimensions: "Could not save dimensions" }));
+    } finally {
+      setDimensionSaving(false);
     }
-  }, [adminToken, queryClient]);
+  }, [adminToken, dimensionSaving, queryClient]);
 
   const handleSaveExpandedDesc = async () => {
     const current = itemRef.current;

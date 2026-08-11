@@ -911,6 +911,10 @@ export default function CatalogReviewScreen() {
           style={s.modalOverlay}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
         >
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => { if (!addingInProgress) { setAddModalPart(null); setDuplicateItem(null); } }}
+          />
           <View style={[s.modalSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={[s.modalHeader, { borderBottomColor: colors.border }]}>
               <Text style={[s.modalTitle, { color: colors.foreground }]}>
