@@ -55,9 +55,52 @@ type ShelfSession = {
 
 const SHELF_SESSION_KEY = "parts_id_shelf_session_v1";
 
-// ── Shelf prefix auto-formatter ────────────────────────────────────────────
-// For all-numeric input, formats as XX-XX-XXX (up to 7 digits).
-// Non-numeric (or mixed) input is passed through unchanged.
+/** Key owned by BulkShelfAssign — used only to detect an in-progress cross-flow session. */
+const BULK_SHELF_ASSIGN_SESSION_KEY = "parts_id_bulk_shelf_session_v1";
+
+// ── BulkShelfAssign cross-flow session validators ──────────────────────────
+// Full nested validation mirrors BulkShelfAssign's own BulkSession shape so
+// malformed or stale blobs — including those with corrupt nested entries —
+// never produce a false cross-flow warning.
+
+const BULK_ROW_SYNC_STATUSES: ReadonlySet<string> = new Set(["pending", "synced", "error"]);
+
+function isValidCrossFlowInventoryItem(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
+  const e = entry as Record<string, unknown>;
+  return typeof e.id === "number" && typeof e.catalog === "string" && typeof e.vendor === "string";
+}
+
+function isValidCrossFlowItemRowState(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    (e.assignedBarcode === null || typeof e.assignedBarcode === "string") &&
+    (e.syncStatus === null || (typeof e.syncStatus === "string" && BULK_ROW_SYNC_STATUSES.has(e.syncStatus))) &&
+    (e.conflictBarcode === null || typeof e.conflictBarcode === "string") &&
+    (e.conflictOwner === null || typeof e.conflictOwner === "string") &&
+    typeof e.flash === "boolean"
+  );
+}
+
+/**
+ * Full shape validation for a BulkShelfAssign session blob.
+ * Validates outer structure, every shelfItems inventory entry, and every
+ * itemRowStates row-state value so malformed nested data is rejected.
+ */
+function isActiveBulkShelfAssignSession(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (
+    typeof v.shelfPrefix !== "string" || v.shelfPrefix.length === 0 ||
+    !Array.isArray(v.shelfItems) ||
+    typeof v.itemRowStates !== "object" || v.itemRowStates === null || Array.isArray(v.itemRowStates) ||
+    (v.targetItemId !== null && typeof v.targetItemId !== "number")
+  ) return false;
+  if (!(v.shelfItems as Array<unknown>).every(isValidCrossFlowInventoryItem)) return false;
+  if (!Object.values(v.itemRowStates as Record<string, unknown>).every(isValidCrossFlowItemRowState)) return false;
+  return true;
+}
 function formatShelfPrefix(raw: string): string {
   const stripped = raw.replace(/-/g, "");
   if (!/^\d*$/.test(stripped)) return raw;
@@ -222,6 +265,8 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   // Session resume banner
   const [resumeSession, setResumeSession] = useState<ShelfSession | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
+  /** True when BulkShelfAssign has an active session that would be silently orphaned. */
+  const [otherFlowActive, setOtherFlowActive] = useState(false);
 
   const updateBarcodesMutation = useUpdateItemBarcodes();
   const { data: inventoryPage } = useListInventory({ limit: 500 });
@@ -262,13 +307,23 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     loadChime(); // synchronous; errors handled internally
   }, []);
 
-  // Check for a saved session on mount
+  // Check for a saved session on mount; also cross-check for an active BulkShelfAssign session.
   useEffect(() => {
     let cancelled = false;
-    loadShelfSession().then(session => {
+    void Promise.all([
+      loadShelfSession(),
+      AsyncStorage.getItem(BULK_SHELF_ASSIGN_SESSION_KEY).catch(() => null),
+    ]).then(([session, otherRaw]) => {
       if (cancelled) return;
       if (session && session.shelfPrefix) {
         setResumeSession(session);
+      }
+      // Show cross-flow warning when the other flow has a valid, non-empty session.
+      try {
+        const other = otherRaw ? (JSON.parse(otherRaw) as unknown) : null;
+        setOtherFlowActive(isActiveBulkShelfAssignSession(other));
+      } catch {
+        setOtherFlowActive(false);
       }
       setSessionChecked(true);
     }).catch(_err => {
@@ -621,6 +676,18 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
 
   return (
     <View>
+      {/* Cross-flow warning banner */}
+      {sessionChecked && otherFlowActive ? (
+        <View style={[apStyles.resumeBanner, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "44" }]}>
+          <Text style={[apStyles.resumeTitle, { color: colors.foreground }]}>
+            ℹ️ In-progress session in another flow
+          </Text>
+          <Text style={[apStyles.resumeSub, { color: colors.mutedForeground }]}>
+            You have an in-progress shelf session in Bulk Assign by Shelf — open it to continue.
+          </Text>
+        </View>
+      ) : null}
+
       {/* Resume session banner */}
       {sessionChecked && resumeSession && !shelfMode ? (
         <View style={[apStyles.resumeBanner, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "44" }]}>

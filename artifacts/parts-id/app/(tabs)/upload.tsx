@@ -3099,6 +3099,19 @@ export default function UploadScreen() {
                         </Pressable>
                       ) : null}
                     </View>
+                    {/* ── Scan to Assign Barcode section heading ── */}
+                    <View style={{ paddingHorizontal: 16, paddingTop: 20, paddingBottom: 4 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+                        <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.mutedForeground, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                          Scan to Assign Barcode
+                        </Text>
+                        <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+                      </View>
+                      <Text style={{ fontSize: 12, fontFamily: "Inter_400Regular", color: colors.mutedForeground, textAlign: "center" }}>
+                        Scan a barcode and assign it to any catalog item, or enter shelf mode to assign barcodes to all items on a shelf.
+                      </Text>
+                    </View>
                     <BarcodeAddPart scrollY={addpartScrollY} />
                     <AddPartForm
                       adminToken={adminToken}

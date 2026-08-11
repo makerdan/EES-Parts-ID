@@ -33,6 +33,28 @@ import { upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 
 const BULK_SESSION_KEY = "parts_id_bulk_shelf_session_v1";
+
+/** Key owned by BarcodeAddPart — used only to detect an in-progress cross-flow session. */
+const BARCODE_ADD_PART_SESSION_KEY = "parts_id_shelf_session_v1";
+
+/**
+ * Full shape validation for a BarcodeAddPart session blob.
+ * Mirrors BarcodeAddPart's isValidShelfSession, isValidAssignmentEntry, and
+ * isValidBulkQueueEntry exactly so malformed or stale blobs — including those
+ * with valid outer arrays but corrupt nested entries — never trigger the
+ * cross-flow warning.
+ */
+const BARCODE_BULK_QUEUE_STATUSES: ReadonlySet<string> = new Set(["pending", "assigned", "skipped"]);
+function isActiveBarcodeAddPartSession(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.shelfPrefix === "string" && v.shelfPrefix.length > 0 &&
+    Array.isArray(v.assignments) && (v.assignments as Array<unknown>).every(isValidBarcodeAssignmentEntry) &&
+    Array.isArray(v.bulkQueue) && (v.bulkQueue as Array<unknown>).every(isValidBarcodeBulkQueueEntry) &&
+    typeof v.bulkMode === "boolean"
+  );
+}
 /**
  * Minimum milliseconds between auto-assign attempts. Prevents the same
  * barcode frame from triggering multiple assignments while the camera
@@ -118,20 +140,49 @@ async function saveBulkSession(session: BulkSession): Promise<void> {
   }
 }
 
+// ── Session shape validators ───────────────────────────────────────────────
+// Full nested validation is used for both loading (isValidBulkSession) and
+// cross-flow detection (isActiveBarcodeAddPartSession) so both code paths
+// share the same protection against malformed or stale persisted blobs.
+
+const ROW_SYNC_STATUSES: ReadonlySet<string> = new Set(["pending", "synced", "error"]);
+
+function isValidInventoryItem(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
+  const e = entry as Record<string, unknown>;
+  return typeof e.id === "number" && typeof e.catalog === "string" && typeof e.vendor === "string";
+}
+
+function isValidItemRowState(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    (e.assignedBarcode === null || typeof e.assignedBarcode === "string") &&
+    (e.syncStatus === null || (typeof e.syncStatus === "string" && ROW_SYNC_STATUSES.has(e.syncStatus))) &&
+    (e.conflictBarcode === null || typeof e.conflictBarcode === "string") &&
+    (e.conflictOwner === null || typeof e.conflictOwner === "string") &&
+    typeof e.flash === "boolean"
+  );
+}
+
 /**
  * Validate a parsed bulk-session blob before trusting it. AsyncStorage data
  * survives app upgrades, so a stale shape must be rejected (returns null and
  * the stored session is cleared by the caller path via startFresh/clear).
+ * Full nested validation protects against partially-migrated or corrupt blobs.
  */
 function isValidBulkSession(value: unknown): value is BulkSession {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
-  return (
-    typeof v.shelfPrefix === "string" &&
-    Array.isArray(v.shelfItems) &&
-    typeof v.itemRowStates === "object" && v.itemRowStates !== null && !Array.isArray(v.itemRowStates) &&
-    (v.targetItemId === null || typeof v.targetItemId === "number")
-  );
+  if (
+    typeof v.shelfPrefix !== "string" ||
+    !Array.isArray(v.shelfItems) ||
+    typeof v.itemRowStates !== "object" || v.itemRowStates === null || Array.isArray(v.itemRowStates) ||
+    (v.targetItemId !== null && typeof v.targetItemId !== "number")
+  ) return false;
+  if (!(v.shelfItems as Array<unknown>).every(isValidInventoryItem)) return false;
+  if (!Object.values(v.itemRowStates as Record<string, unknown>).every(isValidItemRowState)) return false;
+  return true;
 }
 
 async function loadBulkSession(): Promise<BulkSession | null> {
@@ -204,6 +255,8 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
 
   const [resumeSession, setResumeSession] = useState<BulkSession | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
+  /** True when BarcodeAddPart has an active session that would be silently orphaned. */
+  const [otherFlowActive, setOtherFlowActive] = useState(false);
 
   const doneAnimScale = useRef(new Animated.Value(0)).current;
   const doneAnimOpacity = useRef(new Animated.Value(0)).current;
@@ -337,9 +390,20 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
       setCameraStarted(false);
       return;
     }
-    loadBulkSession().then(session => {
+    // Load own session and cross-check for an active BarcodeAddPart session concurrently.
+    void Promise.all([
+      loadBulkSession(),
+      AsyncStorage.getItem(BARCODE_ADD_PART_SESSION_KEY).catch(() => null),
+    ]).then(([session, otherRaw]) => {
       if (session?.shelfPrefix) {
         setResumeSession(session);
+      }
+      // Show cross-flow warning when the other flow has a valid, non-empty session.
+      try {
+        const other = otherRaw ? (JSON.parse(otherRaw) as unknown) : null;
+        setOtherFlowActive(isActiveBarcodeAddPartSession(other));
+      } catch {
+        setOtherFlowActive(false);
       }
       setSessionChecked(true);
     }).catch(_err => {
@@ -802,6 +866,22 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         {/* ── Input step ───────────────────────────────────────────────────── */}
         {step === "input" ? (
           <ScrollView contentContainerStyle={bsStyles.inputScroll} keyboardShouldPersistTaps="handled">
+            {sessionChecked && otherFlowActive ? (
+              <View
+                style={[
+                  bsStyles.resumeBanner,
+                  { backgroundColor: colors.warning + "18", borderColor: colors.warning + "44" },
+                ]}
+              >
+                <Text style={[bsStyles.resumeTitle, { color: colors.foreground }]}>
+                  ℹ️ In-progress session in another flow
+                </Text>
+                <Text style={[bsStyles.resumeSub, { color: colors.mutedForeground }]}>
+                  You have an in-progress shelf session in Scan to Assign Barcode — switch back to continue it.
+                </Text>
+              </View>
+            ) : null}
+
             {sessionChecked && resumeSession ? (
               <View
                 style={[
@@ -1577,3 +1657,23 @@ const bsStyles = StyleSheet.create({
   },
   allFailRetryBtnText: { fontSize: 13, fontFamily: "Inter_700Bold" },
 });
+
+function isValidBarcodeBulkQueueEntry(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    typeof e.barcode === "string" &&
+    typeof e.status === "string" && BARCODE_BULK_QUEUE_STATUSES.has(e.status) &&
+    (e.skippedAt === undefined || (typeof e.skippedAt === "number" && Number.isFinite(e.skippedAt)))
+  );
+}
+
+function isValidBarcodeAssignmentEntry(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    typeof e.barcode === "string" &&
+    typeof e.item === "object" && e.item !== null &&
+    typeof (e.item as Record<string, unknown>).id === "number"
+  );
+}
