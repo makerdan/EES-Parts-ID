@@ -42,6 +42,7 @@ import {
   type AppStateStatus,
   Image,
   LayoutChangeEvent,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -307,7 +308,8 @@ async function _loadFloorPlanFromBundle(signal: AbortSignal): Promise<void> {
     // viewBox crops at high zoom.  This is a local-file read so it is fast.
     const res = await fetch(uri, { signal });
     if (signal.aborted) throw new Error("aborted");
-    const xml = res.ok ? await res.text() : "";
+    if (!res.ok) throw new Error(`bundled SVG fetch failed: ${res.status}`);
+    const xml = await res.text();
     const contentViewBox = parseContentViewBox(xml);
     newData = {
       xml,
@@ -467,10 +469,12 @@ export function ZoneOverlayItem({
     const labelColor = isCounted ? "#fff" : colors.primary + "80";
     return (
       <G
-        {...(Platform.OS !== "web" && isActive && {
-          onLongPress: () => onZoneLongPress?.(zone),
-          delayLongPress: 400,
-        })}
+        {...(Platform.OS !== "web" && isActive
+          ? { onLongPress: () => onZoneLongPress?.(zone), delayLongPress: 400 }
+          : Platform.OS === "web" && isActive
+          ? { onClick: () => onZoneLongPress?.(zone) }
+          : {}
+        )}
       >
         <AnimatedRect
           x={zone.svgX}
@@ -1029,16 +1033,38 @@ export function WarehouseMapView({
   const [containerW, setContainerW] = useState(0);
   const [containerH, setContainerH] = useState(0);
 
-  // Auto-dismiss empty-state banner after 3 s
-  const [emptyDismissed, setEmptyDismissed] = useState(false);
+  // Manual dismiss for the empty-zones card (persistent until user closes it) (F-064)
+  const [noZonesDismissed, setNoZonesDismissed] = useState(false);
+  // Reset dismiss when zones appear so the card reappears if zones are later removed
   useEffect(() => {
-    if (!zonesLoading && !zonesError && zones.length === 0) {
-      setEmptyDismissed(false);
-      const t = setTimeout(() => setEmptyDismissed(true), 3000);
-      return () => clearTimeout(t);
+    if (!zonesLoading && !zonesError && zones.length > 0) {
+      setNoZonesDismissed(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zonesLoading, zonesError, zones.length]);
+
+  // Zone Editor URL — computed here so the no-zones card can link to it (F-064)
+  const zoneEditorUrl: string | null = process.env.EXPO_PUBLIC_DOMAIN
+    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/__mockup/zone-editor`
+    : null;
+
+  // Select-mode coach mark — shown once to first-visit users (F-062)
+  const COACH_KEY = "@rdc34/select_coach_v1";
+  const [showSelectCoach, setShowSelectCoach] = useState(false);
+  const dismissSelectCoach = useCallback(() => {
+    setShowSelectCoach(false);
+    AsyncStorage.setItem(COACH_KEY, "1").catch(() => {});
+  }, []);
+  useEffect(() => {
+    AsyncStorage.getItem(COACH_KEY)
+      .then((val) => { if (!val) setShowSelectCoach(true); })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Auto-dismiss when the user enables select mode
+  useEffect(() => {
+    if (selectMode && showSelectCoach) dismissSelectCoach();
+  }, [selectMode, showSelectCoach, dismissSelectCoach]);
 
   // Shared values for gesture computations (UI thread safe)
   const containerWV = useSharedValue(0);
@@ -2527,25 +2553,61 @@ export function WarehouseMapView({
         </Pressable>
       )}
 
-      {/* Empty state: no zones defined yet — auto-hides after 3 s */}
-      {!zonesLoading && !zonesError && zones.length === 0 && !emptyDismissed && (
-        <View style={[styles.emptyOverlay, { pointerEvents: "none" }]}>
+      {/* Empty state: no zones defined yet — persistent, dismissable (F-064) */}
+      {!zonesLoading && !zonesError && zones.length === 0 && !noZonesDismissed && (
+        <View style={styles.emptyOverlay}>
           <View
             style={[
               styles.emptyCard,
               { backgroundColor: colors.card + "ee", borderColor: colors.border },
             ]}
           >
-            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-              No zones defined
-            </Text>
+            <View style={styles.emptyCardHeader}>
+              <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+                No zones defined
+              </Text>
+              <Pressable
+                onPress={() => setNoZonesDismissed(true)}
+                hitSlop={8}
+                accessibilityLabel="Dismiss no zones card"
+              >
+                <Feather name="x" size={16} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
             <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
               {isAdmin
                 ? "Use the Zone Drawing Tool to add aisle overlays."
                 : "An admin can add aisle zones from the web interface."}
             </Text>
+            {isAdmin && zoneEditorUrl !== null && (
+              <Pressable
+                onPress={() => Linking.openURL(zoneEditorUrl!)}
+                style={[styles.emptySetupBtn, { backgroundColor: colors.primary }]}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.emptySetupBtnText, { color: colors.primaryForeground }]}>
+                  Set up zones
+                </Text>
+              </Pressable>
+            )}
           </View>
         </View>
+      )}
+
+      {/* Select-mode coach mark — shown once on first visit (F-062) */}
+      {showSelectCoach && (
+        <Pressable
+          onPress={dismissSelectCoach}
+          style={[styles.coachMark, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss hint"
+        >
+          <Feather name="mouse-pointer" size={13} color="#fff" />
+          <Text style={styles.coachMarkText}>
+            Tap the select icon to interact with zones
+          </Text>
+          <Feather name="x" size={12} color="#ffffffbb" />
+        </Pressable>
       )}
 
       {/* Zoom controls — bottom-right cluster: Select on top, + below, − below, fit at bottom */}
@@ -2656,12 +2718,49 @@ const styles = StyleSheet.create({
     maxWidth: 280,
     alignItems: "center",
   },
-  emptyTitle: { fontSize: 15, fontFamily: "Inter_700Bold", marginBottom: 6 },
+  emptyCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    marginBottom: 6,
+  },
+  emptyTitle: { fontSize: 15, fontFamily: "Inter_700Bold" },
   emptyHint: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
     textAlign: "center",
     lineHeight: 20,
+    marginBottom: 12,
+  },
+  emptySetupBtn: {
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    alignItems: "center",
+    alignSelf: "stretch",
+  },
+  emptySetupBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  coachMark: {
+    position: "absolute",
+    right: 56,
+    bottom: 96 + 36 * 3 + 4, // align with the select button (top of zoom controls)
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+    boxShadow: "0 2px 6px rgba(0,0,0,0.18)",
+    maxWidth: 220,
+  },
+  coachMarkText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: "#fff",
+    lineHeight: 16,
   },
   hintBadge: {
     position: "absolute",
