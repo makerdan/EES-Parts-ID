@@ -243,7 +243,16 @@ export function MeasurePartScreen({
       setWidthStr(fmtForUnit(seedDims?.width, currentUnit));
       setHeightStr(fmtForUnit(seedDims?.height, currentUnit));
       setDiameterStr(fmtForUnit(seedDims?.diameter, currentUnit));
-      if (!permission?.granted && permission?.canAskAgain !== false) requestPermission();
+      if (!permission?.granted && permission?.canAskAgain !== false) {
+        void (async () => {
+          try {
+            await requestPermission();
+          } catch {
+            // silently handled — UI already shows "Open Settings" when
+            // canAskAgain is false after a permanent denial
+          }
+        })();
+      }
     }
   }, [visible, initialDims, initialItem, permission, requestPermission]);
 
@@ -354,6 +363,9 @@ export function MeasurePartScreen({
     setPhase("estimating");
     setEstimateError(null);
 
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 30_000);
+
     try {
       const photo = await cameraRef.current.takePictureAsync({
         base64: true,
@@ -384,6 +396,7 @@ export function MeasurePartScreen({
           imageBase64: photo.base64,
           mimeType: "image/jpeg",
         }),
+        signal: abortController.signal,
       });
 
       if (!isMountedRef.current) return;
@@ -408,13 +421,20 @@ export function MeasurePartScreen({
       setPhase("confirm");
     } catch (err) {
       if (!isMountedRef.current) return;
-      const msg = err instanceof Error ? err.message : "Estimation failed";
+      const isTimeout = err instanceof Error && err.name === "AbortError";
+      const msg = isTimeout
+        ? "Estimate timed out — tap to retry or enter dimensions manually"
+        : err instanceof Error ? err.message : "Estimation failed";
       setEstimateError(msg);
       setPhase("preview");
-      Alert.alert(
-        "Estimation failed",
-        `${msg}\n\nYou can enter dimensions manually.`
-      );
+      if (!isTimeout) {
+        Alert.alert(
+          "Estimation failed",
+          `${msg}\n\nYou can enter dimensions manually.`
+        );
+      }
+    } finally {
+      clearTimeout(timeoutId);
     }
   }, [adminToken, unit]);
 
@@ -435,6 +455,9 @@ export function MeasurePartScreen({
       snapL != null || snapW != null || snapH != null || snapD != null
         ? { length: snapL, width: snapW, height: snapH, diameter: snapD }
         : null;
+
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 30_000);
 
     try {
       const photo = await cameraRef.current.takePictureAsync({
@@ -463,6 +486,7 @@ export function MeasurePartScreen({
           imageBase64: photo.base64,
           mimeType: "image/jpeg",
         }),
+        signal: abortController.signal,
       });
 
       if (!isMountedRef.current) return;
@@ -488,9 +512,13 @@ export function MeasurePartScreen({
       setDiameterStr(fmtForUnit(dims.diameter, unit));
     } catch (err) {
       if (!isMountedRef.current) return;
-      const msg = err instanceof Error ? err.message : "Estimation failed";
+      const isTimeout = err instanceof Error && err.name === "AbortError";
+      const msg = isTimeout
+        ? "Estimate timed out — tap to retry or enter dimensions manually"
+        : err instanceof Error ? err.message : "Estimation failed";
       setConfirmEstimateError(msg);
     } finally {
+      clearTimeout(timeoutId);
       if (isMountedRef.current) setIsReestimating(false);
     }
   }, [adminToken, unit, lengthStr, widthStr, heightStr, diameterStr]);
