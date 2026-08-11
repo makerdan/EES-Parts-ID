@@ -10,7 +10,7 @@ import {
 } from "@workspace/api-client-react";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as FileSystem from "expo-file-system/legacy";
-import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { isLiDARSupported } from "lidar-measure";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -60,6 +60,36 @@ export default function EditItemScreen() {
   const sectionYRef = useRef<Record<string, number>>({});
   const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => { return () => { if (navTimerRef.current !== null) clearTimeout(navTimerRef.current); }; }, []);
+
+  // Track unsaved changes across renders so the beforeRemove guard can read
+  // the latest value without causing the effect to re-register on every edit.
+  const hasChangesRef = useRef(false);
+  // Set to true right before dispatching a confirmed discard so the listener
+  // does not intercept the re-dispatched navigation action (one-shot bypass).
+  const discardConfirmedRef = useRef(false);
+  const navigation = useNavigation();
+  useEffect(() => {
+    const unsubscribe = navigation.addListener("beforeRemove", (e) => {
+      if (discardConfirmedRef.current || !hasChangesRef.current) return;
+      e.preventDefault();
+      Alert.alert(
+        "Discard changes?",
+        "Your edits will be lost.",
+        [
+          { text: "Keep Editing", style: "cancel" },
+          {
+            text: "Discard",
+            style: "destructive",
+            onPress: () => {
+              discardConfirmedRef.current = true;
+              navigation.dispatch(e.data.action);
+            },
+          },
+        ],
+      );
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   const updateBinsMutation = useUpdateItemBins();
   const updateBarcodesMutation = useUpdateItemBarcodes();
@@ -844,6 +874,10 @@ export default function EditItemScreen() {
     parseDimField(dimDiameter) !== (existingDims?.diameter ?? null) ||
     photoUri1 !== (item.imageUrl ?? null) ||
     photoUri2 !== (item?.imageUrl2 ?? null);
+
+  // Keep ref in sync so the beforeRemove guard always reads the latest value
+  // without needing to re-register on every edit.
+  hasChangesRef.current = hasChanges;
 
   const statusColor =
     isSaving ? colors.warning

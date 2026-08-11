@@ -67,6 +67,8 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
   const [error, setError] = useState<string | null>(null);
   const [successCount, setSuccessCount] = useState(0);
   const [photoCount, setPhotoCount] = useState(0);
+  const [failedPhotoSlots, setFailedPhotoSlots] = useState<Array<{ itemId: number; photo: CapturedPhoto; slot: 1 | 2 }>>([]);
+  const [retrying, setRetrying] = useState(false);
 
   const [duplicate, setDuplicate] = useState<DuplicateState | null>(null);
   const [duplicateLoading, setDuplicateLoading] = useState(false);
@@ -161,6 +163,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       setSuccessCount(0);
       setPhotoCount(0);
       setDuplicate(null);
+      setFailedPhotoSlots([]);
       setPrefixScannerOpen(false);
       prefixScanLock.current = false;
     } else {
@@ -199,6 +202,9 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
     setPhoto2(null);
     setError(null);
     setDuplicate(null);
+    // Note: failedPhotoSlots is intentionally NOT cleared here — resetItemFields
+    // is only called on the success path (no failed uploads). The !visible effect
+    // and the retry-success path clear failedPhotoSlots explicitly.
   }, []);
 
   const advanceCounter = useCallback(() => {
@@ -246,6 +252,35 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
   const invalidateInventory = useCallback(async () => {
     await invalidateInventoryList({ queryClient });
   }, [queryClient]);
+
+  const retryFailedPhotos = useCallback(async () => {
+    if (!adminToken || failedPhotoSlots.length === 0 || retrying) return;
+    const slots = [...failedPhotoSlots];
+    setRetrying(true);
+    setError(null);
+    try {
+      const results = await Promise.allSettled(
+        slots.map(({ itemId, photo: p, slot }) => uploadPhoto(itemId, p, slot))
+      );
+      const retryFailed    = slots.filter((_, i) => results[i]!.status === "rejected");
+      const retrySucceeded = slots.filter((_, i) => results[i]!.status === "fulfilled");
+      // Functional update: preserve any new failures that arrived (from a concurrent
+      // submission) while this retry was in flight; only remove the slots we just
+      // retried (replace failed ones, remove succeeded ones).
+      setFailedPhotoSlots(prev => {
+        const withoutRetried = prev.filter(
+          p => !retrySucceeded.some(s => s.itemId === p.itemId && s.slot === p.slot) &&
+               !retryFailed.some(f => f.itemId === p.itemId && f.slot === p.slot),
+        );
+        return [...withoutRetried, ...retryFailed];
+      });
+      if (retryFailed.length > 0) {
+        setError("Some photos still failed — check your connection and tap Retry again.");
+      }
+    } finally {
+      setRetrying(false);
+    }
+  }, [adminToken, failedPhotoSlots, uploadPhoto, retrying]);
 
   const handleSubmit = useCallback(async (mode: "next" | "done") => {
     if (submitting) return;
@@ -302,25 +337,55 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       const data = await res.json() as { item: InventoryItem };
       const createdItem = data.item;
 
+      let failedUploads: Array<{ itemId: number; photo: CapturedPhoto; slot: 1 | 2 }> = [];
       if (photo || photo2) {
-        const uploads: Array<Promise<void>> = [];
-        if (photo) uploads.push(uploadPhoto(createdItem.id, photo, 1));
-        if (photo2) uploads.push(uploadPhoto(createdItem.id, photo2, 2));
-        const results = await Promise.allSettled(uploads);
-        if (results.some(r => r.status === "rejected")) {
-          setError("Item added but one or more photo uploads failed — check connection.");
+        const pendingSlots: Array<{ photo: CapturedPhoto; slot: 1 | 2 }> = [];
+        if (photo) pendingSlots.push({ photo, slot: 1 });
+        if (photo2) pendingSlots.push({ photo: photo2, slot: 2 });
+        const results = await Promise.allSettled(
+          pendingSlots.map(({ photo: p, slot }) => uploadPhoto(createdItem.id, p, slot))
+        );
+        failedUploads = pendingSlots
+          .filter((_, i) => results[i]!.status === "rejected")
+          .map(({ photo: p, slot }) => ({ itemId: createdItem.id, photo: p, slot }));
+        if (failedUploads.length > 0) {
+          // Accumulate: merge new failures with any pending retries from previous
+          // items, deduplicating by (itemId, slot) so a slot never appears twice.
+          setFailedPhotoSlots(prev => {
+            const without = prev.filter(
+              p => !failedUploads.some(f => f.itemId === p.itemId && f.slot === p.slot),
+            );
+            return [...without, ...failedUploads];
+          });
+          setError("Item added but photo upload failed — tap Retry to try again.");
         }
       }
 
       await invalidateInventory();
       setSuccessCount(c => c + 1);
       if (photo || photo2) setPhotoCount(c => c + 1);
-      resetItemFields();
 
-      if (mode === "next") {
-        advanceCounter();
+      if (failedUploads.length === 0) {
+        // All uploads succeeded — clear item fields and advance.
+        resetItemFields();
+        if (mode === "next") {
+          advanceCounter();
+        } else {
+          onClose();
+        }
       } else {
-        onClose();
+        // Photo uploads failed — clear item text/photo fields so the user can
+        // enter the next item, but keep failedPhotoSlots so the Retry button
+        // stays accessible. For "done" mode, keep the sheet open until retry.
+        setCatalog("");
+        setVendor("");
+        setPhoto(null);
+        setPhoto2(null);
+        setDuplicate(null);
+        if (mode === "next") {
+          advanceCounter();
+        }
+        // "done" mode: sheet stays open; user taps Retry then closes manually.
       }
     } catch {
       setError("Network error. Check your connection and try again.");
@@ -354,13 +419,25 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
         return;
       }
 
+      let failedUploads: Array<{ itemId: number; photo: CapturedPhoto; slot: 1 | 2 }> = [];
       if (duplicate.pendingPhoto || duplicate.pendingPhoto2) {
-        const uploads: Array<Promise<void>> = [];
-        if (duplicate.pendingPhoto) uploads.push(uploadPhoto(duplicate.item.id, duplicate.pendingPhoto, 1));
-        if (duplicate.pendingPhoto2) uploads.push(uploadPhoto(duplicate.item.id, duplicate.pendingPhoto2, 2));
-        const results = await Promise.allSettled(uploads);
-        if (results.some(r => r.status === "rejected")) {
-          setError("Bin updated but one or more photo uploads failed — check connection.");
+        const pendingSlots: Array<{ photo: CapturedPhoto; slot: 1 | 2 }> = [];
+        if (duplicate.pendingPhoto) pendingSlots.push({ photo: duplicate.pendingPhoto, slot: 1 });
+        if (duplicate.pendingPhoto2) pendingSlots.push({ photo: duplicate.pendingPhoto2, slot: 2 });
+        const results = await Promise.allSettled(
+          pendingSlots.map(({ photo: p, slot }) => uploadPhoto(duplicate.item.id, p, slot))
+        );
+        failedUploads = pendingSlots
+          .filter((_, i) => results[i]!.status === "rejected")
+          .map(({ photo: p, slot }) => ({ itemId: duplicate.item.id, photo: p, slot }));
+        if (failedUploads.length > 0) {
+          setFailedPhotoSlots(prev => {
+            const without = prev.filter(
+              p => !failedUploads.some(f => f.itemId === p.itemId && f.slot === p.slot),
+            );
+            return [...without, ...failedUploads];
+          });
+          setError("Bin updated but photo upload failed — tap Retry to try again.");
         }
       }
 
@@ -369,11 +446,25 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       if (duplicate.pendingPhoto || duplicate.pendingPhoto2) setPhotoCount(c => c + 1);
       const resolvedMode = duplicate.pendingMode;
       setDuplicate(null);
-      resetItemFields();
-      if (resolvedMode === "next") {
-        advanceCounter();
+
+      if (failedUploads.length === 0) {
+        resetItemFields();
+        if (resolvedMode === "next") {
+          advanceCounter();
+        } else {
+          onClose();
+        }
       } else {
-        onClose();
+        // Photo uploads failed — clear item text/photo fields but keep
+        // failedPhotoSlots so the Retry button stays accessible.
+        setCatalog("");
+        setVendor("");
+        setPhoto(null);
+        setPhoto2(null);
+        if (resolvedMode === "next") {
+          advanceCounter();
+        }
+        // "done" mode: sheet stays open; user taps Retry then closes manually.
       }
     } catch {
       setError("Network error. Check connection and try again.");
@@ -643,6 +734,21 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
                       )}
                     </Pressable>
                   </View>
+                </View>
+              ) : null}
+
+              {failedPhotoSlots.length > 0 ? (
+                <View style={[styles.errorBanner, { backgroundColor: colors.warning + "15", borderColor: colors.warning + "55", marginTop: 12 }]}>
+                  <Text style={[styles.errorText, { color: colors.warning }]}>
+                    {failedPhotoSlots.length === 1 ? "1 photo" : `${failedPhotoSlots.length} photos`} failed to upload.
+                  </Text>
+                  <Pressable
+                    onPress={retryFailedPhotos}
+                    disabled={retrying}
+                    style={[styles.dupConfirmBtn, { backgroundColor: colors.primary, marginTop: 8, flex: 0, paddingHorizontal: 16, opacity: retrying ? 0.5 : 1 }]}
+                  >
+                    <Text style={[styles.dupConfirmText, { color: colors.primaryForeground }]}>Retry failed photos</Text>
+                  </Pressable>
                 </View>
               ) : null}
 

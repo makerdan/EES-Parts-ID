@@ -101,6 +101,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   const [inputCollapsed, setInputCollapsed] = useState(false);
   const [activeBreakerChips, setActiveBreakerChips] = useState<Array<string>>([]);
   const [contactVisible, setContactVisible] = useState(false);
+  const [prefetchFailed, setPrefetchFailed] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
   const pulse = useRef(new Animated.Value(1)).current;
@@ -122,10 +123,15 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   }, [pulse]);
 
   const prefetchQuickLookups = useCallback(async () => {
-    await prefetchQuickLookupsImpl(answerCacheRef.current, API_BASE);
+    try {
+      await prefetchQuickLookupsImpl(answerCacheRef.current, API_BASE);
+    } catch {
+      setPrefetchFailed(true);
+    }
   }, []);
 
   const handleModalShow = useCallback(() => {
+    setPrefetchFailed(false);
     prefetchQuickLookups();
   }, [prefetchQuickLookups]);
 
@@ -424,15 +430,30 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
                 </View>
 
                 {/* Quick Lookups — wrapping pill row */}
-                <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>QUICK LOOKUPS</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                  <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground, marginBottom: 0 }]}>QUICK LOOKUPS</Text>
+                  {prefetchFailed ? (
+                    <Text style={{ fontSize: 10, fontFamily: "Inter_400Regular", color: colors.mutedForeground, fontStyle: "italic" }}>
+                      (tap to load)
+                    </Text>
+                  ) : null}
+                </View>
                 <View style={emptyStyles.chipRow}>
                   {QUICK_LOOKUP_CHIPS.map(({ label, question: q }) => (
                     <Pressable
                       key={label}
                       onPress={() => onChipTap(label, q)}
-                      style={[emptyStyles.chip, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                      style={[
+                        emptyStyles.chip,
+                        {
+                          backgroundColor: prefetchFailed ? colors.muted + "88" : colors.muted,
+                          borderColor: prefetchFailed ? colors.mutedForeground + "55" : colors.border,
+                        },
+                      ]}
                     >
-                      <Text style={[emptyStyles.chipText, { color: colors.foreground }]}>{label}</Text>
+                      <Text style={[emptyStyles.chipText, { color: prefetchFailed ? colors.mutedForeground : colors.foreground }]}>
+                        {label}
+                      </Text>
                     </Pressable>
                   ))}
                 </View>

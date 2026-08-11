@@ -68,6 +68,10 @@ jest.mock("expo-router", () => ({
   useRouter:            jest.fn(() => ({ replace: jest.fn(), back: jest.fn() })),
   useLocalSearchParams: jest.fn(() => ({})),
   useFocusEffect:       jest.fn(),
+  useNavigation:        jest.fn(() => ({
+    addListener: jest.fn(() => jest.fn()),
+    dispatch:    jest.fn(),
+  })),
 }));
 
 // ─── Other module mocks ───────────────────────────────────────────────────────
