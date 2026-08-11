@@ -23,6 +23,7 @@
 
 import "buffer";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Buffer } from "buffer";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -57,6 +58,9 @@ import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
 import { getOrSplitChunks, PAGES_PER_CHUNK, splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
 
 const POLL_MS = 2500;
+
+/** AsyncStorage key for persisting the active job ID across tab navigation. */
+const ACTIVE_JOB_KEY = "parts_id_catalog_active_job_v1";
 
 /** Files above this threshold are split into chunks before uploading. */
 const CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
@@ -364,8 +368,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   // Release stored chunk bytes and pdf bytes when the job reaches a terminal
   // success/cancel state (failure keeps them so retry remains available).
+  // Also clear the persisted jobId from AsyncStorage for all terminal states.
   useEffect(() => {
-    if (jobStatus?.status === "done" || jobStatus?.status === "cancelled") {
+    const status = jobStatus?.status;
+    if (status === "done" || status === "cancelled" || status === "failed") {
+      void AsyncStorage.removeItem(ACTIVE_JOB_KEY).catch(() => {});
+    }
+    if (status === "done" || status === "cancelled") {
       chunksRef.current = null;
       setHasStoredChunks(false);
       setPdfBytes(null);
@@ -463,6 +472,27 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     isMountedRef.current = true;
     return () => { isMountedRef.current = false; };
   }, []);
+
+  // On mount, restore an in-progress job from AsyncStorage so the admin sees
+  // polling resume even if they navigated away while a job was running.
+  const resumeAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (resumeAttemptedRef.current) return;
+    resumeAttemptedRef.current = true;
+    AsyncStorage.getItem(ACTIVE_JOB_KEY).then(storedJobId => {
+      if (!storedJobId) return;
+      setJobStatus({
+        jobId: storedJobId,
+        status: "pending",
+        totalPages: null,
+        processedPages: 0,
+        matchedParts: 0,
+        imagesMatched: 0,
+        errorMessage: null,
+      });
+      startPolling(storedJobId);
+    }).catch(() => { /* ignore — non-critical */ });
+  }, [startPolling]);
 
   const handleCancelJob = useCallback(async () => {
     const token = adminTokenRef.current;
@@ -826,6 +856,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     // if the server-side job fails with poe_chain_exhausted.
     setFailedChunkInfo(null);
 
+    void AsyncStorage.setItem(ACTIVE_JOB_KEY, parentJobId).catch(() => {});
     setAiRawLog([]);
     seenAiPagesRef.current.clear();
     setJobStatus({ jobId: parentJobId, status: "pending", totalPages: null, processedPages: 0, matchedParts: 0, imagesMatched: 0, errorMessage: null });
@@ -984,6 +1015,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         setLoading(false);
         resetUploadProgress();
         const jobId = resp.jobId;
+        void AsyncStorage.setItem(ACTIVE_JOB_KEY, jobId).catch(() => {});
         setAiRawLog([]);
         seenAiPagesRef.current.clear();
         setJobStatus({
@@ -1052,6 +1084,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setShowRetryBtn(false);
     setFailedChunkInfo(null);
     if (attempt === 0) {
+      void AsyncStorage.removeItem(ACTIVE_JOB_KEY).catch(() => {});
       setJobStatus(null);
       chunksRef.current = null;
       setHasStoredChunks(false);
