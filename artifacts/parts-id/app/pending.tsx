@@ -17,14 +17,35 @@ export default function PendingScreen() {
   const { logout, recheckApprovalStatus, approvalStatus } = useApp();
   const [signingOut, setSigningOut] = React.useState(false);
 
-  const checking = approvalStatus === "loading";
+  // F-049: inFlight ref prevents concurrent poll calls.
+  const inFlight = React.useRef(false);
 
-  React.useEffect(() => {
-    const id = setInterval(() => {
-      recheckApprovalStatus();
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(id);
+  // Wrap recheckApprovalStatus with the overlap guard.
+  const safeRecheck = React.useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      await recheckApprovalStatus();
+    } finally {
+      inFlight.current = false;
+    }
   }, [recheckApprovalStatus]);
+
+  // F-049: Fire one immediate check on mount (shown via the existing "loading"
+  // approvalStatus indicator), then poll every 30s.
+  React.useEffect(() => {
+    // Immediate check on mount.
+    safeRecheck();
+
+    const id = setInterval(() => {
+      safeRecheck();
+    }, POLL_INTERVAL_MS);
+
+    return () => clearInterval(id);
+    // safeRecheck is stable (useCallback with stable recheckApprovalStatus dep).
+  }, [safeRecheck]);
+
+  const checking = approvalStatus === "loading";
 
   const handleSignOut = async () => {
     setSigningOut(true);
@@ -32,7 +53,7 @@ export default function PendingScreen() {
   };
 
   const handleCheckAgain = async () => {
-    await recheckApprovalStatus();
+    await safeRecheck();
   };
 
   const styles = StyleSheet.create({

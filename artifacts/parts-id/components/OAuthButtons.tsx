@@ -75,9 +75,15 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
   // just never touch the web resource there).
   const clerk = useClerk();
 
-  const [googleLoading, setGoogleLoading] = useState(false);
-  const [appleLoading, setAppleLoading] = useState(false);
+  // Single shared loading flag so only one OAuth provider can be in flight at a
+  // time, and both buttons are disabled while the flow is running (F-046).
+  const [oauthLoading, setOauthLoading] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
+  // Per-attempt token: incremented each time a new attempt starts so that a
+  // stale attempt that resolves after the 60s timeout (or after a new attempt
+  // begins) cannot mutate the state owned by the current attempt (F-046).
+  const attemptTokenRef = React.useRef(0);
+  const oauthTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const runOAuth = useCallback(
     async (strategy: "oauth_google" | "oauth_apple") => {
@@ -118,37 +124,60 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
     [clerk, startSSOFlow, router],
   );
 
-  const handleGoogle = useCallback(async () => {
-    if (googleLoading) return;
-    setOauthError(null);
-    setGoogleLoading(true);
-    try {
-      await runOAuth("oauth_google");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : null;
-      if (msg && !msg.toLowerCase().includes("cancel")) {
-        setOauthError("Google sign-in failed. Please try again.");
-      }
-    } finally {
-      setGoogleLoading(false);
-    }
-  }, [googleLoading, runOAuth]);
+  // Shared handler: sets the single oauthLoading flag, arms a 60s timeout that
+  // clears loading and shows an error if the flow never resolves (F-046).
+  // A per-attempt token prevents a stale attempt that resolves after the timeout
+  // (or after a new attempt has started) from mutating state it no longer owns.
+  const handleOAuth = useCallback(
+    async (strategy: "oauth_google" | "oauth_apple") => {
+      if (oauthLoading) return;
+      setOauthError(null);
+      setOauthLoading(true);
 
-  const handleApple = useCallback(async () => {
-    if (appleLoading) return;
-    setOauthError(null);
-    setAppleLoading(true);
-    try {
-      await runOAuth("oauth_apple");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : null;
-      if (msg && !msg.toLowerCase().includes("cancel")) {
-        setOauthError("Apple sign-in failed. Please try again.");
+      // Mint a token for this attempt. Any callback that sees a different token
+      // knows it is stale and must not touch loading/error state.
+      attemptTokenRef.current += 1;
+      const myToken = attemptTokenRef.current;
+
+      // Start 60s timeout — fires only if this token is still the active one.
+      oauthTimeoutRef.current = setTimeout(() => {
+        if (attemptTokenRef.current !== myToken) return; // stale
+        setOauthLoading(false);
+        setOauthError("Sign-in timed out. Please try again.");
+      }, 60_000);
+
+      try {
+        await runOAuth(strategy);
+      } catch (err) {
+        if (attemptTokenRef.current !== myToken) return; // stale
+        const msg = err instanceof Error ? err.message : null;
+        if (msg && !msg.toLowerCase().includes("cancel")) {
+          const provider = strategy === "oauth_google" ? "Google" : "Apple";
+          setOauthError(`${provider} sign-in failed. Please try again.`);
+        }
+      } finally {
+        if (attemptTokenRef.current === myToken) {
+          // This attempt still owns the UI — cancel the timeout and clear loading.
+          if (oauthTimeoutRef.current !== null) {
+            clearTimeout(oauthTimeoutRef.current);
+            oauthTimeoutRef.current = null;
+          }
+          setOauthLoading(false);
+        }
       }
-    } finally {
-      setAppleLoading(false);
-    }
-  }, [appleLoading, runOAuth]);
+    },
+    [oauthLoading, runOAuth],
+  );
+
+  const handleGoogle = useCallback(
+    () => handleOAuth("oauth_google"),
+    [handleOAuth],
+  );
+
+  const handleApple = useCallback(
+    () => handleOAuth("oauth_apple"),
+    [handleOAuth],
+  );
 
   const s = StyleSheet.create({
     dividerRow: {
@@ -216,11 +245,11 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
       {oauthError ? <Text style={s.oauthError}>{oauthError}</Text> : null}
 
       <Pressable
-        style={[s.oauthButton, googleLoading && { opacity: 0.6 }]}
+        style={[s.oauthButton, oauthLoading && { opacity: 0.6 }]}
         onPress={handleGoogle}
-        disabled={googleLoading}
+        disabled={oauthLoading}
       >
-        {googleLoading ? (
+        {oauthLoading ? (
           <ActivityIndicator color={colors.foreground} size="small" />
         ) : (
           <>
@@ -232,11 +261,11 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
 
       {Platform.OS !== "android" && (
         <Pressable
-          style={[s.oauthButton, appleLoading && { opacity: 0.6 }]}
+          style={[s.oauthButton, oauthLoading && { opacity: 0.6 }]}
           onPress={handleApple}
-          disabled={appleLoading}
+          disabled={oauthLoading}
         >
-          {appleLoading ? (
+          {oauthLoading ? (
             <ActivityIndicator color={colors.foreground} size="small" />
           ) : (
             <>

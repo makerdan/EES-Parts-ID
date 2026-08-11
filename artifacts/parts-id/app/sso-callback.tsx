@@ -1,9 +1,18 @@
 import { useClerk } from "@clerk/expo";
 import { useRouter } from "expo-router";
-import React, { useEffect } from "react";
-import { ActivityIndicator, Platform, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { useColors } from "@/hooks/useColors";
+
+const SSO_TIMEOUT_MS = 30_000;
 
 /**
  * Dedicated OAuth callback page for web.
@@ -24,16 +33,44 @@ import { useColors } from "@/hooks/useColors";
  *
  * On native this route is never reached: the native useSSO flow resolves the
  * session in-place, so the effect is a no-op there.
+ *
+ * F-047: Detects missing/invalid OAuth params on mount and shows an immediate
+ * error rather than an infinite spinner. Also arms a 30s timeout that replaces
+ * the spinner with a recoverable error if handleRedirectCallback never resolves.
  */
 export default function SsoCallback() {
   const colors = useColors();
   const clerk = useClerk();
   const router = useRouter();
 
+  // "timedOut" = callback never resolved within SSO_TIMEOUT_MS
+  // "missingParams" = URL arrived without the required OAuth params (F-047)
+  const [errorKind, setErrorKind] = useState<"timedOut" | "missingParams" | null>(
+    null,
+  );
+
   useEffect(() => {
     if (Platform.OS !== "web") return;
 
+    // F-047: Check for required OAuth params before attempting the callback.
+    // A URL with no `code` or `state` query param (e.g. a direct navigation to
+    // /sso-callback) would cause handleRedirectCallback to spin forever.
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const hasCode = params.has("code") || params.has("state");
+      if (!hasCode) {
+        setErrorKind("missingParams");
+        return;
+      }
+    }
+
     let cancelled = false;
+
+    // F-047: 30s timeout — show a recoverable error state if the flow hangs.
+    const timeoutId = setTimeout(() => {
+      if (!cancelled) setErrorKind("timedOut");
+    }, SSO_TIMEOUT_MS);
+
     clerk
       .handleRedirectCallback(
         {
@@ -54,12 +91,78 @@ export default function SsoCallback() {
       .catch(() => {
         // Token missing/expired or the user cancelled — send them back to login.
         if (!cancelled) router.replace({ pathname: "/login" });
+      })
+      .finally(() => {
+        clearTimeout(timeoutId);
       });
 
     return () => {
       cancelled = true;
+      clearTimeout(timeoutId);
     };
   }, [clerk, router]);
+
+  const s = StyleSheet.create({
+    container: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 16,
+      padding: 32,
+    },
+    label: {
+      fontSize: 15,
+      fontFamily: "Inter_400Regular",
+    },
+    errorTitle: {
+      fontSize: 17,
+      fontFamily: "Inter_600SemiBold",
+      textAlign: "center",
+    },
+    errorBody: {
+      fontSize: 14,
+      fontFamily: "Inter_400Regular",
+      textAlign: "center",
+      lineHeight: 20,
+    },
+    button: {
+      marginTop: 8,
+      paddingHorizontal: 24,
+      paddingVertical: 12,
+      borderRadius: 8,
+      alignItems: "center",
+    },
+    buttonText: {
+      fontSize: 14,
+      fontFamily: "Inter_600SemiBold",
+    },
+  });
+
+  if (errorKind) {
+    const title =
+      errorKind === "timedOut"
+        ? "Sign-in taking too long"
+        : "Sign-in link invalid";
+    const body =
+      errorKind === "timedOut"
+        ? "The sign-in process didn't complete in time. Please go back and try again."
+        : "This link doesn't contain valid sign-in parameters. Please go back and try again.";
+
+    return (
+      <View style={[s.container, { backgroundColor: colors.background }]}>
+        <Text style={[s.errorTitle, { color: colors.foreground }]}>{title}</Text>
+        <Text style={[s.errorBody, { color: colors.mutedForeground }]}>{body}</Text>
+        <Pressable
+          style={[s.button, { backgroundColor: colors.primary }]}
+          onPress={() => router.replace({ pathname: "/login" })}
+        >
+          <Text style={[s.buttonText, { color: colors.primaryForeground }]}>
+            Go back to sign-in
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
