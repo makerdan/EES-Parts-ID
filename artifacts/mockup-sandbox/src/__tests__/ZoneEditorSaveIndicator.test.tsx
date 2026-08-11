@@ -2,14 +2,15 @@
  * ZoneEditorSaveIndicator.test.tsx
  *
  * Tests for the global save-status indicator and Save button added to the
- * Zone Editor banner (second row, hidden in Calibrate mode).
+ * Zone Editor banner (second row, always visible — Calibrate mode was removed
+ * in Task #850).
  *
  * Coverage:
  *   (a) Form change → status label shows "Unsaved changes ●" (dirty)
  *   (b) Successful auto-save flush → status label shows "All changes saved" (clean)
  *   (c) Failed PATCH → status label shows "Save failed — retry" (error),
  *       Save button re-enabled and labelled "Retry"
- *   (d) Second row is absent in Calibrate mode, present in Pan mode
+ *   (d) Second row is visible in Pan mode and remains visible in Draw mode
  */
 
 import React from "react";
