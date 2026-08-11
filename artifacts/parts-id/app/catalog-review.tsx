@@ -48,6 +48,7 @@ import { performUpdateDescription } from "@/utils/updateDescription";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
+const POLL_FAIL_THRESHOLD = 5; // consecutive failures before showing stalled card
 
 function resumeBytesToBase64(bytes: Uint8Array): string {
   const CHUNK = 0x8000;
@@ -131,6 +132,8 @@ export default function CatalogReviewScreen() {
   // Track one poll interval per jobId so multiple concurrent resumes work and
   // we can re-attach polls when the screen remounts.
   const resumePollRef = useRef<Record<number, ReturnType<typeof setInterval>>>({});
+  // Count consecutive poll failures per jobId (reset on success).
+  const pollFailCountRef = useRef<Record<number, number>>({});
   const [infoDialog, setInfoDialog] = useState<{ visible: boolean; title: string; message: string }>({
     visible: false, title: "", message: "",
   });
@@ -255,9 +258,12 @@ export default function CatalogReviewScreen() {
         if (secondRes.ok) {
           if (jobId) {
             const statusData = await secondRes.json() as {
+              status?: string;
               vendor?: string;
               partsFound?: number;
               matchedParts?: number;
+              processedPages?: number;
+              totalPages?: number | null;
               imagesMatched?: number;
               unmatchedParts?: Array<{ catalogNumber: string; description: string }>;
             };
@@ -268,6 +274,31 @@ export default function CatalogReviewScreen() {
               imagesMatched: statusData.imagesMatched ?? 0,
               unmatchedParts: statusData.unmatchedParts ?? [],
             });
+            // F-002: if the job is still in-progress on mount, start polling so
+            // admins aren't left on a stale "No items to review" screen.
+            const rawStatus = statusData.status;
+            if (
+              !isRefresh &&
+              rawStatus &&
+              rawStatus !== "done" &&
+              rawStatus !== "failed" &&
+              rawStatus !== "cancelled"
+            ) {
+              const numJobId = Number(jobId);
+              if (!isNaN(numJobId) && !resumePollRef.current[numJobId]) {
+                setResumeProgress((prev) => ({
+                  ...prev,
+                  [numJobId]: prev[numJobId] ?? {
+                    status: "processing",
+                    processedPages: statusData.processedPages ?? 0,
+                    totalPages: statusData.totalPages ?? null,
+                    matchedParts: statusData.matchedParts ?? 0,
+                    errorMessage: null,
+                  },
+                }));
+                startPollForJobRef.current(numJobId, authHeaders);
+              }
+            }
           } else {
             const failedData = await secondRes.json() as { jobs: Array<FailedJob> };
             setFailedJobs(failedData.jobs);
@@ -295,10 +326,30 @@ export default function CatalogReviewScreen() {
     if (resumePollRef.current[id]) {
       clearInterval(resumePollRef.current[id]);
     }
+    // Reset failure counter whenever the poll (re)starts.
+    pollFailCountRef.current[id] = 0;
     resumePollRef.current[id] = setInterval(async () => {
       try {
         const statusRes = await fetch(`${API_BASE}/admin/catalog-pdf/${id}/status`, { headers });
-        if (!statusRes.ok) return;
+        if (!statusRes.ok) {
+          // Non-2xx response counts as a failure.
+          pollFailCountRef.current[id] = (pollFailCountRef.current[id] ?? 0) + 1;
+          if (pollFailCountRef.current[id] >= POLL_FAIL_THRESHOLD) {
+            clearInterval(resumePollRef.current[id]);
+            delete resumePollRef.current[id];
+            setResumeProgress((prev) => ({
+              ...prev,
+              [id]: {
+                status: "stalled",
+                processedPages: prev[id]?.processedPages ?? 0,
+                totalPages: prev[id]?.totalPages ?? null,
+                matchedParts: prev[id]?.matchedParts ?? 0,
+                errorMessage: "Processing stalled — please retry or contact support",
+              },
+            }));
+          }
+          return;
+        }
         const body = await statusRes.json() as {
           status: string;
           processedPages: number;
@@ -306,6 +357,8 @@ export default function CatalogReviewScreen() {
           matchedParts: number;
           errorMessage: string | null;
         };
+        // Successful response — reset failure counter.
+        pollFailCountRef.current[id] = 0;
         setResumeProgress((prev) => ({
           ...prev,
           [id]: {
@@ -326,7 +379,23 @@ export default function CatalogReviewScreen() {
           fetchItems();
         }
       } catch (err) {
+        // Network error counts as a failure.
         console.error('[catalog-review] poll status', err);
+        pollFailCountRef.current[id] = (pollFailCountRef.current[id] ?? 0) + 1;
+        if (pollFailCountRef.current[id] >= POLL_FAIL_THRESHOLD) {
+          clearInterval(resumePollRef.current[id]);
+          delete resumePollRef.current[id];
+          setResumeProgress((prev) => ({
+            ...prev,
+            [id]: {
+              status: "stalled",
+              processedPages: prev[id]?.processedPages ?? 0,
+              totalPages: prev[id]?.totalPages ?? null,
+              matchedParts: prev[id]?.matchedParts ?? 0,
+              errorMessage: "Processing stalled — please retry or contact support",
+            },
+          }));
+        }
       }
     }, 3000);
   };
@@ -611,6 +680,21 @@ export default function CatalogReviewScreen() {
       delete next[jobId];
       return next;
     });
+  };
+
+  // Retry a stalled poll: reset the failure counter and restart the interval.
+  // Does not trigger a PDF upload — only restarts status polling.
+  const handleRetryPoll = (id: number) => {
+    pollFailCountRef.current[id] = 0;
+    setResumeProgress((prev) => ({
+      ...prev,
+      [id]: {
+        ...(prev[id] ?? { processedPages: 0, totalPages: null, matchedParts: 0 }),
+        status: "processing",
+        errorMessage: null,
+      },
+    }));
+    startPollForJob(id, authHeaders);
   };
 
   const handleRevert = async (item: ReviewItem, groupJobId: number | null) => {
@@ -1232,6 +1316,7 @@ export default function CatalogReviewScreen() {
                 onResume={handleResume}
                 onReviewChanges={(id) => router.push(`/catalog-review?jobId=${id}`)}
                 onDismissResumeError={handleDismissResumeError}
+                onRetryPoll={handleRetryPoll}
                 colors={colors}
               />
             }
