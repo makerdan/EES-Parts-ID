@@ -48,6 +48,9 @@ function makeFetchMock(patchOk = true) {
         text: () => Promise.resolve(""),
       });
 
+    if (s.includes("/warehouse-zones/alignment"))
+      throw new Error(`unexpected alignment fetch: ${s}`);
+
     if (method === "GET" && s.includes("/warehouse-zones"))
       return Promise.resolve({
         ok: true, status: 200,
@@ -62,6 +65,9 @@ function makeFetchMock(patchOk = true) {
         return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: "Server error" }), text: () => Promise.resolve("Server error") });
       }
     }
+
+    if (s.includes("/warehouse-zones/alignment"))
+      throw new Error(`unexpected alignment fetch: ${s}`);
 
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
   });
@@ -130,10 +136,10 @@ async function clickZone1(container: HTMLElement) {
   await act(async () => {});
 }
 
-// Switch to Calibrate mode via the mode button.
-async function switchToCalibrate(container: HTMLElement) {
+// Switch to Draw mode via the mode button.
+async function switchToDraw(container: HTMLElement) {
   const btn = [...container.querySelectorAll("button")].find(
-    (b) => b.textContent?.includes("Calibrate"),
+    (b) => b.textContent?.includes("Draw Zone"),
   );
   expect(btn).toBeDefined();
   await act(async () => { fireEvent.click(btn!); });
@@ -252,19 +258,19 @@ describe("ZoneEditor — save status indicator", () => {
     expect(retryBtn!.textContent).toBe("Retry");
   });
 
-  // ── (d) Row absent in Calibrate, present in Pan ────────────────────────────
-  it("(d) hides the save-status row in Calibrate mode and shows it in Pan mode", async () => {
+  // ── (d) Row present in Pan and Draw modes ─────────────────────────────────
+  it("(d) save-status row is visible in Pan mode and remains visible after switching to Draw mode", async () => {
     const fetchMock = makeFetchMock(true);
     const { container } = await setupEditor(fetchMock);
 
     // Pan mode (default) — row should be present
     expect(getSaveStatusRow(container)).not.toBeNull();
 
-    // Switch to Calibrate — row should disappear
-    await switchToCalibrate(container);
-    expect(getSaveStatusRow(container)).toBeNull();
+    // Switch to Draw mode — row should still be present
+    await switchToDraw(container);
+    expect(getSaveStatusRow(container)).not.toBeNull();
 
-    // Switch back to Pan — row should reappear
+    // Switch back to Pan — row must still be present
     await switchToPan(container);
     expect(getSaveStatusRow(container)).not.toBeNull();
   });
