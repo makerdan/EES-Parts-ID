@@ -138,6 +138,8 @@ async function playChime(): Promise<void> {
 }
 
 // ── Session persistence ────────────────────────────────────────────────────
+// Writes go through a serial promise-chain queue so a clear can never be
+// overtaken by an in-flight save that was enqueued before it.
 const BULK_QUEUE_STATUSES: ReadonlySet<string> = new Set(["pending", "assigned", "skipped", "error"]);
 
 function isValidAssignmentEntry(entry: unknown): entry is AssignmentEntry {
@@ -281,6 +283,10 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   const allItemsRef = useRef<typeof allItems>(allItems);
   useEffect(() => { allItemsRef.current = allItems; }, [allItems]);
 
+  // Serial write queue — ensures a clear can never be overtaken by an
+  // in-flight save that was enqueued before it (F-036).
+  const sessionWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+
   const allBinLocations = React.useMemo(() => {
     const set = new Set<string>();
     for (const item of allItems) {
@@ -335,11 +341,33 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     return () => { cancelled = true; };
   }, []);
 
-  // Persist session whenever it changes
+  // Enqueue a session write through the serial queue so saves cannot
+  // overtake a clear that was issued after them (F-036).
+  const enqueueSessionWrite = useCallback((action: () => Promise<void>) => {
+    sessionWriteQueueRef.current = sessionWriteQueueRef.current
+      .then(action)
+      .catch(() => {
+        showToast("Could not save session — progress may be lost if you restart the app.", "error");
+      });
+  }, [showToast]);
+
+  // Enqueue a session clear through the same queue.
+  // Clear failures surface a toast so the user knows stale session data may
+  // reappear on the next launch (F-036).
+  const enqueueSessionClear = useCallback(() => {
+    sessionWriteQueueRef.current = sessionWriteQueueRef.current
+      .then(() => AsyncStorage.removeItem(SHELF_SESSION_KEY))
+      .catch(() => {
+        showToast("Could not clear session — stale session data may reappear on the next launch.", "error");
+      });
+  }, [showToast]);
+
+  // Persist session whenever it changes — queued so clears always win (F-036).
   useEffect(() => {
     if (!shelfMode) return;
-    saveShelfSession({ shelfPrefix, assignments, bulkQueue, bulkMode });
-  }, [shelfMode, shelfPrefix, assignments, bulkQueue, bulkMode]);
+    const snapshot = { shelfPrefix, assignments, bulkQueue, bulkMode };
+    enqueueSessionWrite(() => AsyncStorage.setItem(SHELF_SESSION_KEY, JSON.stringify(snapshot)));
+  }, [shelfMode, shelfPrefix, assignments, bulkQueue, bulkMode, enqueueSessionWrite]);
 
   const clearPendingScan = useCallback(() => {
     pendingCommitRef.current = null;
@@ -645,7 +673,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     setLastAssigned(null);
     setResumeSession(null);
     clearPendingScan();
-    clearShelfSession();
+    enqueueSessionClear();
   };
 
   const exitShelfMode = () => {
@@ -658,7 +686,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     setBulkQueue([]);
     setBulkMode(false);
     clearPendingScan();
-    clearShelfSession();
+    enqueueSessionClear();
   };
 
   const isCameraActive = !assignPicker && !shelfAssignPicker && !pendingPhotoItem;
@@ -684,12 +712,14 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
         >
           <Text style={[apStyles.permBtnText, { color: colors.primaryForeground }]}>Enable Camera</Text>
         </Pressable>
-        <Pressable
-          onPress={() => setCameraBypass(true)}
-          style={[apStyles.permBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: colors.border, marginTop: 4 }]}
-        >
-          <Text style={[apStyles.permBtnText, { color: colors.mutedForeground }]}>Skip camera (dev only)</Text>
-        </Pressable>
+        {__DEV__ ? (
+          <Pressable
+            onPress={() => setCameraBypass(true)}
+            style={[apStyles.permBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: colors.border, marginTop: 4 }]}
+          >
+            <Text style={[apStyles.permBtnText, { color: colors.mutedForeground }]}>Skip camera (dev only)</Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   }
@@ -725,7 +755,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
               <Text style={[apStyles.resumeBtnText, { color: colors.primaryForeground }]}>Resume session</Text>
             </Pressable>
             <Pressable
-              onPress={() => { setResumeSession(null); clearShelfSession(); }}
+              onPress={() => { setResumeSession(null); enqueueSessionClear(); }}
               style={[apStyles.resumeBtn, { backgroundColor: colors.muted, borderWidth: 1, borderColor: colors.border }]}
             >
               <Text style={[apStyles.resumeBtnText, { color: colors.foreground }]}>Start fresh</Text>

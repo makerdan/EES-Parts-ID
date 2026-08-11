@@ -305,12 +305,14 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
           >
             <Text style={[styles.permBtnText, { color: colors.primaryForeground }]}>Allow Camera Access</Text>
           </Pressable>
-          <Pressable
-            onPress={() => setCameraBypass(true)}
-            style={[styles.permBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: colors.border, marginTop: 8 }]}
-          >
-            <Text style={[styles.permBtnText, { color: colors.mutedForeground }]}>Skip camera (dev only)</Text>
-          </Pressable>
+          {__DEV__ ? (
+            <Pressable
+              onPress={() => setCameraBypass(true)}
+              style={[styles.permBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: colors.border, marginTop: 8 }]}
+            >
+              <Text style={[styles.permBtnText, { color: colors.mutedForeground }]}>Skip camera (dev only)</Text>
+            </Pressable>
+          ) : null}
         </View>
       </SafeAreaView>
     );

@@ -6,6 +6,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -126,10 +127,36 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
     }
   }, [barcodes, newBarcode, updateMutation, queryClient, onBarcodesChanged, onClose]);
 
+  // Intercept close/cancel while there are unsaved edits (F-053).
+  // A non-empty newBarcode text field counts as a dirty edit because Save
+  // auto-adds it — closing without saving would silently drop the typed value.
+  const handleCloseRequest = useCallback(() => {
+    const savedBarcodes = itemRef.current?.barcodes ?? [];
+    const dirty =
+      JSON.stringify(barcodes) !== JSON.stringify(savedBarcodes) ||
+      newBarcode.trim() !== "";
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    Alert.alert(
+      "Discard changes?",
+      "You have unsaved barcode edits. Do you want to discard them?",
+      [
+        { text: "Keep editing", style: "cancel" },
+        { text: "Discard", style: "destructive", onPress: onClose },
+      ],
+    );
+  }, [barcodes, newBarcode, onClose]);
+
   if (!item) return null;
 
+  // A non-empty newBarcode field is also an unsaved change: handleSave
+  // auto-adds it, so both the dirty guard and the Save-enabled state must
+  // account for it (F-053).
   const hasChanges =
-    JSON.stringify(barcodes) !== JSON.stringify(item.barcodes ?? []);
+    JSON.stringify(barcodes) !== JSON.stringify(item.barcodes ?? []) ||
+    newBarcode.trim() !== "";
   const isSaving = saveStatus === "saving";
 
   const statusColor =
@@ -145,7 +172,7 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
 
   return (
     <>
-      <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={handleCloseRequest}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={[styles.container, { backgroundColor: colors.background }]}
@@ -167,7 +194,7 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
                 {item.vendor} · {item.catalog}
               </Text>
             </View>
-            <Pressable onPress={onClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]} accessibilityLabel="Close barcode editor" accessibilityRole="button">
+            <Pressable onPress={handleCloseRequest} style={[styles.closeBtn, { backgroundColor: colors.muted }]} accessibilityLabel="Close barcode editor" accessibilityRole="button">
               <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
             </Pressable>
           </View>
@@ -255,7 +282,7 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
 
           <View style={[styles.footer, { borderTopColor: colors.border }]}>
             <Pressable
-              onPress={onClose}
+              onPress={handleCloseRequest}
               style={[styles.cancelBtn, { borderColor: colors.border }]}
             >
               <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
