@@ -51,7 +51,7 @@ export default function MapScreen() {
   useTrackScreen("Map");
   const colors = useColors();
   const router = useRouter();
-  const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus, pinnedParts, setPinnedParts, showToast } = useApp();
+  const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus, pinnedParts, setPinnedParts } = useApp();
 
   // Derived at render time so that tests can control EXPO_PUBLIC_DOMAIN via process.env.
   // In production builds the env var is baked in at build time, so the value is stable.
