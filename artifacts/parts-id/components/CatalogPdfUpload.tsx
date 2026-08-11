@@ -508,8 +508,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       if (r.ok) {
         stopPolling();
         setJobStatus(prev => prev ? { ...prev, status: "cancelled" } : prev);
+      } else {
+        Alert.alert("Cancel failed", "Cancel request failed — the job may still be running.");
       }
-    } catch { /* ignore — polling will pick up the change */ }
+    } catch {
+      Alert.alert("Cancel failed", "Cancel request failed — the job may still be running.");
+    }
     finally { if (isMountedRef.current) setCancellingJob(false); }
   }, [jobStatus, stopPolling, onSessionExpired]);
 
