@@ -208,6 +208,27 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
   const doneAnimScale = useRef(new Animated.Value(0)).current;
   const doneAnimOpacity = useRef(new Animated.Value(0)).current;
 
+  /**
+   * F-022: Toast deduplication. Tracks the last toast message + timestamp so
+   * rapid consecutive identical toasts (within 2 s) are suppressed.
+   */
+  const lastToastRef = useRef<{ message: string; ts: number } | null>(null);
+  const showToastDeduped = useCallback(
+    (message: string, kind: Parameters<typeof showToast>[1]) => {
+      const now = Date.now();
+      if (
+        lastToastRef.current &&
+        lastToastRef.current.message === message &&
+        now - lastToastRef.current.ts < 2000
+      ) {
+        return;
+      }
+      lastToastRef.current = { message, ts: now };
+      showToast(message, kind);
+    },
+    [showToast],
+  );
+
   // Used only for the shelf prefix autocomplete chips (lower limit is fine here)
   const { data: suggestPage } = useListInventory({ limit: 500 });
   const suggestAllItems = useMemo(() => suggestPage?.items ?? [], [suggestPage]);
@@ -258,6 +279,33 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
       return !Array.isArray(item.barcodes) || item.barcodes.length === 0;
     });
   }, [shelfItems, itemRowStates, filterUnassigned]);
+
+  /**
+   * F-011: True when every item that required syncing has an error state and
+   * none have succeeded. Items with pre-existing barcodes are excluded because
+   * they were never attempted. Requires at least one failed item.
+   */
+  const allFailed = useMemo(() => {
+    if (shelfItems.length === 0) return false;
+    const needsSync = shelfItems.filter(
+      item => !(Array.isArray(item.barcodes) && item.barcodes.length > 0),
+    );
+    if (needsSync.length === 0) return false;
+    return needsSync.every(item => itemRowStates[item.id]?.syncStatus === "error");
+  }, [shelfItems, itemRowStates]);
+
+  /** F-011: Reset all error rows back to unassigned so the user can re-scan. */
+  const handleRetryAll = useCallback(() => {
+    setItemRowStates(prev => {
+      const next = { ...prev };
+      for (const item of shelfItems) {
+        if (next[item.id]?.syncStatus === "error") {
+          delete next[item.id];
+        }
+      }
+      return next;
+    });
+  }, [shelfItems]);
 
   // Server-side count for the shelf prefix preview — uses limit:1 so only
   // the total field matters; the actual items are not loaded here.
@@ -442,7 +490,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
           flash: false,
         },
       }));
-      showToast("Assignment failed — please try again", "error");
+      showToastDeduped("Assignment failed — please try again", "error");
     } finally {
       assigningRef.current = null;
       setAssigningId(null);
@@ -472,9 +520,9 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         delete next[item.id];
         return next;
       });
-      showToast("Barcode assignment undone", "info");
+      showToastDeduped("Barcode assignment undone", "info");
     } catch {
-      showToast("Could not undo — please try again", "error");
+      showToastDeduped("Could not undo — please try again", "error");
     } finally {
       setUndoingId(null);
     }
@@ -541,7 +589,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         : unassignedItems[0];
 
       if (!effectiveTarget) {
-        showToast("All items already assigned", "info");
+        showToastDeduped("All items already assigned", "info");
         return;
       }
 
@@ -551,7 +599,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         !!existingRow?.assignedBarcode ||
         (Array.isArray(effectiveTarget.barcodes) && effectiveTarget.barcodes.length > 0);
       if (alreadyHasBarcode) {
-        showToast("Item already has a barcode — tap another item to target it", "info");
+        showToastDeduped("Item already has a barcode — tap another item to target it", "info");
         return;
       }
 
@@ -575,7 +623,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
             flash: false,
           },
         }));
-        showToast(`Barcode owned by ${conflictItem.catalog} — row flagged`, "error");
+        showToastDeduped(`Barcode owned by ${conflictItem.catalog} — row flagged`, "error");
         // Still consume the cooldown so a new barcode is expected
         lastScanRef.current = { code, ts: now };
         return;
@@ -966,6 +1014,36 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
                 </Text>
               ) : null}
             </View>
+
+            {/* F-011: All-fail aggregate error card */}
+            {allFailed ? (
+              <View
+                style={[
+                  bsStyles.allFailCard,
+                  {
+                    backgroundColor: colors.destructive + "0d",
+                    borderColor: colors.destructive + "44",
+                  },
+                ]}
+              >
+                <Text style={[bsStyles.allFailTitle, { color: colors.destructive }]}>
+                  ✕ All assignments failed — check your connection
+                </Text>
+                <Text style={[bsStyles.allFailSub, { color: colors.mutedForeground }]}>
+                  {shelfItems.filter(i => itemRowStates[i.id]?.syncStatus === "error").length} item
+                  {shelfItems.filter(i => itemRowStates[i.id]?.syncStatus === "error").length !== 1
+                    ? "s"
+                    : ""}{" "}
+                  failed to sync.
+                </Text>
+                <Pressable
+                  onPress={handleRetryAll}
+                  style={[bsStyles.allFailRetryBtn, { backgroundColor: colors.destructive }]}
+                >
+                  <Text style={[bsStyles.allFailRetryBtnText, { color: "#fff" }]}>Retry All</Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             {/* Item list */}
             <FlatList
@@ -1479,4 +1557,23 @@ const bsStyles = StyleSheet.create({
   },
   filterToggleText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   filterCount: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  // F-011: aggregate all-fail error card
+  allFailCard: {
+    marginHorizontal: 12,
+    marginBottom: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+    gap: 6,
+  },
+  allFailTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", lineHeight: 18 },
+  allFailSub: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  allFailRetryBtn: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 2,
+  },
+  allFailRetryBtnText: { fontSize: 13, fontFamily: "Inter_700Bold" },
 });
