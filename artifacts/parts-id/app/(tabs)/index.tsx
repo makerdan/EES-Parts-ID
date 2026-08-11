@@ -271,6 +271,10 @@ export default function SearchScreen() {
   const [syncError, setSyncError] = useState(false);
   const [syncRetryPending, setSyncRetryPending] = useState(false);
   const [syncErrorDismissed, setSyncErrorDismissed] = useState(false);
+  // F-039: visible banner when a search times out and falls back to stale cache
+  const [searchTimedOut, setSearchTimedOut] = useState(false);
+  // F-068: guard per-error-class toasts so each fires at most once per occurrence
+  const errorToastFiredRef = useRef({ searchTimeout: false, syncFailure: false, offlineFallback: false });
   const syncRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncRetryAttemptRef = useRef(0);
   // Concurrency guard: prevents a second syncAllInventory from starting while
@@ -368,6 +372,8 @@ export default function SearchScreen() {
       setAIZeroResults(null);
       setSyncError(false);
       setSyncErrorDismissed(false);
+      setSearchTimedOut(false);
+      errorToastFiredRef.current = { searchTimeout: false, syncFailure: false, offlineFallback: false };
       aiSearchGenRef.current += 1;
       searchMutationRef.current?.reset();
     });
@@ -543,6 +549,34 @@ export default function SearchScreen() {
       setSyncErrorDismissed(false);
     }
   }, [syncError]);
+
+  // F-068: fire a toast on the first occurrence of a sync failure; reset the
+  // guard when the error clears so a subsequent failure fires again.
+  useEffect(() => {
+    if (syncError && !errorToastFiredRef.current.syncFailure) {
+      errorToastFiredRef.current.syncFailure = true;
+      showToast("Background sync failed — offline data may be stale", "error");
+    }
+    if (!syncError) {
+      errorToastFiredRef.current.syncFailure = false;
+    }
+  // showToast is a stable useCallback ([] deps) from AppContext — safe to omit
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncError]);
+
+  // F-068: fire a toast on the first occurrence of an offline-fallback event.
+  useEffect(() => {
+    if (isOffline && !searchTimedOut && !errorToastFiredRef.current.offlineFallback) {
+      errorToastFiredRef.current.offlineFallback = true;
+      showToast("No connection — showing cached results", "info");
+    }
+    if (!isOffline) {
+      errorToastFiredRef.current.offlineFallback = false;
+    }
+  // showToast is stable; searchTimedOut is intentionally in deps to avoid
+  // double-firing when a timeout also triggers isOffline.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOffline, searchTimedOut]);
 
   // Trigger a background sync when the app returns to foreground and the Fuse
   // index is soft-stale (older than FUSE_SOFT_STALE_MS). This catches the
@@ -844,6 +878,8 @@ export default function SearchScreen() {
       // timeout + error-handler path deal with it.
     }
 
+    setSearchTimedOut(false); // F-039: clear stale timeout banner on new search
+    errorToastFiredRef.current.searchTimeout = false; // allow toast to fire again
     setPinnedParts([]);
     setOfflineResults(null);
     setIsOffline(false);
@@ -878,6 +914,13 @@ export default function SearchScreen() {
       searchTimeoutRef.current = null;
       searchAbortedRef.current = true; // onSuccess will discard any late response
       searchMutation.reset();          // clear the loading spinner
+      // F-039: show a visible banner so stale data is never silently presented
+      setSearchTimedOut(true);
+      // F-068: fire a toast on the first timeout per search
+      if (!errorToastFiredRef.current.searchTimeout) {
+        errorToastFiredRef.current.searchTimeout = true;
+        showToast("Search timed out — showing cached results", "info");
+      }
       runOfflineFallback();
     }, SEARCH_TIMEOUT_MS);
   };
@@ -885,6 +928,7 @@ export default function SearchScreen() {
   const handleClear = () => {
     if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
     searchAbortedRef.current = false;
+    setSearchTimedOut(false); // F-039
     setMode("search");
     setActiveCategorySlug(null);
     setActiveCategoryLabel(null);
@@ -952,6 +996,7 @@ export default function SearchScreen() {
       // timeout + error-handler path deal with it.
     }
 
+    setSearchTimedOut(false); // F-039
     setShowSimilarSizeBanner(false);
     setFilters(expanded);
     setPinnedParts([]);
@@ -977,6 +1022,13 @@ export default function SearchScreen() {
       searchTimeoutRef.current = null;
       searchAbortedRef.current = true;
       searchMutation.reset();
+      // F-039: show banner so stale data is never silently presented
+      setSearchTimedOut(true);
+      // F-068: toast on first timeout per search
+      if (!errorToastFiredRef.current.searchTimeout) {
+        errorToastFiredRef.current.searchTimeout = true;
+        showToast("Search timed out — showing cached results", "info");
+      }
       runOfflineFallback();
     }, SEARCH_TIMEOUT_MS);
   };
@@ -999,6 +1051,7 @@ export default function SearchScreen() {
       // timeout + error-handler path deal with it.
     }
 
+    setSearchTimedOut(false); // F-039
     setPinnedParts([]);
     setOfflineResults(null);
     setIsOffline(false);
@@ -1020,6 +1073,13 @@ export default function SearchScreen() {
       searchTimeoutRef.current = null;
       searchAbortedRef.current = true;
       searchMutation.reset();
+      // F-039: show banner so stale data is never silently presented
+      setSearchTimedOut(true);
+      // F-068: toast on first timeout per search
+      if (!errorToastFiredRef.current.searchTimeout) {
+        errorToastFiredRef.current.searchTimeout = true;
+        showToast("Search timed out — showing cached results", "info");
+      }
       runOfflineFallback();
     }, SEARCH_TIMEOUT_MS);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1139,6 +1199,8 @@ export default function SearchScreen() {
               <Pressable
                 onPress={() => syncAllInventory()}
                 style={[styles.statusBadge, { backgroundColor: colors.destructive + "18" }]}
+                accessibilityLabel={syncRetryPending ? "Sync failed, retrying in background" : "Sync failed, tap to retry"}
+                accessibilityRole="button"
               >
                 <Text style={[styles.statusBadgeText, { color: colors.destructive }]}>
                   {syncRetryPending ? "⚠ Sync failed — retrying…" : "⚠ Sync failed — tap to retry"}
@@ -1180,6 +1242,8 @@ export default function SearchScreen() {
           <Pressable
             onPress={() => setShowReference(true)}
             style={[styles.headerBtn, styles.refBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+            accessibilityLabel="Quick Reference"
+            accessibilityRole="button"
           >
             <Text style={styles.refBtnIcon}>⚡</Text>
             <Text style={[styles.logoutBtnLabel, { color: colors.mutedForeground }]}>Ref</Text>
@@ -1190,6 +1254,8 @@ export default function SearchScreen() {
               readNewestCacheTimestamp().then(setCacheAge);
             }}
             style={[styles.headerBtn, styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+            accessibilityLabel="Settings"
+            accessibilityRole="button"
           >
             <Feather name="settings" size={16} color={colors.mutedForeground} />
             <Text style={[styles.logoutBtnLabel, { color: colors.mutedForeground }]}>Settings</Text>
@@ -1508,6 +1574,24 @@ export default function SearchScreen() {
         </View>
       ) : null}
 
+      {/* F-039: Search timeout banner — shown when the 8-second timeout fires */}
+      {searchTimedOut ? (
+        <View style={[styles.timeoutBanner, { backgroundColor: colors.warning + "15", borderBottomColor: colors.warning + "44" }]}>
+          <Text style={[styles.timeoutBannerText, { color: colors.warning, flex: 1 }]}>
+            Search timed out — showing cached results
+          </Text>
+          <Pressable
+            onPress={() => { setSearchTimedOut(false); handleSearch(); }}
+            hitSlop={8}
+            style={styles.timeoutBannerRetry}
+            accessibilityLabel="Retry search"
+            accessibilityRole="button"
+          >
+            <Text style={[styles.timeoutBannerRetryText, { color: colors.warning }]}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {/* Sync error banner — shown when background re-sync fails */}
       {syncError && !syncErrorDismissed ? (
         <View style={[styles.syncErrorBanner, { backgroundColor: colors.destructive + "14", borderBottomColor: colors.destructive + "44" }]}>
@@ -1550,6 +1634,7 @@ export default function SearchScreen() {
                 returnKeyType="search"
                 onSubmitEditing={handleSearch}
                 blurOnSubmit={false}
+                accessibilityLabel="Search parts by keyword, catalog number, or vendor"
               />
               {filters.keywords ? (
                 <Pressable
@@ -1570,6 +1655,8 @@ export default function SearchScreen() {
                   borderWidth: 1,
                   borderColor: (searchMutation.isPending || !canSearch) ? colors.border : '#000',
                 }]}
+                accessibilityLabel={searchMutation.isPending ? "Searching" : "Search"}
+                accessibilityRole="button"
               >
                 <Text style={[styles.searchBarSearchBtnText, { color: '#000' }]}>
                   {searchMutation.isPending ? "…" : "🔍 Search"}
@@ -1579,6 +1666,8 @@ export default function SearchScreen() {
                 <Pressable
                   onPress={handleClear}
                   style={[styles.secondaryBtn, styles.searchBarClearBtn, { borderColor: colors.border }]}
+                  accessibilityLabel="Clear search"
+                  accessibilityRole="button"
                 >
                   <Text style={[styles.searchBarClearBtnText, { color: colors.mutedForeground }]}>Clear</Text>
                 </Pressable>
@@ -1664,9 +1753,20 @@ export default function SearchScreen() {
                   <Text style={[styles.resultsCount, { color: colors.foreground }]}>
                     {results.length + sizeUnknownResults.length} {isOffline ? "offline" : ""} match{results.length + sizeUnknownResults.length !== 1 ? "es" : ""} found
                   </Text>
+                  {/* F-068: stale-age label when inventory is older than 24 hours */}
+                  {fuseSyncedAt != null && Date.now() - fuseSyncedAt > FUSE_SOFT_STALE_MS ? (
+                    <View style={[styles.staleAgeChip, { backgroundColor: colors.muted }]}>
+                      <Feather name="clock" size={10} color={colors.mutedForeground} />
+                      <Text style={[styles.staleAgeChipText, { color: colors.mutedForeground }]}>
+                        {`${Math.floor((Date.now() - fuseSyncedAt) / 3_600_000)}h old`}
+                      </Text>
+                    </View>
+                  ) : null}
                   <Pressable
                     onPress={handleClear}
                     style={[styles.secondaryBtn, styles.newSearchBtn, { borderColor: colors.border }]}
+                    accessibilityLabel="Start a new search"
+                    accessibilityRole="button"
                   >
                     <Text style={[styles.newSearchText, { color: colors.primary }]}>New Search</Text>
                   </Pressable>
@@ -2070,6 +2170,26 @@ const styles = StyleSheet.create({
   offlineBadgeText: { fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
   offlineBanner: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1 },
   offlineBannerText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  timeoutBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    gap: 8,
+  },
+  timeoutBannerText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  timeoutBannerRetry: { paddingHorizontal: 8, paddingVertical: 2 },
+  timeoutBannerRetryText: { fontSize: 12, fontFamily: "Inter_700Bold" },
+  staleAgeChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  staleAgeChipText: { fontSize: 10, fontFamily: "Inter_500Medium" },
   syncErrorBanner: {
     flexDirection: "row",
     alignItems: "center",
