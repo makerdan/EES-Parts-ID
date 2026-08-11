@@ -198,7 +198,7 @@ server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {
     console.error(
       `[serve] Port ${port} is already in use. ` +
-        `Kill the process holding it (fuser -k ${port}/tcp) and retry.`,
+        `Kill the process holding it (node ../../scripts/free-ports.mjs ${port}) and retry.`,
     );
   } else {
     console.error(`[serve] Server error:`, err);
