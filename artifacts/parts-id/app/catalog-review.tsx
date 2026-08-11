@@ -303,6 +303,8 @@ export default function CatalogReviewScreen() {
             const failedData = await secondRes.json() as { jobs: Array<FailedJob> };
             setFailedJobs(failedData.jobs);
           }
+        } else if (jobId) {
+          setError("Could not load job status — try refreshing.");
         }
       }
     } catch (err) {
@@ -510,6 +512,10 @@ export default function CatalogReviewScreen() {
         const largeStatusR = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, {
           headers: authHeaders,
         });
+        if (!largeStatusR.ok) {
+          showInfo("Resume failed", `Could not load job status (HTTP ${largeStatusR.status}). Please try again.`);
+          return;
+        }
         const largeStatusBody = await largeStatusR.json().catch(() => ({})) as {
           failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
         };
@@ -619,6 +625,10 @@ export default function CatalogReviewScreen() {
           const statusR = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, {
             headers: authHeaders,
           });
+          if (!statusR.ok) {
+            showInfo("Resume failed", `Could not load job status (HTTP ${statusR.status}). Please try again.`);
+            return;
+          }
           const statusBody = await statusR.json().catch(() => ({})) as {
             failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
           };
