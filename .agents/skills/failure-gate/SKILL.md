@@ -349,6 +349,7 @@ pipeline is.
 ## Reference
 
 - Known-flaky patterns: `.agents/memory/MEMORY.md`
-- Canonical skill (tracked): `.agents/skills/failure-gate/SKILL.md`
+- Canonical skill (tracked): `.agents/skills/failure-gate/SKILL.md` — this file; git-committed and durable across merges. Update this file when the skill changes.
+- Runtime copy (ephemeral): `.local/custom_skills/failure-gate/SKILL.md` — Replit-managed copy injected at session start from the platform's skill store; lives in `.gitignore` and does not survive merges. Not the source of truth.
 - Lint guard: the project's plan-file lint guard script (e.g. `scripts/check-failure-gate.mjs`)
 - Session mandate: the project's session mandate (e.g. `replit.md` § "Agent rules")
