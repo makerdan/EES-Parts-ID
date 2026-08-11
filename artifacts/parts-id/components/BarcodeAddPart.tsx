@@ -271,6 +271,9 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
         setResumeSession(session);
       }
       setSessionChecked(true);
+    }).catch(_err => {
+      if (cancelled) return;
+      setSessionChecked(true);
     });
     return () => { cancelled = true; };
   }, []);

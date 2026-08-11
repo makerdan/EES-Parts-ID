@@ -114,6 +114,7 @@ async function saveBulkSession(session: BulkSession): Promise<void> {
     await AsyncStorage.setItem(BULK_SESSION_KEY, JSON.stringify(session));
   } catch (err) {
     reportStorageError("Could not save bulk shelf session", err);
+    throw err;
   }
 }
 
@@ -293,14 +294,18 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         setResumeSession(session);
       }
       setSessionChecked(true);
+    }).catch(_err => {
+      setSessionChecked(true);
     });
   }, [visible]);
 
   // Persist session whenever key state changes (only during active session)
   useEffect(() => {
     if (step !== "session" || !shelfPrefix) return;
-    saveBulkSession({ shelfPrefix, shelfItems, itemRowStates, targetItemId });
-  }, [step, shelfPrefix, shelfItems, itemRowStates, targetItemId]);
+    saveBulkSession({ shelfPrefix, shelfItems, itemRowStates, targetItemId }).catch(_err => {
+      showToast("Session save failed — your progress may not resume after restart", "error");
+    });
+  }, [step, shelfPrefix, shelfItems, itemRowStates, targetItemId, showToast]);
 
   // Detect completion: all items assigned → transition to "done"
   useEffect(() => {
