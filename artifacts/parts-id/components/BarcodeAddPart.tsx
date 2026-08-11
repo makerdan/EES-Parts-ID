@@ -38,12 +38,13 @@ interface AssignmentEntry {
   item: InventoryItem;
 }
 
-type BulkQueueStatus = "pending" | "assigned" | "skipped";
+type BulkQueueStatus = "pending" | "assigned" | "skipped" | "error";
 
 interface BulkQueueEntry {
   barcode: string;
   status: BulkQueueStatus;
   skippedAt?: number;
+  errorMsg?: string;
 }
 
 type ShelfSession = {
@@ -137,7 +138,7 @@ async function playChime(): Promise<void> {
 }
 
 // ── Session persistence ────────────────────────────────────────────────────
-const BULK_QUEUE_STATUSES: ReadonlySet<string> = new Set(["pending", "assigned", "skipped"]);
+const BULK_QUEUE_STATUSES: ReadonlySet<string> = new Set(["pending", "assigned", "skipped", "error"]);
 
 function isValidAssignmentEntry(entry: unknown): entry is AssignmentEntry {
   if (typeof entry !== 'object' || entry === null) return false;
@@ -155,7 +156,8 @@ function isValidBulkQueueEntry(entry: unknown): entry is BulkQueueEntry {
   return (
     typeof e.barcode === 'string' &&
     typeof e.status === 'string' && BULK_QUEUE_STATUSES.has(e.status) &&
-    (e.skippedAt === undefined || (typeof e.skippedAt === 'number' && Number.isFinite(e.skippedAt)))
+    (e.skippedAt === undefined || (typeof e.skippedAt === 'number' && Number.isFinite(e.skippedAt))) &&
+    (e.errorMsg === undefined || typeof e.errorMsg === 'string')
   );
 }
 
@@ -546,12 +548,30 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
         setBulkQueue(prev =>
           prev.map(e => e.barcode === code ? { ...e, status: "assigned" as BulkQueueStatus } : e)
         );
-      } catch {
-        setScanError("Could not assign barcode. Please try again.");
-        setShelfScannedCode(null);
+      } catch (err) {
+        const errorMsg =
+          err instanceof Error ? err.message : "Could not assign barcode. Please try again.";
+        if (bulkMode && code) {
+          // Bulk mode: mark the queue item as failed so it shows an inline Retry row
+          setBulkQueue(prev =>
+            prev.some(e => e.barcode === code)
+              ? prev.map(e =>
+                  e.barcode === code
+                    ? { ...e, status: "error" as BulkQueueStatus, errorMsg }
+                    : e,
+                )
+              : [...prev, { barcode: code, status: "error" as BulkQueueStatus, errorMsg }],
+          );
+          showToast("Assignment failed — tap Retry on the item to try again.", "error");
+        } else {
+          // Non-bulk: surface the error inline and retain shelfScannedCode so the
+          // admin can tap "Retry assignment" without re-scanning.
+          setScanError("Could not assign barcode. Please try again.");
+          // Do NOT clear shelfScannedCode — it is used by the Retry button below.
+        }
       }
     },
-    [shelfScannedCode, updateBarcodesMutation, queryClient, triggerScanFeedback, settings.scanSound],
+    [bulkMode, shelfScannedCode, updateBarcodesMutation, queryClient, triggerScanFeedback, settings.scanSound, showToast],
   );
 
   const handleUndoAssignment = useCallback(
@@ -954,14 +974,23 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
           {bulkQueue.filter(e => e.status !== "skipped").map((entry) => {
             const isPending = entry.status === "pending";
             const isAssigned = entry.status === "assigned";
-            const statusColor = isAssigned ? colors.success : colors.primary;
-            const statusLabel = isAssigned ? "Assigned" : "Pending";
+            const isError = entry.status === "error";
+            const statusColor = isAssigned
+              ? colors.success
+              : isError
+                ? colors.destructive
+                : colors.primary;
+            const statusLabel = isAssigned ? "Assigned" : isError ? "Failed" : "Pending";
             return (
               <View
                 key={entry.barcode}
                 style={[apStyles.logRow, {
-                  backgroundColor: colors.card,
-                  borderColor: isAssigned ? colors.success + "44" : colors.border,
+                  backgroundColor: isError ? colors.destructive + "0d" : colors.card,
+                  borderColor: isAssigned
+                    ? colors.success + "44"
+                    : isError
+                      ? colors.destructive + "55"
+                      : colors.border,
                 }]}
               >
                 <View style={{ flex: 1 }}>
@@ -988,6 +1017,16 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
                       <Text style={[apStyles.undoBtnText, { color: colors.mutedForeground }]}>Skip</Text>
                     </Pressable>
                   </>
+                ) : isError ? (
+                  <Pressable
+                    onPress={() => {
+                      setShelfScannedCode(entry.barcode);
+                      setShelfAssignPicker(true);
+                    }}
+                    style={[apStyles.undoBtn, { backgroundColor: colors.destructive + "18", borderColor: colors.destructive + "44" }]}
+                  >
+                    <Text style={[apStyles.undoBtnText, { color: colors.destructive }]}>Retry</Text>
+                  </Pressable>
                 ) : (
                   <View style={[apStyles.logBadge, { backgroundColor: colors.success + "22" }]}>
                     <Text style={[apStyles.logBadgeText, { color: colors.success, fontSize: 11 }]}>✓</Text>
@@ -1014,8 +1053,27 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
                 </Text>
               </Pressable>
             ) : null}
+            {/* Non-bulk shelf failure: offer a Retry button since the barcode was retained */}
+            {shelfMode && shelfScannedCode && !conflictItem ? (
+              <Pressable
+                onPress={() => { setScanError(null); setShelfAssignPicker(true); }}
+                style={[apStyles.conflictViewBtn, { borderColor: colors.destructive + "55" }]}
+              >
+                <Text style={[apStyles.conflictViewBtnText, { color: colors.destructive }]}>
+                  Retry assignment →
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
-          <Pressable onPress={() => { setScanError(null); setConflictItem(null); }} hitSlop={8}>
+          <Pressable
+            onPress={() => {
+              setScanError(null);
+              setConflictItem(null);
+              // Also clear the retained shelf code on manual dismiss
+              if (shelfMode && !conflictItem) setShelfScannedCode(null);
+            }}
+            hitSlop={8}
+          >
             <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
           </Pressable>
         </View>
