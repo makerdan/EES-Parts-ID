@@ -174,28 +174,6 @@ function isValidShelfSession(value: unknown): value is ShelfSession {
   );
 }
 
-async function saveShelfSession(session: ShelfSession): Promise<void> {
-  try {
-    await AsyncStorage.setItem(SHELF_SESSION_KEY, JSON.stringify(session));
-  } catch { /* non-fatal */ }
-}
-
-async function loadShelfSession(): Promise<ShelfSession | null> {
-  try {
-    const raw = await AsyncStorage.getItem(SHELF_SESSION_KEY);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    return isValidShelfSession(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-async function clearShelfSession(): Promise<void> {
-  try {
-    await AsyncStorage.removeItem(SHELF_SESSION_KEY);
-  } catch { /* non-fatal */ }
-}
 
 interface BarcodeAddPartProps {
   scrollY?: number;
@@ -318,28 +296,46 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   // Check for a saved session on mount; also cross-check for an active BulkShelfAssign session.
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([
-      loadShelfSession(),
-      AsyncStorage.getItem(BULK_SHELF_ASSIGN_SESSION_KEY).catch(() => null),
-    ]).then(([session, otherRaw]) => {
-      if (cancelled) return;
-      if (session && session.shelfPrefix) {
-        setResumeSession(session);
-      }
-      // Show cross-flow warning when the other flow has a valid, non-empty session.
+    void (async () => {
       try {
-        const other = otherRaw ? (JSON.parse(otherRaw) as unknown) : null;
-        setOtherFlowActive(isActiveBulkShelfAssignSession(other));
+        const [rawSession, otherRaw] = await Promise.all([
+          AsyncStorage.getItem(SHELF_SESSION_KEY).catch(() => null),
+          AsyncStorage.getItem(BULK_SHELF_ASSIGN_SESSION_KEY).catch(() => null),
+        ]);
+        if (cancelled) return;
+
+        // Detect when a session blob exists but is invalid/corrupt (F-050)
+        if (rawSession) {
+          let session: ShelfSession | null = null;
+          try {
+            const parsed: unknown = JSON.parse(rawSession);
+            session = isValidShelfSession(parsed) ? parsed : null;
+          } catch {
+            session = null;
+          }
+          if (session?.shelfPrefix) {
+            setResumeSession(session);
+          } else if (session === null) {
+            // Raw data existed but could not be parsed — surface to user (F-050)
+            showToast("Previous session could not be restored.", "error");
+          }
+        }
+
+        // Show cross-flow warning when the other flow has a valid, non-empty session.
+        try {
+          const other = otherRaw ? (JSON.parse(otherRaw) as unknown) : null;
+          setOtherFlowActive(isActiveBulkShelfAssignSession(other));
+        } catch {
+          setOtherFlowActive(false);
+        }
       } catch {
-        setOtherFlowActive(false);
+        // ignore unexpected errors — session state defaults to empty
+      } finally {
+        if (!cancelled) setSessionChecked(true);
       }
-      setSessionChecked(true);
-    }).catch(_err => {
-      if (cancelled) return;
-      setSessionChecked(true);
-    });
+    })();
     return () => { cancelled = true; };
-  }, []);
+  }, [showToast]);
 
   // Enqueue a session write through the serial queue so saves cannot
   // overtake a clear that was issued after them (F-036).

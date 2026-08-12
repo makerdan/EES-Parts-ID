@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -53,7 +54,21 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
   const openScanner = useCallback(async () => {
     if (!permission?.granted) {
       const result = await requestPermission();
-      if (!result.granted) return;
+      if (!result.granted) {
+        // Permission was denied — offer to open system settings (F-035)
+        Alert.alert(
+          "Camera Access Required",
+          "Barcode scanning needs camera access. Open Settings to allow it.",
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Open Settings",
+              onPress: () => { void Linking.openSettings(); },
+            },
+          ],
+        );
+        return;
+      }
     }
     scannerLockRef.current = false;
     setScannerOpen(true);
