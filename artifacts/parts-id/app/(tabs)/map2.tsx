@@ -19,6 +19,7 @@ import {
   ActivityIndicator,
   Dimensions,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -55,20 +56,42 @@ export default function Map2Screen() {
 
 function Map2Web({ colors }: { colors: ReturnType<typeof useColors> }) {
   const [svgXml, setSvgXml] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     let alive = true;
+    setSvgXml(null);
+    setError(null);
     import("../../assets/warehouse-map-raw")
       .then(({ WAREHOUSE_MAP_SVG }) => {
         if (alive) setSvgXml(WAREHOUSE_MAP_SVG);
       })
-      .catch(() => {
-        // import failure is silent; the spinner stays visible
+      .catch((err: unknown) => {
+        if (alive) setError(err instanceof Error ? err.message : "Failed to load map asset");
       });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [retryKey]);
+
+  if (error) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <Text style={{ color: colors.destructive, textAlign: "center", padding: 16 }}>
+          Failed to load floor plan{"\n"}{error}
+        </Text>
+        <Pressable
+          onPress={() => setRetryKey((k) => k + 1)}
+          style={[styles.retryBtn, { backgroundColor: colors.primary }]}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading floor plan"
+        >
+          <Text style={[styles.retryBtnText, { color: "#fff" }]}>Retry</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   if (!svgXml) {
     return (
@@ -188,5 +211,16 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+  },
+  retryBtn: {
+    marginTop: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  retryBtnText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
 });

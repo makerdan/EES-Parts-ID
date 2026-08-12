@@ -657,6 +657,10 @@ export function ZoneOverlayItem({
 // SvgXml/SvgUri layer underneath acts as a placeholder while the tile loads —
 // when the Image resolves it paints on top.  Unmounting cancels the in-flight
 // download via the `cancelled` flag.
+//
+// Retry policy (F-044): one automatic retry after the first failure.  If the
+// retry also fails, onFetchError is called so the parent can surface a
+// "Tap to reload map" banner.
 function PngTile({
   z,
   col,
@@ -664,6 +668,7 @@ function PngTile({
   svgHash,
   tileW,
   tileH,
+  onFetchError,
 }: {
   z: number;
   col: number;
@@ -671,16 +676,33 @@ function PngTile({
   svgHash: string;
   tileW: number;
   tileH: number;
+  onFetchError?: (() => void) | undefined;
 }) {
   "use no memo";
   const [uri, setUri] = useState<string | null>(null);
+  // Keep a stable ref so the async callback can call the latest onFetchError
+  // without needing it in the effect dependency array.
+  const onFetchErrorRef = useRef(onFetchError);
+  useEffect(() => { onFetchErrorRef.current = onFetchError; }, [onFetchError]);
 
   useEffect(() => {
     if (!svgHash) return;
     let cancelled = false;
-    fetchTile(z, col, row, svgHash)
-      .then((u) => { if (!cancelled) setUri(u); })
-      .catch(() => {});
+    async function load() {
+      try {
+        const u = await fetchTile(z, col, row, svgHash);
+        if (!cancelled) setUri(u);
+      } catch {
+        // First attempt failed — retry once before giving up (F-044).
+        try {
+          const u = await fetchTile(z, col, row, svgHash);
+          if (!cancelled) setUri(u);
+        } catch {
+          if (!cancelled) onFetchErrorRef.current?.();
+        }
+      }
+    }
+    void load();
     return () => { cancelled = true; };
   }, [z, col, row, svgHash]);
 
@@ -714,6 +736,7 @@ function FadeOutTileLayer({
   svgRenderW,
   svgRenderH,
   onDone,
+  onFetchError,
 }: {
   id: number;
   tiles: Array<{ col: number; row: number }>;
@@ -723,6 +746,7 @@ function FadeOutTileLayer({
   svgRenderW: number;
   svgRenderH: number;
   onDone: (id: number) => void;
+  onFetchError?: (() => void) | undefined;
 }) {
   "use no memo";
   const opacity = useSharedValue(1);
@@ -751,6 +775,7 @@ function FadeOutTileLayer({
           svgHash={svgHash}
           tileW={tileW}
           tileH={tileH}
+          onFetchError={onFetchError}
         />
       ))}
     </Animated.View>
@@ -782,6 +807,18 @@ function safeZoneAlignment(
     return IDENTITY_ALIGNMENT;
   }
   return { translateX: a.translateX, translateY: a.translateY, scale: a.scale };
+}
+
+/**
+ * True when the floor-plan cache entry contains data usable for rendering.
+ * An empty fallback entry (set by setFallbackEmpty after a total load failure)
+ * has non-null cache but empty uri/xml — treat it as unusable so the retry
+ * path triggers instead of silently leaving a dead "Map unavailable" state.
+ */
+function isSvgDataUsable(data: ReturnType<typeof getCachedData>): boolean {
+  if (!data) return false;
+  if (Platform.OS === "web") return Boolean(data.xml);
+  return Boolean(data.uri) || Boolean(data.xml);
 }
 
 export interface WarehouseMapViewProps {
@@ -849,6 +886,12 @@ export interface WarehouseMapViewProps {
    * any selection state (e.g. the zone action menu).
    */
   onPanStart?: (() => void) | undefined;
+  /**
+   * Called when Linking.openURL fails for the Zone Editor "Set up zones" button
+   * in the empty-zones card.  Receives the URL so the parent can surface a
+   * toast with it so the admin can copy it manually (F-042).
+   */
+  onZoneEditorLaunchFailed?: ((url: string) => void) | undefined;
 }
 
 /** 3D-style teardrop pin rendered entirely in SVG viewBox coordinates.
@@ -1024,6 +1067,7 @@ export function WarehouseMapView({
   onSelectModeChange,
   selectedZoneId,
   onPanStart,
+  onZoneEditorLaunchFailed,
 }: WarehouseMapViewProps) {
   "use no memo";
   const colors = useColors();
@@ -1639,7 +1683,21 @@ export function WarehouseMapView({
   // svgXml: full SVG text — the native tile renderer (SvgXml + cropped
   // viewBox) and the web floor-plan <div> injection both render from this.
   const [svgXml, setSvgXml] = useState(() => getCachedData()?.xml ?? "");
-  const [svgLoading, setSvgLoading] = useState(() => !hasCachedData());
+  // svgLoading: true when no usable floor-plan data is in cache yet.
+  // isSvgDataUsable guards against an empty fallback entry (set by
+  // setFallbackEmpty after a total load failure) — hasCachedData() returns
+  // true for those entries, but they have no uri/xml to render (F-043).
+  const [svgLoading, setSvgLoading] = useState(() => !isSvgDataUsable(getCachedData()));
+  // F-043: track load errors so the "Map unavailable" fallback can show a
+  // Retry button instead of a silent dead end.  Initialize to true when the
+  // cache exists but is empty (empty fallback entry from a previous failure)
+  // so that a remount after total failure immediately shows the Retry button.
+  const [svgLoadError, setSvgLoadError] = useState(() => {
+    const d = getCachedData();
+    return d !== null && !isSvgDataUsable(d);
+  });
+  // Incrementing this triggers a forced cache-busting reload of the floor plan.
+  const [svgRetryKey, setSvgRetryKey] = useState(0);
 
   // svgHash is the content-hash of the currently loaded floor plan SVG.
   // It is used as a cache-directory key for PNG tiles so stale tiles are never
@@ -1711,27 +1769,29 @@ export function WarehouseMapView({
   }, []);
 
   // Load the SVG floor plan.  Runs once on mount (serverHashChanged === 0) and
-  // again whenever the server reports a new floor-plan hash (serverHashChanged > 0).
+  // again whenever the server reports a new floor-plan hash (serverHashChanged > 0)
+  // or the user taps Retry (svgRetryKey > 0).
   useEffect(() => {
     let cancelled = false;
     const isServerUpdate = serverHashChanged > 0;
+    const isRetry = svgRetryKey > 0;
+    const isForced = isServerUpdate || isRetry;
 
     // Fast-path: skip the load if we already have adequate cached data.
-    // On web, "adequate" requires a non-empty xml — web renders from the full
-    // SVG text, so a stale entry without it must not suppress the reload.
+    // isSvgDataUsable rejects the empty fallback entry written by
+    // setFallbackEmpty (non-null cache with empty uri/xml) so a remount
+    // after a total failure does not silently skip the retry attempt (F-043).
     const cached = getCachedData();
-    const isAdequate = cached !== null &&
-      (Platform.OS !== "web" || Boolean(cached.xml));
-    if (!isServerUpdate && isAdequate) return;
+    if (!isForced && isSvgDataUsable(cached)) return;
 
-    if (isServerUpdate) {
-      // Admin uploaded a new floor plan while the app was open.  Bust the
-      // in-memory cache and reset the load promise so loadSvgAsset() issues
-      // a fresh fetch instead of returning the stale cached entry.
+    if (isForced) {
+      // Bust the in-memory cache and reset the load promise so loadSvgAsset()
+      // issues a fresh fetch instead of returning the stale cached entry.
       resetForServerUpdate();
       _svgLoadPromise = null;
       setSvgUri(""); setSvgXml("");
       setSvgLoading(true);
+      setSvgLoadError(false);
     }
 
     (async () => {
@@ -1743,12 +1803,13 @@ export function WarehouseMapView({
       // getCachedData() returns SvgData | null — no cast needed here since it
       // is a function call (TypeScript narrows const locals correctly).
       const afterPersist = getCachedData();
-      if (afterPersist !== null && !isServerUpdate && !cancelled) {
-        // Persisted data available — update state right away so the skeleton
-        // never appears for returning users.
-        setSvgUri(afterPersist.uri);
-        setSvgXml(afterPersist.xml);
+      if (isSvgDataUsable(afterPersist) && !isForced && !cancelled) {
+        // Persisted usable data available — update state right away so the
+        // skeleton never appears for returning users.
+        setSvgUri(afterPersist!.uri);
+        setSvgXml(afterPersist!.xml);
         setSvgHash(getCachedHash() ?? "");
+        setSvgLoadError(false);
         setSvgLoading(false);
       }
 
@@ -1759,16 +1820,24 @@ export function WarehouseMapView({
       await loadSvgAsset();
       if (cancelled) return;
       const afterLoad = getCachedData();
-      if (afterLoad) {
-        setSvgUri(afterLoad.uri);
-        setSvgXml(afterLoad.xml);
+      // F-043: detect load failure — when no usable data is in the cache after
+      // loadSvgAsset() resolves (all internal fallbacks failed, and
+      // setFallbackEmpty wrote an empty cache entry), surface an error state
+      // so the "Map unavailable" fallback can show a Retry button.
+      const hasUsableData = isSvgDataUsable(afterLoad);
+      if (hasUsableData) {
+        setSvgUri(afterLoad!.uri);
+        setSvgXml(afterLoad!.xml);
         setSvgHash(getCachedHash() ?? "");
+        setSvgLoadError(false);
+      } else {
+        setSvgLoadError(true);
       }
       setSvgLoading(false);
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverHashChanged]);
+  }, [serverHashChanged, svgRetryKey]);
 
   // Parse the content viewBox from the SVG XML as soon as it is available.
   // The parsed rect is the tightly cropped bounding box of the actual warehouse
@@ -1934,10 +2003,49 @@ export function WarehouseMapView({
     opacity: tileLayerOpacity.value,
   }));
 
+  // ── Tile-failure banner (F-044) ───────────────────────────────────────────
+  // When a tile fetch fails after one retry, show "Tap to reload map" so the
+  // user has an explicit recovery path.  Tapping bumps tileReloadKey, which
+  // is appended to every PngTile key prop so all tiles unmount and re-fetch.
+  const [tileFailBanner, setTileFailBanner] = useState(false);
+  const [tileReloadKey, setTileReloadKey] = useState(0);
+
+  const handleTileFetchError = useCallback(() => {
+    setTileFailBanner(true);
+  }, []);
+
+  const handleTileReload = useCallback(() => {
+    setTileFailBanner(false);
+    setTileReloadKey((k) => k + 1);
+  }, []);
+
+  // Reset banner when the floor plan hash changes (new plan uploaded) or the
+  // SVG retry key increments — a fresh floor plan needs a fresh tile set.
+  useEffect(() => { setTileFailBanner(false); }, [svgHash, svgRetryKey]);
+
+  // Callback for FadeOutTileLayer — fade tiles are cosmetic; errors there do
+  // not surface a banner (they disappear anyway after 150 ms).
+  // Defined here so the JSX below can reference it without repetition.
+  // (intentionally undefined — fade-layer tile errors are non-fatal)
+
+  // ── Floor-plan retry handler (F-043) ─────────────────────────────────────
+  // Busts the in-memory + AsyncStorage cache and forces a fresh load.
+  const handleFloorPlanRetry = useCallback(() => {
+    resetForServerUpdate();
+    _svgLoadPromise = null;
+    setSvgUri("");
+    setSvgXml("");
+    setSvgLoadError(false);
+    setSvgLoading(true);
+    setSvgRetryKey((k) => k + 1);
+  }, []);
+
   // Skeleton shimmer — pulsing opacity while SVG is fetching.
-  // Starts unmounted when the cache is already populated so there is no
-  // visible skeleton flash on repeat visits.
-  const [skeletonMounted, setSkeletonMounted] = useState(() => !hasCachedData());
+  // Starts unmounted when the cache already has usable data so there is no
+  // visible skeleton flash on repeat visits.  Empty fallback entries (from
+  // a previous total failure) are not usable — show skeleton so the user
+  // sees the retry experience rather than a bare "Map unavailable" on remount.
+  const [skeletonMounted, setSkeletonMounted] = useState(() => !isSvgDataUsable(getCachedData()));
   const skeletonOpacity = useSharedValue(1);
   const shimmerPulse = useSharedValue(0.45);
   useEffect(() => {
@@ -2368,6 +2476,8 @@ export function WarehouseMapView({
                       svgRenderW={svgRenderW}
                       svgRenderH={svgRenderH}
                       onDone={removeFadeLayer}
+                      // Fade-layer tile errors are cosmetic — tiles disappear
+                      // after 150 ms anyway, so no banner is surfaced.
                     />
                   ) : null,
                 )}
@@ -2376,28 +2486,44 @@ export function WarehouseMapView({
                   {numTiles > 1 && tiles.length > 0
                     ? tiles.map(({ col, row }) => (
                         <PngTile
-                          key={`${col}-${row}`}
+                          key={`${col}-${row}-${tileReloadKey}`}
                           z={renderZoom}
                           col={col}
                           row={row}
                           svgHash={svgHash}
                           tileW={svgRenderW / numTiles}
                           tileH={svgRenderH / numTiles}
+                          onFetchError={handleTileFetchError}
                         />
                       ))
                     : null}
                 </Animated.View>
               </View>
             ) : !svgLoading ? (
+              /* F-043: native load failed — show descriptive message + Retry */
               <View
                 style={[
                   styles.svgFallback,
                   { width: svgRenderW, height: svgRenderH, backgroundColor: colors.muted },
                 ]}
               >
-                <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
-                  Map unavailable
+                <Text style={{ color: colors.mutedForeground, fontSize: 13, textAlign: "center", paddingHorizontal: 24 }}>
+                  {svgLoadError
+                    ? "Floor plan could not be loaded.\nServer and bundled asset both failed."
+                    : "Map unavailable"}
                 </Text>
+                {svgLoadError && (
+                  <Pressable
+                    onPress={handleFloorPlanRetry}
+                    style={[styles.floorPlanRetryBtn, { backgroundColor: colors.primary }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry loading floor plan"
+                  >
+                    <Text style={[styles.floorPlanRetryBtnText, { color: colors.primaryForeground }]}>
+                      Retry
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             ) : (
               <View style={{ width: svgRenderW, height: svgRenderH }} />
@@ -2424,15 +2550,30 @@ export function WarehouseMapView({
                 },
               })
             ) : !svgLoading ? (
+              /* F-043: web load failed — show descriptive message + Retry */
               <View
                 style={[
                   styles.svgFallback,
                   { width: svgRenderW, height: svgRenderH, backgroundColor: colors.muted },
                 ]}
               >
-                <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
-                  Map unavailable
+                <Text style={{ color: colors.mutedForeground, fontSize: 13, textAlign: "center", paddingHorizontal: 24 }}>
+                  {svgLoadError
+                    ? "Floor plan could not be loaded.\nServer and bundled asset both failed."
+                    : "Map unavailable"}
                 </Text>
+                {svgLoadError && (
+                  <Pressable
+                    onPress={handleFloorPlanRetry}
+                    style={[styles.floorPlanRetryBtn, { backgroundColor: colors.primary }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry loading floor plan"
+                  >
+                    <Text style={[styles.floorPlanRetryBtnText, { color: colors.primaryForeground }]}>
+                      Retry
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             ) : (
               <View style={{ width: svgRenderW, height: svgRenderH }} />
@@ -2581,7 +2722,13 @@ export function WarehouseMapView({
             </Text>
             {isAdmin && zoneEditorUrl !== null && (
               <Pressable
-                onPress={() => Linking.openURL(zoneEditorUrl!)}
+                onPress={() => {
+                  // Catch URL-open failures and notify the parent so it can
+                  // surface a toast with the URL for manual copying (F-042).
+                  Linking.openURL(zoneEditorUrl!).catch(() => {
+                    onZoneEditorLaunchFailed?.(zoneEditorUrl!);
+                  });
+                }}
                 style={[styles.emptySetupBtn, { backgroundColor: colors.primary }]}
                 accessibilityRole="button"
               >
@@ -2592,6 +2739,22 @@ export function WarehouseMapView({
             )}
           </View>
         </View>
+      )}
+
+      {/* Tile-fetch failure banner — shown after a tile fails even after one
+          retry.  Tapping reloads all tiles by bumping tileReloadKey (F-044). */}
+      {tileFailBanner && Platform.OS !== "web" && (
+        <Pressable
+          onPress={handleTileReload}
+          style={[styles.tileFailBanner, { backgroundColor: colors.destructive + "18", borderColor: colors.destructive + "40" }]}
+          accessibilityRole="button"
+          accessibilityLabel="Tap to reload map tiles"
+        >
+          <Feather name="alert-circle" size={14} color={colors.destructive} />
+          <Text style={[styles.tileFailBannerText, { color: colors.destructive }]}>
+            Tap to reload map
+          </Text>
+        </Pressable>
       )}
 
       {/* Select-mode coach mark — shown once on first visit (F-062) */}
@@ -2690,7 +2853,28 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  svgFallback: { alignItems: "center", justifyContent: "center" },
+  svgFallback: { alignItems: "center", justifyContent: "center", gap: 12 },
+  floorPlanRetryBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  floorPlanRetryBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  tileFailBanner: {
+    position: "absolute",
+    top: 12,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    boxShadow: "0 2px 4px rgba(0,0,0,0.12)",
+  },
+  tileFailBannerText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   floatingBadge: {
     position: "absolute",
     top: 12,

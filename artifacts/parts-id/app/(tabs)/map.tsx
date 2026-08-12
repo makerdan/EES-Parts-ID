@@ -51,7 +51,7 @@ export default function MapScreen() {
   useTrackScreen("Map");
   const colors = useColors();
   const router = useRouter();
-  const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus, pinnedParts, setPinnedParts } = useApp();
+  const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus, pinnedParts, setPinnedParts, showToast } = useApp();
 
   // Derived at render time so that tests can control EXPO_PUBLIC_DOMAIN via process.env.
   // In production builds the env var is baked in at build time, so the value is stable.
@@ -349,13 +349,18 @@ export default function MapScreen() {
         } else {
           next.add(zone.id);
         }
-        void AsyncStorage.setItem(CYCLE_COUNTED_KEY, JSON.stringify([...next]));
+        const serialized = JSON.stringify([...next]);
+        // Await the write; revert toggle and show toast on failure (F-041).
+        AsyncStorage.setItem(CYCLE_COUNTED_KEY, serialized).catch(() => {
+          setCountedZoneIds(prev);
+          showToast("Couldn't save cycle count — please try again", "error");
+        });
         return next;
       });
       return;
     }
     setSummaryZone(toAisleZone(zone));
-  }, [cycleMode]);
+  }, [cycleMode, showToast]);
 
   const handleBrowseFromSheet = useCallback((zone: WarehouseZone) => {
     setSummaryZone(null);
@@ -442,7 +447,11 @@ export default function MapScreen() {
                     zoneEditorLongPressed.current = false;
                     return;
                   }
-                  Linking.openURL(zoneEditorUrl!);
+                  // Catch URL-open failures and surface the URL so the admin
+                  // can copy it manually (F-042).
+                  Linking.openURL(zoneEditorUrl!).catch(() => {
+                    showToast(`Could not open Zone Editor. Copy the URL: ${zoneEditorUrl}`, "error");
+                  });
                 }}
                 onLongPress={() => {
                   zoneEditorLongPressed.current = true;
@@ -585,6 +594,9 @@ export default function MapScreen() {
           })()}
           selectedZoneId={selectedZone?.id}
           onPanStart={handleMapPanStart}
+          onZoneEditorLaunchFailed={(url) => {
+            showToast(`Could not open Zone Editor. Copy the URL: ${url}`, "error");
+          }}
         />
 
         {selectedZone !== null && (
