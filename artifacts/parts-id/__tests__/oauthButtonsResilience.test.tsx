@@ -34,6 +34,12 @@ jest.mock("@clerk/expo", () => ({
   useClerk: () => ({ client: null }),
 }));
 
+// ── @/contexts/AppContext ────────────────────────────────────────────────────
+const mockShowToast = jest.fn();
+jest.mock("@/contexts/AppContext", () => ({
+  useApp: () => ({ showToast: mockShowToast }),
+}));
+
 // ── @/hooks/useColors ────────────────────────────────────────────────────────
 jest.mock("@/hooks/useColors", () => ({
   useColors: () => ({
@@ -79,6 +85,7 @@ beforeEach(() => {
   jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
   mockReplace.mockClear();
   mockStartSSOFlow.mockReset();
+  mockShowToast.mockClear();
 });
 
 afterEach(() => {
@@ -135,8 +142,36 @@ describe("OAuthButtons — shared loading flag (F-046)", () => {
     expect(isButtonLoading(result, "Continue with Google")).toBe(false);
     expect(isButtonLoading(result, "Continue with Apple")).toBe(false);
 
-    // Timeout error message shown
+    // Timeout error message shown inline
     expect(result.queryByText("Sign-in timed out. Please try again.")).toBeTruthy();
+
+    // showToast called so the error survives navigation to sign-up/login
+    expect(mockShowToast).toHaveBeenCalledWith(
+      "Sign-in timed out. Please try again.",
+      "error",
+    );
+  });
+
+  it("shows a toast when the provider flow throws an error, so the message survives navigation", async () => {
+    // startSSOFlow rejects with a non-cancel error
+    mockStartSSOFlow.mockRejectedValue(new Error("Network request failed"));
+
+    const result = await render(<OAuthButtons mode="sign-in" />);
+    await flushMicrotasks();
+
+    await act(async () => {
+      fireEvent.press(result.getByText("Continue with Google"));
+    });
+    await flushMicrotasks();
+
+    // Inline error shown
+    expect(result.queryByText("Google sign-in failed. Please try again.")).toBeTruthy();
+
+    // Toast fired so the message persists if the user navigates to sign-up
+    expect(mockShowToast).toHaveBeenCalledWith(
+      "Google sign-in failed. Please try again.",
+      "error",
+    );
   });
 
   it("stale attempt settling after timeout does not clear a new in-flight attempt", async () => {

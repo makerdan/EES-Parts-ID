@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 
+import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 
 // NOTE: Before OAuth buttons work, you must enable Google and/or Apple as
@@ -61,6 +62,7 @@ function AppleIcon({ color }: { color: string }) {
 export function OAuthButtons({ mode }: OAuthButtonsProps) {
   const colors = useColors();
   const router = useRouter();
+  const { showToast } = useApp();
 
   // Native (iOS/Android): useSSO()/startSSOFlow() opens the in-app browser and
   // resolves with createdSessionId in the same JS context, which we activate
@@ -143,7 +145,10 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
       oauthTimeoutRef.current = setTimeout(() => {
         if (attemptTokenRef.current !== myToken) return; // stale
         setOauthLoading(false);
-        setOauthError("Sign-in timed out. Please try again.");
+        const timeoutMsg = "Sign-in timed out. Please try again.";
+        setOauthError(timeoutMsg);
+        // Persist via toast so the message survives navigation to sign-up/login.
+        showToast(timeoutMsg, "error");
       }, 60_000);
 
       try {
@@ -153,7 +158,10 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
         const msg = err instanceof Error ? err.message : null;
         if (msg && !msg.toLowerCase().includes("cancel")) {
           const provider = strategy === "oauth_google" ? "Google" : "Apple";
-          setOauthError(`${provider} sign-in failed. Please try again.`);
+          const failMsg = `${provider} sign-in failed. Please try again.`;
+          setOauthError(failMsg);
+          // Persist via toast so the message survives navigation to sign-up/login.
+          showToast(failMsg, "error");
         }
       } finally {
         if (attemptTokenRef.current === myToken) {
@@ -166,7 +174,7 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
         }
       }
     },
-    [oauthLoading, runOAuth],
+    [oauthLoading, runOAuth, showToast],
   );
 
   const handleGoogle = useCallback(
