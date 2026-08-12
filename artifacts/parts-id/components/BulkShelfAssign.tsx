@@ -257,6 +257,8 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
   const [sessionChecked, setSessionChecked] = useState(false);
   /** True when BarcodeAddPart has an active session that would be silently orphaned. */
   const [otherFlowActive, setOtherFlowActive] = useState(false);
+  /** True once the admin has dismissed the cross-flow warning for this mount. */
+  const [crossFlowDismissed, setCrossFlowDismissed] = useState(false);
 
   const doneAnimScale = useRef(new Animated.Value(0)).current;
   const doneAnimOpacity = useRef(new Animated.Value(0)).current;
@@ -866,16 +868,26 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         {/* ── Input step ───────────────────────────────────────────────────── */}
         {step === "input" ? (
           <ScrollView contentContainerStyle={bsStyles.inputScroll} keyboardShouldPersistTaps="handled">
-            {sessionChecked && otherFlowActive ? (
+            {sessionChecked && otherFlowActive && !crossFlowDismissed ? (
               <View
                 style={[
                   bsStyles.resumeBanner,
                   { backgroundColor: colors.warning + "18", borderColor: colors.warning + "44" },
                 ]}
               >
-                <Text style={[bsStyles.resumeTitle, { color: colors.foreground }]}>
-                  ℹ️ In-progress session in another flow
-                </Text>
+                <View style={bsStyles.resumeBannerRow}>
+                  <Text style={[bsStyles.resumeTitle, { color: colors.foreground, flex: 1 }]}>
+                    ℹ️ In-progress session in another flow
+                  </Text>
+                  <Pressable
+                    onPress={() => setCrossFlowDismissed(true)}
+                    hitSlop={8}
+                    accessibilityLabel="Dismiss cross-flow session warning"
+                    style={bsStyles.crossFlowDismissBtn}
+                  >
+                    <Text style={[bsStyles.crossFlowDismissBtnText, { color: colors.mutedForeground }]}>✕</Text>
+                  </Pressable>
+                </View>
                 <Text style={[bsStyles.resumeSub, { color: colors.mutedForeground }]}>
                   You have an in-progress shelf session in Scan to Assign Barcode — switch back to continue it.
                 </Text>
@@ -1433,6 +1445,9 @@ const bsStyles = StyleSheet.create({
     gap: 4,
     marginBottom: 16,
   },
+  resumeBannerRow: { flexDirection: "row", alignItems: "flex-start" },
+  crossFlowDismissBtn: { marginLeft: 8, padding: 2 },
+  crossFlowDismissBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   resumeTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   resumeSub: { fontSize: 12, fontFamily: "Inter_400Regular" },
   resumeBtns: { flexDirection: "row", gap: 8, marginTop: 10 },

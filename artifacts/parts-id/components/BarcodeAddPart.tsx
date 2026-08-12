@@ -249,6 +249,8 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   const [sessionChecked, setSessionChecked] = useState(false);
   /** True when BulkShelfAssign has an active session that would be silently orphaned. */
   const [otherFlowActive, setOtherFlowActive] = useState(false);
+  /** True once the admin has dismissed the cross-flow warning for this mount. */
+  const [crossFlowDismissed, setCrossFlowDismissed] = useState(false);
 
   const updateBarcodesMutation = useUpdateItemBarcodes();
   const { data: inventoryPage } = useListInventory({ limit: 500 });
@@ -723,11 +725,21 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   return (
     <View>
       {/* Cross-flow warning banner */}
-      {sessionChecked && otherFlowActive ? (
+      {sessionChecked && otherFlowActive && !crossFlowDismissed ? (
         <View style={[apStyles.resumeBanner, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "44" }]}>
-          <Text style={[apStyles.resumeTitle, { color: colors.foreground }]}>
-            ℹ️ In-progress session in another flow
-          </Text>
+          <View style={apStyles.resumeBannerRow}>
+            <Text style={[apStyles.resumeTitle, { color: colors.foreground, flex: 1 }]}>
+              ℹ️ In-progress session in another flow
+            </Text>
+            <Pressable
+              onPress={() => setCrossFlowDismissed(true)}
+              hitSlop={8}
+              accessibilityLabel="Dismiss cross-flow session warning"
+              style={apStyles.crossFlowDismissBtn}
+            >
+              <Text style={[apStyles.crossFlowDismissBtnText, { color: colors.mutedForeground }]}>✕</Text>
+            </Pressable>
+          </View>
           <Text style={[apStyles.resumeSub, { color: colors.mutedForeground }]}>
             You have an in-progress shelf session in Bulk Assign by Shelf — open it to continue.
           </Text>
@@ -1300,6 +1312,9 @@ const apStyles = StyleSheet.create({
     padding: 14,
     gap: 4,
   },
+  resumeBannerRow: { flexDirection: "row", alignItems: "flex-start" },
+  crossFlowDismissBtn: { marginLeft: 8, padding: 2 },
+  crossFlowDismissBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   resumeTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   resumeSub: { fontSize: 12, fontFamily: "Inter_400Regular" },
   resumeBtns: { flexDirection: "row", gap: 8, marginTop: 10 },
