@@ -1677,6 +1677,23 @@ if [[ -n "$PLAN_TIER_WF_LINE" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Test 40: pre-commit hook rejects unused variables in every linted package
+#
+# The dedicated smoke test creates temporary violations in api-server and
+# mockup-sandbox, runs the real hook with each file presented as staged, and
+# removes the fixtures afterward. This catches package-routing or ESLint-rule
+# regressions that a normal green lint run cannot detect.
+# ---------------------------------------------------------------------------
+PRE_COMMIT_HOOK_OUTPUT=$(bash "$SCRIPT_DIR/test-pre-commit.sh" 2>&1)
+PRE_COMMIT_HOOK_EXIT=$?
+assert_exit "pre-commit smoke test — rejects api-server and mockup-sandbox violations" \
+  0 "$PRE_COMMIT_HOOK_EXIT"
+if [[ "$PRE_COMMIT_HOOK_EXIT" -ne 0 ]]; then
+  echo "  pre-commit smoke test output:"
+  echo "$PRE_COMMIT_HOOK_OUTPUT" | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

@@ -15,6 +15,11 @@ fi
 #    Strategy: if any staged files belong to a known package, run that
 #    package's full lint step. This avoids per-file ESLint config-resolution
 #    issues while keeping the hook scoped to only affected packages.
+#
+#    Smoke-test both package paths (without changing the Git index):
+#      bash scripts/test-pre-commit.sh
+#    The smoke test creates a temporary no-unused-vars violation in each
+#    package and confirms this hook rejects it.
 
 STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep -E '\.(ts|tsx)$' || true)
 
