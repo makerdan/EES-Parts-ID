@@ -12,12 +12,18 @@ import { useColors } from "@/hooks/useColors";
 
 export default function BannedScreen() {
   const colors = useColors();
-  const { logout } = useApp();
+  const { logout, showToast } = useApp();
   const [signingOut, setSigningOut] = React.useState(false);
 
   const handleSignOut = async () => {
     setSigningOut(true);
-    await logout();
+    try {
+      await logout();
+    } catch {
+      showToast("Sign out failed. Please try again.", "error");
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   const styles = StyleSheet.create({

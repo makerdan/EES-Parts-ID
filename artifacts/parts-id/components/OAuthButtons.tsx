@@ -95,7 +95,9 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
       // fall back to the current origin for local dev.
       if (Platform.OS === "web") {
         const signIn = clerk.client?.signIn;
-        if (!signIn) return;
+        if (!signIn || typeof signIn.authenticateWithRedirect !== "function") {
+          throw new Error("Web sign-in is unavailable. Please try again.");
+        }
         const origin =
           process.env.EXPO_PUBLIC_APP_URL ||
           (typeof window !== "undefined" ? window.location.origin : "");

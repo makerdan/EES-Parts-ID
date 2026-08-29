@@ -14,8 +14,9 @@ const POLL_INTERVAL_MS = 30_000;
 
 export default function PendingScreen() {
   const colors = useColors();
-  const { logout, recheckApprovalStatus, approvalStatus } = useApp();
+  const { logout, recheckApprovalStatus, approvalStatus, showToast } = useApp();
   const [signingOut, setSigningOut] = React.useState(false);
+  const [checkError, setCheckError] = React.useState(false);
 
   // F-049: inFlight ref prevents concurrent poll calls.
   const inFlight = React.useRef(false);
@@ -26,6 +27,9 @@ export default function PendingScreen() {
     inFlight.current = true;
     try {
       await recheckApprovalStatus();
+      setCheckError(false);
+    } catch {
+      setCheckError(true);
     } finally {
       inFlight.current = false;
     }
@@ -49,10 +53,17 @@ export default function PendingScreen() {
 
   const handleSignOut = async () => {
     setSigningOut(true);
-    await logout();
+    try {
+      await logout();
+    } catch {
+      showToast("Sign out failed. Please try again.", "error");
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   const handleCheckAgain = async () => {
+    setCheckError(false);
     await safeRecheck();
   };
 
@@ -128,6 +139,12 @@ export default function PendingScreen() {
       fontFamily: "Inter_500Medium",
       color: colors.mutedForeground,
     },
+    error: {
+      fontSize: 13,
+      fontFamily: "Inter_400Regular",
+      color: colors.destructive,
+      textAlign: "center",
+    },
   });
 
   return (
@@ -142,6 +159,7 @@ export default function PendingScreen() {
         <View style={styles.badge}>
           <Text style={styles.badgeText}>Pending Review</Text>
         </View>
+        {checkError ? <Text style={styles.error}>Check failed — tap to retry</Text> : null}
         <Pressable
           style={[styles.checkButton, checking && { opacity: 0.6 }]}
           onPress={handleCheckAgain}

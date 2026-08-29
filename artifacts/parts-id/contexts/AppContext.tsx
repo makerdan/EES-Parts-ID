@@ -458,6 +458,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setApprovalStatus("pending");
       setIsAdmin(false);
       setAdminToken(null);
+      throw new Error("Approval status check failed");
     }
   }, [verifyAdmin]);
 
@@ -497,8 +498,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setApprovalStatus("loading");
     try {
       await doApprovalCheck(controller.signal);
-    } catch {
+    } catch (error) {
       if (!controller.signal.aborted) setApprovalStatus("pending");
+      if (!controller.signal.aborted) throw error;
     } finally {
       if (recheckControllerRef.current === controller) {
         recheckControllerRef.current = null;

@@ -1,7 +1,7 @@
 import { useAuth } from "@clerk/expo";
 import { useRouter, useSegments } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useApp } from "@/contexts/AppContext";
 
@@ -135,6 +135,20 @@ export function AuthGate() {
             <Text style={styles.buttonText}>Try again</Text>
           </Pressable>
         </View>
+      </View>
+    );
+  }
+
+  // Keep protected routes covered while Clerk or the approval check settles.
+  // Returning null here lets the stack's previous screen flash for one render.
+  const waitingForAuth =
+    !clerkLoaded ||
+    (isSignedIn && (approvalStatus === "idle" || approvalStatus === "loading"));
+  if (waitingForAuth) {
+    return (
+      <View style={styles.overlay}>
+        <ActivityIndicator size="large" color="#2563eb" />
+        <Text style={[styles.body, { color: "#555" }]}>Loading…</Text>
       </View>
     );
   }

@@ -15,6 +15,24 @@ import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { OAuthButtons } from "@/components/OAuthButtons";
 import { useColors } from "@/hooks/useColors";
 
+function getAuthErrorMessage(error: unknown, fallback: string): string {
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object") {
+    const details = error as {
+      errors?: Array<{ message?: unknown }>;
+      message?: unknown;
+    };
+    const clerkMessage = details.errors?.find(
+      (item) => typeof item.message === "string" && item.message.trim(),
+    )?.message;
+    if (typeof clerkMessage === "string") return clerkMessage;
+    if (typeof details.message === "string" && details.message.trim()) {
+      return details.message;
+    }
+  }
+  return fallback;
+}
+
 export default function LoginScreen() {
   const colors = useColors();
   const router = useRouter();
@@ -34,23 +52,27 @@ export default function LoginScreen() {
     }
     setLocalError(null);
 
-    const { error } = await signIn.password({ emailAddress, password });
-    if (error) {
-      setLocalError(error.message ?? "Sign in failed. Please try again.");
-      return;
-    }
+    try {
+      const { error } = await signIn.password({ emailAddress, password });
+      if (error) {
+        setLocalError(getAuthErrorMessage(error, "Sign in failed. Please try again."));
+        return;
+      }
 
-    if (signIn.status === "complete") {
-      await signIn.finalize({
-        navigate: ({ decorateUrl }) => {
-          const url = decorateUrl("/");
-          if (typeof window !== "undefined" && url.startsWith("http")) {
-            window.location.href = url;
-          } else {
-            router.replace("/(tabs)");
-          }
-        },
-      });
+      if (signIn.status === "complete") {
+        await signIn.finalize({
+          navigate: ({ decorateUrl }) => {
+            const url = decorateUrl("/");
+            if (typeof window !== "undefined" && url.startsWith("http")) {
+              window.location.href = url;
+            } else {
+              router.replace("/(tabs)");
+            }
+          },
+        });
+      }
+    } catch (error) {
+      setLocalError(getAuthErrorMessage(error, "Sign in failed. Please try again."));
     }
   };
 

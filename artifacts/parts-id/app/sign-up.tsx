@@ -15,6 +15,24 @@ import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { OAuthButtons } from "@/components/OAuthButtons";
 import { useColors } from "@/hooks/useColors";
 
+function getAuthErrorMessage(error: unknown, fallback: string): string {
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object") {
+    const details = error as {
+      errors?: Array<{ message?: unknown }>;
+      message?: unknown;
+    };
+    const clerkMessage = details.errors?.find(
+      (item) => typeof item.message === "string" && item.message.trim(),
+    )?.message;
+    if (typeof clerkMessage === "string") return clerkMessage;
+    if (typeof details.message === "string" && details.message.trim()) {
+      return details.message;
+    }
+  }
+  return fallback;
+}
+
 export default function SignUpScreen() {
   const colors = useColors();
   const router = useRouter();
@@ -39,14 +57,39 @@ export default function SignUpScreen() {
     }
     setLocalError(null);
 
-    const { error } = await signUp.password({ emailAddress, password });
-    if (error) {
-      setLocalError(error.message ?? "Sign up failed. Please try again.");
-      return;
-    }
+    try {
+      const { error } = await signUp.password({ emailAddress, password });
+      if (error) {
+        setLocalError(getAuthErrorMessage(error, "Sign up failed. Please try again."));
+        return;
+      }
 
-    if (!error) {
-      await signUp.verifications.sendEmailCode();
+      await sendVerificationCode();
+    } catch (error) {
+      setLocalError(getAuthErrorMessage(error, "Sign up failed. Please try again."));
+    }
+  };
+
+  const sendVerificationCode = async () => {
+    setLocalError(null);
+    try {
+      const result = await signUp.verifications.sendEmailCode();
+      const error = (result as { error?: unknown } | undefined)?.error;
+      if (error) {
+        setLocalError(
+          getAuthErrorMessage(
+            error,
+            "Couldn't send verification code. Check your connection and try again.",
+          ),
+        );
+      }
+    } catch (error) {
+      setLocalError(
+        getAuthErrorMessage(
+          error,
+          "Couldn't send verification code. Check your connection and try again.",
+        ),
+      );
     }
   };
 
@@ -54,19 +97,41 @@ export default function SignUpScreen() {
     if (loading || !code.trim()) return;
     setLocalError(null);
 
-    await signUp.verifications.verifyEmailCode({ code });
+    try {
+      const verificationResult = await signUp.verifications.verifyEmailCode({ code });
+      const error = (verificationResult as { error?: unknown } | undefined)?.error;
+      if (error) {
+        setLocalError(
+          getAuthErrorMessage(
+            error,
+            "Verification code is invalid or expired. Please try again.",
+          ),
+        );
+        return;
+      }
 
-    if (signUp.status === "complete") {
-      await signUp.finalize({
-        navigate: ({ decorateUrl }) => {
-          const url = decorateUrl("/");
-          if (typeof window !== "undefined" && url.startsWith("http")) {
-            window.location.href = url;
-          } else {
-            router.replace("/(tabs)");
-          }
-        },
-      });
+      // The returned resource is fresher than the hook's captured status.
+      const status =
+        (verificationResult as { status?: string } | undefined)?.status ?? signUp.status;
+      if (status === "complete") {
+        await signUp.finalize({
+          navigate: ({ decorateUrl }) => {
+            const url = decorateUrl("/");
+            if (typeof window !== "undefined" && url.startsWith("http")) {
+              window.location.href = url;
+            } else {
+              router.replace("/(tabs)");
+            }
+          },
+        });
+      }
+    } catch (error) {
+      setLocalError(
+        getAuthErrorMessage(
+          error,
+          "Verification code is invalid or expired. Please try again.",
+        ),
+      );
     }
   };
 
@@ -236,7 +301,7 @@ export default function SignUpScreen() {
 
           <Pressable
             style={styles.secondaryButton}
-            onPress={() => signUp.verifications.sendEmailCode()}
+            onPress={sendVerificationCode}
             disabled={loading}
           >
             <Text style={styles.secondaryButtonText}>Resend code</Text>

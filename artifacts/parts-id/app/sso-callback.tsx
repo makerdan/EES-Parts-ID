@@ -14,6 +14,51 @@ import { useColors } from "@/hooks/useColors";
 
 const SSO_TIMEOUT_MS = 30_000;
 
+function getSsoErrorMessage(error: unknown): {
+  title: string;
+  body: string;
+} {
+  const rawMessage =
+    error && typeof error === "object" && "errors" in error
+      ? ((error as { errors?: Array<{ message?: unknown; code?: unknown }> }).errors?.[0]
+          ?.message ?? "")
+      : error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "";
+  const message = String(rawMessage).toLowerCase();
+
+  if (message.includes("cancel")) {
+    return {
+      title: "Sign-in cancelled",
+      body: "Sign-in was cancelled. Please try again when you're ready.",
+    };
+  }
+  if (message.includes("expired") || message.includes("session")) {
+    return {
+      title: "Sign-in session expired",
+      body: "Your sign-in session expired. Please go back and try again.",
+    };
+  }
+  if (
+    message.includes("provider") ||
+    message.includes("oauth") ||
+    message.includes("redirect") ||
+    message.includes("network") ||
+    message.includes("connection")
+  ) {
+    return {
+      title: "Sign-in provider error",
+      body: "The sign-in provider couldn't complete the request. Please try again.",
+    };
+  }
+  return {
+    title: "Unable to complete sign-in",
+    body: "We couldn't complete sign-in. Please go back and try again.",
+  };
+}
+
 /**
  * Dedicated OAuth callback page for web.
  *
@@ -45,9 +90,13 @@ export default function SsoCallback() {
 
   // "timedOut" = callback never resolved within SSO_TIMEOUT_MS
   // "missingParams" = URL arrived without the required OAuth params (F-047)
-  const [errorKind, setErrorKind] = useState<"timedOut" | "missingParams" | null>(
-    null,
-  );
+  const [errorKind, setErrorKind] = useState<
+    "timedOut" | "missingParams" | "callbackError" | null
+  >(null);
+  const [callbackError, setCallbackError] = useState<{
+    title: string;
+    body: string;
+  } | null>(null);
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
@@ -88,9 +137,12 @@ export default function SsoCallback() {
           return Promise.resolve();
         },
       )
-      .catch(() => {
-        // Token missing/expired or the user cancelled — send them back to login.
-        if (!cancelled) router.replace({ pathname: "/login" });
+      .catch((error: unknown) => {
+        // Keep callback failures visible instead of silently redirecting away.
+        if (!cancelled) {
+          setCallbackError(getSsoErrorMessage(error));
+          setErrorKind("callbackError");
+        }
       })
       .finally(() => {
         clearTimeout(timeoutId);
@@ -139,14 +191,18 @@ export default function SsoCallback() {
   });
 
   if (errorKind) {
+    const callbackErrorContent =
+      errorKind === "callbackError" ? callbackError : null;
     const title =
-      errorKind === "timedOut"
+      callbackErrorContent?.title ??
+      (errorKind === "timedOut"
         ? "Sign-in taking too long"
-        : "Sign-in link invalid";
+        : "Sign-in link invalid");
     const body =
-      errorKind === "timedOut"
+      callbackErrorContent?.body ??
+      (errorKind === "timedOut"
         ? "The sign-in process didn't complete in time. Please go back and try again."
-        : "This link doesn't contain valid sign-in parameters. Please go back and try again.";
+        : "This link doesn't contain valid sign-in parameters. Please go back and try again.");
 
     return (
       <View style={[s.container, { backgroundColor: colors.background }]}>
