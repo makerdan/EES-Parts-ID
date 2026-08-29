@@ -82,13 +82,6 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="map2"
-        options={{
-          title: "Map2",
-          tabBarIcon: ({ color }) => <Feather name="layers" size={22} color={color} />,
-        }}
-      />
-      <Tabs.Screen
         name="upload"
         options={{
           title: "Admin",
