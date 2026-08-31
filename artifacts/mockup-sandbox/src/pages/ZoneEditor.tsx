@@ -65,7 +65,9 @@ let _rasterCache: { key: string; imageData: ImageData; w: number; h: number } | 
 async function rasterizeSvg(
   svgInner: string,
   dims: { w: number; h: number },
+  signal?: AbortSignal,
 ): Promise<{ imageData: ImageData; w: number; h: number }> {
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
   if (_rasterCache && _rasterCache.key === svgInner) {
     return { imageData: _rasterCache.imageData, w: _rasterCache.w, h: _rasterCache.h };
   }
@@ -87,21 +89,33 @@ async function rasterizeSvg(
 
   return new Promise((resolve, reject) => {
     const img = new Image();
+    const abort = () => {
+      img.onload = null;
+      img.onerror = null;
+      img.src = "";
+      URL.revokeObjectURL(url);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    const finish = () => signal?.removeEventListener("abort", abort);
     img.onload = () => {
+      if (signal?.aborted) { abort(); return; }
       const canvas = document.createElement("canvas");
       canvas.width = cw;
       canvas.height = ch;
       const ctx = canvas.getContext("2d");
-      if (!ctx) { URL.revokeObjectURL(url); reject(new Error("No 2D canvas context")); return; }
+      if (!ctx) { finish(); URL.revokeObjectURL(url); reject(new Error("No 2D canvas context")); return; }
       ctx.fillStyle = "white";
       ctx.fillRect(0, 0, cw, ch);
       ctx.drawImage(img, 0, 0);
       URL.revokeObjectURL(url);
       const imageData = ctx.getImageData(0, 0, cw, ch);
+      if (signal?.aborted) { finish(); reject(new DOMException("Aborted", "AbortError")); return; }
       _rasterCache = { key: svgInner, imageData, w: cw, h: ch };
+      finish();
       resolve({ imageData, w: cw, h: ch });
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Failed to rasterize floor plan SVG")); };
+    img.onerror = () => { finish(); URL.revokeObjectURL(url); if (!signal?.aborted) reject(new Error("Failed to rasterize floor plan SVG")); };
     img.src = url;
   });
 }
@@ -548,6 +562,9 @@ function writeDraft(id: number, f: FormState) {
 function clearDraft(id: number) {
   try { localStorage.removeItem(draftKey(id)); } catch {}
 }
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
+}
 function readDraft(id: number): { form: FormState; savedAt: number } | null {
   try {
     const raw = localStorage.getItem(draftKey(id));
@@ -726,6 +743,11 @@ export function ZoneEditor() {
   const svgDimsRef = useRef(svgDims);
   const fillLoadingRef = useRef(false);
   const fillSensitivityRef = useRef(fillSensitivity);
+  const aliveRef = useRef(true);
+  const fetchAbortRef = useRef<AbortController | null>(null);
+  const saveAbortRef = useRef<AbortController | null>(null);
+  const dragAbortRef = useRef<AbortController | null>(null);
+  const fillAbortRef = useRef<AbortController | null>(null);
 
   // Mutex: prevents concurrent undo/redo from corrupting the stack when the
   // user holds Cmd+Z or fires repeated keypresses during an async operation.
@@ -765,24 +787,27 @@ export function ZoneEditor() {
   // API defined by VITE_FLOOR_PLAN_API_FALLBACK. The bundled SVG is only
   // shown when both attempts fail or the env has no fallback configured.
   useEffect(() => {
+    const controller = new AbortController();
     void (async () => {
       const fallback = (import.meta.env.VITE_FLOOR_PLAN_API_FALLBACK as string | undefined)?.replace(/\/$/, "");
       const urls = [`${API_BASE}/floor-plan/svg`];
       if (fallback && fallback !== API_BASE) urls.push(`${fallback}/floor-plan/svg`);
       for (const url of urls) {
         try {
-          const res = await fetch(url);
+          const res = await fetch(url, { signal: controller.signal });
           if (res.ok) {
             const raw = await res.text();
+            if (!aliveRef.current || controller.signal.aborted) return;
             setSvgInner(extractSvgInner(raw));
             setSvgDims(extractSvgDims(raw));
             // Invalidate the raster cache whenever the floor plan changes.
             _rasterCache = null;
             return;
           }
-        } catch {}
+        } catch (err) { if (!isAbortError(err)) { /* fallback is best effort */ } }
       }
     })();
+    return () => controller.abort();
   }, []);
 
   // Inject the floor plan SVG directly into the SVG DOM so it shares the same
@@ -881,33 +906,37 @@ export function ZoneEditor() {
   );
 
   const fetchZones = useCallback(async () => {
+    if (!aliveRef.current) return;
     // Stamp this request so stale responses can be detected and discarded.
     const myId = ++fetchIdRef.current;
+    fetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
     setLoading(true);
     setLoadError("");
     try {
-      const res = await fetch(`${API_BASE}/warehouse-zones`);
+      const res = await fetch(`${API_BASE}/warehouse-zones`, { signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       // Discard the response if a newer fetch has already started, or if a
       // drag/commit is still in-flight (isDraggingRef covers both the gesture
       // window and the PATCH commit window up to the authoritative refetch).
-      if (myId !== fetchIdRef.current || isDraggingRef.current) return;
+      if (!aliveRef.current || controller.signal.aborted || myId !== fetchIdRef.current || isDraggingRef.current) return;
       setZones(data.zones ?? []);
       setDragZone(null);
       // Also refresh coverage stats (non-critical — suppress errors)
-      void fetch(`${API_BASE}/warehouse-zones/coverage`)
+      void fetch(`${API_BASE}/warehouse-zones/coverage`, { signal: controller.signal })
         .then((r) => (r.ok ? r.json() : null))
         .then((d: { unsortedCount: number; uncoveredAisles: string[] } | null) => {
-          if (d) setCoverage(d);
+          if (d && aliveRef.current && !controller.signal.aborted && myId === fetchIdRef.current) setCoverage(d);
         })
-        .catch(() => {});
-    } catch {
-      if (myId === fetchIdRef.current) {
+        .catch((err) => { if (!isAbortError(err)) { /* coverage is non-critical */ } });
+    } catch (err) {
+      if (!isAbortError(err) && aliveRef.current && !controller.signal.aborted && myId === fetchIdRef.current) {
         setLoadError("Failed to load zones — is the API server running?");
       }
     } finally {
-      if (myId === fetchIdRef.current) setLoading(false);
+      if (aliveRef.current && !controller.signal.aborted && myId === fetchIdRef.current) setLoading(false);
     }
   }, []);
 
@@ -954,6 +983,7 @@ export function ZoneEditor() {
         true,
       );
       if (!ok) return;
+      if (!aliveRef.current) return;
       const zonesToDelete = zonesRef.current.filter((z) => ids.includes(z.id));
       setSaving(true);
       try {
@@ -968,6 +998,7 @@ export function ZoneEditor() {
             }),
           ),
         );
+        if (!aliveRef.current) return;
         toast.success(
           ids.length === 1 ? "Zone deleted" : `${ids.length} zones deleted`,
         );
@@ -976,9 +1007,10 @@ export function ZoneEditor() {
         setSelectionOrder([]);
         await fetchZones();
       } catch (err) {
+        if (!aliveRef.current) return;
         toast.error(err instanceof Error ? err.message : String(err));
       } finally {
-        setSaving(false);
+        if (aliveRef.current) setSaving(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -1005,11 +1037,12 @@ export function ZoneEditor() {
   }, []);
 
   const patchZone = useCallback(
-    async (id: number, updates: Partial<Zone>): Promise<boolean> => {
+    async (id: number, updates: Partial<Zone>, signal?: AbortSignal): Promise<boolean> => {
       const res = await fetch(`${API_BASE}/warehouse-zones/${id}`, {
         method: "PATCH",
         headers: headers(),
         body: JSON.stringify(updates),
+        ...(signal ? { signal } : {}),
       });
       if (res.status === 401) { throw new Error("Session expired — please sign in again"); }
       if (!res.ok) {
@@ -1026,6 +1059,7 @@ export function ZoneEditor() {
   const applyUndoRedoRef = useRef<((dir: "undo" | "redo") => Promise<void>) | null>(null);
 
   const applyUndoRedo = useCallback(async (dir: "undo" | "redo") => {
+    if (!aliveRef.current) return;
     if (undoRedoBusyRef.current) return; // drop concurrent key repeats
     undoRedoBusyRef.current = true;
     const srcStack = dir === "undo" ? undoStackRef.current : redoStackRef.current;
@@ -1167,6 +1201,7 @@ export function ZoneEditor() {
           break;
         }
       }
+      if (!aliveRef.current) return;
       // Move the entry between stacks
       if (dir === "undo") {
         undoStackRef.current = undoStackRef.current.slice(0, -1);
@@ -1179,6 +1214,7 @@ export function ZoneEditor() {
       setRedoCount(redoStackRef.current.length);
       await fetchZones();
     } catch (err) {
+      if (!aliveRef.current) return;
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       undoRedoBusyRef.current = false;
@@ -1189,7 +1225,7 @@ export function ZoneEditor() {
 
   // ── Form actions ────────────────────────────────────────────────────────────
   const handleCreate = async () => {
-    if (!pendingRect) return;
+    if (!pendingRect || !aliveRef.current) return;
     if (!form.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
     if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 09)"); return; }
     setSaving(true);
@@ -1214,6 +1250,7 @@ export function ZoneEditor() {
         throw new Error(err.error ?? `HTTP ${res.status}`);
       }
       const { zone } = await res.json() as { zone: Zone };
+      if (!aliveRef.current) return;
       toast.success(`Zone for aisle "${zone.aisleId}" created`);
       pushUndo({ type: "create", zones: [zone] });
       setPendingRect(null);
@@ -1222,9 +1259,10 @@ export function ZoneEditor() {
       setForm({ aisleId: zone.aisleId, sectionNum: zone.sectionNum, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      if (aliveRef.current) setSaving(false);
     }
   };
 
@@ -1235,6 +1273,7 @@ export function ZoneEditor() {
   // concurrent flush for the same zone (onBlur fires, then selection-change effect
   // runs before the PATCH resolves) sees the equality check as true and skips.
   const flushSave = useCallback(async (committedForm: FormState, zoneId: number) => {
+    if (!aliveRef.current) return;
     if (!committedForm.aisleId.trim()) return;
     if (!isValidAisleId(committedForm.aisleId)) return;
     if (JSON.stringify(committedForm) === JSON.stringify(lastSavedFormRef.current)) return;
@@ -1249,14 +1288,19 @@ export function ZoneEditor() {
       sortOrder: committedForm.sortOrder,
     };
     setSaveStatus("saving");
+    saveAbortRef.current?.abort();
+    const controller = new AbortController();
+    saveAbortRef.current = controller;
     try {
-      await patchZone(zoneId, afterMeta);
+      await patchZone(zoneId, afterMeta, controller.signal);
+      if (!aliveRef.current || controller.signal.aborted) return;
       clearDraft(zoneId);
       pushUndo({ type: "edit", id: zoneId, before: beforeMeta, after: afterMeta });
       setSaveStatus("clean");
       toast.success("Saved");
       await fetchZones();
     } catch (e) {
+      if (isAbortError(e) || !aliveRef.current) return;
       // Persist the unsaved form to localStorage so it can be recovered when
       // the server comes back online and the user re-selects this zone.
       writeDraft(zoneId, committedForm);
@@ -1268,7 +1312,7 @@ export function ZoneEditor() {
   }, [patchZone, pushUndo, fetchZones]);
 
   const handleSaveEdit = async () => {
-    if (!selectedId) return;
+    if (!selectedId || !aliveRef.current) return;
     // Read committed values — zoneFormRef.current captures rawSection even
     // if React state hasn't flushed the section-number onBlur yet.
     const committedForm = zoneFormRef.current?.getCommittedForm() ?? form;
@@ -1277,6 +1321,9 @@ export function ZoneEditor() {
     if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
     const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
     setSaving(true);
+    saveAbortRef.current?.abort();
+    const controller = new AbortController();
+    saveAbortRef.current = controller;
     try {
       const afterMeta: MetaSnap = {
         aisleId: normalizeAisleId(committedForm.aisleId),
@@ -1284,23 +1331,26 @@ export function ZoneEditor() {
         isInventory: committedForm.isInventory,
         sortOrder: committedForm.sortOrder,
       };
-      await patchZone(selectedId, afterMeta);
+      await patchZone(selectedId, afterMeta, controller.signal);
+      if (!aliveRef.current || controller.signal.aborted) return;
       clearDraft(selectedId);
       pushUndo({ type: "edit", id: selectedId, before: beforeMeta, after: afterMeta });
       lastSavedFormRef.current = { ...committedForm };
       toast.success("Zone updated");
       await fetchZones();
     } catch (e) {
+      if (isAbortError(e) || !aliveRef.current) return;
       writeDraft(selectedId, committedForm);
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      if (aliveRef.current && !controller.signal.aborted) setSaving(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!selectedId) return;
+    if (!selectedId || !aliveRef.current) return;
     if (!await showConfirm("Delete zone", "Delete this zone? You can undo with Cmd+Z / Ctrl+Z.", true)) return;
+    if (!aliveRef.current) return;
     const zoneToDelete = zones.find((z) => z.id === selectedId);
     setSaving(true);
     try {
@@ -1310,20 +1360,22 @@ export function ZoneEditor() {
       });
       if (res.status === 401) { throw new Error("Session expired — please sign in again"); }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!aliveRef.current) return;
       toast.success("Zone deleted");
       if (zoneToDelete) pushUndo({ type: "delete", zones: [zoneToDelete] });
       setSelectedIds(new Set());
       setSelectionOrder([]);
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      if (aliveRef.current) setSaving(false);
     }
   };
 
   const handleDuplicate = async () => {
-    if (!selectedZone) return;
+    if (!selectedZone || !aliveRef.current) return;
     setSaving(true);
     try {
       const targetAisleId = normalizeAisleId(form.aisleId);
@@ -1347,6 +1399,7 @@ export function ZoneEditor() {
         throw new Error(err.error ?? `HTTP ${res.status}`);
       }
       const { zone } = await res.json() as { zone: Zone };
+      if (!aliveRef.current) return;
       toast.success(`Duplicated → placed to the right`);
       pushUndo({ type: "create", zones: [zone] });
       setSelectedIds(new Set([zone.id]));
@@ -1354,14 +1407,15 @@ export function ZoneEditor() {
       setForm({ aisleId: zone.aisleId, sectionNum: zone.sectionNum, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      if (aliveRef.current) setSaving(false);
     }
   };
 
   const handleMultiDuplicate = async () => {
-    if (selectedZoneList.length === 0) return;
+    if (selectedZoneList.length === 0 || !aliveRef.current) return;
     setSaving(true);
     try {
       const sortedSelection = [...selectedZoneList].sort((a, b) => {
@@ -1394,20 +1448,22 @@ export function ZoneEditor() {
         }),
       );
       const newIds = new Set(results.map((r) => r.zone.id));
+      if (!aliveRef.current) return;
       toast.success(`Duplicated ${newIds.size} zone${newIds.size !== 1 ? "s" : ""} — drag to reposition`);
       pushUndo({ type: "create", zones: results.map((r) => r.zone) });
       setSelectedIds(newIds);
       setSelectionOrder([...newIds]);
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      if (aliveRef.current) setSaving(false);
     }
   };
 
   const handleResetSectionNumToNull = async () => {
-    if (selectedIds.size === 0) return;
+    if (selectedIds.size === 0 || !aliveRef.current) return;
     const undoChanges = [...selectedIds].map((id) => {
       const zone = zones.find((z) => z.id === id);
       return {
@@ -1418,15 +1474,18 @@ export function ZoneEditor() {
     });
     try {
       await Promise.all([...selectedIds].map((id) => patchZone(id, { sectionNum: null })));
+      if (!aliveRef.current) return;
       pushUndo({ type: "multiEdit", changes: undoChanges });
       toast.success(`Reset §number for ${selectedIds.size} zone${selectedIds.size !== 1 ? "s" : ""}`);
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     }
   };
 
   const handleMultiSave = async (updates: Partial<Zone>) => {
+    if (!aliveRef.current) return;
     const n = selectedIds.size;
     const parts: string[] = [];
     if (updates.aisleId) parts.push(`Aisle ID → ${updates.aisleId}`);
@@ -1440,6 +1499,7 @@ export function ZoneEditor() {
     setMultiSaving(true);
     try {
       await Promise.all(jobs.map(({ id, body }) => patchZone(id, body)));
+      if (!aliveRef.current) return;
       pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
       if (updates.sectionNum !== undefined) {
@@ -1452,9 +1512,10 @@ export function ZoneEditor() {
       toast.success(`Updated ${n} zones`);
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setMultiSaving(false);
+      if (aliveRef.current) setMultiSaving(false);
     }
   };
 
@@ -1462,6 +1523,7 @@ export function ZoneEditor() {
   // idsOverride lets the selection-change effect pass the *previous* multi-selection
   // so the save targets the zones the user was actually editing, not the new selection.
   const handleMultiAutoSave = async (idsOverride?: ReadonlySet<number>) => {
+    if (!aliveRef.current) return;
     const ids = idsOverride ?? selectedIds;
     if (multiSaving || ids.size === 0) return;
     const updates: Partial<Zone> = {};
@@ -1484,6 +1546,7 @@ export function ZoneEditor() {
       for (const { id, body } of jobs) {
         await patchZone(id, body);
       }
+      if (!aliveRef.current) return;
       pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
       if (updates.sectionNum !== undefined) {
@@ -1495,15 +1558,16 @@ export function ZoneEditor() {
       toast.success(`Saved ${n} zone${n !== 1 ? "s" : ""}`);
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setMultiSaving(false);
+      if (aliveRef.current) setMultiSaving(false);
     }
   };
 
   // ── Auto-number handler ────────────────────────────────────────────────────
   const handleAutoNumber = async () => {
-    if (autoNumPreview.length === 0) return;
+    if (autoNumPreview.length === 0 || !aliveRef.current) return;
 
     // Pre-flight: catch collisions with non-selected zones BEFORE any DB writes.
     // The two-phase sentinel strategy only parks selected zones, so a non-selected
@@ -1545,6 +1609,7 @@ export function ZoneEditor() {
     try {
       for (const { id, sentinel } of sentinelMap) {
         await patchZone(id, { sectionNum: sentinel });
+        if (!aliveRef.current) return;
       }
       phase1Done = true;
 
@@ -1553,7 +1618,9 @@ export function ZoneEditor() {
         const patch: Partial<Zone> = { sectionNum: newSectionNum };
         if (autoNumSyncSortOrder) patch.sortOrder = preview.newSortOrder;
         await patchZone(id, patch);
+        if (!aliveRef.current) return;
       }
+      if (!aliveRef.current) return;
       // IMPORTANT: pushUndo must remain here — after BOTH phases have fully
       // succeeded — and must never be moved before the try/catch or before the
       // Phase 2 loop.  If it were called before Phase 2 (or before the catch
@@ -1573,8 +1640,10 @@ export function ZoneEditor() {
       toast.success(`Auto-numbered ${n} zone${n !== 1 ? "s" : ""}`);
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       // Always re-sync the UI so the map reflects actual DB state, not stale local state.
       await fetchZones().catch(() => {});
+      if (!aliveRef.current) return;
 
       // Best-effort sentinel rollback: if Phase 1 ran but Phase 2 threw, some zones
       // may be stuck at their negative sentinel values. Restore them to their originals.
@@ -1592,6 +1661,7 @@ export function ZoneEditor() {
             );
             if (stillAtSentinel.length > 0) {
               for (const z of stillAtSentinel) {
+                if (!aliveRef.current) return;
                 const orig = originals.get(z.id);
                 if (orig !== undefined) {
                   const rollbackOk = await patchZone(z.id, { sectionNum: orig }).then(() => true).catch(() => false);
@@ -1599,6 +1669,7 @@ export function ZoneEditor() {
                 }
               }
               await fetchZones().catch(() => {});
+              if (!aliveRef.current) return;
               if (stuckIds.length > 0) {
                 // Rollback PATCHes failed for some zones — surface actionable error.
                 console.error("[ZoneEditor] sentinel rollback failed for zone IDs:", stuckIds);
@@ -1621,23 +1692,25 @@ export function ZoneEditor() {
             `Auto-numbering failed and the rollback also failed. Zones ${affectedIds.join(", ")} may need manual correction.`,
           );
           await fetchZones().catch(() => {});
+          if (!aliveRef.current) return;
           return;
         }
       }
 
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setAutoNumApplying(false);
+      if (aliveRef.current) setAutoNumApplying(false);
     }
   };
 
   const copyCoords = () => {
+    if (!aliveRef.current) return;
     const zone = zones.find((z) => z.id === selectedId);
     if (!zone) return;
     const txt = `${zone.svgX.toFixed(2)} ${zone.svgY.toFixed(2)} ${zone.svgWidth.toFixed(2)} ${zone.svgHeight.toFixed(2)}`;
-    void navigator.clipboard.writeText(txt).then(() =>
-      toast.success("SVG coords copied to clipboard")
-    );
+    void navigator.clipboard.writeText(txt).then(() => {
+      if (aliveRef.current) toast.success("SVG coords copied to clipboard");
+    });
   };
 
   // Sync single-select form when selected zone changes.
@@ -1735,6 +1808,19 @@ export function ZoneEditor() {
 
   // Auto-save when single-select form fields change (debounced 600 ms)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Stop all component-owned asynchronous work when the editor is removed.
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      fetchAbortRef.current?.abort();
+      saveAbortRef.current?.abort();
+      dragAbortRef.current?.abort();
+      fillAbortRef.current?.abort();
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     if (!selectedId || !lastSavedFormRef.current) return;
     if (pendingRect) return;
@@ -1748,6 +1834,8 @@ export function ZoneEditor() {
     const capturedId = selectedId;
     const capturedForm = form;
     autoSaveTimerRef.current = setTimeout(async () => {
+      autoSaveTimerRef.current = null;
+      if (!aliveRef.current) return;
       const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
       setSaveStatus("saving");
       try {
@@ -1757,7 +1845,11 @@ export function ZoneEditor() {
           isInventory: capturedForm.isInventory,
           sortOrder: capturedForm.sortOrder,
         };
-        await patchZone(capturedId, afterMeta);
+        saveAbortRef.current?.abort();
+        const controller = new AbortController();
+        saveAbortRef.current = controller;
+        await patchZone(capturedId, afterMeta, controller.signal);
+        if (!aliveRef.current || controller.signal.aborted) return;
         clearDraft(capturedId);
         pushUndo({ type: "edit", id: capturedId, before: beforeMeta, after: afterMeta });
         lastSavedFormRef.current = { ...capturedForm };
@@ -1765,13 +1857,22 @@ export function ZoneEditor() {
         toast.success("Saved");
         await fetchZones();
       } catch (e) {
+        if (isAbortError(e) || !aliveRef.current) return;
         // Server unreachable — save the form locally so the user can recover it.
         writeDraft(capturedId, capturedForm);
         setSaveStatus("error");
         toast.error(e instanceof Error ? e.message : String(e));
       }
     }, 600);
-    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      // A selection/form replacement makes an in-flight save stale. The next
+      // flush (if any) creates its own controller.
+      saveAbortRef.current?.abort();
+    };
   }, [form, selectedId, pendingRect, fetchZones, patchZone, pushUndo]);
 
   // ── beforeunload guard: flush unsaved form changes on tab close / navigation ──
@@ -1870,6 +1971,9 @@ export function ZoneEditor() {
     // and re-run the useEffect that keeps fillLoadingRef in sync.
     if (fillLoadingRef.current) return;
     fillLoadingRef.current = true;
+    fillAbortRef.current?.abort();
+    const fillController = new AbortController();
+    fillAbortRef.current = fillController;
     setFillLoading(true);
     try {
       // Seed point must be in floor-plan SVG space (what rasterizeSvg/floodFillBounds
@@ -1892,10 +1996,12 @@ export function ZoneEditor() {
 
       // Run rasterise + BFS on the main thread. The 1024-px raster completes
       // in well under 100 ms for typical floor plans — no perceptible jank.
-      const raster = await rasterizeSvg(svgInnerRef.current, dims);
+      const raster = await rasterizeSvg(svgInnerRef.current, dims, fillController.signal);
+      if (!aliveRef.current || fillController.signal.aborted) return;
       const bounds = floodFillBounds(raster.imageData, px, py, darkThreshold);
 
       if (!bounds) {
+        if (!aliveRef.current || fillController.signal.aborted) return;
         toast.error("Click inside a light area, not on a wall or line.");
         return;
       }
@@ -1919,8 +2025,16 @@ export function ZoneEditor() {
       };
 
       // Flash the detected rectangle as a fillFlashRect (~300 ms) for visual feedback.
+      if (!aliveRef.current || fillController.signal.aborted) return;
       setFillFlashRect(rect);
-      await new Promise<void>((r) => setTimeout(r, 300));
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 300);
+        fillController.signal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+      });
+      if (!aliveRef.current || fillController.signal.aborted) return;
       setFillFlashRect(null);
 
       // Commit as pendingRect — opens the sidebar form (same flow as Draw mode).
@@ -1932,12 +2046,13 @@ export function ZoneEditor() {
       // Auto-switch back to Pan so a stray click doesn't trigger another fill.
       setMode("pan");
     } catch (err) {
+      if (isAbortError(err) || !aliveRef.current) return;
       toast.error(err instanceof Error ? err.message : "Fill failed");
     } finally {
       // Reset the ref synchronously so the guard is lifted immediately,
       // matching the synchronous set at the top of the function.
       fillLoadingRef.current = false;
-      setFillLoading(false);
+      if (aliveRef.current) setFillLoading(false);
     }
   }, [setForm]);
 
@@ -2055,6 +2170,7 @@ export function ZoneEditor() {
       }
 
       if (state.t === "move" || state.t === "resize") {
+        if (!aliveRef.current) return;
         // Capture and clear geometry refs synchronously.
         const base = dragBaseRef.current;
         dragBaseRef.current = null;
@@ -2073,13 +2189,18 @@ export function ZoneEditor() {
         // refetch. The generation counter inside fetchZones rejects responses
         // that are older than the final authoritative call.
         const original = base ?? zonesRef.current.find((z) => z.id === zone.id);
+        dragAbortRef.current?.abort();
+        const dragController = new AbortController();
+        dragAbortRef.current = dragController;
         try {
           if (state.t === "move") {
-            await patchZone(zone.id, { svgX: zone.svgX, svgY: zone.svgY });
+            await patchZone(zone.id, { svgX: zone.svgX, svgY: zone.svgY }, dragController.signal);
+            if (!aliveRef.current || dragController.signal.aborted) return;
             if (original) pushUndo({ type: "move", id: zone.id, before: { svgX: original.svgX, svgY: original.svgY }, after: { svgX: zone.svgX, svgY: zone.svgY } });
             toast.success("Position saved");
           } else {
-            await patchZone(zone.id, { svgX: zone.svgX, svgY: zone.svgY, svgWidth: zone.svgWidth, svgHeight: zone.svgHeight });
+            await patchZone(zone.id, { svgX: zone.svgX, svgY: zone.svgY, svgWidth: zone.svgWidth, svgHeight: zone.svgHeight }, dragController.signal);
+            if (!aliveRef.current || dragController.signal.aborted) return;
             if (original) pushUndo({ type: "resize", id: zone.id, before: { svgX: original.svgX, svgY: original.svgY, svgWidth: original.svgWidth, svgHeight: original.svgHeight }, after: { svgX: zone.svgX, svgY: zone.svgY, svgWidth: zone.svgWidth, svgHeight: zone.svgHeight } });
             toast.success("Size saved");
           }
@@ -2093,6 +2214,7 @@ export function ZoneEditor() {
           isDraggingRef.current = false;
           await fetchZones();
         } catch (err) {
+          if (isAbortError(err) || !aliveRef.current) return;
           isDraggingRef.current = false;
           setDragZone(null);
           toast.error(err instanceof Error ? err.message : String(err));
@@ -2101,6 +2223,7 @@ export function ZoneEditor() {
       }
 
       if (state.t === "multiMove") {
+        if (!aliveRef.current) return;
         const origins = multiDragOriginsRef.current;
         // Only save if there was actual movement
         const currentDelta = (() => {
@@ -2111,12 +2234,15 @@ export function ZoneEditor() {
         })();
         setMultiDragDelta(null);
         if (!currentDelta || (Math.abs(currentDelta.x) < 0.5 && Math.abs(currentDelta.y) < 0.5)) return;
+        dragAbortRef.current?.abort();
+        const dragController = new AbortController();
         // Use allSettled so a partial failure is surfaced rather than silently lost.
         const results = await Promise.allSettled(
           [...origins.entries()].map(([id, orig]) =>
-            patchZone(id, { svgX: orig.x + currentDelta.x, svgY: orig.y + currentDelta.y }),
+            patchZone(id, { svgX: orig.x + currentDelta.x, svgY: orig.y + currentDelta.y }, dragController.signal),
           ),
         );
+        if (!aliveRef.current || dragController.signal.aborted) return;
         const failCount = results.filter((r) => r.status === "rejected").length;
         const okCount = results.length - failCount;
         if (failCount === 0) {
@@ -2135,9 +2261,10 @@ export function ZoneEditor() {
           );
         }
         // Always refetch to restore consistent UI state after partial failures.
-        await fetch(`${API_BASE}/warehouse-zones`)
+        await fetch(`${API_BASE}/warehouse-zones`, { signal: dragController.signal })
           .then((r) => r.json())
-          .then((d) => { setZones(d.zones ?? []); });
+          .then((d) => { if (aliveRef.current && !dragController.signal.aborted) setZones(d.zones ?? []); })
+          .catch((err) => { if (!isAbortError(err) && aliveRef.current) toast.error(err instanceof Error ? err.message : String(err)); });
         return;
       }
 

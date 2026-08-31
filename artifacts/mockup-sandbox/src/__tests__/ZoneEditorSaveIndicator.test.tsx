@@ -34,7 +34,7 @@ const ZONE_1 = {
 // ─── Fetch mock factory ────────────────────────────────────────────────────────
 type FetchArgs = [string, RequestInit | undefined];
 
-function makeFetchMock(patchOk = true) {
+function makeFetchMock(patchOk = true, pendingPatch?: Promise<Response>) {
   return vi.fn((...[url, init]: FetchArgs) => {
     const method = (init?.method ?? "GET").toUpperCase();
     const s = String(url);
@@ -61,6 +61,7 @@ function makeFetchMock(patchOk = true) {
 
     if (method === "PATCH") {
       if (patchOk) {
+        if (pendingPatch) return pendingPatch;
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
       } else {
         return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: "Server error" }), text: () => Promise.resolve("Server error") });
@@ -274,5 +275,43 @@ describe("ZoneEditor — save status indicator", () => {
     // Switch back to Pan — row must still be present
     await switchToPan(container);
     expect(getSaveStatusRow(container)).not.toBeNull();
+  });
+
+  // ── (e) Unmount cancels an in-flight debounced edit save ────────────────────
+  it("(e) aborts an in-flight auto-save when the editor unmounts", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let resolvePatch!: (value: Response) => void;
+    const patchResponse = new Promise<Response>((resolve) => {
+      resolvePatch = resolve;
+    });
+    const fetchMock = makeFetchMock(true, patchResponse);
+    const { container } = await setupEditor(fetchMock);
+    await clickZone1(container);
+    await act(async () => {
+      fireEvent.change(getAisleInput(container), { target: { value: "14" } });
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+      await Promise.resolve();
+    });
+
+    const patchCall = fetchMock.mock.calls.find(([, init]) => (init?.method ?? "GET").toUpperCase() === "PATCH");
+    expect(patchCall).toBeDefined();
+    const signal = patchCall?.[1]?.signal;
+    expect(signal).toBeDefined();
+
+    cleanup();
+    expect(signal?.aborted).toBe(true);
+
+    resolvePatch({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({}),
+    } as Response);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    vi.useRealTimers();
   });
 });
