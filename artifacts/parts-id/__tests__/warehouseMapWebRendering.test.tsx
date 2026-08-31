@@ -5,13 +5,13 @@ import React from "react";
 import { act, render } from "@testing-library/react-native";
 
 jest.mock("react-native-reanimated", () =>
-  require("./helpers/mapMocks").createReanimatedMock(),
+  require("./helpers/mapMocks").createReanimatedMockWithPropsCallback(),
 );
 
 jest.mock("react-native-gesture-handler", () => {
   const React = require("react");
   function makeChainable() {
-    const obj: Record<string, (...args: unknown[]) => typeof obj> = {};
+    const obj: Record<string, (...args: Array<unknown>) => typeof obj> = {};
     [
       "onBegin", "onUpdate", "onEnd", "onFinalize",
       "onTouchesDown", "onTouchesUp", "onTouchesCancelled", "onTouchesMoved",
@@ -31,9 +31,9 @@ jest.mock("react-native-gesture-handler", () => {
       Pinch: makeChainable,
       Tap: makeChainable,
       LongPress: makeChainable,
-      Simultaneous: () => makeChainable(),
-      Exclusive: () => makeChainable(),
-      Race: () => makeChainable(),
+      Simultaneous: (..._args: Array<unknown>) => makeChainable(),
+      Exclusive: (..._args: Array<unknown>) => makeChainable(),
+      Race: (..._args: Array<unknown>) => makeChainable(),
     },
     GestureDetector: ({ children }: { children: React.ReactNode }) =>
       React.createElement(React.Fragment, null, children),
@@ -46,9 +46,13 @@ jest.mock("react-native-svg", () =>
 jest.mock("@expo/vector-icons", () =>
   require("./helpers/mapMocks").createVectorIconsMock(),
 );
-jest.mock("expo-asset", () =>
-  require("./helpers/mapMocks").createExpoAssetMock(),
-);
+const mockAssetLoadAsync = jest.fn();
+jest.mock("expo-asset", () => ({
+  Asset: {
+    fromModule: () => ({ downloadAsync: async () => {}, localUri: "", uri: "" }),
+    loadAsync: (...args: Array<unknown>) => mockAssetLoadAsync(...args),
+  },
+}));
 jest.mock("@react-native-async-storage/async-storage", () => ({
   __esModule: true,
   default: {
@@ -60,9 +64,10 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 jest.mock("@/hooks/useColors", () =>
   require("./helpers/mapMocks").createUseColorsMock(),
 );
-jest.mock("@/utils/apiBase", () => ({ API_BASE: "" }));
+jest.mock("@/utils/apiBase", () => ({ API_BASE: "http://test.local/api" }));
+const mockFetchWithAuth = jest.fn();
 jest.mock("@/utils/appAuth", () => ({
-  fetchWithAuth: jest.fn(() => Promise.resolve({ ok: false })),
+  fetchWithAuth: (...args: Array<unknown>) => mockFetchWithAuth(...args),
   setAuthTokenGetter: jest.fn(),
   onUnauthorized: jest.fn(),
 }));
@@ -77,22 +82,49 @@ jest.mock("@/utils/tilePyramidCache", () => ({
 }));
 
 const WEB_SCENE_XML =
-  '<svg viewBox="100 200 5000 3000"><path id="floor-plan" d="M100 200H5100V3200Z"/></svg>';
+  '<svg viewBox="100 200 5000 3000" onload="bad()">' +
+  '<script>alert(1)</script>' +
+  '<path id="floor-plan" d="M100 200H5100V3200Z"/>' +
+  '<foreignObject><div>bad</div></foreignObject>' +
+  '</svg>';
 const WEB_SCENE_CACHE = {
   xml: WEB_SCENE_XML,
-  innerXml: '<path id="floor-plan" d="M100 200H5100V3200Z"/>',
+  innerXml:
+    '<script>alert(1)</script><path id="floor-plan" d="M100 200H5100V3200Z"/>' +
+    '<foreignObject><div>bad</div></foreignObject>',
   uri: "",
   contentViewBox: { x: 100, y: 200, w: 5000, h: 3000 },
 };
+const HOT_SWAP_XML =
+  '<svg viewBox="0 0 6000 4000"><path id="floor-plan-b" d="M0 0H6000V4000Z"/></svg>';
+type MockWebCache = typeof WEB_SCENE_CACHE | {
+  xml: string;
+  innerXml: string;
+  uri: string;
+  contentViewBox?: { x: number; y: number; w: number; h: number };
+} | null;
+let mockCache: MockWebCache = WEB_SCENE_CACHE;
+let mockCacheHash: string | null = "web-scene-hash";
 jest.mock("@/utils/floorPlanCache", () => ({
-  getCachedData: jest.fn(() => WEB_SCENE_CACHE),
-  getCachedHash: jest.fn(() => "web-scene-hash"),
-  hasCachedData: jest.fn(() => true),
-  getIfValid: jest.fn(() => WEB_SCENE_CACHE),
+  getCachedData: jest.fn(() => mockCache),
+  getCachedHash: jest.fn(() => mockCacheHash),
+  hasCachedData: jest.fn(() => mockCache !== null),
+  getIfValid: jest.fn((hash: string) =>
+    mockCache !== null && mockCacheHash === hash ? mockCache : null,
+  ),
   initPersistRead: jest.fn(() => Promise.resolve()),
-  resetForServerUpdate: jest.fn(),
-  setCached: jest.fn(),
-  setFallbackEmpty: jest.fn(),
+  resetForServerUpdate: jest.fn(() => {
+    mockCache = null;
+    mockCacheHash = null;
+  }),
+  setCached: jest.fn((hash: string, data: MockWebCache) => {
+    mockCache = data;
+    mockCacheHash = hash;
+  }),
+  setFallbackEmpty: jest.fn(() => {
+    mockCache = { xml: "", innerXml: "", uri: "" };
+    mockCacheHash = null;
+  }),
 }));
 
 import { WarehouseMapView } from "@/components/WarehouseMapView";
@@ -101,6 +133,14 @@ import {
   normalizeSvgViewBoxOrigin,
   sizeSvgRoot,
 } from "@/utils/webSvgScene";
+
+async function flushPromises(ticks = 12) {
+  for (let i = 0; i < ticks; i++) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+}
 
 describe("web SVG scene contract", () => {
   it("keeps a zero-origin viewBox and exposes the shared frame", () => {
@@ -190,10 +230,18 @@ describe("WarehouseMapView — unified web floor-plan scene", () => {
   const originalPlatform = require("react-native").Platform.OS;
 
   beforeEach(() => {
+    jest.useFakeTimers();
     require("react-native").Platform.OS = "web";
+    mockCache = WEB_SCENE_CACHE;
+    mockCacheHash = "web-scene-hash";
+    mockFetchWithAuth.mockReset();
+    mockFetchWithAuth.mockResolvedValue({ ok: false });
+    mockAssetLoadAsync.mockReset();
+    mockAssetLoadAsync.mockResolvedValue([{ hash: "bundle-hash", localUri: "", uri: "" }]);
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     require("react-native").Platform.OS = originalPlatform;
   });
 
@@ -241,6 +289,9 @@ describe("WarehouseMapView — unified web floor-plan scene", () => {
     expect(
       floorGroups[0]!.props.dangerouslySetInnerHTML.__html,
     ).toContain('id="floor-plan"');
+    expect(
+      floorGroups[0]!.props.dangerouslySetInnerHTML.__html,
+    ).not.toMatch(/script|foreignObject|onload/i);
 
     // The overlay rect is a descendant of the same outer SVG scene, not a
     // second surface layered over a separate floor-plan div.
@@ -251,6 +302,337 @@ describe("WarehouseMapView — unified web floor-plan scene", () => {
     expect(zoneRects).toHaveLength(1);
     expect(scene.queryAll(
       (node) => node.type === "svg-svg" && node.props.viewBox !== undefined,
+      { includeSelf: true },
+    )).toHaveLength(1);
+
+    await result.unmount();
+  });
+
+  it("does not render unsafe cached markup even though valid floor-plan artwork survives", async () => {
+    const result = await render(
+      <WarehouseMapView
+        zones={[zone]}
+        zonesLoading={false}
+        zonesError={false}
+        onZonesRetry={jest.fn()}
+        onZoneTap={jest.fn()}
+      />,
+    );
+
+    const layoutNode = result.root!.queryAll(
+      (node) => typeof node.props.onLayout === "function",
+      { includeSelf: true },
+    )[0]!;
+    await act(async () => {
+      layoutNode.props.onLayout({
+        nativeEvent: { layout: { width: 500, height: 800 } },
+      });
+    });
+
+    const scene = result.root!.queryAll(
+      (node) => node.type === "svg-svg" && node.props.viewBox !== undefined,
+      { includeSelf: true },
+    )[0]!;
+    const floorGroup = scene.queryAll(
+      (node) => node.type === "g" && node.props.dangerouslySetInnerHTML !== undefined,
+      { includeSelf: true },
+    )[0]!;
+    const html = floorGroup.props.dangerouslySetInnerHTML.__html as string;
+
+    expect(html).toContain('id="floor-plan"');
+    expect(html).not.toMatch(/<script\b|<foreignObject\b|onload\s*=/i);
+
+    await result.unmount();
+  });
+
+  it("keeps a zero-origin floor plan and zone overlay in one equal-sized SVG scene", async () => {
+    mockCache = {
+      xml: '<svg viewBox="0 0 6000 4000"><path id="zero-origin-floor-plan"/></svg>',
+      innerXml: '<path id="zero-origin-floor-plan"/>',
+      uri: "",
+      contentViewBox: { x: 0, y: 0, w: 6000, h: 4000 },
+    };
+    mockCacheHash = "zero-origin-hash";
+
+    const result = await render(
+      <WarehouseMapView
+        zones={[zone]}
+        zonesLoading={false}
+        zonesError={false}
+        onZonesRetry={jest.fn()}
+        onZoneTap={jest.fn()}
+      />,
+    );
+    const layoutNode = result.root!.queryAll(
+      (node) => typeof node.props.onLayout === "function",
+      { includeSelf: true },
+    )[0]!;
+    await act(async () => {
+      layoutNode.props.onLayout({
+        nativeEvent: { layout: { width: 500, height: 800 } },
+      });
+    });
+
+    const scene = result.root!.queryAll(
+      (node) => node.type === "svg-svg" && node.props.viewBox !== undefined,
+      { includeSelf: true },
+    )[0]!;
+    expect(scene.props.viewBox).toBe("0 0 6000 4000");
+    expect(scene.props.width).toBe(500);
+    expect(scene.props.height).toBe(500 / (6000 / 4000));
+    expect(scene.queryAll(
+      (node) => node.type === "g" && node.props.dangerouslySetInnerHTML !== undefined,
+      { includeSelf: true },
+    )[0]!.props.dangerouslySetInnerHTML.__html).toContain("zero-origin-floor-plan");
+    expect(scene.queryAll(
+      (node) => node.type === "svg-rect",
+      { includeSelf: true },
+    )).toHaveLength(1);
+    expect(scene.queryAll(
+      (node) => node.type === "svg-svg" && node.props.viewBox !== undefined,
+      { includeSelf: true },
+    )).toHaveLength(1);
+
+    await result.unmount();
+  });
+
+  it("refetches when cached web data has no usable XML instead of leaving the scene blank", async () => {
+    mockCache = { xml: "", innerXml: "", uri: "", contentViewBox: { x: 0, y: 0, w: 6000, h: 4000 } };
+    mockCacheHash = "empty-cache-hash";
+    mockFetchWithAuth
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hash: "empty-cache-hash" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hash: "empty-cache-hash" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => HOT_SWAP_XML,
+      });
+
+    const result = await render(
+      <WarehouseMapView
+        zones={[]}
+        zonesLoading={false}
+        zonesError={false}
+        onZonesRetry={jest.fn()}
+        onZoneTap={jest.fn()}
+      />,
+    );
+    const layoutNode = result.root!.queryAll(
+      (node) => typeof node.props.onLayout === "function",
+      { includeSelf: true },
+    )[0]!;
+    await act(async () => {
+      layoutNode.props.onLayout({
+        nativeEvent: { layout: { width: 500, height: 800 } },
+      });
+    });
+    await flushPromises(16);
+
+    const scene = result.root!.queryAll(
+      (node) => node.type === "svg-svg" && node.props.viewBox !== undefined,
+      { includeSelf: true },
+    )[0]!;
+    expect(scene).toBeDefined();
+    expect(scene.props.viewBox).toBe("0 0 6000 4000");
+    expect(scene.queryAll(
+      (node) => node.type === "g" && node.props.dangerouslySetInnerHTML !== undefined,
+      { includeSelf: true },
+    )[0]!.props.dangerouslySetInnerHTML.__html).toContain("floor-plan-b");
+    expect(mockFetchWithAuth).toHaveBeenCalledTimes(3);
+
+    await result.unmount();
+  });
+
+  it("keeps the floor plan and overlays under the same pan/zoom transform contract", async () => {
+    const result = await render(
+      <WarehouseMapView
+        zones={[zone]}
+        zonesLoading={false}
+        zonesError={false}
+        onZonesRetry={jest.fn()}
+        onZoneTap={jest.fn()}
+        zoneAlignment={{ translateX: 12, translateY: -8, scale: 1.1 }}
+        anchorTransform="matrix(1 0 0 1 4 6)"
+      />,
+    );
+    const layoutNode = result.root!.queryAll(
+      (node) => typeof node.props.onLayout === "function",
+      { includeSelf: true },
+    )[0]!;
+    await act(async () => {
+      layoutNode.props.onLayout({
+        nativeEvent: { layout: { width: 500, height: 800 } },
+      });
+    });
+
+    const scene = result.root!.queryAll(
+      (node) => node.type === "svg-svg" && node.props.viewBox !== undefined,
+      { includeSelf: true },
+    )[0]!;
+    const floorGroup = scene.queryAll(
+      (node) => node.type === "g" && node.props.dangerouslySetInnerHTML !== undefined,
+      { includeSelf: true },
+    )[0]!;
+    const transformedGroups = scene.queryAll(
+      (node) => node.type === "svg-g" && typeof node.props.transform === "string",
+      { includeSelf: true },
+    );
+    const animatedMap = result.root!.queryAll(
+      (node) => node.type === "rn-reanimated-view",
+      { includeSelf: true },
+    )[0]!;
+
+    expect(floorGroup.parent?.type).toBe("svg-svg");
+    expect(transformedGroups.map((node) => node.props.transform)).toEqual([
+      "matrix(1 0 0 1 4 6)",
+      "translate(12, -8) scale(1.1)",
+    ]);
+    const animatedStyle = (animatedMap.props.style as Array<Record<string, unknown>>)
+      .find((style) => Array.isArray(style.transform));
+    expect(animatedStyle?.transform).toEqual([
+      expect.objectContaining({ translateX: expect.any(Number) }),
+      expect.objectContaining({ translateY: expect.any(Number) }),
+      expect.objectContaining({ scale: expect.any(Number) }),
+    ]);
+    expect(scene.parent?.type).toBe("rn-reanimated-view");
+
+    await result.unmount();
+  });
+
+  it("shows a retry state after server and bundle loads fail, then replaces it with a valid scene on retry", async () => {
+    mockCache = null;
+    mockCacheHash = null;
+    mockFetchWithAuth.mockResolvedValue({ ok: false });
+    mockAssetLoadAsync.mockRejectedValue(new Error("bundle unavailable"));
+
+    const result = await render(
+      <WarehouseMapView
+        zones={[]}
+        zonesLoading={false}
+        zonesError={false}
+        onZonesRetry={jest.fn()}
+        onZoneTap={jest.fn()}
+      />,
+    );
+    const layoutNode = result.root!.queryAll(
+      (node) => typeof node.props.onLayout === "function",
+      { includeSelf: true },
+    )[0]!;
+    await act(async () => {
+      layoutNode.props.onLayout({
+        nativeEvent: { layout: { width: 500, height: 800 } },
+      });
+    });
+    await flushPromises();
+
+    expect(result.root!.queryAll(
+      (node) => node.type === "svg-svg" && node.props.viewBox !== undefined,
+      { includeSelf: true },
+    )).toHaveLength(0);
+    const retry = result.root!.queryAll(
+      (node) => node.type === "rn-pressable" &&
+        node.props.accessibilityLabel === "Retry loading floor plan",
+      { includeSelf: true },
+    )[0]!;
+    expect(retry).toBeDefined();
+
+    mockFetchWithAuth
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hash: "retry-hash" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => HOT_SWAP_XML,
+      });
+    await act(async () => {
+      retry.props.onPress();
+    });
+    await flushPromises(16);
+
+    const scene = result.root!.queryAll(
+      (node) => node.type === "svg-svg" && node.props.viewBox !== undefined,
+      { includeSelf: true },
+    )[0]!;
+    expect(scene).toBeDefined();
+    expect(scene.props.viewBox).toBe("0 0 6000 4000");
+    expect(scene.queryAll(
+      (node) => node.type === "g" && node.props.dangerouslySetInnerHTML !== undefined,
+      { includeSelf: true },
+    )[0]!.props.dangerouslySetInnerHTML.__html).toContain("floor-plan-b");
+
+    await result.unmount();
+  });
+
+  it("reloads the web scene after the server floor-plan hash changes", async () => {
+    mockCache = {
+      xml: '<svg viewBox="0 0 6000 4000"><path id="floor-plan-a"/></svg>',
+      innerXml: '<path id="floor-plan-a"/>',
+      uri: "",
+      contentViewBox: { x: 0, y: 0, w: 6000, h: 4000 },
+    };
+    mockCacheHash = "hash-a";
+    mockFetchWithAuth
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hash: "hash-a" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hash: "hash-b" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hash: "hash-b" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => WEB_SCENE_XML,
+      });
+
+    const result = await render(
+      <WarehouseMapView
+        zones={[zone]}
+        zonesLoading={false}
+        zonesError={false}
+        onZonesRetry={jest.fn()}
+        onZoneTap={jest.fn()}
+      />,
+    );
+    const layoutNode = result.root!.queryAll(
+      (node) => typeof node.props.onLayout === "function",
+      { includeSelf: true },
+    )[0]!;
+    await act(async () => {
+      layoutNode.props.onLayout({
+        nativeEvent: { layout: { width: 500, height: 800 } },
+      });
+    });
+    await flushPromises(6);
+
+    await act(async () => {
+      jest.advanceTimersByTime(60_000);
+    });
+    await flushPromises(16);
+
+    const scene = result.root!.queryAll(
+      (node) => node.type === "svg-svg" && node.props.viewBox !== undefined,
+      { includeSelf: true },
+    )[0]!;
+    expect(scene.props.viewBox).toBe("0 0 5000 3000");
+    expect(scene.props.width).toBe(500);
+    expect(scene.props.height).toBe(300);
+    expect(scene.queryAll(
+      (node) => node.type === "g" && node.props.dangerouslySetInnerHTML !== undefined,
+      { includeSelf: true },
+    )[0]!.props.dangerouslySetInnerHTML.__html).toContain("floor-plan");
+    expect(scene.queryAll(
+      (node) => node.type === "svg-rect",
       { includeSelf: true },
     )).toHaveLength(1);
 
