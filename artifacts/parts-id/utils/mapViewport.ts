@@ -28,9 +28,9 @@ export interface ContentViewBox {
  * Returns null when the attribute is absent or malformed.
  */
 export function parseContentViewBox(xml: string): ContentViewBox | null {
-  const match = xml.match(/viewBox="([^"]+)"/);
-  if (!match || match[1] === undefined) return null;
-  const parts = match[1].trim().split(/[\s,]+/).map(Number);
+  const match = xml.match(/viewBox=(["'])([^"']+)\1/i);
+  if (!match || match[2] === undefined) return null;
+  const parts = match[2].trim().split(/[\s,]+/).map(Number);
   if (parts.length !== 4 || parts.some((n) => !isFinite(n))) return null;
   // Length checked to be exactly 4 above.
   return { x: parts[0]!, y: parts[1]!, w: parts[2]!, h: parts[3]! };

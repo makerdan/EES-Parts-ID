@@ -103,6 +103,11 @@ import {
   fetchTile,
   prefetchZoomLevel,
 } from "@/utils/tilePyramidCache";
+import {
+  normalizeSvgViewBoxOrigin,
+  sanitizeSvgForWeb,
+  sizeSvgRoot,
+} from "@/utils/webSvgScene";
 
 const VIEWPORT_KEY = "@rdc34/warehouse_map_viewport_v2";
 const FloorPlanMetaSchema = z.object({ hash: z.string() });
@@ -188,50 +193,6 @@ function stripSvgWrapper(xml: string): string {
   return xml
     .replace(/^[\s\S]*?<svg[^>]*>/, "")
     .replace(/<\/svg>\s*$/, "");
-}
-
-/**
- * Conservative string-based SVG sanitizer — mirrors the server's sanitizeSvg
- * (artifacts/api-server/src/routes/floorPlan.ts) as defence-in-depth for the
- * web dangerouslySetInnerHTML injection path.  Server-side sanitization has
- * already run on uploaded plans, so this is a lightweight double-check.
- * Deliberately NOT DOMPurify: DOMPurify parses fragment input through the
- * HTML parser, which mangles SVG-only elements/attributes and previously
- * left the floor plan blank on web.
- */
-function sanitizeSvgForWeb(svg: string): string {
-  let s = svg;
-  // Remove <script>…</script> blocks (case-insensitive) and self-closing <script/>.
-  s = s.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "");
-  s = s.replace(/<script\b[^/]*\/>/gi, "");
-  // Remove <foreignObject>…</foreignObject> blocks and self-closing variants.
-  s = s.replace(/<foreignObject\b[^>]*>[\s\S]*?<\/foreignObject\s*>/gi, "");
-  s = s.replace(/<foreignObject\b[^/]*\/>/gi, "");
-  // Strip event-handler attributes: on<word>=("…"|'…'|unquoted).
-  s = s.replace(/\s+on[a-z][a-z0-9]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, "");
-  // Normalise link-like attributes, then blank javascript:/data: URI values.
-  s = s.replace(/\b(href|src|xlink:href|action)\s*=\s*/gi, (_m, attr: string) => `${attr}=`);
-  s = s.replace(
-    /\b(href|src|xlink:href|action)=\s*(?:"(?:javascript:|data:)[^"]*"|'(?:javascript:|data:)[^']*'|(?:javascript:|data:)\S*)/gi,
-    '$1=""',
-  );
-  return s;
-}
-
-/**
- * Rewrite the width/height attributes on the opening <svg> tag so the
- * injected floor plan renders at exactly the given pixel size (matching the
- * Animated.View and the zone-overlay <Svg> dimensions).  The leading \s in
- * the attribute patterns avoids touching stroke-width etc.  When an attribute
- * is absent the browser default (100%) already fills the wrapping <div>,
- * which has the same dimensions.
- */
-function sizeSvgRoot(xml: string, w: number, h: number): string {
-  return xml.replace(/<svg\b[^>]*>/i, (tag) =>
-    tag
-      .replace(/\swidth\s*=\s*"[^"]*"/i, ` width="${w}"`)
-      .replace(/\sheight\s*=\s*"[^"]*"/i, ` height="${h}"`),
-  );
 }
 
 async function _loadFloorPlanFromServer(signal: AbortSignal): Promise<void> {
@@ -1715,11 +1676,7 @@ export function WarehouseMapView({
   // normalises coordinates when it strips the outer <svg> wrapper.
   const normalizedSvgXml = useMemo(() => {
     if (!svgXml || !contentVB) return svgXml;
-    if (contentVB.x === 0 && contentVB.y === 0) return svgXml;
-    return svgXml.replace(
-      /viewBox="[^"]*"/,
-      `viewBox="0 0 ${contentVB.w} ${contentVB.h}"`,
-    );
+    return normalizeSvgViewBoxOrigin(svgXml);
   }, [svgXml, contentVB]);
 
   // Web floor-plan HTML — the (normalised) full SVG text with its root
