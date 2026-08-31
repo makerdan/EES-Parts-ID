@@ -10,16 +10,10 @@
  * Empty zones       → instructional empty state card over the map
  *
  * Floor-plan rendering strategy (crisp at any zoom level):
- *   Web    — The fetched SVG XML (outer viewBox normalised to "0 0 W H",
- *            width/height rewritten to the render size) is injected via
- *            dangerouslySetInnerHTML into an absolutely-positioned <div>
- *            layered underneath the zone-overlay <Svg>.  Because the injected
- *            string starts with an <svg> tag the browser parses it in SVG
- *            namespace — injecting bare <g>/<path> content into an existing
- *            SVG element goes through the HTML fragment parser instead, which
- *            treats SVG tags as unknown HTML elements and renders nothing.
- *            Both layers share the same viewBox and pixel dimensions, so the
- *            zone overlays align exactly with the floor plan.
+ *   Web    — One browser-owned <Svg> scene receives the normalized floor-plan
+ *            markup inside a real SVG <g>, followed by the zone overlay groups.
+ *            The floor plan and overlays therefore share one viewBox, render
+ *            size, pan/zoom transform, and SVG namespace.
  *   Native — Adaptive tiling: the floor plan is split into numTiles×numTiles
  *            tiles where numTiles = ceil(zoom).  Each tile renders
  *            svgRenderW×svgRenderH pt of SvgXml with a viewBox cropped to its
@@ -104,9 +98,8 @@ import {
   prefetchZoomLevel,
 } from "@/utils/tilePyramidCache";
 import {
+  createWebSvgScene,
   normalizeSvgViewBoxOrigin,
-  sanitizeSvgForWeb,
-  sizeSvgRoot,
 } from "@/utils/webSvgScene";
 
 const VIEWPORT_KEY = "@rdc34/warehouse_map_viewport_v2";
@@ -159,14 +152,14 @@ export function prefetchSvgAsset(): Promise<void> {
 function loadSvgAsset(): Promise<void> {
   if (_svgLoadPromise) {
     // Self-heal a stale singleton.  If a previous load has already settled
-    // but the cache still lacks renderable web data (a failed load, or a
-    // stale entry written by an older build), the resolved promise is dead —
+    // but the cache still lacks renderable data (a failed load, or a stale
+    // entry written by an older build), the resolved promise is dead —
     // returning it would leave the map blank for the rest of the session.
     // Null it out and fall through to start a fresh fetch.  In-flight loads
     // are returned as-is so concurrent mounts share one request.
     const cached = getCachedData();
-    const webDataUnusable = Platform.OS === "web" && !cached?.xml;
-    if (!(_svgLoadSettled && webDataUnusable)) return _svgLoadPromise;
+    const dataUnusable = !isSvgDataUsable(cached);
+    if (!(_svgLoadSettled && dataUnusable)) return _svgLoadPromise;
     _svgLoadPromise = null;
   }
 
@@ -185,9 +178,9 @@ function loadSvgAsset(): Promise<void> {
 
 /**
  * Strip the outer <svg>…</svg> wrapper from SVG XML.
- * Web rendering injects the full <svg> document into a <div> (see
- * webFloorPlanHtml in WarehouseMapView), but the stripped innerXml is still
- * written to the cache so persisted entries keep their expected shape.
+ * Web rendering injects the stripped body into the unified SVG scene, but the
+ * innerXml is still written to the cache so persisted entries keep their
+ * expected shape.
  */
 function stripSvgWrapper(xml: string): string {
   return xml
@@ -1631,9 +1624,8 @@ export function WarehouseMapView({
   // Resolve the bundled SVG asset.
   //
   // Web path  — fetches the SVG text and stores it via floorPlanCache.  The
-  //             full <svg> markup (viewBox normalised, width/height rewritten
-  //             to the render size) is injected via dangerouslySetInnerHTML
-  //             into a <div> layered beneath the zone-overlay <Svg>.
+  //             canonical web scene embeds the sanitized floor-plan body in
+  //             the same outer <Svg> as the zone overlay.
   // Native path — stores only the local file URI; <SvgUri> reads it directly.
   //
   // getCachedData() reads the module-level cache in utils/floorPlanCache.
@@ -1642,7 +1634,7 @@ export function WarehouseMapView({
   // no skeleton, no fetch.
   const [svgUri, setSvgUri] = useState(() => getCachedData()?.uri ?? "");
   // svgXml: full SVG text — the native tile renderer (SvgXml + cropped
-  // viewBox) and the web floor-plan <div> injection both render from this.
+  // viewBox) and the web scene renderer both render from this.
   const [svgXml, setSvgXml] = useState(() => getCachedData()?.xml ?? "");
   // svgLoading: true when no usable floor-plan data is in cache yet.
   // isSvgDataUsable guards against an empty fallback entry (set by
@@ -1679,17 +1671,24 @@ export function WarehouseMapView({
     return normalizeSvgViewBoxOrigin(svgXml);
   }, [svgXml, contentVB]);
 
-  // Web floor-plan HTML — the (normalised) full SVG text with its root
-  // width/height rewritten to the exact render dimensions, passed through the
-  // conservative sanitizer.  Injected into an absolutely-positioned <div>
-  // beneath the zone-overlay <Svg>; both layers resolve to the same
-  // "0 0 W H" viewBox and identical pixel dimensions, so zones align exactly.
-  const webFloorPlanHtml = useMemo(() => {
-    if (Platform.OS !== "web" || !normalizedSvgXml) return "";
-    return sanitizeSvgForWeb(
-      sizeSvgRoot(normalizedSvgXml, svgRenderW, svgRenderH),
-    );
-  }, [normalizedSvgXml, svgRenderW, svgRenderH]);
+  // Canonical browser scene.  The complete SVG is sanitized, normalized, and
+  // sized once here; its body is inserted into the same outer Svg that owns
+  // the zone overlay below.  Keeping this as one scene prevents a floor-plan
+  // surface and an overlay surface from drifting apart during web transforms.
+  const webSvgScene = useMemo(() => {
+    if (Platform.OS !== "web" || !svgXml || svgRenderW <= 0 || svgRenderH <= 0) {
+      return null;
+    }
+    try {
+      return createWebSvgScene(svgXml, svgRenderW, svgRenderH);
+    } catch {
+      // Invalid SVG data must reach the existing visible retry state rather
+      // than rendering a blank browser surface.
+      return null;
+    }
+  }, [svgXml, svgRenderW, svgRenderH]);
+  const webSceneError =
+    Platform.OS === "web" && Boolean(svgXml) && !svgLoading && webSvgScene === null;
 
   // ── Server floor-plan ETag wiring ────────────────────────────────────────
   // Poll /floor-plan/meta every 60 s while mounted.  When the server returns a
@@ -1747,6 +1746,8 @@ export function WarehouseMapView({
       resetForServerUpdate();
       _svgLoadPromise = null;
       setSvgUri(""); setSvgXml("");
+      setContentVB(null);
+      contentVBRef.current = null;
       setSvgLoading(true);
       setSvgLoadError(false);
     }
@@ -2360,6 +2361,24 @@ export function WarehouseMapView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, selectMode, countedZoneIds, pinnedZoneIds, variantZoneIds, pinnedBinLabels, pinnedSectionsMap, variantSectionsMap, selectedZoneId]);
 
+  const zoneOverlayLayer = anchorTransform ? (
+    <G transform={anchorTransform}>
+      <G transform={(() => {
+        const a = safeZoneAlignment(zoneAlignment);
+        return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`;
+      })()}>
+        {zoneOverlays}
+      </G>
+    </G>
+  ) : (
+    <G transform={(() => {
+      const a = safeZoneAlignment(zoneAlignment);
+      return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`;
+    })()}>
+      {zoneOverlays}
+    </G>
+  );
+
   // ── Early return before layout ─────────────────────────────────────────────
   if (containerW === 0) {
     return <View style={[styles.fill, { backgroundColor: colors.background }]} onLayout={onLayout} />;
@@ -2486,28 +2505,32 @@ export function WarehouseMapView({
               <View style={{ width: svgRenderW, height: svgRenderH }} />
             )
           ) : (
-            /* Web: floor plan injected as a complete <svg> document into an
-               absolutely-positioned <div> so the browser parses it in SVG
-               namespace.  The zone-overlay <Svg> below is absoluteFill with
-               the same normalised viewBox + pixel dimensions, so zones sit
-               exactly on top.  "Map unavailable" only when the load failed. */
-            webFloorPlanHtml ? (
-              React.createElement("div", {
-                dangerouslySetInnerHTML: { __html: webFloorPlanHtml },
-                style: {
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: svgRenderW,
-                  height: svgRenderH,
-                  overflow: "hidden",
-                  // Colour-invert the artwork in dark mode ONLY — an
-                  // unconditional invert blanked the map in light mode.
-                  filter: isDark ? "invert(1) brightness(0.88)" : "none",
-                },
-              })
+            /* Web: floor plan and zone overlays are children of one outer
+               SVG scene.  The raw floor-plan body is injected into a real SVG
+               group so the browser parses paths in the SVG namespace, while
+               the overlay uses the exact same normalized viewBox and size. */
+            webSvgScene ? (
+              <Svg
+                viewBox={webSvgScene.viewBox}
+                width={webSvgScene.renderWidth}
+                height={webSvgScene.renderHeight}
+                style={{ width: webSvgScene.renderWidth, height: webSvgScene.renderHeight }}
+              >
+                {React.createElement("g", {
+                  dangerouslySetInnerHTML: {
+                    __html: stripSvgWrapper(webSvgScene.svgMarkup),
+                  },
+                  style: {
+                    // Colour-invert the artwork in dark mode ONLY — an
+                    // unconditional invert blanked the map in light mode.
+                    filter: isDark ? "invert(1) brightness(0.88)" : "none",
+                  },
+                })}
+                {zoneOverlayLayer}
+              </Svg>
             ) : !svgLoading ? (
-              /* F-043: web load failed — show descriptive message + Retry */
+              /* F-043: web load or scene validation failed — show a
+                 descriptive message + Retry instead of a blank map. */
               <View
                 style={[
                   styles.svgFallback,
@@ -2515,11 +2538,11 @@ export function WarehouseMapView({
                 ]}
               >
                 <Text style={{ color: colors.mutedForeground, fontSize: 13, textAlign: "center", paddingHorizontal: 24 }}>
-                  {svgLoadError
+                  {svgLoadError || webSceneError
                     ? "Floor plan could not be loaded.\nServer and bundled asset both failed."
                     : "Map unavailable"}
                 </Text>
-                {svgLoadError && (
+                {(svgLoadError || webSceneError) && (
                   <Pressable
                     onPress={handleFloorPlanRetry}
                     style={[styles.floorPlanRetryBtn, { backgroundColor: colors.primary }]}
@@ -2591,38 +2614,26 @@ export function WarehouseMapView({
             </Animated.View>
           )}
 
-          {/* Zone overlay SVG — shares the same viewBox as the floor plan so
-              zone coordinates align exactly.
-              On web: layered (absoluteFill) on top of the floor-plan <div>
-              rendered above; both resolve to the same normalised "0 0 W H"
-              viewBox and identical pixel dimensions.
-              On native: the zone rects are layered on top of the <SvgUri>
-              rendered above via absoluteFill.
+          {/* Native zone overlay SVG — shares the same viewBox as the floor
+              plan so zone coordinates align exactly.  Web renders this layer
+              inside the unified scene above instead.
               Each ZoneOverlayItem drives its own strokeWidth and fontSize via
               useAnimatedProps on the UI thread — visual weight stays constant
               as zoom changes, with zero JS re-renders during pinch or spring
               animations. Zone geometry (x/y/w/h) fills the full SVG viewBox,
               so alignment with the floor plan is always exact. */}
-          <Svg
-            style={StyleSheet.absoluteFill}
-            viewBox={contentVB
-              ? `0 0 ${contentVB.w} ${contentVB.h}`
-              : `0 0 ${SVG_VIEWBOX_W} ${SVG_VIEWBOX_H}`}
-            width={svgRenderW}
-            height={svgRenderH}
-          >
-            {anchorTransform ? (
-              <G transform={anchorTransform}>
-                <G transform={(() => { const a = safeZoneAlignment(zoneAlignment); return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`; })()}>
-                  {zoneOverlays}
-                </G>
-              </G>
-            ) : (
-              <G transform={(() => { const a = safeZoneAlignment(zoneAlignment); return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`; })()}>
-                {zoneOverlays}
-              </G>
-            )}
-          </Svg>
+          {Platform.OS !== "web" && (
+            <Svg
+              style={StyleSheet.absoluteFill}
+              viewBox={contentVB
+                ? `0 0 ${contentVB.w} ${contentVB.h}`
+                : `0 0 ${SVG_VIEWBOX_W} ${SVG_VIEWBOX_H}`}
+              width={svgRenderW}
+              height={svgRenderH}
+            >
+              {zoneOverlayLayer}
+            </Svg>
+          )}
         </Animated.View>
       </GestureDetector>
       </View>

@@ -4,9 +4,10 @@
  * Four runtime paths are covered across five suites:
  *
  *   1. Fresh app open (warm cache) → fit-to-screen always runs, regardless of
- *      any previously saved viewport.  AsyncStorage.getItem is NOT called on
- *      mount — the restore path has been intentionally removed so the map is
- *      always centred when the user opens it.
+ *      any previously saved viewport.  The viewport key is NOT read on mount —
+ *      the restore path has been intentionally removed so the map is always
+ *      centred when the user opens it.  Other startup preferences may still
+ *      use AsyncStorage.
  *
  *   2. No saved viewport (null) → same as above; pendingFit is set and
  *      applyFitIfReady fires once both contentVBRef and containerW are ready.
@@ -27,9 +28,9 @@
  * • useSharedValue returns a tracked plain object; every instance is pushed to
  *   `trackedValues` so tests can inspect post-mount / post-layout .value
  *   mutations without knowing which slot in the component each value occupies.
- * • AsyncStorage.getItem is a jest.fn() — tests assert it is NOT called on
- *   mount (new semantics).  setItem is tracked to verify background-flush calls
- *   in suite 4.
+ * • AsyncStorage.getItem is a jest.fn() — tests assert the viewport key is NOT
+ *   read on mount (new semantics).  setItem is tracked to verify background-
+ *   flush calls in suite 4.
  * • panBounds is spied upon and mocked to return {maxX:10000, maxY:10000} so
  *   the small test tx/ty values pass through clamping unchanged.
  * • AppState.addEventListener in the react-native mock is re-implemented
@@ -430,9 +431,9 @@ describe("startup always fits — no viewport restore on mount", () => {
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("phone (390×761): AsyncStorage.getItem is NOT called on mount (no restore path)", async () => {
+  it("phone (390×761): the viewport key is NOT read on mount (no restore path)", async () => {
     await mountAndLayout(390, 761);
-    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalledWith(VIEWPORT_KEY);
   });
 
   it("phone (390×761): computeFitTarget returns the natural fit scale (not snapped to z0 overview)", async () => {
@@ -456,9 +457,9 @@ describe("startup always fits — no viewport restore on mount", () => {
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("iPad (768×960): AsyncStorage.getItem is NOT called on mount", async () => {
+  it("iPad (768×960): the viewport key is NOT read on mount", async () => {
     await mountAndLayout(768, 960);
-    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalledWith(VIEWPORT_KEY);
   });
 });
 
@@ -509,9 +510,9 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("phone (390×761): AsyncStorage.getItem is NOT called on mount (no restore path)", async () => {
+  it("phone (390×761): the viewport key is NOT read on mount (no restore path)", async () => {
     await mountFitLayout(390, 761);
-    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalledWith(VIEWPORT_KEY);
   });
 
   it("iPad (768×960): computeFitTarget is called when no stored viewport exists", async () => {
@@ -538,7 +539,7 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
 // on a fresh open regardless of what is in storage.
 // =============================================================================
 
-describe("startup fit — no AsyncStorage.getItem call during mount", () => {
+describe("startup fit — no viewport-key AsyncStorage read during mount", () => {
   // Use a scale value clearly different from ZOOM_STOPS[0].scale (1.5) so we
   // can verify the stored scale is ignored and the fit scale is applied instead.
   const STORED_VIEWPORT = JSON.stringify({ s: 4.0, tx: 30, ty: 20 });
@@ -554,14 +555,14 @@ describe("startup fit — no AsyncStorage.getItem call during mount", () => {
     return renderer;
   }
 
-  it("phone (390×761): AsyncStorage.getItem is not called even when a stored viewport exists", async () => {
+  it("phone (390×761): the viewport key is not read even when stored data exists", async () => {
     await mountAndLayout(390, 761);
-    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalledWith(VIEWPORT_KEY);
   });
 
-  it("iPad (768×960): AsyncStorage.getItem is not called even when a stored viewport exists", async () => {
+  it("iPad (768×960): the viewport key is not read even when stored data exists", async () => {
     await mountAndLayout(768, 960);
-    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalledWith(VIEWPORT_KEY);
   });
 
   it("phone (390×761): fit-to-screen scale is applied (stored s=4.0 is ignored; natural fit scale is used)", async () => {
@@ -836,8 +837,8 @@ describe("startup fit — cold cache (getCachedData returns null on first instal
       expect(trackedValues.some((sv) => sv.value === fitTx)).toBe(true);
       expect(trackedValues.some((sv) => sv.value === fitTy)).toBe(true);
 
-      // The startup-fit useEffect does NOT call AsyncStorage.getItem on mount.
-      expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+      // The startup-fit useEffect does NOT read the viewport key on mount.
+      expect(mockAsyncStorageGetItem).not.toHaveBeenCalledWith(VIEWPORT_KEY);
     },
   );
 
@@ -1032,25 +1033,20 @@ describe("_applyFocus — zone found / not found / section disambiguation", () =
 });
 
 // =============================================================================
-// Suite 8 — Web floor-plan layer: full <svg> document injected into a <div>,
-//           viewBox origin normalisation, width/height rewrite, sanitizer.
+// Suite 8 — Web unified SVG scene: floor-plan body and zone overlay share one
+//           outer SVG, with viewBox normalisation and sanitizer coverage.
 //
 // Verifies:
 //   1. When Platform.OS === "web" and cached xml is non-empty, the floor plan
-//      renders as a <div> with dangerouslySetInnerHTML whose __html is a
-//      complete <svg> document.  (A complete document is parsed by the
-//      browser in SVG namespace; bare <g>/<path> fragments injected inside an
-//      existing SVG element go through the HTML parser and render nothing —
-//      the bug that left the Map tab blank on web.)
-//   2. A non-zero contentVB origin is normalised: the injected document's
-//      viewBox is rewritten to "0 0 W H" (matching the zone-overlay <Svg>)
-//      and the root width/height are rewritten to the render dimensions.
-//   3. A zero contentVB origin leaves the original viewBox untouched.
-//   4. No floor-plan content is injected inside the zone-overlay <Svg>.
+//      body is injected into a child <g> of the unified outer <Svg>.
+//   2. The outer scene owns the normalised viewBox and exact render dimensions.
+//   3. A zero-origin source remains in the same normalised scene contract.
+//   4. The floor-plan group is a direct child of the unified scene, not a
+//      separate surface from the zone overlay.
 //   5. The conservative sanitizer strips <script> blocks and on* handlers.
 // =============================================================================
 
-describe("web floor-plan layer — <svg> document injected into a <div>", () => {
+describe("web unified SVG scene — floor plan and overlay share one viewport", () => {
   const WEB_INNER_XML = '<path d="M0 0 L100 100"/>';
   const WEB_VB_OFFSET = { x: 50, y: 30, w: 7200, h: 4820 };
   const WEB_CACHED_DATA_OFFSET = {
@@ -1085,63 +1081,61 @@ describe("web floor-plan layer — <svg> document injected into a <div>", () => 
     return renderer;
   }
 
-  /** The floor-plan <div> is the only host node with dangerouslySetInnerHTML. */
-  function getFloorPlanHtml(renderer: Awaited<ReturnType<typeof render>>): string {
-    const divNodes = renderer.root!.queryAll(
-      (n) => n.type === "div" && n.props.dangerouslySetInnerHTML != null,
+  function getScene(renderer: Awaited<ReturnType<typeof render>>) {
+    const sceneNodes = renderer.root!.queryAll(
+      (n) => n.type === "svg" && n.props.viewBox != null,
       { includeSelf: true },
     );
-    expect(divNodes.length).toBe(1);
-    return divNodes[0]!.props.dangerouslySetInnerHTML.__html as string;
+    expect(sceneNodes.length).toBe(1);
+    return sceneNodes[0]!;
   }
 
-  it("renders a <div> whose dangerouslySetInnerHTML is a complete <svg> document", async () => {
+  function getFloorPlanGroup(renderer: Awaited<ReturnType<typeof render>>) {
+    const floorPlanGroups = renderer.root!.queryAll(
+      (n) => n.type === "g" && n.props.dangerouslySetInnerHTML != null,
+      { includeSelf: true },
+    );
+    expect(floorPlanGroups.length).toBe(1);
+    return floorPlanGroups[0]!;
+  }
+
+  it("renders the floor-plan body inside the unified outer <Svg>", async () => {
     const renderer = await mountAndLayout(800, 600);
-    const html = getFloorPlanHtml(renderer);
-    expect(html.startsWith("<svg")).toBe(true);
+    const scene = getScene(renderer);
+    const floorPlanGroup = getFloorPlanGroup(renderer);
+    const html = floorPlanGroup.props.dangerouslySetInnerHTML.__html as string;
+    expect(scene.children).toContain(floorPlanGroup);
     expect(html).toContain(WEB_INNER_XML);
   });
 
-  it("normalises a non-zero viewBox origin to '0 0 W H' and rewrites width/height", async () => {
+  it("normalises the scene viewBox and sets exact render dimensions", async () => {
     const renderer = await mountAndLayout(800, 600);
-    const html = getFloorPlanHtml(renderer);
-    // viewBox normalised so the floor plan and the zone-overlay <Svg>
-    // (which uses "0 0 W H") share one coordinate frame.
-    expect(html).toContain('viewBox="0 0 7200 4820"');
-    expect(html).not.toContain('viewBox="50 30');
-    // Root width/height rewritten to the exact render dimensions
-    // (svgRenderW = containerW; svgRenderH = containerW / (vb.w / vb.h)).
+    const scene = getScene(renderer);
+    const html = getFloorPlanGroup(renderer).props.dangerouslySetInnerHTML.__html as string;
+    expect(scene.props.viewBox).toBe("0 0 7200 4820");
+    expect(scene.props.width).toBe(800);
     const expectedH = 800 / (WEB_VB_OFFSET.w / WEB_VB_OFFSET.h);
-    expect(html).toContain('width="800"');
-    expect(html).toContain(`height="${expectedH}"`);
-    expect(html).not.toContain('width="7250"');
-    expect(html).not.toContain('height="4850"');
+    expect(scene.props.height).toBe(expectedH);
+    expect(html).not.toContain('viewBox="50 30');
   });
 
-  it("keeps the original viewBox when contentVB origin is already (0, 0)", async () => {
+  it("keeps a zero-origin source in the normalised scene contract", async () => {
     const fpc = require("@/utils/floorPlanCache");
     const zeroOriginVB = { x: 0, y: 0, w: 7200, h: 4820 };
     fpc.getCachedData.mockReturnValue({
       ...WEB_CACHED_DATA_OFFSET,
+      xml: `<svg viewBox="0 0 7200 4820">${WEB_INNER_XML}</svg>`,
       contentViewBox: zeroOriginVB,
     });
 
     const renderer = await mountAndLayout(800, 600);
-    const html = getFloorPlanHtml(renderer);
-    // No normalisation applied — the original viewBox passes through.
-    expect(html).toContain('viewBox="50 30 7200 4820"');
+    expect(getScene(renderer).props.viewBox).toBe("0 0 7200 4820");
   });
 
-  it("does NOT inject floor-plan content inside the zone-overlay <Svg>", async () => {
-    // Regression guard for the HTML-namespace bug: a <g> carrying
-    // dangerouslySetInnerHTML inside the zone-overlay <Svg> is parsed as an
-    // unknown HTML element by the browser and renders nothing on web.
+  it("keeps the injected floor-plan group directly under the unified scene", async () => {
     const renderer = await mountAndLayout(800, 600);
-    const gNodes = renderer.root!.queryAll(
-      (n) => n.type === "g" && n.props.dangerouslySetInnerHTML != null,
-      { includeSelf: true },
-    );
-    expect(gNodes.length).toBe(0);
+    const scene = getScene(renderer);
+    expect(getFloorPlanGroup(renderer).parent).toBe(scene);
   });
 
   it("strips <script> blocks and on* event handlers from the injected document", async () => {
@@ -1152,7 +1146,7 @@ describe("web floor-plan layer — <svg> document injected into a <div>", () => 
     });
 
     const renderer = await mountAndLayout(800, 600);
-    const html = getFloorPlanHtml(renderer);
+    const html = getFloorPlanGroup(renderer).props.dangerouslySetInnerHTML.__html as string;
     expect(html).not.toContain("<script");
     expect(html).not.toContain("onload=");
     expect(html).toContain(WEB_INNER_XML);

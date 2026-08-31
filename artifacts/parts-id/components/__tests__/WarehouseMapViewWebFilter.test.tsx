@@ -4,7 +4,7 @@
  * Background
  * ──────────
  * An `invert(1) brightness(0.88)` CSS filter was being applied to the web
- * floor-plan <div> whenever the OS/browser reported dark mode — even when the
+ * floor-plan surface whenever the OS/browser reported dark mode — even when the
  * user's in-app theme setting was "light".  The root cause was WarehouseMapView
  * calling `useColorScheme()` (raw OS preference) instead of `useIsDark()` (which
  * respects the user's explicit in-app setting).
@@ -21,7 +21,7 @@
  * 1. When `useIsDark()` returns false  → filter is "none"  (no invert in light mode).
  * 2. When `useIsDark()` returns true   → filter is "invert(1) brightness(0.88)".
  * 3. Light mode: the string "invert" never appears anywhere in the filter value.
- * 4. The injected floor-plan HTML is always present (both modes).
+ * 4. The injected floor-plan SVG body is always present (both modes).
  *
  * Mock strategy
  * ─────────────
@@ -31,11 +31,11 @@
  *   the component must not consult the OS scheme directly, only through the
  *   hook.  Overriding `useColorScheme` in these tests would therefore NOT
  *   catch a regression where someone swaps back to the raw call.
- * • Platform.OS is forced to "web" so the web floor-plan <div> branch
- *   renders instead of the native tile path.
+ * • Platform.OS is forced to "web" so the web unified SVG branch renders
+ *   instead of the native tile path.
  * • @/utils/floorPlanCache.getCachedData returns non-empty xml so `svgXml`
- *   state is truthy on mount — the floor-plan <div> only renders when
- *   webFloorPlanHtml is non-empty.
+ *   state is truthy on mount — the unified web SVG only renders when its
+ *   canonical scene is valid.
  */
 
 // React 19 requires IS_REACT_ACT_ENVIRONMENT = true for act() to flush
@@ -259,14 +259,14 @@ jest.mock("@/utils/tilePyramidCache", () => ({
 }));
 
 // ─── @/utils/floorPlanCache ──────────────────────────────────────────────────
-// xml is non-empty so the web floor-plan <div> renders on mount.
+// xml is non-empty so the web floor-plan SVG renders on mount.
 
 const MOCK_CONTENT_VB = { x: 60, y: 80, w: 7200, h: 4820 };
 const MOCK_INNER_XML = "<path d='M0 0 L10 10' />";
 const MOCK_CACHED_DATA = {
   uri:            "",
   innerXml:       MOCK_INNER_XML,
-  xml:            `<svg><g>${MOCK_INNER_XML}</g></svg>`,
+  xml:            `<svg viewBox="60 80 7200 4820"><g>${MOCK_INNER_XML}</g></svg>`,
   contentViewBox: MOCK_CONTENT_VB,
 };
 
@@ -319,20 +319,20 @@ function fireOnLayout(
 }
 
 /**
- * Locate the web floor-plan <div> — the only host node that carries
- * dangerouslySetInnerHTML (the injected floor-plan SVG document).
+ * Locate the web floor-plan <g> — the only host node that carries
+ * dangerouslySetInnerHTML (the injected floor-plan SVG body).
  */
-function findFloorPlanDiv(result: Awaited<ReturnType<typeof render>>) {
+function findFloorPlanGroup(result: Awaited<ReturnType<typeof render>>) {
   const matches = result.root!.queryAll(
     (n) =>
-      n.type === "div" &&
+      n.type === "g" &&
       n.props != null &&
       n.props.dangerouslySetInnerHTML != null,
     { includeSelf: true },
   );
   if (matches.length !== 1) {
     throw new Error(
-      `Expected exactly one floor-plan <div>, found ${matches.length}`,
+      `Expected exactly one floor-plan <g>, found ${matches.length}`,
     );
   }
   // Length checked to be exactly 1 above.
@@ -400,38 +400,38 @@ afterEach(() => {
 // =============================================================================
 
 describe("web floor-plan filter — invert only when useIsDark() returns true", () => {
-  it("dark mode (useIsDark=true): floor-plan <div> has filter 'invert(1) brightness(0.88)'", async () => {
+  it("dark mode (useIsDark=true): floor-plan <g> has filter 'invert(1) brightness(0.88)'", async () => {
     const result = await mountWeb("dark");
-    const div = findFloorPlanDiv(result);
-    expect(div.props.style.filter).toBe("invert(1) brightness(0.88)");
+    const group = findFloorPlanGroup(result);
+    expect(group.props.style.filter).toBe("invert(1) brightness(0.88)");
   });
 
-  it("light mode (useIsDark=false): floor-plan <div> has filter 'none' (no invert)", async () => {
+  it("light mode (useIsDark=false): floor-plan <g> has filter 'none' (no invert)", async () => {
     const result = await mountWeb("light");
-    const div = findFloorPlanDiv(result);
-    expect(div.props.style.filter).toBe("none");
+    const group = findFloorPlanGroup(result);
+    expect(group.props.style.filter).toBe("none");
   });
 
   it("light mode: the string 'invert' must NOT appear in the filter value", async () => {
     const result = await mountWeb("light");
-    const div = findFloorPlanDiv(result);
+    const group = findFloorPlanGroup(result);
     // Guards against both partial invert and any future filter reintroduction.
-    expect(div.props.style.filter).not.toContain("invert");
+    expect(group.props.style.filter).not.toContain("invert");
   });
 
-  it("dark mode: the full SVG document is embedded in the floor-plan <div>", async () => {
+  it("dark mode: the SVG floor-plan body is embedded in the unified scene", async () => {
     const result = await mountWeb("dark");
-    const div = findFloorPlanDiv(result);
-    const html = div.props.dangerouslySetInnerHTML.__html as string;
-    expect(html.startsWith("<svg")).toBe(true);
+    const group = findFloorPlanGroup(result);
+    const html = group.props.dangerouslySetInnerHTML.__html as string;
+    expect(html.startsWith("<g>")).toBe(true);
     expect(html).toContain(MOCK_INNER_XML);
   });
 
-  it("light mode: the full SVG document is also present (floor plan renders in both modes)", async () => {
+  it("light mode: the SVG floor-plan body is also present (floor plan renders in both modes)", async () => {
     const result = await mountWeb("light");
-    const div = findFloorPlanDiv(result);
-    const html = div.props.dangerouslySetInnerHTML.__html as string;
-    expect(html.startsWith("<svg")).toBe(true);
+    const group = findFloorPlanGroup(result);
+    const html = group.props.dangerouslySetInnerHTML.__html as string;
+    expect(html.startsWith("<g>")).toBe(true);
     expect(html).toContain(MOCK_INNER_XML);
   });
 
