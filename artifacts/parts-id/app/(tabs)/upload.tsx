@@ -65,6 +65,17 @@ import {
   runSaveAll,
 } from "@/utils/expandDescHandlers";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
+import {
+  BARCODE_ALIASES,
+  BIN_ALIASES,
+  CATALOG_ALIASES,
+  DESC_ALIASES,
+  findSpreadsheetColumn,
+  normalizeSpreadsheetRows,
+  parseBinCell,
+  parseOds,
+  VENDOR_ALIASES,
+} from "@/utils/importSpreadsheet";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
@@ -136,13 +147,6 @@ type BinDiffSummary = {
   willPreserveBarcodes: number;
   willBarcodeConflicts: number;
 };
-
-// CSV/XLSX cell may pack multiple bins separated by ; or | — split, trim, drop blanks.
-function parseBinCell(cell: string): Array<string> {
-  const trimmed = cell.trim();
-  if (!trimmed) return [];
-  return trimmed.split(/[;|]/).map(b => b.trim()).filter(b => b.length > 0);
-}
 
 type EnrichProgress = {
   progress: number;
@@ -243,17 +247,6 @@ const QueryResultSchema = z.object({
   error: z.string().optional(),
 });
 
-// ── Column header aliases ──────────────────────────────────────────────────
-const VENDOR_ALIASES = ["vendor", "mfr", "manufacturer", "brand", "make", "supplier"];
-const CATALOG_ALIASES = ["catalog", "catalog#", "cat#", "part", "part#", "partno", "item", "itemno", "sku", "model", "partnumber", "part number", "cat no", "catalog no"];
-const DESC_ALIASES = ["description", "desc", "name", "product", "productname", "title", "item description"];
-const BIN_ALIASES = ["bin", "bin location", "binlocation", "location", "loc", "shelf", "aisle", "bin#", "bin no"];
-const BARCODE_ALIASES = ["barcode", "barcodes", "barcode#", "upc", "ean", "gtin"];
-
-function findCol(headers: Array<string>, aliases: Array<string>): number {
-  return aliases.map(a => headers.indexOf(a)).find(i => i >= 0) ?? -1;
-}
-
 // ── Parse CSV text ─────────────────────────────────────────────────────────
 function parseCSV(rawText: string): Array<ParsedRow> {
   // Strip UTF-8 BOM (\uFEFF) if present so Excel-exported files parse correctly.
@@ -262,11 +255,11 @@ function parseCSV(rawText: string): Array<ParsedRow> {
   if (lines.length < 2) return [];
 
   const headers = lines[0]!.split(",").map(h => h.trim().toLowerCase().replace(/['"]/g, ""));
-  const vendorCol = findCol(headers, VENDOR_ALIASES);
-  const catalogCol = findCol(headers, CATALOG_ALIASES);
-  const descCol = findCol(headers, DESC_ALIASES);
-  const binCol = findCol(headers, BIN_ALIASES);
-  const barcodeCol = findCol(headers, BARCODE_ALIASES);
+  const vendorCol = findSpreadsheetColumn(headers, VENDOR_ALIASES);
+  const catalogCol = findSpreadsheetColumn(headers, CATALOG_ALIASES);
+  const descCol = findSpreadsheetColumn(headers, DESC_ALIASES);
+  const binCol = findSpreadsheetColumn(headers, BIN_ALIASES);
+  const barcodeCol = findSpreadsheetColumn(headers, BARCODE_ALIASES);
 
   const rows: Array<ParsedRow> = [];
   for (let i = 1; i < lines.length; i++) {
@@ -329,29 +322,7 @@ async function parseXlsx(uri: string): Promise<Array<ParsedRow>> {
   }
 
   if (!bestRows || bestRows.length < 2) return [];
-
-  const headers = bestRows[0]!.map(h => String(h ?? "").trim().toLowerCase());
-  const vendorCol = findCol(headers, VENDOR_ALIASES);
-  const catalogCol = findCol(headers, CATALOG_ALIASES);
-  const descCol = findCol(headers, DESC_ALIASES);
-  const binCol = findCol(headers, BIN_ALIASES);
-  const barcodeCol = findCol(headers, BARCODE_ALIASES);
-
-  const rows: Array<ParsedRow> = [];
-  for (let i = 1; i < bestRows.length; i++) {
-    const cells = bestRows[i]!.map(c => String(c ?? "").trim());
-    const vendor = vendorCol >= 0 ? cells[vendorCol] ?? "" : "";
-    const catalog = catalogCol >= 0 ? cells[catalogCol] ?? "" : "";
-    if (!vendor && !catalog) continue;
-    rows.push({
-      vendor: vendor || "UNKNOWN",
-      catalog: catalog || "UNKNOWN",
-      description: descCol >= 0 ? cells[descCol] ?? "" : "",
-      binLocations: binCol >= 0 ? parseBinCell(cells[binCol] ?? "") : [],
-      barcodes: barcodeCol >= 0 ? (cells[barcodeCol] ?? "").split(/[,;|]/).map(b => b.trim()).filter(b => b.length > 0) : [],
-    });
-  }
-  return rows;
+  return normalizeSpreadsheetRows(bestRows);
 }
 
 // ── Inventory row component ───────────────────────────────────────────────
@@ -706,7 +677,7 @@ export default function UploadScreen() {
   const [parsedRows, setParsedRows] = useState<Array<ParsedRow>>([]);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
+  const [fileType, setFileType] = useState<"csv" | "xlsx" | "ods" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
   const [activeSection, setActiveSection] = useState<"import" | "enrichment" | "warehouse" | "people" | null>(null);
   const [addpartScrollY, setAddpartScrollY] = useState(0);
@@ -1463,7 +1434,13 @@ export default function UploadScreen() {
       if (result.canceled || !result.assets?.[0]) return;
 
       const asset = result.assets[0];
-      setFileName(asset.name);
+      // Clear any previous import before parsing the new selection. This
+      // prevents an invalid or empty workbook from leaving stale rows eligible
+      // for preview/upload.
+      setFileName(null);
+      setFileType(null);
+      setParsedRows([]);
+      setRawCsv(null);
 
       const ext = asset.name.split(".").pop()?.toLowerCase() ?? "";
       let rows: Array<ParsedRow> = [];
@@ -1491,6 +1468,12 @@ export default function UploadScreen() {
         // at this point (file just loaded), so all bin data is included.
         rawText = serializeToCsv(rows, new Set());
         setFileType("xlsx");
+      } else if (ext === "ods") {
+        rows = await parseOds(asset.uri);
+        // ODS is parsed locally, then sent through the same canonical CSV
+        // preview/upload contract as XLSX and CSV imports.
+        rawText = serializeToCsv(rows, new Set());
+        setFileType("ods");
       } else {
         try {
           const response = await fetch(asset.uri);
@@ -1512,6 +1495,7 @@ export default function UploadScreen() {
       }
       setUploadError(null);
       setUploadSuccess(null);
+      setFileName(asset.name);
       setRawCsv(rawText);
       setParsedRows(rows);
     } catch {
@@ -2093,7 +2077,7 @@ export default function UploadScreen() {
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>📁 Import File</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Accepts: CSV, Excel (.xlsx/.xlsm){"\n"}
+                  Accepts: CSV, Excel (.xlsx/.xlsm), OpenDocument Spreadsheet (.ods){"\n"}
                   Required columns: vendor, catalog{"\n"}
                   Optional: description, bin (or binLocation), barcodes (upc/ean/gtin){"\n"}
                   Multiple bins per row: separate with ; or |{"\n"}
@@ -2102,14 +2086,14 @@ export default function UploadScreen() {
 
                 <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
                   <Text style={[styles.pickBtnText, { color: colors.primary }]}>
-                    📂 Choose CSV or Excel File
+                    📂 Choose CSV, Excel, or ODS File
                   </Text>
                 </Pressable>
 
                 {fileName ? (
                   <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
                     <Text style={[styles.fileChipText, { color: colors.foreground }]}>
-                      {fileType === "xlsx" ? "📊" : "📄"} {fileName}
+                      {fileType === "xlsx" || fileType === "ods" ? "📊" : "📄"} {fileName}
                     </Text>
                   </View>
                 ) : null}
