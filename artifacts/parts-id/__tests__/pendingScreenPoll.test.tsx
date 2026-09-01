@@ -30,6 +30,7 @@ jest.mock("@/hooks/useColors", () => ({
 // ── @/contexts/AppContext ────────────────────────────────────────────────────
 const mockRecheckApprovalStatus = jest.fn(() => Promise.resolve());
 const mockLogout = jest.fn(() => Promise.resolve());
+const mockShowToast = jest.fn();
 const mockUseApp = jest.fn();
 
 jest.mock("@/contexts/AppContext", () => ({
@@ -37,7 +38,7 @@ jest.mock("@/contexts/AppContext", () => ({
 }));
 
 import React from "react";
-import { act, render } from "@testing-library/react-native";
+import { act, fireEvent, render } from "@testing-library/react-native";
 
 import PendingScreen from "@/app/pending";
 
@@ -56,10 +57,12 @@ beforeEach(() => {
   jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
   mockRecheckApprovalStatus.mockReset().mockResolvedValue(undefined);
   mockLogout.mockReset().mockResolvedValue(undefined);
+  mockShowToast.mockClear();
   mockUseApp.mockReturnValue({
     approvalStatus: "pending",
     recheckApprovalStatus: mockRecheckApprovalStatus,
     logout: mockLogout,
+    showToast: mockShowToast,
     settings: {},
     updateSetting: jest.fn(),
   });
@@ -139,5 +142,26 @@ describe("PendingScreen — in-flight overlap guard (F-049)", () => {
     await flushMicrotasks();
 
     expect(mockRecheckApprovalStatus).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("PendingScreen — logout error recovery", () => {
+  it("re-enables sign out and shows a failure toast when logout throws", async () => {
+    mockLogout.mockRejectedValue(new Error("Session cleanup failed"));
+
+    const result = await render(<PendingScreen />);
+    await act(async () => {
+      fireEvent.press(result.getByText("Sign Out"));
+    });
+    await flushMicrotasks();
+
+    expect(mockLogout).toHaveBeenCalledTimes(1);
+    expect(mockShowToast).toHaveBeenCalledWith(
+      "Sign out failed. Please try again.",
+      "error",
+    );
+
+    const signOutButton = result.getByText("Sign Out").parent;
+    expect(signOutButton?.props.disabled).toBe(false);
   });
 });
