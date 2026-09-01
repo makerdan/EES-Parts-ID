@@ -425,6 +425,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
     const run = async () => {
       while (!controller.signal.aborted) {
+        if (!isMountedRef.current) return;
         const token = adminTokenRef.current;
         if (!token) return;
 
@@ -493,6 +494,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     if (resumeAttemptedRef.current) return;
     resumeAttemptedRef.current = true;
     AsyncStorage.getItem(ACTIVE_JOB_KEY).then(storedJobId => {
+      if (!isMountedRef.current) return;
       if (!storedJobId) return;
       setJobStatus({
         jobId: storedJobId,
@@ -1068,7 +1070,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           setRetryCountdown(delaySec);
           retryTimerRef.current = setTimeout(() => {
             retryTimerRef.current = null;
-            handleStart(attempt + 1);
+            if (isMountedRef.current) handleStart(attempt + 1);
           }, delaySec * 1000);
         } else {
           setLoading(false);

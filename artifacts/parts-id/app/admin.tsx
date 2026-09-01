@@ -10,7 +10,7 @@ import { Feather } from "@expo/vector-icons";
 import { File as FsFile, Paths as FsPaths } from "expo-file-system";
 import { useRouter } from "expo-router";
 import * as Sharing from "expo-sharing";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -183,9 +183,30 @@ export default function AdminDashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const mountedRef = useRef(true);
+  const statsGenerationRef = useRef(0);
+  const exportGenerationRef = useRef(0);
+  const statsControllerRef = useRef<AbortController | null>(null);
+  const exportControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    statsGenerationRef.current += 1;
+    exportGenerationRef.current += 1;
+    statsControllerRef.current?.abort();
+    exportControllerRef.current?.abort();
+  }, []);
+  useEffect(() => () => {
+    statsGenerationRef.current += 1;
+    statsControllerRef.current?.abort();
+  }, [adminToken]);
 
   const handleExport = useCallback(async () => {
     if (!stats) return;
+    exportControllerRef.current?.abort();
+    const controller = new AbortController();
+    exportControllerRef.current = controller;
+    const generation = ++exportGenerationRef.current;
     setExporting(true);
     try {
       const csv = serializeDashboardToCsv(stats);
@@ -205,40 +226,61 @@ export default function AdminDashboardScreen() {
       } else {
         const file = new FsFile(FsPaths.cache, filename);
         await file.write(csv);
+        if (controller.signal.aborted || !mountedRef.current) return;
         const canShare = await Sharing.isAvailableAsync();
+        if (controller.signal.aborted || !mountedRef.current) return;
         if (canShare) {
           await Sharing.shareAsync(file.uri, {
             mimeType: "text/csv",
             dialogTitle: "Export Dashboard CSV",
             UTI: "public.comma-separated-values-text",
           });
+          if (controller.signal.aborted || !mountedRef.current) return;
         }
       }
     } catch (err) {
-      Alert.alert("Export failed", err instanceof Error ? err.message : "Unknown error");
+      if (
+        mountedRef.current &&
+        generation === exportGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        Alert.alert("Export failed", err instanceof Error ? err.message : "Unknown error");
+      }
     } finally {
-      setExporting(false);
+      if (mountedRef.current && generation === exportGenerationRef.current) {
+        setExporting(false);
+      }
     }
   }, [stats]);
 
   const fetchStats = useCallback(async (isRefresh = false) => {
     if (!adminToken || !API_BASE) return;
+    statsControllerRef.current?.abort();
+    const controller = new AbortController();
+    statsControllerRef.current = controller;
+    const generation = ++statsGenerationRef.current;
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
     try {
       const res = await fetch(`${API_BASE}/admin/dashboard-stats`, {
         headers: { Authorization: `Bearer ${adminToken}` },
+        signal: controller.signal,
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as DashboardStats;
-      setStats(data);
+      if (mountedRef.current && generation === statsGenerationRef.current && !controller.signal.aborted) {
+        setStats(data);
+      }
     } catch (err) {
+      if (controller.signal.aborted || !mountedRef.current || generation !== statsGenerationRef.current) return;
       if (err instanceof TypeError) reportNetworkFailure();
       setError(err instanceof Error ? err.message : "Failed to load stats");
     } finally {
-      if (isRefresh) setRefreshing(false);
-      else setLoading(false);
+      if (mountedRef.current && generation === statsGenerationRef.current) {
+        if (isRefresh) setRefreshing(false);
+        else setLoading(false);
+      }
     }
   }, [adminToken, reportNetworkFailure]);
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -88,7 +88,17 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   const controlled = open !== undefined;
   const [visible, setVisible] = useState(false);
   const isVisible = controlled ? open : visible;
-  const handleClose = controlled ? (onClose ?? (() => {})) : () => setVisible(false);
+  const mountedRef = useRef(true);
+  const sessionGenerationRef = useRef(0);
+  const prefetchControllerRef = useRef<AbortController | null>(null);
+  const requestControllerRef = useRef<AbortController | null>(null);
+  const handleClose = useCallback(() => {
+    sessionGenerationRef.current += 1;
+    prefetchControllerRef.current?.abort();
+    requestControllerRef.current?.abort();
+    if (controlled) (onClose ?? (() => {}))();
+    else setVisible(false);
+  }, [controlled, onClose]);
 
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
@@ -111,6 +121,26 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   // Stores the full chip context needed for retry when a chip call fails
   const failedChipRef = useRef<{ label: string; question: string } | null>(null);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      sessionGenerationRef.current += 1;
+      prefetchControllerRef.current?.abort();
+      requestControllerRef.current?.abort();
+    };
+  }, []);
+
+  // A controlled close can happen without invoking our Back button. Invalidate
+  // all work as soon as the modal leaves the screen.
+  useEffect(() => {
+    if (!isVisible) {
+      sessionGenerationRef.current += 1;
+      prefetchControllerRef.current?.abort();
+      requestControllerRef.current?.abort();
+    }
+  }, [isVisible]);
+
   const isBusy = loading || chipLoading;
   const answerLoading = loading || chipLoading;
   const hasActiveAnswerArea = answer || isError || answerLoading;
@@ -123,41 +153,62 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   }, [pulse]);
 
   const prefetchQuickLookups = useCallback(async () => {
+    const generation = sessionGenerationRef.current;
+    const controller = new AbortController();
+    prefetchControllerRef.current?.abort();
+    prefetchControllerRef.current = controller;
     try {
-      await prefetchQuickLookupsImpl(answerCacheRef.current, API_BASE);
+      await prefetchQuickLookupsImpl(answerCacheRef.current, API_BASE, controller.signal);
+      if (!mountedRef.current || generation !== sessionGenerationRef.current || controller.signal.aborted) return;
     } catch {
-      setPrefetchFailed(true);
+      if (mountedRef.current && generation === sessionGenerationRef.current && !controller.signal.aborted) {
+        setPrefetchFailed(true);
+      }
     }
   }, []);
 
   const handleModalShow = useCallback(() => {
+    sessionGenerationRef.current += 1;
+    prefetchControllerRef.current?.abort();
+    requestControllerRef.current?.abort();
+    setLoading(false);
+    setChipLoading(false);
     setPrefetchFailed(false);
     prefetchQuickLookups();
   }, [prefetchQuickLookups]);
 
-  const fetchChipAnswer = async (label: string, chipQuestion: string): Promise<string> => {
-    return fetchChipAnswerImpl(label, chipQuestion, answerCacheRef.current, API_BASE);
+  const fetchChipAnswer = async (label: string, chipQuestion: string, signal: AbortSignal): Promise<string> => {
+    return fetchChipAnswerImpl(label, chipQuestion, answerCacheRef.current, API_BASE, signal);
   };
 
   const onChipTap = async (label: string, chipQuestion: string) => {
     if (isBusy) return;
     askedQuestionRef.current = label;
     failedChipRef.current = null;
+    const generation = sessionGenerationRef.current;
+    const controller = new AbortController();
+    requestControllerRef.current?.abort();
+    requestControllerRef.current = controller;
     setChipLoading(true);
     setIsError(false);
     setAnswer("");
     setQuestion("");
 
     try {
-      const a = await fetchChipAnswer(label, chipQuestion);
+      const a = await fetchChipAnswer(label, chipQuestion, controller.signal);
+      if (!mountedRef.current || generation !== sessionGenerationRef.current || controller.signal.aborted) return;
       setHistory(h => [...h, { q: label, a }]);
       setAnswer("");
     } catch {
-      failedChipRef.current = { label, question: chipQuestion };
-      setIsError(true);
+      if (mountedRef.current && generation === sessionGenerationRef.current && !controller.signal.aborted) {
+        failedChipRef.current = { label, question: chipQuestion };
+        setIsError(true);
+      }
     } finally {
-      setChipLoading(false);
-      scrollRef.current?.scrollToEnd({ animated: true });
+      if (mountedRef.current && generation === sessionGenerationRef.current) {
+        setChipLoading(false);
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }
     }
   };
 
@@ -166,6 +217,10 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
     if (!q || isBusy) return;
     askedQuestionRef.current = q;
     failedChipRef.current = null;
+    const generation = sessionGenerationRef.current;
+    const controller = new AbortController();
+    requestControllerRef.current?.abort();
+    requestControllerRef.current = controller;
     setLoading(true);
     setIsError(false);
     setAnswer("");
@@ -176,22 +231,30 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: q, history }),
+        signal: controller.signal,
       });
 
       if (!res.ok) {
-        setIsError(true);
+        if (mountedRef.current && generation === sessionGenerationRef.current && !controller.signal.aborted) {
+          setIsError(true);
+        }
         return;
       }
 
       const data: { answer: string } = await res.json();
+      if (!mountedRef.current || generation !== sessionGenerationRef.current || controller.signal.aborted) return;
       setHistory(h => [...h, { q: askedQuestionRef.current, a: data.answer }]);
       setAnswer("");
       setQuestion("");
       scrollRef.current?.scrollToEnd({ animated: true });
     } catch {
-      setIsError(true);
+      if (mountedRef.current && generation === sessionGenerationRef.current && !controller.signal.aborted) {
+        setIsError(true);
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current && generation === sessionGenerationRef.current) {
+        setLoading(false);
+      }
     }
   };
 

@@ -270,3 +270,27 @@ describe("ReferenceModal — chip retry", () => {
     expect(findTextNodes(result.root!, "A GFCI protects against ground faults.")).toHaveLength(1);
   });
 });
+
+describe("ReferenceModal — request lifecycle", () => {
+  it("aborts a typed request when the modal unmounts", async () => {
+    const deferred: { resolve?: (value: Response) => void } = {};
+    fetchWithAuth.mockReturnValueOnce(
+      new Promise<Response>((resolve) => { deferred.resolve = resolve; }),
+    );
+
+    const result = await render(<ReferenceModal open={true} onClose={jest.fn()} />);
+    const input = findQuestionInput(result.root!)[0]!;
+    await act(async () => { input.props.onChangeText("How do I identify this breaker?"); });
+    await act(async () => { findSendButtons(result.root!)[0]!.props.onPress(); });
+
+    const signal = fetchWithAuth.mock.calls[0][1].signal as AbortSignal;
+    expect(signal.aborted).toBe(false);
+
+    await result.unmount();
+    expect(signal.aborted).toBe(true);
+
+    // Keep the deferred promise settled so this test does not leave a dangling
+    // promise in the Jest worker.
+    deferred.resolve?.({ ok: false } as Response);
+  });
+});

@@ -234,6 +234,55 @@ describe("useApiStatus", () => {
   // ── Focus / blur polling lifecycle ─────────────────────────────────────────
 
   describe("focus/blur polling lifecycle", () => {
+    it("aborts an in-flight health request when the focused screen blurs", async () => {
+      jest.useFakeTimers();
+      let observedSignal: AbortSignal | undefined;
+      mockFetch.mockImplementation((_url, init) => {
+        observedSignal = (init as RequestInit | undefined)?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      });
+
+      const { unmount } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN, intervalMs: 1000 }),
+      );
+
+      act(() => { triggerFocus(); });
+      expect(observedSignal).toBeInstanceOf(AbortSignal);
+      expect(observedSignal?.aborted).toBe(false);
+
+      const blur = capturedFocusCallback?.();
+      act(() => { if (typeof blur === "function") blur(); });
+
+      expect(observedSignal?.aborted).toBe(true);
+      await unmount();
+    });
+
+    it("does not overlap health polls while the previous request is pending", async () => {
+      jest.useFakeTimers();
+      let resolveFetch: ((value: Response) => void) | null = null;
+      mockFetch.mockImplementation(() =>
+        new Promise<Response>(resolve => { resolveFetch = resolve; }),
+      );
+
+      const { unmount } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN, intervalMs: 1000 }),
+      );
+
+      act(() => { triggerFocus(); });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      await act(async () => { jest.advanceTimersByTime(5000); });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        resolveFetch?.({
+          ok: true,
+          json: async () => ({ status: "ok" }),
+        } as Response);
+      });
+      await flushMicrotasks();
+      await unmount();
+    });
+
     it("starts polling immediately on focus and fires again on each interval tick", async () => {
       jest.useFakeTimers();
 

@@ -281,6 +281,8 @@ export default function SearchScreen() {
   // one is already in flight (e.g. user taps Refresh while a background retry
   // is running), which would race on setSyncProgress and the Fuse index.
   const isSyncingRef = useRef(false);
+  const syncControllerRef = useRef<AbortController | null>(null);
+  const pendingSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks whether the component is still mounted. The retry-timer callback
   // checks this before touching any React state to avoid the
   // "can't perform a state update on an unmounted component" warning.
@@ -386,6 +388,7 @@ export default function SearchScreen() {
   }, [registerLogoutHandler]);
 
   const buildFuseIndex = useCallback((items: Array<InventoryItem>) => {
+    if (!isMountedRef.current) return;
     fuseItemsRef.current = items;
     setCachedCount(items.length);
     fuseRef.current = new Fuse(items, {
@@ -431,6 +434,8 @@ export default function SearchScreen() {
     // Prevent concurrent syncs from racing on setSyncProgress and the Fuse index.
     if (isSyncingRef.current) return false;
     isSyncingRef.current = true;
+    const controller = new AbortController();
+    syncControllerRef.current = controller;
 
     // Convenience guard: every state setter that runs after an `await` is
     // wrapped in this helper so that a mid-flight unmount turns them into
@@ -450,16 +455,22 @@ export default function SearchScreen() {
       const allItems = await fetchInventoryPages(
         async (page, pageSize) => {
           const data: { items: Array<InventoryItem>; total: number } = await retryAsync(async () => {
-            const res = await fetchWithAuth(`${API_BASE}/inventory?page=${page}&limit=${pageSize}`);
+            if (controller.signal.aborted) {
+              throw controller.signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+            }
+            const res = await fetchWithAuth(`${API_BASE}/inventory?page=${page}&limit=${pageSize}`, {
+              signal: controller.signal,
+            });
             if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
             return res.json();
-          });
+          }, { signal: controller.signal });
           if (!Array.isArray(data?.items)) throw new Error("Sync failed: unexpected response shape");
           return data;
         },
         500,
         (loaded, total) => ifMounted(() => setSyncProgress({ loaded, total })),
       );
+      if (controller.signal.aborted || !isMountedRef.current) return false;
       buildFuseIndex(allItems);
 
       // Prune cached search results whose items were deleted server-side.
@@ -468,6 +479,7 @@ export default function SearchScreen() {
       // offline searches never surface deleted inventory.
       const liveIds = new Set(allItems.map(item => item.id));
       await updateQueryCache(cache => {
+        if (controller.signal.aborted || !isMountedRef.current) return cache;
         let dirty = false;
         const pruned: QueryCache<SearchResult> = {};
         for (const [key, entry] of Object.entries(cache)) {
@@ -481,6 +493,7 @@ export default function SearchScreen() {
         }
         return dirty ? pruned : cache;
       });
+      if (controller.signal.aborted || !isMountedRef.current) return false;
 
       syncRetryAttemptRef.current = 0; // success — reset backoff counter
       {
@@ -501,6 +514,7 @@ export default function SearchScreen() {
       }
       success = true;
     } catch {
+      if (controller.signal.aborted || !isMountedRef.current) return false;
       ifMounted(() => setSyncError(true));
       // Schedule an automatic retry with exponential backoff (30 s → doubles → 5 min cap)
       const delay = Math.min(
@@ -518,6 +532,7 @@ export default function SearchScreen() {
     } finally {
       ifMounted(() => setSyncProgress(null));
       isSyncingRef.current = false;
+      if (syncControllerRef.current === controller) syncControllerRef.current = null;
     }
     return success;
   }, [buildFuseIndex]);
@@ -539,6 +554,14 @@ export default function SearchScreen() {
         clearTimeout(searchTimeoutRef.current);
         searchTimeoutRef.current = null;
       }
+      if (pendingSearchTimerRef.current !== null) {
+        clearTimeout(pendingSearchTimerRef.current);
+        pendingSearchTimerRef.current = null;
+      }
+      syncControllerRef.current?.abort();
+      syncControllerRef.current = null;
+      isSyncingRef.current = false;
+      aiSearchGenRef.current += 1;
     };
   }, []);
 
@@ -604,6 +627,7 @@ export default function SearchScreen() {
   useEffect(() => {
     AsyncStorage.getItem(FUSE_CACHE_KEY)
       .then(raw => {
+        if (!isMountedRef.current) return;
         if (!raw) {
           // Cache empty — fetch all inventory in background
           syncAllInventory();
@@ -626,6 +650,7 @@ export default function SearchScreen() {
         // background full sync. The sync will replace the cache with the
         // authoritative server list and record a fresh timestamp.
         getFuseCacheSyncedAt().then(syncedAt => {
+          if (!isMountedRef.current) return;
           setFuseSyncedAt(syncedAt);
           const age = syncedAt == null ? Infinity : Date.now() - syncedAt;
           if (age > FUSE_SYNC_MAX_AGE_MS) {
@@ -633,10 +658,11 @@ export default function SearchScreen() {
           }
         }).catch(() => {
           // If we can't read the timestamp, play it safe and re-sync
-          syncAllInventory();
+          if (isMountedRef.current) syncAllInventory();
         });
       })
       .catch((err) => {
+        if (!isMountedRef.current) return;
         console.error('[index] load fuse cache', err);
         syncAllInventory();
       });
@@ -645,8 +671,12 @@ export default function SearchScreen() {
 
   // Load search and viewed-part history from AsyncStorage on mount.
   useEffect(() => {
-    loadQueryHistory().then(setQueryHistory).catch(() => {});
-    loadViewedHistory().then(setViewedHistory).catch(() => {});
+    loadQueryHistory().then(history => {
+      if (isMountedRef.current) setQueryHistory(history);
+    }).catch(() => {});
+    loadViewedHistory().then(history => {
+      if (isMountedRef.current) setViewedHistory(history);
+    }).catch(() => {});
   }, []);
 
   const runFuseSearch = useCallback((kw: string): Array<SearchResult> => {
@@ -671,15 +701,21 @@ export default function SearchScreen() {
     // Serialise through the shared write lock so a concurrent onSuccess write
     // cannot clobber the pruned snapshot we're about to read.
     const next = _queryCacheWriteLock.then(async () => {
+      if (!isMountedRef.current) return;
       const cache = await loadQueryCache();
+      if (!isMountedRef.current) return;
       const pruned = pruneExpired(cache);
-      if (Object.keys(pruned).length !== Object.keys(cache).length) await saveQueryCache(pruned);
+      if (Object.keys(pruned).length !== Object.keys(cache).length) {
+        if (!isMountedRef.current) return;
+        await saveQueryCache(pruned);
+      }
       const result = resolveOfflineFallback({
         queryKey,
         cache: pruned,
         fuseSearch: runFuseSearch,
         keywords: kw,
       });
+      if (!isMountedRef.current) return;
       offlineCacheRef.current = {
         type: result.cacheType,
         timestamp: result.cacheType === 'exact' ? (pruned[queryKey]?.timestamp ?? null) : null,
@@ -698,7 +734,9 @@ export default function SearchScreen() {
       }
     });
     _queryCacheWriteLock = next.catch(() => {});
-    next.catch(err => reportStorageError("Could not run offline fallback", err));
+     next.catch(err => {
+       if (isMountedRef.current) reportStorageError("Could not run offline fallback", err);
+     });
   }, [runFuseSearch]);
 
   // Fire a non-blocking translate-query request and update AI state when it
@@ -718,6 +756,7 @@ export default function SearchScreen() {
   const searchMutation = useSearchInventory({
     mutation: {
       onSuccess: (data) => {
+        if (!isMountedRef.current) return;
         if (searchAbortedRef.current) return; // timed out — discard late response
         if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
         setIsOffline(false);
@@ -772,12 +811,16 @@ export default function SearchScreen() {
         // runOfflineFallback from overwriting a stale snapshot.
         const queryKey = buildQueryKey(filtersRef.current);
         updateQueryCache(cache => {
+           if (!isMountedRef.current) return cache;
           const pruned = pruneExpired(cache);
           pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
           return pruned;
-        }).catch(err => reportStorageError("Could not save query cache after search", err));
+       }).catch(err => {
+         if (isMountedRef.current) reportStorageError("Could not save query cache after search", err);
+       });
       },
       onError: () => {
+        if (!isMountedRef.current) return;
         if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
         if (!searchAbortedRef.current) runOfflineFallback(); // timeout already ran fallback — skip
       },
@@ -805,10 +848,12 @@ export default function SearchScreen() {
       catalog: pendingInventorySearch.catalog ?? "",
     };
     setFilters(merged);
-    setTimeout(() => {
+     pendingSearchTimerRef.current = setTimeout(() => {
+       pendingSearchTimerRef.current = null;
+       if (!isMountedRef.current) return;
       const body = buildSearchBody(merged, null);
       searchMutation.mutate({ data: body });
-    }, 0);
+     }, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingInventorySearch]));
 
@@ -831,10 +876,12 @@ export default function SearchScreen() {
       maxDiameter: pendingMeasureSearch.maxDiameter ?? "",
     };
     setFilters(merged);
-    setTimeout(() => {
+     pendingSearchTimerRef.current = setTimeout(() => {
+       pendingSearchTimerRef.current = null;
+       if (!isMountedRef.current) return;
       const body = buildSearchBody(merged, activeCategorySlugRef.current);
       searchMutation.mutate({ data: body });
-    }, 0);
+     }, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingMeasureSearch]));
 
@@ -877,6 +924,7 @@ export default function SearchScreen() {
       // If NetInfo itself fails, assume connected and let the normal
       // timeout + error-handler path deal with it.
     }
+    if (!isMountedRef.current) return;
 
     setSearchTimedOut(false); // F-039: clear stale timeout banner on new search
     errorToastFiredRef.current.searchTimeout = false; // allow toast to fire again
@@ -906,12 +954,15 @@ export default function SearchScreen() {
     const _kw = flt.keywords.trim();
     if (_kw) {
       appendQueryHistory(_kw).then(() => {
-        loadQueryHistory().then(setQueryHistory).catch(() => {});
+        loadQueryHistory().then(history => {
+          if (isMountedRef.current) setQueryHistory(history);
+        }).catch(() => {});
       }).catch(() => {});
     }
     // Fall back to offline if API hasn't responded within the timeout
     searchTimeoutRef.current = setTimeout(() => {
       searchTimeoutRef.current = null;
+      if (!isMountedRef.current) return;
       searchAbortedRef.current = true; // onSuccess will discard any late response
       searchMutation.reset();          // clear the loading spinner
       // F-039: show a visible banner so stale data is never silently presented
@@ -995,6 +1046,7 @@ export default function SearchScreen() {
       // If NetInfo itself fails, assume connected and let the normal
       // timeout + error-handler path deal with it.
     }
+    if (!isMountedRef.current) return;
 
     setSearchTimedOut(false); // F-039
     setShowSimilarSizeBanner(false);
@@ -1006,6 +1058,10 @@ export default function SearchScreen() {
     aiSearchGenRef.current += 1;
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (pendingSearchTimerRef.current) {
+      clearTimeout(pendingSearchTimerRef.current);
+      pendingSearchTimerRef.current = null;
+    }
 
     if (!isCurrentlyConnected) {
       // runOfflineFallback reads filtersRef.current, which the setFilters(expanded)
@@ -1020,6 +1076,7 @@ export default function SearchScreen() {
     searchMutation.mutate({ data: body });
     searchTimeoutRef.current = setTimeout(() => {
       searchTimeoutRef.current = null;
+      if (!isMountedRef.current) return;
       searchAbortedRef.current = true;
       searchMutation.reset();
       // F-039: show banner so stale data is never silently presented
@@ -1050,6 +1107,7 @@ export default function SearchScreen() {
       // If NetInfo itself fails, assume connected and let the normal
       // timeout + error-handler path deal with it.
     }
+    if (!isMountedRef.current) return;
 
     setSearchTimedOut(false); // F-039
     setPinnedParts([]);
@@ -1061,6 +1119,10 @@ export default function SearchScreen() {
     aiSearchGenRef.current += 1;
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (pendingSearchTimerRef.current) {
+      clearTimeout(pendingSearchTimerRef.current);
+      pendingSearchTimerRef.current = null;
+    }
 
     if (!isCurrentlyConnected) {
       runOfflineFallback();
@@ -1071,6 +1133,7 @@ export default function SearchScreen() {
     searchMutation.mutate({ data: body });
     searchTimeoutRef.current = setTimeout(() => {
       searchTimeoutRef.current = null;
+      if (!isMountedRef.current) return;
       searchAbortedRef.current = true;
       searchMutation.reset();
       // F-039: show banner so stale data is never silently presented
@@ -1091,11 +1154,14 @@ export default function SearchScreen() {
     setMeasureItem(null);
     if (!item || !adminToken) return;
     try {
+      const controller = new AbortController();
       const res = await fetch(`${API_BASE}/inventory/${item.id}/dimensions`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
         body: JSON.stringify(dims),
+        signal: controller.signal,
       });
+      if (!isMountedRef.current) return;
       if (!res.ok) throw new Error(`PATCH dimensions failed: ${res.status}`);
       const updated = fuseItemsRef.current.map(it =>
         it.id === item.id ? { ...it, dimensions: dims } : it,
@@ -1111,6 +1177,7 @@ export default function SearchScreen() {
       }
       showToast("Dimensions saved.");
     } catch {
+      if (!isMountedRef.current) return;
       showToast("Could not save dimensions — please try again.");
     }
   }, [measureItem, adminToken, buildFuseIndex, showToast]);
