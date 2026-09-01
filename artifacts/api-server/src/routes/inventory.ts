@@ -40,6 +40,7 @@ import { uploadCatalogImage } from "../lib/objectStorage";
 import { callPoeBotWithChain, PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/poeModelLimits";
 import { inventorySearchLimiter } from "../lib/rateLimiter";
+import { buildReverseVendorMap } from "../lib/vendorMap";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { estimateImageBytes } from "../utils/aiHelpers";
 import { generateKeywords, mergeWithPinned } from "../utils/generateKeywords";
@@ -195,15 +196,7 @@ async function loadDictionaries(): Promise<DictionaryCache> {
     const synonymMapLookup = new Map(synonyms.map(s => [s.term, s.synonyms]));
     const slangMap = new Map(slang.map(s => [s.slangTerm, s.standardTerms]));
 
-    const reverseVendorMap = new Map<string, string>();
-    const extendedVendors = vendors.filter(v => !v.isPrimary);
-    const primaryVendors = vendors.filter(v => v.isPrimary);
-    for (const v of extendedVendors) {
-      for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
-    }
-    for (const v of primaryVendors) {
-      for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
-    }
+    const reverseVendorMap = buildReverseVendorMap(vendors);
 
     return {
       correctionMap,
