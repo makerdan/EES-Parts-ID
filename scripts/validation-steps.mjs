@@ -13,25 +13,25 @@ export const FAST = [
   ["lint", "node scripts/check-db-reachability.mjs && pnpm --filter @workspace/parts-id run lint && pnpm --filter @workspace/api-server run lint && pnpm --filter @workspace/mockup-sandbox run lint && pnpm run lint:libs"],
   ["lint-mocks", "pnpm --filter @workspace/scripts run lint:mocks"],
   ["tsconfig-check", "pnpm --filter @workspace/scripts run tsconfig:check"],
-  ["port-guard", "bash scripts/check-hardcoded-ports.sh"],
+   ["port-guard", "node scripts/serial-lock.mjs --resource ports --priority 90 -- bash scripts/check-hardcoded-ports.sh"],
   ["bundle-domain-check", "pnpm --filter @workspace/parts-id run check:bundle-domain"],
   ["light-mode-config", "bash scripts/check-light-mode-config.sh"],
 ];
 
 export const STANDARD_EXTRA = [
-  ["codegen-check", "pnpm --filter @workspace/api-spec run codegen:check"],
+  ["codegen-check", "node scripts/serial-lock.mjs --resource codegen --priority 80 -- pnpm --filter @workspace/api-spec run codegen:check"],
   ["spec-check", "pnpm --filter @workspace/api-spec run spec:check"],
   ["env-check", "pnpm --filter @workspace/scripts env:check"],
   ["spec-check-tests", "pnpm --filter @workspace/api-spec test"],
   ["failure-gate-contract", "node scripts/test/failure-gate-contract.test.mjs"],
-  ["test", "pnpm test"],
+  ["test", "node scripts/serial-lock.mjs --resource shared-test-results --priority 60 -- pnpm test"],
   ["serve-proxy-smoke", "pnpm --filter @workspace/parts-id run test:serve-proxy"],
 ];
 
 export const STANDARD_PLUS_EXTRA = [
   ["schema-check", "pnpm --filter @workspace/db run schema:check"],
   ["verify-fts", "pnpm --filter @workspace/db run verify-fts"],
-  ["api-server-coverage", "pnpm --filter @workspace/api-server run test:coverage"],
+  ["api-server-coverage", "node scripts/serial-lock.mjs --resource shared-test-results --priority 60 -- pnpm --filter @workspace/api-server run test:coverage"],
   ["security-audit", "pnpm audit --audit-level=low"],
   ["post-merge-health-test", "bash scripts/test-post-merge.sh"],
 ];

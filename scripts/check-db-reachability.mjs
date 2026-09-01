@@ -24,7 +24,7 @@
  *
  * Run standalone:  node scripts/check-db-reachability.mjs
  * Self-test:       node scripts/check-db-reachability.mjs --self-test
- * CI: wired into the "lint" validation workflow (see .replit).
+ * CI: wired into the "lint" validation tier step (see scripts/validation-steps.mjs).
  */
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";

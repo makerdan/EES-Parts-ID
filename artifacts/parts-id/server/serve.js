@@ -136,8 +136,10 @@ const landingPageTemplate = fs.readFileSync(TEMPLATE_PATH, "utf-8");
 const appName = getAppName();
 
 const devPorts = require("../../../scripts/dev-ports.json");
-const API_PORT = parseInt(process.env.API_SERVER_PORT || String(devPorts.NATIVE_API_DEV_PORT), 10);
-const STATIC_PORT_DEFAULT = devPorts.STATIC_SERVER_PORT;
+const API_PORT = parseInt(
+  process.env.API_SERVER_PORT || String(devPorts.NATIVE_API_DEV_PORT),
+  10,
+);
 
 /**
  * Forward /api/* requests to the API server running on localhost:API_PORT.
@@ -192,7 +194,17 @@ const server = http.createServer((req, res) => {
   serveWebOrFallback(pathname, req, res, landingPageTemplate, appName);
 });
 
-const port = parseInt(process.env.PORT || String(STATIC_PORT_DEFAULT), 10);
+if (!process.env.PORT) {
+  console.error(
+    "[serve] PORT environment variable is required; refusing to fall back to an unregistered port.",
+  );
+  process.exit(1);
+}
+const port = parseInt(process.env.PORT, 10);
+if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+  console.error(`[serve] Invalid PORT value: "${process.env.PORT}"`);
+  process.exit(1);
+}
 
 server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {

@@ -6,14 +6,16 @@ set -uo pipefail
 # manifest; concurrent invocations of this script would corrupt them and
 # contend for CPU (making budgets lie). Re-exec ourselves under the
 # crash-safe serial lock so concurrent runs queue instead of racing.
-# The lock wrapper exports SERIAL_LOCK_HELD_PID; on the second pass (or when
-# an ancestor already holds the lock) we fall through and run for real.
+# The lock wrapper exports SERIAL_LOCK_HELD_PID and resource names. On the
+# second pass (or when an ancestor already holds the shared-test-results or
+# global resource) we fall through and run for real.
 # IMPORTANT: everything below — including the outer watchdog budget — only
 # starts AFTER the lock is acquired, so queue-wait time is never counted
 # against any budget.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -z "${SERIAL_LOCK_HELD_PID:-}" ] || ! kill -0 "${SERIAL_LOCK_HELD_PID}" 2>/dev/null; then
-  exec node "${SCRIPT_DIR}/serial-lock.mjs" -- bash "${BASH_SOURCE[0]}" "$@"
+HELD_RESOURCES=",${SERIAL_LOCK_HELD_RESOURCES:-},"
+if [[ "$HELD_RESOURCES" != *,global,* && "$HELD_RESOURCES" != *,shared-test-results,* ]]; then
+  exec node "${SCRIPT_DIR}/serial-lock.mjs" --resource shared-test-results --priority 60 -- bash "${BASH_SOURCE[0]}" "$@"
 fi
 echo "[test-all] serialized run — lock held (waited ${SERIAL_LOCK_WAIT_SECS:-0}s in queue; budgets start now)."
 

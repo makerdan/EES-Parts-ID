@@ -5,7 +5,8 @@
 # Both processes share the same process group so Replit kills them together on shutdown.
 set -euo pipefail
 
-API_PORT=8080
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+API_PORT="${API_SERVER_PORT:-$(node -e 'const fs=require("fs"); const path=require("path"); const p=path.join(process.argv[1],"scripts","dev-ports.json"); const r=JSON.parse(fs.readFileSync(p,"utf8")); process.stdout.write(String(r.NATIVE_API_DEV_PORT));' "$ROOT_DIR")}"
 # Allow override via env var; default 90s covers migrations (~25s) + provider init (~8s)
 # plus a comfortable margin for cold-container startup.
 API_READY_TIMEOUT_SECS=${API_READY_TIMEOUT_SECS:-90}

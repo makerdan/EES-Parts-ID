@@ -194,18 +194,23 @@ completion check merely because it is broader than the task tier.
 
 ## Checks: validation commands (formerly workflows)
 
-Only long-running services are ordinary workflows: `artifacts/api-server: API Server`, `artifacts/parts-id: expo`, `artifacts/mockup-sandbox: Component Preview Server`. Every one-off check is a **registered validation command** (run via validation runs; these do not consume workflow slots). Names with colons were renamed to dashes; all commands are unchanged.
+Only the three long-running services are ordinary workflows: `artifacts/api-server: API Server`, `artifacts/parts-id: expo`, and `artifacts/mockup-sandbox: Component Preview Server`. The `Project` workflow is the single merge-gate entrypoint and runs `test-fast`. Every one-off check is a **registered validation command** (run via validation runs; these do not consume workflow slots). Do not recreate the removed one-shot workflow declarations.
 
 ### Validation tiers (consolidated runners)
 
-Four tier commands run subsets sequentially via `scripts/run-tier.mjs`, with membership centralized in `scripts/validation-steps.mjs`, and are wrapped in `scripts/serial-lock.mjs`. Task calls require `TASK_PLAN_FILE`; explicit ad-hoc calls must opt in with `--allow-no-plan`. Tiers are cumulative.
+Four tier commands run subsets sequentially via `scripts/run-tier.mjs`, with membership centralized in `scripts/validation-steps.mjs`, and are wrapped in the named-resource `scripts/serial-lock.mjs` (`validation`, `codegen`, `shared-test-results`, and `ports`). Task calls require `TASK_PLAN_FILE`; explicit ad-hoc calls must opt in with `--allow-no-plan`. Tiers are cumulative. Lock budgets begin after acquisition, and stale/dead-holder recovery is always logged.
 
 - **`test-fast`** — static checks only: `gate-guard`, task-scoped Failure Gate and Regression Guard repair/check steps, `tsc`, lint, config, port, and bundle-domain checks. (~5 min)
 - **`test-standard`** — fast + codegen/spec/env checks, `failure-gate-contract`, and tests. (~20 min)
 - **`test-standard-plus`** — standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test`. Full quality signal without Playwright browser automation. (~30 min)
 - **`test-heavy`** — standard-plus (same steps, no Playwright currently). For schema migrations, new API routes, auth/security changes, multi-package refactors. (~30 min)
 
-Individual check commands remain registered for targeted runs. Tier membership lives in `scripts/run-tier.mjs` (`FAST` / `STANDARD_EXTRA` / `STANDARD_PLUS_EXTRA` / `HEAVY_EXTRA`) — keep it in sync with this table when checks change. Note: `tsc` subsumes `typecheck`, `typecheck-libs`, `canvas-typecheck`, `api-server-typecheck`, and `parts-id-typecheck`, so tiers run only `tsc`.
+The table below keeps historical check names discoverable for targeted runs;
+they are validation steps, not standalone workflows. Tier membership lives in
+`scripts/validation-steps.mjs` and is executed by `scripts/run-tier.mjs` — keep
+it in sync with this table when checks change. Note: `tsc` subsumes
+`typecheck`, `typecheck-libs`, `canvas-typecheck`, `api-server-typecheck`, and
+`parts-id-typecheck`, so tiers run only `tsc`.
 
 | Old workflow name | Validation command | Tier |
 |---|---|---|
@@ -226,6 +231,7 @@ Individual check commands remain registered for targeted runs. Tier membership l
 | `parts-id-typecheck` | `parts-id-typecheck` | fast (via `tsc`) |
 | `port-guard` | `port-guard` (one-shot scan, not a watcher) | fast |
 | `post-merge-health-test` | `post-merge-health-test` | standard-plus / heavy |
+
 | `schema:check` | `schema-check` | standard-plus / heavy |
 | `security-audit` | `security-audit` | standard-plus / heavy |
 | `spec:check` | `spec-check` | standard |
@@ -236,6 +242,23 @@ Individual check commands remain registered for targeted runs. Tier membership l
 | `typecheck` | `typecheck` | fast (via `tsc`) |
 | `typecheck:libs` | `typecheck-libs` | fast (via `tsc`) |
 | `verify-fts` | `verify-fts` | standard-plus / heavy |
+
+### Port Authority contract
+
+Development ports are declared once in `scripts/dev-ports.json`. Its workflow,
+fallback, legacy, and cleanup sets are checked against the three service
+workflow `waitForPort` values in `.replit` by `scripts/dev-port-contract.mjs`.
+Run `bash scripts/check-hardcoded-ports.sh` before changing a service startup
+command. `scripts/free-dev-ports.mjs` sweeps only those explicitly registered
+ports, sequentially, and refuses to report success while a protected holder is
+still bound. It never scans or kills unregistered ports.
+
+The port cleaner protects the caller's process tree, terminates only socket
+owners discovered through `/proc`, escalates from SIGTERM to SIGKILL with
+diagnostics, and confirms each port is free. Production/deployment paths do not
+invoke the development sweep. No app-owned live-update WebSocket endpoint was
+found during the runtime audit, so no speculative application heartbeat was
+added; the preview's own HMR transport remains under the dev-server supervisor.
 
 ## Admin MFA Enforcement
 
@@ -262,7 +285,9 @@ The Canvas artifact (`artifacts/mockup-sandbox`) uses shadcn/ui scaffold files i
 1. Run `pnpm --filter mockup-sandbox run typecheck` and confirm it exits 0.
 2. Fix any type errors before committing — scaffold files frequently use APIs that shift between package versions (e.g. recharts chart prop types, input-otp slot render props).
 
-The `canvas-typecheck` validation step enforces this automatically on every merge (it is wired into the Project CI gate). Running it locally before committing avoids a failed merge gate.
+The workspace `tsc` validation step covers the Canvas package automatically in
+the `test-fast` command used by the Project gate. Running the package check
+locally before committing avoids a failed merge gate.
 
 ## User preferences
 

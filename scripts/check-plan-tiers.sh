@@ -10,8 +10,8 @@
 #
 # Plan files are gitignored, so this script is designed to be run during
 # task execution — before bulkCreateProjectTasks — rather than in a typical
-# CI step.  Registering it as a validation workflow (plan-tier-check) gives
-# agents a single command to invoke automatically.
+# authoring step. It is intentionally not registered as a workflow: the four
+# validation tiers are the only one-shot checks that consume platform runs.
 #
 # Exit codes:
 #   0 — all tiered plan files passed (or no tiered plan files exist)
