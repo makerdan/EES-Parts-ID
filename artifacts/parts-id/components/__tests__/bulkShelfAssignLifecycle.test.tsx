@@ -15,17 +15,20 @@ import type { RenderResult } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 
 const mockGetItem = jest.fn<Promise<string | null>, [string]>();
+const mockSetItem = jest.fn<Promise<void>, [string, string]>();
+const mockRemoveItem = jest.fn<Promise<void>, [string]>();
 const mockShowToast = jest.fn();
 const mockResolveShelfAssign = jest.fn<Promise<{ wasNew: boolean }>, [string, unknown, unknown, unknown]>();
 const mockInvalidateListIfNew = jest.fn().mockResolvedValue(undefined);
 const mockNotificationAsync = jest.fn().mockResolvedValue(undefined);
+const mockListInventory = jest.fn().mockResolvedValue({ items: [], total: 0 });
 
 jest.mock("@react-native-async-storage/async-storage", () => ({
   __esModule: true,
   default: {
     getItem: (...args: [string]) => mockGetItem(...args),
-    setItem: jest.fn().mockResolvedValue(undefined),
-    removeItem: jest.fn().mockResolvedValue(undefined),
+    setItem: (...args: [string, string]) => mockSetItem(...args),
+    removeItem: (...args: [string]) => mockRemoveItem(...args),
   },
 }));
 
@@ -48,7 +51,7 @@ jest.mock("@tanstack/react-query", () => ({
 }));
 
 jest.mock("@workspace/api-client-react", () => ({
-  listInventory: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+  listInventory: (...args: unknown[]) => mockListInventory(...args),
   useListInventory: jest.fn(() => ({ data: null })),
   useUpdateItemBarcodes: jest.fn(() => ({ mutateAsync: jest.fn().mockResolvedValue(undefined) })),
 }));
@@ -102,11 +105,32 @@ const item = {
   binLocations: ["01-02-100"],
   barcodes: [],
 };
+const targetItem = {
+  id: 8,
+  catalog: "PART-008",
+  vendor: "ACME",
+  binLocations: ["01-02-200"],
+  barcodes: [],
+};
 const resumeSession = JSON.stringify({
   shelfPrefix: "01-02",
   shelfItems: [item],
   itemRowStates: {},
   targetItemId: null,
+});
+const assignedResumeSession = JSON.stringify({
+  shelfPrefix: "01-02",
+  shelfItems: [item, targetItem],
+  itemRowStates: {
+    "7": {
+      assignedBarcode: "BARCODE-007",
+      syncStatus: "synced",
+      conflictBarcode: null,
+      conflictOwner: null,
+      flash: false,
+    },
+  },
+  targetItemId: 8,
 });
 
 function allText(root: Root): string {
@@ -140,6 +164,9 @@ describe("BulkShelfAssign — assignment completion after close", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSetItem.mockResolvedValue(undefined);
+    mockRemoveItem.mockResolvedValue(undefined);
+    mockListInventory.mockResolvedValue({ items: [], total: 0 });
     mockGetItem.mockImplementation((key: string) =>
       Promise.resolve(key === BULK_KEY ? resumeSession : key === BARCODE_KEY ? null : null),
     );
@@ -216,5 +243,76 @@ describe("BulkShelfAssign — assignment completion after close", () => {
     expect(closedText).not.toContain("Done —");
     expect(mockShowToast).not.toHaveBeenCalled();
     expect(mockNotificationAsync).not.toHaveBeenCalled();
+  });
+
+  it("restores the shelf, assigned rows, and selected target before refreshing the catalog", async () => {
+    mockGetItem.mockImplementation((key: string) =>
+      Promise.resolve(key === BULK_KEY ? assignedResumeSession : null),
+    );
+
+    await act(async () => {
+      tree = await render(<BulkShelfAssign visible={true} onClose={jest.fn()} />);
+    });
+    await act(async () => {});
+
+    const root = tree!.root!;
+    const resume = root.queryAll((node: Inst) =>
+      node.type === "rn-pressable" &&
+      node.queryAll((child: Inst) => child.type === "Text", { includeSelf: true })
+        .some(child => child.children.includes("Resume")),
+      { includeSelf: true },
+    )[0];
+    if (!resume) throw new Error("Expected Resume button");
+
+    await act(async () => { resume.props.onPress(); });
+
+    const resumedText = allText(tree!.root!);
+    expect(resumedText).toContain("Bulk Assign — 01-02");
+    expect(resumedText).toContain("BARCODE-007");
+    expect(resumedText).toContain("PART-008");
+    expect(mockListInventory).toHaveBeenCalledWith(
+      { page: 1, limit: 500 },
+      expect.anything(),
+    );
+
+    await act(async () => {});
+    expect(mockSetItem).toHaveBeenCalledWith(
+      BULK_KEY,
+      expect.stringContaining('"BARCODE-007"'),
+    );
+  });
+
+  it("removes malformed JSON instead of leaving an unrecoverable resume banner", async () => {
+    mockGetItem.mockImplementation((key: string) =>
+      Promise.resolve(key === BULK_KEY ? "{not-json" : null),
+    );
+
+    await act(async () => {
+      tree = await render(<BulkShelfAssign visible={true} onClose={jest.fn()} />);
+    });
+    await act(async () => {});
+
+    expect(allText(tree!.root!)).not.toContain("Resume session");
+    expect(mockRemoveItem).toHaveBeenCalledWith(BULK_KEY);
+  });
+
+  it("removes incomplete sessions with an orphaned selected target", async () => {
+    const incomplete = JSON.stringify({
+      shelfPrefix: "01-02",
+      shelfItems: [item],
+      itemRowStates: {},
+      targetItemId: 999,
+    });
+    mockGetItem.mockImplementation((key: string) =>
+      Promise.resolve(key === BULK_KEY ? incomplete : null),
+    );
+
+    await act(async () => {
+      tree = await render(<BulkShelfAssign visible={true} onClose={jest.fn()} />);
+    });
+    await act(async () => {});
+
+    expect(allText(tree!.root!)).not.toContain("Resume session");
+    expect(mockRemoveItem).toHaveBeenCalledWith(BULK_KEY);
   });
 });

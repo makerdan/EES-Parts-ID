@@ -159,7 +159,12 @@ const ROW_SYNC_STATUSES: ReadonlySet<string> = new Set(["pending", "synced", "er
 function isValidInventoryItem(entry: unknown): boolean {
   if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
   const e = entry as Record<string, unknown>;
-  return typeof e.id === "number" && typeof e.catalog === "string" && typeof e.vendor === "string";
+  return (
+    typeof e.id === "number" &&
+    Number.isFinite(e.id) &&
+    typeof e.catalog === "string" &&
+    typeof e.vendor === "string"
+  );
 }
 
 function isValidItemRowState(entry: unknown): boolean {
@@ -184,30 +189,44 @@ function isValidBulkSession(value: unknown): value is BulkSession {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   if (
-    typeof v.shelfPrefix !== "string" ||
+    typeof v.shelfPrefix !== "string" || v.shelfPrefix.trim().length === 0 ||
     !Array.isArray(v.shelfItems) ||
     typeof v.itemRowStates !== "object" || v.itemRowStates === null || Array.isArray(v.itemRowStates) ||
-    (v.targetItemId !== null && typeof v.targetItemId !== "number")
+    (v.targetItemId !== null && (typeof v.targetItemId !== "number" || !Number.isFinite(v.targetItemId)))
   ) return false;
   if (!(v.shelfItems as Array<unknown>).every(isValidInventoryItem)) return false;
-  if (!Object.values(v.itemRowStates as Record<string, unknown>).every(isValidItemRowState)) return false;
+  const shelfItemIds = new Set((v.shelfItems as Array<InventoryItem>).map(item => item.id));
+  const itemRowStates = v.itemRowStates as Record<string, unknown>;
+  if (!Object.entries(itemRowStates).every(([id, state]) =>
+    shelfItemIds.has(Number(id)) && isValidItemRowState(state)
+  )) return false;
+  if (v.targetItemId !== null && !shelfItemIds.has(v.targetItemId as number)) return false;
   return true;
 }
 
 async function loadBulkSession(): Promise<BulkSession | null> {
+  let raw: string | null;
   try {
-    const raw = await AsyncStorage.getItem(BULK_SESSION_KEY);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (!isValidBulkSession(parsed)) {
-      // Stale/corrupt persisted shape — discard it so it is not offered again.
-      await AsyncStorage.removeItem(BULK_SESSION_KEY).catch(() => {});
-      return null;
-    }
-    return parsed;
+    raw = await AsyncStorage.getItem(BULK_SESSION_KEY);
   } catch {
     return null;
   }
+  if (!raw) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Invalid JSON cannot be resumed and must not be offered again.
+    await clearBulkSession();
+    return null;
+  }
+  if (!isValidBulkSession(parsed)) {
+    // Stale/corrupt persisted shape — discard it so it is not offered again.
+    await clearBulkSession();
+    return null;
+  }
+  return parsed;
 }
 
 async function clearBulkSession(): Promise<void> {
@@ -444,6 +463,9 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
     const generation = ++sessionGenerationRef.current;
     if (!visible) {
       setCameraStarted(false);
+      setResumeSession(null);
+      setSessionChecked(false);
+      setOtherFlowActive(false);
       inventoryRequestRef.current?.controller.abort();
       for (const timer of flashTimersRef.current.values()) clearTimeout(timer);
       flashTimersRef.current.clear();
@@ -451,15 +473,16 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
       doneAnimationRef.current = null;
       return;
     }
+    setResumeSession(null);
+    setSessionChecked(false);
+    setOtherFlowActive(false);
     // Load own session and cross-check for an active BarcodeAddPart session concurrently.
     void Promise.all([
       loadBulkSession(),
       AsyncStorage.getItem(BARCODE_ADD_PART_SESSION_KEY).catch(() => null),
     ]).then(([session, otherRaw]) => {
       if (!isSessionCurrent(generation)) return;
-      if (session?.shelfPrefix) {
-        setResumeSession(session);
-      }
+      setResumeSession(session);
       // Show cross-flow warning when the other flow has a valid, non-empty session.
       try {
         const other = otherRaw ? (JSON.parse(otherRaw) as unknown) : null;
