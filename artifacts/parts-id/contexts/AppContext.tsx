@@ -7,6 +7,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -821,6 +822,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const contextValue = useMemo<AppContextValue>(() => ({
+    isAuthenticated,
+    approvalStatus,
+    recheckApprovalStatus,
+    isAdmin,
+    adminToken,
+    logout,
+    logoutAdmin,
+    clearCache,
+    isLoading,
+    settings,
+    updateSetting,
+    textFontScale,
+    showToast,
+    registerLogoutHandler,
+    pendingMapFocus,
+    setPendingMapFocus,
+    pinnedParts,
+    setPinnedParts,
+    pendingMeasureSearch,
+    setPendingMeasureSearch,
+    pendingInventorySearch,
+    setPendingInventorySearch,
+    pendingLidarDims,
+    setPendingLidarDims,
+    resumeProgress,
+    setResumeProgress,
+  }), [
+    isAuthenticated,
+    approvalStatus,
+    recheckApprovalStatus,
+    isAdmin,
+    adminToken,
+    logout,
+    logoutAdmin,
+    clearCache,
+    isLoading,
+    settings,
+    updateSetting,
+    textFontScale,
+    showToast,
+    registerLogoutHandler,
+    pendingMapFocus,
+    pinnedParts,
+    pendingMeasureSearch,
+    pendingInventorySearch,
+    pendingLidarDims,
+    resumeProgress,
+  ]);
+
   if (apiInitError) {
     return (
       <View style={apiErrStyles.container}>
@@ -831,34 +882,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AppContext.Provider value={{
-      isAuthenticated,
-      approvalStatus,
-      recheckApprovalStatus,
-      isAdmin,
-      adminToken,
-      logout,
-      logoutAdmin,
-      clearCache,
-      isLoading,
-      settings,
-      updateSetting,
-      textFontScale,
-      showToast,
-      registerLogoutHandler,
-      pendingMapFocus,
-      setPendingMapFocus,
-      pinnedParts,
-      setPinnedParts,
-      pendingMeasureSearch,
-      setPendingMeasureSearch,
-      pendingInventorySearch,
-      setPendingInventorySearch,
-      pendingLidarDims,
-      setPendingLidarDims,
-      resumeProgress,
-      setResumeProgress,
-    }}>
+    <AppContext.Provider value={contextValue}>
       {children}
       {toastState ? <BrandedToast message={toastState.message} type={toastState.type} /> : null}
     </AppContext.Provider>

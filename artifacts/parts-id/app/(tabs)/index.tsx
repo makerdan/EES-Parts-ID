@@ -493,8 +493,8 @@ export default function SearchScreen() {
         }
         return dirty ? pruned : cache;
       });
-      if (controller.signal.aborted || !isMountedRef.current) return false;
 
+      if (controller.signal.aborted || !isMountedRef.current) return false;
       syncRetryAttemptRef.current = 0; // success — reset backoff counter
       {
         const syncedAt = Date.now();
@@ -671,12 +671,8 @@ export default function SearchScreen() {
 
   // Load search and viewed-part history from AsyncStorage on mount.
   useEffect(() => {
-    loadQueryHistory().then(history => {
-      if (isMountedRef.current) setQueryHistory(history);
-    }).catch(() => {});
-    loadViewedHistory().then(history => {
-      if (isMountedRef.current) setViewedHistory(history);
-    }).catch(() => {});
+    loadQueryHistory().then(setQueryHistory).catch(() => {});
+    loadViewedHistory().then(setViewedHistory).catch(() => {});
   }, []);
 
   const runFuseSearch = useCallback((kw: string): Array<SearchResult> => {
@@ -734,9 +730,9 @@ export default function SearchScreen() {
       }
     });
     _queryCacheWriteLock = next.catch(() => {});
-     next.catch(err => {
-       if (isMountedRef.current) reportStorageError("Could not run offline fallback", err);
-     });
+    next.catch(err => {
+      if (isMountedRef.current) reportStorageError("Could not run offline fallback", err);
+    });
   }, [runFuseSearch]);
 
   // Fire a non-blocking translate-query request and update AI state when it
@@ -811,13 +807,13 @@ export default function SearchScreen() {
         // runOfflineFallback from overwriting a stale snapshot.
         const queryKey = buildQueryKey(filtersRef.current);
         updateQueryCache(cache => {
-           if (!isMountedRef.current) return cache;
+          if (!isMountedRef.current) return cache;
           const pruned = pruneExpired(cache);
           pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
           return pruned;
-       }).catch(err => {
-         if (isMountedRef.current) reportStorageError("Could not save query cache after search", err);
-       });
+        }).catch(err => {
+          if (isMountedRef.current) reportStorageError("Could not save query cache after search", err);
+        });
       },
       onError: () => {
         if (!isMountedRef.current) return;
@@ -826,6 +822,8 @@ export default function SearchScreen() {
       },
     },
   });
+  const mutateSearch = searchMutation.mutate;
+  const resetSearch = searchMutation.reset;
   // Keep the ref pointing at the latest mutation so the logout handler can
   // reset it without capturing a stale closure.
   searchMutationRef.current = searchMutation;
@@ -848,12 +846,12 @@ export default function SearchScreen() {
       catalog: pendingInventorySearch.catalog ?? "",
     };
     setFilters(merged);
-     pendingSearchTimerRef.current = setTimeout(() => {
-       pendingSearchTimerRef.current = null;
-       if (!isMountedRef.current) return;
+    pendingSearchTimerRef.current = setTimeout(() => {
+      pendingSearchTimerRef.current = null;
+      if (!isMountedRef.current) return;
       const body = buildSearchBody(merged, null);
-      searchMutation.mutate({ data: body });
-     }, 0);
+      mutateSearch({ data: body });
+    }, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingInventorySearch]));
 
@@ -876,24 +874,24 @@ export default function SearchScreen() {
       maxDiameter: pendingMeasureSearch.maxDiameter ?? "",
     };
     setFilters(merged);
-     pendingSearchTimerRef.current = setTimeout(() => {
-       pendingSearchTimerRef.current = null;
-       if (!isMountedRef.current) return;
+    pendingSearchTimerRef.current = setTimeout(() => {
+      pendingSearchTimerRef.current = null;
+      if (!isMountedRef.current) return;
       const body = buildSearchBody(merged, activeCategorySlugRef.current);
-      searchMutation.mutate({ data: body });
-     }, 0);
+      mutateSearch({ data: body });
+    }, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingMeasureSearch]));
 
-  const handleChange = (key: keyof FilterValues, value: string | number | boolean) => {
+  const handleChange = useCallback((key: keyof FilterValues, value: string | number | boolean) => {
     setFilters(f => ({ ...f, [key]: value }));
     // Any manual filter edit dismisses the "similar size" suggestion banner
     setShowSimilarSizeBanner(false);
-  };
+  }, []);
 
   const SEARCH_TIMEOUT_MS = 8000;
 
-  const handleSearch = async () => {
+  const handleSearch = useCallback(async () => {
     // Guard: do not fire a search when there is nothing to search for.
     // This mirrors the canSearch computation below and also protects the
     // onSubmitEditing path (keyboard Return), which bypasses the button's
@@ -946,10 +944,10 @@ export default function SearchScreen() {
     // Fire NL translation non-blocking in parallel with the primary search.
     // Only when a keyword/catalog query is present (not dimension-only searches).
     const _aiGen = ++aiSearchGenRef.current;
-    const _aiQuery = filters.keywords.trim() || filters.catalog.trim();
+    const _aiQuery = flt.keywords.trim() || flt.catalog.trim();
     if (_aiQuery) translateQuery(_aiQuery, false, _aiGen);
     const body = buildSearchBody(filtersRef.current, activeCategorySlugRef.current);
-    searchMutation.mutate({ data: body });
+    mutateSearch({ data: body });
     // Record the keyword query in history (non-blocking)
     const _kw = flt.keywords.trim();
     if (_kw) {
@@ -964,7 +962,7 @@ export default function SearchScreen() {
       searchTimeoutRef.current = null;
       if (!isMountedRef.current) return;
       searchAbortedRef.current = true; // onSuccess will discard any late response
-      searchMutation.reset();          // clear the loading spinner
+      resetSearch();                   // clear the loading spinner
       // F-039: show a visible banner so stale data is never silently presented
       setSearchTimedOut(true);
       // F-068: fire a toast on the first timeout per search
@@ -974,9 +972,9 @@ export default function SearchScreen() {
       }
       runOfflineFallback();
     }, SEARCH_TIMEOUT_MS);
-  };
+  }, [mutateSearch, resetSearch, runOfflineFallback, setPinnedParts, showToast, translateQuery]);
 
-  const handleClear = () => {
+  const handleClear = useCallback(() => {
     if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
     searchAbortedRef.current = false;
     setSearchTimedOut(false); // F-039
@@ -984,8 +982,8 @@ export default function SearchScreen() {
     setActiveCategorySlug(null);
     setActiveCategoryLabel(null);
     activeCategorySlugRef.current = null;
-    setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settings.defaultConfidenceThreshold });
-    searchMutation.reset();
+    setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settingsRef.current.defaultConfidenceThreshold });
+    resetSearch();
     setOfflineResults(null);
     setIsOffline(false);
     setOfflineWebError(null);
@@ -997,7 +995,7 @@ export default function SearchScreen() {
     setAITranslationDismissed(false);
     setAIZeroResults(null);
     aiSearchGenRef.current += 1;
-  };
+  }, [resetSearch, setPinnedParts]);
 
   // Keep handleClearRef pointing at the latest closure so the tab-press
   // subscription effect (mounted once) never calls a stale version.
@@ -1014,7 +1012,7 @@ export default function SearchScreen() {
 
 
   // Re-run the last search with each dimension bound widened by the given tolerance fraction
-  const handleSimilarSizeSearch = async (tolerance: number = similarSizeTolerance) => {
+  const handleSimilarSizeSearch = useCallback(async (tolerance: number = similarSizeTolerance) => {
     const f = filtersRef.current;
     const expand = (val: string, factor: number): string => {
       const n = parseFloat(val);
@@ -1073,12 +1071,12 @@ export default function SearchScreen() {
     }
 
     const body = buildSearchBody(expanded, activeCategorySlugRef.current);
-    searchMutation.mutate({ data: body });
+    mutateSearch({ data: body });
     searchTimeoutRef.current = setTimeout(() => {
       searchTimeoutRef.current = null;
       if (!isMountedRef.current) return;
       searchAbortedRef.current = true;
-      searchMutation.reset();
+      resetSearch();
       // F-039: show banner so stale data is never silently presented
       setSearchTimedOut(true);
       // F-068: toast on first timeout per search
@@ -1088,7 +1086,7 @@ export default function SearchScreen() {
       }
       runOfflineFallback();
     }, SEARCH_TIMEOUT_MS);
-  };
+  }, [mutateSearch, resetSearch, runOfflineFallback, setPinnedParts, showToast, similarSizeTolerance]);
 
   const handleCategorySelect = useCallback(async (slug: string, label: string) => {
     setMode("search");
@@ -1130,12 +1128,12 @@ export default function SearchScreen() {
     }
 
     const body = buildSearchBody(filtersRef.current, slug);
-    searchMutation.mutate({ data: body });
+    mutateSearch({ data: body });
     searchTimeoutRef.current = setTimeout(() => {
       searchTimeoutRef.current = null;
       if (!isMountedRef.current) return;
       searchAbortedRef.current = true;
-      searchMutation.reset();
+      resetSearch();
       // F-039: show banner so stale data is never silently presented
       setSearchTimedOut(true);
       // F-068: toast on first timeout per search
@@ -1146,7 +1144,7 @@ export default function SearchScreen() {
       runOfflineFallback();
     }, SEARCH_TIMEOUT_MS);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchMutation, runOfflineFallback]);
+  }, [mutateSearch, resetSearch, runOfflineFallback, setPinnedParts, showToast]);
 
 
   const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
@@ -1247,6 +1245,308 @@ export default function SearchScreen() {
         ]
       : []),
   ], [results, sizeUnknownResults]);
+  const searchListHeader = useMemo(() => (
+    <View>
+      {/* Results header */}
+      {hasResults ? (
+        <View>
+          <View style={styles.resultsHeader}>
+            <Text style={[styles.resultsCount, { color: colors.foreground }]}>
+              {results.length + sizeUnknownResults.length} {isOffline ? "offline" : ""} match{results.length + sizeUnknownResults.length !== 1 ? "es" : ""} found
+            </Text>
+            {/* F-068: stale-age label when inventory is older than 24 hours */}
+            {fuseSyncedAt != null && Date.now() - fuseSyncedAt > FUSE_SOFT_STALE_MS ? (
+              <View style={[styles.staleAgeChip, { backgroundColor: colors.muted }]}>
+                <Feather name="clock" size={10} color={colors.mutedForeground} />
+                <Text style={[styles.staleAgeChipText, { color: colors.mutedForeground }]}>
+                  {`${Math.floor((Date.now() - fuseSyncedAt) / 3_600_000)}h old`}
+                </Text>
+              </View>
+            ) : null}
+            <Pressable
+              onPress={handleClear}
+              style={[styles.secondaryBtn, styles.newSearchBtn, { borderColor: colors.border }]}
+              accessibilityLabel="Start a new search"
+              accessibilityRole="button"
+            >
+              <Text style={[styles.newSearchText, { color: colors.primary }]}>New Search</Text>
+            </Pressable>
+          </View>
+          {/* Actionable "more matches below threshold" banner */}
+          {!isOffline && belowThreshold > 0 && (
+            <Pressable
+              onPress={() => {
+                const lower = Math.max(0, filters.confidenceThreshold - 20);
+                handleChange("confidenceThreshold", lower);
+                // Update the ref immediately so handleSearch reads the new
+                // threshold — don't rely on React state + useEffect propagation.
+                filtersRef.current = { ...filtersRef.current, confidenceThreshold: lower };
+                handleSearch();
+              }}
+              style={[styles.belowThresholdBanner, {
+                backgroundColor: colors.warning + "18",
+                borderColor: colors.warning + "55",
+              }]}
+            >
+              <Text style={[styles.belowThresholdBannerText, { color: colors.warning }]}>
+                {belowThreshold} more match{belowThreshold !== 1 ? "es" : ""} available at{" "}
+                {Math.max(0, filters.confidenceThreshold - 20)}% — tap to lower threshold
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      ) : null}
+
+      {/* Loading */}
+      {searchMutation.isPending ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>
+            Searching dictionaries…
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Error: server failed + no offline cache */}
+      {searchMutation.isError && !isOffline ? (
+        <View style={[styles.errorCard, { backgroundColor: colors.destructive + "11", borderColor: colors.destructive + "44" }]}>
+          <Text style={[styles.errorText, { color: colors.destructive }]}>
+            Search failed. Check your connection and try again.
+          </Text>
+        </View>
+      ) : null}
+      {offlineWebError !== null ? (
+        <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
+          <Text style={{ fontSize: 32, textAlign: "center", marginBottom: 8 }}>📡</Text>
+          <Text style={[styles.errorText, { color: colors.warning, textAlign: "center", fontFamily: "Inter_600SemiBold", marginBottom: 4 }]}>
+            Offline search unavailable
+          </Text>
+          <Text style={[styles.errorText, { color: colors.warning, textAlign: "center" }]}>
+            {offlineWebError}
+          </Text>
+        </View>
+      ) : isOffline && cachedCount === 0 ? (
+        <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
+          <Text style={{ fontSize: 32, textAlign: "center", marginBottom: 8 }}>📡</Text>
+          <Text style={[styles.errorText, { color: colors.warning, textAlign: "center", fontFamily: "Inter_600SemiBold", marginBottom: 4 }]}>
+            Offline search unavailable
+          </Text>
+          <Text style={[styles.errorText, { color: colors.warning, textAlign: "center" }]}>
+            Connect to the internet and search once to enable offline mode.
+          </Text>
+        </View>
+      ) : isOffline && offlineResults !== null && offlineResults.length === 0 ? (
+        <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
+          <Text style={[styles.errorText, { color: colors.warning }]}>
+            Offline — no cached items match your search. Connect to load more results.
+          </Text>
+        </View>
+      ) : isOffline && offlineResults !== null && offlineResults.length > 0 ? (
+        <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
+          <Text style={[styles.errorText, { color: colors.warning }]}>
+            📡 Offline — showing cached results.
+          </Text>
+        </View>
+      ) : null}
+      {isOffline && offlineResults !== null && offlineResults.length > 0 && (() => {
+        const srcTs = offlineCacheRef.current.type === 'exact'
+          ? offlineCacheRef.current.timestamp
+          : fuseSyncedAt;
+        if (srcTs != null && Date.now() - srcTs <= FUSE_SYNC_MAX_AGE_MS) return null;
+        return (
+          <View style={[styles.staleCacheNote, { backgroundColor: colors.warning + "15", borderColor: colors.warning + "44" }]}>
+            <Text style={[styles.staleCacheNoteText, { color: colors.warning }]}>
+              ⚠ {formatStaleCacheWarning(srcTs)}
+            </Text>
+          </View>
+        );
+      })()}
+
+      {/* Empty state */}
+      {hasResults && results.length === 0 && !isOffline ? (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyEmoji}>🔍</Text>
+          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Results Found</Text>
+          <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+            Try broader terms, check spelling, or lower the confidence threshold.
+          </Text>
+          {showSimilarSizeBanner ? (
+            <View style={[styles.similarSizeBanner, {
+              backgroundColor: colors.primary + "14",
+              borderColor: colors.primary + "55",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              gap: 10,
+            }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Text style={[styles.similarSizeBannerIcon, { color: colors.primary }]}>📐</Text>
+                <Text style={[styles.similarSizeBannerTitle, { color: colors.primary, flex: 1 }]}>
+                  No exact match — try nearby sizes?
+                </Text>
+              </View>
+              <Text style={[styles.similarSizeBannerHint, { color: colors.primary + "bb" }]}>
+                Pick a tolerance, then tap to search again
+              </Text>
+              <View style={styles.similarSizeToleranceRow}>
+                {([0.05, 0.10, 0.20] as const).map((tol) => {
+                  const label = `±${Math.round(tol * 100)}%`;
+                  const active = similarSizeTolerance === tol;
+                  return (
+                    <Pressable
+                      key={tol}
+                      onPress={() => {
+                        setSimilarSizeTolerance(tol);
+                        handleSimilarSizeSearch(tol);
+                      }}
+                      style={[
+                        styles.similarSizeToleranceChip,
+                        active
+                          ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                          : { backgroundColor: "transparent", borderColor: colors.primary + "88" },
+                      ]}
+                    >
+                      <Text style={[
+                        styles.similarSizeToleranceChipText,
+                        { color: active ? "#fff" : colors.primary },
+                      ]}>
+                        {label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
+          {belowThreshold > 0 ? (
+            <Pressable
+              onPress={() => {
+                const lower = Math.max(0, filters.confidenceThreshold - 20);
+                handleChange("confidenceThreshold", lower);
+                // Update the ref immediately so handleSearch reads the new
+                // threshold — don't rely on React state + useEffect propagation.
+                filtersRef.current = { ...filtersRef.current, confidenceThreshold: lower };
+                handleSearch();
+              }}
+              style={[styles.lowerThresholdBtn, {
+                backgroundColor: colors.warning + "18",
+                borderColor: colors.warning + "55",
+              }]}
+            >
+              <Text style={[styles.lowerThresholdBtnText, { color: colors.warning }]}>
+                {belowThreshold} match{belowThreshold !== 1 ? "es" : ""} at lower confidence —{"\n"}
+                Tap to search at {Math.max(0, filters.confidenceThreshold - 20)}%
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+
+      {/* AI Zero-Results Card — fires after primary search returns empty */}
+      {hasResults && results.length === 0 && !isOffline && aiZeroResults ? (
+        <View style={styles.aiCardWrapper}>
+          <AIZeroResultsCard
+            loading={aiZeroResults.loading}
+            partName={aiZeroResults.partName}
+            partSpecs={aiZeroResults.partSpecs}
+            catalogNumbers={aiZeroResults.catalogNumbers}
+            substitutes={aiZeroResults.substitutes}
+            error={aiZeroResults.error}
+            onShowOnMap={handleShowOnMap}
+            fontScale={textFontScale}
+          />
+        </View>
+      ) : null}
+
+      {/* Welcome state */}
+      {!hasResults && !searchMutation.isPending ? (
+        <View style={styles.welcomeContainer}>
+          <Text style={styles.welcomeEmoji}>⚡</Text>
+          <Text style={[styles.welcomeTitle, { color: colors.foreground }]}>
+            Search Electrical Parts
+          </Text>
+          <Text style={[styles.welcomeHint, { color: colors.mutedForeground }]}>
+            Search by keywords, catalog #, or vendor. Expand Advanced Filters below for 16-dimension chip filters. Handles abbreviations, synonyms, and misspellings automatically.
+          </Text>
+          {(queryHistory.length > 0 || viewedHistory.length > 0) && (
+            <RecentSearchesPanel
+              queryHistory={queryHistory}
+              viewedHistory={viewedHistory}
+              onSelectQuery={(q) => {
+                handleChange("keywords", q);
+                filtersRef.current = { ...filtersRef.current, keywords: q };
+                handleSearch();
+              }}
+              onSelectPart={(id) => {
+                const found = fuseItemsRef.current.find(it => it.id === id);
+                if (found) {
+                  setDetailsItem(found);
+                } else {
+                  handleChange("keywords", String(id));
+                  filtersRef.current = { ...filtersRef.current, keywords: String(id) };
+                  handleSearch();
+                }
+              }}
+              onClearQueries={() => {
+                clearQueryHistory().catch(() => {});
+                setQueryHistory([]);
+              }}
+              onClearViewed={() => {
+                clearViewedHistory().catch(() => {});
+                setViewedHistory([]);
+              }}
+            />
+          )}
+          <View style={[styles.tipCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.tipTitle, { color: colors.foreground }]}>💡 Quick Tips</Text>
+            {[
+              "Type '20a duplex white' for white 20A outlet",
+              "Type 'BR120' for Eaton BR 20A breaker",
+              "Type '3/4 emt' for 3/4\" EMT conduit fittings",
+              "Select chips to narrow by voltage, amperage, part type…",
+              "Use Photo ID tab to identify parts by camera",
+            ].map((tip, i) => (
+              <Text key={i} style={[styles.tipText, { color: colors.mutedForeground }]}>
+                • {tip}
+              </Text>
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </View>
+  ), [
+    colors.foreground,
+    colors.muted,
+    colors.mutedForeground,
+    colors.border,
+    colors.primary,
+    colors.warning,
+    colors.destructive,
+    colors.card,
+    hasResults,
+    results,
+    sizeUnknownResults,
+    isOffline,
+    fuseSyncedAt,
+    handleClear,
+    belowThreshold,
+    filters.confidenceThreshold,
+    handleChange,
+    handleSearch,
+    searchMutation.isPending,
+    searchMutation.isError,
+    offlineWebError,
+    cachedCount,
+    offlineResults,
+    showSimilarSizeBanner,
+    similarSizeTolerance,
+    handleSimilarSizeSearch,
+    aiZeroResults,
+    handleShowOnMap,
+    textFontScale,
+    queryHistory,
+    viewedHistory,
+  ]);
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -1811,275 +2111,7 @@ export default function SearchScreen() {
               colors={[colors.primary]}
             />
           }
-        ListHeaderComponent={() => (
-          <View>
-            {/* Results header */}
-            {hasResults ? (
-              <View>
-                <View style={styles.resultsHeader}>
-                  <Text style={[styles.resultsCount, { color: colors.foreground }]}>
-                    {results.length + sizeUnknownResults.length} {isOffline ? "offline" : ""} match{results.length + sizeUnknownResults.length !== 1 ? "es" : ""} found
-                  </Text>
-                  {/* F-068: stale-age label when inventory is older than 24 hours */}
-                  {fuseSyncedAt != null && Date.now() - fuseSyncedAt > FUSE_SOFT_STALE_MS ? (
-                    <View style={[styles.staleAgeChip, { backgroundColor: colors.muted }]}>
-                      <Feather name="clock" size={10} color={colors.mutedForeground} />
-                      <Text style={[styles.staleAgeChipText, { color: colors.mutedForeground }]}>
-                        {`${Math.floor((Date.now() - fuseSyncedAt) / 3_600_000)}h old`}
-                      </Text>
-                    </View>
-                  ) : null}
-                  <Pressable
-                    onPress={handleClear}
-                    style={[styles.secondaryBtn, styles.newSearchBtn, { borderColor: colors.border }]}
-                    accessibilityLabel="Start a new search"
-                    accessibilityRole="button"
-                  >
-                    <Text style={[styles.newSearchText, { color: colors.primary }]}>New Search</Text>
-                  </Pressable>
-                </View>
-                {/* Actionable "more matches below threshold" banner */}
-                {!isOffline && belowThreshold > 0 && (
-                  <Pressable
-                    onPress={() => {
-                      const lower = Math.max(0, filters.confidenceThreshold - 20);
-                      handleChange("confidenceThreshold", lower);
-                      // Update the ref immediately so handleSearch reads the new
-                      // threshold — don't rely on React state + useEffect propagation.
-                      filtersRef.current = { ...filtersRef.current, confidenceThreshold: lower };
-                      handleSearch();
-                    }}
-                    style={[styles.belowThresholdBanner, {
-                      backgroundColor: colors.warning + "18",
-                      borderColor: colors.warning + "55",
-                    }]}
-                  >
-                    <Text style={[styles.belowThresholdBannerText, { color: colors.warning }]}>
-                      {belowThreshold} more match{belowThreshold !== 1 ? "es" : ""} available at{" "}
-                      {Math.max(0, filters.confidenceThreshold - 20)}% — tap to lower threshold
-                    </Text>
-                  </Pressable>
-                )}
-              </View>
-            ) : null}
-
-            {/* Loading */}
-            {searchMutation.isPending ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={colors.primary} />
-                <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>
-                  Searching dictionaries…
-                </Text>
-              </View>
-            ) : null}
-
-            {/* Error: server failed + no offline cache */}
-            {searchMutation.isError && !isOffline ? (
-              <View style={[styles.errorCard, { backgroundColor: colors.destructive + "11", borderColor: colors.destructive + "44" }]}>
-                <Text style={[styles.errorText, { color: colors.destructive }]}>
-                  Search failed. Check your connection and try again.
-                </Text>
-              </View>
-            ) : null}
-            {offlineWebError !== null ? (
-              <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
-                <Text style={{ fontSize: 32, textAlign: "center", marginBottom: 8 }}>📡</Text>
-                <Text style={[styles.errorText, { color: colors.warning, textAlign: "center", fontFamily: "Inter_600SemiBold", marginBottom: 4 }]}>
-                  Offline search unavailable
-                </Text>
-                <Text style={[styles.errorText, { color: colors.warning, textAlign: "center" }]}>
-                  {offlineWebError}
-                </Text>
-              </View>
-            ) : isOffline && cachedCount === 0 ? (
-              <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
-                <Text style={{ fontSize: 32, textAlign: "center", marginBottom: 8 }}>📡</Text>
-                <Text style={[styles.errorText, { color: colors.warning, textAlign: "center", fontFamily: "Inter_600SemiBold", marginBottom: 4 }]}>
-                  Offline search unavailable
-                </Text>
-                <Text style={[styles.errorText, { color: colors.warning, textAlign: "center" }]}>
-                  Connect to the internet and search once to enable offline mode.
-                </Text>
-              </View>
-            ) : isOffline && offlineResults !== null && offlineResults.length === 0 ? (
-              <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
-                <Text style={[styles.errorText, { color: colors.warning }]}>
-                  Offline — no cached items match your search. Connect to load more results.
-                </Text>
-              </View>
-            ) : isOffline && offlineResults !== null && offlineResults.length > 0 ? (
-              <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
-                <Text style={[styles.errorText, { color: colors.warning }]}>
-                  📡 Offline — showing cached results.
-                </Text>
-              </View>
-            ) : null}
-            {isOffline && offlineResults !== null && offlineResults.length > 0 && (() => {
-              const srcTs = offlineCacheRef.current.type === 'exact'
-                ? offlineCacheRef.current.timestamp
-                : fuseSyncedAt;
-              if (srcTs != null && Date.now() - srcTs <= FUSE_SYNC_MAX_AGE_MS) return null;
-              return (
-                <View style={[styles.staleCacheNote, { backgroundColor: colors.warning + "15", borderColor: colors.warning + "44" }]}>
-                  <Text style={[styles.staleCacheNoteText, { color: colors.warning }]}>
-                    ⚠ {formatStaleCacheWarning(srcTs)}
-                  </Text>
-                </View>
-              );
-            })()}
-
-            {/* Empty state */}
-            {hasResults && results.length === 0 && !isOffline ? (
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyEmoji}>🔍</Text>
-                <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Results Found</Text>
-                <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
-                  Try broader terms, check spelling, or lower the confidence threshold.
-                </Text>
-                {showSimilarSizeBanner ? (
-                  <View style={[styles.similarSizeBanner, {
-                    backgroundColor: colors.primary + "14",
-                    borderColor: colors.primary + "55",
-                    flexDirection: "column",
-                    alignItems: "flex-start",
-                    gap: 10,
-                  }]}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                      <Text style={[styles.similarSizeBannerIcon, { color: colors.primary }]}>📐</Text>
-                      <Text style={[styles.similarSizeBannerTitle, { color: colors.primary, flex: 1 }]}>
-                        No exact match — try nearby sizes?
-                      </Text>
-                    </View>
-                    <Text style={[styles.similarSizeBannerHint, { color: colors.primary + "bb" }]}>
-                      Pick a tolerance, then tap to search again
-                    </Text>
-                    <View style={styles.similarSizeToleranceRow}>
-                      {([0.05, 0.10, 0.20] as const).map((tol) => {
-                        const label = `±${Math.round(tol * 100)}%`;
-                        const active = similarSizeTolerance === tol;
-                        return (
-                          <Pressable
-                            key={tol}
-                            onPress={() => {
-                              setSimilarSizeTolerance(tol);
-                              handleSimilarSizeSearch(tol);
-                            }}
-                            style={[
-                              styles.similarSizeToleranceChip,
-                              active
-                                ? { backgroundColor: colors.primary, borderColor: colors.primary }
-                                : { backgroundColor: "transparent", borderColor: colors.primary + "88" },
-                            ]}
-                          >
-                            <Text style={[
-                              styles.similarSizeToleranceChipText,
-                              { color: active ? "#fff" : colors.primary },
-                            ]}>
-                              {label}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  </View>
-                ) : null}
-                {belowThreshold > 0 ? (
-                  <Pressable
-                    onPress={() => {
-                      const lower = Math.max(0, filters.confidenceThreshold - 20);
-                      handleChange("confidenceThreshold", lower);
-                      // Update the ref immediately so handleSearch reads the new
-                      // threshold — don't rely on React state + useEffect propagation.
-                      filtersRef.current = { ...filtersRef.current, confidenceThreshold: lower };
-                      handleSearch();
-                    }}
-                    style={[styles.lowerThresholdBtn, {
-                      backgroundColor: colors.warning + "18",
-                      borderColor: colors.warning + "55",
-                    }]}
-                  >
-                    <Text style={[styles.lowerThresholdBtnText, { color: colors.warning }]}>
-                      {belowThreshold} match{belowThreshold !== 1 ? "es" : ""} at lower confidence —{"\n"}
-                      Tap to search at {Math.max(0, filters.confidenceThreshold - 20)}%
-                    </Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            ) : null}
-
-            {/* AI Zero-Results Card — fires after primary search returns empty */}
-            {hasResults && results.length === 0 && !isOffline && aiZeroResults ? (
-              <View style={styles.aiCardWrapper}>
-                <AIZeroResultsCard
-                  loading={aiZeroResults.loading}
-                  partName={aiZeroResults.partName}
-                  partSpecs={aiZeroResults.partSpecs}
-                  catalogNumbers={aiZeroResults.catalogNumbers}
-                  substitutes={aiZeroResults.substitutes}
-                  error={aiZeroResults.error}
-                  onShowOnMap={handleShowOnMap}
-                  fontScale={textFontScale}
-                />
-              </View>
-            ) : null}
-
-            {/* Welcome state */}
-            {!hasResults && !searchMutation.isPending ? (
-              <View style={styles.welcomeContainer}>
-                <Text style={styles.welcomeEmoji}>⚡</Text>
-                <Text style={[styles.welcomeTitle, { color: colors.foreground }]}>
-                  Search Electrical Parts
-                </Text>
-                <Text style={[styles.welcomeHint, { color: colors.mutedForeground }]}>
-                  Search by keywords, catalog #, or vendor. Expand Advanced Filters below for 16-dimension chip filters. Handles abbreviations, synonyms, and misspellings automatically.
-                </Text>
-                {(queryHistory.length > 0 || viewedHistory.length > 0) && (
-                  <RecentSearchesPanel
-                    queryHistory={queryHistory}
-                    viewedHistory={viewedHistory}
-                    onSelectQuery={(q) => {
-                      handleChange("keywords", q);
-                      filtersRef.current = { ...filtersRef.current, keywords: q };
-                      handleSearch();
-                    }}
-                    onSelectPart={(id) => {
-                      const found = fuseItemsRef.current.find(it => it.id === id);
-                      if (found) {
-                        setDetailsItem(found);
-                      } else {
-                        handleChange("keywords", String(id));
-                        filtersRef.current = { ...filtersRef.current, keywords: String(id) };
-                        handleSearch();
-                      }
-                    }}
-                    onClearQueries={() => {
-                      clearQueryHistory().catch(() => {});
-                      setQueryHistory([]);
-                    }}
-                    onClearViewed={() => {
-                      clearViewedHistory().catch(() => {});
-                      setViewedHistory([]);
-                    }}
-                  />
-                )}
-                <View style={[styles.tipCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                  <Text style={[styles.tipTitle, { color: colors.foreground }]}>💡 Quick Tips</Text>
-                  {[
-                    "Type '20a duplex white' for white 20A outlet",
-                    "Type 'BR120' for Eaton BR 20A breaker",
-                    "Type '3/4 emt' for 3/4\" EMT conduit fittings",
-                    "Select chips to narrow by voltage, amperage, part type…",
-                    "Use Photo ID tab to identify parts by camera",
-                  ].map((tip, i) => (
-                    <Text key={i} style={[styles.tipText, { color: colors.mutedForeground }]}>
-                      • {tip}
-                    </Text>
-                  ))}
-                </View>
-              </View>
-            ) : null}
-          </View>
-        )}
+        ListHeaderComponent={searchListHeader}
         renderItem={({ item: listItem }) => {
           if (listItem.kind === "sizeUnknownHeader") {
             return (
