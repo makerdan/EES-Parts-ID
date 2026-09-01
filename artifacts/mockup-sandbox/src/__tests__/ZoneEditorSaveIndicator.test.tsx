@@ -14,7 +14,7 @@
  */
 
 import React from "react";
-import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, act, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { ZoneEditor } from "../pages/ZoneEditor";
 

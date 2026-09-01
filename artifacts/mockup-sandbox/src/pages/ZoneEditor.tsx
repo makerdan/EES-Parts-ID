@@ -39,7 +39,7 @@ import {
   screenToSvg,
 } from "../utils/svgCoords";
 import { useRubberBand } from "../hooks/useRubberBand";
-import { isValidAisleId, findDuplicateConflict, normalizeAisleId, type ZoneLike } from "@workspace/zone-validation";
+import { isValidAisleId, findDuplicateConflict, normalizeAisleId } from "@workspace/zone-validation";
 import warehouseMapFallback from "../../public/warehouse-map.svg?raw";
 
 // Strip the outer <svg> wrapper so the inner content can be embedded directly
@@ -334,21 +334,6 @@ function parseSectionInput(raw: string): number | null {
   const n = parseInt(s, 10);
   return isNaN(n) ? null : n;
 }
-
-/**
- * Returns the next available unassigned sentinel (a negative integer) for the
- * given aisle.  Existing sentinels in that aisle are found and the next one
- * below the minimum is returned.  The first unassigned zone in any aisle gets
- * -1 (displayed as "A"), the second -2 ("B"), and so on.
- */
-function nextSentinelForAisle(zones: ZoneLike[], aisleId: string): number {
-  const normalized = normalizeAisleId(aisleId);
-  const sentinels = zones
-    .filter((z) => normalizeAisleId(z.aisleId) === normalized && z.sectionNum !== null && z.sectionNum < 0)
-    .map((z) => z.sectionNum as number);
-  return sentinels.length === 0 ? -1 : Math.min(...sentinels) - 1;
-}
-
 /**
  * Builds per-zone PATCH payloads for a bulk aisle-ID update, resolving
  * (aisleId, sectionNum) unique-constraint conflicts before any request fires.
@@ -1410,42 +1395,6 @@ export function ZoneEditor() {
       // changed, overwriting it with a different zone's baseline.
     }
   }, [patchZone, pushUndo, fetchZones]);
-
-  const handleSaveEdit = async () => {
-    if (!selectedId || !aliveRef.current) return;
-    // Read committed values — zoneFormRef.current captures rawSection even
-    // if React state hasn't flushed the section-number onBlur yet.
-    const committedForm = zoneFormRef.current?.getCommittedForm() ?? form;
-    if (!committedForm.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
-    if (!isValidAisleId(committedForm.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 09)"); return; }
-    if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
-    const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
-    setSaving(true);
-    saveAbortRef.current?.abort();
-    const controller = new AbortController();
-    saveAbortRef.current = controller;
-    try {
-      const afterMeta: MetaSnap = {
-        aisleId: normalizeAisleId(committedForm.aisleId),
-        sectionNum: committedForm.sectionNum,
-        isInventory: committedForm.isInventory,
-        sortOrder: committedForm.sortOrder,
-      };
-      await patchZone(selectedId, afterMeta, controller.signal);
-      if (!aliveRef.current || controller.signal.aborted) return;
-      clearDraft(selectedId);
-      pushUndo({ type: "edit", id: selectedId, before: beforeMeta, after: afterMeta });
-      lastSavedFormRef.current = { ...committedForm };
-      toast.success("Zone updated");
-      await fetchZones();
-    } catch (e) {
-      if (isAbortError(e) || !aliveRef.current) return;
-      writeDraft(selectedId, committedForm);
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      if (aliveRef.current && !controller.signal.aborted) setSaving(false);
-    }
-  };
 
   const handleDelete = async () => {
     if (!selectedId || !aliveRef.current) return;

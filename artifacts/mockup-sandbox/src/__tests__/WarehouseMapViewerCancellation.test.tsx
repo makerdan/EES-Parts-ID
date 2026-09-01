@@ -14,7 +14,8 @@ describe("WarehouseMapViewer lifecycle cancellation", () => {
     const floorPlanResponse = new Promise<Response>((resolve) => {
       resolveFloorPlan = resolve;
     });
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+    const fetchMock = vi.fn((...args: [string, RequestInit?]) => {
+      const url = args[0];
       if (url.includes("/floor-plan/svg")) return floorPlanResponse;
       return Promise.resolve({
         ok: true,

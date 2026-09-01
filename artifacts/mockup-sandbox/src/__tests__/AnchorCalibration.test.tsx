@@ -129,39 +129,6 @@ async function renderCalibration() {
   return result;
 }
 
-/**
- * Activate "Place" mode for a slot, then simulate a clean click (mousedown +
- * mouseup with ≤ CLICK_SLOP movement) on the SVG canvas.
- *
- * The caller must mock svgEl.getBoundingClientRect() before calling this.
- */
-async function placeAnchor(
-  container: HTMLElement,
-  slotIndex: 0 | 1 | 2,
-  clientX: number,
-  clientY: number,
-) {
-  const label = slotIndex === 0 ? "Place" : "Place";
-  // Find the Place button for the correct slot by aria label / index
-  const placeBtns = Array.from(
-    container.querySelectorAll("button"),
-  ).filter((b) => /^(Place|Re-place)$/i.test(b.textContent?.trim() ?? ""));
-  const btn = placeBtns[slotIndex];
-  if (!btn) throw new Error(`Could not find Place button for slot ${slotIndex}`);
-
-  await act(async () => {
-    fireEvent.click(btn);
-  });
-
-  const svg = container.querySelector("svg")!;
-
-  await act(async () => {
-    fireEvent.mouseDown(svg, { button: 0, clientX, clientY });
-    // No move — counts as a click
-    fireEvent.mouseUp(svg, { clientX, clientY });
-  });
-}
-
 // ---------------------------------------------------------------------------
 // 2. Click-vs-drag slop threshold
 // ---------------------------------------------------------------------------
