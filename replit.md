@@ -72,8 +72,8 @@ Every task plan must declare exactly one validation tier. This prevents all four
 
 | Tier | Runner command | What it covers | Typical duration |
 |---|---|---|---|
-| `fast` | `test-fast` | Static checks only: `gate-guard`, `plan-gate-fix`, `plan-gate-check`, `plan-gate-stubs`, `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check` | ~5 min |
-| `standard` | `test-standard` | fast + `codegen-check`, `spec-check`, `env-check`, `spec-check-tests`, `test` | ~20 min |
+| `fast` | `test-fast` | Static checks: scoped Failure/Regression Guards, `tsc`, lint, config, port, and bundle-domain checks | ~5 min |
+| `standard` | `test-standard` | fast + codegen/spec/env checks, Failure Gate contract coverage, and tests | ~20 min |
 | `standard-plus` | `test-standard-plus` | standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test` | ~30 min |
 | `heavy` | `test-heavy` | Same as standard-plus (currently identical steps) | ~30 min |
 
@@ -92,9 +92,11 @@ Every task plan markdown file must include a `## Validation tier` section with e
 standard
 ```
 
-Before calling `bulkCreateProjectTasks`, run the plan linter:
+Before creating a task, run both plan guards with the task file scoped:
 
 ```bash
+TASK_PLAN_FILE=.local/tasks/my-plan.md node scripts/check-failure-gate.mjs
+TASK_PLAN_FILE=.local/tasks/my-plan.md node scripts/check-regression-guard.mjs
 bash scripts/check-plan-tier.sh .local/tasks/my-plan.md
 ```
 
@@ -125,28 +127,35 @@ session-mandate checklist that must be satisfied before any plan is written.
 
 #### Scaffolding helper
 
-When creating a new plan file, always use `node scripts/new-task-plan.mjs <slug>` — it writes a Failure-Gate-compliant skeleton to `.local/tasks/<slug>.md` (all required sections pre-filled) and immediately confirms compliance via `check-failure-gate.mjs --fix-stub`.
+When creating a plan, use `node scripts/new-plan.mjs <slug> --why "<real reason>" --tier <tier>`. `scripts/new-task-plan.mjs` remains a compatible alias. The scaffold writes the required baseline, validation, legacy tier, and Regression Guard sections, then runs a task-scoped repair pass.
 
 #### HARD-GATE checklist (Planner — complete before writing any plan)
 
-1. **Memory scan** — Open `.agents/memory/MEMORY.md`; check for known-flaky
+1. **Memory and catalog scan** — Open `.agents/memory/MEMORY.md` and
+   `docs/validation/failure-baseline.json`; check for exact suite, test, and
+   signature matches. Only authoritative, unexpired `active` records may be
+   referenced.
+2. **Ownership** — Every referenced baseline must use exactly one
+   `**Ignored baseline:**` or `**Owned baseline repair:**` declaration. A
+   retry pass proves intermittency only, never pre-existing provenance.
+3. **Known-pattern scan** — Check memory for known-flaky
    entries touching suites or files this task modifies.
    Known categories: `reverseVendorMap row-order flake`, `vendor-map
    heap-order tests`, `concurrent effects consume fetchWithAuth mocks out of
    order`, `jest.clearAllMocks clears ALL mock implementations`.
 
-2. **Recent task scan** — Search recently merged task descriptions for
+4. **Recent task scan** — Search recently merged task descriptions for
    "pre-existing", "known failure", "flaky", or suite names this task touches.
 
-3. **Spot-run** — If the task touches `artifacts/api-server` code, run the
+5. **Spot-run** — If the task touches `artifacts/api-server` code, run the
    api-server test suite once before any changes and record failures as
    pre-existing. Skip otherwise (expensive; benefit only applies to server
    code).
 
-4. **Write `## Pre-existing failures to ignore`** — Place after "Steps",
+6. **Write `## Pre-existing failures to ignore`** — Place after "Steps",
    before "Relevant files". Mandatory even when empty.
 
-5. **Write `## Validation`** — Immediately after the pre-existing section.
+7. **Write `## Validation`** — Immediately after the pre-existing section.
    Must contain all three lines:
    - `**Command:**` — one of `test-fast`, `test-standard`,
      `test-standard-plus`, `test-heavy`
@@ -163,9 +172,23 @@ Before writing the first heading of any plan, emit this exact line:
 
 #### Build agent ceiling rule
 
-The `## Validation` command is the **ceiling**. Never run a heavier tier for
-any reason — including pre-existing failures, flaky retries, or
-self-classification outcomes.
+Set `TASK_PLAN_FILE` for every task validation. The `## Validation` command is
+the exact locked tier and ceiling: a missing, unreadable, malformed, or
+mismatched plan fails before any validation step. Run
+`node scripts/run-locked-tier.mjs .local/tasks/<plan>.md`, or invoke the named
+registered command with `TASK_PLAN_FILE` set. Never use `--allow-no-plan` for a
+task. That flag is reserved for explicit ad-hoc/non-task validation.
+
+Ordinary task validation scopes `--fix-stub` and strict checks to the one plan;
+it never scans or rewrites the ignored `.local/tasks/` archive. Archive review
+is an explicit maintenance operation using `--archive`. Temporary observations
+do not authorize ignores. Baseline lifecycle rules are in
+`docs/validation/failure-baseline.md`; the opt-in report is
+`pnpm run maintain:validation-baseline`.
+
+Task validation is locked to the plan. Platform completion validation is a
+separate final gate and may run broader registered commands; do not skip that
+completion check merely because it is broader than the task tier.
 
 ---
 
@@ -175,10 +198,10 @@ Only long-running services are ordinary workflows: `artifacts/api-server: API Se
 
 ### Validation tiers (consolidated runners)
 
-Four tier commands run subsets of the checks below sequentially via `scripts/run-tier.mjs`, wrapped in `node scripts/serial-lock.mjs --` so tier runs (and any check that internally takes the same lock, like `test`) **cannot race each other** — concurrent invocations queue and run one at a time. Per-step timing starts after lock acquisition, so queue-wait time never counts against a step. Tiers are cumulative: standard includes fast, standard-plus includes standard, heavy includes standard-plus.
+Four tier commands run subsets sequentially via `scripts/run-tier.mjs`, with membership centralized in `scripts/validation-steps.mjs`, and are wrapped in `scripts/serial-lock.mjs`. Task calls require `TASK_PLAN_FILE`; explicit ad-hoc calls must opt in with `--allow-no-plan`. Tiers are cumulative.
 
-- **`test-fast`** — static checks only: `gate-guard`, `plan-gate-fix`, `plan-gate-check`, `plan-gate-stubs`, `tsc`, `lint`, `lint-mocks`, `tsconfig-check`, `port-guard`, `bundle-domain-check`. For pure UI/copy changes. (~5 min)
-- **`test-standard`** — fast + `codegen-check`, `spec-check`, `env-check`, `spec-check-tests`, `test`. For most feature/bug-fix work. (~20 min)
+- **`test-fast`** — static checks only: `gate-guard`, task-scoped Failure Gate and Regression Guard repair/check steps, `tsc`, lint, config, port, and bundle-domain checks. (~5 min)
+- **`test-standard`** — fast + codegen/spec/env checks, `failure-gate-contract`, and tests. (~20 min)
 - **`test-standard-plus`** — standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test`. Full quality signal without Playwright browser automation. (~30 min)
 - **`test-heavy`** — standard-plus (same steps, no Playwright currently). For schema migrations, new API routes, auth/security changes, multi-package refactors. (~30 min)
 
@@ -190,6 +213,8 @@ Individual check commands remain registered for targeted runs. Tier membership l
 | _(new)_ | `plan-gate-fix` | fast (auto-remediate; always exits 0) |
 | _(new)_ | `plan-gate-check` | fast (strict Failure Gate lint) |
 | _(new)_ | `plan-gate-stubs` | fast (stub-placeholder warning count; always exits 0) |
+| _(new)_ | `regression-guard-fix` / `regression-guard` | fast (task-scoped declaration repair then strict check) |
+| _(new)_ | `failure-gate-contract` | standard (focused integration contract) |
 | `api-server-coverage` | `api-server-coverage` | standard-plus / heavy |
 | `api-server-typecheck` | `api-server-typecheck` | fast (via `tsc`) |
 | `bundle:domain-check` | `bundle-domain-check` | fast |

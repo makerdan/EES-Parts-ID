@@ -318,6 +318,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # prevents the first health-check pass from catching the server mid-reload.
   wait_for_codegen_settle
 
+  # The Failure Gate distribution is tracked output. Verify that it contains
+  # the same canonical skill and durable support files before syncing main.
+  node scripts/publish-failure-gate.mjs --check || {
+    echo "[post-merge] ERROR: Failure Gate package is stale. Run 'pnpm run publish:failure-gate' and commit artifacts/failure-gate-skill.zip."
+    exit 1
+  }
+
   # Push latest main branch to GitHub after every successful merge.
   # Uses || true so a network error never causes post-merge to report failure.
   bash "$(dirname "$0")/sync-github.sh" || true

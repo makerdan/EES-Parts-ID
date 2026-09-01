@@ -9,6 +9,7 @@
     "lint:mocks": "tsx ./src/check-mock-factories.ts",
     "tsconfig:check": "tsx ./src/check-tsconfig-refs.ts",
     "env:check": "tsx ./src/check-env-vars.ts",
+    "maintain:validation-baseline": "node ./maintain-validation-baseline.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

@@ -316,45 +316,45 @@ isValidation = true
 name = "test-fast"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs fast"
-
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs fast --allow-no-plan"
 
 [[workflows.workflow]]
 name = "test-standard"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs standard"
-
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs standard --allow-no-plan"
 
 [[workflows.workflow]]
 name = "test-heavy"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs heavy"
-
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs heavy --allow-no-plan"
 
 [[workflows.workflow]]
 name = "test-standard-plus"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs standard-plus"
-
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node scripts/serial-lock.mjs -- node scripts/run-tier.mjs standard-plus --allow-no-plan"
 
 [[workflows.workflow]]
 name = "gate-guard"
