@@ -24,7 +24,20 @@ import React, {
 import { Toaster, toast } from "sonner";
 import { computeWheelZoom } from "../utils/wheelZoom";
 import { normRect as normRectUtil } from "../utils/rubberBandSelect";
-import { screenToSvg } from "../utils/svgCoords";
+import {
+  DEFAULT_GRID_SPACING,
+  DEFAULT_STANDARD_RECT,
+  MAX_GRID_SPACING,
+  MAX_STANDARD_RECT_SIZE,
+  MIN_GRID_SPACING,
+  MIN_STANDARD_RECT_SIZE,
+  clampDeltaForRects,
+  moveRect,
+  placeStandardRect,
+  readBoundedNumber,
+  resizeRect,
+  screenToSvg,
+} from "../utils/svgCoords";
 import { useRubberBand } from "../hooks/useRubberBand";
 import { isValidAisleId, findDuplicateConflict, normalizeAisleId, type ZoneLike } from "@workspace/zone-validation";
 import warehouseMapFallback from "../../public/warehouse-map.svg?raw";
@@ -259,6 +272,7 @@ type IxState =
   | { t: "draw"; x1: number; y1: number; x2: number; y2: number }
   | { t: "move"; id: number; ox: number; oy: number }
   | { t: "resize"; id: number; handle: Handle; ax: number; ay: number }
+  | { t: "pendingResize"; handle: Handle; ax: number; ay: number }
   | { t: "rubber"; x1: number; y1: number; x2: number; y2: number; shift: boolean }
   | { t: "multiMove"; startX: number; startY: number }
   // Fill: waits for mouseup with < 5 px movement before triggering the async fill.
@@ -593,6 +607,48 @@ export function ZoneEditor() {
   const [svgDims, setSvgDims] = useState<{ w: number; h: number }>(svgFallbackDims);
   const [tf, setTf] = useState<Tf>({ x: 0, y: 0, s: INITIAL_SCALE });
   const [mode, setMode] = useState<Mode>("pan");
+  // Grid preferences are opt-in and local to this browser. They never enter
+  // the zone payload or the save-status state.
+  const [snapEnabled, setSnapEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem("zoneEditorSnapEnabled") === "true"; } catch {}
+    return false;
+  });
+  const [gridSpacing, setGridSpacing] = useState<number>(() => {
+    try {
+      return readBoundedNumber(
+        localStorage.getItem("zoneEditorGridSpacing"),
+        DEFAULT_GRID_SPACING,
+        MIN_GRID_SPACING,
+        MAX_GRID_SPACING,
+        true,
+      );
+    } catch {}
+    return DEFAULT_GRID_SPACING;
+  });
+  const [standardWidth, setStandardWidth] = useState<number>(() => {
+    try {
+      return readBoundedNumber(
+        localStorage.getItem("zoneEditorStandardWidth"),
+        DEFAULT_STANDARD_RECT.w,
+        MIN_STANDARD_RECT_SIZE,
+        MAX_STANDARD_RECT_SIZE,
+        true,
+      );
+    } catch {}
+    return DEFAULT_STANDARD_RECT.w;
+  });
+  const [standardHeight, setStandardHeight] = useState<number>(() => {
+    try {
+      return readBoundedNumber(
+        localStorage.getItem("zoneEditorStandardHeight"),
+        DEFAULT_STANDARD_RECT.h,
+        MIN_STANDARD_RECT_SIZE,
+        MAX_STANDARD_RECT_SIZE,
+        true,
+      );
+    } catch {}
+    return DEFAULT_STANDARD_RECT.h;
+  });
   // True while the async rasterize+fill operation is in progress.
   const [fillLoading, setFillLoading] = useState(false);
   // Fill sensitivity: slider position 0-100, persisted to localStorage.
@@ -714,6 +770,11 @@ export function ZoneEditor() {
     destructive: boolean;
     resolve: ((ok: boolean) => void) | null;
   }>({ visible: false, title: "", message: "", destructive: false, resolve: null });
+  const [contextMenu, setContextMenu] = useState<{
+    zoneId: number;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const showConfirm = (title: string, message: string, destructive = false): Promise<boolean> =>
     new Promise((resolve) =>
@@ -743,6 +804,11 @@ export function ZoneEditor() {
   const svgDimsRef = useRef(svgDims);
   const fillLoadingRef = useRef(false);
   const fillSensitivityRef = useRef(fillSensitivity);
+  const snapEnabledRef = useRef(snapEnabled);
+  const gridSpacingRef = useRef(gridSpacing);
+  const pendingRectRef = useRef(pendingRect);
+  const pendingResizeBaseRef = useRef<typeof pendingRect>(null);
+  const multiDragReferenceIdRef = useRef<number | null>(null);
   const aliveRef = useRef(true);
   const fetchAbortRef = useRef<AbortController | null>(null);
   const saveAbortRef = useRef<AbortController | null>(null);
@@ -764,6 +830,9 @@ export function ZoneEditor() {
   useEffect(() => { svgInnerRef.current = svgInner; }, [svgInner]);
   useEffect(() => { svgDimsRef.current = svgDims; }, [svgDims]);
   useEffect(() => { fillLoadingRef.current = fillLoading; }, [fillLoading]);
+  useEffect(() => { snapEnabledRef.current = snapEnabled; }, [snapEnabled]);
+  useEffect(() => { gridSpacingRef.current = gridSpacing; }, [gridSpacing]);
+  useEffect(() => { pendingRectRef.current = pendingRect; }, [pendingRect]);
   useEffect(() => {
     fillSensitivityRef.current = fillSensitivity;
     try { localStorage.setItem("zoneEditorFillSensitivity", String(fillSensitivity)); } catch {}
@@ -780,6 +849,18 @@ export function ZoneEditor() {
   useEffect(() => {
     try { localStorage.setItem("zoneEditorAutoNumSyncSortOrder", String(autoNumSyncSortOrder)); } catch {}
   }, [autoNumSyncSortOrder]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorSnapEnabled", String(snapEnabled)); } catch {}
+  }, [snapEnabled]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorGridSpacing", String(gridSpacing)); } catch {}
+  }, [gridSpacing]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorStandardWidth", String(standardWidth)); } catch {}
+  }, [standardWidth]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorStandardHeight", String(standardHeight)); } catch {}
+  }, [standardHeight]);
 
 
   // Fetch the latest uploaded floor plan. Tries the local API first; if it
@@ -1034,6 +1115,25 @@ export function ZoneEditor() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // Context menus are deliberately managed outside the zone selection flow:
+  // opening one must not select, move, or dirty the zone.
+  useEffect(() => {
+    const closeOnPointerDown = (e: MouseEvent) => {
+      const target = e.target;
+      if (target instanceof Element && target.closest("[data-zone-context-menu]")) return;
+      setContextMenu(null);
+    };
+    const closeOnEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setContextMenu(null);
+    };
+    document.addEventListener("mousedown", closeOnPointerDown);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnPointerDown);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
   }, []);
 
   const patchZone = useCallback(
@@ -1938,6 +2038,33 @@ export function ZoneEditor() {
     return screenToSvg(clientX, clientY, rect, tfRef.current);
   }, []);
 
+  const handlePlaceStandardRect = useCallback(() => {
+    if (!aliveRef.current) return;
+    const rect = placeStandardRect(
+      svgDimsRef.current,
+      { w: standardWidth, h: standardHeight },
+      { snap: snapEnabledRef.current, spacing: gridSpacingRef.current },
+    );
+    setMode("draw");
+    setSelectedIds(new Set());
+    setSelectionOrder([]);
+    setDraftRect(null);
+    setPendingRect(rect);
+    setForm({ aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0 });
+  }, [setForm, standardHeight, standardWidth]);
+
+  const handleZoneContextMenu = (e: React.MouseEvent, zone: Zone) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (
+      !Number.isFinite(zone.svgWidth) ||
+      !Number.isFinite(zone.svgHeight) ||
+      zone.svgWidth <= 0 ||
+      zone.svgHeight <= 0
+    ) return;
+    setContextMenu({ zoneId: zone.id, x: e.clientX, y: e.clientY });
+  };
+
   // ── Rubber-band selection (Shift+drag) ─────────────────────────────────────
   const { rubberRect, onSvgMouseDown: onRubberMouseDown } = useRubberBand({
     zonesRef,
@@ -2088,9 +2215,38 @@ export function ZoneEditor() {
       if (state.t === "move") {
         const base = dragBaseRef.current ?? zonesRef.current.find((z) => z.id === state.id);
         if (!base) return;
-        const updated = { ...base, svgX: p.x - state.ox, svgY: p.y - state.oy };
+        const moved = moveRect(
+          { x: base.svgX, y: base.svgY, w: base.svgWidth, h: base.svgHeight },
+          { x: p.x - state.ox, y: p.y - state.oy },
+          {
+            snap: snapEnabledRef.current,
+            spacing: gridSpacingRef.current,
+            bounds: snapEnabledRef.current ? svgDimsRef.current : undefined,
+          },
+        );
+        const updated = { ...base, svgX: moved.x, svgY: moved.y };
         dragZoneRef.current = updated;
         setDragZone(updated);
+        return;
+      }
+
+      if (state.t === "pendingResize") {
+        const base = pendingResizeBaseRef.current;
+        if (!base) return;
+        const resized = resizeRect(
+          { x: base.x, y: base.y, w: base.w, h: base.h },
+          state.handle,
+          p,
+          MIN_ZONE_PX / tfRef.current.s,
+          {
+            snap: snapEnabledRef.current,
+            spacing: gridSpacingRef.current,
+            bounds: snapEnabledRef.current ? svgDimsRef.current : undefined,
+          },
+        );
+        const updated = { x: resized.x, y: resized.y, w: resized.w, h: resized.h };
+        pendingRectRef.current = updated;
+        setPendingRect(updated);
         return;
       }
 
@@ -2098,31 +2254,59 @@ export function ZoneEditor() {
         const base = dragBaseRef.current ?? zonesRef.current.find((z) => z.id === state.id);
         if (!base) return;
         const minSvg = MIN_ZONE_PX / tfRef.current.s;
-        let updated: Zone;
-        const h = state.handle;
-        if (h === "n") {
-          const bottom = base.svgY + base.svgHeight;
-          const newY = Math.min(p.y, bottom - minSvg);
-          updated = { ...base, svgY: newY, svgHeight: bottom - newY };
-        } else if (h === "s") {
-          updated = { ...base, svgHeight: Math.max(minSvg, p.y - base.svgY) };
-        } else if (h === "e") {
-          updated = { ...base, svgWidth: Math.max(minSvg, p.x - base.svgX) };
-        } else if (h === "w") {
-          const right = base.svgX + base.svgWidth;
-          const newX = Math.min(p.x, right - minSvg);
-          updated = { ...base, svgX: newX, svgWidth: right - newX };
-        } else {
-          const r = normRectUtil(state.ax, state.ay, p.x, p.y);
-          updated = { ...base, ...r };
-        }
+        const resized = resizeRect(
+          { x: base.svgX, y: base.svgY, w: base.svgWidth, h: base.svgHeight },
+          state.handle,
+          p,
+          minSvg,
+          {
+            snap: snapEnabledRef.current,
+            spacing: gridSpacingRef.current,
+            bounds: snapEnabledRef.current ? svgDimsRef.current : undefined,
+          },
+        );
+        const updated = {
+          ...base,
+          svgX: resized.x,
+          svgY: resized.y,
+          svgWidth: resized.w,
+          svgHeight: resized.h,
+        };
         dragZoneRef.current = updated;
         setDragZone(updated);
         return;
       }
 
       if (state.t === "multiMove") {
-        const delta = { x: p.x - state.startX, y: p.y - state.startY };
+        const rawDelta = { x: p.x - state.startX, y: p.y - state.startY };
+        let delta = rawDelta;
+        if (snapEnabledRef.current) {
+          const referenceId = multiDragReferenceIdRef.current;
+          const reference = referenceId === null
+            ? null
+            : zonesRef.current.find((z) => z.id === referenceId);
+          if (reference) {
+            const snappedReference = moveRect(
+              { x: reference.svgX, y: reference.svgY, w: reference.svgWidth, h: reference.svgHeight },
+              { x: reference.svgX + rawDelta.x, y: reference.svgY + rawDelta.y },
+              { snap: true, spacing: gridSpacingRef.current, bounds: svgDimsRef.current },
+            );
+            delta = {
+              x: snappedReference.x - reference.svgX,
+              y: snappedReference.y - reference.svgY,
+            };
+          }
+          delta = clampDeltaForRects(
+            [...multiDragOriginsRef.current.entries()].flatMap(([id, origin]) => {
+              const zone = zonesRef.current.find((z) => z.id === id);
+              return zone
+                ? [{ x: origin.x, y: origin.y, w: zone.svgWidth, h: zone.svgHeight }]
+                : [];
+            }),
+            delta,
+            svgDimsRef.current,
+          );
+        }
         setMultiDragDelta(delta);
       }
     };
@@ -2222,16 +2406,51 @@ export function ZoneEditor() {
         return;
       }
 
+      if (state.t === "pendingResize") {
+        pendingResizeBaseRef.current = null;
+        isDraggingRef.current = false;
+        return;
+      }
+
       if (state.t === "multiMove") {
         if (!aliveRef.current) return;
         const origins = multiDragOriginsRef.current;
         // Only save if there was actual movement
-        const currentDelta = (() => {
+        let currentDelta = (() => {
           if (!svgRef.current) return null;
           const rect = svgRef.current.getBoundingClientRect();
           const p = screenToSvg(e.clientX, e.clientY, rect, tfRef.current);
           return { x: p.x - state.startX, y: p.y - state.startY };
         })();
+        if (currentDelta && snapEnabledRef.current) {
+          const referenceId = multiDragReferenceIdRef.current;
+          const reference = referenceId === null
+            ? null
+            : origins.has(referenceId)
+              ? zonesRef.current.find((z) => z.id === referenceId)
+              : null;
+          if (reference) {
+            const snappedReference = moveRect(
+              { x: reference.svgX, y: reference.svgY, w: reference.svgWidth, h: reference.svgHeight },
+              { x: reference.svgX + currentDelta.x, y: reference.svgY + currentDelta.y },
+              { snap: true, spacing: gridSpacingRef.current, bounds: svgDimsRef.current },
+            );
+            currentDelta = {
+              x: snappedReference.x - reference.svgX,
+              y: snappedReference.y - reference.svgY,
+            };
+          }
+          currentDelta = clampDeltaForRects(
+            [...origins.entries()].flatMap(([id, origin]) => {
+              const zone = zonesRef.current.find((z) => z.id === id);
+              return zone
+                ? [{ x: origin.x, y: origin.y, w: zone.svgWidth, h: zone.svgHeight }]
+                : [];
+            }),
+            currentDelta,
+            svgDimsRef.current,
+          );
+        }
         setMultiDragDelta(null);
         if (!currentDelta || (Math.abs(currentDelta.x) < 0.5 && Math.abs(currentDelta.y) < 0.5)) return;
         dragAbortRef.current?.abort();
@@ -2345,6 +2564,7 @@ export function ZoneEditor() {
         }
       }
       multiDragOriginsRef.current = origins;
+      multiDragReferenceIdRef.current = zone.id;
       setMultiDragDelta(null);
       ixRef.current = { t: "multiMove", startX: p.x, startY: p.y };
       return;
@@ -2388,6 +2608,32 @@ export function ZoneEditor() {
     };
   };
 
+  const onPendingHandleMouseDown = (e: React.MouseEvent, handle: Handle) => {
+    e.stopPropagation();
+    if (e.button !== 0 || !pendingRectRef.current) return;
+    const pending = pendingRectRef.current;
+    const anchorZone = {
+      id: -1,
+      aisleId: "",
+      sectionNum: null,
+      isInventory: true,
+      svgX: pending.x,
+      svgY: pending.y,
+      svgWidth: pending.w,
+      svgHeight: pending.h,
+      sortOrder: 0,
+    };
+    const anchor = ANCHOR[handle](anchorZone);
+    pendingResizeBaseRef.current = pending;
+    isDraggingRef.current = true;
+    ixRef.current = {
+      t: "pendingResize",
+      handle,
+      ax: anchor.x,
+      ay: anchor.y,
+    };
+  };
+
   const onWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
     if (!svgRef.current) return;
@@ -2423,6 +2669,19 @@ export function ZoneEditor() {
     }
     return zones;
   }, [zones, dragZone, multiDragDelta, selectedIds]);
+
+  const gridCoordinates = useMemo(() => {
+    if (!snapEnabled || gridSpacing <= 0) return { x: [] as number[], y: [] as number[] };
+    const x = Array.from(
+      { length: Math.floor(svgDims.w / gridSpacing) + 1 },
+      (_, i) => i * gridSpacing,
+    );
+    const y = Array.from(
+      { length: Math.floor(svgDims.h / gridSpacing) + 1 },
+      (_, i) => i * gridSpacing,
+    );
+    return { x, y };
+  }, [gridSpacing, snapEnabled, svgDims.h, svgDims.w]);
 
   // ── Auto-number computed values ────────────────────────────────────────────
   // Selected zones ordered by selection sequence (or sortOrder/svgY fallback for rubber-band).
@@ -2601,6 +2860,52 @@ export function ZoneEditor() {
             Reset §
           </button>
         </div>
+        <div style={styles.gridControls}>
+          <label style={styles.gridToggle}>
+            <input
+              type="checkbox"
+              aria-label="Snap to grid"
+              checked={snapEnabled}
+              onChange={(e) => setSnapEnabled(e.target.checked)}
+              style={{ accentColor: "#f59e0b", cursor: "pointer" }}
+            />
+            <span>Snap to grid</span>
+          </label>
+          <label style={styles.gridSpacingLabel}>
+            <span>Grid</span>
+            <input
+              aria-label="Grid spacing"
+              type="number"
+              min={MIN_GRID_SPACING}
+              max={MAX_GRID_SPACING}
+              step={1}
+              value={gridSpacing}
+              onChange={(e) => {
+                const next = readBoundedNumber(
+                  e.target.value,
+                  gridSpacing,
+                  MIN_GRID_SPACING,
+                  MAX_GRID_SPACING,
+                  true,
+                );
+                setGridSpacing(next);
+              }}
+              style={styles.gridSpacingInput}
+            />
+            <span>SVG units</span>
+          </label>
+          {mode === "draw" && (
+            <button
+              type="button"
+              aria-label="Place standard rectangle"
+              title={`Place ${standardWidth} × ${standardHeight} SVG unit rectangle`}
+              onClick={handlePlaceStandardRect}
+              style={styles.standardButton}
+            >
+              + Standard rectangle
+            </button>
+          )}
+        </div>
         {mode === "fill" && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 8 }}>
             <label style={{ fontSize: 11, color: "#ddd", whiteSpace: "nowrap" }}>
@@ -2767,6 +3072,22 @@ export function ZoneEditor() {
             onMouseDown={onSvgMouseDown}
           >
             <g transform={`translate(${tf.x},${tf.y}) scale(${tf.s})`}>
+              {snapEnabled && (
+                <g
+                  data-testid="zone-editor-grid"
+                  data-grid-spacing={gridSpacing}
+                  pointerEvents="none"
+                  stroke="rgba(71,85,105,0.28)"
+                  strokeWidth={1 / tf.s}
+                >
+                  {gridCoordinates.x.map((x) => (
+                    <line key={`grid-x-${x}`} x1={x} y1={0} x2={x} y2={svgDims.h} />
+                  ))}
+                  {gridCoordinates.y.map((y) => (
+                    <line key={`grid-y-${y}`} x1={0} y1={y} x2={svgDims.w} y2={y} />
+                  ))}
+                </g>
+              )}
               {/* Floor plan — embedded as a child <g> inside the SVG so it
                   shares the same coordinate system as zone overlays and stays
                   perfectly crisp at any zoom level (no rasterisation). */}
@@ -2797,6 +3118,7 @@ export function ZoneEditor() {
                         zone.isInventory ? undefined : `${12 / tf.s} ${6 / tf.s}`
                       }
                       onMouseDown={(e) => onZoneMouseDown(e, zone)}
+                      onContextMenu={(e) => handleZoneContextMenu(e, zone)}
                       style={{ cursor: sel && selectedIds.size > 1 ? "move" : "pointer" }}
                     />
                     <text
@@ -2907,17 +3229,69 @@ export function ZoneEditor() {
 
               {/* Pending rect (drawn, awaiting form submission — blue) */}
               {pendingRect && (
-                <rect
-                  x={pendingRect.x}
-                  y={pendingRect.y}
-                  width={pendingRect.w}
-                  height={pendingRect.h}
-                  fill="rgba(0,112,255,0.15)"
-                  stroke="#0070ff"
-                  strokeWidth={sw}
-                  strokeDasharray={`${14 / tf.s} ${7 / tf.s}`}
-                  style={{ pointerEvents: "none" }}
-                />
+                <>
+                  <rect
+                    x={pendingRect.x}
+                    y={pendingRect.y}
+                    width={pendingRect.w}
+                    height={pendingRect.h}
+                    fill="rgba(0,112,255,0.15)"
+                    stroke="#0070ff"
+                    strokeWidth={sw}
+                    strokeDasharray={`${14 / tf.s} ${7 / tf.s}`}
+                    style={{ pointerEvents: "none" }}
+                  />
+                  {(["n", "s", "e", "w"] as Handle[]).map((h) => {
+                    const cx = h === "e"
+                      ? pendingRect.x + pendingRect.w
+                      : h === "w"
+                        ? pendingRect.x
+                        : pendingRect.x + pendingRect.w / 2;
+                    const cy = h === "s"
+                      ? pendingRect.y + pendingRect.h
+                      : h === "n"
+                        ? pendingRect.y
+                        : pendingRect.y + pendingRect.h / 2;
+                    const w = h === "e" || h === "w" ? hs : hs * 2.5;
+                    const ht = h === "n" || h === "s" ? hs : hs * 2.5;
+                    return (
+                      <rect
+                        key={`pending-edge-${h}`}
+                        x={cx - w / 2}
+                        y={cy - ht / 2}
+                        width={w}
+                        height={ht}
+                        fill="#0070ff"
+                        stroke="#fff"
+                        strokeWidth={1.5 / tf.s}
+                        onMouseDown={(e) => onPendingHandleMouseDown(e, h)}
+                        style={{ cursor: HANDLE_CURSOR[h] }}
+                      />
+                    );
+                  })}
+                  {(["nw", "ne", "sw", "se"] as Handle[]).map((h) => {
+                    const hx = h.includes("e")
+                      ? pendingRect.x + pendingRect.w
+                      : pendingRect.x;
+                    const hy = h.includes("s")
+                      ? pendingRect.y + pendingRect.h
+                      : pendingRect.y;
+                    return (
+                      <rect
+                        key={`pending-corner-${h}`}
+                        x={hx - hs / 2}
+                        y={hy - hs / 2}
+                        width={hs}
+                        height={hs}
+                        fill="#0070ff"
+                        stroke="#fff"
+                        strokeWidth={1.5 / tf.s}
+                        onMouseDown={(e) => onPendingHandleMouseDown(e, h)}
+                        style={{ cursor: HANDLE_CURSOR[h] }}
+                      />
+                    );
+                  })}
+                </>
               )}
 
               {/* Rubber-band selection rectangle (Shift+drag) */}
@@ -2939,6 +3313,65 @@ export function ZoneEditor() {
 
           {loading && (
             <div style={styles.loadingBadge}>Loading zones…</div>
+          )}
+          {contextMenu && (
+            <div
+              data-zone-context-menu
+              style={{
+                position: "fixed",
+                left: contextMenu.x,
+                top: contextMenu.y,
+                zIndex: 30,
+                minWidth: 210,
+                padding: 4,
+                border: "1px solid #cbd5e1",
+                borderRadius: 6,
+                background: "#fff",
+                boxShadow: "0 8px 24px rgba(15,23,42,0.2)",
+              }}
+            >
+              <button
+                type="button"
+                data-zone-context-menu
+                onClick={() => {
+                  const zone = zonesRef.current.find((z) => z.id === contextMenu.zoneId);
+                  if (!zone) {
+                    setContextMenu(null);
+                    return;
+                  }
+                  setStandardWidth(
+                    Math.min(
+                      MAX_STANDARD_RECT_SIZE,
+                      Math.max(MIN_STANDARD_RECT_SIZE, Math.round(zone.svgWidth)),
+                    ),
+                  );
+                  setStandardHeight(
+                    Math.min(
+                      MAX_STANDARD_RECT_SIZE,
+                      Math.max(MIN_STANDARD_RECT_SIZE, Math.round(zone.svgHeight)),
+                    ),
+                  );
+                  setContextMenu(null);
+                  toast.success(
+                    `Standard rectangle set to ${Math.round(zone.svgWidth)} × ${Math.round(zone.svgHeight)}`,
+                  );
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "7px 9px",
+                  border: 0,
+                  borderRadius: 4,
+                  background: "transparent",
+                  color: "#1e293b",
+                  textAlign: "left",
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                Set as standard rectangle size
+              </button>
+            </div>
           )}
         </div>
 
@@ -3752,6 +4185,49 @@ const styles = {
     display: "flex",
     gap: 6,
     marginLeft: "auto",
+  },
+  gridControls: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    marginLeft: 8,
+    whiteSpace: "nowrap" as const,
+  },
+  gridToggle: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    color: "#f8fafc",
+    fontSize: 11,
+    cursor: "pointer",
+    userSelect: "none" as const,
+  },
+  gridSpacingLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 10,
+  },
+  gridSpacingInput: {
+    width: 48,
+    padding: "3px 4px",
+    border: "1px solid #64748b",
+    borderRadius: 3,
+    background: "#0f172a",
+    color: "#f8fafc",
+    fontSize: 11,
+  } as React.CSSProperties,
+  standardButton: {
+    padding: "4px 9px",
+    borderRadius: 4,
+    background: "#f59e0b",
+    color: "#111827",
+    border: "none",
+    cursor: "pointer",
+    fontSize: 11,
+    fontWeight: 700,
+    whiteSpace: "nowrap" as const,
   },
   hint: {
     fontSize: 11,
