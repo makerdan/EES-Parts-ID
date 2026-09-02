@@ -584,7 +584,14 @@ export default function UploadScreen() {
   const router = useRouter();
   const { userId: currentClerkUserId } = useAuth();
   const { isAdmin, logoutAdmin, adminToken, showToast } = useApp();
-  const { status: apiStatus, restarting: apiRestarting, triggerRestart, checkStatus, bots: apiBots, probeSingleBot } = useApiHealth();
+  const {
+    status: apiStatus,
+    restarting: apiRestarting,
+    triggerRestart,
+    checkStatus,
+    bots: apiBots,
+    probeSingleBot,
+  } = useApiHealth();
   const apiCheckAnim = useRef(new Animated.Value(1)).current;
   const [apiChecking, setApiChecking] = useState(false);
   const [activeBadge, setActiveBadge] = useState<string | null>(null);
@@ -657,7 +664,27 @@ export default function UploadScreen() {
       "The server will briefly go offline while it restarts.",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Restart", style: "destructive", onPress: () => { triggerRestart(); } },
+        {
+          text: "Restart",
+          style: "destructive",
+          onPress: () => {
+            void triggerRestart().then((outcome) => {
+              if (outcome === "recovered") {
+                Alert.alert("API server recovered", "The API server is back online.");
+              } else if (outcome === "authorization") {
+                Alert.alert("Restart denied", "Admin access with MFA is required.");
+              } else if (outcome === "rejected") {
+                Alert.alert("Restart not accepted", "The API server did not accept the restart request.");
+              } else if (outcome === "timeout") {
+                Alert.alert("Restart timed out", "The API server did not respond in time. It was not treated as restarted.");
+              } else if (outcome === "server_failure") {
+                Alert.alert("Restart failed", "The API server could not process the restart request.");
+              } else if (outcome === "recovery_failed") {
+                Alert.alert("API server did not recover", "The restart was accepted, but the server did not become healthy.");
+              }
+            });
+          },
+        },
       ],
     );
   }, [triggerRestart]);
