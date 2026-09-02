@@ -4,6 +4,10 @@ import { eq, lt, sql } from "drizzle-orm";
 import app from "./app";
 import { initProvider, probePoeBotsOnStartup } from "./lib/aiProvider";
 import { logger } from "./lib/logger";
+import {
+  pruneScreenViewLog,
+  SCREEN_VIEW_RETENTION_INTERVAL_MS,
+} from "./lib/screenViewRetention";
 import { startServer } from "./lib/startServer";
 import { validateEnv } from "./lib/validateEnv";
 import { applyZoneSectionNumFix } from "./lib/zoneSectionNumFix";
@@ -21,6 +25,7 @@ process.on("unhandledRejection", (reason) => {
 
 const rawPort = process.env["PORT"];
 const port = rawPort ? Number(rawPort) : NaN;
+const isDev = process.env.NODE_ENV !== "production";
 
 if (!Number.isInteger(port) || port <= 0 || port > 65535) {
   throw new Error(
@@ -32,7 +37,7 @@ if (!Number.isInteger(port) || port <= 0 || port > 65535) {
 
 validateEnv();
 
-if (process.env["SKIP_ADMIN_MFA"] === "true") {
+if (process.env["SKIP_ADMIN_MFA"] === "true" && isDev) {
   logger.warn(
     { SKIP_ADMIN_MFA: "true" },
     "Admin MFA enforcement is DISABLED (SKIP_ADMIN_MFA=true) — admin accounts are not protected by MFA",
@@ -300,9 +305,11 @@ Promise.race([
       logger.error({ err }, "Poe bot startup probe failed");
     });
 
-    // Schedule audit log retention cleanup.
+    // Schedule retention independently of incoming telemetry traffic.
     pruneAuditLog();
     setInterval(pruneAuditLog, AUDIT_LOG_RETENTION_INTERVAL_MS).unref();
+    pruneScreenViewLog();
+    setInterval(pruneScreenViewLog, SCREEN_VIEW_RETENTION_INTERVAL_MS).unref();
   })
   .catch((err) => {
     logger.error({ err }, "Fatal error during server startup — exiting");

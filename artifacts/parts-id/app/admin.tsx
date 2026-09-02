@@ -34,19 +34,27 @@ import { serializeDashboardToCsv } from "@/utils/exportCsv";
 
 type DailyPoint = { date: string; total: number };
 type ByScreen = { screenName: string; total: number };
-type ByFeature = { feature: string; total: number };
+type ByFeature = { feature: string; total: number | null };
 
 type DashboardStats = {
+  generatedAt?: string;
+  window?: { start: string; end: string; days: number };
+  timezone?: string;
+  privacy?: {
+    minimumCellCount: number;
+    suppressedValue: string;
+    uniqueVisitorsAvailable: boolean;
+    aggregateOnly: boolean;
+  };
   ai: {
-    totalAllTime: number;
-    totalThisMonth: number;
+    requestsInWindow?: number | null;
     byFeature: Array<ByFeature>;
   };
   screenViews: {
-    totalAllTime: number;
-    uniqueVisitorsToday: number;
+    viewsInWindow?: number | null;
+    uniqueVisitorsInWindow?: number | null;
     byScreen: Array<ByScreen>;
-    dailyLast30Days: Array<DailyPoint>;
+    dailyInWindow?: Array<DailyPoint>;
   };
   summary: {
     inventoryItems: number;
@@ -101,6 +109,15 @@ function TableRow({
       </Text>
     </View>
   );
+}
+
+function displayPrivacyValue(value: number | null | undefined): string | number {
+  return value == null ? "Suppressed" : value;
+}
+
+function formatReportingWindow(window: DashboardStats["window"]): string {
+  if (!window) return "Reporting window unavailable";
+  return `${window.start.slice(0, 10)} through ${window.end.slice(0, 10)} (UTC)`;
 }
 
 const BAR_CHART_HEIGHT = 120;
@@ -367,8 +384,11 @@ export default function AdminDashboardScreen() {
           {/* AI Usage */}
           <SectionHeader title="AI Usage" colors={colors} />
           <View style={styles.statRow}>
-            <StatBox label="All Time" value={stats.ai.totalAllTime} colors={colors} />
-            <StatBox label="This Month" value={stats.ai.totalThisMonth} colors={colors} />
+            <StatBox
+              label={`Requests — Last ${stats.window?.days ?? 30} Days`}
+              value={displayPrivacyValue(stats.ai.requestsInWindow)}
+              colors={colors}
+            />
           </View>
           <View style={[styles.table, { borderColor: colors.border, backgroundColor: colors.card }]}>
             <TableRow left="Feature" right="Requests" colors={colors} dim />
@@ -379,7 +399,7 @@ export default function AdminDashboardScreen() {
                 <TableRow
                   key={row.feature}
                   left={row.feature === "identify" ? "Photo ID" : "Reference Assistant"}
-                  right={row.total}
+                  right={displayPrivacyValue(row.total)}
                   colors={colors}
                 />
               ))
@@ -389,8 +409,16 @@ export default function AdminDashboardScreen() {
           {/* Screen Views */}
           <SectionHeader title="Screen Views" colors={colors} />
           <View style={styles.statRow}>
-            <StatBox label="All Time" value={stats.screenViews.totalAllTime} colors={colors} />
-            <StatBox label="Unique Today" value={stats.screenViews.uniqueVisitorsToday} colors={colors} />
+            <StatBox
+              label={`Views — Last ${stats.window?.days ?? 30} UTC Days`}
+              value={displayPrivacyValue(stats.screenViews.viewsInWindow)}
+              colors={colors}
+            />
+            <StatBox
+              label={`Unique Visitors — Last ${stats.window?.days ?? 30} UTC Days`}
+              value={displayPrivacyValue(stats.screenViews.uniqueVisitorsInWindow)}
+              colors={colors}
+            />
           </View>
           <View style={[styles.table, { borderColor: colors.border, backgroundColor: colors.card }]}>
             <TableRow left="Screen" right="Views" colors={colors} dim />
@@ -403,11 +431,18 @@ export default function AdminDashboardScreen() {
             )}
           </View>
 
-          {/* 30-day chart */}
-          <SectionHeader title="Daily Views — Last 30 Days" colors={colors} />
+          {/* Bounded, privacy-filtered chart */}
+          <SectionHeader title="Daily Views — Reporting Window (UTC)" colors={colors} />
           <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <DailyBarChart data={stats.screenViews.dailyLast30Days} colors={colors} />
+            <DailyBarChart data={stats.screenViews.dailyInWindow ?? []} colors={colors} />
           </View>
+          <Text style={[styles.privacyDisclosure, { color: colors.mutedForeground }]}>
+            Reporting window: {formatReportingWindow(stats.window)}.{"\n"}
+            Counts below {stats.privacy?.minimumCellCount ?? 5} events are suppressed.
+            {stats.privacy?.uniqueVisitorsAvailable === false
+              ? " Unique-visitor reporting is unavailable because server privacy key material is not configured."
+              : " Unique visitors are server-derived and rotated daily."}
+          </Text>
 
           {/* Admin tools */}
           <SectionHeader title="Map Calibration" colors={colors} />
@@ -547,4 +582,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  privacyDisclosure: { fontSize: 12, lineHeight: 18, marginTop: 8 },
 });

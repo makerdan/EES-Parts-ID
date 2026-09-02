@@ -51,3 +51,4 @@
 - [Completion validation pitfalls](completion-validation-pitfalls.md) — validation runs ALL workflows concurrently (unlocked `test` scrambles vendor_map) and gate-guard vs post-merge Tests 34/35 are mutually exclusive → full green impossible until reconciled.
 - [SVG load singleton retries](svg-load-singleton-retry.md) — a settled module-level load promise must be discarded when cache data is unusable on either platform, or later cold loads stay blank.
 - [SheetJS ArrayBuffer fixtures](sheetjs-array-buffer-fixtures.md) — type:"array" ODS fixtures return an ArrayBuffer; pass it directly instead of converting it as a number array.
+- [Support analytics privacy](support-analytics-privacy.md) — use keyed rotating grouping or disable unique visitors; disclose bounded UTC windows and suppression.

@@ -54,7 +54,9 @@ function sessionHasMfa(req: Request): boolean {
  * should call next()).
  */
 function rejectIfMfaMissing(req: Request, res: Response): boolean {
-  if (process.env.SKIP_ADMIN_MFA === "true") return false;
+  // Production must always fail closed. The bypass exists only for local test
+  // and development environments and can never weaken a deployed admin route.
+  if (process.env.NODE_ENV !== "production" && process.env.SKIP_ADMIN_MFA === "true") return false;
   if (sessionHasMfa(req)) return false;
   res.status(403).json({
     error: "MFA required for admin access",
