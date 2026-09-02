@@ -65,6 +65,34 @@ function rejectIfMfaMissing(req: Request, res: Response): boolean {
   return true;
 }
 
+/**
+ * Re-check admin access for routes that may include privileged content but
+ * must remain usable by ordinary approved users. This deliberately does not
+ * trust res.locals.appUser: role and status are read again from the database,
+ * and the current Clerk session must still contain a recognized MFA factor.
+ */
+export async function hasCurrentAdminAccess(req: Request): Promise<boolean> {
+  const userId = getAuth(req)?.userId;
+  if (!userId || (process.env.NODE_ENV === "production" && !sessionHasMfa(req))) return false;
+  if (process.env.NODE_ENV !== "production" && process.env.SKIP_ADMIN_MFA === "true") {
+    // Development/test bypass follows the same explicit opt-out as the
+    // admin-only middleware, but the database role is still revalidated.
+    if (process.env.ADMIN_CLERK_USER_ID === userId) return true;
+  } else if (!sessionHasMfa(req)) {
+    return false;
+  }
+
+  if (process.env.ADMIN_CLERK_USER_ID === userId) return true;
+
+  const rows = await db
+    .select({ role: usersTable.role, status: usersTable.status })
+    .from(usersTable)
+    .where(eq(usersTable.clerkUserId, userId))
+    .limit(1);
+
+  return rows[0]?.role === "admin" && rows[0]?.status === "approved";
+}
+
 export function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
   const appUser = res.locals.appUser as
     | { clerkUserId: string; role?: string }
