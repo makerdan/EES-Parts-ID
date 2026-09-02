@@ -27,6 +27,7 @@ import {
   View,
 } from "react-native";
 
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
@@ -64,32 +65,47 @@ export default function EditItemScreen() {
   // Track unsaved changes across renders so the beforeRemove guard can read
   // the latest value without causing the effect to re-register on every edit.
   const hasChangesRef = useRef(false);
-  // Set to true right before dispatching a confirmed discard so the listener
-  // does not intercept the re-dispatched navigation action (one-shot bypass).
+  // Set to true for exits that have already been confirmed or completed by the
+  // screen so the navigation listener cannot intercept them a second time.
   const discardConfirmedRef = useRef(false);
+  const pendingExitRef = useRef<(() => void) | null>(null);
+  const [discardDialogVisible, setDiscardDialogVisible] = useState(false);
   const navigation = useNavigation();
+  const routerRef = useRef(router);
+  routerRef.current = router;
+
+  const requestExit = useCallback((exit: () => void = () => routerRef.current.back()) => {
+    if (discardConfirmedRef.current || !hasChangesRef.current) {
+      exit();
+      return;
+    }
+    pendingExitRef.current = exit;
+    setDiscardDialogVisible(true);
+  }, []);
+  const handleExitPress = useCallback(() => { requestExit(); }, [requestExit]);
+
+  const keepEditing = useCallback(() => {
+    pendingExitRef.current = null;
+    setDiscardDialogVisible(false);
+  }, []);
+
+  const discardChanges = useCallback(() => {
+    const exit = pendingExitRef.current;
+    pendingExitRef.current = null;
+    setDiscardDialogVisible(false);
+    if (!exit) return;
+    discardConfirmedRef.current = true;
+    exit();
+  }, []);
+
   useEffect(() => {
     const unsubscribe = navigation.addListener("beforeRemove", (e) => {
       if (discardConfirmedRef.current || !hasChangesRef.current) return;
       e.preventDefault();
-      Alert.alert(
-        "Discard changes?",
-        "Your edits will be lost.",
-        [
-          { text: "Keep Editing", style: "cancel" },
-          {
-            text: "Discard",
-            style: "destructive",
-            onPress: () => {
-              discardConfirmedRef.current = true;
-              navigation.dispatch(e.data.action);
-            },
-          },
-        ],
-      );
+      requestExit(() => navigation.dispatch(e.data.action));
     });
     return unsubscribe;
-  }, [navigation]);
+  }, [navigation, requestExit]);
 
   const updateBinsMutation = useUpdateItemBins();
   const updateBarcodesMutation = useUpdateItemBarcodes();
@@ -107,7 +123,10 @@ export default function EditItemScreen() {
   // the error banner and decide to cancel before being kicked to tabs.
   useEffect(() => {
     if (saveStatus === "saving" || saveStatus === "error") return;
-    if (shouldRedirectNonAdmin(isLoading, isAdmin)) { router.replace("/(tabs)"); }
+    if (shouldRedirectNonAdmin(isLoading, isAdmin)) {
+      discardConfirmedRef.current = true;
+      router.replace("/(tabs)");
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, isAdmin, saveStatus]);
 
@@ -424,6 +443,7 @@ export default function EditItemScreen() {
                 asyncStorage: AsyncStorage,
                 itemId: current.id,
               });
+              discardConfirmedRef.current = true;
               router.back();
             } catch {
               setDeleteErrorMsg("Could not delete the part. Check your connection and try again.");
@@ -820,6 +840,7 @@ export default function EditItemScreen() {
       }
 
       setSaveStatus("saved");
+      discardConfirmedRef.current = true;
       navTimerRef.current = setTimeout(() => router.back(), 500);
     } catch (err) {
       const msg = err && typeof err === "object" && "message" in err
@@ -895,7 +916,7 @@ export default function EditItemScreen() {
       >
         {/* Header */}
         <View style={[s.header, { borderBottomColor: colors.border }]}>
-          <Pressable onPress={() => router.back()} style={s.headerBack}>
+          <Pressable onPress={handleExitPress} style={s.headerBack} accessibilityLabel="Back">
             <Text style={[s.headerBackText, { color: colors.primary }]}>← Back</Text>
           </Pressable>
           <View style={s.headerCenter}>
@@ -1394,8 +1415,9 @@ export default function EditItemScreen() {
             </Pressable>
           ) : null}
           <Pressable
-            onPress={() => router.back()}
+            onPress={handleExitPress}
             style={[s.cancelBtn, { borderColor: colors.border }]}
+            accessibilityLabel="Cancel"
           >
             <Text style={[s.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
           </Pressable>
@@ -1426,6 +1448,17 @@ export default function EditItemScreen() {
           ) : null}
         </View>
       </KeyboardAvoidingView>
+
+      <ConfirmDialog
+        visible={discardDialogVisible}
+        title="Discard changes?"
+        message="Your edits will be lost."
+        confirmLabel="Discard"
+        cancelLabel="Keep Editing"
+        destructive
+        onConfirm={discardChanges}
+        onCancel={keepEditing}
+      />
 
       {/* Barcode scanner modal — native only */}
       {Platform.OS !== "web" ? (

@@ -1,15 +1,11 @@
 /**
  * Guards the unsaved-changes navigation guard added to EditItemScreen (F-040).
  *
- * The screen registers a `beforeRemove` listener via useNavigation().addListener.
- * When `hasChanges` is true the listener must:
- *   1. Call e.preventDefault() to block the navigation.
- *   2. Show an Alert with "Discard changes?" as the title.
- *   3. When "Discard" is pressed, set discardConfirmedRef and dispatch the
- *      original action so the navigation actually proceeds.
+ * The screen registers a `beforeRemove` listener via useNavigation().addListener
+ * and uses the rendered ConfirmDialog for every dirty exit path.
  *
  * When no changes have been made the listener must allow navigation through
- * without calling preventDefault or Alert.alert.
+ * without calling preventDefault.
  */
 
 // @ts-ignore — global augmentation for test environment only
@@ -187,7 +183,6 @@ jest.mock("@/components/KeyboardDoneInput", () => {
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import React from "react";
-import { Alert } from "react-native";
 import { render, act, fireEvent } from "@testing-library/react-native";
 
 async function renderScreen() {
@@ -244,6 +239,32 @@ afterEach(async () => {
 // =============================================================================
 
 describe("EditItemScreen — beforeRemove listener (F-040)", () => {
+  const findNode = (result: Awaited<ReturnType<typeof render>>, predicate: (node: any) => boolean) =>
+    result.root!.queryAll(predicate)[0];
+
+  const findDescriptionInput = (result: Awaited<ReturnType<typeof render>>) =>
+    findNode(result, n => n.type === "rn-textinput" && n.props.placeholder === "Brief description of the part…");
+
+  const findButton = (result: Awaited<ReturnType<typeof render>>, label: string) =>
+    findNode(result, n => n.type === "rn-pressable" && n.props.accessibilityLabel === label);
+
+  const expectDiscardDialogVisible = (result: Awaited<ReturnType<typeof render>>) => {
+    expect(result.root!.queryAll(n => n.type === "rn-modal")).toHaveLength(1);
+    expect(result.root!.queryAll(n => n.type === "Text" && n.props.children === "Discard changes?")).toHaveLength(1);
+  };
+
+  const pressDialogButton = async (
+    result: Awaited<ReturnType<typeof render>>,
+    label: string,
+  ) => {
+    const button = findNode(
+      result,
+      n => n.type === "rn-pressable" && n.props.children?.props?.children === label,
+    );
+    expect(button).toBeDefined();
+    await act(async () => { fireEvent.press(button!); });
+  };
+
   it("registers a beforeRemove listener via useNavigation().addListener", async () => {
     const result = await renderScreen();
     activeTree = result;
@@ -251,7 +272,7 @@ describe("EditItemScreen — beforeRemove listener (F-040)", () => {
     expect(capturedBeforeRemove).not.toBeNull();
   });
 
-  it("allows navigation when no changes have been made (no alert, no preventDefault)", async () => {
+  it("allows navigation when no changes have been made", async () => {
     const result = await renderScreen();
     activeTree = result;
 
@@ -264,21 +285,48 @@ describe("EditItemScreen — beforeRemove listener (F-040)", () => {
     });
 
     expect(mockPreventDefault).not.toHaveBeenCalled();
-    expect(Alert.alert).not.toHaveBeenCalled();
   });
 
-  it("blocks navigation and shows Discard dialog when there are unsaved changes", async () => {
+  it("leaves immediately from the header Back control when there are no changes", async () => {
     const result = await renderScreen();
     activeTree = result;
 
-    // Use react-test-renderer's raw traversal (result.root!.queryAll) to locate
-    // the rn-textinput stub, bypassing RTLRN's accessibility-based host-type
-    // filtering that would otherwise hide the element from getByTestId/getByPlaceholderText.
-    const descInput = result.root!.queryAll(
-      n => n.type === "rn-textinput" && n.props.placeholder === "Brief description of the part\u2026"
-    )[0];
+    const backButton = findButton(result, "Back");
+    expect(backButton).toBeDefined();
+    await act(async () => { fireEvent.press(backButton!); });
+
+    expect(mockRouterBack).toHaveBeenCalledTimes(1);
+
+    const cancelButton = findButton(result, "Cancel");
+    expect(cancelButton).toBeDefined();
+    await act(async () => { fireEvent.press(cancelButton!); });
+    expect(mockRouterBack).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a visible dialog from Back, preserves edits when kept, and discards once", async () => {
+    const result = await renderScreen();
+    activeTree = result;
+
+    const descInput = findDescriptionInput(result);
     expect(descInput).toBeDefined();
     await act(async () => { fireEvent.changeText(descInput!, "Changed description"); });
+
+    const backButton = findButton(result, "Back");
+    expect(backButton).toBeDefined();
+    await act(async () => { fireEvent.press(backButton!); });
+
+    expectDiscardDialogVisible(result);
+    expect(mockRouterBack).not.toHaveBeenCalled();
+
+    await pressDialogButton(result, "Keep Editing");
+    expect(result.root!.queryAll(n => n.type === "rn-modal")).toHaveLength(0);
+    expect(descInput!.props.value).toBe("Changed description");
+    expect(mockRouterBack).not.toHaveBeenCalled();
+
+    await act(async () => { fireEvent.press(backButton!); });
+    expectDiscardDialogVisible(result);
+    await pressDialogButton(result, "Discard");
+    expect(mockRouterBack).toHaveBeenCalledTimes(1);
 
     const mockPreventDefault = jest.fn();
     await act(async () => {
@@ -287,27 +335,49 @@ describe("EditItemScreen — beforeRemove listener (F-040)", () => {
         data: { action: { type: "GO_BACK" } },
       });
     });
-
-    expect(mockPreventDefault).toHaveBeenCalledTimes(1);
-    expect(Alert.alert).toHaveBeenCalledWith(
-      "Discard changes?",
-      "Your edits will be lost.",
-      expect.arrayContaining([
-        expect.objectContaining({ text: "Keep Editing" }),
-        expect.objectContaining({ text: "Discard", style: "destructive" }),
-      ]),
-    );
+    expect(mockPreventDefault).not.toHaveBeenCalled();
   });
 
-  it("dispatches the original action when Discard is confirmed", async () => {
+  it("shows the same dialog from footer Cancel and completes that exit once", async () => {
     const result = await renderScreen();
     activeTree = result;
 
-    const descInput3 = result.root!.queryAll(
-      n => n.type === "rn-textinput" && n.props.placeholder === "Brief description of the part\u2026"
-    )[0];
-    expect(descInput3).toBeDefined();
-    await act(async () => { fireEvent.changeText(descInput3!, "Changed description"); });
+    const descInput = findDescriptionInput(result);
+    expect(descInput).toBeDefined();
+    await act(async () => { fireEvent.changeText(descInput!, "Changed description"); });
+
+    const cancelButton = findButton(result, "Cancel");
+    expect(cancelButton).toBeDefined();
+    await act(async () => { fireEvent.press(cancelButton!); });
+    expectDiscardDialogVisible(result);
+    expect(mockRouterBack).not.toHaveBeenCalled();
+    await pressDialogButton(result, "Keep Editing");
+    expect(descInput!.props.value).toBe("Changed description");
+    expect(mockRouterBack).not.toHaveBeenCalled();
+
+    await act(async () => { fireEvent.press(cancelButton!); });
+    expectDiscardDialogVisible(result);
+    await pressDialogButton(result, "Discard");
+
+    expect(mockRouterBack).toHaveBeenCalledTimes(1);
+
+    const mockPreventDefault2 = jest.fn();
+    await act(async () => {
+      capturedBeforeRemove!({
+        preventDefault: mockPreventDefault2,
+        data: { action: { type: "GO_BACK" } },
+      });
+    });
+    expect(mockPreventDefault2).not.toHaveBeenCalled();
+  });
+
+  it("dispatches the original action when a blocked navigation is discarded", async () => {
+    const result = await renderScreen();
+    activeTree = result;
+
+    const descInput = findDescriptionInput(result);
+    expect(descInput).toBeDefined();
+    await act(async () => { fireEvent.changeText(descInput!, "Changed description"); });
 
     const originalAction = { type: "GO_BACK" };
     const mockPreventDefault = jest.fn();
@@ -318,55 +388,11 @@ describe("EditItemScreen — beforeRemove listener (F-040)", () => {
       });
     });
 
-    const alertCall = (Alert.alert as jest.Mock).mock.calls[0] as [
-      string,
-      string,
-      Array<{ text: string; onPress?: () => void }>,
-    ];
-    const discardBtn = alertCall[2].find(b => b.text === "Discard");
-    expect(discardBtn).toBeDefined();
-    await act(async () => { discardBtn!.onPress?.(); });
+    expect(mockPreventDefault).toHaveBeenCalledTimes(1);
+    expectDiscardDialogVisible(result);
+    await pressDialogButton(result, "Discard");
 
     expect(mockNavigationDispatch).toHaveBeenCalledWith(originalAction);
-  });
-
-  it("does NOT show a second dialog when Discard was already confirmed (one-shot bypass)", async () => {
-    const result = await renderScreen();
-    activeTree = result;
-
-    const descInput = result.root!.queryAll(
-      n => n.type === "rn-textinput" && n.props.placeholder === "Brief description of the part\u2026"
-    )[0];
-    expect(descInput).toBeDefined();
-    await act(async () => { fireEvent.changeText(descInput!, "Changed description"); });
-
-    const mockPreventDefault = jest.fn();
-    const evt = {
-      preventDefault: mockPreventDefault,
-      data: { action: { type: "GO_BACK" } },
-    };
-
-    // First trigger → dialog shown, Discard pressed.
-    await act(async () => { capturedBeforeRemove!(evt); });
-    const firstAlertCall = (Alert.alert as jest.Mock).mock.calls[0] as [
-      string,
-      string,
-      Array<{ text: string; onPress?: () => void }>,
-    ];
-    const discardBtn = firstAlertCall[2].find(b => b.text === "Discard");
-    await act(async () => { discardBtn!.onPress?.(); });
-
-    // Second trigger (the re-dispatched navigation) → must pass through silently.
-    (Alert.alert as jest.Mock).mockClear();
-    const mockPreventDefault2 = jest.fn();
-    await act(async () => {
-      capturedBeforeRemove!({
-        preventDefault: mockPreventDefault2,
-        data: { action: { type: "GO_BACK" } },
-      });
-    });
-
-    expect(mockPreventDefault2).not.toHaveBeenCalled();
-    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(mockNavigationDispatch).toHaveBeenCalledTimes(1);
   });
 });
