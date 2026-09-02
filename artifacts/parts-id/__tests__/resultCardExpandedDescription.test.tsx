@@ -58,6 +58,12 @@ jest.mock("react-native", () => {
     AppState:     { currentState: "active", addEventListener: jest.fn(() => ({ remove: jest.fn() })) },
     Animated,
     Easing,
+    PanResponder: {
+      create: () => ({
+        panHandlers: {},
+        getInteractionHandle: () => null,
+      }),
+    },
     LayoutAnimation: { configureNext: noop, Presets: { easeInEaseOut: {}, linear: {}, spring: {} } },
     UIManager: { setLayoutAnimationEnabledExperimental: noop },
   };
