@@ -216,7 +216,10 @@ export function useApiStatus({
       if (!isMountedRef.current || generation !== generationRef.current) return;
       if (!res.ok) return;
       const raw = await res.json();
-      const parsed = HealthCheckResponse.safeParse(raw);
+      // The admin single-bot endpoint returns the refreshed bot summary
+      // (`{ bots }`), not the full `/healthz` payload (`{ status, bots }`).
+      // Validate the shared bot shape without requiring an unrelated status.
+      const parsed = HealthCheckResponse.pick({ bots: true }).safeParse(raw);
       if (parsed.success && parsed.data.bots) {
         setBots(parsed.data.bots);
       }

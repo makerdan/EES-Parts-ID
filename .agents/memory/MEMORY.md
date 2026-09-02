@@ -54,3 +54,4 @@
 - [SheetJS ArrayBuffer fixtures](sheetjs-array-buffer-fixtures.md) — type:"array" ODS fixtures return an ArrayBuffer; pass it directly instead of converting it as a number array.
 - [Support analytics privacy](support-analytics-privacy.md) — use keyed rotating grouping or disable unique visitors; disclose bounded UTC windows and suppression.
 - [Knip UI package boundaries](knip-ui-package-boundaries.md) — dynamically discovered components and CSS-only imports need explicit Knip configuration.
+- [Standard-tier database pool pressure](standard-db-pool-pressure.md) — concurrent validation can exhaust PostgreSQL clients; confirm affected API suites in isolation before assigning regression ownership.
