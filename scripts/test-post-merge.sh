@@ -1624,6 +1624,22 @@ if [[ "$PRE_COMMIT_HOOK_EXIT" -ne 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Test 41: validation lock and protected port cleanup recovery
+#
+# Runs focused black-box tests against the production lock and port-cleanup
+# entrypoints. The child-process contention is intentional: these guarantees
+# cannot be proven by source-shape checks alone.
+# ---------------------------------------------------------------------------
+PORT_AUTHORITY_OUTPUT=$(node "$SCRIPT_DIR/test-port-authority.mjs" 2>&1)
+PORT_AUTHORITY_EXIT=$?
+assert_exit "Port Authority recovery — focused contention and cleanup tests" \
+  0 "$PORT_AUTHORITY_EXIT"
+if [[ "$PORT_AUTHORITY_EXIT" -ne 0 ]]; then
+  echo "  Port Authority test output:"
+  echo "$PORT_AUTHORITY_OUTPUT" | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
