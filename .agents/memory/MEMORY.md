@@ -44,6 +44,7 @@
 - [expo-file-system source typecheck leak](expo-fs-src-typecheck.md) — package main points at src/*.ts, so strict tsc flags error inside node_modules; alias subpath to build/*.d.ts via tsconfig paths.
 - [Stale tsbuildinfo empty dist](stale-tsbuildinfo-empty-dist.md) — TS2306 "dist/index.d.ts is not a module" means tsbuildinfo lied; rm the lib's tsconfig.tsbuildinfo and rebuild.
 - [RTLRN migration patterns](rtlrn-migration-patterns.md) — key rules: await render(); root=undefined when component returns null; SVG Text mock must use "Text" not "svg-text"; never render() inside jest.isolateModules(); use await act(async) for onPress calls.
+- [RTLRN custom-host queries](rtrln-custom-host-queries.md) — project RN mocks expose TextInput values as host props; nested labels may need root-tree text traversal instead of display-value/exact-text queries.
 - [Async RN render and unmount](rntl-async-render-unmount.md) — current React 19 RN tests require awaited render/unmount and async act around route transitions.
 - [vendor_map heap-order tests](vendor-map-heap-order-tests.md) — vendor suites depend on physical page order; winners must sit on later pages than rivals (fillfactor 50 + padded re-insert); serialize shared-DB jest runs.
 - [ts-ignore leaks into inferred return type](ts-ignore-worklet-return-leak.md) — @ts-ignore silences its line but the property still enters the object's inferred type and errors at the use site; cast the value instead.
