@@ -93,6 +93,27 @@ describe("vendorNameResolution — every PRIMARY_VENDORS name resolves to the de
   }
 });
 
+describe("vendorNameResolution — conflict winners are independent of database row order", () => {
+  const permutations = [
+    [...PRIMARY_VENDORS].reverse(),
+    [...PRIMARY_VENDORS].sort((a, b) => b.code.localeCompare(a.code)),
+  ].map((vendors) => [vendors]);
+
+  it.each(permutations)("resolves aliases consistently for an arbitrary row order", (vendors) => {
+    const map = buildReverseVendorMap(vendors);
+
+    for (const [alias, expectedCode] of CONFLICT_WINNERS) {
+      expect({
+        alias,
+        resolved: resolveVendorCode(alias, map),
+      }).toEqual({
+        alias,
+        resolved: expectedCode,
+      });
+    }
+  });
+});
+
 // ── Tests: CRS and CHC each own their own names ───────────────────────────────
 
 describe("vendorNameResolution — CRS owns all crouse-hinds names; CHC owns its cooper names", () => {
