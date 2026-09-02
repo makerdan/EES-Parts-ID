@@ -56,3 +56,4 @@
 - [Support analytics privacy](support-analytics-privacy.md) — use keyed rotating grouping or disable unique visitors; disclose bounded UTC windows and suppression.
 - [Knip UI package boundaries](knip-ui-package-boundaries.md) — dynamically discovered components and CSS-only imports need explicit Knip configuration.
 - [Standard-tier database pool pressure](standard-db-pool-pressure.md) — concurrent validation can exhaust PostgreSQL clients; confirm affected API suites in isolation before assigning regression ownership.
+- [Mapped Jest context mocks](mapped-jest-context-mocks.md) — when a path is mapped to a manual mock, configure that exported mock instance; a separate local spy may not be consumed by the screen.
