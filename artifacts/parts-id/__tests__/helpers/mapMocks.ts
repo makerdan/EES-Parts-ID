@@ -1,3 +1,5 @@
+import * as path from "path";
+
 /**
  * Shared Jest mock factories for native modules used across Map/Zone tests.
  *
@@ -10,7 +12,19 @@
  *   jest.mock("@/hooks/useColors",            () => require("./helpers/mapMocks").createUseColorsMock());
  *   jest.mock("@/utils/floorPlanCache",       () => require("./helpers/mapMocks").createFloorPlanCacheMock());
  *   jest.mock("@/utils/mapViewport",          () => require("./helpers/mapMocks").createMapViewportMock());
+ *   jest.mock("react-native",                 () => require("./helpers/mapMocks").createReactNativeMock());
  */
+
+/**
+ * react-native — the canonical artifact-wide mock from __mocks__.
+ *
+ * Keeping this behind a factory lets suites that need an explicit jest.mock()
+ * call use the same maintained API surface as suites that rely on
+ * moduleNameMapper.  Do not recreate partial React Native objects inline.
+ */
+export function createReactNativeMock(): Record<string, unknown> {
+  return jest.requireActual(path.resolve(__dirname, "../../__mocks__/react-native.js")) as Record<string, unknown>;
+}
 
 /** react-native-reanimated — full version with Easing and both default and named exports. */
 export function createReanimatedMock(): object {
