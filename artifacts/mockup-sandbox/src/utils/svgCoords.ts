@@ -55,7 +55,7 @@ export function snapCoordinate(
   return Math.abs(snapped - value) <= Math.max(0, threshold) ? snapped : value;
 }
 
-export function snapPoint(
+function snapPoint(
   point: Pt,
   spacing: number,
   threshold = Math.min(4, spacing / 3),
@@ -66,7 +66,7 @@ export function snapPoint(
   };
 }
 
-export function clampRectPosition(
+function clampRectPosition(
   rect: SvgRect,
   bounds: SvgBounds,
 ): SvgRect {
@@ -216,18 +216,5 @@ export function screenToSvg(
   return {
     x: (clientX - rect.left - tf.x) / tf.s,
     y: (clientY - rect.top - tf.y) / tf.s,
-  };
-}
-
-/**
- * Converts SVG-canvas coordinates back to container-relative screen coordinates.
- *
- * @param pt   Point in SVG-canvas space
- * @param tf   Current canvas transform { x, y, s }
- */
-export function svgToScreen(pt: Pt, tf: SvgTransform): Pt {
-  return {
-    x: pt.x * tf.s + tf.x,
-    y: pt.y * tf.s + tf.y,
   };
 }
