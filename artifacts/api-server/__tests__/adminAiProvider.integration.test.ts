@@ -62,11 +62,15 @@ import { eq } from "drizzle-orm";
 import type { Express } from "express";
 
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
+import {
+  cleanupTestUser,
+  seedTestUser,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 import type * as AiProviderModule from "../src/lib/aiProvider";
 
 // ── Test state ──────────────────────────────────────────────────────────────────
-const NON_ADMIN_USER_ID = "jest-ai-provider-nonadmin";
+const NON_ADMIN_USER_ID = workerQualifiedUserId("jest-ai-provider-nonadmin");
 const adminToken = ADMIN_TEST_USER_ID;
 
 let app: Express;
