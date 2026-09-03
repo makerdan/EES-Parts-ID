@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: sync-readme
@@ -20,7 +19,6 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-      pull-requests: write
     steps:
       - name: Checkout default branch for maintenance
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -31,10 +29,8 @@ jobs:
         shell: bash
         run: cp replit.md README.md
 
-      - name: Commit and open pull request if changed
+      - name: Commit to automation branch if changed
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -52,13 +48,7 @@ jobs:
               git push origin "HEAD:refs/heads/${branch}"
             fi
 
-            if gh pr list --base main --head "$branch" --state open --json number --jq '.[0].number' | grep -q .; then
-              echo "Existing README synchronization pull request updated."
-            else
-              gh pr create \
-                --base main \
-                --head "$branch" \
-                --title "docs: sync README from replit.md" \
-                --body "Automated README synchronization. Merge after required validation passes."
-            fi
+            compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1"
+            echo "README synchronization branch updated: ${compare_url}"
+            printf 'Open a pull request for the protected default branch: %s\n' "$compare_url" >> "$GITHUB_STEP_SUMMARY"
           fi
