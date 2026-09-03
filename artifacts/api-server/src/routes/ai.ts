@@ -1,5 +1,13 @@
 import { getAuth } from "@clerk/express";
-import { AiIdentifyBodySchema, AiPartCardBodySchema,AiTranslateQueryBodySchema } from "@workspace/api-zod";
+import {
+  AiIdentifyBodySchema,
+  AiIdentifyResponseSchema,
+  AiPartCardBodySchema,
+  AiPartCardResponseSchema,
+  AiPartCardSpecResponseSchema,
+  AiTranslateQueryBodySchema,
+  AiTranslateResponseSchema,
+} from "@workspace/api-zod";
 import { db } from "@workspace/db";
 import { aiRequestLogTable, inventoryFtsVector, inventoryTable, partCardCacheTable } from "@workspace/db";
 import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace/integrations-poe-server";
@@ -12,7 +20,14 @@ import { getLogger } from "../lib/logger";
 import { PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET } from "../lib/poeModelLimits";
 import { identifyLimiter, partCardLimiter,translateLimiter } from "../lib/rateLimiter";
-import { buildImageContent, checkImagePayloadSize, checkPerImageSize, extractJsonFromText, isProviderPayloadTooLargeError,normalizeAnalysis } from "../utils/aiHelpers";
+import {
+  buildImageContent,
+  checkImagePayloadSize,
+  checkPerImageSize,
+  isProviderPayloadTooLargeError,
+  normalizeAnalysis,
+  parseAiResponseOr,
+} from "../utils/aiHelpers";
 
 /** Returns the rate-limit key for a request: Clerk userId if available, else IP. */
 function rateLimitKey(req: Parameters<typeof getAuth>[0]): string {
@@ -124,8 +139,14 @@ router.post("/identify", async (req, res) => {
           }),
         );
 
-    const text = response.choices[0]?.message?.content ?? "{}";
-    const analysis = normalizeAnalysis(extractJsonFromText(text), text);
+    const text = response.choices[0]?.message?.content ?? "";
+    const parsed = parseAiResponseOr(
+      text,
+      AiIdentifyResponseSchema,
+      "identify",
+      AiIdentifyResponseSchema.parse({}),
+    );
+    const analysis = normalizeAnalysis(parsed, text);
 
     res.json({
       partNumbers: analysis.partNumbers ?? [],
@@ -236,29 +257,27 @@ router.post("/translate-query", async (req, res) => {
       ],
     });
 
-    const text = response.choices[0]?.message?.content ?? "{}";
-    const parsed = extractJsonFromText(text) ?? {};
+    const text = response.choices[0]?.message?.content ?? "";
+    const parsed = parseAiResponseOr(
+      text,
+      AiTranslateResponseSchema,
+      "query translation",
+      AiTranslateResponseSchema.parse({}),
+    );
 
-    const translatedTerms = Array.isArray(parsed.translatedTerms)
-      ? (parsed.translatedTerms as Array<unknown>).filter((t): t is string => typeof t === "string").slice(0, 8)
-      : [];
-    const interpretation = typeof parsed.interpretation === "string" ? parsed.interpretation : "";
-    const appliedTranslation =
-      typeof parsed.appliedTranslation === "boolean" ? parsed.appliedTranslation : translatedTerms.length > 0;
+    const translatedTerms = parsed.translatedTerms.slice(0, 8);
+    const interpretation = parsed.interpretation;
+    const appliedTranslation = parsed.appliedTranslation || translatedTerms.length > 0;
 
     if (!zeroResults) {
       return void res.json({ translatedTerms, interpretation, appliedTranslation });
     }
 
-    const partName = typeof parsed.partName === "string" ? parsed.partName : "";
-    const partSpecs = Array.isArray(parsed.partSpecs)
-      ? (parsed.partSpecs as Array<unknown>).filter((s): s is string => typeof s === "string").slice(0, 6)
-      : [];
-    const catalogNumbers = Array.isArray(parsed.catalogNumbers)
-      ? (parsed.catalogNumbers as Array<unknown>).filter((s): s is string => typeof s === "string").slice(0, 4)
-      : [];
+    const partName = parsed.partName;
+    const partSpecs = parsed.partSpecs.slice(0, 6);
+    const catalogNumbers = parsed.catalogNumbers.slice(0, 4);
     const suggestedRequery =
-      typeof parsed.suggestedRequery === "string" && parsed.suggestedRequery.trim()
+      parsed.suggestedRequery.trim()
         ? parsed.suggestedRequery.trim()
         : translatedTerms.join(" ");
 
@@ -326,6 +345,36 @@ const partCardCache = new Map<string, { data: object; cachedAt: number; dbCached
 const PART_CARD_L1_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours (in-process hot cache)
 const PART_CARD_DB_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days (DB persistent cache)
 
+function normalizePartCardData(value: unknown): {
+  displayName: string;
+  specs: Array<{ label: string; value: string }>;
+  crossRefs: Array<string>;
+  compatibilityNote: string;
+} | null {
+  const parsed = AiPartCardResponseSchema.safeParse(value);
+  if (!parsed.success) return null;
+
+  const specs = parsed.data.specs
+    .map((spec) => AiPartCardSpecResponseSchema.safeParse(spec))
+    .filter((result): result is { success: true; data: { label: string; value: string } } => result.success)
+    .map((result) => result.data)
+    .slice(0, 10);
+  const crossRefs = parsed.data.crossRefs
+    .filter((ref): ref is string => typeof ref === "string")
+    .slice(0, 6);
+  const compatibilityNote =
+    typeof parsed.data.compatibilityNote === "string"
+      ? parsed.data.compatibilityNote
+      : "";
+
+  return {
+    displayName: parsed.data.displayName,
+    specs,
+    crossRefs,
+    compatibilityNote,
+  };
+}
+
 // POST /ai/part-card
 // Returns web-sourced part info: display name, key specs, cross-refs, compatibility note.
 // Results are cached: L1 in-memory (24h) → L2 database (30-day TTL) → AI call.
@@ -376,10 +425,15 @@ router.post("/part-card", async (req, res) => {
           .limit(1);
 
         if (dbRow) {
-          const data = dbRow.data as object;
-          const dbCachedAt = dbRow.cachedAt instanceof Date ? dbRow.cachedAt.toISOString() : String(dbRow.cachedAt);
-          partCardCache.set(cacheKey, { data, cachedAt: Date.now(), dbCachedAt });
-          return void res.json({ ...data, cachedAt: dbCachedAt });
+          const data = normalizePartCardData(dbRow.data);
+          if (!data) {
+            reqLogger.warn({ cacheKey }, "part-card: invalid DB cache row ignored");
+          } else {
+            const dbCachedAt =
+              dbRow.cachedAt instanceof Date ? dbRow.cachedAt.toISOString() : String(dbRow.cachedAt);
+            partCardCache.set(cacheKey, { data, cachedAt: Date.now(), dbCachedAt });
+            return void res.json({ ...data, cachedAt: dbCachedAt });
+          }
         }
       } catch (dbErr) {
         reqLogger.warn({ err: dbErr }, "part-card: DB cache read failed, proceeding to AI");
@@ -419,24 +473,19 @@ router.post("/part-card", async (req, res) => {
       ],
     });
 
-    const text = response.choices[0]?.message?.content ?? "{}";
-    const parsed = extractJsonFromText(text) ?? {};
+    const text = response.choices[0]?.message?.content ?? "";
+    const parsed = parseAiResponseOr(
+      text,
+      AiPartCardResponseSchema,
+      "part card",
+      AiPartCardResponseSchema.parse({}),
+    );
 
-    const displayName = typeof parsed.displayName === "string" ? parsed.displayName : "";
-    const specs = Array.isArray(parsed.specs)
-      ? (parsed.specs as Array<unknown>).filter(
-          (s): s is { label: string; value: string } =>
-            typeof s === "object" && s !== null &&
-            typeof (s as { label?: unknown }).label === "string" &&
-            typeof (s as { value?: unknown }).value === "string",
-        ).slice(0, 10)
-      : [];
-    const crossRefs = Array.isArray(parsed.crossRefs)
-      ? (parsed.crossRefs as Array<unknown>).filter((s): s is string => typeof s === "string").slice(0, 6)
-      : [];
-    const compatibilityNote = typeof parsed.compatibilityNote === "string" ? parsed.compatibilityNote : "";
-
-    const data = { displayName, specs, crossRefs, compatibilityNote };
+    const data = normalizePartCardData(parsed);
+    if (!data) {
+      throw new Error("Part card response could not be normalized");
+    }
+    const { displayName, specs, crossRefs, compatibilityNote } = data;
 
     // Only cache if we got something useful
     if (displayName || specs.length > 0 || crossRefs.length > 0 || compatibilityNote) {

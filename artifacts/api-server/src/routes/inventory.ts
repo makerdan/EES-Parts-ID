@@ -2,6 +2,8 @@ import { getAuth } from "@clerk/express";
 import {
   AddPartConflictResponse,
   AddPartResponse,
+  AiDimensionsResponseSchema,
+  AiEnrichmentResponseSchema,
   EstimateDimensionsResponse,
   LookupByBarcodeResponse,
   PatchExpandedDescriptionBody,
@@ -44,7 +46,12 @@ import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/po
 import { inventorySearchLimiter } from "../lib/rateLimiter";
 import { buildReverseVendorMap } from "../lib/vendorMap";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
-import { estimateImageBytes } from "../utils/aiHelpers";
+import {
+  estimateImageBytes,
+  MalformedAiResponseError,
+  parseAiResponse,
+  parseAiResponseOr,
+} from "../utils/aiHelpers";
 import { generateKeywords, mergeWithPinned } from "../utils/generateKeywords";
 import { resizeImages } from "../utils/imageResize";
 import { expandMeasurements } from "../utils/measurementConversion";
@@ -164,6 +171,27 @@ function normalizeElectricalUnits(text: string): string {
   result = result.replace(/(\d+)\/(\d+V)\b/g, "$1V/$2");
 
   return result;
+}
+
+function parseEnrichmentResponse(rawText: string): {
+  expandedDescription: string;
+  confidence: number;
+} {
+  const parsed = parseAiResponse(
+    rawText,
+    AiEnrichmentResponseSchema,
+    "description enrichment",
+  );
+  return {
+    expandedDescription: normalizeElectricalUnits(parsed.expandedDescription),
+    confidence: parsed.confidence,
+  };
+}
+
+function safeEnrichmentErrorMessage(err: unknown): string {
+  return err instanceof MalformedAiResponseError
+    ? "AI response was invalid"
+    : String(err);
 }
 
 // ── Module-level dictionary cache ─────────────────────────────────────────────
@@ -1679,7 +1707,7 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
   } catch (err) {
     reqLogger.error({ err }, "[inventory/enrich-sse] SSE enrichment failed");
-    res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
+    res.write(`data: ${JSON.stringify({ error: safeEnrichmentErrorMessage(err) })}\n\n`);
     res.end();
   }
 });
@@ -1908,19 +1936,9 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
                 enrichSystemPrompt,
                 `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`,
               )
-        ) || item.description;
+        );
 
-        let expandedDescription: string = item.description;
-        let confidence: number | null = null;
-        try {
-          const parsed = JSON.parse(rawText) as { expandedDescription?: string; confidence?: number };
-          expandedDescription = parsed.expandedDescription?.trim() || item.description;
-          confidence = typeof parsed.confidence === "number" ? parsed.confidence : null;
-        } catch {
-          expandedDescription = rawText || item.description;
-          confidence = null;
-        }
-        expandedDescription = normalizeElectricalUnits(expandedDescription);
+        const { expandedDescription, confidence } = parseEnrichmentResponse(rawText);
 
         let autoSaved = false;
         if (confidence != null && confidence > 70) {
@@ -1972,7 +1990,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
           partNumber: item.catalog,
           originalDescription: item.description,
           expandedDescription: null,
-          error: String(aiErr),
+          error: safeEnrichmentErrorMessage(aiErr),
           progress: processed,
           total,
         });
@@ -2036,19 +2054,9 @@ router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
             return resp.choices[0]?.message?.content?.trim() ?? "";
           })()
         : await callPoeBotWithChain("enrich", enrichSystemPrompt, userPrompt)
-    ) || item.description;
+    );
 
-    let expandedDescription: string = item.description;
-    let confidence: number | null = null;
-    try {
-      const parsed = JSON.parse(rawText) as { expandedDescription?: string; confidence?: number };
-      expandedDescription = parsed.expandedDescription?.trim() || item.description;
-      confidence = typeof parsed.confidence === "number" ? parsed.confidence : null;
-    } catch {
-      expandedDescription = rawText || item.description;
-      confidence = null;
-    }
-    expandedDescription = normalizeElectricalUnits(expandedDescription);
+    const { expandedDescription, confidence } = parseEnrichmentResponse(rawText);
 
     res.json({
       id: item.id,
@@ -2063,7 +2071,11 @@ router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
       return void res.status(503).json({ error: "poe_chain_exhausted" });
     }
     reqLogger.error({ err }, "[expand-description single] failed");
-    res.status(500).json({ error: String(err) });
+    res.status(500).json({
+      error: err instanceof MalformedAiResponseError
+        ? "Description expansion failed"
+        : String(err),
+    });
   }
 });
 
@@ -2950,35 +2962,26 @@ async function callDimensionAi(imageBase64: string, mimeType: string, useOpenAiF
 }
 
 function parseDimensionResponse(raw: string): { length: number | null; width: number | null; height: number | null; diameter: number | null } {
-  // Extract the first balanced JSON object from the response.
-  // The flat regex /\{[^}]*\}/ fails on nested braces, so we scan manually.
-  let parsed: Record<string, unknown> = {};
-  const start = raw.indexOf("{");
-  if (start !== -1) {
-    let depth = 0;
-    let end = -1;
-    for (let i = start; i < raw.length; i++) {
-      if (raw[i] === "{") depth++;
-      else if (raw[i] === "}") {
-        depth--;
-        if (depth === 0) { end = i; break; }
-      }
-    }
-    if (end !== -1) {
-      try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { /* keep {} */ }
-    }
-  }
+  const parsed = parseAiResponseOr(
+    raw,
+    AiDimensionsResponseSchema,
+    "dimensions",
+    AiDimensionsResponseSchema.parse({
+      length: null,
+      width: null,
+      height: null,
+      diameter: null,
+    }),
+  );
 
-  const sanitize = (v: unknown): number | null => {
-    const n = Number(v);
-    return isFinite(n) && n > 0 && n <= 100_000 ? Math.round(n * 10) / 10 : null;
-  };
+  const round = (value: number | null): number | null =>
+    value === null ? null : Math.round(value * 10) / 10;
 
   return {
-    length: sanitize(parsed.length),
-    width: sanitize(parsed.width),
-    height: sanitize(parsed.height),
-    diameter: sanitize(parsed.diameter),
+    length: round(parsed.length),
+    width: round(parsed.width),
+    height: round(parsed.height),
+    diameter: round(parsed.diameter),
   };
 }
 
