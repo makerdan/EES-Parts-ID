@@ -224,6 +224,7 @@ it in sync with this table when checks change. Note: `tsc` subsumes
 | _(new)_ | `plan-gate-check` | fast (strict Failure Gate lint) |
 | _(new)_ | `plan-gate-stubs` | fast (stub-placeholder warning count; always exits 0) |
 | _(new)_ | `regression-guard-fix` / `regression-guard` | fast (task-scoped declaration repair then strict check) |
+| _(new)_ | `skill-mirror-sync-contract` | fast (account authority, local projection, and downstream mirror boundary) |
 | _(new)_ | `failure-gate-contract` | standard (focused integration contract) |
 | `api-server-coverage` | `api-server-coverage` | standard-plus / heavy |
 | `api-server-typecheck` | `api-server-typecheck` | fast (via `tsc`) |

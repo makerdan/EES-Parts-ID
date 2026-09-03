@@ -64,6 +64,9 @@ function isSafeExample(value) {
 function pathFinding(filePath) {
   const normalized = filePath.replaceAll("\\", "/").toLowerCase();
   if (ALLOWED_ARCHIVES.has(normalized)) return null;
+  if (normalized.startsWith(".agents/skills/.account-projections")) {
+    return "generated account skill projection";
+  }
 
   const segments = normalized.split("/");
   const privateDirectories = new Set([
@@ -208,6 +211,12 @@ function runSelfTests() {
 
   const upload = scanPaths(["attached_assets/customer.pdf"], new Map([["attached_assets/customer.pdf", "not inspected"]]));
   assert(upload.some((finding) => finding.includes("attached_assets/customer.pdf")), "upload path negative control was not rejected");
+
+  const accountProjection = scanPaths(
+    [".agents/skills/.account-projections/private-skill/SKILL.md"],
+    new Map([[".agents/skills/.account-projections/private-skill/SKILL.md", "# private account skill"]]),
+  );
+  assert(accountProjection.some((finding) => finding.includes("generated account skill projection")), "account projection negative control was not rejected");
 
   const credential = "API_KEY=" + "not-a-placeholder-secret-value-123456";
   const credentialFindings = scanPaths(["fixture.txt"], new Map([["fixture.txt", credential]]));

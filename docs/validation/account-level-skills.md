@@ -1,38 +1,61 @@
 # Account-level skill validation contract
 
-## Status
+## Authority and projection boundary
 
-This repository does not own the canonical source for account-level skills. The
-authoritative source is the account/platform-managed skill store that publishes
-skills into the development environment. It is outside the repository and is
-owned by the account/platform skill maintainers.
+The account/platform-managed skill store is authoritative. It is external to
+the repository and is selected for a session by the required
+`ACCOUNT_SKILLS_SOURCE` path. A workspace must never invent a fallback source,
+use timestamps as revisions, or treat a runtime file as authoritative.
 
-`.local/custom_skills/<name>/SKILL.md` is a runtime mirror supplied by that
-platform. It is useful evidence about what this environment received, but it is
-not the source of truth and must not be edited, committed, or used to establish
-the canonical content. The tracked `.agents/skills/` directory is likewise not
-an account-level registry.
+Before a skill is loaded, the account source is read and its non-empty
+`.account-revision` value is compared with the local projection. Account skills
+are discovered deterministically as immediate source directories containing
+`SKILL.md`; every regular supporting file below each directory is projected,
+not just the markdown entrypoint. Symlinks and unexpected source entries are
+rejected.
+
+The generated projection lives at
+`.agents/skills/.account-projections/`. Its `manifest.json` records format,
+account revision, each skill's sorted file list, and a SHA-256 fingerprint over
+the file paths and bytes. The projection is rebuilt in a staging directory,
+validated, and installed under a serialized lock by directory rename. A
+missing manifest, missing file, unexpected file, revision mismatch, fingerprint
+mismatch, or source change during the copy is an incomplete or stale
+projection, never a reason to load old instructions.
+
+This namespace is generated locally and is ignored by git. Workspace-authored
+skills elsewhere under `.agents/skills/` are never overwritten or removed.
+Account-managed content may only be replaced inside the explicit
+`.account-projections` namespace recorded by its manifest. If the account
+source is unavailable, invocation fails closed even when an older projection
+exists.
+
+The projection helper and invocation loader are repository validation tooling;
+they do not edit `.local/custom_skills` and do not publish account content into
+tracked files.
 
 ## Supported validation surface
 
-Until the account/platform owner publishes a supported, read-only interface for
-the canonical store, repository validation is limited to the following:
+The supported repository validation surface is:
 
-1. **Boundary checks** — confirm that repository changes do not add a skill
-   registry, copy account-level skill content into tracked files, or edit
-   platform-managed `.local/custom_skills/` mirrors.
-2. **Runtime mirror checks** — when a mirror is present, check its expected
-   path, readable frontmatter/identity, and any version, revision, or opaque
-   fingerprint metadata that the platform explicitly exposes for that mirror.
-3. **Supported refresh checks** — verify that the platform's documented install
-   or refresh path can be invoked by the account/platform owner and that the
-   resulting mirror reports the expected platform metadata.
+1. **Projection checks** — exercise account-to-workspace refresh, recursive
+   contents, revisions, fingerprints, ownership protection, atomic installation,
+   partial-copy rejection, and fail-closed source handling using isolated
+   fixtures.
+2. **Boundary checks** — confirm generated account projections are ignored and
+   that repository changes do not add a registry, private account content, or
+   edits to `.local/custom_skills`.
+3. **Runtime mirror checks** — when a platform mirror is present, check its
+   expected path, readable identity, and platform-provided revision or opaque
+   fingerprint metadata.
 
 A repository check must not hash a runtime mirror against a repository file,
 reconstruct an account-level registry, infer a canonical version from file
-timestamps, or compare against a copied skill body. If the platform does not
-expose authoritative metadata for a mirror, canonical-content parity is
-**unknown**, not passing and not a repository failure.
+timestamps, or compare against a copied skill body. The projection check uses
+only the supported account source path and its revision. If that source is
+unavailable, the invocation result is failed/blocked and stale instructions
+are not loaded. If the platform does not expose authoritative metadata for its
+disposable runtime mirror, mirror parity is **unknown**, not passing.
 
 The repository may report observations such as mirror missing, mirror
 unreadable, metadata mismatch, or canonical metadata unavailable. It must not
@@ -44,15 +67,29 @@ claim that the account-level source is current based only on the runtime file.
 |---|---|---|
 | Canonical skill content, version, or publication is wrong | Account/platform skill owner | Report the skill identity and observed platform result; do not patch a mirror |
 | Runtime mirror is missing or stale after a supported refresh | Account/platform provisioning/sync owner | Report the environment, mirror identity, and opaque metadata; request platform remediation |
-| Canonical metadata or validation API is unavailable | Account/platform owner | Mark the result unknown and preserve fail-closed behavior for any check declared required by the account/platform contract |
-| Repository adds a copied registry, canonical content, or mirror-edit automation | Repository maintainer | Reject the change; remove the repository-owned copy or automation |
+| Canonical metadata or validation API is unavailable | Account/platform owner | Mark the result unavailable and preserve fail-closed invocation behavior |
+| Repository adds a copied registry, generated account content, or mirror-edit automation | Repository maintainer | Reject the change; remove the repository-owned copy or automation |
 | A focused skill contract is incorrect | The owner of that skill's account-level contract | Keep the focused proposal responsible for its own assertions and remediation |
 
-Failures should include the skill identifier, environment, observed
-platform-provided metadata (without secrets or skill contents), validation
-surface, timestamp, and whether the result is failed, unknown, or blocked by
-provisioning. Remediation must use the supported account/platform refresh or
-publication path. Hand-editing `.local/custom_skills/` is never remediation.
+Failures should include the skill identifier, environment, observed revision or
+fingerprint (without secrets or skill contents), validation surface, timestamp,
+and whether the result is failed, unavailable, or blocked by provisioning.
+Remediation must use the supported account source publication path. Hand-editing
+`.local/custom_skills/` is never remediation.
+
+## Two-stage mirror contract
+
+The direction is intentionally one-way:
+
+1. account source → local workspace projection at
+   `.agents/skills/.account-projections/`; then
+2. workspace skill projection/source → disposable runtime mirror at
+   `.local/custom_skills/<name>/`.
+
+The runtime mirror is the final downstream copy. It may be refreshed by the
+platform or supported post-merge automation and may carry its own opaque
+fingerprint, but it must never flow back into the account source or workspace
+projection. The repository must not edit `.local/custom_skills` directly.
 
 ## Rules for future skill-specific proposals
 
@@ -72,6 +109,5 @@ account/platform owner supplies all of the following:
 The proposal must preserve the ownership boundary in
 `.local/custom_skills/install-github-actions/SKILL.md`: that focused skill
 defines its own validation contract and must not be silently replaced by a
-generic repository mirror check. The existing
-`.local/custom_skills/skill-mirror-sync/SKILL.md` is reference material only; it
-must not be promoted to the account-level source of truth.
+generic repository mirror check. `.local/custom_skills/skill-mirror-sync/` is
+runtime reference material only; it is never promoted to the account source.
