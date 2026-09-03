@@ -243,10 +243,31 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   }
   trap cleanup_background_install EXIT TERM INT
 
+  wait_for_background_install() {
+    if [[ -z "${INSTALL_PID:-}" ]]; then
+      return 0
+    fi
+
+    echo "[post-merge] Waiting for background install (PID ${INSTALL_PID}) before dependency-sensitive steps..."
+    local install_exit=0
+    wait "$INSTALL_PID" || install_exit=$?
+    INSTALL_PID=""
+
+    if [[ "$install_exit" -eq 124 ]]; then
+      echo "[post-merge] ERROR: background install timed out after 120s. See /tmp/post-merge-install.log."
+      return 1
+    elif [[ "$install_exit" -ne 0 ]]; then
+      echo "[post-merge] ERROR: background install exited with code ${install_exit}. See /tmp/post-merge-install.log."
+      return 1
+    fi
+
+    echo "[post-merge] Background install completed successfully."
+    return 0
+  }
+
   # Only run pnpm install if the lockfile changed in the merge.
-  # Run in the background so it does not block the health check within the
-  # 20s platform budget — the API server does not need a reinstall to stay
-  # healthy, and packages are already on disk from the merge.
+  # Run it in the background so cleanup and timeout handling remain centralized,
+  # then wait for it before any dependency-sensitive work below.
   if git --no-optional-locks diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q 'pnpm-lock.yaml'; then
     echo "[post-merge] Lockfile changed — installing dependencies in background..."
     timeout 120 sh -c 'CI=true pnpm install --frozen-lockfile' >> /tmp/post-merge-install.log 2>&1 &
@@ -255,6 +276,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   else
     echo "[post-merge] Lockfile unchanged — skipping install."
   fi
+
+  # Codegen and schema operations resolve workspace dependencies. Never let
+  # them run against the pre-merge node_modules after a lockfile change.
+  wait_for_background_install || exit 1
+
   # Only run db push + FTS verification if schema files changed in the merge.
   # drizzle-kit push --force takes ~60s and the FTS index check takes ~15s even
   # with no changes; skipping both when the schema is untouched is critical for
@@ -342,20 +368,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # Push latest main branch to GitHub after every successful merge.
   # Uses || true so a network error never causes post-merge to report failure.
   bash "$(dirname "$0")/sync-github.sh" || true
-
-  # Wait for background install to finish before health-checking the server.
-  # A server that started before the install completed may crash due to missing
-  # packages; waiting here avoids a spurious health-check failure and restart.
-  if [ -n "${INSTALL_PID:-}" ]; then
-    echo "[post-merge] Waiting for background install (PID ${INSTALL_PID}) to finish..."
-    INSTALL_EXIT=0
-    wait "$INSTALL_PID" || INSTALL_EXIT=$?
-    if [ "$INSTALL_EXIT" -ne 0 ]; then
-      echo "[post-merge] WARNING: background install exited with code ${INSTALL_EXIT} — see /tmp/post-merge-install.log. Proceeding to health check anyway."
-    else
-      echo "[post-merge] Background install completed successfully."
-    fi
-  fi
 
   # First health check pass.
   if check_api_health "initial"; then
