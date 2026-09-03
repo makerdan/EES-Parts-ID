@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: sync-readme
@@ -19,6 +20,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      pull-requests: write
     steps:
       - name: Checkout default branch for maintenance
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -29,8 +31,10 @@ jobs:
         shell: bash
         run: cp replit.md README.md
 
-      - name: Commit and push if changed
+      - name: Commit and open pull request if changed
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -38,6 +42,23 @@ jobs:
           if git diff --cached --quiet; then
             echo "README.md is already up to date — nothing to commit."
           else
+            branch="automation/sync-readme"
+            remote_sha="$(git ls-remote origin "refs/heads/${branch}" | awk '{print $1}')"
+            git checkout -B "$branch"
             git commit -m "docs: sync README.md from replit.md [skip ci]"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
+            if [ -n "$remote_sha" ]; then
+              git push --force-with-lease="refs/heads/${branch}:${remote_sha}" origin "HEAD:refs/heads/${branch}"
+            else
+              git push origin "HEAD:refs/heads/${branch}"
+            fi
+
+            if gh pr list --base main --head "$branch" --state open --json number --jq '.[0].number' | grep -q .; then
+              echo "Existing README synchronization pull request updated."
+            else
+              gh pr create \
+                --base main \
+                --head "$branch" \
+                --title "docs: sync README from replit.md" \
+                --body "Automated README synchronization. Merge after required validation passes."
+            fi
           fi
