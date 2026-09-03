@@ -36,6 +36,8 @@ lib/
   api-zod/        # Generated Zod validators
   api-client-react/ # Generated React Query hooks
 scripts/          # CI helpers, codegen, port guards
+data/
+  public/            # intentionally public warehouse layout reference data
 ```
 
 ## Getting started
@@ -62,6 +64,17 @@ pnpm install
 | `APP_PASSWORD` | App-level password gate |
 | `AI_INTEGRATIONS_OPENAI_API_KEY` | OpenAI via Replit proxy |
 | `POE_API_KEY2` | Poe AI fallback |
+
+Inventory imports must read a source file supplied outside the repository:
+
+```bash
+DATABASE_URL="$DATABASE_URL" pnpm --filter @workspace/api-server exec tsx \
+  src/seed/import-spreadsheet.ts /path/to/inventory.xlsx
+```
+
+Do not commit inventory exports, uploaded documents, database backups, or
+operational logs. See [public repository readiness](docs/public-repository-readiness.md)
+for the public/private data boundary and the deterministic repository check.
 
 ### Run (development)
 

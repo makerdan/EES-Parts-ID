@@ -1,3 +1,4 @@
+- [Public repository boundary scans](public-repository-boundary-scans.md) — scan tracked source while excluding the guard’s own negative controls and generated bundles; history listings need an explicit output buffer.
 - [SVG viewBox origin normalization](svg-viewbox-origin-normalization.md) — sharp rasterizes relative to SVG viewBox origin; rewrite to "0 0 W H" before tiling so tiles and zone overlay share the same coordinate frame.
 - [ts-jest inline tsconfig paths](ts-jest-paths.md) — inline tsconfig object in jest.config.js does NOT inherit from tsconfig.json; must re-declare all paths explicitly.
 - [Metro silent HTTP 500 in production build](metro-oom-build.md) — React Compiler Babel worker crash (NOT OOM) causes silent Metro HTTP 500; fix with "use no memo" on large components.

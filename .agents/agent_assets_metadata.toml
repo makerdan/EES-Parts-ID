@@ -13,12 +13,6 @@ type = "text"
 title = "Merged Tasks Record (updated)"
 
 [[outputs]]
-id = "upIFKTsl-iuEspeuhoF84"
-uri = "file://warehouse_zones_backup_2026-07-05.csv"
-type = "table"
-title = "Zone shapes backup — 819 rows (2026-07-05)"
-
-[[outputs]]
 id = "by8gWjyMiVIzJb-sze6ZR"
 uri = "file://.local/custom_skills/port-authority/SKILL.md"
 type = "text"
@@ -59,10 +53,3 @@ id = "dm8G808uNohnX-004O9KQ"
 uri = "file://artifacts/task-triage-skill.zip"
 type = "unspecified"
 title = "Task Triage — SKILL.md"
-
-[[outputs]]
-id = "3luBc7yMaHqVNjrkjikVB"
-uri = "file://exports/react-render-audit.zip"
-type = "unspecified"
-title = "React Render & Memory Audit skill"
-description = "Canonical ZIP archive of .agents/skills/react-render-audit, containing SKILL.md."
