@@ -183,7 +183,7 @@ importers:
         specifier: ^6.27.0
         version: 6.35.0(ws@8.21.0)(zod@4.4.3)
       pdfjs-dist:
-        specifier: ^6.2.108
+        specifier: ^6.3.289
         version: 6.3.289
       pino:
         specifier: ^9
