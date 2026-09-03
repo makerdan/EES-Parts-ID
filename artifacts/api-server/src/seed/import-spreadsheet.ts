@@ -15,11 +15,14 @@
 
 import { db, pool } from "@workspace/db";
 import { inventoryFtsVector, inventoryTable } from "@workspace/db";
+import { assertDatabaseExecutionMode } from "@workspace/db/runtime-data-boundary";
 import { sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
 
 const XLSX_PATH = process.argv[2] ?? process.env.INVENTORY_XLSX_PATH;
 const BATCH_SIZE = 250;
+
+assertDatabaseExecutionMode("seed");
 
 interface SpreadsheetRow {
   [key: string]: string;

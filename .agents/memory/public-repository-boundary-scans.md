@@ -15,6 +15,7 @@ constants, dependency metadata, and the scanner itself; the first complete
 history listing also failed before producing a result.
 
 **How to apply:** Keep checks narrowly focused on known credential formats,
-synthetic test allowlists, and prohibited path classes. Report historical
-private paths for owner-led purge rather than treating current-tree deletion as
-history remediation.
+synthetic test allowlists, and prohibited path classes. Use clearly synthetic
+`test-*` values in credential-shaped fixtures because test files are still
+scanned. Report historical private paths for owner-led purge rather than
+treating current-tree deletion as history remediation.
