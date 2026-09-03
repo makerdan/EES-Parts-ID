@@ -111,8 +111,8 @@ function validateWorkflowContract(files, coverage) {
   }
   if (!/^  schedule:/m.test(audit) || !/^  workflow_dispatch:/m.test(audit)) errors.push("scheduled-audit.yml: missing schedule/manual events");
   if (!/^  schedule:/m.test(readme) || !/^  workflow_dispatch:/m.test(readme)) errors.push("sync-readme.yml: missing schedule/manual events");
-  if (!/pull-requests:\s+write/.test(readme) || !/gh pr create/.test(readme)) {
-    errors.push("sync-readme.yml: protected-branch maintenance must open a pull request");
+  if (!/branch="automation\/sync-readme"/.test(readme) || !/compare\/main\.\.\.\$\{branch\}\?expand=1/.test(readme)) {
+    errors.push("sync-readme.yml: protected-branch maintenance must publish a reviewable automation branch");
   }
   if (/git push origin "HEAD:\$\{GITHUB_REF_NAME\}"/.test(readme)) {
     errors.push("sync-readme.yml: must not push maintenance changes directly to the protected default branch");
