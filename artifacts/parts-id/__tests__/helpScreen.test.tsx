@@ -2,6 +2,7 @@
 
 import React from "react";
 import { act, fireEvent, render } from "@testing-library/react-native";
+import { HELP_ERROR_CODES, type HelpErrorCode } from "@workspace/api-zod";
 
 const mockApp = {
   isAdmin: false,
@@ -64,7 +65,7 @@ jest.mock("@clerk/expo", () => ({
 
 import HelpScreen from "@/app/(tabs)/help";
 import { saveHelpOrientationDismissed } from "@/utils/helpStorage";
-import { askHelpQuestion, fetchHelpRecords, HelpApiError, type HelpErrorCode } from "@/utils/helpApi";
+import { askHelpQuestion, fetchHelpRecords, HelpApiError } from "@/utils/helpApi";
 
 async function settle() {
   await act(async () => {
@@ -75,6 +76,16 @@ async function settle() {
 }
 
 describe("Help screen", () => {
+  const expectedErrorTitles: Record<HelpErrorCode, string> = {
+    HELP_UNSUPPORTED: "That topic is outside Help",
+    HELP_RATE_LIMITED: "Help is receiving a lot of questions",
+    HELP_AUTHORIZATION_UNAVAILABLE: "Help assistant unavailable",
+    HELP_TIMEOUT: "Help took too long to respond",
+    HELP_PROVIDER_UNAVAILABLE: "Help assistant unavailable",
+    HELP_PROVIDER_RATE_LIMITED: "Help is receiving a lot of questions",
+    HELP_INVALID_REQUEST: "Help assistant unavailable",
+  };
+
   beforeEach(() => {
     mockApp.isAdmin = false;
     jest.clearAllMocks();
@@ -115,21 +126,15 @@ describe("Help screen", () => {
     expect(result.queryByText("Admin workflow")).toBeNull();
   });
 
-  it.each([
-    ["HELP_UNSUPPORTED", "That topic is outside Help"],
-    ["HELP_RATE_LIMITED", "Help is receiving a lot of questions"],
-    ["HELP_PROVIDER_RATE_LIMITED", "Help is receiving a lot of questions"],
-    ["HELP_TIMEOUT", "Help took too long to respond"],
-    ["HELP_PROVIDER_UNAVAILABLE", "Help assistant unavailable"],
-  ])("shows recovery controls for %s", async (code, title) => {
-    (askHelpQuestion as jest.Mock).mockRejectedValueOnce(new HelpApiError(code as HelpErrorCode, "The assistant could not answer."));
+  it.each(HELP_ERROR_CODES)("shows recovery controls for %s", async (code) => {
+    (askHelpQuestion as jest.Mock).mockRejectedValueOnce(new HelpApiError(code, "The assistant could not answer."));
     const result = await render(<HelpScreen />);
     await settle();
     await act(async () => fireEvent.changeText(result.getByLabelText("Ask a Help question"), "How do I search?"));
     await act(async () => fireEvent.press(result.getByLabelText("Send Help question")));
     await settle();
 
-    expect(result.getByText(title)).toBeTruthy();
+    expect(result.getByText(expectedErrorTitles[code])).toBeTruthy();
     expect(result.getByText("Retry")).toBeTruthy();
     expect(result.getByText("Contact support")).toBeTruthy();
   });

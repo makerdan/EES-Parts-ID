@@ -1,5 +1,6 @@
 import { useAuth } from "@clerk/expo";
 import { Feather } from "@expo/vector-icons";
+import { HELP_ERROR_CODE, type HelpErrorCode } from "@workspace/api-zod";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -27,12 +28,21 @@ import {
 } from "@/utils/helpStorage";
 
 type AssistantState = "idle" | "loading" | "success" | "unsupported" | "rate-limited" | "timeout" | "provider-outage";
+type AssistantFailureState = Exclude<AssistantState, "idle" | "loading" | "success">;
 
-function errorState(error: unknown): Exclude<AssistantState, "idle" | "loading" | "success"> {
+const HELP_ERROR_STATE_BY_CODE: Record<HelpErrorCode, AssistantFailureState> = {
+  [HELP_ERROR_CODE.UNSUPPORTED]: "unsupported",
+  [HELP_ERROR_CODE.RATE_LIMITED]: "rate-limited",
+  [HELP_ERROR_CODE.AUTHORIZATION_UNAVAILABLE]: "provider-outage",
+  [HELP_ERROR_CODE.TIMEOUT]: "timeout",
+  [HELP_ERROR_CODE.PROVIDER_UNAVAILABLE]: "provider-outage",
+  [HELP_ERROR_CODE.PROVIDER_RATE_LIMITED]: "rate-limited",
+  [HELP_ERROR_CODE.INVALID_REQUEST]: "provider-outage",
+};
+
+function errorState(error: unknown): AssistantFailureState {
   if (error instanceof HelpApiError) {
-    if (error.code === "HELP_UNSUPPORTED") return "unsupported";
-    if (error.code === "HELP_RATE_LIMITED" || error.code === "HELP_PROVIDER_RATE_LIMITED") return "rate-limited";
-    if (error.code === "HELP_TIMEOUT") return "timeout";
+    return HELP_ERROR_STATE_BY_CODE[error.code];
   }
   return "provider-outage";
 }
@@ -241,7 +251,7 @@ export default function HelpScreen() {
       if (!mountedRef.current || generation !== generationRef.current || controller.signal.aborted) return;
       const apiError = error instanceof HelpApiError
         ? error
-        : new HelpApiError("HELP_PROVIDER_UNAVAILABLE", "The Help assistant is unavailable right now.");
+        : new HelpApiError(HELP_ERROR_CODE.PROVIDER_UNAVAILABLE, "The Help assistant is unavailable right now.");
       setAssistantError(apiError);
       setAssistantState(errorState(apiError));
     }

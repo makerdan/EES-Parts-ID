@@ -1,3 +1,5 @@
+import { HELP_ERROR_CODE, type HelpErrorCode } from "@workspace/api-zod";
+
 import { getAiClient, getReferenceModel } from "./aiProvider";
 import {
   ALL_HELP_RECORDS,
@@ -20,12 +22,7 @@ export const HELP_ASSISTANT_LIMITS = {
   timeoutMs: 8_000,
 } as const;
 
-export type HelpAssistantErrorCode =
-  | "HELP_UNSUPPORTED"
-  | "HELP_AUTHORIZATION_UNAVAILABLE"
-  | "HELP_TIMEOUT"
-  | "HELP_PROVIDER_UNAVAILABLE"
-  | "HELP_PROVIDER_RATE_LIMITED";
+export type HelpAssistantErrorCode = HelpErrorCode;
 
 export class HelpAssistantError extends Error {
   constructor(
@@ -197,7 +194,7 @@ async function callHelpProvider(
       timeout = setTimeout(() => {
         controller.abort();
         reject(new HelpAssistantError(
-          "HELP_TIMEOUT",
+          HELP_ERROR_CODE.TIMEOUT,
           "The Help assistant timed out.",
           504,
           true,
@@ -209,7 +206,7 @@ async function callHelpProvider(
     const answer = response.choices[0]?.message?.content?.trim() ?? "";
     if (!answer) {
       throw new HelpAssistantError(
-        "HELP_PROVIDER_UNAVAILABLE",
+        HELP_ERROR_CODE.PROVIDER_UNAVAILABLE,
         "The Help assistant is temporarily unavailable.",
         503,
         true,
@@ -222,7 +219,7 @@ async function callHelpProvider(
     if (err instanceof HelpAssistantError) throw err;
     if (isProviderRateLimited(err)) {
       throw new HelpAssistantError(
-        "HELP_PROVIDER_RATE_LIMITED",
+        HELP_ERROR_CODE.PROVIDER_RATE_LIMITED,
         "The Help assistant is busy. Please retry shortly or contact support.",
         503,
         true,
@@ -230,14 +227,14 @@ async function callHelpProvider(
     }
     if (isProviderTimeout(err)) {
       throw new HelpAssistantError(
-        "HELP_TIMEOUT",
+        HELP_ERROR_CODE.TIMEOUT,
         "The Help assistant timed out. Please retry or contact support.",
         504,
         true,
       );
     }
     throw new HelpAssistantError(
-      "HELP_PROVIDER_UNAVAILABLE",
+      HELP_ERROR_CODE.PROVIDER_UNAVAILABLE,
       "The Help assistant is temporarily unavailable. Please retry or contact support.",
       503,
       true,
@@ -255,7 +252,7 @@ export async function answerHelpQuestion(args: {
   const records = selectHelpRecords(args.question, args.includeAdmin);
   if (records.length === 0) {
     throw new HelpAssistantError(
-      "HELP_UNSUPPORTED",
+      HELP_ERROR_CODE.UNSUPPORTED,
       "I couldn't find that in the approved Parts ID Help content. Please contact support.",
       422,
       false,

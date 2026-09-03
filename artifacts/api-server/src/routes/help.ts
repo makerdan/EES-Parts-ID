@@ -1,4 +1,5 @@
 import { getAuth } from "@clerk/express";
+import { HELP_ANSWER_CODE, HELP_ERROR_CODE, type HelpErrorCode } from "@workspace/api-zod";
 import { type Request, type Response, Router } from "express";
 
 import {
@@ -24,6 +25,19 @@ import { hasCurrentAdminAccess, requireAdminAuth } from "../middlewares/requireA
 
 const router = Router();
 const WORKFLOW_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+function sendHelpError(
+  res: Response,
+  status: number,
+  body: {
+    error: string;
+    code: HelpErrorCode;
+    retryable?: boolean;
+    contactFallback?: boolean;
+  },
+): void {
+  res.status(status).json(body);
+}
 
 function parseWorkflow(req: Request): string | undefined {
   const raw = req.query["workflow"];
@@ -76,7 +90,7 @@ router.post("/ask", async (req, res) => {
       res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
       return void res.status(429).json({
         error: "Too many Help requests. Please retry shortly or contact support.",
-        code: "HELP_RATE_LIMITED",
+        code: HELP_ERROR_CODE.RATE_LIMITED,
         retryable: true,
       });
     }
@@ -86,20 +100,20 @@ router.post("/ask", async (req, res) => {
       history?: unknown;
     };
     if (typeof body?.question !== "string" || !body.question.trim()) {
-      return void res.status(400).json({ error: "question is required", code: "HELP_INVALID_REQUEST" });
+      return void sendHelpError(res, 400, { error: "question is required", code: HELP_ERROR_CODE.INVALID_REQUEST });
     }
     if (body.question.length > HELP_ASSISTANT_LIMITS.maxQuestionLength) {
-      return void res.status(400).json({
+      return void sendHelpError(res, 400, {
         error: `question must be ${HELP_ASSISTANT_LIMITS.maxQuestionLength} characters or fewer`,
-        code: "HELP_INVALID_REQUEST",
+        code: HELP_ERROR_CODE.INVALID_REQUEST,
       });
     }
 
     const history = body.history === undefined ? [] : body.history;
     if (!Array.isArray(history) || history.length > HELP_ASSISTANT_LIMITS.maxHistoryItems) {
-      return void res.status(400).json({
+      return void sendHelpError(res, 400, {
         error: `history must contain at most ${HELP_ASSISTANT_LIMITS.maxHistoryItems} items`,
-        code: "HELP_INVALID_REQUEST",
+        code: HELP_ERROR_CODE.INVALID_REQUEST,
       });
     }
     for (const item of history) {
@@ -111,9 +125,9 @@ router.post("/ask", async (req, res) => {
         (item as { q: string }).q.length > HELP_ASSISTANT_LIMITS.maxHistoryItemLength ||
         (item as { a: string }).a.length > HELP_ASSISTANT_LIMITS.maxHistoryItemLength
       ) {
-        return void res.status(400).json({
+        return void sendHelpError(res, 400, {
           error: `each history item must have q and a strings of ${HELP_ASSISTANT_LIMITS.maxHistoryItemLength} characters or fewer`,
-          code: "HELP_INVALID_REQUEST",
+          code: HELP_ERROR_CODE.INVALID_REQUEST,
         });
       }
     }
@@ -125,7 +139,7 @@ router.post("/ask", async (req, res) => {
       includeAdmin = await hasCurrentAdminAccess(req);
     } catch {
       throw new HelpAssistantError(
-        "HELP_AUTHORIZATION_UNAVAILABLE",
+        HELP_ERROR_CODE.AUTHORIZATION_UNAVAILABLE,
         "Help authorization is temporarily unavailable. Please retry or contact support.",
         503,
         true,
@@ -143,7 +157,7 @@ router.post("/ask", async (req, res) => {
         reqLogger.debug({ audience: includeAdmin ? "admin" : "general" }, "help.ask cache hit");
         return void res.json({
           answer: cached,
-          code: "HELP_ANSWER",
+          code: HELP_ANSWER_CODE,
           cached: true,
         });
       }
@@ -164,23 +178,23 @@ router.post("/ask", async (req, res) => {
     }
     return void res.json({
       answer: result.answer,
-      code: "HELP_ANSWER",
+      code: HELP_ANSWER_CODE,
       cached: false,
     });
   } catch (err) {
     if (err instanceof HelpAssistantError) {
       reqLogger.warn({ code: err.code }, "help.ask handled failure");
-      return void res.status(err.status).json({
+      return void sendHelpError(res, err.status, {
         error: err.message,
         code: err.code,
         retryable: err.retryable,
-        contactFallback: err.code !== "HELP_UNSUPPORTED",
+        contactFallback: err.code !== HELP_ERROR_CODE.UNSUPPORTED,
       });
     }
     reqLogger.error({ err }, "help.ask authorization or request failure");
-    return void res.status(503).json({
+    return void sendHelpError(res, 503, {
       error: "The Help assistant is temporarily unavailable. Please retry or contact support.",
-      code: "HELP_PROVIDER_UNAVAILABLE",
+      code: HELP_ERROR_CODE.PROVIDER_UNAVAILABLE,
       retryable: true,
       contactFallback: true,
     });

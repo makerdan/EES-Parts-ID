@@ -24,6 +24,7 @@ module.exports = {
     "^@/(.*)$": "<rootDir>/$1",
     "^@workspace/zone-validation$": "<rootDir>/../../lib/zone-validation/src/index.ts",
     "^@workspace/api-client-react$": "<rootDir>/../../lib/api-client-react/src/index.ts",
+    "^@workspace/api-zod$": "<rootDir>/../../lib/api-zod/src/index.ts",
   },
   transform: {
     "^.+\\.tsx?$": [
@@ -43,6 +44,7 @@ module.exports = {
             "@workspace/api-client-react": [
               "../../lib/api-client-react/src/index.ts",
             ],
+            "@workspace/api-zod": ["../../lib/api-zod/src/index.ts"],
           },
         },
       },
