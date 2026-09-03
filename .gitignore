@@ -80,6 +80,13 @@ Thumbs.db
 .cache/
 .local/
 
+# Account-managed skill projections are generated locally from the external
+# account source and must never become repository content.
+/.agents/skills/.account-projections/
+/.agents/skills/.account-projections.lock
+/.agents/skills/.account-projections.staging-*/
+/.agents/skills/.account-projections.backup-*/
+
 # Legacy NX/Angular artefacts (not used)
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
