@@ -84,6 +84,24 @@ const ASK_LOG_QUESTION = "JEST-REF-ASK-LOG-QUESTION";
 const UNKNOWN_USER = "jest-reference-ask-log-unknown-user";
 const NON_ADMIN_ASK_LOG_USER = "jest-reference-ask-log-nonadmin";
 
+const ADMIN_ONLY_REFERENCE_ENDPOINTS = [
+  {
+    name: "GET /api/reference/ask-log",
+    request: () => supertest(app).get("/api/reference/ask-log"),
+  },
+  {
+    name: "POST /api/reference/quick-lookups/:label",
+    request: () =>
+      supertest(app)
+        .post(`/api/reference/quick-lookups/${TEST_LABEL}`)
+        .send({ question: "What is this?" }),
+  },
+  {
+    name: "GET /api/reference/help/admin",
+    request: () => supertest(app).get("/api/reference/help/admin"),
+  },
+] as const;
+
 /**
  * Reconstruct the full answer text from an SSE response body by concatenating
  * every `data: {"content":"…"}` frame in order.
@@ -116,6 +134,18 @@ async function cleanupTestLabel() {
 beforeAll(async () => {
   process.env.ADMIN_CLERK_USER_ID = "jest-admin-user";
   process.env.TEST_DEFAULT_AUTH_USER = "jest-admin-user";
+  await db
+    .insert(usersTable)
+    .values({
+      clerkUserId: NON_ADMIN_ASK_LOG_USER,
+      email: `${NON_ADMIN_ASK_LOG_USER}@test.example`,
+      status: "approved",
+      role: "user",
+    })
+    .onConflictDoUpdate({
+      target: usersTable.clerkUserId,
+      set: { status: "approved", role: "user" },
+    });
   await ensureQuickLookupTable();
   await cleanupTestLabel();
 });
@@ -124,6 +154,9 @@ afterAll(async () => {
   delete process.env.TEST_DEFAULT_AUTH_USER;
   delete process.env.ADMIN_CLERK_USER_ID;
   await cleanupTestLabel();
+  await db
+    .delete(usersTable)
+    .where(eq(usersTable.clerkUserId, NON_ADMIN_ASK_LOG_USER));
 });
 
 beforeEach(() => {
@@ -294,27 +327,12 @@ describe("GET /api/reference/ask-log", () => {
         answer: "Jest reference answer",
         matchedItemCount: 1,
       });
-    await db
-      .insert(usersTable)
-      .values({
-        clerkUserId: NON_ADMIN_ASK_LOG_USER,
-        email: `${NON_ADMIN_ASK_LOG_USER}@test.example`,
-        status: "approved",
-        role: "user",
-      })
-      .onConflictDoUpdate({
-        target: usersTable.clerkUserId,
-        set: { status: "approved", role: "user" },
-      });
   });
 
   afterAll(async () => {
     await db
       .delete(referenceLogTable)
       .where(eq(referenceLogTable.question, ASK_LOG_QUESTION));
-    await db
-      .delete(usersTable)
-      .where(eq(usersTable.clerkUserId, NON_ADMIN_ASK_LOG_USER));
     await db
       .delete(usersTable)
       .where(eq(usersTable.clerkUserId, UNKNOWN_USER));
@@ -371,6 +389,40 @@ describe("GET /api/reference/ask-log", () => {
       ]),
     );
   });
+});
+
+// ── Admin-only reference endpoint authorization contract ─────────────────────
+
+describe("Admin-only reference endpoints", () => {
+  it.each(ADMIN_ONLY_REFERENCE_ENDPOINTS)(
+    "$name rejects an anonymous request",
+    async ({ request }) => {
+      const previousDefaultUser = process.env.TEST_DEFAULT_AUTH_USER;
+      delete process.env.TEST_DEFAULT_AUTH_USER;
+
+      try {
+        const res = await request().expect(401);
+        expect(res.body).toEqual({ error: "Authentication required" });
+      } finally {
+        if (previousDefaultUser === undefined) {
+          delete process.env.TEST_DEFAULT_AUTH_USER;
+        } else {
+          process.env.TEST_DEFAULT_AUTH_USER = previousDefaultUser;
+        }
+      }
+    },
+  );
+
+  it.each(ADMIN_ONLY_REFERENCE_ENDPOINTS)(
+    "$name rejects an approved non-admin",
+    async ({ request }) => {
+      const res = await request()
+        .set("Authorization", `Bearer ${NON_ADMIN_ASK_LOG_USER}`)
+        .expect(403);
+
+      expect(res.body).toEqual({ error: "Admin access required" });
+    },
+  );
 });
 
 // ── GET /api/reference/quick-lookups ──────────────────────────────────────────

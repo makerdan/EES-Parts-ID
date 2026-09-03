@@ -18,9 +18,17 @@ import helpRouter from "./help";
 
 const router = Router();
 
-// Compatibility namespace for clients that group the app-only Help contract
-// beside the existing Reference assistant. Both paths use the same guarded
-// router and content cache.
+// Reference namespace audience map:
+// - /ask and GET /quick-lookups[/:label]: approved app users; /ask limits
+//   privileged knowledge inside the handler instead of exposing admin content.
+// - GET /ask-log and POST /quick-lookups/:label: administrators only.
+// - /help: approved app users for general records; /help/admin: administrators
+//   only. Both Help audiences use the same server-side requireAdminAuth guard
+//   where privileged content is served.
+//
+// The Help compatibility namespace lets clients group the app-only Help
+// contract beside the existing Reference assistant. Both paths use the same
+// guarded router and content cache.
 router.use("/help", helpRouter);
 
 const GENERIC_ERROR_MESSAGE =
