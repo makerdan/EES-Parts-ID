@@ -1111,6 +1111,172 @@ export const AdminRestartResponse = zod.object({
 
 
 /**
+ * @summary Get Poe catalogue, probe health, and effective AI routes
+ */
+export const GetAdminAiStatusResponse = zod.object({
+  "provider": zod.enum(['poe', 'openai']),
+  "catalogue": zod.object({
+  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "models": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "modalities": zod.array(zod.string()),
+  "capabilities": zod.object({
+  "text": zod.boolean().nullable(),
+  "vision": zod.boolean().nullable(),
+  "structuredOutput": zod.boolean().nullable()
+})
+})),
+  "fetchedAt": zod.coerce.date().nullable(),
+  "lastSuccessAt": zod.coerce.date().nullable(),
+  "error": zod.string().nullable()
+}),
+  "bots": zod.record(zod.string(), zod.enum(['ok', 'timeout', '404', 'error'])),
+  "routes": zod.array(zod.object({
+  "feature": zod.enum(['enrich', 'identify', 'dimensions', 'catalog']),
+  "primary": zod.string(),
+  "fallbacks": zod.array(zod.string()),
+  "effective": zod.array(zod.string())
+})),
+  "overrides": zod.record(zod.string(), zod.array(zod.string())),
+  "reference": zod.object({
+  "provider": zod.enum(['gemini']),
+  "readOnly": zod.boolean(),
+  "note": zod.string()
+})
+})
+
+
+/**
+ * @summary Refresh the live Poe model catalogue
+ */
+export const RefreshAdminPoeCatalogueResponse = zod.object({
+  "provider": zod.enum(['poe', 'openai']),
+  "catalogue": zod.object({
+  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "models": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "modalities": zod.array(zod.string()),
+  "capabilities": zod.object({
+  "text": zod.boolean().nullable(),
+  "vision": zod.boolean().nullable(),
+  "structuredOutput": zod.boolean().nullable()
+})
+})),
+  "fetchedAt": zod.coerce.date().nullable(),
+  "lastSuccessAt": zod.coerce.date().nullable(),
+  "error": zod.string().nullable()
+}),
+  "bots": zod.record(zod.string(), zod.enum(['ok', 'timeout', '404', 'error'])),
+  "routes": zod.array(zod.object({
+  "feature": zod.enum(['enrich', 'identify', 'dimensions', 'catalog']),
+  "primary": zod.string(),
+  "fallbacks": zod.array(zod.string()),
+  "effective": zod.array(zod.string())
+})),
+  "overrides": zod.record(zod.string(), zod.array(zod.string())),
+  "reference": zod.object({
+  "provider": zod.enum(['gemini']),
+  "readOnly": zod.boolean(),
+  "note": zod.string()
+})
+})
+
+
+/**
+ * @summary Save capability-safe Poe fallback choices
+ */
+
+export const updateAdminAiRoutesBodyFallbacksMax = 5;
+
+
+export const updateAdminAiRoutesBodyRoutesMaxOne = 5;
+
+
+
+export const UpdateAdminAiRoutesBody = zod.object({
+  "feature": zod.enum(['enrich', 'identify', 'dimensions', 'catalog']).optional(),
+  "fallbacks": zod.array(zod.string().min(1)).max(updateAdminAiRoutesBodyFallbacksMax).optional(),
+  "routes": zod.record(zod.string(), zod.array(zod.string().min(1)).max(updateAdminAiRoutesBodyRoutesMaxOne)).optional()
+}).describe('Provide either one feature\/fallbacks pair or a routes object.')
+
+export const UpdateAdminAiRoutesResponse = zod.object({
+  "provider": zod.enum(['poe', 'openai']),
+  "catalogue": zod.object({
+  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "models": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "modalities": zod.array(zod.string()),
+  "capabilities": zod.object({
+  "text": zod.boolean().nullable(),
+  "vision": zod.boolean().nullable(),
+  "structuredOutput": zod.boolean().nullable()
+})
+})),
+  "fetchedAt": zod.coerce.date().nullable(),
+  "lastSuccessAt": zod.coerce.date().nullable(),
+  "error": zod.string().nullable()
+}),
+  "bots": zod.record(zod.string(), zod.enum(['ok', 'timeout', '404', 'error'])),
+  "routes": zod.array(zod.object({
+  "feature": zod.enum(['enrich', 'identify', 'dimensions', 'catalog']),
+  "primary": zod.string(),
+  "fallbacks": zod.array(zod.string()),
+  "effective": zod.array(zod.string())
+})),
+  "overrides": zod.record(zod.string(), zod.array(zod.string())),
+  "reference": zod.object({
+  "provider": zod.enum(['gemini']),
+  "readOnly": zod.boolean(),
+  "note": zod.string()
+})
+})
+
+
+/**
+ * @summary Reset Poe fallback choices to code defaults
+ */
+export const ResetAdminAiRoutesBody = zod.object({
+  "feature": zod.enum(['enrich', 'identify', 'dimensions', 'catalog']).optional()
+})
+
+export const ResetAdminAiRoutesResponse = zod.object({
+  "provider": zod.enum(['poe', 'openai']),
+  "catalogue": zod.object({
+  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "models": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "modalities": zod.array(zod.string()),
+  "capabilities": zod.object({
+  "text": zod.boolean().nullable(),
+  "vision": zod.boolean().nullable(),
+  "structuredOutput": zod.boolean().nullable()
+})
+})),
+  "fetchedAt": zod.coerce.date().nullable(),
+  "lastSuccessAt": zod.coerce.date().nullable(),
+  "error": zod.string().nullable()
+}),
+  "bots": zod.record(zod.string(), zod.enum(['ok', 'timeout', '404', 'error'])),
+  "routes": zod.array(zod.object({
+  "feature": zod.enum(['enrich', 'identify', 'dimensions', 'catalog']),
+  "primary": zod.string(),
+  "fallbacks": zod.array(zod.string()),
+  "effective": zod.array(zod.string())
+})),
+  "overrides": zod.record(zod.string(), zod.array(zod.string())),
+  "reference": zod.object({
+  "provider": zod.enum(['gemini']),
+  "readOnly": zod.boolean(),
+  "note": zod.string()
+})
+})
+
+
+/**
  * @deprecated
  * @summary [Deprecated] Use /reference/ask instead
  */

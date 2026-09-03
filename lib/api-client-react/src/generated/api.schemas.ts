@@ -463,6 +463,112 @@ export interface AdminRestartResponse {
   restarting: boolean;
 }
 
+export interface PoeModelCapabilities {
+  text: boolean | null;
+  vision: boolean | null;
+  structuredOutput: boolean | null;
+}
+
+export interface PoeCatalogueModel {
+  id: string;
+  name: string;
+  modalities: string[];
+  capabilities: PoeModelCapabilities;
+}
+
+export type PoeCatalogueFreshness = typeof PoeCatalogueFreshness[keyof typeof PoeCatalogueFreshness];
+
+
+export const PoeCatalogueFreshness = {
+  fresh: 'fresh',
+  stale: 'stale',
+  unavailable: 'unavailable',
+} as const;
+
+export interface PoeCatalogue {
+  freshness: PoeCatalogueFreshness;
+  models: PoeCatalogueModel[];
+  fetchedAt: string | null;
+  lastSuccessAt: string | null;
+  error: string | null;
+}
+
+export type PoeFeatureRouteFeature = typeof PoeFeatureRouteFeature[keyof typeof PoeFeatureRouteFeature];
+
+
+export const PoeFeatureRouteFeature = {
+  enrich: 'enrich',
+  identify: 'identify',
+  dimensions: 'dimensions',
+  catalog: 'catalog',
+} as const;
+
+export interface PoeFeatureRoute {
+  feature: PoeFeatureRouteFeature;
+  primary: string;
+  fallbacks: string[];
+  effective: string[];
+}
+
+export type AdminAiStatusProvider = typeof AdminAiStatusProvider[keyof typeof AdminAiStatusProvider];
+
+
+export const AdminAiStatusProvider = {
+  poe: 'poe',
+  openai: 'openai',
+} as const;
+
+export type AdminAiStatusBots = {[key: string]: 'ok' | 'timeout' | '404' | 'error'};
+
+export type AdminAiStatusOverrides = {[key: string]: string[]};
+
+export type AdminAiStatusReferenceProvider = typeof AdminAiStatusReferenceProvider[keyof typeof AdminAiStatusReferenceProvider];
+
+
+export const AdminAiStatusReferenceProvider = {
+  gemini: 'gemini',
+} as const;
+
+export type AdminAiStatusReference = {
+  provider: AdminAiStatusReferenceProvider;
+  readOnly: boolean;
+  note: string;
+};
+
+export interface AdminAiStatus {
+  provider: AdminAiStatusProvider;
+  catalogue: PoeCatalogue;
+  bots: AdminAiStatusBots;
+  routes: PoeFeatureRoute[];
+  overrides: AdminAiStatusOverrides;
+  reference: AdminAiStatusReference;
+}
+
+export type AdminAiRoutesUpdateFeature = typeof AdminAiRoutesUpdateFeature[keyof typeof AdminAiRoutesUpdateFeature];
+
+
+export const AdminAiRoutesUpdateFeature = {
+  enrich: 'enrich',
+  identify: 'identify',
+  dimensions: 'dimensions',
+  catalog: 'catalog',
+} as const;
+
+export type AdminAiRoutesUpdateRoutes = {[key: string]: string[]};
+
+/**
+ * Provide either one feature/fallbacks pair or a routes object.
+ */
+export interface AdminAiRoutesUpdate {
+  feature?: AdminAiRoutesUpdateFeature;
+  /**
+     * @maxItems 5
+     * @items.minLength 1
+     */
+  fallbacks?: string[];
+  routes?: AdminAiRoutesUpdateRoutes;
+}
+
 export type AiReferenceBodyHistoryItem = {
   q: string;
   a: string;
@@ -501,6 +607,20 @@ limit?: number;
  * Cursor — return only rows with id strictly less than this value (use nextCursor from the previous page)
  */
 before_id?: number;
+};
+
+export type ResetAdminAiRoutesBodyFeature = typeof ResetAdminAiRoutesBodyFeature[keyof typeof ResetAdminAiRoutesBodyFeature];
+
+
+export const ResetAdminAiRoutesBodyFeature = {
+  enrich: 'enrich',
+  identify: 'identify',
+  dimensions: 'dimensions',
+  catalog: 'catalog',
+} as const;
+
+export type ResetAdminAiRoutesBody = {
+  feature?: ResetAdminAiRoutesBodyFeature;
 };
 
 export type DeleteUserMe400 = {

@@ -686,6 +686,84 @@ paths:
         "401":
           description: Admin token required
 
+  /admin/ai-status:
+    get:
+      operationId: getAdminAiStatus
+      tags: [admin]
+      summary: Get Poe catalogue, probe health, and effective AI routes
+      responses:
+        "200":
+          description: Protected AI routing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "401": { description: Admin token required }
+        "403": { description: Admin access required }
+
+  /admin/ai-status/catalogue/refresh:
+    post:
+      operationId: refreshAdminPoeCatalogue
+      tags: [admin]
+      summary: Refresh the live Poe model catalogue
+      responses:
+        "200":
+          description: Refreshed or stale last-good status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "401": { description: Admin token required }
+        "503": { description: Poe catalogue unavailable }
+
+  /admin/ai-status/routes:
+    put:
+      operationId: updateAdminAiRoutes
+      tags: [admin]
+      summary: Save capability-safe Poe fallback choices
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAiRoutesUpdate"
+      responses:
+        "200":
+          description: Updated AI routing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "400": { description: Invalid or incompatible fallback choices }
+        "401": { description: Admin token required }
+        "503": { description: Could not persist fallback choices }
+
+  /admin/ai-status/routes/reset:
+    post:
+      operationId: resetAdminAiRoutes
+      tags: [admin]
+      summary: Reset Poe fallback choices to code defaults
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                feature:
+                  type: string
+                  enum: [enrich, identify, dimensions, catalog]
+      responses:
+        "200":
+          description: Reset AI routing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "400": { description: Unknown feature }
+        "401": { description: Admin token required }
+        "503": { description: Could not persist reset }
+
   /ai/reference:
     post:
       operationId: aiReference
@@ -1570,6 +1648,103 @@ components:
           type: boolean
       required:
         - restarting
+
+    PoeModelCapabilities:
+      type: object
+      properties:
+        text: { type: boolean, nullable: true }
+        vision: { type: boolean, nullable: true }
+        structuredOutput: { type: boolean, nullable: true }
+      required: [text, vision, structuredOutput]
+
+    PoeCatalogueModel:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        modalities:
+          type: array
+          items: { type: string }
+        capabilities:
+          $ref: "#/components/schemas/PoeModelCapabilities"
+      required: [id, name, modalities, capabilities]
+
+    PoeCatalogue:
+      type: object
+      properties:
+        freshness:
+          type: string
+          enum: [fresh, stale, unavailable]
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/PoeCatalogueModel"
+        fetchedAt: { type: string, format: date-time, nullable: true }
+        lastSuccessAt: { type: string, format: date-time, nullable: true }
+        error: { type: string, nullable: true }
+      required: [freshness, models, fetchedAt, lastSuccessAt, error]
+
+    PoeFeatureRoute:
+      type: object
+      properties:
+        feature:
+          type: string
+          enum: [enrich, identify, dimensions, catalog]
+        primary: { type: string }
+        fallbacks:
+          type: array
+          items: { type: string }
+        effective:
+          type: array
+          items: { type: string }
+      required: [feature, primary, fallbacks, effective]
+
+    AdminAiStatus:
+      type: object
+      properties:
+        provider: { type: string, enum: [poe, openai] }
+        catalogue:
+          $ref: "#/components/schemas/PoeCatalogue"
+        bots:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, timeout, "404", error]
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PoeFeatureRoute"
+        overrides:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+        reference:
+          type: object
+          properties:
+            provider: { type: string, enum: [gemini] }
+            readOnly: { type: boolean }
+            note: { type: string }
+          required: [provider, readOnly, note]
+      required: [provider, catalogue, bots, routes, overrides, reference]
+
+    AdminAiRoutesUpdate:
+      type: object
+      properties:
+        feature:
+          type: string
+          enum: [enrich, identify, dimensions, catalog]
+        fallbacks:
+          type: array
+          maxItems: 5
+          items: { type: string, minLength: 1 }
+        routes:
+          type: object
+          additionalProperties:
+            type: array
+            maxItems: 5
+            items: { type: string, minLength: 1 }
+      description: Provide either one feature/fallbacks pair or a routes object.
 
     AiReferenceBody:
       type: object

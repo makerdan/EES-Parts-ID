@@ -92,6 +92,7 @@ async function migrateAdminPreferences(): Promise<void> {
         ADD COLUMN IF NOT EXISTS shelf_prefix TEXT,
         ADD COLUMN IF NOT EXISTS shelf_step INTEGER,
         ADD COLUMN IF NOT EXISTS ai_provider TEXT,
+        ADD COLUMN IF NOT EXISTS ai_fallback_models JSONB,
         ADD COLUMN IF NOT EXISTS revoked_before BIGINT NOT NULL DEFAULT 0
     `);
   } catch (err) {

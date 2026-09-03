@@ -90,6 +90,25 @@ type ExpandDescDraft = {
   savedAt: number;
 };
 
+type AiStatusPayload = {
+  provider: "poe" | "openai";
+  catalogue: {
+    freshness: "fresh" | "stale" | "unavailable";
+    models: Array<{
+      id: string;
+      name: string;
+      modalities: Array<string>;
+      capabilities: { text: boolean | null; vision: boolean | null; structuredOutput: boolean | null };
+    }>;
+    fetchedAt: string | null;
+    lastSuccessAt: string | null;
+    error: string | null;
+  };
+  bots: Record<string, string>;
+  routes: Array<{ feature: string; primary: string; fallbacks: Array<string>; effective: Array<string> }>;
+  reference: { provider: string; readOnly: boolean; note: string };
+};
+
 const SQL_EXAMPLES: Array<{ label: string; group: string; sql: string }> = [
   {
     group: "Browse",
@@ -657,9 +676,12 @@ export default function UploadScreen() {
   }, [probeSingleBot]);
 
   const [aiStatusBots, setAiStatusBots] = useState<Record<string, string>>({});
+  const [aiStatus, setAiStatus] = useState<AiStatusPayload | null>(null);
   const [aiStatusLoading, setAiStatusLoading] = useState(false);
   const [aiStatusError, setAiStatusError] = useState<string | null>(null);
   const [aiStatusProbing, setAiStatusProbing] = useState(false);
+  const [aiCatalogueRefreshing, setAiCatalogueRefreshing] = useState(false);
+  const [aiRoutesSaving, setAiRoutesSaving] = useState(false);
 
   const fetchAiStatus = useCallback(async () => {
     if (!adminToken || !API_BASE) return;
@@ -670,8 +692,9 @@ export default function UploadScreen() {
         headers: { Authorization: `Bearer ${adminToken}` },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { bots: Record<string, string> };
+      const data = (await res.json()) as AiStatusPayload;
       setAiStatusBots(data.bots ?? {});
+      setAiStatus(data.catalogue ? data : null);
     } catch (err) {
       setAiStatusError(err instanceof Error ? err.message : "Failed to load AI status");
     } finally {
@@ -689,14 +712,77 @@ export default function UploadScreen() {
         headers: { Authorization: `Bearer ${adminToken}` },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { bots: Record<string, string> };
+      const data = (await res.json()) as AiStatusPayload;
       setAiStatusBots(data.bots ?? {});
+      setAiStatus(data.catalogue ? data : null);
     } catch (err) {
       setAiStatusError(err instanceof Error ? err.message : "Probe failed");
     } finally {
       setAiStatusProbing(false);
     }
   }, [adminToken, aiStatusProbing]);
+
+  const refreshAiCatalogue = useCallback(async () => {
+    if (!adminToken || !API_BASE || aiCatalogueRefreshing) return;
+    setAiCatalogueRefreshing(true);
+    setAiStatusError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-status/catalogue/refresh`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      const data = (await res.json()) as AiStatusPayload;
+      setAiStatus(data.catalogue ? data : null);
+      setAiStatusBots(data.bots ?? {});
+      if (!res.ok && data.catalogue?.error) throw new Error(data.catalogue.error);
+    } catch (err) {
+      setAiStatusError(err instanceof Error ? err.message : "Catalogue refresh failed");
+    } finally {
+      setAiCatalogueRefreshing(false);
+    }
+  }, [adminToken, aiCatalogueRefreshing]);
+
+  const saveAiRoutes = useCallback(async (routes: Array<{ feature: string; fallbacks: Array<string> }>) => {
+    if (!adminToken || !API_BASE || aiRoutesSaving) return;
+    setAiRoutesSaving(true);
+    setAiStatusError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-status/routes`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ routes: Object.fromEntries(routes.map((route) => [route.feature, route.fallbacks])) }),
+      });
+      const data = (await res.json()) as AiStatusPayload & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setAiStatus(data.catalogue ? data : null);
+      setAiStatusBots(data.bots ?? {});
+    } catch (err) {
+      setAiStatusError(err instanceof Error ? err.message : "Fallback choices could not be saved");
+    } finally {
+      setAiRoutesSaving(false);
+    }
+  }, [adminToken, aiRoutesSaving]);
+
+  const resetAiRoutes = useCallback(async () => {
+    if (!adminToken || !API_BASE || aiRoutesSaving) return;
+    setAiRoutesSaving(true);
+    setAiStatusError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-status/routes/reset`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = (await res.json()) as AiStatusPayload & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setAiStatus(data);
+      setAiStatusBots(data.bots ?? {});
+    } catch (err) {
+      setAiStatusError(err instanceof Error ? err.message : "Fallback choices could not be reset");
+    } finally {
+      setAiRoutesSaving(false);
+    }
+  }, [adminToken, aiRoutesSaving]);
 
   useEffect(() => {
     if (adminToken) {
@@ -3334,20 +3420,26 @@ export default function UploadScreen() {
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <View style={styles.aiStatusHeader}>
                   <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 AI Status</Text>
-                  <Pressable
-                    onPress={aiStatusProbing ? undefined : triggerAiProbe}
-                    disabled={aiStatusProbing}
-                    style={[
-                      styles.aiProbeBtn,
-                      { borderColor: aiStatusProbing ? colors.border : colors.primary },
-                    ]}
-                  >
-                    {aiStatusProbing ? (
-                      <ActivityIndicator size="small" color={colors.primary} />
-                    ) : (
-                      <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Re-run probe</Text>
-                    )}
-                  </Pressable>
+                  <View style={styles.aiStatusActions}>
+                    <Pressable
+                      onPress={aiStatusProbing ? undefined : triggerAiProbe}
+                      disabled={aiStatusProbing}
+                      style={[styles.aiProbeBtn, { borderColor: aiStatusProbing ? colors.border : colors.primary }]}
+                    >
+                      {aiStatusProbing ? <ActivityIndicator size="small" color={colors.primary} /> : (
+                        <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Re-run probe</Text>
+                      )}
+                    </Pressable>
+                    <Pressable
+                      onPress={aiCatalogueRefreshing ? undefined : refreshAiCatalogue}
+                      disabled={aiCatalogueRefreshing}
+                      style={[styles.aiProbeBtn, { borderColor: aiCatalogueRefreshing ? colors.border : colors.primary }]}
+                    >
+                      {aiCatalogueRefreshing ? <ActivityIndicator size="small" color={colors.primary} /> : (
+                        <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Refresh models</Text>
+                      )}
+                    </Pressable>
+                  </View>
                 </View>
                 {aiStatusLoading && Object.keys(aiStatusBots).length === 0 ? (
                   <ActivityIndicator size="small" color={colors.primary} style={{ alignSelf: "flex-start" }} />
@@ -3378,6 +3470,90 @@ export default function UploadScreen() {
                     })}
                   </View>
                 )}
+                {aiStatus ? (
+                  <>
+                    <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>
+                      Active provider: <Text style={{ color: colors.foreground }}>{aiStatus.provider}</Text>
+                      {"  "}Catalogue: <Text style={{ color: aiStatus.catalogue.freshness === "fresh" ? "#10b981" : "#f59e0b" }}>
+                        {aiStatus.catalogue.freshness}
+                      </Text>
+                    </Text>
+                    {aiStatus.catalogue.error ? (
+                      <Text style={[styles.aiStatusMeta, { color: colors.destructive }]}>
+                        Last refresh: {aiStatus.catalogue.error}
+                      </Text>
+                    ) : null}
+                    <Text style={[styles.aiStatusSectionTitle, { color: colors.foreground }]}>Safe Poe fallbacks</Text>
+                    <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                      Primaries are code-owned. Only catalogue models with the required capabilities can be selected as fallbacks.
+                    </Text>
+                    {aiStatus.routes.map((route) => {
+                      const eligible = aiStatus.catalogue.models.filter((model) => {
+                        if (route.feature !== "enrich" && model.capabilities.vision === false) return false;
+                        if (model.capabilities.text === false || model.capabilities.structuredOutput === false) return false;
+                        return !route.fallbacks.includes(model.name) && model.name !== route.primary;
+                      });
+                      const update = (fallbacks: Array<string>) => {
+                        void saveAiRoutes(aiStatus.routes.map((item) => (
+                          item.feature === route.feature ? { feature: item.feature, fallbacks } : { feature: item.feature, fallbacks: item.fallbacks }
+                        )));
+                      };
+                      return (
+                        <View key={route.feature} style={[styles.aiRouteRow, { borderTopColor: colors.border }]}>
+                          <View style={styles.aiRouteHeading}>
+                            <Text style={[styles.aiRouteFeature, { color: colors.foreground }]}>{route.feature}</Text>
+                            <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>Primary: {route.primary}</Text>
+                          </View>
+                          {route.fallbacks.length === 0 ? (
+                            <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>No configured fallbacks</Text>
+                          ) : route.fallbacks.map((model, index) => (
+                            <View key={model} style={styles.aiFallbackRow}>
+                              <Text style={[styles.aiFallbackText, { color: colors.foreground }]}>{index + 1}. {model}</Text>
+                              <View style={styles.aiFallbackActions}>
+                                <Pressable disabled={index === 0 || aiRoutesSaving} onPress={() => {
+                                  const next = [...route.fallbacks];
+                                  const current = next[index];
+                                  const previous = next[index - 1];
+                                  if (!current || !previous) return;
+                                  next[index - 1] = current;
+                                  next[index] = previous;
+                                  update(next);
+                                }}><Text style={[styles.aiRouteAction, { color: index === 0 ? colors.muted : colors.primary }]}>↑</Text></Pressable>
+                                <Pressable disabled={index === route.fallbacks.length - 1 || aiRoutesSaving} onPress={() => {
+                                  const next = [...route.fallbacks];
+                                  const current = next[index];
+                                  const following = next[index + 1];
+                                  if (!current || !following) return;
+                                  next[index] = following;
+                                  next[index + 1] = current;
+                                  update(next);
+                                }}><Text style={[styles.aiRouteAction, { color: index === route.fallbacks.length - 1 ? colors.muted : colors.primary }]}>↓</Text></Pressable>
+                                <Pressable disabled={aiRoutesSaving} onPress={() => update(route.fallbacks.filter((item) => item !== model))}>
+                                  <Text style={[styles.aiRouteAction, { color: colors.destructive }]}>×</Text>
+                                </Pressable>
+                              </View>
+                            </View>
+                          ))}
+                          {eligible[0] ? (
+                            <Pressable disabled={aiRoutesSaving} onPress={() => update([...route.fallbacks, eligible[0]!.name])}>
+                              <Text style={[styles.aiAddFallback, { color: colors.primary }]}>+ Add {eligible[0]!.name}</Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      );
+                    })}
+                    <View style={styles.aiRouteFooter}>
+                      <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>
+                        Reference assistant: Gemini (read-only)
+                      </Text>
+                      <Pressable disabled={aiRoutesSaving} onPress={resetAiRoutes}>
+                        <Text style={[styles.aiAddFallback, { color: colors.primary }]}>
+                          {aiRoutesSaving ? "Saving…" : "Reset fallbacks"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </>
+                ) : null}
               </View>
 
             </ScrollView>
@@ -4153,7 +4329,8 @@ const styles = StyleSheet.create({
   queryExportRow: { flexDirection: "row", gap: 8, paddingTop: 4 },
   queryExportBtn: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: "center", justifyContent: "center", minHeight: 40 },
   queryExportBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  aiStatusHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  aiStatusHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  aiStatusActions: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1 },
   aiProbeBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, minWidth: 44, alignItems: "center" },
   aiProbeBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   aiStatusError: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
@@ -4163,6 +4340,17 @@ const styles = StyleSheet.create({
   aiStatusBadge: { flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   aiStatusBadgeDot: { fontSize: 8 },
   aiStatusBadgeText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  aiStatusMeta: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  aiStatusSectionTitle: { fontSize: 14, fontFamily: "Inter_700Bold", marginTop: 6 },
+  aiRouteRow: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 9, marginTop: 5, gap: 5 },
+  aiRouteHeading: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 8 },
+  aiRouteFeature: { fontSize: 13, fontFamily: "Inter_700Bold", textTransform: "capitalize" },
+  aiFallbackRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 26 },
+  aiFallbackText: { flex: 1, fontSize: 12, fontFamily: "Inter_500Medium" },
+  aiFallbackActions: { flexDirection: "row", gap: 10 },
+  aiRouteAction: { fontSize: 17, fontFamily: "Inter_700Bold", minWidth: 16, textAlign: "center" },
+  aiAddFallback: { fontSize: 12, fontFamily: "Inter_600SemiBold", paddingVertical: 3 },
+  aiRouteFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 },
   shelfEntryBanner: {
     flexDirection: "row",
     alignItems: "center",

@@ -20,6 +20,8 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AdminAiRoutesUpdate,
+  AdminAiStatus,
   AdminAuditLogPage,
   AdminRestartResponse,
   AiIdentifyBody,
@@ -41,6 +43,7 @@ import type {
   InventoryListResponse,
   ListInventoryParams,
   LookupDictionaryParams,
+  ResetAdminAiRoutesBody,
   SearchInventoryBody,
   SearchInventoryResponse,
   UpdateBarcodesBody,
@@ -2296,6 +2299,296 @@ export const useAdminRestart = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getAdminRestartMutationOptions(options));
+    }
+
+export const getGetAdminAiStatusUrl = () => {
+
+
+
+
+  return `/api/admin/ai-status`
+}
+
+/**
+ * @summary Get Poe catalogue, probe health, and effective AI routes
+ */
+export const getAdminAiStatus = async ( options?: RequestInit): Promise<AdminAiStatus> => {
+
+  return customFetch<AdminAiStatus>(getGetAdminAiStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminAiStatusQueryKey = () => {
+    return [
+    `/api/admin/ai-status`
+    ] as const;
+    }
+
+
+export const getGetAdminAiStatusQueryOptions = <TData = Awaited<ReturnType<typeof getAdminAiStatus>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminAiStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminAiStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminAiStatus>>> = ({ signal }) => getAdminAiStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminAiStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminAiStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminAiStatus>>>
+export type GetAdminAiStatusQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get Poe catalogue, probe health, and effective AI routes
+ */
+
+export function useGetAdminAiStatus<TData = Awaited<ReturnType<typeof getAdminAiStatus>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminAiStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminAiStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRefreshAdminPoeCatalogueUrl = () => {
+
+
+
+
+  return `/api/admin/ai-status/catalogue/refresh`
+}
+
+/**
+ * @summary Refresh the live Poe model catalogue
+ */
+export const refreshAdminPoeCatalogue = async ( options?: RequestInit): Promise<AdminAiStatus> => {
+
+  return customFetch<AdminAiStatus>(getRefreshAdminPoeCatalogueUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRefreshAdminPoeCatalogueMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshAdminPoeCatalogue>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshAdminPoeCatalogue>>, TError,void, TContext> => {
+
+const mutationKey = ['refreshAdminPoeCatalogue'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshAdminPoeCatalogue>>, void> = () => {
+
+
+          return  refreshAdminPoeCatalogue(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RefreshAdminPoeCatalogueMutationResult = NonNullable<Awaited<ReturnType<typeof refreshAdminPoeCatalogue>>>
+
+    export type RefreshAdminPoeCatalogueMutationError = ErrorType<void>
+
+    /**
+ * @summary Refresh the live Poe model catalogue
+ */
+export const useRefreshAdminPoeCatalogue = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshAdminPoeCatalogue>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof refreshAdminPoeCatalogue>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRefreshAdminPoeCatalogueMutationOptions(options));
+    }
+
+export const getUpdateAdminAiRoutesUrl = () => {
+
+
+
+
+  return `/api/admin/ai-status/routes`
+}
+
+/**
+ * @summary Save capability-safe Poe fallback choices
+ */
+export const updateAdminAiRoutes = async (adminAiRoutesUpdate: AdminAiRoutesUpdate, options?: RequestInit): Promise<AdminAiStatus> => {
+
+  return customFetch<AdminAiStatus>(getUpdateAdminAiRoutesUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminAiRoutesUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateAdminAiRoutesMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAdminAiRoutes>>, TError,{data: BodyType<AdminAiRoutesUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAdminAiRoutes>>, TError,{data: BodyType<AdminAiRoutesUpdate>}, TContext> => {
+
+const mutationKey = ['updateAdminAiRoutes'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAdminAiRoutes>>, {data: BodyType<AdminAiRoutesUpdate>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateAdminAiRoutes(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAdminAiRoutesMutationResult = NonNullable<Awaited<ReturnType<typeof updateAdminAiRoutes>>>
+    export type UpdateAdminAiRoutesMutationBody = BodyType<AdminAiRoutesUpdate>
+    export type UpdateAdminAiRoutesMutationError = ErrorType<void>
+
+    /**
+ * @summary Save capability-safe Poe fallback choices
+ */
+export const useUpdateAdminAiRoutes = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAdminAiRoutes>>, TError,{data: BodyType<AdminAiRoutesUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAdminAiRoutes>>,
+        TError,
+        {data: BodyType<AdminAiRoutesUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateAdminAiRoutesMutationOptions(options));
+    }
+
+export const getResetAdminAiRoutesUrl = () => {
+
+
+
+
+  return `/api/admin/ai-status/routes/reset`
+}
+
+/**
+ * @summary Reset Poe fallback choices to code defaults
+ */
+export const resetAdminAiRoutes = async (resetAdminAiRoutesBody?: ResetAdminAiRoutesBody, options?: RequestInit): Promise<AdminAiStatus> => {
+
+  return customFetch<AdminAiStatus>(getResetAdminAiRoutesUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(resetAdminAiRoutesBody)
+  }
+);}
+
+
+
+
+
+export const getResetAdminAiRoutesMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetAdminAiRoutes>>, TError,{data?: BodyType<ResetAdminAiRoutesBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resetAdminAiRoutes>>, TError,{data?: BodyType<ResetAdminAiRoutesBody>}, TContext> => {
+
+const mutationKey = ['resetAdminAiRoutes'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resetAdminAiRoutes>>, {data?: BodyType<ResetAdminAiRoutesBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  resetAdminAiRoutes(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResetAdminAiRoutesMutationResult = NonNullable<Awaited<ReturnType<typeof resetAdminAiRoutes>>>
+    export type ResetAdminAiRoutesMutationBody = BodyType<ResetAdminAiRoutesBody> | undefined
+    export type ResetAdminAiRoutesMutationError = ErrorType<void>
+
+    /**
+ * @summary Reset Poe fallback choices to code defaults
+ */
+export const useResetAdminAiRoutes = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetAdminAiRoutes>>, TError,{data?: BodyType<ResetAdminAiRoutesBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resetAdminAiRoutes>>,
+        TError,
+        {data?: BodyType<ResetAdminAiRoutesBody>},
+        TContext
+      > => {
+      return useMutation(getResetAdminAiRoutesMutationOptions(options));
     }
 
 export const getAiReferenceUrl = () => {
