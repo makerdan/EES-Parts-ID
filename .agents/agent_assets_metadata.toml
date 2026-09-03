@@ -59,3 +59,10 @@ id = "dm8G808uNohnX-004O9KQ"
 uri = "file://artifacts/task-triage-skill.zip"
 type = "unspecified"
 title = "Task Triage — SKILL.md"
+
+[[outputs]]
+id = "3luBc7yMaHqVNjrkjikVB"
+uri = "file://exports/react-render-audit.zip"
+type = "unspecified"
+title = "React Render & Memory Audit skill"
+description = "Canonical ZIP archive of .agents/skills/react-render-audit, containing SKILL.md."

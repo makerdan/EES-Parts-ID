@@ -33,7 +33,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  jest.resetAllMocks();
+  jest.clearAllMocks();
 });
 
 // ── fetchChipAnswer — TTL / expiry ──────────────────────────────────────────

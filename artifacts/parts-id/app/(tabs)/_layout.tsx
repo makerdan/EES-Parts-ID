@@ -89,6 +89,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="help"
+        options={{
+          title: "Help",
+          tabBarIcon: ({ color }) => <Feather name="help-circle" size={22} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="measure"
         options={{
           title: "Measure",

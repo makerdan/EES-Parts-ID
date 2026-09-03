@@ -10,6 +10,7 @@
 
 import "buffer";
 
+import { useQueryClient } from "@tanstack/react-query";
 import * as DocumentPicker from "expo-document-picker";
 import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -42,12 +43,14 @@ import { performAddToInventory } from "@/utils/addToInventory";
 import { buildResumeHeaders } from "@/utils/aiFallbackHeaders";
 import { API_BASE } from "@/utils/apiBase";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
+import { invalidateListCache } from "@/utils/editItemCache";
 import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
 import { PAGES_PER_CHUNK, splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
 import { performUpdateDescription } from "@/utils/updateDescription";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
+const POLL_FAIL_THRESHOLD = 5; // consecutive failures before showing stalled card
 
 function resumeBytesToBase64(bytes: Uint8Array): string {
   const CHUNK = 0x8000;
@@ -107,6 +110,7 @@ export default function CatalogReviewScreen() {
   const { jobId } = useLocalSearchParams<{ jobId?: string }>();
   const { adminToken, logoutAdmin, resumeProgress, setResumeProgress, setPendingInventorySearch } = useApp();
   const { reportNetworkFailure } = useApiHealth();
+  const queryClient = useQueryClient();
 
   type JobSummary = {
     vendor: string;
@@ -123,6 +127,7 @@ export default function CatalogReviewScreen() {
   const [error, setError] = useState<string | null>(null);
   const [revertingId, setRevertingId] = useState<number | null>(null);
   const [revertedIds, setRevertedIds] = useState<Set<number>>(new Set());
+  const [approvedIds, setApprovedIds] = useState<Set<number>>(new Set());
   const [dismissingId, setDismissingId] = useState<number | null>(null);
   const [resumingId, setResumingId] = useState<number | null>(null);
   const [jobSummary, setJobSummary] = useState<JobSummary | null>(null);
@@ -130,6 +135,8 @@ export default function CatalogReviewScreen() {
   // Track one poll interval per jobId so multiple concurrent resumes work and
   // we can re-attach polls when the screen remounts.
   const resumePollRef = useRef<Record<number, ReturnType<typeof setInterval>>>({});
+  // Count consecutive poll failures per jobId (reset on success).
+  const pollFailCountRef = useRef<Record<number, number>>({});
   const [infoDialog, setInfoDialog] = useState<{ visible: boolean; title: string; message: string }>({
     visible: false, title: "", message: "",
   });
@@ -254,9 +261,12 @@ export default function CatalogReviewScreen() {
         if (secondRes.ok) {
           if (jobId) {
             const statusData = await secondRes.json() as {
+              status?: string;
               vendor?: string;
               partsFound?: number;
               matchedParts?: number;
+              processedPages?: number;
+              totalPages?: number | null;
               imagesMatched?: number;
               unmatchedParts?: Array<{ catalogNumber: string; description: string }>;
             };
@@ -267,10 +277,37 @@ export default function CatalogReviewScreen() {
               imagesMatched: statusData.imagesMatched ?? 0,
               unmatchedParts: statusData.unmatchedParts ?? [],
             });
+            // F-002: if the job is still in-progress on mount, start polling so
+            // admins aren't left on a stale "No items to review" screen.
+            const rawStatus = statusData.status;
+            if (
+              !isRefresh &&
+              rawStatus &&
+              rawStatus !== "done" &&
+              rawStatus !== "failed" &&
+              rawStatus !== "cancelled"
+            ) {
+              const numJobId = Number(jobId);
+              if (!isNaN(numJobId) && !resumePollRef.current[numJobId]) {
+                setResumeProgress((prev) => ({
+                  ...prev,
+                  [numJobId]: prev[numJobId] ?? {
+                    status: "processing",
+                    processedPages: statusData.processedPages ?? 0,
+                    totalPages: statusData.totalPages ?? null,
+                    matchedParts: statusData.matchedParts ?? 0,
+                    errorMessage: null,
+                  },
+                }));
+                startPollForJobRef.current(numJobId, authHeaders);
+              }
+            }
           } else {
             const failedData = await secondRes.json() as { jobs: Array<FailedJob> };
             setFailedJobs(failedData.jobs);
           }
+        } else if (jobId) {
+          setError("Could not load job status — try refreshing.");
         }
       }
     } catch (err) {
@@ -294,10 +331,30 @@ export default function CatalogReviewScreen() {
     if (resumePollRef.current[id]) {
       clearInterval(resumePollRef.current[id]);
     }
+    // Reset failure counter whenever the poll (re)starts.
+    pollFailCountRef.current[id] = 0;
     resumePollRef.current[id] = setInterval(async () => {
       try {
         const statusRes = await fetch(`${API_BASE}/admin/catalog-pdf/${id}/status`, { headers });
-        if (!statusRes.ok) return;
+        if (!statusRes.ok) {
+          // Non-2xx response counts as a failure.
+          pollFailCountRef.current[id] = (pollFailCountRef.current[id] ?? 0) + 1;
+          if (pollFailCountRef.current[id] >= POLL_FAIL_THRESHOLD) {
+            clearInterval(resumePollRef.current[id]);
+            delete resumePollRef.current[id];
+            setResumeProgress((prev) => ({
+              ...prev,
+              [id]: {
+                status: "stalled",
+                processedPages: prev[id]?.processedPages ?? 0,
+                totalPages: prev[id]?.totalPages ?? null,
+                matchedParts: prev[id]?.matchedParts ?? 0,
+                errorMessage: "Processing stalled — please retry or contact support",
+              },
+            }));
+          }
+          return;
+        }
         const body = await statusRes.json() as {
           status: string;
           processedPages: number;
@@ -305,6 +362,8 @@ export default function CatalogReviewScreen() {
           matchedParts: number;
           errorMessage: string | null;
         };
+        // Successful response — reset failure counter.
+        pollFailCountRef.current[id] = 0;
         setResumeProgress((prev) => ({
           ...prev,
           [id]: {
@@ -321,11 +380,29 @@ export default function CatalogReviewScreen() {
           setResumingId((prev) => (prev === id ? null : prev));
           if (body.status === "done") {
             setFailedJobs((prev) => prev.filter((j) => j.id !== id));
+            void invalidateListCache({ queryClient });
+            void queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
           }
           fetchItems();
         }
       } catch (err) {
+        // Network error counts as a failure.
         console.error('[catalog-review] poll status', err);
+        pollFailCountRef.current[id] = (pollFailCountRef.current[id] ?? 0) + 1;
+        if (pollFailCountRef.current[id] >= POLL_FAIL_THRESHOLD) {
+          clearInterval(resumePollRef.current[id]);
+          delete resumePollRef.current[id];
+          setResumeProgress((prev) => ({
+            ...prev,
+            [id]: {
+              status: "stalled",
+              processedPages: prev[id]?.processedPages ?? 0,
+              totalPages: prev[id]?.totalPages ?? null,
+              matchedParts: prev[id]?.matchedParts ?? 0,
+              errorMessage: "Processing stalled — please retry or contact support",
+            },
+          }));
+        }
       }
     }, 3000);
   };
@@ -440,6 +517,10 @@ export default function CatalogReviewScreen() {
         const largeStatusR = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, {
           headers: authHeaders,
         });
+        if (!largeStatusR.ok) {
+          showInfo("Resume failed", `Could not load job status (HTTP ${largeStatusR.status}). Please try again.`);
+          return;
+        }
         const largeStatusBody = await largeStatusR.json().catch(() => ({})) as {
           failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
         };
@@ -549,6 +630,10 @@ export default function CatalogReviewScreen() {
           const statusR = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, {
             headers: authHeaders,
           });
+          if (!statusR.ok) {
+            showInfo("Resume failed", `Could not load job status (HTTP ${statusR.status}). Please try again.`);
+            return;
+          }
           const statusBody = await statusR.json().catch(() => ({})) as {
             failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
           };
@@ -612,6 +697,21 @@ export default function CatalogReviewScreen() {
     });
   };
 
+  // Retry a stalled poll: reset the failure counter and restart the interval.
+  // Does not trigger a PDF upload — only restarts status polling.
+  const handleRetryPoll = (id: number) => {
+    pollFailCountRef.current[id] = 0;
+    setResumeProgress((prev) => ({
+      ...prev,
+      [id]: {
+        ...(prev[id] ?? { processedPages: 0, totalPages: null, matchedParts: 0 }),
+        status: "processing",
+        errorMessage: null,
+      },
+    }));
+    startPollForJob(id, authHeaders);
+  };
+
   const handleRevert = async (item: ReviewItem, groupJobId: number | null) => {
     if (revertingId) return;
     setRevertingId(item.id);
@@ -633,10 +733,28 @@ export default function CatalogReviewScreen() {
     } finally { setRevertingId(null); }
   };
 
+  const handleApprove = (itemId: number) => {
+    setApprovedIds((prev) => new Set([...prev, itemId]));
+  };
+
+  const handleApproveAll = () => {
+    const allActiveIds = new Set(
+      groups.flatMap((g) => g.items.filter((i) => !revertedIds.has(i.id)).map((i) => i.id)),
+    );
+    setApprovedIds(allActiveIds);
+  };
+
   const totalActive = groups.reduce(
     (acc, g) => acc + g.items.filter((i) => !revertedIds.has(i.id)).length,
     0,
   );
+
+  const totalItemCount = groups.reduce((acc, g) => acc + g.items.length, 0);
+  const unapprovedActiveCount = groups.reduce(
+    (acc, g) => acc + g.items.filter((i) => !revertedIds.has(i.id) && !approvedIds.has(i.id)).length,
+    0,
+  );
+  const allReviewed = totalItemCount > 0 && unapprovedActiveCount === 0;
 
   // Flat list data: section headers + items
   type ListRow =
@@ -674,16 +792,33 @@ export default function CatalogReviewScreen() {
     const { item, groupJobId } = row;
     const conf = item.imageConfidence != null ? Math.round(item.imageConfidence * 100) : null;
     const isReverting = revertingId === item.id;
+    const isApproved = approvedIds.has(item.id);
 
     return (
-      <View style={[s.row, { backgroundColor: colors.card, borderColor: item.isLowConfidence ? colors.warning + "88" : colors.border }]}>
+      <View style={[
+        s.row,
+        {
+          backgroundColor: isApproved ? colors.card : colors.card,
+          borderColor: isApproved
+            ? "#22c55e88"
+            : item.isLowConfidence
+            ? colors.warning + "88"
+            : colors.border,
+          opacity: isApproved ? 0.75 : 1,
+        },
+      ]}>
         <View style={s.rowTop}>
           <View style={s.rowIdent}>
             <Text style={[s.catalog, { color: colors.foreground }]}>{item.catalog}</Text>
             <Text style={[s.vendor, { color: colors.mutedForeground }]}>{item.vendor}</Text>
           </View>
           <View style={s.rowBadges}>
-            {item.isLowConfidence ? (
+            {isApproved ? (
+              <View style={[s.badge, { backgroundColor: "#22c55e22" }]}>
+                <Text style={[s.badgeText, { color: "#22c55e" }]}>✓ Approved</Text>
+              </View>
+            ) : null}
+            {!isApproved && item.isLowConfidence ? (
               <View style={[s.badge, { backgroundColor: colors.warning + "22" }]}>
                 <Text style={[s.badgeText, { color: colors.warning }]}>Low confidence</Text>
               </View>
@@ -734,18 +869,29 @@ export default function CatalogReviewScreen() {
           </View>
         )}
 
-        {/* Revert button */}
-        <Pressable
-          onPress={() => handleRevert(item, groupJobId)}
-          disabled={isReverting}
-          style={[s.revertBtn, { borderColor: colors.destructive + "88" }]}
-        >
-          {isReverting ? (
-            <ActivityIndicator size="small" color={colors.destructive} />
-          ) : (
-            <Text style={[s.revertBtnText, { color: colors.destructive }]}>Revert</Text>
-          )}
-        </Pressable>
+        {/* Action buttons */}
+        <View style={s.rowActions}>
+          {!isApproved ? (
+            <Pressable
+              onPress={() => handleApprove(item.id)}
+              disabled={isReverting}
+              style={[s.approveBtn, { borderColor: "#22c55e88" }]}
+            >
+              <Text style={[s.approveBtnText, { color: "#22c55e" }]}>✓ Approve</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            onPress={() => handleRevert(item, groupJobId)}
+            disabled={isReverting}
+            style={[s.revertBtn, { borderColor: colors.destructive + "88" }]}
+          >
+            {isReverting ? (
+              <ActivityIndicator size="small" color={colors.destructive} />
+            ) : (
+              <Text style={[s.revertBtnText, { color: colors.destructive }]}>Revert</Text>
+            )}
+          </Pressable>
+        </View>
       </View>
     );
   };
@@ -770,6 +916,10 @@ export default function CatalogReviewScreen() {
           style={s.modalOverlay}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
         >
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => { if (!addingInProgress) { setAddModalPart(null); setDuplicateItem(null); } }}
+          />
           <View style={[s.modalSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={[s.modalHeader, { borderBottomColor: colors.border }]}>
               <Text style={[s.modalTitle, { color: colors.foreground }]}>
@@ -1096,6 +1246,22 @@ export default function CatalogReviewScreen() {
             <Text style={[s.retryBtnText, { color: colors.primaryForeground }]}>Retry</Text>
           </Pressable>
         </View>
+      ) : allReviewed && failedJobs.length === 0 && Object.keys(resumeProgress).length === 0 ? (
+        <View style={s.center}>
+          <View style={[s.completionIconCircle, { backgroundColor: "#22c55e18" }]}>
+            <Text style={s.completionIcon}>✓</Text>
+          </View>
+          <Text style={[s.emptyTitle, { color: colors.foreground, marginTop: 8 }]}>Review complete</Text>
+          <Text style={[s.hint, { color: colors.mutedForeground }]}>
+            {approvedIds.size} approved{revertedIds.size > 0 ? `, ${revertedIds.size} reverted` : ""}
+          </Text>
+          <Pressable
+            onPress={() => router.back()}
+            style={[s.doneBtn, { backgroundColor: colors.primary }]}
+          >
+            <Text style={[s.doneBtnText, { color: colors.primaryForeground }]}>Done</Text>
+          </Pressable>
+        </View>
       ) : listData.length === 0 && failedJobs.length === 0 && Object.keys(resumeProgress).length === 0 && !(jobId && jobSummary && jobSummary.unmatchedParts.length > 0) ? (
         <View style={s.center}>
           <Text style={[s.emptyTitle, { color: colors.foreground }]}>
@@ -1137,6 +1303,7 @@ export default function CatalogReviewScreen() {
             <View style={[s.summaryBar, { borderBottomColor: colors.border }]}>
               <Text style={[s.summaryText, { color: colors.mutedForeground }]}>
                 {totalActive} item{totalActive !== 1 ? "s" : ""} across {groups.filter(g => g.items.filter(i => !revertedIds.has(i.id)).length > 0).length} session{groups.length !== 1 ? "s" : ""}
+                {approvedIds.size > 0 ? ` · ${approvedIds.size} approved` : ""}
                 {revertedIds.size > 0 ? ` · ${revertedIds.size} reverted` : ""}
               </Text>
             </View>
@@ -1168,6 +1335,7 @@ export default function CatalogReviewScreen() {
                 onResume={handleResume}
                 onReviewChanges={(id) => router.push(`/catalog-review?jobId=${id}`)}
                 onDismissResumeError={handleDismissResumeError}
+                onRetryPoll={handleRetryPoll}
                 colors={colors}
               />
             }
@@ -1229,8 +1397,22 @@ export default function CatalogReviewScreen() {
                 </View>
               ) : null
             }
-            contentContainerStyle={{ paddingBottom: 100 }}
+            contentContainerStyle={{ paddingBottom: unapprovedActiveCount > 0 ? 100 : 32 }}
           />
+
+          {/* Approve All sticky footer */}
+          {unapprovedActiveCount > 0 ? (
+            <View style={[s.approveAllBar, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
+              <Pressable
+                onPress={handleApproveAll}
+                style={[s.approveAllBtn, { backgroundColor: "#22c55e" }]}
+              >
+                <Text style={[s.approveAllBtnText, { color: "#ffffff" }]}>
+                  ✓ Approve All ({unapprovedActiveCount})
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
         </>
       )}
     </SafeAreaView>
@@ -1273,8 +1455,25 @@ const s = StyleSheet.create({
   diffLabel: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5 },
   diffOld: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
   diffNew: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  rowActions: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  approveBtn: { borderWidth: 1, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, alignSelf: "flex-start", alignItems: "center" },
+  approveBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   revertBtn: { borderWidth: 1, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, alignSelf: "flex-start", alignItems: "center" },
   revertBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  approveAllBar: {
+    position: "absolute", bottom: 0, left: 0, right: 0,
+    paddingHorizontal: 16, paddingVertical: 12, paddingBottom: 28, borderTopWidth: 1,
+  },
+  approveAllBtn: {
+    borderRadius: 12, paddingVertical: 14, alignItems: "center", justifyContent: "center",
+  },
+  approveAllBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  completionIconCircle: {
+    width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center",
+  },
+  completionIcon: { fontSize: 36, color: "#22c55e" },
+  doneBtn: { marginTop: 12, paddingHorizontal: 40, paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  doneBtnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
   imageBlock: { borderRadius: 8, overflow: "hidden", alignSelf: "flex-start" },
   partImage: { width: 120, height: 90 },
   noImageBlock: {

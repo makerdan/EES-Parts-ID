@@ -127,3 +127,9 @@ overrides:
   rollup>@rollup/rollup-win32-ia32-msvc: '-'
   rollup>@rollup/rollup-win32-x64-gnu: '-'
   rollup>@rollup/rollup-win32-x64-msvc: '-'
+  nanoid: '>=3.3.18 <4.0.0'
+  browserslist: '>=4.28.8 <5.0.0'
+  decode-uri-component: '>=0.5.0 <1.0.0'
+  '@xmldom/xmldom@>=0.9.0 <0.9.12': '>=0.9.12 <1.0.0'
+  '@xmldom/xmldom@>=0.7.0 <0.8.15': '>=0.8.15 <0.9.0'
+  image-size: file:./patches/image-size

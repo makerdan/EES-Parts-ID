@@ -331,9 +331,10 @@ afterEach(async () => {
 //
 // Flow: AsyncStorage returns null → pendingFit.current = true → onLayout fires
 // → applyFitIfReadyRef.current() runs with real container dims + SVG viewBox
-// → computeFitTarget is called → scale = ZOOM_STOPS[0].scale, renderZoom = 0.
+// → computeFitTarget is called with { snapToOverview: false } → raw fit scale
+//   (< ZOOM_STOPS[0].scale) is committed; zoomStopForScale still resolves to 0.
 
-describe("applyFitIfReady — z0 snap at callback invocation", () => {
+describe("applyFitIfReady — raw fit (snapToOverview:false) on callback invocation", () => {
   async function mountAndLayout(containerW: number, containerH: number) {
     const result = trackResult(await render(<WarehouseMapView {...BASE_PROPS} />));
     await act(async () => {
@@ -347,10 +348,13 @@ describe("applyFitIfReady — z0 snap at callback invocation", () => {
     expect(computeFitTargetSpy).toHaveBeenCalled();
   });
 
-  it("phone (390×761): computeFitTarget returns scale === ZOOM_STOPS[0].scale", async () => {
+  it("phone (390×761): computeFitTarget returns a raw fit scale (not snapped to ZOOM_STOPS[0].scale)", async () => {
     await mountAndLayout(390, 761);
     const result = computeFitTargetSpy.mock.results.at(-1)!.value as { scale: number; tx: number; ty: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
+    // applyFitIfReady passes { snapToOverview: false } so the raw fit is returned,
+    // which is smaller than the z0 snap value for these container dimensions.
+    expect(result.scale).toBeGreaterThan(0);
+    expect(result.scale).toBeLessThan(ZOOM_STOPS[0]!.scale);
   });
 
   it("phone (390×761): zoomStopForScale of committed scale === 0 (z0 renderZoom)", async () => {
@@ -364,10 +368,12 @@ describe("applyFitIfReady — z0 snap at callback invocation", () => {
     expect(computeFitTargetSpy).toHaveBeenCalled();
   });
 
-  it("iPad (768×960): computeFitTarget returns scale === ZOOM_STOPS[0].scale", async () => {
+  it("iPad (768×960): computeFitTarget returns a raw fit scale (not snapped to ZOOM_STOPS[0].scale)", async () => {
     await mountAndLayout(768, 960);
     const result = computeFitTargetSpy.mock.results.at(-1)!.value as { scale: number; tx: number; ty: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
+    // applyFitIfReady passes { snapToOverview: false } so the raw fit is returned.
+    expect(result.scale).toBeGreaterThan(0);
+    expect(result.scale).toBeLessThan(ZOOM_STOPS[0]!.scale);
   });
 
   it("iPad (768×960): zoomStopForScale of committed scale === 0 (z0 renderZoom)", async () => {
@@ -376,7 +382,7 @@ describe("applyFitIfReady — z0 snap at callback invocation", () => {
     expect(zoomStopForScale(result.scale)).toBe(0);
   });
 
-  it("phone and iPad both snap to the same scale (snap is device-independent)", async () => {
+  it("phone and iPad both return a raw fit scale below z0 (no snap in applyFitIfReady)", async () => {
     await mountAndLayout(390, 761);
     const phoneResult = computeFitTargetSpy.mock.results.at(-1)!.value as { scale: number };
     computeFitTargetSpy.mockClear();
@@ -384,9 +390,11 @@ describe("applyFitIfReady — z0 snap at callback invocation", () => {
     await mountAndLayout(768, 960);
     const iPadResult = computeFitTargetSpy.mock.results.at(-1)!.value as { scale: number };
 
-    expect(phoneResult.scale).toBe(ZOOM_STOPS[0]!.scale);
-    expect(iPadResult.scale).toBe(ZOOM_STOPS[0]!.scale);
-    expect(phoneResult.scale).toBe(iPadResult.scale);
+    // applyFitIfReady uses { snapToOverview: false }, so neither device snaps to z0.
+    expect(phoneResult.scale).toBeGreaterThan(0);
+    expect(phoneResult.scale).toBeLessThan(ZOOM_STOPS[0]!.scale);
+    expect(iPadResult.scale).toBeGreaterThan(0);
+    expect(iPadResult.scale).toBeLessThan(ZOOM_STOPS[0]!.scale);
   });
 });
 

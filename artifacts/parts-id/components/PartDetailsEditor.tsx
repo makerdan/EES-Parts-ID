@@ -247,6 +247,17 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
     const current = itemRef.current;
     setMeasureOpen(false);
+
+    // Snapshot the current dimension display values synchronously before any
+    // state update. Functional setState updaters are deferred and may not
+    // execute until after the catch block runs, so they cannot be used for
+    // snapshotting. React state values read directly at callback entry time
+    // always reflect the current render, giving us reliable pre-confirm values.
+    const prevLength = dimLength;
+    const prevWidth = dimWidth;
+    const prevHeight = dimHeight;
+    const prevDiameter = dimDiameter;
+
     setDimLength(fmtDim(dims.length));
     setDimWidth(fmtDim(dims.width));
     setDimHeight(fmtDim(dims.height));
@@ -274,9 +285,16 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       await invalidateListCache({ queryClient });
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
     } catch {
+      // Restore pre-confirm values so the display matches what is actually
+      // persisted on the server — matching the rollback pattern of the main
+      // Save path.
+      setDimLength(prevLength);
+      setDimWidth(prevWidth);
+      setDimHeight(prevHeight);
+      setDimDiameter(prevDiameter);
       setFieldSaveErrors(prev => ({ ...prev, dimensions: "Could not save dimensions" }));
     }
-  }, [adminToken, queryClient]);
+  }, [adminToken, queryClient, dimLength, dimWidth, dimHeight, dimDiameter]);
 
   const handleSaveExpandedDesc = async () => {
     const current = itemRef.current;

@@ -60,6 +60,7 @@ export function WarehouseMapViewer() {
   });
   const [zones, setZones] = useState<Zone[]>([]);
   const [zonesError, setZonesError] = useState(false);
+  const mountedRef = useRef(true);
 
   const panRef = useRef<{ active: boolean; startX: number; startY: number; originTf: Transform }>({
     active: false,
@@ -72,20 +73,27 @@ export function WarehouseMapViewer() {
   // returns 404 (nothing uploaded in this env), falls back to the production
   // API defined by VITE_FLOOR_PLAN_API_FALLBACK.
   useEffect(() => {
+    const controller = new AbortController();
+    const signal = controller.signal;
     void (async () => {
       const fallback = (import.meta.env.VITE_FLOOR_PLAN_API_FALLBACK as string | undefined)?.replace(/\/$/, "");
       const urls = [`${API_BASE}/floor-plan/svg`];
       if (fallback && fallback !== API_BASE) urls.push(`${fallback}/floor-plan/svg`);
       for (const url of urls) {
         try {
-          const res = await fetch(url);
+          const res = await fetch(url, { signal });
           if (res.ok) {
-            setSvgInner(extractSvgInner(await res.text()));
+            const raw = await res.text();
+            if (signal.aborted || !mountedRef.current) return;
+            setSvgInner(extractSvgInner(raw));
             return;
           }
-        } catch {}
+        } catch (error) {
+          if (signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+        }
       }
     })();
+    return () => controller.abort();
   }, []);
 
   // Inject floor plan SVG into same coordinate space as zone overlays
@@ -97,16 +105,29 @@ export function WarehouseMapViewer() {
 
   // Fetch zones from API on mount
   useEffect(() => {
+    const controller = new AbortController();
+    const signal = controller.signal;
     void (async () => {
       try {
-        const res = await fetch(`${API_BASE}/warehouse-zones`);
+        const res = await fetch(`${API_BASE}/warehouse-zones`, { signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json() as { zones?: Zone[] };
+        if (signal.aborted || !mountedRef.current) return;
         setZones(data.zones ?? []);
-      } catch {
+      } catch (error) {
+        if (signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+        if (!mountedRef.current) return;
         setZonesError(true);
       }
     })();
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
@@ -179,9 +200,9 @@ export function WarehouseMapViewer() {
     <div style={styles.root}>
       {/* ── Banner ──────────────────────────────────────────────────────────── */}
       <div style={styles.banner}>
-        <a href="/__mockup" style={styles.backLink}>← Internal Tools</a>
+        <a href="/__mockup" style={styles.backLink}>← Admin Tools</a>
         <span style={{ fontWeight: 600 }}>
-          ⚠ DEV TOOL — Warehouse Map Viewer — internal use only
+          Admin — Warehouse Map Viewer
         </span>
         {zonesError && (
           <span style={styles.zoneError}>
@@ -263,20 +284,21 @@ const styles = {
     alignItems: "center",
     gap: 12,
     padding: "6px 16px",
-    background: "#7c3aed",
+    background: "#1e293b",
     color: "white",
     fontSize: 12,
     flexShrink: 0,
     zIndex: 10,
   },
   backLink: {
-    color: "rgba(255,255,255,0.85)",
+    color: "#cbd5e1",
     textDecoration: "none",
     fontSize: 12,
     fontWeight: 500,
     padding: "2px 8px",
     borderRadius: 4,
-    border: "1px solid rgba(255,255,255,0.3)",
+    border: "1px solid #475569",
+    background: "rgba(255,255,255,0.08)",
     whiteSpace: "nowrap" as const,
     marginRight: 4,
   },

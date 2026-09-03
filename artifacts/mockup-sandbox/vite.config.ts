@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { readFileSync } from "fs";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 import { mockupPreviewPlugin } from "./mockupPreviewPlugin";
@@ -27,9 +28,19 @@ if (!basePath) {
   );
 }
 
+const portRegistry = JSON.parse(
+  readFileSync(path.resolve(import.meta.dirname, "../../scripts/dev-ports.json"), "utf8"),
+) as { workflowPorts?: { api?: number } };
+
 // Target for the /api proxy. Override via VITE_API_SERVER env var if the API
-// server is running on a different port or host in your dev environment.
-const apiServerTarget = process.env.VITE_API_SERVER ?? "http://localhost:8080";
+// server is running on a different port or host in your dev environment. The
+// registry fallback is explicit and stays aligned with the workflow contract.
+const apiPort = portRegistry.workflowPorts?.api;
+if (!Number.isInteger(apiPort)) {
+  throw new Error("Port registry is missing workflowPorts.api");
+}
+const apiServerTarget =
+  process.env.VITE_API_SERVER ?? `http://localhost:${apiPort}`;
 
 // Proxy config shared between the dev server and `vite preview`.
 // Forwards every /api/** request to the API server so that Clerk session
@@ -75,6 +86,7 @@ export default defineConfig({
   },
   server: {
     port,
+    strictPort: true,
     host: "0.0.0.0",
     allowedHosts: true,
     fs: {
@@ -84,6 +96,7 @@ export default defineConfig({
   },
   preview: {
     port,
+    strictPort: true,
     host: "0.0.0.0",
     allowedHosts: true,
     proxy: apiProxy,

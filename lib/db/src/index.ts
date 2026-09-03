@@ -11,8 +11,20 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
+// Keep the application pool at pg's intended default outside Jest. Test
+// workers share the development database with the running API service, so
+// each worker gets a deliberately small pool that still supports concurrent
+// requests within a test.
+export const DEFAULT_POOL_MAX = 10;
+export const JEST_POOL_MAX = 2;
+
+export function getPoolMax(isJest = Boolean(process.env.JEST_WORKER_ID)): number {
+  return isJest ? JEST_POOL_MAX : DEFAULT_POOL_MAX;
+}
+
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  max: getPoolMax(),
   connectionTimeoutMillis: 10_000,
   idleTimeoutMillis: 30_000,
   // Under Jest (JEST_WORKER_ID is set), let the worker process exit when the

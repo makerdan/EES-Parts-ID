@@ -1127,6 +1127,24 @@ exit 0
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR29/pnpm"
 
+# The temp workspace intentionally contains only generated-file sentinels, not
+# the tracked Failure Gate distribution. Stub that repository-level check while
+# leaving all other Node.js calls on the real runtime.
+REAL_NODE29=$(command -v node)
+cat > "$MOCK_BIN_DIR29/node" << MOCKEOF
+#!/bin/bash
+if [[ "\$*" == *"publish-failure-gate.mjs --check"* ]]; then
+  exit 0
+fi
+if [[ "\${1:-}" == "scripts/serial-lock.mjs" ]]; then
+  while [[ "\${1:-}" != "--" && "\$#" -gt 0 ]]; do shift; done
+  shift
+  exec "\$@"
+fi
+exec "$REAL_NODE29" "\$@"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR29/node"
+
 cat > "$MOCK_BIN_DIR29/curl" << 'MOCKEOF'
 #!/bin/bash
 echo '{"status":"ok"}'
@@ -1176,6 +1194,23 @@ cat > "$MOCK_BIN_DIR30/pnpm" << 'MOCKEOF'
 exit 0
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR30/pnpm"
+
+# As in Test 29, isolate this generated-file fixture from the repository-level
+# Failure Gate package check while preserving real Node.js behavior elsewhere.
+REAL_NODE30=$(command -v node)
+cat > "$MOCK_BIN_DIR30/node" << MOCKEOF
+#!/bin/bash
+if [[ "\$*" == *"publish-failure-gate.mjs --check"* ]]; then
+  exit 0
+fi
+if [[ "\${1:-}" == "scripts/serial-lock.mjs" ]]; then
+  while [[ "\${1:-}" != "--" && "\$#" -gt 0 ]]; do shift; done
+  shift
+  exec "\$@"
+fi
+exec "$REAL_NODE30" "\$@"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR30/node"
 
 cat > "$MOCK_BIN_DIR30/curl" << 'MOCKEOF'
 #!/bin/bash
@@ -1361,7 +1396,7 @@ assert_exit     "port-guard synthetic — exits 1 when violation in artifacts/" 
 assert_contains "port-guard synthetic — prints ERROR header"                   "ERROR: Hardcoded port fallback" "$PORT_GUARD_OUTPUT"
 
 # ---------------------------------------------------------------------------
-# Test 34: security-audit is wired into the required CI gate
+# Test 34: the consolidated validation workflow contract is wired correctly
 #
 # Verifies two structural invariants in .replit:
 #   (a) A workflow named "security-audit" exists AND carries isValidation=true,
@@ -1378,99 +1413,20 @@ assert_contains "port-guard synthetic — prints ERROR header"                  
 # ---------------------------------------------------------------------------
 REPLIT_CFG="$SCRIPT_DIR/../.replit"
 
-if grep -q 'name = "security-audit"' "$REPLIT_CFG"; then
-  pass "security-audit — workflow declared in .replit"
+if node "$SCRIPT_DIR/dev-port-contract.mjs"; then
+  pass "workflow contract — services, Project gate, and registered ports agree"
 else
-  fail "security-audit — workflow NOT found in .replit (add a [[workflows.workflow]] block named 'security-audit')"
+  fail "workflow contract — .replit and scripts/dev-ports.json are inconsistent"
 fi
 
-# Check that the security-audit block carries isValidation = true.
-# Strategy: extract the line number of 'name = "security-audit"' and then
-# scan the following lines until the next [[workflows.workflow]] header,
-# confirming isValidation appears in that window.
-AUDIT_LINE=$(grep -n 'name = "security-audit"' "$REPLIT_CFG" | head -1 | cut -d: -f1)
-NEXT_WORKFLOW_LINE=$(awk -v start="$AUDIT_LINE" 'NR > start && /^\[\[workflows\.workflow\]\]/ { print NR; exit }' "$REPLIT_CFG")
-if [[ -z "$NEXT_WORKFLOW_LINE" ]]; then
-  NEXT_WORKFLOW_LINE=$(wc -l < "$REPLIT_CFG")
-fi
-
-AUDIT_BLOCK=$(sed -n "${AUDIT_LINE},${NEXT_WORKFLOW_LINE}p" "$REPLIT_CFG")
-if [[ "$AUDIT_BLOCK" == *'isValidation = true'* ]]; then
-  pass "security-audit — isValidation = true set on the workflow"
+if ! grep -Eq 'name = "(security-audit|canvas-typecheck|typecheck|lint|test|codegen-check|port-guard)"' "$REPLIT_CFG"; then
+  pass "workflow contract — stale one-shot declarations are absent"
 else
-  fail "security-audit — isValidation = true NOT found in the security-audit workflow block"
-fi
-
-# Check that the Project workflow lists security-audit as a task.
-# The Project workflow tasks are the 'args = "..."' lines that appear between
-# 'name = "Project"' and the next [[workflows.workflow]] header.
-PROJECT_LINE=$(grep -n 'name = "Project"' "$REPLIT_CFG" | head -1 | cut -d: -f1)
-NEXT_AFTER_PROJECT=$(awk -v start="$PROJECT_LINE" 'NR > start && /^\[\[workflows\.workflow\]\]/ { print NR; exit }' "$REPLIT_CFG")
-if [[ -z "$NEXT_AFTER_PROJECT" ]]; then
-  NEXT_AFTER_PROJECT=$(wc -l < "$REPLIT_CFG")
-fi
-
-PROJECT_BLOCK=$(sed -n "${PROJECT_LINE},${NEXT_AFTER_PROJECT}p" "$REPLIT_CFG")
-if [[ "$PROJECT_BLOCK" == *'args = "security-audit"'* ]]; then
-  pass "security-audit — listed as a task in the Project CI gate"
-else
-  fail "security-audit — NOT listed as a task in the Project CI gate (add a [[workflows.workflow.tasks]] entry with args = \"security-audit\")"
-fi
-
-# Check that the security-audit workflow fails on ANY advisory severity.
-# A single low-level audit over the full install covers every severity for
-# both dev and prod dependency sets (subsumes the old prod moderate pass).
-if [[ "$AUDIT_BLOCK" == *'pnpm audit --audit-level=low'* ]]; then
-  pass "security-audit — low-severity audit threshold present in workflow command"
-else
-  fail "security-audit — low-severity threshold MISSING from security-audit workflow (command must include 'pnpm audit --audit-level=low')"
+  fail "workflow contract — stale one-shot declaration remains in .replit"
 fi
 
 # ---------------------------------------------------------------------------
-# Test 35: canvas-typecheck is wired into the required CI gate
-#
-# Verifies two structural invariants in .replit:
-#   (a) A workflow named "canvas-typecheck" exists AND carries isValidation=true,
-#       proving it is a recognised quality gate and not just an ad-hoc script.
-#   (b) The "Project" workflow (the runButton CI gate) lists "canvas-typecheck"
-#       as one of its tasks, proving that a future shadcn/ui scaffold update or
-#       package bump that re-introduces type errors will fail the build
-#       automatically on every merge rather than silently accumulating again.
-#
-# Background: recharts and input-otp changed their exported types after the
-# shadcn/ui scaffold was generated; the 11 resulting TS errors were not caught
-# until a manual audit because canvas-typecheck was not in the CI gate.
-# ---------------------------------------------------------------------------
-CANVAS_TC_LINE=$(grep -n 'name = "canvas-typecheck"' "$REPLIT_CFG" | head -1 | cut -d: -f1)
-if [[ -n "$CANVAS_TC_LINE" ]]; then
-  pass "canvas-typecheck — workflow declared in .replit"
-else
-  fail "canvas-typecheck — workflow NOT found in .replit (add a [[workflows.workflow]] block named 'canvas-typecheck')"
-fi
-
-if [[ -n "$CANVAS_TC_LINE" ]]; then
-  NEXT_CANVAS_WORKFLOW_LINE=$(awk -v start="$CANVAS_TC_LINE" 'NR > start && /^\[\[workflows\.workflow\]\]/ { print NR; exit }' "$REPLIT_CFG")
-  if [[ -z "$NEXT_CANVAS_WORKFLOW_LINE" ]]; then
-    NEXT_CANVAS_WORKFLOW_LINE=$(wc -l < "$REPLIT_CFG")
-  fi
-  CANVAS_TC_BLOCK=$(sed -n "${CANVAS_TC_LINE},${NEXT_CANVAS_WORKFLOW_LINE}p" "$REPLIT_CFG")
-
-  if [[ "$CANVAS_TC_BLOCK" == *'isValidation = true'* ]]; then
-    pass "canvas-typecheck — isValidation = true set on the workflow"
-  else
-    fail "canvas-typecheck — isValidation = true NOT found in the canvas-typecheck workflow block"
-  fi
-fi
-
-# Reuse PROJECT_BLOCK extracted in Test 34 (same variable, same scope).
-if [[ "$PROJECT_BLOCK" == *'args = "canvas-typecheck"'* ]]; then
-  pass "canvas-typecheck — listed as a task in the Project CI gate"
-else
-  fail "canvas-typecheck — NOT listed as a task in the Project CI gate (add a [[workflows.workflow.tasks]] entry with args = \"canvas-typecheck\")"
-fi
-
-# ---------------------------------------------------------------------------
-# Test 36: process-cleanup traps are present (Port-Authority hygiene)
+# Test 35: process-cleanup traps are present (Port-Authority hygiene)
 #
 # Structural guards so the orphan-process cleanup cannot be silently removed:
 #   (a) this test runner installs a cleanup trap on EXIT/TERM/INT that kills
@@ -1637,43 +1593,50 @@ assert_exit     "plan-tier-check — exits 1 when plan has hard-fail keyword at 
 assert_contains "plan-tier-check — prints UNDER-TIER ERROR for migration keyword"          "UNDER-TIER ERROR" "$PLAN_TIERS_FAIL_OUTPUT"
 
 # ---------------------------------------------------------------------------
-# Test 39: plan-tier-check validation workflow is wired into .replit
+# Test 39: plan-tier checks remain manual-only and do not recreate workflows
 #
-# Verifies two structural invariants:
-#   (a) A workflow named "plan-tier-check" exists AND carries isValidation=true,
-#       proving it is a recognised quality gate and not just an ad-hoc script.
-#   (b) The workflow's command is scripts/check-plan-tiers.sh (the wrapper),
-#       not check-plan-tier.sh directly (which requires a plan-file argument).
-#
-# This guards against the workflow being removed or the command being changed
-# to a form that would break (e.g. requiring a positional argument).
+# Plan-tier linting is an authoring guard for task plans, not a fifth validation
+# tier. The four registered tier workflows are the only one-shot workflows in
+# .replit, so this test prevents the helper from silently reintroducing the
+# removed standalone validation declaration.
 # ---------------------------------------------------------------------------
-PLAN_TIER_WF_LINE=$(grep -n 'name = "plan-tier-check"' "$REPLIT_CFG" | head -1 | cut -d: -f1)
-if [[ -n "$PLAN_TIER_WF_LINE" ]]; then
-  pass "plan-tier-check — workflow declared in .replit"
+if grep -q 'name = "plan-tier-check"' "$REPLIT_CFG"; then
+  fail "plan-tier-check — stale standalone workflow remains in .replit"
 else
-  fail "plan-tier-check — workflow NOT found in .replit (register via setValidationCommand)"
+  pass "plan-tier-check — helper remains manual-only; no standalone workflow"
 fi
 
-if [[ -n "$PLAN_TIER_WF_LINE" ]]; then
-  NEXT_PLAN_TIER_WF_LINE=$(awk -v start="$PLAN_TIER_WF_LINE" \
-    'NR > start && /^\[\[workflows\.workflow\]\]/ { print NR; exit }' "$REPLIT_CFG")
-  if [[ -z "$NEXT_PLAN_TIER_WF_LINE" ]]; then
-    NEXT_PLAN_TIER_WF_LINE=$(wc -l < "$REPLIT_CFG")
-  fi
-  PLAN_TIER_WF_BLOCK=$(sed -n "${PLAN_TIER_WF_LINE},${NEXT_PLAN_TIER_WF_LINE}p" "$REPLIT_CFG")
+# ---------------------------------------------------------------------------
+# Test 40: pre-commit hook rejects unused variables in every linted package
+#
+# The dedicated smoke test creates temporary violations in api-server and
+# mockup-sandbox, runs the real hook with each file presented as staged, and
+# removes the fixtures afterward. This catches package-routing or ESLint-rule
+# regressions that a normal green lint run cannot detect.
+# ---------------------------------------------------------------------------
+PRE_COMMIT_HOOK_OUTPUT=$(bash "$SCRIPT_DIR/test-pre-commit.sh" 2>&1)
+PRE_COMMIT_HOOK_EXIT=$?
+assert_exit "pre-commit smoke test — rejects api-server and mockup-sandbox violations" \
+  0 "$PRE_COMMIT_HOOK_EXIT"
+if [[ "$PRE_COMMIT_HOOK_EXIT" -ne 0 ]]; then
+  echo "  pre-commit smoke test output:"
+  echo "$PRE_COMMIT_HOOK_OUTPUT" | sed 's/^/    /'
+fi
 
-  if [[ "$PLAN_TIER_WF_BLOCK" == *'isValidation = true'* ]]; then
-    pass "plan-tier-check — isValidation = true set on the workflow"
-  else
-    fail "plan-tier-check — isValidation = true NOT found in the plan-tier-check workflow block"
-  fi
-
-  if [[ "$PLAN_TIER_WF_BLOCK" == *'check-plan-tiers.sh'* ]]; then
-    pass "plan-tier-check — workflow command invokes check-plan-tiers.sh (wrapper, not bare check-plan-tier.sh)"
-  else
-    fail "plan-tier-check — workflow command must invoke check-plan-tiers.sh (the no-arg wrapper script)"
-  fi
+# ---------------------------------------------------------------------------
+# Test 41: validation lock and protected port cleanup recovery
+#
+# Runs focused black-box tests against the production lock and port-cleanup
+# entrypoints. The child-process contention is intentional: these guarantees
+# cannot be proven by source-shape checks alone.
+# ---------------------------------------------------------------------------
+PORT_AUTHORITY_OUTPUT=$(node "$SCRIPT_DIR/test-port-authority.mjs" 2>&1)
+PORT_AUTHORITY_EXIT=$?
+assert_exit "Port Authority recovery — focused contention and cleanup tests" \
+  0 "$PORT_AUTHORITY_EXIT"
+if [[ "$PORT_AUTHORITY_EXIT" -ne 0 ]]; then
+  echo "  Port Authority test output:"
+  echo "$PORT_AUTHORITY_OUTPUT" | sed 's/^/    /'
 fi
 
 # ---------------------------------------------------------------------------

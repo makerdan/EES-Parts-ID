@@ -38,6 +38,8 @@
  * matched by socket inode via /proc/<pid>/fd.
  */
 import { readFileSync, readdirSync, readlinkSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // ── Env guard ───────────────────────────────────────────────────────────────
 // FREE_PORTS_GUARD=1 makes the sweep a no-op. It guards against recursive
@@ -65,12 +67,31 @@ const argv = process.argv.slice(2);
 // with "port already used". Only safe BETWEEN steps, when nothing in our
 // tree should legitimately hold the swept ports.
 const includeOwnTree = argv.includes("--include-own-tree");
-const ports = argv
-  .filter((a) => /^\d+$/.test(a))
-  .map(Number)
-  .filter((p) => p > 0 && p <= 65535);
+const allDev = argv.includes("--all-dev");
+let ports;
+if (allDev) {
+  const registryPath = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "dev-ports.json",
+  );
+  let registry;
+  try {
+    registry = JSON.parse(readFileSync(registryPath, "utf8"));
+  } catch (error) {
+    console.error(`free-ports: unable to read port registry ${registryPath}: ${error.message}`);
+    process.exit(1);
+  }
+  ports = Array.isArray(registry.cleanupPorts)
+    ? [...new Set(registry.cleanupPorts)].filter((p) => Number.isInteger(p) && p > 0 && p <= 65535)
+    : [];
+} else {
+  ports = argv
+    .filter((a) => /^\d+$/.test(a))
+    .map(Number)
+    .filter((p) => p > 0 && p <= 65535);
+}
 if (ports.length === 0) {
-  console.error("Usage: free-ports.mjs [--include-own-tree] <port> [<port>...]");
+  console.error("Usage: free-ports.mjs [--include-own-tree] [--all-dev] <port> [<port>...]");
   process.exit(2);
 }
 
@@ -301,6 +322,13 @@ async function freePort(port) {
 
   if (victims.size === 0) {
     // Every holder belongs to this run's own process tree — nothing to kill.
+    const stillBound = listeningInodes(port).size > 0;
+    if (stillBound) {
+      console.error(
+        `free-ports: refusing to claim port ${port} is free; its holder is protected by the active caller tree.`,
+      );
+      return false;
+    }
     return true;
   }
 

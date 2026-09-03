@@ -522,6 +522,46 @@ function CategoryGrid({
   );
 }
 
+const BrowseListHeader = React.memo(function BrowseListHeader({
+  accentColor,
+  colors,
+  fontScale = 1.0,
+  onSelectAll,
+  parentLabel,
+  parentCount,
+  inCategory,
+}: {
+  accentColor: string;
+  colors: ColorMap;
+  fontScale?: number;
+  onSelectAll: () => void;
+  parentLabel: string;
+  parentCount: number;
+  inCategory?: boolean;
+}) {
+  return (
+    <Pressable
+      style={[styles.listRow, styles.allRow, {
+        backgroundColor: accentColor + "11",
+        borderColor: accentColor + "55",
+      }]}
+      onPress={onSelectAll}
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.listRowLabel, { color: accentColor, fontFamily: "Inter_700Bold", fontSize: Math.round(14 * fontScale) }]}>
+          All {parentLabel}
+        </Text>
+        <Text style={[styles.listRowSub, { color: colors.mutedForeground, fontSize: Math.round(12 * fontScale) }]}>
+          {inCategory
+            ? `Show all ${parentCount} items in this category`
+            : `Show all ${parentCount} items`}
+        </Text>
+      </View>
+      <Feather name="search" size={16} color={accentColor} />
+    </Pressable>
+  );
+});
+
 function SubcategoryList({
   subcategories,
   accentColor,
@@ -548,25 +588,17 @@ function SubcategoryList({
       contentContainerStyle={styles.listContent}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
-      ListHeaderComponent={() => (
-        <Pressable
-          style={[styles.listRow, styles.allRow, {
-            backgroundColor: accentColor + "11",
-            borderColor: accentColor + "55",
-          }]}
-          onPress={onSelectAll}
-        >
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.listRowLabel, { color: accentColor, fontFamily: "Inter_700Bold", fontSize: Math.round(14 * fontScale) }]}>
-              All {parentLabel}
-            </Text>
-            <Text style={[styles.listRowSub, { color: colors.mutedForeground, fontSize: Math.round(12 * fontScale) }]}>
-              Show all {parentCount} items in this category
-            </Text>
-          </View>
-          <Feather name="search" size={16} color={accentColor} />
-        </Pressable>
-      )}
+      ListHeaderComponent={
+        <BrowseListHeader
+          accentColor={accentColor}
+          colors={colors}
+          fontScale={fontScale}
+          onSelectAll={onSelectAll}
+          parentLabel={parentLabel}
+          parentCount={parentCount}
+          inCategory
+        />
+      }
       renderItem={({ item }) => (
         <Pressable
           style={[styles.listRow, {
@@ -618,25 +650,16 @@ function ItemTypeList({
       contentContainerStyle={styles.listContent}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
-      ListHeaderComponent={() => (
-        <Pressable
-          style={[styles.listRow, styles.allRow, {
-            backgroundColor: accentColor + "11",
-            borderColor: accentColor + "55",
-          }]}
-          onPress={onSelectAll}
-        >
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.listRowLabel, { color: accentColor, fontFamily: "Inter_700Bold", fontSize: Math.round(14 * fontScale) }]}>
-              All {parentLabel}
-            </Text>
-            <Text style={[styles.listRowSub, { color: colors.mutedForeground, fontSize: Math.round(12 * fontScale) }]}>
-              Show all {parentCount} items
-            </Text>
-          </View>
-          <Feather name="search" size={16} color={accentColor} />
-        </Pressable>
-      )}
+      ListHeaderComponent={
+        <BrowseListHeader
+          accentColor={accentColor}
+          colors={colors}
+          fontScale={fontScale}
+          onSelectAll={onSelectAll}
+          parentLabel={parentLabel}
+          parentCount={parentCount}
+        />
+      }
       renderItem={({ item }) => (
         <Pressable
           style={[styles.listRow, {

@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -14,6 +14,7 @@ import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { PinIcon } from "@/components/PinIcon";
 import { RetryImage } from "@/components/RetryImage";
 import { getSizeLabel, SizeVariantDropdown } from "@/components/SizeVariantDropdown";
+import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 
 interface ResultCardProps {
@@ -115,10 +116,14 @@ const varStyles = StyleSheet.create({
 export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVariantsToggle, rank, fontScale = 1.0, sizeUnknown = false, autoExpandPartCard = false, onReenrichKeywords, onOpen, onVariantSelect }: ResultCardProps) {
   "use no memo";
   const colors = useColors();
+  const { showToast } = useApp();
   const [expanded, setExpanded] = useState(false);
   const [lightboxUris, setLightboxUris] = useState<Array<string>>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [reenrichState, setReenrichState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  // F-059: mirror reenrichState in a ref so the failed state is not lost when
+  // the parent re-renders and React re-reconciles the component instance.
+  const reenrichStateRef = useRef<"idle" | "loading" | "done" | "error">("idle");
   const [localKeywords, setLocalKeywords] = useState<Array<string> | null>(null);
   const [localEnrichedAt, setLocalEnrichedAt] = useState<Date | string | null | undefined>(undefined);
   const [activeItem, setActiveItem] = useState<InventoryItem>(result.item);
@@ -132,15 +137,21 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
   const isViewingVariant = activeItem.id !== item.id;
 
   const handleReenrich = async () => {
-    if (!onReenrichKeywords || reenrichState === "loading") return;
+    if (!onReenrichKeywords || reenrichStateRef.current === "loading") return;
     setReenrichState("loading");
+    reenrichStateRef.current = "loading";
     try {
       const updated = await onReenrichKeywords(activeItem);
       setLocalKeywords(updated.aiKeywords ?? null);
       setLocalEnrichedAt(updated.enrichedAt ?? null);
       setReenrichState("done");
+      reenrichStateRef.current = "done";
     } catch {
       setReenrichState("error");
+      reenrichStateRef.current = "error";
+      // F-059: fire a toast so the failure is visible even if the card scrolls
+      // off screen; the ⟳ Re-enrich button on the card allows retrying.
+      showToast("Re-enrich failed — tap ⟳ Re-enrich on the card to retry", "error");
     }
   };
 

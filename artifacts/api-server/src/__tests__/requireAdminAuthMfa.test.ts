@@ -70,6 +70,7 @@ function buildMocks(role: "admin" | "user" | undefined = "admin") {
 
 describe("requireAdminAuth — MFA enforcement", () => {
   const ORIGINAL_SKIP = process.env.SKIP_ADMIN_MFA;
+  const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 
   afterEach(() => {
     // Restore env between tests.
@@ -77,6 +78,11 @@ describe("requireAdminAuth — MFA enforcement", () => {
       delete process.env.SKIP_ADMIN_MFA;
     } else {
       process.env.SKIP_ADMIN_MFA = ORIGINAL_SKIP;
+    }
+    if (ORIGINAL_NODE_ENV === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = ORIGINAL_NODE_ENV;
     }
     mockSessionClaims = null;
   });
@@ -153,6 +159,22 @@ describe("requireAdminAuth — MFA enforcement", () => {
 
     expect(next).toHaveBeenCalledTimes(1);
     expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("fails closed in production even when SKIP_ADMIN_MFA=true", () => {
+    process.env.NODE_ENV = "production";
+    process.env.SKIP_ADMIN_MFA = "true";
+    mockSessionClaims = { amr: ["pwd"] };
+
+    const { req, res, next } = buildMocks("admin");
+    requireAdminAuth(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
+    const responseBody = (res.status as jest.Mock).mock.results[0].value;
+    expect(responseBody.json).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "MFA_REQUIRED" }),
+    );
   });
 
   it("non-admin users are rejected with 403 regardless of MFA settings", () => {

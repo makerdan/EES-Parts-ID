@@ -73,6 +73,7 @@ function renderSection(
     onResume: jest.fn(),
     onReviewChanges: jest.fn(),
     onDismissResumeError: jest.fn(),
+    onRetryPoll: jest.fn(),
     colors: TEST_COLORS,
   });
   const texts = collectText(el);
@@ -107,6 +108,7 @@ describe("FailedJobsSection — renders nothing when there are no failed jobs", 
       onResume: jest.fn(),
       onReviewChanges: jest.fn(),
       onDismissResumeError: jest.fn(),
+      onRetryPoll: jest.fn(),
       colors: TEST_COLORS,
     });
     const result = (FailedJobsSection as (p: typeof el.props) => React.ReactNode)(el.props);
@@ -293,6 +295,7 @@ describe("FailedJobsSection — re-failed progress card", () => {
       onResume,
       onReviewChanges: jest.fn(),
       onDismissResumeError,
+      onRetryPoll: jest.fn(),
       colors: TEST_COLORS,
     });
     // Walk the element tree to find the Resume button's onPress and call it.

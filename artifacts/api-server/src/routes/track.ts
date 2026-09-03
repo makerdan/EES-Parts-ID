@@ -1,20 +1,22 @@
-import crypto from "node:crypto";
-
+import { ScreenViewEventSchema } from "@workspace/api-zod";
 import { db } from "@workspace/db";
 import { screenViewLogTable } from "@workspace/db";
-import { lt } from "drizzle-orm";
 import { Router } from "express";
 
 import { logger } from "../lib/logger";
 import { screenViewLimiter } from "../lib/rateLimiter";
+import {
+  deriveRotatingVisitorHash,
+  getScreenViewRateLimitKey,
+} from "../lib/screenViewPrivacy";
 
 const router = Router();
 
-// POST /track/screen-view — public endpoint, fire-and-forget screen view logging.
-// No auth required. Hashes req.ip for privacy-safe de-identification.
+// POST /track/screen-view — public, fire-and-forget screen view logging.
+// The event contract is intentionally finite and rejects all client identifiers.
 router.post("/screen-view", async (req, res) => {
   const ip = req.ip ?? "unknown";
-  const limitResult = await screenViewLimiter.check(ip);
+  const limitResult = await screenViewLimiter.check(getScreenViewRateLimitKey(ip));
   if (!limitResult.allowed) {
     return void res.status(429).json({
       error: "Too many requests. Please try again later.",
@@ -22,21 +24,25 @@ router.post("/screen-view", async (req, res) => {
     });
   }
 
-  const { screen } = req.body as { screen?: string };
+  const parsed = ScreenViewEventSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return void res.status(400).json({
+      error: "Invalid screen-view event",
+      code: "INVALID_SCREEN_EVENT",
+    });
+  }
 
   res.status(204).end();
 
-  if (!screen?.trim()) return;
-  const visitorHash = crypto.createHash("sha256").update(ip).digest("hex");
+  const { screen } = parsed.data;
+  const visitorHash = deriveRotatingVisitorHash(ip);
 
   setImmediate(async () => {
     try {
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       await db.insert(screenViewLogTable).values({
-        screenName: screen.trim(),
+        screenName: screen,
         visitorHash,
       });
-      await db.delete(screenViewLogTable).where(lt(screenViewLogTable.createdAt, thirtyDaysAgo));
     } catch (err) {
       logger.warn({ err }, "screen-view log insert failed");
     }

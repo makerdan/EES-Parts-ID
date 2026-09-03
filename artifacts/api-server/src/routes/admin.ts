@@ -10,6 +10,29 @@ import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
 
+const RESTART_DELAY_MS = 200;
+
+/**
+ * The restart route deliberately uses a replaceable exit function. Tests can
+ * stub this seam without ever terminating the Jest worker, while production
+ * still delegates to the real process exit.
+ */
+export const restartRuntime = {
+  exit(code: number): void {
+    process.exit(code);
+  },
+  schedule(callback: () => void, delayMs: number): void {
+    setTimeout(callback, delayMs);
+  },
+};
+
+let restartInFlight = false;
+
+/** Reset the route-local guard after a test that stubs restartRuntime.exit. */
+export function resetRestartStateForTests(): void {
+  restartInFlight = false;
+}
+
 // ── GET /admin/me ─────────────────────────────────────────────────────────────
 // Self-check: tells the current (approved) Clerk user whether they are an admin.
 // Only requires app-level auth (applied globally in app.ts), NOT admin auth, so
@@ -206,11 +229,36 @@ router.post("/ai-provider", requireAdminAuth, async (req, res) => {
 });
 
 // ── POST /admin/restart ───────────────────────────────────────────────────────
-// Sends a 202 Accepted response, then exits the process after a short delay
-// so Replit's workflow runner can restart it automatically.
+// Sends a 202 Accepted response, then exits the process after a short delay so
+// the development workflow runner can restart it automatically. The route is
+// intentionally not a production self-restart mechanism.
 router.post("/restart", requireAdminAuth, (_req, res) => {
+  if (process.env.NODE_ENV !== "development") {
+    return res.status(503).json({
+      restarting: false,
+      code: "RESTART_UNAVAILABLE",
+      error: "API restart is unavailable",
+    });
+  }
+
+  if (restartInFlight) {
+    return res.status(409).json({
+      restarting: false,
+      code: "RESTART_IN_PROGRESS",
+      error: "API restart is already in progress",
+    });
+  }
+
+  restartInFlight = true;
   res.status(202).json({ restarting: true });
-  setTimeout(() => process.exit(0), 200);
+  restartRuntime.schedule(() => {
+    // Clear before calling the replaceable exit seam so a test stub, or an
+    // unexpected no-op implementation, cannot leave the route permanently
+    // blocked.
+    restartInFlight = false;
+    restartRuntime.exit(0);
+  }, RESTART_DELAY_MS);
+  return;
 });
 
 // ── User Management ───────────────────────────────────────────────────────────

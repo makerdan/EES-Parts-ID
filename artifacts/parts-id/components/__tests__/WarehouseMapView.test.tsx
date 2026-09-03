@@ -4,9 +4,10 @@
  * Four runtime paths are covered across five suites:
  *
  *   1. Fresh app open (warm cache) → fit-to-screen always runs, regardless of
- *      any previously saved viewport.  AsyncStorage.getItem is NOT called on
- *      mount — the restore path has been intentionally removed so the map is
- *      always centred when the user opens it.
+ *      any previously saved viewport.  The viewport key is NOT read on mount —
+ *      the restore path has been intentionally removed so the map is always
+ *      centred when the user opens it.  Other startup preferences may still
+ *      use AsyncStorage.
  *
  *   2. No saved viewport (null) → same as above; pendingFit is set and
  *      applyFitIfReady fires once both contentVBRef and containerW are ready.
@@ -27,9 +28,9 @@
  * • useSharedValue returns a tracked plain object; every instance is pushed to
  *   `trackedValues` so tests can inspect post-mount / post-layout .value
  *   mutations without knowing which slot in the component each value occupies.
- * • AsyncStorage.getItem is a jest.fn() — tests assert it is NOT called on
- *   mount (new semantics).  setItem is tracked to verify background-flush calls
- *   in suite 4.
+ * • AsyncStorage.getItem is a jest.fn() — tests assert the viewport key is NOT
+ *   read on mount (new semantics).  setItem is tracked to verify background-
+ *   flush calls in suite 4.
  * • panBounds is spied upon and mocked to return {maxX:10000, maxY:10000} so
  *   the small test tx/ty values pass through clamping unchanged.
  * • AppState.addEventListener in the react-native mock is re-implemented
@@ -423,22 +424,25 @@ describe("startup always fits — no viewport restore on mount", () => {
     expect(call[0]).toEqual(MOCK_CONTENT_VB);
   });
 
-  it("phone (390×761): at least two shared values hold ZOOM_STOPS[0].scale (scale + savedScale)", async () => {
+  it("phone (390×761): at least two shared values hold the natural fit scale (scale + savedScale)", async () => {
     await mountAndLayout(390, 761);
-    const fitScale = ZOOM_STOPS[0]!.scale;
-    const matches = trackedValues.filter((sv) => sv.value === fitScale);
+    const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
+    const matches = trackedValues.filter((sv) => sv.value === result.scale);
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("phone (390×761): AsyncStorage.getItem is NOT called on mount (no restore path)", async () => {
+  it("phone (390×761): the viewport key is NOT read on mount (no restore path)", async () => {
     await mountAndLayout(390, 761);
-    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalledWith(VIEWPORT_KEY);
   });
 
-  it("phone (390×761): computeFitTarget returns scale === ZOOM_STOPS[0].scale (z0 fit)", async () => {
+  it("phone (390×761): computeFitTarget returns the natural fit scale (not snapped to z0 overview)", async () => {
     await mountAndLayout(390, 761);
     const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
+    // With snapToOverview:false the initial fit returns the raw fitContentViewport
+    // scale (≤ MIN_SCALE for this large MOCK_CONTENT_VB), not ZOOM_STOPS[0].scale.
+    expect(result.scale).not.toBe(ZOOM_STOPS[0]!.scale);
+    expect(result.scale).toBeGreaterThan(0);
   });
 
   it("iPad (768×960): computeFitTarget is called on mount", async () => {
@@ -446,16 +450,16 @@ describe("startup always fits — no viewport restore on mount", () => {
     expect(computeFitTargetSpy).toHaveBeenCalled();
   });
 
-  it("iPad (768×960): at least two shared values hold ZOOM_STOPS[0].scale", async () => {
+  it("iPad (768×960): at least two shared values hold the natural fit scale", async () => {
     await mountAndLayout(768, 960);
-    const fitScale = ZOOM_STOPS[0]!.scale;
-    const matches = trackedValues.filter((sv) => sv.value === fitScale);
+    const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
+    const matches = trackedValues.filter((sv) => sv.value === result.scale);
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("iPad (768×960): AsyncStorage.getItem is NOT called on mount", async () => {
+  it("iPad (768×960): the viewport key is NOT read on mount", async () => {
     await mountAndLayout(768, 960);
-    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalledWith(VIEWPORT_KEY);
   });
 });
 
@@ -490,22 +494,25 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
     expect(call[0]).toEqual(MOCK_CONTENT_VB);
   });
 
-  it("phone (390×761): computeFitTarget returns scale === ZOOM_STOPS[0].scale (z0 fit)", async () => {
+  it("phone (390×761): computeFitTarget returns the natural fit scale (not snapped to z0 overview)", async () => {
     await mountFitLayout(390, 761);
     const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
+    // With snapToOverview:false the initial fit returns the raw fitContentViewport
+    // scale (≤ MIN_SCALE for this large MOCK_CONTENT_VB), not ZOOM_STOPS[0].scale.
+    expect(result.scale).not.toBe(ZOOM_STOPS[0]!.scale);
+    expect(result.scale).toBeGreaterThan(0);
   });
 
-  it("phone (390×761): at least two shared values hold ZOOM_STOPS[0].scale after fit", async () => {
+  it("phone (390×761): at least two shared values hold the natural fit scale after fit", async () => {
     await mountFitLayout(390, 761);
-    const fitScale = ZOOM_STOPS[0]!.scale;
-    const matches = trackedValues.filter((sv) => sv.value === fitScale);
+    const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
+    const matches = trackedValues.filter((sv) => sv.value === result.scale);
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("phone (390×761): AsyncStorage.getItem is NOT called on mount (no restore path)", async () => {
+  it("phone (390×761): the viewport key is NOT read on mount (no restore path)", async () => {
     await mountFitLayout(390, 761);
-    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalledWith(VIEWPORT_KEY);
   });
 
   it("iPad (768×960): computeFitTarget is called when no stored viewport exists", async () => {
@@ -513,10 +520,13 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
     expect(computeFitTargetSpy).toHaveBeenCalled();
   });
 
-  it("iPad (768×960): computeFitTarget returns scale === ZOOM_STOPS[0].scale (z0 fit)", async () => {
+  it("iPad (768×960): computeFitTarget returns the natural fit scale (not snapped to z0 overview)", async () => {
     await mountFitLayout(768, 960);
     const result = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
-    expect(result.scale).toBe(ZOOM_STOPS[0]!.scale);
+    // With snapToOverview:false the initial fit returns the raw fitContentViewport
+    // scale (≤ MIN_SCALE for this large MOCK_CONTENT_VB), not ZOOM_STOPS[0].scale.
+    expect(result.scale).not.toBe(ZOOM_STOPS[0]!.scale);
+    expect(result.scale).toBeGreaterThan(0);
   });
 });
 
@@ -529,7 +539,7 @@ describe("no saved viewport — pendingFit set and applyFitIfReady fires", () =>
 // on a fresh open regardless of what is in storage.
 // =============================================================================
 
-describe("startup fit — no AsyncStorage.getItem call during mount", () => {
+describe("startup fit — no viewport-key AsyncStorage read during mount", () => {
   // Use a scale value clearly different from ZOOM_STOPS[0].scale (1.5) so we
   // can verify the stored scale is ignored and the fit scale is applied instead.
   const STORED_VIEWPORT = JSON.stringify({ s: 4.0, tx: 30, ty: 20 });
@@ -545,24 +555,24 @@ describe("startup fit — no AsyncStorage.getItem call during mount", () => {
     return renderer;
   }
 
-  it("phone (390×761): AsyncStorage.getItem is not called even when a stored viewport exists", async () => {
+  it("phone (390×761): the viewport key is not read even when stored data exists", async () => {
     await mountAndLayout(390, 761);
-    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalledWith(VIEWPORT_KEY);
   });
 
-  it("iPad (768×960): AsyncStorage.getItem is not called even when a stored viewport exists", async () => {
+  it("iPad (768×960): the viewport key is not read even when stored data exists", async () => {
     await mountAndLayout(768, 960);
-    expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+    expect(mockAsyncStorageGetItem).not.toHaveBeenCalledWith(VIEWPORT_KEY);
   });
 
-  it("phone (390×761): fit-to-screen scale is applied (stored s=4.0 is ignored; ZOOM_STOPS[0].scale is used)", async () => {
+  it("phone (390×761): fit-to-screen scale is applied (stored s=4.0 is ignored; natural fit scale is used)", async () => {
     await mountAndLayout(390, 761);
-    const fitScale = ZOOM_STOPS[0]!.scale;
     // Stored scale (4.0) must NOT appear in tracked shared values.
     const storedScaleMatches = trackedValues.filter((sv) => sv.value === 4.0);
     expect(storedScaleMatches.length).toBe(0);
-    // Fit scale must appear (scale + savedScale).
-    const fitScaleMatches = trackedValues.filter((sv) => sv.value === fitScale);
+    // The natural fit scale (snapToOverview:false) must appear (scale + savedScale).
+    const fitResult = computeFitTargetSpy.mock.results[0]!.value as { scale: number };
+    const fitScaleMatches = trackedValues.filter((sv) => sv.value === fitResult.scale);
     expect(fitScaleMatches.length).toBeGreaterThanOrEqual(2);
   });
 });
@@ -827,8 +837,8 @@ describe("startup fit — cold cache (getCachedData returns null on first instal
       expect(trackedValues.some((sv) => sv.value === fitTx)).toBe(true);
       expect(trackedValues.some((sv) => sv.value === fitTy)).toBe(true);
 
-      // The startup-fit useEffect does NOT call AsyncStorage.getItem on mount.
-      expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+      // The startup-fit useEffect does NOT read the viewport key on mount.
+      expect(mockAsyncStorageGetItem).not.toHaveBeenCalledWith(VIEWPORT_KEY);
     },
   );
 
@@ -1019,5 +1029,126 @@ describe("_applyFocus — zone found / not found / section disambiguation", () =
 
     expect(trackedValues.some((sv) => sv.value === expectedCxS2)).toBe(true);
     expect(trackedValues.some((sv) => sv.value === unexpectedCxS1)).toBe(false);
+  });
+});
+
+// =============================================================================
+// Suite 8 — Web unified SVG scene: floor-plan body and zone overlay share one
+//           outer SVG, with viewBox normalisation and sanitizer coverage.
+//
+// Verifies:
+//   1. When Platform.OS === "web" and cached xml is non-empty, the floor plan
+//      body is injected into a child <g> of the unified outer <Svg>.
+//   2. The outer scene owns the normalised viewBox and exact render dimensions.
+//   3. A zero-origin source remains in the same normalised scene contract.
+//   4. The floor-plan group is a direct child of the unified scene, not a
+//      separate surface from the zone overlay.
+//   5. The conservative sanitizer strips <script> blocks and on* handlers.
+// =============================================================================
+
+describe("web unified SVG scene — floor plan and overlay share one viewport", () => {
+  const WEB_INNER_XML = '<path d="M0 0 L100 100"/>';
+  const WEB_VB_OFFSET = { x: 50, y: 30, w: 7200, h: 4820 };
+  const WEB_CACHED_DATA_OFFSET = {
+    uri: "",
+    innerXml: WEB_INNER_XML,
+    xml: `<svg width="7250" height="4850" viewBox="50 30 7200 4820">${WEB_INNER_XML}</svg>`,
+    contentViewBox: WEB_VB_OFFSET,
+  };
+
+  beforeEach(() => {
+    // Run web platform tests in web mode.
+    (require("react-native").Platform as { OS: string }).OS = "web";
+
+    const fpc = require("@/utils/floorPlanCache");
+    fpc.getCachedData.mockReturnValue(WEB_CACHED_DATA_OFFSET);
+    fpc.hasCachedData.mockReturnValue(true);
+    fpc.getCachedHash.mockReturnValue("web-hash");
+  });
+
+  // afterEach from the outer scope already restores Platform.OS = "ios" via
+  // jest.useRealTimers(), but the Platform.OS write lives inside the outer
+  // beforeEach — this inner afterEach ensures the restore happens even when
+  // a test throws before the outer afterEach fires.
+  afterEach(() => {
+    (require("react-native").Platform as { OS: string }).OS = "ios";
+  });
+
+  async function mountAndLayout(w: number, h: number) {
+    const renderer = await render(<WarehouseMapView {...BASE_PROPS} />);
+    await flushPromises();
+    await act(async () => { fireOnLayout(renderer, w, h); });
+    return renderer;
+  }
+
+  function getScene(renderer: Awaited<ReturnType<typeof render>>) {
+    const sceneNodes = renderer.root!.queryAll(
+      (n) => n.type === "svg" && n.props.viewBox != null,
+      { includeSelf: true },
+    );
+    expect(sceneNodes.length).toBe(1);
+    return sceneNodes[0]!;
+  }
+
+  function getFloorPlanGroup(renderer: Awaited<ReturnType<typeof render>>) {
+    const floorPlanGroups = renderer.root!.queryAll(
+      (n) => n.type === "g" && n.props.dangerouslySetInnerHTML != null,
+      { includeSelf: true },
+    );
+    expect(floorPlanGroups.length).toBe(1);
+    return floorPlanGroups[0]!;
+  }
+
+  it("renders the floor-plan body inside the unified outer <Svg>", async () => {
+    const renderer = await mountAndLayout(800, 600);
+    const scene = getScene(renderer);
+    const floorPlanGroup = getFloorPlanGroup(renderer);
+    const html = floorPlanGroup.props.dangerouslySetInnerHTML.__html as string;
+    expect(scene.children).toContain(floorPlanGroup);
+    expect(html).toContain(WEB_INNER_XML);
+  });
+
+  it("normalises the scene viewBox and sets exact render dimensions", async () => {
+    const renderer = await mountAndLayout(800, 600);
+    const scene = getScene(renderer);
+    const html = getFloorPlanGroup(renderer).props.dangerouslySetInnerHTML.__html as string;
+    expect(scene.props.viewBox).toBe("0 0 7200 4820");
+    expect(scene.props.width).toBe(800);
+    const expectedH = 800 / (WEB_VB_OFFSET.w / WEB_VB_OFFSET.h);
+    expect(scene.props.height).toBe(expectedH);
+    expect(html).not.toContain('viewBox="50 30');
+  });
+
+  it("keeps a zero-origin source in the normalised scene contract", async () => {
+    const fpc = require("@/utils/floorPlanCache");
+    const zeroOriginVB = { x: 0, y: 0, w: 7200, h: 4820 };
+    fpc.getCachedData.mockReturnValue({
+      ...WEB_CACHED_DATA_OFFSET,
+      xml: `<svg viewBox="0 0 7200 4820">${WEB_INNER_XML}</svg>`,
+      contentViewBox: zeroOriginVB,
+    });
+
+    const renderer = await mountAndLayout(800, 600);
+    expect(getScene(renderer).props.viewBox).toBe("0 0 7200 4820");
+  });
+
+  it("keeps the injected floor-plan group directly under the unified scene", async () => {
+    const renderer = await mountAndLayout(800, 600);
+    const scene = getScene(renderer);
+    expect(getFloorPlanGroup(renderer).parent).toBe(scene);
+  });
+
+  it("strips <script> blocks and on* event handlers from the injected document", async () => {
+    const fpc = require("@/utils/floorPlanCache");
+    fpc.getCachedData.mockReturnValue({
+      ...WEB_CACHED_DATA_OFFSET,
+      xml: `<svg viewBox="50 30 7200 4820" onload="evil()"><script>alert(1)</script>${WEB_INNER_XML}</svg>`,
+    });
+
+    const renderer = await mountAndLayout(800, 600);
+    const html = getFloorPlanGroup(renderer).props.dangerouslySetInnerHTML.__html as string;
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("onload=");
+    expect(html).toContain(WEB_INNER_XML);
   });
 });

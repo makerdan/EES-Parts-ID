@@ -28,9 +28,9 @@ export interface ContentViewBox {
  * Returns null when the attribute is absent or malformed.
  */
 export function parseContentViewBox(xml: string): ContentViewBox | null {
-  const match = xml.match(/viewBox="([^"]+)"/);
-  if (!match || match[1] === undefined) return null;
-  const parts = match[1].trim().split(/[\s,]+/).map(Number);
+  const match = xml.match(/viewBox=(["'])([^"']+)\1/i);
+  if (!match || match[2] === undefined) return null;
+  const parts = match[2].trim().split(/[\s,]+/).map(Number);
   if (parts.length !== 4 || parts.some((n) => !isFinite(n))) return null;
   // Length checked to be exactly 4 above.
   return { x: parts[0]!, y: parts[1]!, w: parts[2]!, h: parts[3]! };
@@ -289,9 +289,13 @@ export function zoomStopForScale(scale: number): number {
  * (animated) and `applyFitIfReady` (immediate) in WarehouseMapView.
  *
  * Both callbacks call `fitContentViewport` to derive the raw geometry, then
- * override the scale to `ZOOM_STOPS[0].scale` (z0 overview) so the fit button
- * always snaps to the same discrete zoom level regardless of container size.
- * The tx/ty are re-proportioned to match the snapped scale.
+ * (by default) override the scale to `ZOOM_STOPS[0].scale` (z0 overview) so
+ * the fit button always snaps to the same discrete zoom level regardless of
+ * container size. The tx/ty are re-proportioned to match the snapped scale.
+ *
+ * Pass `{ snapToOverview: false }` to skip the snap and return the raw
+ * `fitContentViewport` result directly. Use this for the initial/mount fit so
+ * the entire floor plan is visible even when the natural fit scale is below 1.5.
  *
  * Extracting this as a pure function lets tests exercise the real path without
  * mounting WarehouseMapView or mocking Reanimated.
@@ -300,10 +304,15 @@ export function computeFitTarget(
   vb: ContentViewBox,
   containerW: number,
   containerH: number,
+  options?: { snapToOverview?: boolean },
 ): { scale: number; tx: number; ty: number } {
   const { scale: rawS, tx: rawTX, ty: rawTY } = fitContentViewport(
     vb, containerW, containerH, SVG_VIEWBOX_W, SVG_VIEWBOX_H,
   );
+  const snapToOverview = options?.snapToOverview ?? true;
+  if (!snapToOverview) {
+    return { scale: rawS, tx: rawTX, ty: rawTY };
+  }
   const s = ZOOM_STOPS[0]!.scale;
   const ratio = rawS > 0 ? s / rawS : 1;
   return { scale: s, tx: rawTX * ratio, ty: rawTY * ratio };
