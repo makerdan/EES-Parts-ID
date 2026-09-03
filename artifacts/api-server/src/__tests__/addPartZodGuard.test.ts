@@ -117,6 +117,8 @@ function makeWellFormedRow(overrides: Record<string, unknown> = {}) {
     id: 1,
     vendor: "ACME",
     catalog: "X-001",
+    orderPurchase: 5,
+    orderQuantity: 10,
     description: "Test part",
     binLocations: [],
     aiKeywords: [],
