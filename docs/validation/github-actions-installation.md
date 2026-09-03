@@ -2,13 +2,22 @@
 
 ## Scope and evidence
 
-This task applies the tracked GitHub Actions contract only. It does not change
-GitHub branch rules, required checks, secrets, environments, runners, or live
-workflow state. Workflow and repository evidence below is inferred from the
-tracked files; remote activation and run evidence remain pending for the
-dependent activation task.
+Live repository evidence was collected on 2026-09-03 through the authorized
+GitHub connection for `makerdan/EES-Parts-ID`. API results are recorded as live
+facts only when GitHub returned them successfully. Settings blocked by the
+repository plan remain explicitly unavailable rather than being inferred from
+tracked workflow files.
 
-## Changed files
+The tracked contract commit in this workspace is
+`c9caeae834b0198405f8547bd6a944e6e1fd5d17`. GitHub's live `main` was still at
+`31c923d12e5e9969b858e0c5c889305478a97303` during inspection. Because those
+revisions differ, this report does not claim that the redesigned contract has
+landed or that a legacy remote run validates the tracked workflows.
+
+No production secret, deployment, release, environment, application data, or
+privileged pull-request execution was introduced.
+
+## Tracked contract
 
 - `.github/actions/setup-node-pnpm/action.yml` — reusable checkout, Node 24.13.0,
   pnpm 10.26.1, frozen install, and lockfile/OS/architecture/toolchain cache.
@@ -23,70 +32,172 @@ dependent activation task.
 - `scripts/validation-steps.mjs` — registers the contract check in standard.
 - `package.json` — records the exact pnpm package manager.
 - `docs/validation/github-actions-coverage.md` — complete local-to-remote matrix.
-- `docs/validation/github-actions-installation.md` — this installation report.
 
-## Local-to-remote coverage
+## Live repository state
 
-The complete matrix is in
-`docs/validation/github-actions-coverage.md`. Portable checks have one owner:
-the Linux validation job runs `pnpm run test-standard-plus` exactly once, and
-the stable aggregator depends on that job. Task-plan and task-scoped
-Failure/Regression Gate provenance is intentionally local-only. The LiDAR
-native suite is separately owned by the macOS job because Xcode and the iOS
-simulator are not portable to the Linux runner.
+| Surface | Live evidence | Result |
+|---|---|---|
+| Repository | `makerdan/EES-Parts-ID`, private; authenticated connection has admin access | confirmed |
+| Default branch | repository API returned `main` | confirmed |
+| Default-branch revision | `31c923d12e5e9969b858e0c5c889305478a97303` | confirmed; does not match tracked contract |
+| Branch protection | branch API returned `protected: false` | not configured |
+| Branch-protection details | API returned 403: “Upgrade to GitHub Pro or make this repository public to enable this feature.” | unavailable on current private-repository plan |
+| Repository rulesets / branch rules | both APIs returned the same GitHub plan restriction | unavailable on current private-repository plan |
+| Required checks and reviews | no branch protection is active; protected-check details are plan-blocked | not configured / unavailable |
+| Force-push and deletion blocks | no branch protection is active; protected-branch settings are plan-blocked | not configured |
+| Merge queue | cannot be enabled/aligned without an available protected-branch/ruleset policy | not applicable on the current private-repository plan |
+| Actions enablement | enabled | confirmed |
+| Allowed actions | `all` | confirmed; not yet narrowed |
+| SHA pinning policy | `false` | confirmed; not yet required by GitHub |
+| Default workflow token | `read` | confirmed |
+| Workflow token PR approval | `can_approve_pull_request_reviews: false` | confirmed |
+| Fork contributor approval | API returned 422: fork PR approval is not allowed for private repositories | not applicable |
 
-## Event scopes and security
+All four tracked workflow paths are enabled remotely, but the live files are the
+legacy versions at the old `main` revision. Git object evidence confirmed
+mutable references such as `actions/checkout@v4`, `actions/setup-node@v4`,
+`pnpm/action-setup@v4`, and `actions/cache@v4`. The live CI workflow also lacks
+the tracked `merge_group` event and stable `CI / required` aggregator.
 
-CI and LiDAR cover pull requests, `merge_group`, pushes to `main`, and manual
-dispatch. Scheduled audit and README synchronization cover only their schedule
-and manual dispatch. Validation jobs use explicit `contents: read`, no
-production secrets, no write credentials, no privileged pull-request execution,
-and checkout disables persisted credentials. The README job is the sole
-write-capable workflow and never processes pull-request code.
+## Policy activation decision
 
-All third-party action references use immutable commit SHAs. Jobs have finite
-timeouts and safe concurrency. pnpm installs are frozen. The PostgreSQL service
-uses a fixed `postgres:16.4` image with health checks, readiness polling, and
-schema preparation. Cache keys include OS, architecture, Node version,
-pnpm version, and lockfile context; artifacts are diagnostic-only with
-seven-day retention and `continue-on-error` limited to upload steps.
+No branch/ruleset policy could be applied. GitHub rejected the relevant read
+endpoints for this private repository because the account/repository plan does
+not provide the feature; the branch itself reports `protected: false`.
 
-## Exclusions, gaps, and duplicate decisions
+The Actions allowlist and SHA-pinning setting were intentionally left unchanged.
+Enabling selected/SHA-only actions while the live default branch still contains
+mutable action tags would make the currently installed workflows fail before
+the tracked immutable workflow revision lands. That would violate the task's
+requirement not to weaken or knowingly break validation.
 
-- GitHub branch protection, required-check configuration, Actions policy,
-  merge-queue enablement, and live remote runs are not changed here.
-- Task-plan archive checks remain local-only because their provenance is owned by
-  Replit task validation.
-- No separate codegen, typecheck, test, coverage, or audit jobs are created;
-  the canonical tier owns these checks once rather than duplicating execution.
-- Native LiDAR coverage is separate by necessity, not a duplicate Linux suite.
-- No production credentials, self-hosted runners, deployments, or application
-  behavior changes are included.
+The already-safe defaults were preserved:
 
-## Validation results
+- Actions remain enabled.
+- The default workflow token remains read-only.
+- Workflow tokens cannot approve pull-request reviews.
+- No workflow or repository secret was read or changed.
 
-- Focused contract: `node scripts/test/github-actions-contract.test.mjs` is
-  designed to verify all tracked workflow properties and rejects a mutable
-  action in its negative control.
-- Required task validation: `test-standard` is the mandated command and must be
-  run with the task lock. The initial baseline run was interrupted during the
-  long test phase before a result was emitted; it was not treated as a failure.
-- No GitHub revision, event, matrix leg, cancellation, retry, or aggregator run
-  is claimed because live remote verification is out of scope.
+## Live run evidence
 
-## Remaining manual GitHub settings
+### Safe manual README synchronization
 
-The dependent `Activate GitHub Validation Policy` task must inspect and, with
-separate authorization, configure the default branch, required `CI / required`
-check, merge queue, Actions permissions, and any ruleset/branch-protection
-requirements. It must verify actual revision-aware PR, merge-queue, push, and
-manual results rather than treating YAML presence as activation.
+- Revision: `31c923d12e5e9969b858e0c5c889305478a97303`
+- Event: `workflow_dispatch`
+- Workflow: `Sync README from replit.md`
+- Run / attempt: `33709398658` / `1`
+- Job: `Copy replit.md → README.md`
+- Command path: checkout, copy `replit.md`, commit/push only if changed
+- Outcome: success
+- Run: <https://github.com/makerdan/EES-Parts-ID/actions/runs/33709398658>
+- Job: <https://github.com/makerdan/EES-Parts-ID/actions/runs/33709398658/job/100505468028>
 
-## Rollback and follow-up actions
+This confirms the isolated authorized maintenance path on the legacy revision.
+It is not evidence for the redesigned validation contract.
 
-Before disabling or renaming the stable check, remove its required-check
-reference in GitHub settings. Then revert the workflow contract and report,
-confirm the old local/Replit validation remains wired, and only afterward
-disable obsolete workflows or caches. Do not remove the aggregator first if
-branch protection already requires it. Follow-up activation and live
-negative-control verification belong to the dependent task.
+### Safe manual scheduled audit
+
+- Revision: `31c923d12e5e9969b858e0c5c889305478a97303`
+- Event: `workflow_dispatch`
+- Workflow: `Scheduled security audit`
+- Run / attempt: `33709397577` / `1`
+- Job: `Daily dependency audit (low+)`
+- Intended command: `pnpm audit --audit-level=low`
+- Outcome: failure during the legacy `Install pnpm` step
+- Skipped after setup failure: cache, dependency install, and audit command
+- Run: <https://github.com/makerdan/EES-Parts-ID/actions/runs/33709397577>
+- Job: <https://github.com/makerdan/EES-Parts-ID/actions/runs/33709397577/job/100505467239>
+
+The audit command did not execute, so no dependency-audit outcome is claimed.
+The failure is consistent with the live legacy workflow still using a mutable
+`pnpm/action-setup@v4` path rather than the tracked setup component.
+
+### Existing default-branch run history
+
+The latest legacy CI push runs available during inspection were:
+
+- Run `30765280285`, revision
+  `2a119c02a4b1dbd04b2d73f320d5f5ded2e69350`, attempt 1, failure:
+  <https://github.com/makerdan/EES-Parts-ID/actions/runs/30765280285>
+- Run `30304514538`, revision
+  `7a59d591bbaad5fb0bd5233eb1680614dce34fe1`, attempt 1, failure:
+  <https://github.com/makerdan/EES-Parts-ID/actions/runs/30304514538>
+
+No default-branch run exists for the tracked contract revision. No push was
+manufactured merely to claim coverage.
+
+## Positive and negative-control status
+
+The required remote acceptance proof remains blocked:
+
+- No pull-request revision contains the tracked redesigned workflows.
+- The live workflow does not emit `CI / required`.
+- No required-check policy can be configured on the current private-repository
+  plan.
+- Therefore no honest positive PR run, `merge_group` run, required aggregator
+  result, or branch-policy block can be recorded.
+- A temporary negative-control PR was not created because the remote base lacks
+  the contract under test and cannot require the aggregator. A red legacy run
+  would not prove fail-closed behavior.
+
+The repository's deterministic local contract test still owns the tracked
+mutable-action negative control. It must not be presented as a substitute for
+the required live branch-policy regression guard.
+
+## Local validation
+
+- Focused contract:
+  `node scripts/test/github-actions-contract.test.mjs` passed, verifying four
+  tracked workflows, 26 validation surfaces, and immutable action pins.
+- Required tier: registered `test-standard` run
+  `BVZxfmpBSBXKOa-DgPftS` completed with a failed `test` step after all preceding
+  standard checks, including `github-actions-contract`, passed.
+- Intermittent Canvas target:
+  `WarehouseMapRoute.test.tsx` passed all three isolated retries.
+- Intermittent API target: the inventory integration
+  `bin preservation on conflict` scenario passed all three isolated retries.
+- Under the task's explicit flaky-test rule, those passing isolated retries are
+  not assigned to this report-only change. The full tier was not rerun and no
+  heavier tier was used.
+
+## Required activation sequence
+
+To complete remote activation without creating a validation outage:
+
+1. Land or synchronize the tracked contract revision on GitHub and confirm the
+   exact GitHub commit SHA.
+2. Run a real PR revision and confirm `Portable validation`,
+   `Run LidarMeasureTests`, and `CI / required` are emitted for that SHA.
+3. Move the private repository to a GitHub plan that supports branch
+   protection/rulesets, or make it public only if the repository owner separately
+   approves that visibility change.
+4. Preserve or strengthen existing review requirements, require pull requests,
+   require `CI / required`, block force-pushes/deletion, and include
+   administrators unless an explicitly documented emergency bypass is required.
+5. Enable merge queue only with the tracked `merge_group` coverage present, then
+   capture a real merge-group run; otherwise keep merge queue disabled and record
+   it as not applicable.
+6. Change Actions policy to selected immutable action references and require SHA
+   pinning only after the pinned workflow revision is live.
+7. Re-run the PR revision, then introduce and revert a safe temporary contract
+   violation to prove the required aggregator blocks the PR when a dependency
+   fails.
+8. Exercise the redesigned default-branch and manual paths and record every
+   revision, event, workflow, job/matrix leg, command, attempt, skip, retry, and
+   outcome.
+9. Close the temporary PR and delete its branch after evidence is captured.
+
+## Rollback
+
+Rollback must remove policy references before removing checks:
+
+1. Remove `CI / required` from required checks.
+2. Disable merge queue if it depends on the tracked `merge_group` checks.
+3. Relax the selected-action/SHA-only policy only if the replacement workflow
+   requires it.
+4. Revert the workflow contract and this report.
+5. Confirm the previous local/Replit validation remains wired.
+6. Only then disable or rename obsolete workflows and delete temporary branches.
+
+Never remove or rename the stable aggregator while branch policy still requires
+it; doing so would permanently block merges.
