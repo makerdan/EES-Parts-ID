@@ -24,6 +24,8 @@
  * without forceExit, and surfaces any genuine resource-leak bugs rather than
  * masking them.
  */
+const testConnectionBudget = require("./test-connection-budget.cjs");
+
 const sharedConfig = {
   preset: "ts-jest",
   testEnvironment: "node",
@@ -120,6 +122,18 @@ const sharedConfig = {
   ],
 };
 
+// ── Shared development-database connection budget ────────────────────────────
+//
+// The two Jest projects can have workers alive at the same time. Keep their
+// aggregate worker count deterministic: 2 parallel workers + 1 db-serial
+// worker, each with the Jest-only pool cap of 2 clients = 6 test clients.
+// Global setup uses at most one transient client before workers start. The
+// development API keeps its normal 10-client application pool reserved, for a
+// documented ceiling of 17 clients for this validation shape.
+//
+// Do not raise these values without updating dbPoolBudget.test.ts. The test
+// deliberately checks the arithmetic and the production/test pool split.
+
 module.exports = {
   // globalSetup runs once before all projects — keeps DB preflight + schema
   // sync to a single execution regardless of how many projects are defined.
@@ -183,6 +197,7 @@ module.exports = {
         "/vendorPriority\\.integration\\.test\\.ts$",
         "/vendorNameResolutionMap\\.integration\\.test\\.ts$",
       ],
+      maxWorkers: testConnectionBudget.parallelMaxWorkers,
     },
   ],
 };
