@@ -99,7 +99,7 @@ overrides:
 
 patchedDependencies:
   image-size@2.0.2:
-    hash: 866496adf5a3eeee438998c12587748999c380914813bc030e73d41200033535
+    hash: 0db1e1c4edd604e5027336abcb01e6ca726513544ce5f18699059d3bd2063896
     path: patches/image-size@2.0.2.patch
 
 importers:
@@ -655,7 +655,7 @@ importers:
         version: 7.3.0
       image-size:
         specifier: 2.0.2
-        version: 2.0.2(patch_hash=866496adf5a3eeee438998c12587748999c380914813bc030e73d41200033535)
+        version: 2.0.2(patch_hash=0db1e1c4edd604e5027336abcb01e6ca726513544ce5f18699059d3bd2063896)
       jest:
         specifier: ~29.7.0
         version: 29.7.0(@types/node@26.1.0)
@@ -17658,7 +17658,7 @@ snapshots:
 
   ignore@7.0.5: {}
 
-  image-size@2.0.2(patch_hash=866496adf5a3eeee438998c12587748999c380914813bc030e73d41200033535): {}
+  image-size@2.0.2(patch_hash=0db1e1c4edd604e5027336abcb01e6ca726513544ce5f18699059d3bd2063896): {}
 
   immediate@3.0.6: {}
 
@@ -19261,7 +19261,7 @@ snapshots:
       flow-enums-runtime: 0.0.6
       graceful-fs: 4.2.11
       hermes-parser: 0.32.0
-      image-size: 2.0.2(patch_hash=866496adf5a3eeee438998c12587748999c380914813bc030e73d41200033535)
+      image-size: 2.0.2(patch_hash=0db1e1c4edd604e5027336abcb01e6ca726513544ce5f18699059d3bd2063896)
       invariant: 2.2.4
       jest-worker: 29.7.0
       jsc-safe-url: 0.2.4
@@ -19307,7 +19307,7 @@ snapshots:
       flow-enums-runtime: 0.0.6
       graceful-fs: 4.2.11
       hermes-parser: 0.35.0
-      image-size: 2.0.2(patch_hash=866496adf5a3eeee438998c12587748999c380914813bc030e73d41200033535)
+      image-size: 2.0.2(patch_hash=0db1e1c4edd604e5027336abcb01e6ca726513544ce5f18699059d3bd2063896)
       invariant: 2.2.4
       jest-worker: 29.7.0
       jsc-safe-url: 0.2.4

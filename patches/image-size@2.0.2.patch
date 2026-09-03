@@ -1,8 +1,16 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index bde0210..5b9fe67 100644
+index f563aee..461fefb 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -163,6 +163,9 @@ var HEIF = {
+@@ -2,6 +2,7 @@
+ 
+ Object.defineProperty(exports, '__esModule', { value: true });
+ 
++var fs = require('node:fs');
+ 
+ // lib/types/utils.ts
+ var decoder = new TextDecoder();
+@@ -164,6 +165,9 @@ var HEIF = {
      while (currentOffset < ipcoBox.offset + ipcoBox.size) {
        const ispeBox = findBox(input, "ispe", currentOffset);
        if (!ispeBox) break;
@@ -12,7 +20,7 @@ index bde0210..5b9fe67 100644
        const rawWidth = readUInt32BE(input, ispeBox.offset + 12);
        const rawHeight = readUInt32BE(input, ispeBox.offset + 16);
        const clapBox = findBox(input, "clap", currentOffset);
-@@ -253,9 +256,13 @@ var ICNS = {
+@@ -254,9 +258,13 @@ var ICNS = {
      const images = [];
      while (imageOffset < fileLength && imageOffset < inputLength) {
        const imageHeader = readImageHeader(input, imageOffset);
@@ -27,7 +35,7 @@ index bde0210..5b9fe67 100644
      }
      if (images.length === 0) {
        throw new TypeError("Invalid ICNS, no sizes found");
-@@ -487,6 +494,9 @@ function extractPartialStreams(input) {
+@@ -488,6 +496,9 @@ function extractPartialStreams(input) {
    while (offset < input.length) {
      const jxlpBox = findBox(input, "jxlp", offset);
      if (!jxlpBox) break;
@@ -37,11 +45,27 @@ index bde0210..5b9fe67 100644
      partialStreams.push(
        input.slice(jxlpBox.offset + 12, jxlpBox.offset + jxlpBox.size)
      );
+@@ -969,6 +980,9 @@ var globalOptions = {
+   disabledTypes: []
+ };
+ function imageSize(input) {
++  if (typeof input === "string") {
++    input = fs.readFileSync(input);
++  }
+   const type = detector(input);
+   if (typeof type !== "undefined") {
+     if (globalOptions.disabledTypes.indexOf(type) > -1) {
 diff --git a/dist/index.mjs b/dist/index.mjs
-index 22c17af..08070cb 100644
+index 22c17af..8c117b1 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
-@@ -159,6 +159,9 @@ var HEIF = {
+@@ -1,3 +1,5 @@
++import { readFileSync } from "node:fs";
++
+ // lib/types/utils.ts
+ var decoder = new TextDecoder();
+ var toUTF8String = (input, start = 0, end = input.length) => decoder.decode(input.slice(start, end));
+@@ -159,6 +161,9 @@ var HEIF = {
      while (currentOffset < ipcoBox.offset + ipcoBox.size) {
        const ispeBox = findBox(input, "ispe", currentOffset);
        if (!ispeBox) break;
@@ -51,7 +75,7 @@ index 22c17af..08070cb 100644
        const rawWidth = readUInt32BE(input, ispeBox.offset + 12);
        const rawHeight = readUInt32BE(input, ispeBox.offset + 16);
        const clapBox = findBox(input, "clap", currentOffset);
-@@ -249,9 +252,13 @@ var ICNS = {
+@@ -249,9 +254,13 @@ var ICNS = {
      const images = [];
      while (imageOffset < fileLength && imageOffset < inputLength) {
        const imageHeader = readImageHeader(input, imageOffset);
@@ -66,7 +90,7 @@ index 22c17af..08070cb 100644
      }
      if (images.length === 0) {
        throw new TypeError("Invalid ICNS, no sizes found");
-@@ -483,6 +490,9 @@ function extractPartialStreams(input) {
+@@ -483,6 +492,9 @@ function extractPartialStreams(input) {
    while (offset < input.length) {
      const jxlpBox = findBox(input, "jxlp", offset);
      if (!jxlpBox) break;
@@ -76,6 +100,16 @@ index 22c17af..08070cb 100644
      partialStreams.push(
        input.slice(jxlpBox.offset + 12, jxlpBox.offset + jxlpBox.size)
      );
+@@ -964,6 +976,9 @@ var globalOptions = {
+   disabledTypes: []
+ };
+ function imageSize(input) {
++  if (typeof input === "string") {
++    input = readFileSync(input);
++  }
+   const type = detector(input);
+   if (typeof type !== "undefined") {
+     if (globalOptions.disabledTypes.indexOf(type) > -1) {
 diff --git a/dist/types/heif.cjs b/dist/types/heif.cjs
 index 1f49078..dfc9b6e 100644
 --- a/dist/types/heif.cjs
@@ -170,3 +204,4 @@ index 49b0c4c..5a736df 100644
      partialStreams.push(
        input.slice(jxlpBox.offset + 12, jxlpBox.offset + jxlpBox.size)
      );
+\ No newline at end of file

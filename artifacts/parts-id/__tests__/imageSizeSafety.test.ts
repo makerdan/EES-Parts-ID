@@ -89,6 +89,25 @@ describe("Metro image-size safety patch", () => {
     expect(() => require(imageSizeEntry)).not.toThrow();
   });
 
+  it("accepts the filename input Metro uses for image assets", () => {
+    const metroPackagePath = require.resolve("metro/package.json");
+    const imageSizeEntry = require.resolve("image-size", {
+      paths: [path.dirname(metroPackagePath)],
+    });
+    const imageSizePackage = require(imageSizeEntry) as {
+      default?: (input: string | Uint8Array) => { width: number; height: number };
+      imageSize?: (input: string | Uint8Array) => { width: number; height: number };
+    };
+    const sizeOf = imageSizePackage.default ?? imageSizePackage.imageSize;
+    const iconPath = path.resolve(process.cwd(), "assets/images/icon.png");
+
+    expect(sizeOf).toEqual(expect.any(Function));
+    expect(sizeOf?.(iconPath)).toMatchObject({
+      width: expect.any(Number),
+      height: expect.any(Number),
+    });
+  });
+
   it.each(malformedImages)("terminates deterministically for malformed $name input", ({ bytes }) => {
     const output = JSON.parse(runParserInChild(bytes)) as { result?: unknown; error?: string };
     expect(output.result).toBeUndefined();
