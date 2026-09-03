@@ -1,15 +1,15 @@
 ---
 name: react-test-renderer@19 toJSON vs root API
-description: toJSON() silently drops conditional children in React 19; use renderer.root.findAll() instead.
+description: toJSON() silently drops conditional children in React 19; use the live render root queryAll() API instead.
 ---
 
-# react-test-renderer@19: use root.findAll(), not toJSON()
+# react-test-renderer@19: use the live root queryAll API, not toJSON()
 
 ## The rule
-In `react-test-renderer@19`, always traverse the instance tree via `renderer.root.findAll()` instead of parsing `renderer.toJSON()` for assertions that look inside conditionally-rendered children.
+In this project with `react-test-renderer@19`, always traverse the instance tree via the live render root's `queryAll()` instead of parsing `renderer.toJSON()` or using the removed `findAll()` method for assertions that look inside conditionally-rendered children.
 
 ## Why
-`toJSON()` in React 19 can return a snapshot of the tree *before* conditional blocks have been flushed, silently omitting nodes inside `{condition && <…>}` branches. The header (always rendered) appeared in `toJSON()` but phase-conditional blocks did not. The root API (`renderer.root`) is a live reference to the current fiber tree and correctly reflects all rendered nodes.
+`toJSON()` in React 19 can return a snapshot of the tree *before* conditional blocks have been flushed, silently omitting nodes inside `{condition && <…>}` branches. The header (always rendered) appeared in `toJSON()` but phase-conditional blocks did not. The root API is a live reference to the current fiber tree and correctly reflects all rendered nodes; this project's testing-library root exposes that traversal as `queryAll()`.
 
 ## How to apply
 ```ts
@@ -19,7 +19,7 @@ function instText(node: TestInst | string): string {
   return node.children.map(c => instText(c as any)).join("");
 }
 function findByTag(root: TestInst, tag: string) {
-  return root.findAll(n => n.type === tag, { deep: true });
+  return root.queryAll(n => n.type === tag, { includeSelf: true });
 }
 function findPressable(root: TestInst, text: string) {
   return findByTag(root, "rn-pressable").find(n => instText(n).includes(text)) ?? null;

@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import React, { useCallback } from "react";
+import React, { useCallback, useState } from "react";
 import {
   Alert,
   Image,
@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 
+import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 
 export interface PartPhotoPickerProps {
@@ -24,8 +25,11 @@ export interface PartPhotoPickerProps {
 
 export function PartPhotoPicker({ value, onChange, label, isAiSourced, onPressPhoto }: PartPhotoPickerProps) {
   const colors = useColors();
+  const { showToast } = useApp();
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const openCamera = useCallback(async () => {
+    if (pickerOpen) return;
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted") {
       Alert.alert(
@@ -35,18 +39,26 @@ export function PartPhotoPicker({ value, onChange, label, isAiSourced, onPressPh
       );
       return;
     }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: "images",
-      quality: 0.6,
-      allowsEditing: false,
-    });
-    const asset = result.canceled ? undefined : result.assets[0];
-    if (asset) {
-      onChange(asset.uri);
+    setPickerOpen(true);
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: "images",
+        quality: 0.6,
+        allowsEditing: false,
+      });
+      const asset = result.canceled ? undefined : result.assets[0];
+      if (asset) {
+        onChange(asset.uri);
+      }
+    } catch {
+      showToast("Could not open camera — please try again.", "error");
+    } finally {
+      setPickerOpen(false);
     }
-  }, [onChange]);
+  }, [onChange, pickerOpen, showToast]);
 
   const openLibrary = useCallback(async () => {
+    if (pickerOpen) return;
     if (Platform.OS !== "web") {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
@@ -58,16 +70,23 @@ export function PartPhotoPicker({ value, onChange, label, isAiSourced, onPressPh
         return;
       }
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: "images",
-      quality: 0.6,
-      allowsEditing: false,
-    });
-    const asset = result.canceled ? undefined : result.assets[0];
-    if (asset) {
-      onChange(asset.uri);
+    setPickerOpen(true);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: "images",
+        quality: 0.6,
+        allowsEditing: false,
+      });
+      const asset = result.canceled ? undefined : result.assets[0];
+      if (asset) {
+        onChange(asset.uri);
+      }
+    } catch {
+      showToast("Could not open photo library — please try again.", "error");
+    } finally {
+      setPickerOpen(false);
     }
-  }, [onChange]);
+  }, [onChange, pickerOpen, showToast]);
 
   const thumbnail = value ? (
     <View style={ppStyles.thumbnailOuter}>
@@ -111,7 +130,8 @@ export function PartPhotoPicker({ value, onChange, label, isAiSourced, onPressPh
           {thumbnail}
           <Pressable
             onPress={openLibrary}
-            style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
+            disabled={pickerOpen}
+            style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted, opacity: pickerOpen ? 0.5 : 1 }]}
             accessibilityLabel={value ? "Replace photo" : "Upload photo"}
           >
             <Feather name="upload" size={16} color={colors.foreground} />
@@ -125,7 +145,8 @@ export function PartPhotoPicker({ value, onChange, label, isAiSourced, onPressPh
           {thumbnail}
           <Pressable
             onPress={openCamera}
-            style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
+            disabled={pickerOpen}
+            style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted, opacity: pickerOpen ? 0.5 : 1 }]}
             accessibilityLabel={value ? "Retake photo" : "Take photo"}
           >
             <Feather name="camera" size={16} color={colors.foreground} />
@@ -135,7 +156,8 @@ export function PartPhotoPicker({ value, onChange, label, isAiSourced, onPressPh
           </Pressable>
           <Pressable
             onPress={openLibrary}
-            style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
+            disabled={pickerOpen}
+            style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted, opacity: pickerOpen ? 0.5 : 1 }]}
             accessibilityLabel="Upload from library"
           >
             <Feather name="upload" size={16} color={colors.foreground} />

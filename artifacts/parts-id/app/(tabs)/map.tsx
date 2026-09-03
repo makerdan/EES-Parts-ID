@@ -10,14 +10,11 @@
 import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { InventoryItem } from "@workspace/api-client-react";
-import * as Clipboard from "expo-clipboard";
 import { useFocusEffect, useRouter } from "expo-router";
 import * as ScreenOrientation from "expo-screen-orientation";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
   Linking,
-  Platform,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -41,10 +38,6 @@ import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const CYCLE_COUNTED_KEY = "CYCLE_COUNTED_IDS";
 
-const ZONE_EDITOR_URL = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/__mockup/zone-editor`
-  : "http://localhost:8081/__mockup/zone-editor";
-
 function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
   const aisleNum = parseInt(zone.aisleId, 10) || 0;
   return {
@@ -59,6 +52,12 @@ export default function MapScreen() {
   const colors = useColors();
   const router = useRouter();
   const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus, pinnedParts, setPinnedParts, showToast } = useApp();
+
+  // Derived at render time so that tests can control EXPO_PUBLIC_DOMAIN via process.env.
+  // In production builds the env var is baked in at build time, so the value is stable.
+  const zoneEditorUrl: string | null = process.env.EXPO_PUBLIC_DOMAIN
+    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/__mockup/zone-editor`
+    : null;
 
   /**
    * For each pinned aisle, build a label containing the actual bin code
@@ -350,13 +349,18 @@ export default function MapScreen() {
         } else {
           next.add(zone.id);
         }
-        void AsyncStorage.setItem(CYCLE_COUNTED_KEY, JSON.stringify([...next]));
+        const serialized = JSON.stringify([...next]);
+        // Await the write; revert toggle and show toast on failure (F-041).
+        AsyncStorage.setItem(CYCLE_COUNTED_KEY, serialized).catch(() => {
+          setCountedZoneIds(prev);
+          showToast("Couldn't save cycle count — please try again", "error");
+        });
         return next;
       });
       return;
     }
     setSummaryZone(toAisleZone(zone));
-  }, [cycleMode]);
+  }, [cycleMode, showToast]);
 
   const handleBrowseFromSheet = useCallback((zone: WarehouseZone) => {
     setSummaryZone(null);
@@ -435,28 +439,19 @@ export default function MapScreen() {
               </View>
             )}
           </View>
-          {/* Zone Editor: only shown to admins */}
-          {isAdmin && <View style={styles.zoneEditorWrapper}>
+          {/* Zone Editor: only shown to admins when EXPO_PUBLIC_DOMAIN is configured */}
+          {isAdmin && zoneEditorUrl !== null && <View style={styles.zoneEditorWrapper}>
               <Pressable
                 onPress={() => {
                   if (zoneEditorLongPressed.current) {
                     zoneEditorLongPressed.current = false;
                     return;
                   }
-                  if (ZONE_EDITOR_URL.includes("localhost") && !__DEV__) {
-                    Alert.alert(
-                      "Zone Editor Not Configured",
-                      "Zone Editor is not configured in this build. Set EXPO_PUBLIC_DOMAIN before building.",
-                      [{ text: "OK" }],
-                    );
-                    return;
-                  }
-                  if (Platform.OS === "web") {
-                    Linking.openURL(ZONE_EDITOR_URL);
-                  } else {
-                    Clipboard.setStringAsync(ZONE_EDITOR_URL);
-                    showToast("Zone Editor URL copied — open in your browser", "info");
-                  }
+                  // Catch URL-open failures and surface the URL so the admin
+                  // can copy it manually (F-042).
+                  Linking.openURL(zoneEditorUrl!).catch(() => {
+                    showToast(`Could not open Zone Editor. Copy the URL: ${zoneEditorUrl}`, "error");
+                  });
                 }}
                 onLongPress={() => {
                   zoneEditorLongPressed.current = true;
@@ -599,6 +594,9 @@ export default function MapScreen() {
           })()}
           selectedZoneId={selectedZone?.id}
           onPanStart={handleMapPanStart}
+          onZoneEditorLaunchFailed={(url) => {
+            showToast(`Could not open Zone Editor. Copy the URL: ${url}`, "error");
+          }}
         />
 
         {selectedZone !== null && (

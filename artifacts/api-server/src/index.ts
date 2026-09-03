@@ -1,37 +1,17 @@
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
-
 import { adminAuditLogTable, catalogPdfJobTable, db } from "@workspace/db";
 import { eq, lt, sql } from "drizzle-orm";
 
 import app from "./app";
 import { initProvider, probePoeBotsOnStartup } from "./lib/aiProvider";
 import { logger } from "./lib/logger";
-import { MAX_RETRIES, startServer } from "./lib/startServer";
+import {
+  pruneScreenViewLog,
+  SCREEN_VIEW_RETENTION_INTERVAL_MS,
+} from "./lib/screenViewRetention";
+import { startServer } from "./lib/startServer";
 import { validateEnv } from "./lib/validateEnv";
 import { applyZoneSectionNumFix } from "./lib/zoneSectionNumFix";
 import { shutdownCatalogPdfLoops } from "./routes/catalogPdf";
-
-// Resolve scripts/dev-ports.json by walking up from cwd. Deliberately avoids
-// `import.meta` (createRequire(import.meta.url)) so this file stays parseable
-// under the CommonJS ts-jest transform used by the test suite.
-function readDevFallbackPort(): number {
-  let dir = process.cwd();
-  for (let i = 0; i < 6; i++) {
-    const candidate = path.join(dir, "scripts", "dev-ports.json");
-    if (existsSync(candidate)) {
-      const parsed = JSON.parse(readFileSync(candidate, "utf8")) as {
-        API_SERVER_PORT: number;
-      };
-      return parsed.API_SERVER_PORT;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return NaN;
-}
-const DEV_FALLBACK_PORT = readDevFallbackPort();
 
 process.on("uncaughtException", (err) => {
   logger.error({ err }, "Uncaught exception — exiting");
@@ -44,18 +24,10 @@ process.on("unhandledRejection", (reason) => {
 });
 
 const rawPort = process.env["PORT"];
-const isDev = process.env["NODE_ENV"] !== "production";
+const port = rawPort ? Number(rawPort) : NaN;
+const isDev = process.env.NODE_ENV !== "production";
 
-if (!rawPort && isDev) {
-  logger.warn(
-    { fallbackPort: DEV_FALLBACK_PORT },
-    "PORT env var not set — falling back to dev default in development",
-  );
-}
-
-const port = rawPort ? Number(rawPort) : isDev ? DEV_FALLBACK_PORT : NaN;
-
-if (Number.isNaN(port) || port <= 0) {
+if (!Number.isInteger(port) || port <= 0 || port > 65535) {
   throw new Error(
     rawPort
       ? `Invalid PORT value: "${rawPort}"`
@@ -65,7 +37,7 @@ if (Number.isNaN(port) || port <= 0) {
 
 validateEnv();
 
-if (process.env["SKIP_ADMIN_MFA"] === "true") {
+if (process.env["SKIP_ADMIN_MFA"] === "true" && isDev) {
   logger.warn(
     { SKIP_ADMIN_MFA: "true" },
     "Admin MFA enforcement is DISABLED (SKIP_ADMIN_MFA=true) — admin accounts are not protected by MFA",
@@ -288,7 +260,10 @@ Promise.race([
   migrationsTimeout,
 ])
   .then(() => withStartupTimeout(initProvider(), INIT_PROVIDER_TIMEOUT_MS, "initProvider"))
-  .then(() => startServer(app, port, MAX_RETRIES))
+  // The dev workflow has already performed the canonical stale-holder sweep.
+  // Do not retry or silently move the listener after a conflict: the startup
+  // error must identify the owner and the recovery command.
+  .then(() => startServer(app, port, 0))
   .then((server) => {
     // Hard cap on total shutdown time: if draining hangs (slow AI call, DB
     // stall), force-exit so the platform doesn't have to SIGKILL us.
@@ -330,9 +305,11 @@ Promise.race([
       logger.error({ err }, "Poe bot startup probe failed");
     });
 
-    // Schedule audit log retention cleanup.
+    // Schedule retention independently of incoming telemetry traffic.
     pruneAuditLog();
     setInterval(pruneAuditLog, AUDIT_LOG_RETENTION_INTERVAL_MS).unref();
+    pruneScreenViewLog();
+    setInterval(pruneScreenViewLog, SCREEN_VIEW_RETENTION_INTERVAL_MS).unref();
   })
   .catch((err) => {
     logger.error({ err }, "Fatal error during server startup — exiting");

@@ -147,7 +147,7 @@ function Gallery() {
       <div className="max-w-2xl mx-auto">
         <header className="mb-10">
           <h1 className="text-2xl font-semibold text-gray-900 mb-1">
-            Internal Admin Tools
+            Admin Tools
           </h1>
           <p className="text-gray-500 text-sm">
             Bookmark this page to quickly reach any admin tool.
@@ -202,9 +202,8 @@ function ZoneEditorRoute() {
 }
 
 function WarehouseMapRoute() {
-  // Read-only tool — still needs a signed-in Clerk session for API access.
   return (
-    <AdminGate requireAdmin={false}>
+    <AdminGate requireAdmin>
       <Suspense fallback={null}>
         <WarehouseMapViewerPage />
       </Suspense>

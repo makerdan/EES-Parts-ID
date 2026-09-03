@@ -11,6 +11,7 @@ import {
   INVENTORY_CSV_HEADER,
   type CsvInventoryRow,
 } from "../utils/exportCsv";
+import { serializeDashboardToCsv } from "../utils/exportCsv";
 
 // ── escapeField ───────────────────────────────────────────────────────────────
 
@@ -166,5 +167,41 @@ describe("serializeInventoryToCsv", () => {
     expect(row).toBe(
       '"SQUARE D","QO120","20A 1P QO breaker","E1-04;E1-05","785901234567,785901234568"',
     );
+  });
+});
+
+describe("serializeDashboardToCsv", () => {
+  it("includes bounded-window privacy metadata and no raw record section", () => {
+    const csv = serializeDashboardToCsv({
+      generatedAt: "2026-09-01T00:00:00.000Z",
+      window: {
+        start: "2026-08-03T00:00:00.000Z",
+        end: "2026-09-02T00:00:00.000Z",
+        days: 30,
+      },
+      timezone: "UTC",
+      privacy: {
+        minimumCellCount: 5,
+        suppressedValue: "Suppressed",
+        uniqueVisitorsAvailable: false,
+        aggregateOnly: true,
+      },
+      ai: { requestsInWindow: null, byFeature: [{ feature: "identify", total: null }] },
+      screenViews: {
+        viewsInWindow: 5,
+        uniqueVisitorsInWindow: null,
+        byScreen: [{ screenName: "Search", total: 5 }],
+        dailyInWindow: [{ date: "2026-09-01", total: 5 }],
+      },
+      summary: { inventoryItems: 1, catalogJobsDone: 2, contactMessages: 3 },
+    });
+
+    expect(csv).toContain("Window Start");
+    expect(csv).toContain("Timezone,\"UTC\"");
+    expect(csv).toContain("Privacy Minimum Cell Count,5");
+    expect(csv).toContain("Unique Visitor Reporting,\"Disabled\"");
+    expect(csv).toContain("Data Scope,Aggregate records only; no raw telemetry records");
+    expect(csv).toContain("Requests in Reporting Window,Suppressed");
+    expect(csv).not.toContain("visitorHash");
   });
 });

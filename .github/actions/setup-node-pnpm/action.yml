@@ -1,0 +1,36 @@
+name: Repository Node and pnpm setup
+description: Install the pinned repository toolchain, dependencies, and a lockfile-keyed pnpm cache.
+
+inputs:
+  pnpm-version:
+    description: Exact pnpm version used by the repository.
+    required: false
+    default: 10.26.1
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js from repository version
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version-file: .node-version
+
+    - name: Set up pnpm
+      uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d
+      with:
+        version: ${{ inputs.pnpm-version }}
+
+    - name: Locate pnpm store
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore pnpm store
+      uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-node-${{ hashFiles('.node-version') }}-pnpm-${{ inputs.pnpm-version }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+    - name: Install JavaScript dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

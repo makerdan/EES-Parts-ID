@@ -7,6 +7,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -90,7 +91,7 @@ export type ToastVariant = "info" | "success" | "error";
 export const DEFAULT_SETTINGS: AppSettings = {
   textSize: "normal",
   defaultConfidenceThreshold: 50,
-  themeMode: "system",
+  themeMode: "light",
   shelfViewEnabled: true,
   scanSound: true,
   dimensionUnit: "mm",
@@ -241,7 +242,7 @@ async function fetchAdminProfile(token: string, signal?: AbortSignal): Promise<A
   }
 }
 
-async function pushAdminProfile(token: string, settings: AppSettings): Promise<void> {
+async function pushAdminProfile(token: string, settings: AppSettings, signal?: AbortSignal): Promise<void> {
   const res = await fetchWithAuth(`${API_BASE}/admin/profile`, {
     method: "PUT",
     headers: {
@@ -255,6 +256,7 @@ async function pushAdminProfile(token: string, settings: AppSettings): Promise<v
       defaultConfidenceThreshold: settings.defaultConfidenceThreshold,
       scanSound: settings.scanSound,
     }),
+    ...(signal !== undefined ? { signal } : {}),
   });
   if (!res.ok) throw new Error(`Server responded ${res.status}`);
 }
@@ -350,6 +352,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [apiInitError, setApiInitError] = useState(false);
+  const mountedRef = useRef(true);
+  const authEpochRef = useRef(0);
+  const refreshAbortRef = useRef<AbortController | null>(null);
+  const adminActionAbortRef = useRef<AbortController | null>(null);
+  const settingsSyncAbortRef = useRef<AbortController | null>(null);
+  const settingsSyncVersionRef = useRef(0);
 
   const adminTokenRef = useRef<string | null>(null);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
@@ -364,6 +372,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Keep a stable ref to getToken so we don't recreate the auth getter on every render.
   const getTokenRef = useRef(getToken);
   useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
+
+  // Invalidate all asynchronous work belonging to a previous auth identity.
+  useEffect(() => {
+    authEpochRef.current += 1;
+    refreshAbortRef.current?.abort();
+    adminActionAbortRef.current?.abort();
+    settingsSyncAbortRef.current?.abort();
+  }, [isSignedIn, userId, clerkLoaded]);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    refreshAbortRef.current?.abort();
+    adminActionAbortRef.current?.abort();
+    settingsSyncAbortRef.current?.abort();
+  }, []);
 
   // ── API client initialization ─────────────────────────────────────────────
   useEffect(() => {
@@ -399,6 +422,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // and the server now reports they are not, a toast is shown immediately so
   // the user understands why the admin UI has locked without a sign-out.
   const verifyAdmin = useCallback(async (token: string, signal?: AbortSignal) => {
+    if (!mountedRef.current || signal?.aborted) return;
+    const epoch = authEpochRef.current;
     await verifyAdminRequest({
       apiBase: API_BASE,
       token,
@@ -406,8 +431,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       wasAdmin: isAdminRef.current,
       setIsAdmin,
       setAdminToken,
-      onDemotion: () => showToastRef.current("Your admin access has been revoked.", "error"),
+      onDemotion: () => {
+        if (mountedRef.current && epoch === authEpochRef.current && !signal?.aborted) {
+          showToastRef.current("Your admin access has been revoked.", "error");
+        }
+      },
       onMfaRequired: () => {
+        if (!mountedRef.current || epoch !== authEpochRef.current || signal?.aborted) return;
         Alert.alert(
           "Two-Factor Authentication Required",
           "Admin access requires two-factor authentication (2FA). Enable it in your account settings under Security → Two-step verification.",
@@ -426,12 +456,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // ── Approval status check ─────────────────────────────────────────────────
   // After Clerk confirms sign-in, call the API to verify the user is approved.
   const doApprovalCheck = useCallback(async (signal?: AbortSignal) => {
+    if (!mountedRef.current || signal?.aborted) return;
+    const epoch = authEpochRef.current;
     // Use the stable ref so this callback is not recreated every time Clerk
     // rotates the getToken function reference (e.g. on token refresh), which
     // would cause the approval-check useEffect to re-fire in a tight loop.
     const token = await getTokenRef.current();
-    if (signal?.aborted) return;
+    if (signal?.aborted || !mountedRef.current || epoch !== authEpochRef.current) return;
     if (!token) {
+      if (!mountedRef.current || epoch !== authEpochRef.current) return;
       setApprovalStatus("pending");
       setIsAdmin(false);
       setAdminToken(null);
@@ -443,7 +476,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ...(signal !== undefined ? { signal } : {}),
     });
 
-    if (signal?.aborted) return;
+    if (signal?.aborted || !mountedRef.current || epoch !== authEpochRef.current) return;
 
     if (resp.ok) {
       setApprovalStatus("approved");
@@ -451,13 +484,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await verifyAdmin(token, signal);
     } else if (resp.status === 403) {
       const body = await resp.json() as { code?: string };
+      if (!mountedRef.current || epoch !== authEpochRef.current) return;
       setApprovalStatus(body.code === "banned" ? "banned" : "pending");
       setIsAdmin(false);
       setAdminToken(null);
     } else {
+      if (!mountedRef.current || epoch !== authEpochRef.current) return;
       setApprovalStatus("pending");
       setIsAdmin(false);
       setAdminToken(null);
+      throw new Error("Approval status check failed");
     }
   }, [verifyAdmin]);
 
@@ -473,7 +509,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setApprovalStatus("loading");
 
     doApprovalCheck(controller.signal).catch(() => {
-      if (!controller.signal.aborted) setApprovalStatus("pending");
+      if (!controller.signal.aborted && mountedRef.current) setApprovalStatus("pending");
     });
 
     return () => { controller.abort(); };
@@ -489,7 +525,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const recheckApprovalStatus = useCallback(async () => {
-    if (!isSignedIn) return;
+    if (!isSignedIn || !mountedRef.current) return;
     // Cancel any previous in-flight recheck before starting a new one.
     recheckControllerRef.current?.abort();
     const controller = new AbortController();
@@ -497,8 +533,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setApprovalStatus("loading");
     try {
       await doApprovalCheck(controller.signal);
-    } catch {
-      if (!controller.signal.aborted) setApprovalStatus("pending");
+    } catch (error) {
+      if (!controller.signal.aborted && mountedRef.current) setApprovalStatus("pending");
+      if (!controller.signal.aborted && mountedRef.current) throw error;
     } finally {
       if (recheckControllerRef.current === controller) {
         recheckControllerRef.current = null;
@@ -529,6 +566,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // ── 401 handler ──────────────────────────────────────────────────────────
   useEffect(() => {
     const handle401 = () => {
+      if (!mountedRef.current) return;
       // Every request now carries the Clerk session token, so a 401 means the
       // session expired — sign out and reset admin state.
       signOut().catch(() => {});
@@ -568,13 +606,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // ── Boot: restore settings from storage ──────────────────────────────────
   useEffect(() => {
+    let active = true;
     loadSettings().then((s) => {
+      if (!active || !mountedRef.current) return;
       setSettings(s);
       applyThemeMode(s.themeMode);
       setSettingsLoaded(true);
     }).catch(() => {
-      setSettingsLoaded(true);
+      if (active && mountedRef.current) setSettingsLoaded(true);
     });
+    return () => { active = false; };
   }, []);
 
   // ── Admin profile sync ────────────────────────────────────────────────────
@@ -599,13 +640,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     adminProfileAbortRef.current?.abort();
     const controller = new AbortController();
     adminProfileAbortRef.current = controller;
+    const epoch = authEpochRef.current;
 
     (async () => {
       const token = await getTokenRef.current();
-      if (controller.signal.aborted || !token) return;
+      if (controller.signal.aborted || !mountedRef.current || epoch !== authEpochRef.current || !token) return;
       try {
         const profile = await fetchAdminProfile(token, controller.signal);
-        if (controller.signal.aborted || !profile) return;
+        if (controller.signal.aborted || !mountedRef.current || epoch !== authEpochRef.current || !profile) return;
         setSettings(prev => {
           const merged = mergeProfileIntoSettings(prev, profile);
           if (merged === prev) return prev;
@@ -636,24 +678,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // (not just current admins) means a newly promoted user discovers their new
   // role within one poll cycle — no sign-out required.
   const refreshAdminStatus = useCallback(async () => {
-    const token = await getTokenRef.current();
-    if (!token) {
-      setIsAdmin(false);
-      setAdminToken(null);
-      return;
+    if (!mountedRef.current) return;
+    refreshAbortRef.current?.abort();
+    const controller = new AbortController();
+    refreshAbortRef.current = controller;
+    const epoch = authEpochRef.current;
+    try {
+      const token = await getTokenRef.current();
+      if (controller.signal.aborted || !mountedRef.current || epoch !== authEpochRef.current) return;
+      if (!token) {
+        setIsAdmin(false);
+        setAdminToken(null);
+        return;
+      }
+      await verifyAdmin(token, controller.signal);
+    } finally {
+      if (refreshAbortRef.current === controller) refreshAbortRef.current = null;
     }
-    await verifyAdmin(token);
   }, [verifyAdmin]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    const id = setInterval(() => { refreshAdminStatus(); }, 30_000);
+    const id = setInterval(() => { void refreshAdminStatus(); }, 30_000);
     return () => clearInterval(id);
   }, [isAuthenticated, refreshAdminStatus]);
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (nextState) => {
-      if (nextState === "active" && isAuthenticated) refreshAdminStatus();
+      if (nextState === "active" && isAuthenticated) void refreshAdminStatus();
     });
     return () => sub.remove();
   }, [isAuthenticated, refreshAdminStatus]);
@@ -665,13 +717,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const syncSettingsToServer = useCallback(async (settingsToSync: AppSettings) => {
     const token = adminTokenRef.current;
-    if (!token) return;
+    if (!token || !mountedRef.current) return;
+    settingsSyncAbortRef.current?.abort();
+    const controller = new AbortController();
+    settingsSyncAbortRef.current = controller;
+    const version = ++settingsSyncVersionRef.current;
+    const epoch = authEpochRef.current;
     try {
-      await pushAdminProfile(token, settingsToSync);
-      pendingSyncRef.current = false;
+      await pushAdminProfile(token, settingsToSync, controller.signal);
+      if (!controller.signal.aborted && mountedRef.current &&
+          epoch === authEpochRef.current && version === settingsSyncVersionRef.current &&
+          adminTokenRef.current === token) {
+        pendingSyncRef.current = false;
+      }
     } catch {
-      pendingSyncRef.current = true;
-      showToast("Couldn't save setting to server — will retry when reconnected.", "error");
+      if (!controller.signal.aborted && mountedRef.current &&
+          epoch === authEpochRef.current && version === settingsSyncVersionRef.current) {
+        pendingSyncRef.current = true;
+        showToast("Couldn't save setting to server — will retry when reconnected.", "error");
+      }
+    } finally {
+      if (settingsSyncAbortRef.current === controller) settingsSyncAbortRef.current = null;
     }
   }, [showToast]);
 
@@ -685,6 +751,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [syncSettingsToServer]);
 
   const updateSetting = useCallback(<K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    if (!mountedRef.current) return;
     const next = { ...currentSettingsRef.current, [key]: value };
     setSettings(next);
     saveSettings(next);
@@ -703,15 +770,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // ── Auth actions ──────────────────────────────────────────────────────────
 
   const logout = useCallback(async () => {
+    if (!mountedRef.current) return;
+    authEpochRef.current += 1;
+    refreshAbortRef.current?.abort();
+    adminActionAbortRef.current?.abort();
+    settingsSyncAbortRef.current?.abort();
+    adminProfileAbortRef.current?.abort();
+    recheckControllerRef.current?.abort();
     try {
       await clearSessionStorage(secureDelete, AsyncStorage.multiRemove);
     } catch (err) {
       reportStorageError("Could not clear session storage on logout", err);
     }
     logoutRegistryRef.current.fire();
-    setIsAdmin(false);
-    setAdminToken(null);
-    setApprovalStatus("idle");
+    if (mountedRef.current) {
+      setIsAdmin(false);
+      setAdminToken(null);
+      setApprovalStatus("idle");
+    }
     await signOut();
   }, [signOut]);
 
@@ -719,13 +795,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // when an admin action returns 401/403 so a stale token or a role change is
   // reconciled without dropping the user out of the app entirely.
   const logoutAdmin = useCallback(async () => {
+    if (!mountedRef.current) return;
+    adminActionAbortRef.current?.abort();
+    const controller = new AbortController();
+    adminActionAbortRef.current = controller;
+    const epoch = authEpochRef.current;
     const token = await getTokenRef.current();
+    if (controller.signal.aborted || !mountedRef.current || epoch !== authEpochRef.current) return;
     if (!token) {
       setIsAdmin(false);
       setAdminToken(null);
       return;
     }
-    await verifyAdmin(token);
+    try {
+      await verifyAdmin(token, controller.signal);
+    } finally {
+      if (adminActionAbortRef.current === controller) adminActionAbortRef.current = null;
+    }
   }, [verifyAdmin]);
 
   const clearCache = useCallback(async () => {
@@ -735,6 +821,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       reportStorageError("Could not clear search cache", err);
     }
   }, []);
+
+  const contextValue = useMemo<AppContextValue>(() => ({
+    isAuthenticated,
+    approvalStatus,
+    recheckApprovalStatus,
+    isAdmin,
+    adminToken,
+    logout,
+    logoutAdmin,
+    clearCache,
+    isLoading,
+    settings,
+    updateSetting,
+    textFontScale,
+    showToast,
+    registerLogoutHandler,
+    pendingMapFocus,
+    setPendingMapFocus,
+    pinnedParts,
+    setPinnedParts,
+    pendingMeasureSearch,
+    setPendingMeasureSearch,
+    pendingInventorySearch,
+    setPendingInventorySearch,
+    pendingLidarDims,
+    setPendingLidarDims,
+    resumeProgress,
+    setResumeProgress,
+  }), [
+    isAuthenticated,
+    approvalStatus,
+    recheckApprovalStatus,
+    isAdmin,
+    adminToken,
+    logout,
+    logoutAdmin,
+    clearCache,
+    isLoading,
+    settings,
+    updateSetting,
+    textFontScale,
+    showToast,
+    registerLogoutHandler,
+    pendingMapFocus,
+    pinnedParts,
+    pendingMeasureSearch,
+    pendingInventorySearch,
+    pendingLidarDims,
+    resumeProgress,
+  ]);
 
   if (apiInitError) {
     return (
@@ -746,34 +882,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AppContext.Provider value={{
-      isAuthenticated,
-      approvalStatus,
-      recheckApprovalStatus,
-      isAdmin,
-      adminToken,
-      logout,
-      logoutAdmin,
-      clearCache,
-      isLoading,
-      settings,
-      updateSetting,
-      textFontScale,
-      showToast,
-      registerLogoutHandler,
-      pendingMapFocus,
-      setPendingMapFocus,
-      pinnedParts,
-      setPinnedParts,
-      pendingMeasureSearch,
-      setPendingMeasureSearch,
-      pendingInventorySearch,
-      setPendingInventorySearch,
-      pendingLidarDims,
-      setPendingLidarDims,
-      resumeProgress,
-      setResumeProgress,
-    }}>
+    <AppContext.Provider value={contextValue}>
       {children}
       {toastState ? <BrandedToast message={toastState.message} type={toastState.type} /> : null}
     </AppContext.Provider>

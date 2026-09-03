@@ -118,6 +118,7 @@ export default function RootLayout() {
                       <Stack.Screen name="admin-inbox" options={{ headerShown: false }} />
                       <Stack.Screen name="admin" options={{ headerShown: false }} />
                       <Stack.Screen name="sso-callback" options={{ headerShown: false }} />
+                      <Stack.Screen name="admin-map-calibration" options={{ headerShown: false }} />
                     </Stack>
                     <AuthGate />
                   </DismissKeyboard>

@@ -213,9 +213,9 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
             addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
             if (isAdmin) {
               setNotFoundCode(code);
-            } else {
-              scheduleTimer(resetScan, 4500);
             }
+            // Non-admin: keep the message visible until the user taps
+            // "Scan Again" — actionable, not auto-dismissed (F-052).
           } else if (status === null) {
             const offlineItem = await lookupByBarcodeOffline(code);
             if (!isMountedRef.current) return;
@@ -234,12 +234,12 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
                 onClose();
               }, 500);
             } else {
+              // Offline cache miss — actionable: user must tap Dismiss (F-052)
               setScanPhase("offline_miss");
-              scheduleTimer(resetScan, 2500);
             }
           } else {
+            // Server/network error — actionable: user must tap Dismiss (F-052)
             setScanPhase("error");
-            scheduleTimer(resetScan, 2000);
           }
         }
       };

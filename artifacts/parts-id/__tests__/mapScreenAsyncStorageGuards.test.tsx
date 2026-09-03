@@ -165,8 +165,7 @@ jest.mock("@/components/BrowseByAisle", () => ({
 jest.mock("react-native-reanimated", () => require("./helpers/mapMocks").createReanimatedMock());
 
 // ─── react-native-gesture-handler ────────────────────────────────────────────
-
-jest.mock("react-native-gesture-handler", () => require("./helpers/mapMocks").createGestureHandlerMock());
+// Handled automatically by moduleNameMapper in jest.config.js → __mocks__/react-native-gesture-handler.js
 
 // ─── react-native-svg ────────────────────────────────────────────────────────
 

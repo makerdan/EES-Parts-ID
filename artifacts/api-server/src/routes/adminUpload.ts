@@ -379,38 +379,42 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
     let inserted = 0;
     let updated = 0;
 
-    for (const row of rows) {
-      // Atomic upsert via the (vendor, catalog) unique index. Mirrors the seed
-      // importer pattern so concurrent uploads of the same key can't race on
-      // the unique constraint.
-      const result = await db
-        .insert(inventoryTable)
-        .values({
-          vendor: row.vendor.toUpperCase(),
-          catalog: row.catalog,
-          description: row.description,
-          binLocations: row.binLocations,
-          barcodes: row.barcodes,
-          aiKeywords: [],
-        })
-        .onConflictDoUpdate({
-          target: [inventoryTable.vendor, inventoryTable.catalog],
-          set: {
-            description: sql`CASE WHEN length(EXCLUDED.description) > 0 THEN EXCLUDED.description ELSE ${inventoryTable.description} END`,
-            // Preserve existing bins when no bin data is supplied — guards
-            // multi-bin assignments during partial re-uploads (Task #455).
-            binLocations: sql`CASE WHEN coalesce(array_length(EXCLUDED.bin_locations, 1), 0) > 0 THEN EXCLUDED.bin_locations ELSE ${inventoryTable.binLocations} END`,
-            // Preserve existing barcodes when no barcode data is supplied — same
-            // semantics as binLocations so manual scan assignments survive re-uploads.
-            barcodes: sql`CASE WHEN coalesce(array_length(EXCLUDED.barcodes, 1), 0) > 0 THEN EXCLUDED.barcodes ELSE ${inventoryTable.barcodes} END`,
-            updatedAt: sql`now()`,
-          },
-        })
-        .returning({ isNew: sql<boolean>`(xmax = 0)` });
+    // Wrap the entire upsert loop in a transaction so a mid-loop failure rolls
+    // back all previously committed rows — enforcing all-or-nothing semantics.
+    await db.transaction(async (tx) => {
+      for (const row of rows) {
+        // Atomic upsert via the (vendor, catalog) unique index. Mirrors the seed
+        // importer pattern so concurrent uploads of the same key can't race on
+        // the unique constraint.
+        const result = await tx
+          .insert(inventoryTable)
+          .values({
+            vendor: row.vendor.toUpperCase(),
+            catalog: row.catalog,
+            description: row.description,
+            binLocations: row.binLocations,
+            barcodes: row.barcodes,
+            aiKeywords: [],
+          })
+          .onConflictDoUpdate({
+            target: [inventoryTable.vendor, inventoryTable.catalog],
+            set: {
+              description: sql`CASE WHEN length(EXCLUDED.description) > 0 THEN EXCLUDED.description ELSE ${inventoryTable.description} END`,
+              // Preserve existing bins when no bin data is supplied — guards
+              // multi-bin assignments during partial re-uploads (Task #455).
+              binLocations: sql`CASE WHEN coalesce(array_length(EXCLUDED.bin_locations, 1), 0) > 0 THEN EXCLUDED.bin_locations ELSE ${inventoryTable.binLocations} END`,
+              // Preserve existing barcodes when no barcode data is supplied — same
+              // semantics as binLocations so manual scan assignments survive re-uploads.
+              barcodes: sql`CASE WHEN coalesce(array_length(EXCLUDED.barcodes, 1), 0) > 0 THEN EXCLUDED.barcodes ELSE ${inventoryTable.barcodes} END`,
+              updatedAt: sql`now()`,
+            },
+          })
+          .returning({ isNew: sql<boolean>`(xmax = 0)` });
 
-      if (result[0]?.isNew) inserted++;
-      else updated++;
-    }
+        if (result[0]?.isNew) inserted++;
+        else updated++;
+      }
+    });
 
     invalidateReferenceAnswerCache().catch(() => {});
 

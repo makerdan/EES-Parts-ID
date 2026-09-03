@@ -6,7 +6,7 @@
   "scripts": {
     "predev": "pnpm --filter @workspace/api-spec run codegen:ensure",
     "pretypecheck": "pnpm --filter @workspace/api-spec run codegen:ensure",
-    "dev": "fuser -k -KILL ${PORT}/tcp 2>/dev/null || true; while fuser ${PORT}/tcp 2>/dev/null >/dev/null 2>&1; do sleep 0.2; done && NODE_ENV=development exec tsx src/index.ts",
+    "dev": "node ../../scripts/free-ports.mjs \"${PORT:?PORT environment variable is required}\" && NODE_ENV=development exec tsx src/index.ts",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck.tsbuildinfo && tsc -p tsconfig.test.json --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck-test.tsbuildinfo",
@@ -36,7 +36,7 @@
     "helmet": "^8.2.0",
     "http-proxy-middleware": "^4.1.1",
     "openai": "^6.27.0",
-    "pdfjs-dist": "^5.7.284",
+    "pdfjs-dist": "^6.2.108",
     "pino": "^9",
     "pino-http": "^10",
     "sharp": "^0.35.0"

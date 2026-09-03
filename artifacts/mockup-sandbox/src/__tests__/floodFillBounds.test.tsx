@@ -197,7 +197,7 @@ describe("ZoneEditor fill mode — integration", () => {
 
     // Make Image fire onload synchronously (via microtask) when src is assigned.
     Object.defineProperty(HTMLImageElement.prototype, "src", {
-      set(this: HTMLImageElement, _url: string) {
+      set(this: HTMLImageElement) {
         // Schedule onload as a microtask so the Promise chain in rasterizeSvg proceeds.
         Promise.resolve().then(() => {
           this.onload?.(new Event("load"));

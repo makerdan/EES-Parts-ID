@@ -31,7 +31,18 @@ export function startServer(
           );
         });
       } else {
-        logger.error({ err }, "Error listening on port");
+        if (err.code === "EADDRINUSE") {
+          logger.error(
+            {
+              err,
+              port,
+              recoveryCommand: `node scripts/free-ports.mjs ${port}`,
+            },
+            "Port is already in use; stop the owning development process or run the canonical recovery command",
+          );
+        } else {
+          logger.error({ err }, "Error listening on port");
+        }
         process.exit(1);
       }
     });

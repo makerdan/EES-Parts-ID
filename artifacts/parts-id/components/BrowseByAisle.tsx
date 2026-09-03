@@ -188,15 +188,24 @@ function DrillRow({
   highlighted?: boolean;
 }) {
   const glowOpacity = useRef(new Animated.Value(0)).current;
+  const glowAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     if (!highlighted) return;
     glowOpacity.setValue(1);
-    Animated.timing(glowOpacity, {
+    const animation = Animated.timing(glowOpacity, {
       toValue: 0,
       duration: 1200,
       useNativeDriver: true,
-    }).start();
+    });
+    glowAnimationRef.current = animation;
+    animation.start(() => {
+      if (glowAnimationRef.current === animation) glowAnimationRef.current = null;
+    });
+    return () => {
+      animation.stop();
+      if (glowAnimationRef.current === animation) glowAnimationRef.current = null;
+    };
   }, [highlighted, glowOpacity]);
 
   return (
@@ -526,6 +535,7 @@ function SectionShelfView({
   const listFooter = selectedPart ? (
     <View style={{ marginHorizontal: 12, marginTop: 12 }}>
       <ResultCard
+        key={selectedKey}
         result={{
           item: selectedPart.item,
           confidence: 1,
@@ -677,6 +687,16 @@ export function BrowseByAisle({
   const [addPartVisible, setAddPartVisible] = useState(false);
   const [pendingBin, setPendingBin] = useState("");
   const [aisleRefreshing, setAisleRefreshing] = useState(false);
+  const mountedRef = useRef(true);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    if (highlightTimerRef.current !== null) {
+      clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = null;
+    }
+  }, []);
 
   const handleEditItem = isAdmin
     ? (item: InventoryItem) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } })
@@ -716,7 +736,12 @@ export function BrowseByAisle({
       const sectionNum = crumbs.section.sectionNum;
       setCrumbs(prev => ({ ...prev, section: null }));
       setHighlightedSectionNum(sectionNum);
-      setTimeout(() => setHighlightedSectionNum(null), 1400);
+      if (highlightTimerRef.current !== null) clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = setTimeout(() => {
+        if (!mountedRef.current) return;
+        setHighlightedSectionNum(null);
+        highlightTimerRef.current = null;
+      }, 1400);
     } else if (crumbs.aisle !== null) {
       setCrumbs({ aisle: null, section: null });
     }
@@ -844,8 +869,13 @@ export function BrowseByAisle({
               <RefreshControl
                 refreshing={aisleRefreshing}
                 onRefresh={async () => {
+                  if (!mountedRef.current) return;
                   setAisleRefreshing(true);
-                  try { await onRefresh(); } finally { setAisleRefreshing(false); }
+                  try {
+                    await onRefresh();
+                  } finally {
+                    if (mountedRef.current) setAisleRefreshing(false);
+                  }
                 }}
                 tintColor={colors.primary}
                 colors={[colors.primary]}

@@ -54,8 +54,8 @@ jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColo
 jest.mock("react-native-reanimated", () => require("./helpers/mapMocks").createReanimatedMock());
 
 // ─── react-native-gesture-handler ────────────────────────────────────────────
-
-jest.mock("react-native-gesture-handler", () => require("./helpers/mapMocks").createGestureHandlerMock());
+// jest.config.js moduleNameMapper routes this to __mocks__/react-native-gesture-handler.js
+// automatically.  __simulateTap() / __resetTap() are available via require().
 
 // ─── react-native-svg ────────────────────────────────────────────────────────
 
@@ -549,7 +549,11 @@ describe("MFA_REQUIRED during confirm", () => {
 describe("Double-tap guard", () => {
   it("issues only one batch of 3 PUT calls when Confirm is tapped rapidly twice", async () => {
     // Make the first slot's upsertAnchor return a never-resolving promise so
-    // isConfirming stays true long enough to block the second tap.
+    // isConfirming stays true long enough to block the second tap.  Slot 1 is
+    // resolved with { ok: false } inside the same act() so that handleConfirm
+    // returns immediately (avoids continuing to slots 2 and 3) and all async
+    // work completes before the test ends — preventing "overlapping act() calls"
+    // warnings from leaking pending state updates into the next test.
     let resolveSlot1!: (v: AnchorMutResult) => void;
     const pendingSlot1 = new Promise<AnchorMutResult>((resolve) => { resolveSlot1 = resolve; });
 
@@ -558,16 +562,39 @@ describe("Double-tap guard", () => {
     activeTree = await renderScreen([...VALID_ANCHORS]);
     await goToReview(activeTree);
 
-    // First tap — kicks off the in-flight confirm
-    const confirmBtn = activeTree.queryByText(/Confirm & Apply/i);
-    if (!confirmBtn) throw new Error("Confirm button not found");
-    fireEvent.press(confirmBtn);
-    // Second tap immediately after (guard must block this)
-    fireEvent.press(confirmBtn);
+    const confirmBtnText = activeTree.queryByText(/Confirm & Apply/i);
+    if (!confirmBtnText) throw new Error("Confirm button not found");
 
-    // Resolve the pending call and flush remaining work
+    // ── Why we call onPress directly instead of fireEvent.press ──────────────
+    // In RTLRN 14, fireEvent.press is *async* and wraps the call in its own
+    // inner act().  Each such inner act pushes React's actScopeDepth counter.
+    // When two fireEvent.press calls are made without await inside an outer
+    // await act(), React 19 ends up with three concurrently-open act scopes
+    // (outer + A1 + A2) whose depths are 1, 2, 3.  When A1 pops, the current
+    // depth is still 3 (A2 is open), so React's depth-equality guard fires:
+    //   prevActScopeDepth(1) !== actScopeDepth(3) - 1
+    // producing one "overlapping act() calls" warning per mismatched pop — three
+    // total for two inner acts plus the outer cleanup.
+    //
+    // Calling element.props.onPress() directly never creates an inner act scope,
+    // so the entire double-tap sequence lives inside the single outer act() with
+    // no depth mismatch.  The double-tap semantics are preserved because
+    // confirmingRef.current is set synchronously by the first call before the
+    // second call evaluates the guard.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let pressable: any = confirmBtnText.parent;
+    while (pressable && !pressable.props?.onPress) {
+      pressable = pressable.parent;
+    }
+    if (!pressable?.props?.onPress) throw new Error("Confirm Pressable not found in tree");
+    const onPress = pressable.props.onPress as () => void;
+
     await act(async () => {
-      resolveSlot1({ ok: true });
+      onPress();   // First tap: sets confirmingRef.current = true
+      onPress();   // Second tap: blocked by confirmingRef guard
+      // Resolve slot 1 with failure so handleConfirm exits without continuing to
+      // slots 2 and 3.  This drains all async work in the same act() scope.
+      resolveSlot1({ ok: false });
       await rawFlush();
     });
 
@@ -575,5 +602,428 @@ describe("Double-tap guard", () => {
     expect(mockUpsertAnchor.mock.calls.length).toBeLessThanOrEqual(3);
     // And at least 1 call happened
     expect(mockUpsertAnchor).toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// Source-level regression guards — pick overlay pointerEvents and tapGesture
+// =============================================================================
+// These tests read the raw source of the calibration screen and assert that
+// two critical props can't be silently removed by a future refactor.
+//
+//  1. tapGesture must call .runOnJS(true) — ensures the onEnd callback runs on
+//     the JS thread under Reanimated 4; without it state updates inside onEnd
+//     can be silently dropped on native.
+//
+//  2. The pickOverlay View must carry pointerEvents="box-none" — without it the
+//     absolutely-positioned overlay intercepts tap events on web, preventing
+//     placed coordinates from being registered (Save button stays disabled).
+
+describe("Source-level regression guards — pick overlay and tapGesture", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fsModule  = require("fs")   as typeof import("fs");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const pathModule = require("path") as typeof import("path");
+  const calibSrc: string = fsModule.readFileSync(
+    pathModule.resolve(__dirname, "../app/admin-map-calibration.tsx"),
+    "utf-8",
+  );
+
+  /** Walk forward from startIdx until the closing `>` of a JSX opening tag. */
+  function extractOpeningTag(src: string, startIdx: number): string {
+    let i = startIdx;
+    let depth = 0;
+    while (i < src.length) {
+      const ch = src[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      else if (ch === ">" && depth === 0) return src.slice(startIdx, i + 1);
+      i++;
+    }
+    return src.slice(startIdx, i);
+  }
+
+  it("tapGesture chain includes .runOnJS(true) before .onEnd(", () => {
+    // Locate the Gesture.Tap() call that builds the tap gesture.
+    const tapGestureIdx = calibSrc.indexOf("Gesture.Tap()");
+    expect(tapGestureIdx).toBeGreaterThan(-1);
+
+    // The .onEnd( must come after .runOnJS(true) in the same gesture chain.
+    const onEndIdx = calibSrc.indexOf(".onEnd(", tapGestureIdx);
+    expect(onEndIdx).toBeGreaterThan(-1);
+
+    const between = calibSrc.slice(tapGestureIdx, onEndIdx);
+    expect(between).toMatch(/\.runOnJS\s*\(\s*true\s*\)/);
+  });
+
+  it("pickOverlay View carries pointerEvents=\"box-none\"", () => {
+    // Scan for every <View that references styles.pickOverlay.
+    const tagStartRe = /<View\b/g;
+    let match: RegExpExecArray | null;
+    let found = false;
+
+    while ((match = tagStartRe.exec(calibSrc)) !== null) {
+      const tag = extractOpeningTag(calibSrc, match.index);
+      if (!tag.includes("pickOverlay")) continue;
+      found = true;
+
+      const hasBoxNone = /pointerEvents\s*=\s*["']box-none["']/.test(tag);
+      if (!hasBoxNone) {
+        throw new Error(
+          `The pickOverlay <View> is missing pointerEvents="box-none".\n` +
+          `Without it the overlay intercepts tap events on web, preventing\n` +
+          `placed coordinates from being registered and the Save button remaining disabled.\n` +
+          `Add  pointerEvents="box-none"  to the <View style={[styles.pickOverlay, …]}> tag\n` +
+          `in app/admin-map-calibration.tsx.`,
+        );
+      }
+      expect(hasBoxNone).toBe(true);
+    }
+
+    if (!found) {
+      throw new Error(
+        `Could not find a <View> that references styles.pickOverlay ` +
+        `in app/admin-map-calibration.tsx. ` +
+        `The overlay may have been renamed — update this test to match.`,
+      );
+    }
+  });
+});
+
+// =============================================================================
+// Multi-slot save isolation
+// =============================================================================
+// Saving slot A triggers upsertAnchor → which calls refetch() internally →
+// which causes the anchor-sync useEffect to fire.  Without the prevAnchorIdsRef
+// guard, any slot NOT present in the new server response would have its locally-
+// placed svgCoord wiped back to null, re-disabling that slot's Save button even
+// though the user had already placed a point there.
+
+describe("Multi-slot save isolation — refetch must not wipe unsaved local coords", () => {
+  beforeEach(() => {
+    // Provide cached SVG data so the component mounts the GestureDetector
+    // (it only renders when svgXml is truthy).
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock;
+      hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue({
+      xml: "<svg/>",
+      contentViewBox: null,
+      hash: "test",
+    });
+    floorPlanCache.hasCachedData.mockReturnValue(true);
+    // The unified file mock captures the latest Gesture.Tap().onEnd() callback
+    // automatically — no spy needed.  __resetTap() clears it between tests.
+    require("react-native-gesture-handler").__resetTap();
+  });
+
+  afterEach(() => {
+    // Restore the floorPlanCache to its default (null) so subsequent tests
+    // that expect svgXml="" are unaffected.
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock;
+      hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue(null);
+    floorPlanCache.hasCachedData.mockReturnValue(false);
+    require("react-native-gesture-handler").__resetTap();
+  });
+
+  it("locally-placed coord on slot 2 survives a refetch that only returns slot 1", async () => {
+    // Start with no server anchors — all 3 slots show "Not placed".
+    activeTree = await renderScreen([]);
+    expect(activeTree.queryAllByText("Not placed")).toHaveLength(3);
+
+    // Enter pick mode for slot 2 (index 1) by pressing its "Place" button.
+    // All 3 slots start as "Place" buttons; the second one belongs to slot 2.
+    const placeButtons = activeTree.getAllByText("Place");
+    expect(placeButtons).toHaveLength(3);
+    await act(async () => {
+      fireEvent.press(placeButtons[1]!);
+      await rawFlush();
+    });
+    // After the press, the component re-renders with pickingSlot = 1 and the
+    // tapGesture re-registers its onEnd callback — the file mock captures the
+    // latest callback automatically in _lastOnEnd.
+
+    // Simulate a tap on the map.  mapW/mapH are 0 in tests (no layout event),
+    // so screenToSvgCoords returns {x:0, y:0} regardless of the input.
+    await act(async () => {
+      require("react-native-gesture-handler").__simulateTap({ x: 50, y: 50 });
+      await rawFlush();
+    });
+
+    // Slot 2 now has a coord ({x:0, y:0}); slots 1 and 3 remain "Not placed".
+    expect(activeTree.queryAllByText("Not placed")).toHaveLength(2);
+
+    // Simulate the refetch that fires when slot 1 is saved: the server now
+    // returns only slot 1.  The sync useEffect must NOT wipe slot 2's local draft.
+    _mockAnchors = [VALID_ANCHORS[0]];
+    await act(async () => {
+      await activeTree!.rerender(<AdminMapCalibrationScreen />);
+      await rawFlush();
+    });
+
+    // After the refetch:
+    //   Slot 1 — synced from server (svgX:100)
+    //   Slot 2 — local draft PRESERVED (never saved, never in prevAnchorIdsRef)
+    //   Slot 3 — still "Not placed" (untouched)
+    //
+    // BUG (before fix): the effect wiped every slot not in the server response
+    //   → slot 2 would become "Not placed" → 2 "Not placed" texts.
+    // FIX: only previously-saved-and-now-deleted slots are cleared
+    //   → slot 2 is left intact → 1 "Not placed" text.
+    expect(activeTree.queryAllByText("Not placed")).toHaveLength(1);
+
+    // Slot 1 must show the server-synced SVG coordinate (svgX = 100).
+    expect(activeTree.queryByText(/x:\s*100\.0/)).not.toBeNull();
+  });
+});
+
+// =============================================================================
+// Zone corner snap — non-empty zones pre-fill Zone X/Y on tap
+// =============================================================================
+
+describe("Zone corner snap — tap near a corner fills Zone X/Y", () => {
+  const { findNearestZoneCorner: mockFindNearest } = require("@/utils/nearestZoneCorner") as {
+    findNearestZoneCorner: jest.Mock;
+  };
+  const { useWarehouseZones: mockUseWarehouseZones } = require("@/hooks/useWarehouseZones") as {
+    useWarehouseZones: jest.Mock;
+  };
+
+  const TEST_ZONE = {
+    id: 1, aisleId: "A", sectionNum: 1, isInventory: true,
+    svgX: 100, svgY: 100, svgWidth: 50, svgHeight: 50,
+    sortOrder: 0, createdAt: "", updatedAt: "",
+  };
+
+  beforeEach(() => {
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock; hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue({ xml: "<svg/>", contentViewBox: null, hash: "test" });
+    floorPlanCache.hasCachedData.mockReturnValue(true);
+    mockUseWarehouseZones.mockReturnValue({
+      zones: [TEST_ZONE],
+      alignment: { translateX: 0, translateY: 0, scale: 1 },
+      alignmentStale: false, anchors: [], loading: false, error: false,
+      refetch: mockRefetchZones,
+    });
+    require("react-native-gesture-handler").__resetTap();
+  });
+
+  afterEach(() => {
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock; hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue(null);
+    floorPlanCache.hasCachedData.mockReturnValue(false);
+    mockUseWarehouseZones.mockReturnValue({
+      zones: [],
+      alignment: { translateX: 0, translateY: 0, scale: 1 },
+      alignmentStale: false, anchors: [], loading: false, error: false,
+      refetch: mockRefetchZones,
+    });
+    require("react-native-gesture-handler").__resetTap();
+  });
+
+  it("fills Zone X and Zone Y inputs when findNearestZoneCorner returns a match", async () => {
+    // Override findNearestZoneCorner for this test only.
+    // We get the mock via require() so we reference the same jest.fn() instance
+    // that was registered in the top-level jest.mock() call.
+    const { findNearestZoneCorner: findNearestMock } = require("@/utils/nearestZoneCorner") as {
+      findNearestZoneCorner: jest.Mock;
+    };
+    findNearestMock.mockReturnValueOnce({ worldX: 150, worldY: 200, distance: 5, zone: TEST_ZONE });
+
+    activeTree = await renderScreen([]);
+
+    // Enter pick mode for slot 1
+    const placeButtons = activeTree.getAllByText("Place");
+    await act(async () => { fireEvent.press(placeButtons[0]!); await rawFlush(); });
+
+    // Simulate a tap on the map
+    await act(async () => {
+      require("react-native-gesture-handler").__simulateTap({ x: 50, y: 50 });
+      await rawFlush();
+    });
+
+    // findNearestZoneCorner must have been called (confirms tap fired through handleMapTap)
+    expect(findNearestMock).toHaveBeenCalled();
+
+    // When snap succeeds both worldXStr and worldYStr are valid numbers,
+    // so the slot transitions to "ready" and shows the "✓ ready" badge.
+    // This is a reliable proxy for the form state being updated.
+    expect(activeTree.queryByText(/✓ ready/)).not.toBeNull();
+  });
+
+  it("does NOT fill Zone X/Y when findNearestZoneCorner returns null", async () => {
+    // mockFindNearest defaults to null — no extra setup needed
+
+    activeTree = await renderScreen([]);
+
+    const placeButtons = activeTree.getAllByText("Place");
+    await act(async () => { fireEvent.press(placeButtons[0]!); await rawFlush(); });
+
+    await act(async () => {
+      require("react-native-gesture-handler").__simulateTap({ x: 50, y: 50 });
+      await rawFlush();
+    });
+
+    // Slot should NOT be ready (Zone X/Y fields still empty)
+    expect(activeTree.queryByText(/✓ ready/)).toBeNull();
+    // No snapped display values
+    expect(activeTree.queryByDisplayValue("150")).toBeNull();
+  });
+});
+
+// =============================================================================
+// Inline hint — no nearby zone corner after pin placement
+// =============================================================================
+
+describe("Inline hint when Zone X/Y empty after pin placement", () => {
+  beforeEach(() => {
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock; hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue({ xml: "<svg/>", contentViewBox: null, hash: "test" });
+    floorPlanCache.hasCachedData.mockReturnValue(true);
+    require("react-native-gesture-handler").__resetTap();
+  });
+
+  afterEach(() => {
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock; hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue(null);
+    floorPlanCache.hasCachedData.mockReturnValue(false);
+    require("react-native-gesture-handler").__resetTap();
+  });
+
+  it("shows hint after pin placement when no zone corner is nearby (findNearestZoneCorner returns null)", async () => {
+    activeTree = await renderScreen([]);
+
+    const placeButtons = activeTree.getAllByText("Place");
+    await act(async () => { fireEvent.press(placeButtons[0]!); await rawFlush(); });
+
+    await act(async () => {
+      require("react-native-gesture-handler").__simulateTap({ x: 50, y: 50 });
+      await rawFlush();
+    });
+
+    expect(activeTree.queryByText(/No nearby zone corner found/i)).not.toBeNull();
+  });
+
+  it("hint disappears once snap fills both Zone X and Zone Y", async () => {
+    activeTree = await renderScreen([]);
+
+    // First tap: findNearestZoneCorner returns null (default) → hint appears
+    const placeButtons = activeTree.getAllByText("Place");
+    await act(async () => { fireEvent.press(placeButtons[0]!); await rawFlush(); });
+    await act(async () => {
+      require("react-native-gesture-handler").__simulateTap({ x: 50, y: 50 });
+      await rawFlush();
+    });
+
+    expect(activeTree.queryByText(/No nearby zone corner found/i)).not.toBeNull();
+
+    // Second tap: snap succeeds → both worldXStr and worldYStr are filled → hint gone.
+    // Re-enter pick mode first (slot 1 now shows "Re-place").
+    const rePlaceBtn = activeTree.queryByText("Re-place");
+    expect(rePlaceBtn).not.toBeNull();
+
+    const { findNearestZoneCorner: findNearestMock } = require("@/utils/nearestZoneCorner") as {
+      findNearestZoneCorner: jest.Mock;
+    };
+    findNearestMock.mockReturnValueOnce({ worldX: 100, worldY: 200, distance: 3, zone: { id: 99 } });
+
+    await act(async () => { fireEvent.press(rePlaceBtn!); await rawFlush(); });
+    await act(async () => {
+      require("react-native-gesture-handler").__simulateTap({ x: 50, y: 50 });
+      await rawFlush();
+    });
+
+    // Hint must be gone — both fields are now non-empty (snap filled them)
+    expect(activeTree.queryByText(/No nearby zone corner found/i)).toBeNull();
+  });
+
+  it("hint not shown before any pin is placed", async () => {
+    activeTree = await renderScreen([]);
+    // No tap — coord is null for all slots
+    expect(activeTree.queryByText(/No nearby zone corner found/i)).toBeNull();
+  });
+});
+
+// =============================================================================
+// Edit-mode faint zone overlay — regression guard
+// =============================================================================
+// renderMapCard(null) is called in the edit step, so overlayTransformStr is
+// null.  The faint overlay (<Rect> per zone, mocked as "svg-rect") must render
+// when zones is non-empty and must NOT render when zones is empty.
+// Without this guard a refactor of renderMapCard could silently remove the
+// overlay and no existing test would catch it.
+
+describe("Edit-mode faint zone overlay", () => {
+  const { useWarehouseZones: mockUseWarehouseZones } = require("@/hooks/useWarehouseZones") as {
+    useWarehouseZones: jest.Mock;
+  };
+
+  const EDIT_OVERLAY_ZONE = {
+    id: 42, aisleId: "B", sectionNum: 2, isInventory: true,
+    svgX: 50, svgY: 80, svgWidth: 100, svgHeight: 60,
+    sortOrder: 0, createdAt: "", updatedAt: "",
+  };
+
+  beforeEach(() => {
+    // Provide cached SVG so svgXml is truthy and the SVG tree (including zone
+    // overlay Rect elements) actually renders.  Without this, the component
+    // shows the "Loading floor plan…" placeholder and no SVG children exist.
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock; hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue({ xml: "<svg/>", contentViewBox: null, hash: "test-overlay" });
+    floorPlanCache.hasCachedData.mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    const floorPlanCache = require("@/utils/floorPlanCache") as {
+      getCachedData: jest.Mock; hasCachedData: jest.Mock;
+    };
+    floorPlanCache.getCachedData.mockReturnValue(null);
+    floorPlanCache.hasCachedData.mockReturnValue(false);
+    // Restore the default empty-zones return value so subsequent tests that
+    // rely on the top-level mock behaviour are unaffected.
+    mockUseWarehouseZones.mockReturnValue({
+      zones: [],
+      alignment: { translateX: 0, translateY: 0, scale: 1 },
+      alignmentStale: false, anchors: [], loading: false, error: false,
+      refetch: mockRefetchZones,
+    });
+  });
+
+  it("renders an svg-rect for each zone in the faint overlay when zones is non-empty", async () => {
+    mockUseWarehouseZones.mockReturnValue({
+      zones: [EDIT_OVERLAY_ZONE],
+      alignment: { translateX: 0, translateY: 0, scale: 1 },
+      alignmentStale: false, anchors: [], loading: false, error: false,
+      refetch: mockRefetchZones,
+    });
+
+    activeTree = await renderScreen([]);
+
+    // The faint edit-mode overlay stamps testID="edit-zone-overlay-rect" on each
+    // <Rect> so we can find them without UNSAFE_queryAllByType (not in RTLRN 14).
+    const rects = activeTree.queryAllByTestId("edit-zone-overlay-rect");
+    expect(rects.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders no zone overlay rects when zones is empty", async () => {
+    // Top-level mock already returns zones:[] by default; no extra setup needed.
+    activeTree = await renderScreen([]);
+
+    const rects = activeTree.queryAllByTestId("edit-zone-overlay-rect");
+    expect(rects).toHaveLength(0);
   });
 });

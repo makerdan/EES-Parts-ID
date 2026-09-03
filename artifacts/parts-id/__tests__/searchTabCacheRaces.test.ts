@@ -94,7 +94,7 @@ async function readNewestCacheTimestamp(): Promise<string> {
 
 describe("readNewestCacheTimestamp — corrupt-cache guard", () => {
   beforeEach(() => {
-    jest.resetAllMocks();
+    jest.clearAllMocks();
   });
 
   it("returns 'No cached data' for a JSON string at the root", async () => {

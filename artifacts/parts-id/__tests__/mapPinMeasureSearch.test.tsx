@@ -223,8 +223,7 @@ jest.mock("@/utils/apiBase", () => ({ API_BASE: "http://localhost:3001" }));
 jest.mock("react-native-reanimated", () => require("./helpers/mapMocks").createReanimatedMock());
 
 // ─── react-native-gesture-handler (needed by WarehouseMapView) ───────────────
-
-jest.mock("react-native-gesture-handler", () => require("./helpers/mapMocks").createGestureHandlerMock());
+// Handled automatically by moduleNameMapper in jest.config.js → __mocks__/react-native-gesture-handler.js
 
 // ─── react-native-svg (needed by WarehouseMapView) ───────────────────────────
 

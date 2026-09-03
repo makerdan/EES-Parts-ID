@@ -10,7 +10,7 @@ import {
 } from "@workspace/api-client-react";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as FileSystem from "expo-file-system/legacy";
-import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { isLiDARSupported } from "lidar-measure";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -27,6 +27,7 @@ import {
   View,
 } from "react-native";
 
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
@@ -61,6 +62,51 @@ export default function EditItemScreen() {
   const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => { return () => { if (navTimerRef.current !== null) clearTimeout(navTimerRef.current); }; }, []);
 
+  // Track unsaved changes across renders so the beforeRemove guard can read
+  // the latest value without causing the effect to re-register on every edit.
+  const hasChangesRef = useRef(false);
+  // Set to true for exits that have already been confirmed or completed by the
+  // screen so the navigation listener cannot intercept them a second time.
+  const discardConfirmedRef = useRef(false);
+  const pendingExitRef = useRef<(() => void) | null>(null);
+  const [discardDialogVisible, setDiscardDialogVisible] = useState(false);
+  const navigation = useNavigation();
+  const routerRef = useRef(router);
+  routerRef.current = router;
+
+  const requestExit = useCallback((exit: () => void = () => routerRef.current.back()) => {
+    if (discardConfirmedRef.current || !hasChangesRef.current) {
+      exit();
+      return;
+    }
+    pendingExitRef.current = exit;
+    setDiscardDialogVisible(true);
+  }, []);
+  const handleExitPress = useCallback(() => { requestExit(); }, [requestExit]);
+
+  const keepEditing = useCallback(() => {
+    pendingExitRef.current = null;
+    setDiscardDialogVisible(false);
+  }, []);
+
+  const discardChanges = useCallback(() => {
+    const exit = pendingExitRef.current;
+    pendingExitRef.current = null;
+    setDiscardDialogVisible(false);
+    if (!exit) return;
+    discardConfirmedRef.current = true;
+    exit();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener("beforeRemove", (e) => {
+      if (discardConfirmedRef.current || !hasChangesRef.current) return;
+      e.preventDefault();
+      requestExit(() => navigation.dispatch(e.data.action));
+    });
+    return unsubscribe;
+  }, [navigation, requestExit]);
+
   const updateBinsMutation = useUpdateItemBins();
   const updateBarcodesMutation = useUpdateItemBarcodes();
   const updateKeywordsMutation = useUpdateItemKeywords();
@@ -77,7 +123,10 @@ export default function EditItemScreen() {
   // the error banner and decide to cancel before being kicked to tabs.
   useEffect(() => {
     if (saveStatus === "saving" || saveStatus === "error") return;
-    if (shouldRedirectNonAdmin(isLoading, isAdmin)) { router.replace("/(tabs)"); }
+    if (shouldRedirectNonAdmin(isLoading, isAdmin)) {
+      discardConfirmedRef.current = true;
+      router.replace("/(tabs)");
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, isAdmin, saveStatus]);
 
@@ -96,6 +145,8 @@ export default function EditItemScreen() {
   const [keywords, setKeywords] = useState<Array<string>>(item?.aiKeywords ?? []);
   const [newKeyword, setNewKeyword] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteErrorMsg, setDeleteErrorMsg] = useState<string | null>(null);
   const [fieldSaveErrors, setFieldSaveErrors] = useState<{
     description?: string;
     bins?: string;
@@ -358,9 +409,9 @@ export default function EditItemScreen() {
 
   const handleDeleteItem = useCallback(() => {
     const current = itemRef.current;
+    setDeleteErrorMsg(null);
     if (!current || !adminToken) {
-      setErrorMsg("Admin session expired. Re-unlock and try again.");
-      setSaveStatus("error");
+      setDeleteErrorMsg("Admin session expired. Re-unlock and try again.");
       return;
     }
     Alert.alert(
@@ -372,6 +423,7 @@ export default function EditItemScreen() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
+            setDeleting(true);
             try {
               const res = await fetch(`${API_BASE}/inventory/${current.id}`, {
                 method: "DELETE",
@@ -379,8 +431,8 @@ export default function EditItemScreen() {
               });
               if (!res.ok) {
                 const data = await res.json().catch(() => ({})) as { error?: string };
-                setErrorMsg(data.error ?? `Could not delete part (HTTP ${res.status}).`);
-                setSaveStatus("error");
+                setDeleteErrorMsg(data.error ?? `Could not delete part (HTTP ${res.status}).`);
+                setDeleting(false);
                 return;
               }
               // Synchronously remove the item from all in-memory caches so
@@ -391,10 +443,11 @@ export default function EditItemScreen() {
                 asyncStorage: AsyncStorage,
                 itemId: current.id,
               });
+              discardConfirmedRef.current = true;
               router.back();
             } catch {
-              setErrorMsg("Could not delete the part. Check your connection and try again.");
-              setSaveStatus("error");
+              setDeleteErrorMsg("Could not delete the part. Check your connection and try again.");
+              setDeleting(false);
             }
           },
         },
@@ -787,6 +840,7 @@ export default function EditItemScreen() {
       }
 
       setSaveStatus("saved");
+      discardConfirmedRef.current = true;
       navTimerRef.current = setTimeout(() => router.back(), 500);
     } catch (err) {
       const msg = err && typeof err === "object" && "message" in err
@@ -842,6 +896,10 @@ export default function EditItemScreen() {
     photoUri1 !== (item.imageUrl ?? null) ||
     photoUri2 !== (item?.imageUrl2 ?? null);
 
+  // Keep ref in sync so the beforeRemove guard always reads the latest value
+  // without needing to re-register on every edit.
+  hasChangesRef.current = hasChanges;
+
   const statusColor =
     isSaving ? colors.warning
     : isSaved ? colors.success
@@ -858,7 +916,7 @@ export default function EditItemScreen() {
       >
         {/* Header */}
         <View style={[s.header, { borderBottomColor: colors.border }]}>
-          <Pressable onPress={() => router.back()} style={s.headerBack}>
+          <Pressable onPress={handleExitPress} style={s.headerBack} accessibilityLabel="Back">
             <Text style={[s.headerBackText, { color: colors.primary }]}>← Back</Text>
           </Pressable>
           <View style={s.headerCenter}>
@@ -1342,20 +1400,24 @@ export default function EditItemScreen() {
         </ScrollView>
 
         {/* Footer */}
-        <View style={[s.footer, { borderTopColor: colors.border }]}>
+        <View style={{ borderTopWidth: 1, borderTopColor: colors.border }}>
+          <View style={s.footer}>
           {adminToken ? (
             <Pressable
               onPress={handleDeleteItem}
-              disabled={isSaving}
-              style={[s.deleteBtn, { backgroundColor: colors.destructive + "18", borderColor: colors.destructive + "44", opacity: isSaving ? 0.4 : 1 }]}
+              disabled={isSaving || deleting}
+              style={[s.deleteBtn, { backgroundColor: colors.destructive + "18", borderColor: colors.destructive + "44", opacity: isSaving || deleting ? 0.4 : 1 }]}
               accessibilityLabel="Delete this part"
             >
-              <Feather name="trash-2" size={14} color={colors.destructive} />
+              {deleting
+                ? <ActivityIndicator size="small" color={colors.destructive} />
+                : <Feather name="trash-2" size={14} color={colors.destructive} />}
             </Pressable>
           ) : null}
           <Pressable
-            onPress={() => router.back()}
+            onPress={handleExitPress}
             style={[s.cancelBtn, { borderColor: colors.border }]}
+            accessibilityLabel="Cancel"
           >
             <Text style={[s.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
           </Pressable>
@@ -1380,8 +1442,23 @@ export default function EditItemScreen() {
               </Text>
             )}
           </Pressable>
+          </View>
+          {deleteErrorMsg ? (
+            <Text testID="delete-error-msg" style={[s.deleteErrorText, { color: colors.destructive }]}>{deleteErrorMsg}</Text>
+          ) : null}
         </View>
       </KeyboardAvoidingView>
+
+      <ConfirmDialog
+        visible={discardDialogVisible}
+        title="Discard changes?"
+        message="Your edits will be lost."
+        confirmLabel="Discard"
+        cancelLabel="Keep Editing"
+        destructive
+        onConfirm={discardChanges}
+        onCancel={keepEditing}
+      />
 
       {/* Barcode scanner modal — native only */}
       {Platform.OS !== "web" ? (
@@ -1553,7 +1630,8 @@ const s = StyleSheet.create({
   },
   errorBanner: { marginTop: 16, borderRadius: 8, borderWidth: 1, padding: 12 },
   errorText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
-  footer: { flexDirection: "row", padding: 16, borderTopWidth: 1, gap: 10 },
+  footer: { flexDirection: "row", padding: 16, gap: 10 },
+  deleteErrorText: { fontSize: 12, fontFamily: "Inter_500Medium", textAlign: "center", paddingHorizontal: 16, paddingBottom: 10 },
   deleteBtn: { alignItems: "center", justifyContent: "center", borderWidth: 1, borderRadius: 8, paddingVertical: 14, paddingHorizontal: 12 },
   cancelBtn: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 14, alignItems: "center" },
   cancelBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },

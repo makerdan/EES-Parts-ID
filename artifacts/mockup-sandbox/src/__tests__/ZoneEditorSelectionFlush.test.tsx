@@ -74,6 +74,9 @@ function baseRoutes(
       text: () => Promise.resolve(""),
     });
 
+  if (url.includes("/warehouse-zones/alignment"))
+    throw new Error(`unexpected alignment fetch: ${url}`);
+
   if (method === "GET" && url.includes("/warehouse-zones"))
     return Promise.resolve({
       ok: true,

@@ -23,6 +23,8 @@
 
 import "buffer";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useQueryClient } from "@tanstack/react-query";
 import { Buffer } from "buffer";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -46,6 +48,7 @@ import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
 import { shouldUseFallback } from "@/utils/aiFallbackHeaders";
 import { API_BASE } from "@/utils/apiBase";
+import { invalidateListCache } from "@/utils/editItemCache";
 import {
   clearPdfPickLogs,
   formatPdfPickLogs,
@@ -57,6 +60,9 @@ import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
 import { getOrSplitChunks, PAGES_PER_CHUNK, splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
 
 const POLL_MS = 2500;
+
+/** AsyncStorage key for persisting the active job ID across tab navigation. */
+const ACTIVE_JOB_KEY = "parts_id_catalog_active_job_v1";
 
 /** Files above this threshold are split into chunks before uploading. */
 const CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
@@ -185,6 +191,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [hasStoredChunks, setHasStoredChunks] = useState(false);
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+
+  const queryClient = useQueryClient();
+  const queryClientRef = useRef(queryClient);
+  useEffect(() => { queryClientRef.current = queryClient; }, [queryClient]);
   // Set to true when retrying with OpenAI fallback after poe_chain_exhausted.
   const withFallbackRef = useRef(false);
   // Prevents showing the poe_chain_exhausted Alert more than once per job.
@@ -364,8 +374,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   // Release stored chunk bytes and pdf bytes when the job reaches a terminal
   // success/cancel state (failure keeps them so retry remains available).
+  // Also clear the persisted jobId from AsyncStorage for all terminal states.
   useEffect(() => {
-    if (jobStatus?.status === "done" || jobStatus?.status === "cancelled") {
+    const status = jobStatus?.status;
+    if (status === "done" || status === "cancelled" || status === "failed") {
+      void AsyncStorage.removeItem(ACTIVE_JOB_KEY).catch(() => {});
+    }
+    if (status === "done" || status === "cancelled") {
       chunksRef.current = null;
       setHasStoredChunks(false);
       setPdfBytes(null);
@@ -410,6 +425,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
     const run = async () => {
       while (!controller.signal.aborted) {
+        if (!isMountedRef.current) return;
         const token = adminTokenRef.current;
         if (!token) return;
 
@@ -439,7 +455,14 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
                   setAiRawLog(prev => [...prev, ...newEntries].sort((a, b) => a.page - b.page));
                 }
               }
-              if (data.status === "done" || data.status === "failed" || data.status === "cancelled") return;
+              if (data.status === "done" || data.status === "failed" || data.status === "cancelled") {
+                if (data.status === "done") {
+                  const qc = queryClientRef.current;
+                  void invalidateListCache({ queryClient: qc });
+                  void qc.invalidateQueries({ queryKey: ["searchInventory"] });
+                }
+                return;
+              }
             }
           }
         } catch {
@@ -464,6 +487,28 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     return () => { isMountedRef.current = false; };
   }, []);
 
+  // On mount, restore an in-progress job from AsyncStorage so the admin sees
+  // polling resume even if they navigated away while a job was running.
+  const resumeAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (resumeAttemptedRef.current) return;
+    resumeAttemptedRef.current = true;
+    AsyncStorage.getItem(ACTIVE_JOB_KEY).then(storedJobId => {
+      if (!isMountedRef.current) return;
+      if (!storedJobId) return;
+      setJobStatus({
+        jobId: storedJobId,
+        status: "pending",
+        totalPages: null,
+        processedPages: 0,
+        matchedParts: 0,
+        imagesMatched: 0,
+        errorMessage: null,
+      });
+      startPolling(storedJobId);
+    }).catch(() => { /* ignore — non-critical */ });
+  }, [startPolling]);
+
   const handleCancelJob = useCallback(async () => {
     const token = adminTokenRef.current;
     if (!token || !jobStatus?.jobId) return;
@@ -478,8 +523,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       if (r.ok) {
         stopPolling();
         setJobStatus(prev => prev ? { ...prev, status: "cancelled" } : prev);
+      } else {
+        Alert.alert("Cancel failed", "Cancel request failed — the job may still be running.");
       }
-    } catch { /* ignore — polling will pick up the change */ }
+    } catch {
+      Alert.alert("Cancel failed", "Cancel request failed — the job may still be running.");
+    }
     finally { if (isMountedRef.current) setCancellingJob(false); }
   }, [jobStatus, stopPolling, onSessionExpired]);
 
@@ -826,6 +875,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     // if the server-side job fails with poe_chain_exhausted.
     setFailedChunkInfo(null);
 
+    void AsyncStorage.setItem(ACTIVE_JOB_KEY, parentJobId).catch(() => {});
     setAiRawLog([]);
     seenAiPagesRef.current.clear();
     setJobStatus({ jobId: parentJobId, status: "pending", totalPages: null, processedPages: 0, matchedParts: 0, imagesMatched: 0, errorMessage: null });
@@ -984,6 +1034,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         setLoading(false);
         resetUploadProgress();
         const jobId = resp.jobId;
+        void AsyncStorage.setItem(ACTIVE_JOB_KEY, jobId).catch(() => {});
         setAiRawLog([]);
         seenAiPagesRef.current.clear();
         setJobStatus({
@@ -1019,7 +1070,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           setRetryCountdown(delaySec);
           retryTimerRef.current = setTimeout(() => {
             retryTimerRef.current = null;
-            handleStart(attempt + 1);
+            if (isMountedRef.current) handleStart(attempt + 1);
           }, delaySec * 1000);
         } else {
           setLoading(false);
@@ -1052,6 +1103,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setShowRetryBtn(false);
     setFailedChunkInfo(null);
     if (attempt === 0) {
+      void AsyncStorage.removeItem(ACTIVE_JOB_KEY).catch(() => {});
       setJobStatus(null);
       chunksRef.current = null;
       setHasStoredChunks(false);

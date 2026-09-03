@@ -16,6 +16,7 @@
 - [jest.clearAllMocks clears ALL mock implementations including non-obvious ones](jest-clearmocks-implementations.md) — clearAllMocks resets getIfValid, Asset.loadAsync, and similar mocks to return undefined; inner beforeEach in nested describe blocks must restore every mock the cold/async path depends on.
 - [panBounds 4th-param svgRenderH](panbounds-svgrenderh.md) — mapViewport.panBounds() takes explicit svgRenderH as 4th arg (not derived internally from SVG_ASPECT); all call sites must pass it.
 - [Jest mockReset needs default Promise after reset](jest-mockreset-promise-default.md) — mockReset() leaves a mock returning undefined; any mock used in a Promise chain needs mockResolvedValue(null) as a default after each reset, or .then() crashes.
+- [Jest canonical mock factories](jest-canonical-mock-factory.md) — explicit mock factories should load a shared manual mock with requireActual and an absolute path to avoid recursive Jest resolution.
 - [Concurrent effects consume fetchWithAuth mocks out of order](concurrent-effects-mock-order.md) — WarehouseMapView has a server-hash polling effect (line 1452) that fires on mount alongside the SVG load effect; stub it first or the SVG-load mock sequence gets misaligned.
 - [exports['.'] types condition for workspace libs](exports-types-condition.md) — moduleResolution:bundler reads exports['.'] before root types; libs must embed a "types" condition in the exports object pointing to stable dist/.
 - [api-zod codegen race in repo typecheck](api-zod-codegen-race.md) — a wall of TS6053 "not found" under lib/api-zod/src/generated is a codegen-ordering race, not a real error; check files exist and re-run.
@@ -43,4 +44,18 @@
 - [expo-file-system source typecheck leak](expo-fs-src-typecheck.md) — package main points at src/*.ts, so strict tsc flags error inside node_modules; alias subpath to build/*.d.ts via tsconfig paths.
 - [Stale tsbuildinfo empty dist](stale-tsbuildinfo-empty-dist.md) — TS2306 "dist/index.d.ts is not a module" means tsbuildinfo lied; rm the lib's tsconfig.tsbuildinfo and rebuild.
 - [RTLRN migration patterns](rtlrn-migration-patterns.md) — key rules: await render(); root=undefined when component returns null; SVG Text mock must use "Text" not "svg-text"; never render() inside jest.isolateModules(); use await act(async) for onPress calls.
+- [RTLRN custom-host queries](rtrln-custom-host-queries.md) — project RN mocks expose TextInput values as host props; nested labels may need root-tree text traversal instead of display-value/exact-text queries.
+- [Async RN render and unmount](rntl-async-render-unmount.md) — current React 19 RN tests require awaited render/unmount and async act around route transitions.
 - [vendor_map heap-order tests](vendor-map-heap-order-tests.md) — vendor suites depend on physical page order; winners must sit on later pages than rivals (fillfactor 50 + padded re-insert); serialize shared-DB jest runs.
+- [ts-ignore leaks into inferred return type](ts-ignore-worklet-return-leak.md) — @ts-ignore silences its line but the property still enters the object's inferred type and errors at the use site; cast the value instead.
+- [parts-id e2e via Clerk approval gate](parts-id-e2e-clerk-approval.md) — fresh sign-ins land users.status='pending' (403 + pending screen); approve the row via SQL before the tester runs; throwaway users via Clerk backend API.
+- [pnpm lockfile drift on main](pnpm-lockfile-drift.md) — RESOLVED; dep changes surgical again. If drift recurs: revert lockfile, re-link, reconcile via lockfile-only install in isolated commit.
+- [Completion validation pitfalls](completion-validation-pitfalls.md) — validation runs ALL workflows concurrently (unlocked `test` scrambles vendor_map) and gate-guard vs post-merge Tests 34/35 are mutually exclusive → full green impossible until reconciled.
+- [SVG load singleton retries](svg-load-singleton-retry.md) — a settled module-level load promise must be discarded when cache data is unusable on either platform, or later cold loads stay blank.
+- [SheetJS ArrayBuffer fixtures](sheetjs-array-buffer-fixtures.md) — type:"array" ODS fixtures return an ArrayBuffer; pass it directly instead of converting it as a number array.
+- [Support analytics privacy](support-analytics-privacy.md) — use keyed rotating grouping or disable unique visitors; disclose bounded UTC windows and suppression.
+- [Knip UI package boundaries](knip-ui-package-boundaries.md) — dynamically discovered components and CSS-only imports need explicit Knip configuration.
+- [Standard-tier database pool pressure](standard-db-pool-pressure.md) — concurrent validation can exhaust PostgreSQL clients; confirm affected API suites in isolation before assigning regression ownership.
+- [Mapped Jest context mocks](mapped-jest-context-mocks.md) — when a path is mapped to a manual mock, configure that exported mock instance; a separate local spy may not be consumed by the screen.
+- [Orval barrel append behavior](orval-barrel-append.md) — normalize managed barrel exports because newer Orval runs can append duplicates instead of replacing them.
+- [ESLint import sort order](eslint-import-sort-order.md) — use fix-dry-run output when simple-import-sort rejects valid but noncanonical package/specifier ordering.
