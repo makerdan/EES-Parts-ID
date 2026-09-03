@@ -22,6 +22,7 @@
     "audit:fix": "pnpm audit --fix"
   },
   "private": true,
+  "packageManager": "pnpm@10.26.1",
   "engines": {
     "node": "24.13.0"
   },
