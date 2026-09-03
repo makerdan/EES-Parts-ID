@@ -226,6 +226,23 @@ export function AnchorCalibration() {
 
   useEffect(() => {
     void refetchAnchors();
+    const refreshOnFocus = () => {
+      void refetchAnchors();
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refetchAnchors();
+      }
+    };
+
+    // A second admin session can change the shared mapping while this tab is
+    // open. Rehydrate whenever the tab becomes the active calibration surface.
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [refetchAnchors]);
 
   // Fetch zone rectangles and alignment on mount (silently swallow errors).
