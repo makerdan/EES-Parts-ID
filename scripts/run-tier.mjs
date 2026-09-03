@@ -1,115 +1,70 @@
 #!/usr/bin/env node
 /**
- * run-tier.mjs — consolidated validation tier runner (Port-Authority-Heavy Step 3).
+ * Run one registered validation tier sequentially.
  *
- * Usage: node scripts/serial-lock.mjs -- node scripts/run-tier.mjs <fast|standard|standard-plus|heavy>
- *
- * Runs the member checks of the requested tier sequentially, fails fast on
- * the first non-zero exit, and prints a per-step timing report. Tiers are
- * cumulative: standard includes fast, standard-plus includes standard, heavy includes standard-plus.
- *
- * Serialization: the registered validation commands wrap this script in
- * scripts/serial-lock.mjs, so per-step timings below are measured AFTER lock
- * acquisition — queue-wait time is never counted against a step. Steps that
- * internally re-wrap the lock (e.g. scripts/test-all.sh) run reentrantly via
- * SERIAL_LOCK_HELD_PID and do not deadlock.
- *
- * NOTE: tier membership is documented in replit.md ("Checks: validation
- * commands"). Keep the two in sync when adding/removing checks.
+ * Task runs must provide TASK_PLAN_FILE. The only no-plan path is the explicit
+ * --allow-no-plan ad-hoc mode, which also makes plan checks no-ops rather than
+ * scanning or modifying the ignored archive.
  */
 import { spawnSync } from "node:child_process";
+import { assertTierLock } from "./lib/tier-lock-check.mjs";
+import { assertTierSteps, getTierSteps } from "./validation-steps.mjs";
 
-// [name, shell command] — mirrors the individually registered validation
-// commands, which remain available for targeted runs.
-const FAST = [
-  ["gate-guard", "bash scripts/check-gate-integrity.sh"],
-  ["tsc", 'pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck'],
-  ["lint", "node scripts/check-db-reachability.mjs && pnpm --filter @workspace/parts-id run lint && pnpm --filter @workspace/api-server run lint && pnpm --filter @workspace/mockup-sandbox run lint && pnpm run lint:libs"],
-  ["lint-mocks", "pnpm --filter @workspace/scripts run lint:mocks"],
-  ["tsconfig-check", "pnpm --filter @workspace/scripts run tsconfig:check"],
-  ["port-guard", "bash scripts/check-hardcoded-ports.sh"],
-  ["bundle-domain-check", "pnpm --filter @workspace/parts-id run check:bundle-domain"],
-];
-
-const STANDARD_EXTRA = [
-  ["codegen-check", "pnpm --filter @workspace/api-spec run codegen:check"],
-  ["spec-check", "pnpm --filter @workspace/api-spec run spec:check"],
-  ["env-check", "pnpm --filter @workspace/scripts env:check"],
-  ["spec-check-tests", "pnpm --filter @workspace/api-spec test"],
-  ["test", "pnpm test"],
-];
-
-const STANDARD_PLUS_EXTRA = [
-  ["schema-check", "pnpm --filter @workspace/db run schema:check"],
-  ["verify-fts", "pnpm --filter @workspace/db run verify-fts"],
-  ["api-server-coverage", "pnpm --filter @workspace/api-server run test:coverage"],
-  ["security-audit", "pnpm audit --audit-level=low"],
-  ["post-merge-health-test", "bash scripts/test-post-merge.sh"],
-];
-
-const HEAVY_EXTRA = [
-  ...STANDARD_PLUS_EXTRA,
-];
-
-const TIERS = {
-  fast: FAST,
-  standard: [...FAST, ...STANDARD_EXTRA],
-  "standard-plus": [...FAST, ...STANDARD_EXTRA, ...STANDARD_PLUS_EXTRA],
-  heavy: [...FAST, ...STANDARD_EXTRA, ...HEAVY_EXTRA],
-};
-
-const tier = process.argv[2];
-const steps = TIERS[tier];
-if (!steps) {
-  console.error(`Usage: run-tier.mjs <fast|standard|standard-plus|heavy> (got: ${tier ?? "nothing"})`);
+const args = process.argv.slice(2);
+const tier = args.find((arg) => !arg.startsWith("-"));
+const allowNoPlan = args.includes("--allow-no-plan");
+const lock = assertTierLock({ requestedTier: tier, allowNoPlan });
+if (!lock.ok) {
+  console.error(`[run-tier] ${lock.error}`);
   process.exit(2);
 }
 
-// Startup assertions: guard against silent empty-tier or typo bugs caused by
-// merge conflicts or destructuring errors in the tier arrays above.
-if (steps.length === 0) {
-  console.error(`[run-tier] FATAL: tier "${tier}" resolved to an empty step array. This is a bug — check FAST / STANDARD_EXTRA / STANDARD_PLUS_EXTRA / HEAVY_EXTRA in run-tier.mjs.`);
+let steps;
+try {
+  steps = assertTierSteps(lock.tier, getTierSteps(lock.tier));
+} catch (error) {
+  console.error(`[run-tier] FATAL: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(2);
 }
-for (const entry of steps) {
-  if (!Array.isArray(entry) || entry.length < 2 || typeof entry[0] !== "string" || !entry[0] || typeof entry[1] !== "string" || !entry[1]) {
-    console.error(`[run-tier] FATAL: malformed step entry in tier "${tier}": ${JSON.stringify(entry)}. Each step must be [name, command] with non-empty strings.`);
-    process.exit(2);
+
+const planFlag = allowNoPlan ? " --allow-no-plan" : "";
+const declaredTier = `test-${lock.tier}`;
+const resolvedSteps = steps.map(([name, command]) => {
+  if (name === "plan-gate-check") return [name, `${command} --declared-tier ${declaredTier}${planFlag}`];
+  if (name === "plan-gate-fix" || name === "plan-gate-stubs" || name === "regression-guard-fix" || name === "regression-guard") {
+    return [name, `${command}${planFlag}`];
   }
-}
+  return [name, command];
+});
 
 const waitSecs = process.env.SERIAL_LOCK_WAIT_SECS ?? "0";
 const underLoad = Number(waitSecs) > 0;
-console.log(`[run-tier] tier=${tier} (${steps.length} steps). Queue wait: ${waitSecs}s${underLoad ? " — ran under concurrent load" : " — ran solo"}. Step timers start now (post lock acquisition).`);
+console.log(`[run-tier] tier=${lock.tier} (${resolvedSteps.length} steps). Queue wait: ${waitSecs}s${underLoad ? " — ran under concurrent load" : " — ran solo"}.`);
+if (lock.bypassed) console.log("[run-tier] explicit ad-hoc no-plan bypass enabled; task archive is isolated.");
 
 const report = [];
 let failed = null;
-
-for (const [name, cmd] of steps) {
+for (const [name, command] of resolvedSteps) {
   console.log(`\n━━━ [run-tier] step: ${name} ━━━`);
   const start = Date.now();
-  const res = spawnSync("bash", ["-c", cmd], { stdio: "inherit" });
-  const secs = ((Date.now() - start) / 1000).toFixed(1);
-  const ok = res.status === 0;
-  report.push({ name, secs, ok, skipped: false });
+  const result = spawnSync("bash", ["-c", command], { stdio: "inherit", env: process.env });
+  const seconds = ((Date.now() - start) / 1000).toFixed(1);
+  const ok = result.status === 0;
+  report.push({ name, seconds, ok });
   if (!ok) {
-    failed = { name, code: res.status ?? `signal ${res.signal}` };
+    failed = { name, code: result.status ?? `signal ${result.signal}` };
     break;
   }
 }
 
-const ranNames = new Set(report.map((r) => r.name));
-console.log(`\n━━━ [run-tier] ${tier} tier report ━━━`);
-for (const r of report) {
-  console.log(`  ${r.ok ? "PASSED " : "FAILED "} ${r.name}  (${r.secs}s)`);
-}
-for (const [name] of steps) {
-  if (!ranNames.has(name)) console.log(`  SKIPPED ${name}  (fail-fast: not run)`);
-}
+const ran = new Set(report.map((entry) => entry.name));
+console.log(`\n━━━ [run-tier] ${lock.tier} tier report ━━━`);
+for (const entry of report) console.log(`  ${entry.ok ? "PASSED " : "FAILED "} ${entry.name}  (${entry.seconds}s)`);
+for (const [name] of resolvedSteps) if (!ran.has(name)) console.log(`  SKIPPED ${name}  (fail-fast: not run)`);
 console.log(`  queue-wait before start: ${waitSecs}s (${underLoad ? "concurrent load" : "solo"})`);
 
 if (failed) {
-  console.error(`\n[run-tier] FAILED at step "${failed.name}" (exit ${failed.code}) — tier ${tier} did not pass.`);
+  console.error(`\n[run-tier] FAILED at step "${failed.name}" (exit ${failed.code}) — tier ${lock.tier} did not pass.`);
   process.exit(1);
 }
-console.log(`\n[run-tier] tier ${tier} PASSED (${report.length}/${steps.length} steps).`);
+console.log(`\n[run-tier] tier ${lock.tier} PASSED (${report.length}/${resolvedSteps.length} steps).`);

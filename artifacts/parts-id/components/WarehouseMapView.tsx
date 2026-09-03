@@ -10,12 +10,10 @@
  * Empty zones       → instructional empty state card over the map
  *
  * Floor-plan rendering strategy (crisp at any zoom level):
- *   Web    — The fetched SVG XML is stripped of its outer <svg> wrapper and the
- *            inner content is injected via dangerouslySetInnerHTML into a <g>
- *            element that lives inside the zone-overlay <Svg>.  Both the floor
- *            plan and the zone rectangles therefore share one SVG viewport;
- *            no separate CSS-scaled layer exists, so there is no rasterisation
- *            blur however far the user zooms in.
+ *   Web    — One browser-owned <Svg> scene receives the normalized floor-plan
+ *            markup inside a real SVG <g>, followed by the zone overlay groups.
+ *            The floor plan and overlays therefore share one viewBox, render
+ *            size, pan/zoom transform, and SVG namespace.
  *   Native — Adaptive tiling: the floor plan is split into numTiles×numTiles
  *            tiles where numTiles = ceil(zoom).  Each tile renders
  *            svgRenderW×svgRenderH pt of SvgXml with a viewBox cropped to its
@@ -30,7 +28,6 @@
  */
 import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import DOMPurify from "dompurify";
 import { Asset } from "expo-asset";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -39,11 +36,11 @@ import {
   type AppStateStatus,
   Image,
   LayoutChangeEvent,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
   Text,
-  useColorScheme,
   View,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -62,7 +59,7 @@ import Animated, {
 import { Ellipse,G, Path, Rect, Svg, SvgUri, SvgXml, Text as SvgText } from "react-native-svg";
 import { z } from "zod";
 
-import { useColors } from "@/hooks/useColors";
+import { useColors, useIsDark } from "@/hooks/useColors";
 import { useMapZoomSteps } from "@/hooks/useMapInteraction";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { API_BASE } from "@/utils/apiBase";
@@ -100,6 +97,10 @@ import {
   fetchTile,
   prefetchZoomLevel,
 } from "@/utils/tilePyramidCache";
+import {
+  createWebSvgScene,
+  normalizeSvgViewBoxOrigin,
+} from "@/utils/webSvgScene";
 
 const VIEWPORT_KEY = "@rdc34/warehouse_map_viewport_v2";
 const FloorPlanMetaSchema = z.object({ hash: z.string() });
@@ -125,6 +126,11 @@ const _persistReadPromise = initPersistRead();
 // Single in-flight asset-load promise so concurrent mounts don't issue
 // duplicate network requests.
 let _svgLoadPromise: Promise<void> | null = null;
+// True once _svgLoadPromise has settled.  Lets loadSvgAsset() distinguish a
+// dead resolved promise (whose completed load may have left unusable data —
+// e.g. a prefetch that finished while the cache held a stale entry) from an
+// in-flight load that concurrent mounts should keep sharing.
+let _svgLoadSettled = false;
 
 // AbortController for the active SVG fetch.  Aborted before each new fetch
 // so stale in-flight requests don't overwrite state after a floor-plan upload.
@@ -144,23 +150,37 @@ export function prefetchSvgAsset(): Promise<void> {
  * a stale server response cannot overwrite state after a floor-plan upload.
  */
 function loadSvgAsset(): Promise<void> {
-  if (_svgLoadPromise) return _svgLoadPromise;
+  if (_svgLoadPromise) {
+    // Self-heal a stale singleton.  If a previous load has already settled
+    // but the cache still lacks renderable data (a failed load, or a stale
+    // entry written by an older build), the resolved promise is dead —
+    // returning it would leave the map blank for the rest of the session.
+    // Null it out and fall through to start a fresh fetch.  In-flight loads
+    // are returned as-is so concurrent mounts share one request.
+    const cached = getCachedData();
+    const dataUnusable = !isSvgDataUsable(cached);
+    if (!(_svgLoadSettled && dataUnusable)) return _svgLoadPromise;
+    _svgLoadPromise = null;
+  }
 
   // Abort any previous in-flight fetch before starting a new one.
   _svgLoadAbortController?.abort();
   const controller = new AbortController();
   _svgLoadAbortController = controller;
 
+  _svgLoadSettled = false;
   _svgLoadPromise = _loadFloorPlanFromServer(controller.signal)
     .catch(() => _loadFloorPlanFromBundle(controller.signal))
-    .catch(() => { if (!controller.signal.aborted) setFallbackEmpty(); });
+    .catch(() => { if (!controller.signal.aborted) setFallbackEmpty(); })
+    .finally(() => { _svgLoadSettled = true; });
   return _svgLoadPromise;
 }
 
 /**
- * Strip the outer <svg>…</svg> wrapper from SVG XML so the inner content can
- * be injected directly into an existing SVG canvas as a child <g> element.
- * Used on web to embed the floor plan inside the zone-overlay SVG viewport.
+ * Strip the outer <svg>…</svg> wrapper from SVG XML.
+ * Web rendering injects the stripped body into the unified SVG scene, but the
+ * innerXml is still written to the cache so persisted entries keep their
+ * expected shape.
  */
 function stripSvgWrapper(xml: string): string {
   return xml
@@ -175,11 +195,11 @@ async function _loadFloorPlanFromServer(signal: AbortSignal): Promise<void> {
   const { hash } = FloorPlanMetaSchema.parse(await metaRes.json());
   if (signal.aborted) throw new Error("aborted");
   // Cache hit — skip re-fetching the SVG bytes entirely.
-  // On web we also require a non-empty innerXml: a stale entry written before
-  // the web SVG-strip fix (innerXml: "") must be treated as a miss so the floor
-  // plan is fetched and the cache self-heals on first load.
+  // On web we also require a non-empty xml: web renders the floor plan from
+  // the full SVG text, so a stale entry without it (written by an older
+  // build) must be treated as a miss so the cache self-heals on first load.
   const cached = getIfValid(hash);
-  if (cached !== null && (Platform.OS !== "web" || Boolean(cached.innerXml))) return;
+  if (cached !== null && (Platform.OS !== "web" || Boolean(cached.xml))) return;
   // Bail out early if the fetch was cancelled between the meta check and the SVG fetch.
   if (signal?.aborted) throw new Error("aborted");
 
@@ -215,9 +235,9 @@ async function _loadFloorPlanFromBundle(signal: AbortSignal): Promise<void> {
   if (!asset) throw new Error("floor-plan asset failed to load");
   const currentHash = asset.hash ?? "";
   // Cache hit — persisted hash matches; skip the URI fetch entirely.
-  // On web, also require a non-empty innerXml so a stale "" entry self-heals.
+  // On web, also require a non-empty xml so a stale "" entry self-heals.
   const cachedBundle = getIfValid(currentHash);
-  if (cachedBundle !== null && (Platform.OS !== "web" || Boolean(cachedBundle.innerXml))) return;
+  if (cachedBundle !== null && (Platform.OS !== "web" || Boolean(cachedBundle.xml))) return;
 
   const uri = asset.localUri ?? asset.uri ?? "";
   let newData: SvgData;
@@ -242,7 +262,8 @@ async function _loadFloorPlanFromBundle(signal: AbortSignal): Promise<void> {
     // viewBox crops at high zoom.  This is a local-file read so it is fast.
     const res = await fetch(uri, { signal });
     if (signal.aborted) throw new Error("aborted");
-    const xml = res.ok ? await res.text() : "";
+    if (!res.ok) throw new Error(`bundled SVG fetch failed: ${res.status}`);
+    const xml = await res.text();
     const contentViewBox = parseContentViewBox(xml);
     newData = {
       xml,
@@ -402,10 +423,12 @@ export function ZoneOverlayItem({
     const labelColor = isCounted ? "#fff" : colors.primary + "80";
     return (
       <G
-        {...(Platform.OS !== "web" && isActive && {
-          onLongPress: () => onZoneLongPress?.(zone),
-          delayLongPress: 400,
-        })}
+        {...(Platform.OS !== "web" && isActive
+          ? { onLongPress: () => onZoneLongPress?.(zone), delayLongPress: 400 }
+          : Platform.OS === "web" && isActive
+          ? { onClick: () => onZoneLongPress?.(zone) }
+          : {}
+        )}
       >
         <AnimatedRect
           x={zone.svgX}
@@ -485,7 +508,9 @@ export function ZoneOverlayItem({
         height={zone.svgHeight}
         fill={pinFillColor}
         stroke={strokeColor}
-        strokeDasharray={(!isPinned && !isVariantPinned && !isActive) ? "20 10" : undefined}
+        {...((!isPinned && !isVariantPinned && !isActive)
+          ? { strokeDasharray: "20 10" }
+          : {})}
         animatedProps={rectPinAnimatedProps}
       />
       {(isPinned || isVariantPinned) ? (() => {
@@ -586,6 +611,10 @@ export function ZoneOverlayItem({
 // SvgXml/SvgUri layer underneath acts as a placeholder while the tile loads —
 // when the Image resolves it paints on top.  Unmounting cancels the in-flight
 // download via the `cancelled` flag.
+//
+// Retry policy (F-044): one automatic retry after the first failure.  If the
+// retry also fails, onFetchError is called so the parent can surface a
+// "Tap to reload map" banner.
 function PngTile({
   z,
   col,
@@ -593,6 +622,7 @@ function PngTile({
   svgHash,
   tileW,
   tileH,
+  onFetchError,
 }: {
   z: number;
   col: number;
@@ -600,16 +630,33 @@ function PngTile({
   svgHash: string;
   tileW: number;
   tileH: number;
+  onFetchError?: (() => void) | undefined;
 }) {
   "use no memo";
   const [uri, setUri] = useState<string | null>(null);
+  // Keep a stable ref so the async callback can call the latest onFetchError
+  // without needing it in the effect dependency array.
+  const onFetchErrorRef = useRef(onFetchError);
+  useEffect(() => { onFetchErrorRef.current = onFetchError; }, [onFetchError]);
 
   useEffect(() => {
     if (!svgHash) return;
     let cancelled = false;
-    fetchTile(z, col, row, svgHash)
-      .then((u) => { if (!cancelled) setUri(u); })
-      .catch(() => {});
+    async function load() {
+      try {
+        const u = await fetchTile(z, col, row, svgHash);
+        if (!cancelled) setUri(u);
+      } catch {
+        // First attempt failed — retry once before giving up (F-044).
+        try {
+          const u = await fetchTile(z, col, row, svgHash);
+          if (!cancelled) setUri(u);
+        } catch {
+          if (!cancelled) onFetchErrorRef.current?.();
+        }
+      }
+    }
+    void load();
     return () => { cancelled = true; };
   }, [z, col, row, svgHash]);
 
@@ -643,6 +690,7 @@ function FadeOutTileLayer({
   svgRenderW,
   svgRenderH,
   onDone,
+  onFetchError,
 }: {
   id: number;
   tiles: Array<{ col: number; row: number }>;
@@ -652,6 +700,7 @@ function FadeOutTileLayer({
   svgRenderW: number;
   svgRenderH: number;
   onDone: (id: number) => void;
+  onFetchError?: (() => void) | undefined;
 }) {
   "use no memo";
   const opacity = useSharedValue(1);
@@ -680,6 +729,7 @@ function FadeOutTileLayer({
           svgHash={svgHash}
           tileW={tileW}
           tileH={tileH}
+          onFetchError={onFetchError}
         />
       ))}
     </Animated.View>
@@ -711,6 +761,18 @@ function safeZoneAlignment(
     return IDENTITY_ALIGNMENT;
   }
   return { translateX: a.translateX, translateY: a.translateY, scale: a.scale };
+}
+
+/**
+ * True when the floor-plan cache entry contains data usable for rendering.
+ * An empty fallback entry (set by setFallbackEmpty after a total load failure)
+ * has non-null cache but empty uri/xml — treat it as unusable so the retry
+ * path triggers instead of silently leaving a dead "Map unavailable" state.
+ */
+function isSvgDataUsable(data: ReturnType<typeof getCachedData>): boolean {
+  if (!data) return false;
+  if (Platform.OS === "web") return Boolean(data.xml);
+  return Boolean(data.uri) || Boolean(data.xml);
 }
 
 export interface WarehouseMapViewProps {
@@ -778,6 +840,12 @@ export interface WarehouseMapViewProps {
    * any selection state (e.g. the zone action menu).
    */
   onPanStart?: (() => void) | undefined;
+  /**
+   * Called when Linking.openURL fails for the Zone Editor "Set up zones" button
+   * in the empty-zones card.  Receives the URL so the parent can surface a
+   * toast with it so the admin can copy it manually (F-042).
+   */
+  onZoneEditorLaunchFailed?: ((url: string) => void) | undefined;
 }
 
 /** 3D-style teardrop pin rendered entirely in SVG viewBox coordinates.
@@ -953,26 +1021,48 @@ export function WarehouseMapView({
   onSelectModeChange,
   selectedZoneId,
   onPanStart,
+  onZoneEditorLaunchFailed,
 }: WarehouseMapViewProps) {
   "use no memo";
   const colors = useColors();
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === "dark";
+  const isDark = useIsDark();
 
   // JS state for rendering (drives SVG dimensions)
   const [containerW, setContainerW] = useState(0);
   const [containerH, setContainerH] = useState(0);
 
-  // Auto-dismiss empty-state banner after 3 s
-  const [emptyDismissed, setEmptyDismissed] = useState(false);
+  // Manual dismiss for the empty-zones card (persistent until user closes it) (F-064)
+  const [noZonesDismissed, setNoZonesDismissed] = useState(false);
+  // Reset dismiss when zones appear so the card reappears if zones are later removed
   useEffect(() => {
-    if (!zonesLoading && !zonesError && zones.length === 0) {
-      setEmptyDismissed(false);
-      const t = setTimeout(() => setEmptyDismissed(true), 3000);
-      return () => clearTimeout(t);
+    if (!zonesLoading && !zonesError && zones.length > 0) {
+      setNoZonesDismissed(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zonesLoading, zonesError, zones.length]);
+
+  // Zone Editor URL — computed here so the no-zones card can link to it (F-064)
+  const zoneEditorUrl: string | null = process.env.EXPO_PUBLIC_DOMAIN
+    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/__mockup/zone-editor`
+    : null;
+
+  // Select-mode coach mark — shown once to first-visit users (F-062)
+  const COACH_KEY = "@rdc34/select_coach_v1";
+  const [showSelectCoach, setShowSelectCoach] = useState(false);
+  const dismissSelectCoach = useCallback(() => {
+    setShowSelectCoach(false);
+    AsyncStorage.setItem(COACH_KEY, "1").catch(() => {});
+  }, []);
+  useEffect(() => {
+    AsyncStorage.getItem(COACH_KEY)
+      .then((val) => { if (!val) setShowSelectCoach(true); })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Auto-dismiss when the user enables select mode
+  useEffect(() => {
+    if (selectMode && showSelectCoach) dismissSelectCoach();
+  }, [selectMode, showSelectCoach, dismissSelectCoach]);
 
   // Shared values for gesture computations (UI thread safe)
   const containerWV = useSharedValue(0);
@@ -1284,7 +1374,7 @@ export function WarehouseMapView({
     const h = containerHRef.current;
     if (!vb || w === 0) return;
     pendingFit.current = false;
-    const { scale: s, tx, ty } = computeFitTarget(vb, w, h);
+    const { scale: s, tx, ty } = computeFitTarget(vb, w, h, { snapToOverview: false });
     scale.value = s;
     savedScale.value = s;
     translateX.value = tx;
@@ -1533,10 +1623,9 @@ export function WarehouseMapView({
 
   // Resolve the bundled SVG asset.
   //
-  // Web path  — fetches the SVG text, strips the outer <svg> wrapper, and
-  //             stores the inner content via floorPlanCache.  The content is
-  //             injected via dangerouslySetInnerHTML into a <g> element inside
-  //             the main SVG canvas so everything shares one viewport.
+  // Web path  — fetches the SVG text and stores it via floorPlanCache.  The
+  //             canonical web scene embeds the sanitized floor-plan body in
+  //             the same outer <Svg> as the zone overlay.
   // Native path — stores only the local file URI; <SvgUri> reads it directly.
   //
   // getCachedData() reads the module-level cache in utils/floorPlanCache.
@@ -1544,10 +1633,24 @@ export function WarehouseMapView({
   // state initialises with cached values and svgLoading starts as false —
   // no skeleton, no fetch.
   const [svgUri, setSvgUri] = useState(() => getCachedData()?.uri ?? "");
-  const [innerXml, setInnerXml] = useState(() => getCachedData()?.innerXml ?? "");
-  // svgXml: full SVG text used by the tile renderer (SvgXml + modified viewBox)
+  // svgXml: full SVG text — the native tile renderer (SvgXml + cropped
+  // viewBox) and the web scene renderer both render from this.
   const [svgXml, setSvgXml] = useState(() => getCachedData()?.xml ?? "");
-  const [svgLoading, setSvgLoading] = useState(() => !hasCachedData());
+  // svgLoading: true when no usable floor-plan data is in cache yet.
+  // isSvgDataUsable guards against an empty fallback entry (set by
+  // setFallbackEmpty after a total load failure) — hasCachedData() returns
+  // true for those entries, but they have no uri/xml to render (F-043).
+  const [svgLoading, setSvgLoading] = useState(() => !isSvgDataUsable(getCachedData()));
+  // F-043: track load errors so the "Map unavailable" fallback can show a
+  // Retry button instead of a silent dead end.  Initialize to true when the
+  // cache exists but is empty (empty fallback entry from a previous failure)
+  // so that a remount after total failure immediately shows the Retry button.
+  const [svgLoadError, setSvgLoadError] = useState(() => {
+    const d = getCachedData();
+    return d !== null && !isSvgDataUsable(d);
+  });
+  // Incrementing this triggers a forced cache-busting reload of the floor plan.
+  const [svgRetryKey, setSvgRetryKey] = useState(0);
 
   // svgHash is the content-hash of the currently loaded floor plan SVG.
   // It is used as a cache-directory key for PNG tiles so stale tiles are never
@@ -1565,12 +1668,27 @@ export function WarehouseMapView({
   // normalises coordinates when it strips the outer <svg> wrapper.
   const normalizedSvgXml = useMemo(() => {
     if (!svgXml || !contentVB) return svgXml;
-    if (contentVB.x === 0 && contentVB.y === 0) return svgXml;
-    return svgXml.replace(
-      /viewBox="[^"]*"/,
-      `viewBox="0 0 ${contentVB.w} ${contentVB.h}"`,
-    );
+    return normalizeSvgViewBoxOrigin(svgXml);
   }, [svgXml, contentVB]);
+
+  // Canonical browser scene.  The complete SVG is sanitized, normalized, and
+  // sized once here; its body is inserted into the same outer Svg that owns
+  // the zone overlay below.  Keeping this as one scene prevents a floor-plan
+  // surface and an overlay surface from drifting apart during web transforms.
+  const webSvgScene = useMemo(() => {
+    if (Platform.OS !== "web" || !svgXml || svgRenderW <= 0 || svgRenderH <= 0) {
+      return null;
+    }
+    try {
+      return createWebSvgScene(svgXml, svgRenderW, svgRenderH);
+    } catch {
+      // Invalid SVG data must reach the existing visible retry state rather
+      // than rendering a blank browser surface.
+      return null;
+    }
+  }, [svgXml, svgRenderW, svgRenderH]);
+  const webSceneError =
+    Platform.OS === "web" && Boolean(svgXml) && !svgLoading && webSvgScene === null;
 
   // ── Server floor-plan ETag wiring ────────────────────────────────────────
   // Poll /floor-plan/meta every 60 s while mounted.  When the server returns a
@@ -1607,27 +1725,31 @@ export function WarehouseMapView({
   }, []);
 
   // Load the SVG floor plan.  Runs once on mount (serverHashChanged === 0) and
-  // again whenever the server reports a new floor-plan hash (serverHashChanged > 0).
+  // again whenever the server reports a new floor-plan hash (serverHashChanged > 0)
+  // or the user taps Retry (svgRetryKey > 0).
   useEffect(() => {
     let cancelled = false;
     const isServerUpdate = serverHashChanged > 0;
+    const isRetry = svgRetryKey > 0;
+    const isForced = isServerUpdate || isRetry;
 
     // Fast-path: skip the load if we already have adequate cached data.
-    // On web, "adequate" requires a non-empty innerXml — a stale entry written
-    // before the web SVG-strip fix (innerXml: "") must not suppress the reload.
+    // isSvgDataUsable rejects the empty fallback entry written by
+    // setFallbackEmpty (non-null cache with empty uri/xml) so a remount
+    // after a total failure does not silently skip the retry attempt (F-043).
     const cached = getCachedData();
-    const isAdequate = cached !== null &&
-      (Platform.OS !== "web" || Boolean(cached.innerXml));
-    if (!isServerUpdate && isAdequate) return;
+    if (!isForced && isSvgDataUsable(cached)) return;
 
-    if (isServerUpdate) {
-      // Admin uploaded a new floor plan while the app was open.  Bust the
-      // in-memory cache and reset the load promise so loadSvgAsset() issues
-      // a fresh fetch instead of returning the stale cached entry.
+    if (isForced) {
+      // Bust the in-memory cache and reset the load promise so loadSvgAsset()
+      // issues a fresh fetch instead of returning the stale cached entry.
       resetForServerUpdate();
       _svgLoadPromise = null;
-      setSvgUri(""); setInnerXml(""); setSvgXml("");
+      setSvgUri(""); setSvgXml("");
+      setContentVB(null);
+      contentVBRef.current = null;
       setSvgLoading(true);
+      setSvgLoadError(false);
     }
 
     (async () => {
@@ -1639,13 +1761,13 @@ export function WarehouseMapView({
       // getCachedData() returns SvgData | null — no cast needed here since it
       // is a function call (TypeScript narrows const locals correctly).
       const afterPersist = getCachedData();
-      if (afterPersist !== null && !isServerUpdate && !cancelled) {
-        // Persisted data available — update state right away so the skeleton
-        // never appears for returning users.
-        setSvgUri(afterPersist.uri);
-        setInnerXml(afterPersist.innerXml);
-        setSvgXml(afterPersist.xml);
+      if (isSvgDataUsable(afterPersist) && !isForced && !cancelled) {
+        // Persisted usable data available — update state right away so the
+        // skeleton never appears for returning users.
+        setSvgUri(afterPersist!.uri);
+        setSvgXml(afterPersist!.xml);
         setSvgHash(getCachedHash() ?? "");
+        setSvgLoadError(false);
         setSvgLoading(false);
       }
 
@@ -1656,17 +1778,24 @@ export function WarehouseMapView({
       await loadSvgAsset();
       if (cancelled) return;
       const afterLoad = getCachedData();
-      if (afterLoad) {
-        setSvgUri(afterLoad.uri);
-        setInnerXml(afterLoad.innerXml);
-        setSvgXml(afterLoad.xml);
+      // F-043: detect load failure — when no usable data is in the cache after
+      // loadSvgAsset() resolves (all internal fallbacks failed, and
+      // setFallbackEmpty wrote an empty cache entry), surface an error state
+      // so the "Map unavailable" fallback can show a Retry button.
+      const hasUsableData = isSvgDataUsable(afterLoad);
+      if (hasUsableData) {
+        setSvgUri(afterLoad!.uri);
+        setSvgXml(afterLoad!.xml);
         setSvgHash(getCachedHash() ?? "");
+        setSvgLoadError(false);
+      } else {
+        setSvgLoadError(true);
       }
       setSvgLoading(false);
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverHashChanged]);
+  }, [serverHashChanged, svgRetryKey]);
 
   // Parse the content viewBox from the SVG XML as soon as it is available.
   // The parsed rect is the tightly cropped bounding box of the actual warehouse
@@ -1832,10 +1961,49 @@ export function WarehouseMapView({
     opacity: tileLayerOpacity.value,
   }));
 
+  // ── Tile-failure banner (F-044) ───────────────────────────────────────────
+  // When a tile fetch fails after one retry, show "Tap to reload map" so the
+  // user has an explicit recovery path.  Tapping bumps tileReloadKey, which
+  // is appended to every PngTile key prop so all tiles unmount and re-fetch.
+  const [tileFailBanner, setTileFailBanner] = useState(false);
+  const [tileReloadKey, setTileReloadKey] = useState(0);
+
+  const handleTileFetchError = useCallback(() => {
+    setTileFailBanner(true);
+  }, []);
+
+  const handleTileReload = useCallback(() => {
+    setTileFailBanner(false);
+    setTileReloadKey((k) => k + 1);
+  }, []);
+
+  // Reset banner when the floor plan hash changes (new plan uploaded) or the
+  // SVG retry key increments — a fresh floor plan needs a fresh tile set.
+  useEffect(() => { setTileFailBanner(false); }, [svgHash, svgRetryKey]);
+
+  // Callback for FadeOutTileLayer — fade tiles are cosmetic; errors there do
+  // not surface a banner (they disappear anyway after 150 ms).
+  // Defined here so the JSX below can reference it without repetition.
+  // (intentionally undefined — fade-layer tile errors are non-fatal)
+
+  // ── Floor-plan retry handler (F-043) ─────────────────────────────────────
+  // Busts the in-memory + AsyncStorage cache and forces a fresh load.
+  const handleFloorPlanRetry = useCallback(() => {
+    resetForServerUpdate();
+    _svgLoadPromise = null;
+    setSvgUri("");
+    setSvgXml("");
+    setSvgLoadError(false);
+    setSvgLoading(true);
+    setSvgRetryKey((k) => k + 1);
+  }, []);
+
   // Skeleton shimmer — pulsing opacity while SVG is fetching.
-  // Starts unmounted when the cache is already populated so there is no
-  // visible skeleton flash on repeat visits.
-  const [skeletonMounted, setSkeletonMounted] = useState(() => !hasCachedData());
+  // Starts unmounted when the cache already has usable data so there is no
+  // visible skeleton flash on repeat visits.  Empty fallback entries (from
+  // a previous total failure) are not usable — show skeleton so the user
+  // sees the retry experience rather than a bare "Map unavailable" on remount.
+  const [skeletonMounted, setSkeletonMounted] = useState(() => !isSvgDataUsable(getCachedData()));
   const skeletonOpacity = useSharedValue(1);
   const shimmerPulse = useSharedValue(0.45);
   useEffect(() => {
@@ -2143,9 +2311,15 @@ export function WarehouseMapView({
       { translateY: translateY.value },
       { scale: scale.value },
     ],
-    // @ts-ignore — `cursor` is a web-only CSS property; the RN StyleSheet type
-    // does not include it, but it is accepted by react-native-web at runtime.
-    ...(Platform.OS === "web" ? { cursor: "grab" } : {}),
+    // `cursor: "grab"` is valid CSS that react-native-web passes through at
+    // runtime, but RN's CursorValue type only allows "auto" | "pointer".
+    // Cast the value so the worklet's inferred return type stays assignable
+    // at the style= use site — a @ts-ignore here does NOT work: it silences
+    // this line but still leaks `cursor?: string` into the inferred return
+    // type, which then fails where `animatedStyle` is passed to style=.
+    ...(Platform.OS === "web"
+      ? { cursor: "grab" as unknown as "pointer" }
+      : {}),
   }));
 
   // ── SVG zone overlays (viewBox coordinate space) ───────────────────────────
@@ -2187,6 +2361,24 @@ export function WarehouseMapView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, selectMode, countedZoneIds, pinnedZoneIds, variantZoneIds, pinnedBinLabels, pinnedSectionsMap, variantSectionsMap, selectedZoneId]);
 
+  const zoneOverlayLayer = anchorTransform ? (
+    <G transform={anchorTransform}>
+      <G transform={(() => {
+        const a = safeZoneAlignment(zoneAlignment);
+        return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`;
+      })()}>
+        {zoneOverlays}
+      </G>
+    </G>
+  ) : (
+    <G transform={(() => {
+      const a = safeZoneAlignment(zoneAlignment);
+      return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`;
+    })()}>
+      {zoneOverlays}
+    </G>
+  );
+
   // ── Early return before layout ─────────────────────────────────────────────
   if (containerW === 0) {
     return <View style={[styles.fill, { backgroundColor: colors.background }]} onLayout={onLayout} />;
@@ -2198,9 +2390,9 @@ export function WarehouseMapView({
       <GestureDetector gesture={mainGesture}>
         <Animated.View style={[{ width: svgRenderW, height: svgRenderH }, animatedStyle]}>
           {/* ── Native floor plan layer ──────────────────────────────────────
-              On web the floor plan is embedded inside the SVG canvas below so
-              that both layers share one SVG viewport (no separate CSS-scaled
-              div, therefore no rasterisation blur at any zoom level).
+              On web the floor plan is instead injected as a complete <svg>
+              document into an absolutely-positioned <div> (web branch below);
+              browser-native SVG rendering stays vector-crisp at any zoom.
               On native, <SvgUri> is rendered directly at svgRenderW × svgRenderH;
               the SVG's own viewBox handles coordinate scaling.  This avoids
               exceeding iOS's maximum GPU texture size which caused patchwork
@@ -2260,6 +2452,8 @@ export function WarehouseMapView({
                       svgRenderW={svgRenderW}
                       svgRenderH={svgRenderH}
                       onDone={removeFadeLayer}
+                      // Fade-layer tile errors are cosmetic — tiles disappear
+                      // after 150 ms anyway, so no banner is surfaced.
                     />
                   ) : null,
                 )}
@@ -2268,45 +2462,98 @@ export function WarehouseMapView({
                   {numTiles > 1 && tiles.length > 0
                     ? tiles.map(({ col, row }) => (
                         <PngTile
-                          key={`${col}-${row}`}
+                          key={`${col}-${row}-${tileReloadKey}`}
                           z={renderZoom}
                           col={col}
                           row={row}
                           svgHash={svgHash}
                           tileW={svgRenderW / numTiles}
                           tileH={svgRenderH / numTiles}
+                          onFetchError={handleTileFetchError}
                         />
                       ))
                     : null}
                 </Animated.View>
               </View>
             ) : !svgLoading ? (
+              /* F-043: native load failed — show descriptive message + Retry */
               <View
                 style={[
                   styles.svgFallback,
                   { width: svgRenderW, height: svgRenderH, backgroundColor: colors.muted },
                 ]}
               >
-                <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
-                  Map unavailable
+                <Text style={{ color: colors.mutedForeground, fontSize: 13, textAlign: "center", paddingHorizontal: 24 }}>
+                  {svgLoadError
+                    ? "Floor plan could not be loaded.\nServer and bundled asset both failed."
+                    : "Map unavailable"}
                 </Text>
+                {svgLoadError && (
+                  <Pressable
+                    onPress={handleFloorPlanRetry}
+                    style={[styles.floorPlanRetryBtn, { backgroundColor: colors.primary }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry loading floor plan"
+                  >
+                    <Text style={[styles.floorPlanRetryBtnText, { color: colors.primaryForeground }]}>
+                      Retry
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             ) : (
               <View style={{ width: svgRenderW, height: svgRenderH }} />
             )
           ) : (
-            /* Web: no separate floor plan div — floor plan is inside the SVG
-               below.  Show "Map unavailable" only if the fetch failed. */
-            !svgLoading && !innerXml ? (
+            /* Web: floor plan and zone overlays are children of one outer
+               SVG scene.  The raw floor-plan body is injected into a real SVG
+               group so the browser parses paths in the SVG namespace, while
+               the overlay uses the exact same normalized viewBox and size. */
+            webSvgScene ? (
+              <Svg
+                viewBox={webSvgScene.viewBox}
+                width={webSvgScene.renderWidth}
+                height={webSvgScene.renderHeight}
+                style={{ width: webSvgScene.renderWidth, height: webSvgScene.renderHeight }}
+              >
+                {React.createElement("g", {
+                  dangerouslySetInnerHTML: {
+                    __html: stripSvgWrapper(webSvgScene.svgMarkup),
+                  },
+                  style: {
+                    // Colour-invert the artwork in dark mode ONLY — an
+                    // unconditional invert blanked the map in light mode.
+                    filter: isDark ? "invert(1) brightness(0.88)" : "none",
+                  },
+                })}
+                {zoneOverlayLayer}
+              </Svg>
+            ) : !svgLoading ? (
+              /* F-043: web load or scene validation failed — show a
+                 descriptive message + Retry instead of a blank map. */
               <View
                 style={[
                   styles.svgFallback,
                   { width: svgRenderW, height: svgRenderH, backgroundColor: colors.muted },
                 ]}
               >
-                <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
-                  Map unavailable
+                <Text style={{ color: colors.mutedForeground, fontSize: 13, textAlign: "center", paddingHorizontal: 24 }}>
+                  {svgLoadError || webSceneError
+                    ? "Floor plan could not be loaded.\nServer and bundled asset both failed."
+                    : "Map unavailable"}
                 </Text>
+                {(svgLoadError || webSceneError) && (
+                  <Pressable
+                    onPress={handleFloorPlanRetry}
+                    style={[styles.floorPlanRetryBtn, { backgroundColor: colors.primary }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry loading floor plan"
+                  >
+                    <Text style={[styles.floorPlanRetryBtnText, { color: colors.primaryForeground }]}>
+                      Retry
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             ) : (
               <View style={{ width: svgRenderW, height: svgRenderH }} />
@@ -2367,54 +2614,26 @@ export function WarehouseMapView({
             </Animated.View>
           )}
 
-          {/* Zone overlay SVG — shares the same viewBox as the floor plan so
-              zone coordinates align exactly.
-              On web: the floor plan inner content is embedded here as the first
-              child <g> element (dangerouslySetInnerHTML), keeping floor plan
-              and zones in one SVG viewport for crisp rendering at any zoom.
-              On native: the zone rects are layered on top of the <SvgUri>
-              rendered above via absoluteFill.
+          {/* Native zone overlay SVG — shares the same viewBox as the floor
+              plan so zone coordinates align exactly.  Web renders this layer
+              inside the unified scene above instead.
               Each ZoneOverlayItem drives its own strokeWidth and fontSize via
               useAnimatedProps on the UI thread — visual weight stays constant
               as zoom changes, with zero JS re-renders during pinch or spring
               animations. Zone geometry (x/y/w/h) fills the full SVG viewBox,
               so alignment with the floor plan is always exact. */}
-          <Svg
-            style={StyleSheet.absoluteFill}
-            viewBox={contentVB
-              ? `0 0 ${contentVB.w} ${contentVB.h}`
-              : `0 0 ${SVG_VIEWBOX_W} ${SVG_VIEWBOX_H}`}
-            width={svgRenderW}
-            height={svgRenderH}
-          >
-            {Platform.OS === "web" && innerXml
-              ? React.createElement(
-                  "g" as unknown as React.ElementType,
-                  {
-                    dangerouslySetInnerHTML: {
-                      __html: DOMPurify.sanitize(innerXml, {
-                        USE_PROFILES: { svg: true, svgFilters: true },
-                        FORCE_BODY: false,
-                      }),
-                    },
-                    style: {
-                      filter: isDark ? "invert(1) brightness(0.88)" : "none",
-                    },
-                  },
-                )
-              : null}
-            {anchorTransform ? (
-              <G transform={anchorTransform}>
-                <G transform={(() => { const a = safeZoneAlignment(zoneAlignment); return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`; })()}>
-                  {zoneOverlays}
-                </G>
-              </G>
-            ) : (
-              <G transform={(() => { const a = safeZoneAlignment(zoneAlignment); return `translate(${a.translateX}, ${a.translateY}) scale(${a.scale})`; })()}>
-                {zoneOverlays}
-              </G>
-            )}
-          </Svg>
+          {Platform.OS !== "web" && (
+            <Svg
+              style={StyleSheet.absoluteFill}
+              viewBox={contentVB
+                ? `0 0 ${contentVB.w} ${contentVB.h}`
+                : `0 0 ${SVG_VIEWBOX_W} ${SVG_VIEWBOX_H}`}
+              width={svgRenderW}
+              height={svgRenderH}
+            >
+              {zoneOverlayLayer}
+            </Svg>
+          )}
         </Animated.View>
       </GestureDetector>
       </View>
@@ -2443,25 +2662,83 @@ export function WarehouseMapView({
         </Pressable>
       )}
 
-      {/* Empty state: no zones defined yet — auto-hides after 3 s */}
-      {!zonesLoading && !zonesError && zones.length === 0 && !emptyDismissed && (
-        <View style={[styles.emptyOverlay, { pointerEvents: "none" }]}>
+      {/* Empty state: no zones defined yet — persistent, dismissable (F-064) */}
+      {!zonesLoading && !zonesError && zones.length === 0 && !noZonesDismissed && (
+        <View style={styles.emptyOverlay}>
           <View
             style={[
               styles.emptyCard,
               { backgroundColor: colors.card + "ee", borderColor: colors.border },
             ]}
           >
-            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-              No zones defined
-            </Text>
+            <View style={styles.emptyCardHeader}>
+              <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+                No zones defined
+              </Text>
+              <Pressable
+                onPress={() => setNoZonesDismissed(true)}
+                hitSlop={8}
+                accessibilityLabel="Dismiss no zones card"
+              >
+                <Feather name="x" size={16} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
             <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
               {isAdmin
                 ? "Use the Zone Drawing Tool to add aisle overlays."
                 : "An admin can add aisle zones from the web interface."}
             </Text>
+            {isAdmin && zoneEditorUrl !== null && (
+              <Pressable
+                onPress={() => {
+                  // Catch URL-open failures and notify the parent so it can
+                  // surface a toast with the URL for manual copying (F-042).
+                  Linking.openURL(zoneEditorUrl!).catch(() => {
+                    onZoneEditorLaunchFailed?.(zoneEditorUrl!);
+                  });
+                }}
+                style={[styles.emptySetupBtn, { backgroundColor: colors.primary }]}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.emptySetupBtnText, { color: colors.primaryForeground }]}>
+                  Set up zones
+                </Text>
+              </Pressable>
+            )}
           </View>
         </View>
+      )}
+
+      {/* Tile-fetch failure banner — shown after a tile fails even after one
+          retry.  Tapping reloads all tiles by bumping tileReloadKey (F-044). */}
+      {tileFailBanner && Platform.OS !== "web" && (
+        <Pressable
+          onPress={handleTileReload}
+          style={[styles.tileFailBanner, { backgroundColor: colors.destructive + "18", borderColor: colors.destructive + "40" }]}
+          accessibilityRole="button"
+          accessibilityLabel="Tap to reload map tiles"
+        >
+          <Feather name="alert-circle" size={14} color={colors.destructive} />
+          <Text style={[styles.tileFailBannerText, { color: colors.destructive }]}>
+            Tap to reload map
+          </Text>
+        </Pressable>
+      )}
+
+      {/* Select-mode coach mark — shown once on first visit (F-062) */}
+      {showSelectCoach && (
+        <Pressable
+          onPress={dismissSelectCoach}
+          style={[styles.coachMark, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss hint"
+        >
+          <Feather name="mouse-pointer" size={13} color="#fff" />
+          <Text style={styles.coachMarkText}>
+            Tap the select icon to interact with zones
+          </Text>
+          <Feather name="x" size={12} color="#ffffffbb" />
+        </Pressable>
       )}
 
       {/* Zoom controls — bottom-right cluster: Select on top, + below, − below, fit at bottom */}
@@ -2544,7 +2821,28 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  svgFallback: { alignItems: "center", justifyContent: "center" },
+  svgFallback: { alignItems: "center", justifyContent: "center", gap: 12 },
+  floorPlanRetryBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  floorPlanRetryBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  tileFailBanner: {
+    position: "absolute",
+    top: 12,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    boxShadow: "0 2px 4px rgba(0,0,0,0.12)",
+  },
+  tileFailBannerText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   floatingBadge: {
     position: "absolute",
     top: 12,
@@ -2572,12 +2870,49 @@ const styles = StyleSheet.create({
     maxWidth: 280,
     alignItems: "center",
   },
-  emptyTitle: { fontSize: 15, fontFamily: "Inter_700Bold", marginBottom: 6 },
+  emptyCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    marginBottom: 6,
+  },
+  emptyTitle: { fontSize: 15, fontFamily: "Inter_700Bold" },
   emptyHint: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
     textAlign: "center",
     lineHeight: 20,
+    marginBottom: 12,
+  },
+  emptySetupBtn: {
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    alignItems: "center",
+    alignSelf: "stretch",
+  },
+  emptySetupBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  coachMark: {
+    position: "absolute",
+    right: 56,
+    bottom: 96 + 36 * 3 + 4, // align with the select button (top of zoom controls)
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+    boxShadow: "0 2px 6px rgba(0,0,0,0.18)",
+    maxWidth: 220,
+  },
+  coachMarkText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: "#fff",
+    lineHeight: 16,
   },
   hintBadge: {
     position: "absolute",

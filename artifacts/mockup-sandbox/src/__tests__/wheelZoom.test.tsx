@@ -138,9 +138,8 @@ describe("ZoneEditor — wheel-zoom integration", () => {
   });
 
   it("registers the wheel listener on the SVG element with { passive: false }", async () => {
-    let container!: HTMLElement;
     await act(async () => {
-      ({ container } = render(<ZoneEditor />));
+      render(<ZoneEditor />);
     });
 
     const wheelCalls = addEventListenerSpy.mock.calls.filter(

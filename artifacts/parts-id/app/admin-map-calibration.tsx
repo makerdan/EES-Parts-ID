@@ -115,6 +115,10 @@ export default function AdminMapCalibrationScreen() {
 
   // Per-slot deleting state
   const [deleting, setDeleting] = useState<Array<boolean>>([false, false, false]);
+  // Per-slot saving state
+  const [savingSlot, setSavingSlot] = useState<[boolean, boolean, boolean]>([false, false, false]);
+  const [saveErrorSlot, setSaveErrorSlot] = useState<[string | null, string | null, string | null]>([null, null, null]);
+  const [savedSlot, setSavedSlot] = useState<[boolean, boolean, boolean]>([false, false, false]);
 
   // Floor-plan SVG layout
   const [mapW, setMapW] = useState(0);
@@ -165,6 +169,21 @@ export default function AdminMapCalibrationScreen() {
           next[i] = { x: serverAnchor.svgX, y: serverAnchor.svgY };
         } else if (prevIds.has(slot)) {
           next[i] = null;                         // deleted → clear
+        }
+      }
+      return next;
+    });
+
+    // Sync savedSlot: true for slots present on the server, false for cleared slots
+    setSavedSlot((prev) => {
+      const next = [...prev] as typeof prev;
+      for (let i = 0; i < 3; i++) {
+        const slot = i + 1;
+        const serverAnchor = anchorMap.get(slot);
+        if (serverAnchor) {
+          next[i] = true;
+        } else if (prevIds.has(slot)) {
+          next[i] = false;                        // deleted → reset
         }
       }
       return next;
@@ -263,6 +282,12 @@ export default function AdminMapCalibrationScreen() {
     setSvgCoords((prev) => {
       const next = [...prev] as typeof prev;
       next[pickingSlot] = svgPt;
+      return next;
+    });
+    // Re-placing the pin marks this slot as having unsaved changes
+    setSavedSlot((prev) => {
+      const next = [...prev] as typeof prev;
+      next[pickingSlot] = false;
       return next;
     });
     const match = findNearestZoneCorner(svgPt, zones, zoneAlignment);
@@ -398,6 +423,52 @@ export default function AdminMapCalibrationScreen() {
     return anchors.some((a) => a.id === idx + 1);
   }, [anchors]);
 
+  // ── Per-slot save ────────────────────────────────────────────────────────
+  const handleSaveSlot = useCallback(async (idx: number) => {
+    if (savingSlot[idx]) return;
+    const coord = svgCoords[idx];
+    const form = forms[idx];
+    if (!coord || !form) return;
+    const wx = safeParseFloat(form.worldXStr);
+    const wy = safeParseFloat(form.worldYStr);
+    if (wx === null || wy === null) return;
+
+    const slot = (idx + 1) as 1 | 2 | 3;
+    const payload: UpsertAnchorPayload = {
+      name: form.name || `Anchor ${slot}`,
+      svgX: coord.x,
+      svgY: coord.y,
+      worldX: wx,
+      worldY: wy,
+    };
+
+    setSavingSlot((prev) => { const next = [...prev] as typeof prev; next[idx] = true; return next; });
+    setSaveErrorSlot((prev) => { const next = [...prev] as typeof prev; next[idx] = null; return next; });
+
+    const result = await upsertAnchor(slot, payload);
+
+    setSavingSlot((prev) => { const next = [...prev] as typeof prev; next[idx] = false; return next; });
+
+    if (result.ok) {
+      setSavedSlot((prev) => { const next = [...prev] as typeof prev; next[idx] = true; return next; });
+      setSaveErrorSlot((prev) => { const next = [...prev] as typeof prev; next[idx] = null; return next; });
+    } else if (result.mfaRequired) {
+      Alert.alert(
+        "Two-Factor Authentication Required",
+        "Admin access requires two-factor authentication (2FA). Enable it in your account settings under Security → Two-step verification.",
+        [
+          { text: "Dismiss", style: "cancel" },
+          {
+            text: "Open Account Settings",
+            onPress: () => { clerkRef.current?.openUserProfile(); },
+          },
+        ],
+      );
+    } else {
+      setSaveErrorSlot((prev) => { const next = [...prev] as typeof prev; next[idx] = "Could not save — check your connection."; return next; });
+    }
+  }, [savingSlot, svgCoords, forms, upsertAnchor]);
+
   // ── Back navigation guard ────────────────────────────────────────────────
   const handleBack = useCallback(() => {
     if (step === "review") {
@@ -504,6 +575,25 @@ export default function AdminMapCalibrationScreen() {
                       />
                     ))}
                   </G>
+                </G>
+              )}
+              {/* Faint zone overlay in edit mode — helps the admin aim near a corner */}
+              {!overlayTransformStr && zones.length > 0 && (
+                <G transform={`translate(${zoneAlignment.translateX}, ${zoneAlignment.translateY}) scale(${zoneAlignment.scale})`}>
+                  {zones.slice(0, 200).map((zone) => (
+                    <Rect
+                      key={zone.id}
+                      testID="edit-zone-overlay-rect"
+                      x={zone.svgX}
+                      y={zone.svgY}
+                      width={zone.svgWidth}
+                      height={zone.svgHeight}
+                      fill="rgba(0,112,255,0.06)"
+                      stroke="#0070ff"
+                      strokeWidth={6}
+                      strokeOpacity={0.3}
+                    />
+                  ))}
                 </G>
               )}
               {/* Anchor point markers */}
@@ -786,11 +876,14 @@ export default function AdminMapCalibrationScreen() {
                   <TextInput
                     style={[styles.textInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
                     value={form.name}
-                    onChangeText={(v) => setForms((prev) => {
-                      const next = [...prev] as typeof prev;
-                      next[idx] = { ...next[idx], name: v };
-                      return next;
-                    })}
+                    onChangeText={(v) => {
+                      setForms((prev) => {
+                        const next = [...prev] as typeof prev;
+                        next[idx] = { ...next[idx], name: v };
+                        return next;
+                      });
+                      setSavedSlot((prev) => { const next = [...prev] as typeof prev; next[idx] = false; return next; });
+                    }}
                     placeholder="e.g. Entrance corner"
                     placeholderTextColor={colors.mutedForeground}
                     autoCapitalize="sentences"
@@ -804,11 +897,14 @@ export default function AdminMapCalibrationScreen() {
                     <TextInput
                       style={[styles.textInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
                       value={form.worldXStr}
-                      onChangeText={(v) => setForms((prev) => {
-                        const next = [...prev] as typeof prev;
-                        next[idx] = { ...next[idx], worldXStr: v };
-                        return next;
-                      })}
+                      onChangeText={(v) => {
+                        setForms((prev) => {
+                          const next = [...prev] as typeof prev;
+                          next[idx] = { ...next[idx], worldXStr: v };
+                          return next;
+                        });
+                        setSavedSlot((prev) => { const next = [...prev] as typeof prev; next[idx] = false; return next; });
+                      }}
                       placeholder="0"
                       placeholderTextColor={colors.mutedForeground}
                       keyboardType="numeric"
@@ -819,17 +915,70 @@ export default function AdminMapCalibrationScreen() {
                     <TextInput
                       style={[styles.textInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
                       value={form.worldYStr}
-                      onChangeText={(v) => setForms((prev) => {
-                        const next = [...prev] as typeof prev;
-                        next[idx] = { ...next[idx], worldYStr: v };
-                        return next;
-                      })}
+                      onChangeText={(v) => {
+                        setForms((prev) => {
+                          const next = [...prev] as typeof prev;
+                          next[idx] = { ...next[idx], worldYStr: v };
+                          return next;
+                        });
+                        setSavedSlot((prev) => { const next = [...prev] as typeof prev; next[idx] = false; return next; });
+                      }}
                       placeholder="0"
                       placeholderTextColor={colors.mutedForeground}
                       keyboardType="numeric"
                     />
                   </View>
                 </View>
+                <Text style={[styles.hint, { color: colors.mutedForeground }]}>
+                  Tap the map near a zone corner to auto-fill. If the fields stay blank after placing the pin, try a spot closer to a corner.
+                </Text>
+
+                {/* No-snap helper — shown when a pin is placed but Zone X/Y weren't auto-filled */}
+                {coord !== null && (form.worldXStr === "" || form.worldYStr === "") && (
+                  <Text style={[styles.noSnapHint, { color: colors.mutedForeground }]}>
+                    No nearby zone corner found — type the Zone X / Zone Y coordinates from your Zone Editor.
+                  </Text>
+                )}
+
+                {/* Per-slot Save button — shown when slot is ready */}
+                {ready && (
+                  <View style={styles.saveSlotRow}>
+                    <Pressable
+                      onPress={() => handleSaveSlot(idx)}
+                      disabled={savingSlot[idx] || savedSlot[idx]}
+                      style={[
+                        styles.saveSlotBtn,
+                        savedSlot[idx]
+                          ? { backgroundColor: color + "20", borderColor: color }
+                          : { backgroundColor: colors.card, borderColor: colors.border },
+                        (savingSlot[idx] || savedSlot[idx]) && { opacity: 0.75 },
+                      ]}
+                      accessibilityLabel={`Save anchor ${slot}`}
+                    >
+                      {savingSlot[idx] ? (
+                        <>
+                          <ActivityIndicator size="small" color={colors.mutedForeground} />
+                          <Text style={[styles.saveSlotBtnText, { color: colors.mutedForeground }]}>Saving…</Text>
+                        </>
+                      ) : savedSlot[idx] ? (
+                        <>
+                          <Feather name="check" size={13} color={color} />
+                          <Text style={[styles.saveSlotBtnText, { color }]}>Saved</Text>
+                        </>
+                      ) : (
+                        <>
+                          <Feather name="save" size={13} color={colors.foreground} />
+                          <Text style={[styles.saveSlotBtnText, { color: colors.foreground }]}>Save</Text>
+                        </>
+                      )}
+                    </Pressable>
+                    {saveErrorSlot[idx] && (
+                      <Text style={[styles.saveSlotError, { color: colors.destructive }]}>
+                        {saveErrorSlot[idx]}
+                      </Text>
+                    )}
+                  </View>
+                )}
               </View>
             );
           })}
@@ -1005,6 +1154,7 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
   },
   worldRow: { flexDirection: "row" },
+  hint: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 15, marginTop: 6 },
   warnCard: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -1057,4 +1207,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   statusText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  saveSlotRow: { gap: 4 },
+  saveSlotBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  saveSlotBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  saveSlotError: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+  noSnapHint: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 16 },
 });

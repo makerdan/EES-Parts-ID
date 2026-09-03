@@ -893,38 +893,43 @@ router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => 
     return;
   }
 
-  const [jobRow] = await db
-    .select({ id: catalogPdfJobTable.id, status: catalogPdfJobTable.status })
-    .from(catalogPdfJobTable)
-    .where(eq(catalogPdfJobTable.id, jobId))
-    .limit(1);
+  try {
+    const [jobRow] = await db
+      .select({ id: catalogPdfJobTable.id, status: catalogPdfJobTable.status })
+      .from(catalogPdfJobTable)
+      .where(eq(catalogPdfJobTable.id, jobId))
+      .limit(1);
 
-  if (!jobRow) {
-    res.status(404).json({ error: "Job not found" });
-    return;
+    if (!jobRow) {
+      res.status(404).json({ error: "Job not found" });
+      return;
+    }
+
+    if (jobRow.status !== "pending" && jobRow.status !== "processing") {
+      res.status(409).json({
+        error: `Cannot cancel a job with status "${jobRow.status}". Only pending or processing jobs can be cancelled.`,
+      });
+      return;
+    }
+
+    await db
+      .update(catalogPdfJobTable)
+      .set({ status: "cancelled", finishedAt: new Date() })
+      .where(eq(catalogPdfJobTable.id, jobId));
+
+    await db.execute(sql`
+      UPDATE catalog_pdf_job
+      SET status = 'cancelled', finished_at = NOW()
+      WHERE parent_job_id = ${jobId}
+        AND status IN ('pending', 'processing')
+    `);
+
+    reqLogger.info({ jobId }, "[catalog-pdf] cancel requested");
+    res.json({ ok: true, jobId: String(jobId) });
+  } catch (err) {
+    reqLogger.error({ err, jobId }, "[catalog-pdf] cancel handler DB error");
+    res.status(500).json({ error: "Cancel failed", requestId: res.locals.requestId });
   }
-
-  if (jobRow.status !== "pending" && jobRow.status !== "processing") {
-    res.status(409).json({
-      error: `Cannot cancel a job with status "${jobRow.status}". Only pending or processing jobs can be cancelled.`,
-    });
-    return;
-  }
-
-  await db
-    .update(catalogPdfJobTable)
-    .set({ status: "cancelled", finishedAt: new Date() })
-    .where(eq(catalogPdfJobTable.id, jobId));
-
-  await db.execute(sql`
-    UPDATE catalog_pdf_job
-    SET status = 'cancelled', finished_at = NOW()
-    WHERE parent_job_id = ${jobId}
-      AND status IN ('pending', 'processing')
-  `);
-
-  reqLogger.info({ jobId }, "[catalog-pdf] cancel requested");
-  res.json({ ok: true, jobId: String(jobId) });
 });
 
 // ── GET /admin/catalog-pdf/:jobId/status ──────────────────────────────────────
@@ -1440,55 +1445,61 @@ router.post("/catalog-pdf/reviews/:id/revert", requireAdminAuth, async (req, res
     return void res.status(400).json({ error: "Invalid jobId" });
   }
 
-  const [row] = await db
-    .select({
-      id: inventoryTable.id,
-      previousDescription: inventoryTable.previousDescription,
-      imageSource: inventoryTable.imageSource,
-      catalogPdfJobId: inventoryTable.catalogPdfJobId,
-    })
-    .from(inventoryTable)
-    .where(eq(inventoryTable.id, id))
-    .limit(1);
+  try {
+    const [row] = await db
+      .select({
+        id: inventoryTable.id,
+        previousDescription: inventoryTable.previousDescription,
+        imageSource: inventoryTable.imageSource,
+        catalogPdfJobId: inventoryTable.catalogPdfJobId,
+      })
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, id))
+      .limit(1);
 
-  if (!row) {
-    return void res.status(404).json({ error: "Item not found" });
-  }
-
-  if (row.imageSource !== "pdf_extraction") {
-    return void res.status(400).json({ error: "Item was not updated by PDF extraction" });
-  }
-
-  // Guard: when a jobId context was provided, verify the item's catalogPdfJobId
-  // is either the job itself or one of its child jobs (chunk-race winner case).
-  if (jobIdContext !== null) {
-    const childRows = await db
-      .select({ id: catalogPdfJobTable.id })
-      .from(catalogPdfJobTable)
-      .where(eq(catalogPdfJobTable.parentJobId, jobIdContext));
-
-    const effectiveJobIds = new Set([jobIdContext, ...childRows.map((c) => c.id)]);
-
-    if (row.catalogPdfJobId === null || !effectiveJobIds.has(row.catalogPdfJobId)) {
-      return void res.status(400).json({ error: "Item does not belong to the specified job" });
+    if (!row) {
+      return void res.status(404).json({ error: "Item not found" });
     }
+
+    if (row.imageSource !== "pdf_extraction") {
+      return void res.status(400).json({ error: "Item was not updated by PDF extraction" });
+    }
+
+    // Guard: when a jobId context was provided, verify the item's catalogPdfJobId
+    // is either the job itself or one of its child jobs (chunk-race winner case).
+    if (jobIdContext !== null) {
+      const childRows = await db
+        .select({ id: catalogPdfJobTable.id })
+        .from(catalogPdfJobTable)
+        .where(eq(catalogPdfJobTable.parentJobId, jobIdContext));
+
+      const effectiveJobIds = new Set([jobIdContext, ...childRows.map((c) => c.id)]);
+
+      if (row.catalogPdfJobId === null || !effectiveJobIds.has(row.catalogPdfJobId)) {
+        return void res.status(400).json({ error: "Item does not belong to the specified job" });
+      }
+    }
+
+    await db
+      .update(inventoryTable)
+      .set({
+        description: row.previousDescription ?? "",
+        previousDescription: null,
+        imageUrl: null,
+        imageUrl2: null,
+        imageSource: null,
+        imageConfidence: null,
+        catalogPdfJobId: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(inventoryTable.id, id));
+
+    res.json({ ok: true });
+  } catch (err) {
+    const reqLogger = getLogger(res);
+    reqLogger.error({ err, id }, "[catalog-pdf] revert handler DB error");
+    res.status(500).json({ error: "Revert failed", requestId: res.locals.requestId });
   }
-
-  await db
-    .update(inventoryTable)
-    .set({
-      description: row.previousDescription ?? "",
-      previousDescription: null,
-      imageUrl: null,
-      imageUrl2: null,
-      imageSource: null,
-      imageConfidence: null,
-      catalogPdfJobId: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(inventoryTable.id, id));
-
-  res.json({ ok: true });
 });
 
 export default router;

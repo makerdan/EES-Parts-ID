@@ -2,27 +2,22 @@
  * Unit tests for vendor name → code resolution logic.
  *
  * No database, no network.  Builds a synthetic reverseVendorMap from the
- * exported PRIMARY_VENDORS array using the same algorithm as inventory.ts
- * (forward iteration over PRIMARY_VENDORS, last-write wins for conflicts,
- * then PRIORITY_CODES re-applied last), and asserts that EVERY name in EVERY
- * PRIMARY_VENDORS entry resolves to the declared winner code — including
- * explicit handling of all known conflict cases.
+ * exported PRIMARY_VENDORS array using the same resolver as inventory.ts,
+ * and asserts that EVERY name in EVERY PRIMARY_VENDORS entry resolves to the
+ * declared winner code — including explicit handling of all known conflicts.
  */
 
 import { PRIMARY_VENDORS, VENDORS } from "../src/seed/dictionaries";
+import { buildReverseVendorMap } from "../src/lib/vendorMap";
 
-// ── Resolution algorithm (mirrors inventory.ts) ───────────────────────────────
+// ── Resolution algorithm (shared with inventory.ts) ──────────────────────────
 
 function buildSyntheticReverseVendorMap(): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const v of PRIMARY_VENDORS) {
-    for (const name of v.names) map.set(name.toLowerCase(), v.code);
-  }
-  return map;
+  return buildReverseVendorMap(PRIMARY_VENDORS);
 }
 
 /**
- * Mirrors inventory.ts lines 668-670:
+ * Mirrors the inventory route's vendor filter fallback:
  *   resolvedCode = map.get(input.toLowerCase()) ?? input.toUpperCase()
  */
 function resolveVendorCode(input: string, map: Map<string, string>): string {
@@ -32,34 +27,32 @@ function resolveVendorCode(input: string, map: Map<string, string>): string {
 // ── Conflict winner declarations ──────────────────────────────────────────────
 //
 // When multiple PRIMARY_VENDORS entries share a name, exactly one code wins in
-// the final map.  The winner is determined by:
-//   1. PRIORITY_CODES override (applied last — highest precedence)
-//   2. Iteration order over PRIMARY_VENDORS: the LAST entry to contain a name
-//      wins (last-write semantics).
+// the final map. The winner is determined by:
+//   1. Explicit product-family preferences (for example generic Eaton → CHD).
+//   2. Stable primary-vendor ordering for any remaining conflicts.
 //
 // Declare every such conflict winner explicitly so the test is not circular.
 // If someone re-orders PRIMARY_VENDORS, these declarations catch the regression.
 
 /**
  * Names that appear in more than one PRIMARY_VENDORS entry.
- * Value = the code that WINS in the synthetic map (based on array order).
+ * Value = the code that WINS in the shared resolver.
  *
  * Derivation:
  *   - "eaton" / "cutler hammer" / "cutler-hammer" / "c-h" / "eaton electrical":
- *       CHD (earlier in array) and ETN (later) share these → ETN wins (last-write).
- *   - "eaton electrical" is also in EAT (between CHD and ETN) — ETN still wins (latest).
+ *       CHD owns the product-family aliases; ETN remains the corporate code.
  *   - "eaton corporation": EAT (earlier) and ETN (later) → ETN wins.
  *   - "thomas betts" / "thomas & betts" / "t&b": ABB (early) and TAB (latest) → TAB wins.
  *   - "edison fuse": BUS (earlier) and EDN (later) → EDN wins.
  *   - CHC and CRS no longer share any names; each owns its names uniquely.
  */
 const CONFLICT_WINNERS = new Map<string, string>([
-  // ETN wins for eaton-family names (ETN is later in PRIMARY_VENDORS than CHD and EAT)
-  ["eaton",               "ETN"],
-  ["cutler hammer",       "ETN"],
-  ["cutler-hammer",       "ETN"],
-  ["c-h",                 "ETN"],
-  ["eaton electrical",    "ETN"],
+  // CHD wins generic Eaton/Cutler-Hammer aliases; ETN owns the corporate name.
+  ["eaton",               "CHD"],
+  ["cutler hammer",       "CHD"],
+  ["cutler-hammer",       "CHD"],
+  ["c-h",                 "CHD"],
+  ["eaton electrical",    "CHD"],
   ["eaton corporation",   "ETN"],
 
   // TAB wins for thomas-betts names (TAB is later in PRIMARY_VENDORS than ABB)
@@ -98,6 +91,27 @@ describe("vendorNameResolution — every PRIMARY_VENDORS name resolves to the de
       }
     });
   }
+});
+
+describe("vendorNameResolution — conflict winners are independent of database row order", () => {
+  const permutations = [
+    [...PRIMARY_VENDORS].reverse(),
+    [...PRIMARY_VENDORS].sort((a, b) => b.code.localeCompare(a.code)),
+  ].map((vendors) => [vendors]);
+
+  it.each(permutations)("resolves aliases consistently for an arbitrary row order", (vendors) => {
+    const map = buildReverseVendorMap(vendors);
+
+    for (const [alias, expectedCode] of CONFLICT_WINNERS) {
+      expect({
+        alias,
+        resolved: resolveVendorCode(alias, map),
+      }).toEqual({
+        alias,
+        resolved: expectedCode,
+      });
+    }
+  });
 });
 
 // ── Tests: CRS and CHC each own their own names ───────────────────────────────
@@ -143,25 +157,29 @@ describe("vendorNameResolution — CRS owns all crouse-hinds names; CHC owns its
   });
 });
 
-// ── Tests: last-write conflict winners (array-order dependent) ────────────────
+// ── Tests: explicit conflict winners ──────────────────────────────────────────
 
-describe("vendorNameResolution — last-write wins: ETN beats CHD for eaton-family names", () => {
+describe("vendorNameResolution — CHD owns generic Eaton aliases", () => {
   const map = buildSyntheticReverseVendorMap();
 
-  it("'eaton' → ETN (ETN appears after CHD in the PRIMARY_VENDORS array)", () => {
-    expect(resolveVendorCode("eaton", map)).toBe("ETN");
+  it("'eaton' → CHD (generic product-family alias)", () => {
+    expect(resolveVendorCode("eaton", map)).toBe("CHD");
   });
 
-  it("'cutler hammer' → ETN", () => {
-    expect(resolveVendorCode("cutler hammer", map)).toBe("ETN");
+  it("'cutler hammer' → CHD", () => {
+    expect(resolveVendorCode("cutler hammer", map)).toBe("CHD");
   });
 
-  it("'cutler-hammer' → ETN", () => {
-    expect(resolveVendorCode("cutler-hammer", map)).toBe("ETN");
+  it("'cutler-hammer' → CHD", () => {
+    expect(resolveVendorCode("cutler-hammer", map)).toBe("CHD");
   });
 
   it("'westinghouse' → ETN (unique to ETN)", () => {
     expect(resolveVendorCode("westinghouse", map)).toBe("ETN");
+  });
+
+  it("'eaton corporation' → ETN (corporate alias)", () => {
+    expect(resolveVendorCode("eaton corporation", map)).toBe("ETN");
   });
 
   it("'ch' → CHD (unique to CHD — ETN only has 'c-h', not 'ch')", () => {

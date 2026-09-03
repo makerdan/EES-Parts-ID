@@ -24,9 +24,22 @@ import React, {
 import { Toaster, toast } from "sonner";
 import { computeWheelZoom } from "../utils/wheelZoom";
 import { normRect as normRectUtil } from "../utils/rubberBandSelect";
-import { screenToSvg } from "../utils/svgCoords";
+import {
+  DEFAULT_GRID_SPACING,
+  DEFAULT_STANDARD_RECT,
+  MAX_GRID_SPACING,
+  MAX_STANDARD_RECT_SIZE,
+  MIN_GRID_SPACING,
+  MIN_STANDARD_RECT_SIZE,
+  clampDeltaForRects,
+  moveRect,
+  placeStandardRect,
+  readBoundedNumber,
+  resizeRect,
+  screenToSvg,
+} from "../utils/svgCoords";
 import { useRubberBand } from "../hooks/useRubberBand";
-import { isValidAisleId, findDuplicateConflict, normalizeAisleId, type ZoneLike } from "@workspace/zone-validation";
+import { isValidAisleId, findDuplicateConflict, normalizeAisleId } from "@workspace/zone-validation";
 import warehouseMapFallback from "../../public/warehouse-map.svg?raw";
 
 // Strip the outer <svg> wrapper so the inner content can be embedded directly
@@ -65,7 +78,9 @@ let _rasterCache: { key: string; imageData: ImageData; w: number; h: number } | 
 async function rasterizeSvg(
   svgInner: string,
   dims: { w: number; h: number },
+  signal?: AbortSignal,
 ): Promise<{ imageData: ImageData; w: number; h: number }> {
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
   if (_rasterCache && _rasterCache.key === svgInner) {
     return { imageData: _rasterCache.imageData, w: _rasterCache.w, h: _rasterCache.h };
   }
@@ -87,21 +102,33 @@ async function rasterizeSvg(
 
   return new Promise((resolve, reject) => {
     const img = new Image();
+    const abort = () => {
+      img.onload = null;
+      img.onerror = null;
+      img.src = "";
+      URL.revokeObjectURL(url);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    const finish = () => signal?.removeEventListener("abort", abort);
     img.onload = () => {
+      if (signal?.aborted) { abort(); return; }
       const canvas = document.createElement("canvas");
       canvas.width = cw;
       canvas.height = ch;
       const ctx = canvas.getContext("2d");
-      if (!ctx) { URL.revokeObjectURL(url); reject(new Error("No 2D canvas context")); return; }
+      if (!ctx) { finish(); URL.revokeObjectURL(url); reject(new Error("No 2D canvas context")); return; }
       ctx.fillStyle = "white";
       ctx.fillRect(0, 0, cw, ch);
       ctx.drawImage(img, 0, 0);
       URL.revokeObjectURL(url);
       const imageData = ctx.getImageData(0, 0, cw, ch);
+      if (signal?.aborted) { finish(); reject(new DOMException("Aborted", "AbortError")); return; }
       _rasterCache = { key: svgInner, imageData, w: cw, h: ch };
+      finish();
       resolve({ imageData, w: cw, h: ch });
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Failed to rasterize floor plan SVG")); };
+    img.onerror = () => { finish(); URL.revokeObjectURL(url); if (!signal?.aborted) reject(new Error("Failed to rasterize floor plan SVG")); };
     img.src = url;
   });
 }
@@ -197,17 +224,6 @@ const MIN_ZONE_PX = 8; // minimum zone size in screen pixels before it's discard
 const API_BASE = `${window.location.origin}/api`;
 const INITIAL_SCALE = 0.18; // start zoomed out to show whole floor plan
 
-// Zone-layer alignment calibration increments. Translate is in SVG viewBox
-// units (the floor plan viewBox is ~3600×2460, so a few units is a fine nudge);
-// scale is a uniform multiplier clamped to a sane range.
-const ALIGN_NUDGE_SMALL = 5;
-const ALIGN_NUDGE_LARGE = 50;
-const ALIGN_SCALE_SMALL = 0.01;
-const ALIGN_SCALE_LARGE = 0.05;
-const ALIGN_SCALE_MIN = 0.1;
-const ALIGN_SCALE_MAX = 5;
-const ALIGN_TRANSLATE_MAX = 10000;
-const IDENTITY_ALIGN = { x: 0, y: 0, s: 1 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Zone {
@@ -225,7 +241,7 @@ interface Zone {
 interface Tf { x: number; y: number; s: number }
 interface Pt { x: number; y: number }
 type Handle = "nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w";
-type Mode = "pan" | "draw" | "fill" | "calibrate";
+type Mode = "pan" | "draw" | "fill";
 
 // ── Undo / Redo types ──────────────────────────────────────────────────────
 const UNDO_LIMIT = 50;
@@ -256,12 +272,12 @@ type IxState =
   | { t: "draw"; x1: number; y1: number; x2: number; y2: number }
   | { t: "move"; id: number; ox: number; oy: number }
   | { t: "resize"; id: number; handle: Handle; ax: number; ay: number }
+  | { t: "pendingResize"; handle: Handle; ax: number; ay: number }
   | { t: "rubber"; x1: number; y1: number; x2: number; y2: number; shift: boolean }
   | { t: "multiMove"; startX: number; startY: number }
   // Fill: waits for mouseup with < 5 px movement before triggering the async fill.
   | { t: "fillPending"; sx: number; sy: number }
-  // Calibrate: drag the whole zone layer. ax/ay = align translate at drag start.
-  | { t: "alignPan"; sx: number; sy: number; ax: number; ay: number };
+;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -318,21 +334,6 @@ function parseSectionInput(raw: string): number | null {
   const n = parseInt(s, 10);
   return isNaN(n) ? null : n;
 }
-
-/**
- * Returns the next available unassigned sentinel (a negative integer) for the
- * given aisle.  Existing sentinels in that aisle are found and the next one
- * below the minimum is returned.  The first unassigned zone in any aisle gets
- * -1 (displayed as "A"), the second -2 ("B"), and so on.
- */
-function nextSentinelForAisle(zones: ZoneLike[], aisleId: string): number {
-  const normalized = normalizeAisleId(aisleId);
-  const sentinels = zones
-    .filter((z) => normalizeAisleId(z.aisleId) === normalized && z.sectionNum !== null && z.sectionNum < 0)
-    .map((z) => z.sectionNum as number);
-  return sentinels.length === 0 ? -1 : Math.min(...sentinels) - 1;
-}
-
 /**
  * Builds per-zone PATCH payloads for a bulk aisle-ID update, resolving
  * (aisleId, sectionNum) unique-constraint conflicts before any request fires.
@@ -560,6 +561,9 @@ function writeDraft(id: number, f: FormState) {
 function clearDraft(id: number) {
   try { localStorage.removeItem(draftKey(id)); } catch {}
 }
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
+}
 function readDraft(id: number): { form: FormState; savedAt: number } | null {
   try {
     const raw = localStorage.getItem(draftKey(id));
@@ -588,13 +592,48 @@ export function ZoneEditor() {
   const [svgDims, setSvgDims] = useState<{ w: number; h: number }>(svgFallbackDims);
   const [tf, setTf] = useState<Tf>({ x: 0, y: 0, s: INITIAL_SCALE });
   const [mode, setMode] = useState<Mode>("pan");
-  // ── Global zone-layer alignment calibration ───────────────────────────────
-  // `align` is the working offset shown live in calibrate mode; `savedAlign` is
-  // the last value persisted to the server (used to detect unsaved changes).
-  // translate x/y are in SVG viewBox units; s is a uniform scale about origin.
-  const [align, setAlign] = useState<{ x: number; y: number; s: number }>(IDENTITY_ALIGN);
-  const [savedAlign, setSavedAlign] = useState<{ x: number; y: number; s: number }>(IDENTITY_ALIGN);
-  const [savingAlign, setSavingAlign] = useState(false);
+  // Grid preferences are opt-in and local to this browser. They never enter
+  // the zone payload or the save-status state.
+  const [snapEnabled, setSnapEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem("zoneEditorSnapEnabled") === "true"; } catch {}
+    return false;
+  });
+  const [gridSpacing, setGridSpacing] = useState<number>(() => {
+    try {
+      return readBoundedNumber(
+        localStorage.getItem("zoneEditorGridSpacing"),
+        DEFAULT_GRID_SPACING,
+        MIN_GRID_SPACING,
+        MAX_GRID_SPACING,
+        true,
+      );
+    } catch {}
+    return DEFAULT_GRID_SPACING;
+  });
+  const [standardWidth, setStandardWidth] = useState<number>(() => {
+    try {
+      return readBoundedNumber(
+        localStorage.getItem("zoneEditorStandardWidth"),
+        DEFAULT_STANDARD_RECT.w,
+        MIN_STANDARD_RECT_SIZE,
+        MAX_STANDARD_RECT_SIZE,
+        true,
+      );
+    } catch {}
+    return DEFAULT_STANDARD_RECT.w;
+  });
+  const [standardHeight, setStandardHeight] = useState<number>(() => {
+    try {
+      return readBoundedNumber(
+        localStorage.getItem("zoneEditorStandardHeight"),
+        DEFAULT_STANDARD_RECT.h,
+        MIN_STANDARD_RECT_SIZE,
+        MAX_STANDARD_RECT_SIZE,
+        true,
+      );
+    } catch {}
+    return DEFAULT_STANDARD_RECT.h;
+  });
   // True while the async rasterize+fill operation is in progress.
   const [fillLoading, setFillLoading] = useState(false);
   // Fill sensitivity: slider position 0-100, persisted to localStorage.
@@ -645,6 +684,7 @@ export function ZoneEditor() {
   const formRef = useRef<FormState>({ aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0 });
   const setForm = useCallback((f: FormState) => { formRef.current = f; setFormState(f); }, []);
   const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"clean" | "dirty" | "saving" | "error">("clean");
 
   // Crash-recovery draft offer: set when the selected zone has a localStorage
   // draft that differs from the current server state.
@@ -715,6 +755,11 @@ export function ZoneEditor() {
     destructive: boolean;
     resolve: ((ok: boolean) => void) | null;
   }>({ visible: false, title: "", message: "", destructive: false, resolve: null });
+  const [contextMenu, setContextMenu] = useState<{
+    zoneId: number;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const showConfirm = (title: string, message: string, destructive = false): Promise<boolean> =>
     new Promise((resolve) =>
@@ -735,13 +780,25 @@ export function ZoneEditor() {
   const tfRef = useRef(tf);
   const zonesRef = useRef(zones);
   const dragZoneRef = useRef<Zone | null>(null);
+  const isDraggingRef = useRef<boolean>(false);
+  const dragBaseRef = useRef<Zone | null>(null);
+  const fetchIdRef = useRef(0);
   const modeRef = useRef(mode);
   const selectedIdsRef = useRef(selectedIds);
   const svgInnerRef = useRef(svgInner);
   const svgDimsRef = useRef(svgDims);
   const fillLoadingRef = useRef(false);
   const fillSensitivityRef = useRef(fillSensitivity);
-  const alignRef = useRef(align);
+  const snapEnabledRef = useRef(snapEnabled);
+  const gridSpacingRef = useRef(gridSpacing);
+  const pendingRectRef = useRef(pendingRect);
+  const pendingResizeBaseRef = useRef<typeof pendingRect>(null);
+  const multiDragReferenceIdRef = useRef<number | null>(null);
+  const aliveRef = useRef(true);
+  const fetchAbortRef = useRef<AbortController | null>(null);
+  const saveAbortRef = useRef<AbortController | null>(null);
+  const dragAbortRef = useRef<AbortController | null>(null);
+  const fillAbortRef = useRef<AbortController | null>(null);
 
   // Mutex: prevents concurrent undo/redo from corrupting the stack when the
   // user holds Cmd+Z or fires repeated keypresses during an async operation.
@@ -758,7 +815,9 @@ export function ZoneEditor() {
   useEffect(() => { svgInnerRef.current = svgInner; }, [svgInner]);
   useEffect(() => { svgDimsRef.current = svgDims; }, [svgDims]);
   useEffect(() => { fillLoadingRef.current = fillLoading; }, [fillLoading]);
-  useEffect(() => { alignRef.current = align; }, [align]);
+  useEffect(() => { snapEnabledRef.current = snapEnabled; }, [snapEnabled]);
+  useEffect(() => { gridSpacingRef.current = gridSpacing; }, [gridSpacing]);
+  useEffect(() => { pendingRectRef.current = pendingRect; }, [pendingRect]);
   useEffect(() => {
     fillSensitivityRef.current = fillSensitivity;
     try { localStorage.setItem("zoneEditorFillSensitivity", String(fillSensitivity)); } catch {}
@@ -775,6 +834,18 @@ export function ZoneEditor() {
   useEffect(() => {
     try { localStorage.setItem("zoneEditorAutoNumSyncSortOrder", String(autoNumSyncSortOrder)); } catch {}
   }, [autoNumSyncSortOrder]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorSnapEnabled", String(snapEnabled)); } catch {}
+  }, [snapEnabled]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorGridSpacing", String(gridSpacing)); } catch {}
+  }, [gridSpacing]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorStandardWidth", String(standardWidth)); } catch {}
+  }, [standardWidth]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorStandardHeight", String(standardHeight)); } catch {}
+  }, [standardHeight]);
 
 
   // Fetch the latest uploaded floor plan. Tries the local API first; if it
@@ -782,24 +853,27 @@ export function ZoneEditor() {
   // API defined by VITE_FLOOR_PLAN_API_FALLBACK. The bundled SVG is only
   // shown when both attempts fail or the env has no fallback configured.
   useEffect(() => {
+    const controller = new AbortController();
     void (async () => {
       const fallback = (import.meta.env.VITE_FLOOR_PLAN_API_FALLBACK as string | undefined)?.replace(/\/$/, "");
       const urls = [`${API_BASE}/floor-plan/svg`];
       if (fallback && fallback !== API_BASE) urls.push(`${fallback}/floor-plan/svg`);
       for (const url of urls) {
         try {
-          const res = await fetch(url);
+          const res = await fetch(url, { signal: controller.signal });
           if (res.ok) {
             const raw = await res.text();
+            if (!aliveRef.current || controller.signal.aborted) return;
             setSvgInner(extractSvgInner(raw));
             setSvgDims(extractSvgDims(raw));
             // Invalidate the raster cache whenever the floor plan changes.
             _rasterCache = null;
             return;
           }
-        } catch {}
+        } catch (err) { if (!isAbortError(err)) { /* fallback is best effort */ } }
       }
     })();
+    return () => controller.abort();
   }, []);
 
   // Inject the floor plan SVG directly into the SVG DOM so it shares the same
@@ -822,6 +896,10 @@ export function ZoneEditor() {
     () => zones.filter((z) => selectedIds.has(z.id)),
     [zones, selectedIds],
   );
+
+  // Reset save status whenever the selected zone changes (new zone or deselected).
+  // Must live after `selectedId` is derived above.
+  useEffect(() => { setSaveStatus("clean"); }, [selectedId]);
 
   // Inline validation for the Aisle ID field (only when a value is present;
   // empty string is handled at save-time as "required").
@@ -894,87 +972,42 @@ export function ZoneEditor() {
   );
 
   const fetchZones = useCallback(async () => {
+    if (!aliveRef.current) return;
+    // Stamp this request so stale responses can be detected and discarded.
+    const myId = ++fetchIdRef.current;
+    fetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
     setLoading(true);
     setLoadError("");
     try {
-      const res = await fetch(`${API_BASE}/warehouse-zones`);
+      const res = await fetch(`${API_BASE}/warehouse-zones`, { signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      // Discard the response if a newer fetch has already started, or if a
+      // drag/commit is still in-flight (isDraggingRef covers both the gesture
+      // window and the PATCH commit window up to the authoritative refetch).
+      if (!aliveRef.current || controller.signal.aborted || myId !== fetchIdRef.current || isDraggingRef.current) return;
       setZones(data.zones ?? []);
       setDragZone(null);
       // Also refresh coverage stats (non-critical — suppress errors)
-      void fetch(`${API_BASE}/warehouse-zones/coverage`)
+      void fetch(`${API_BASE}/warehouse-zones/coverage`, { signal: controller.signal })
         .then((r) => (r.ok ? r.json() : null))
         .then((d: { unsortedCount: number; uncoveredAisles: string[] } | null) => {
-          if (d) setCoverage(d);
+          if (d && aliveRef.current && !controller.signal.aborted && myId === fetchIdRef.current) setCoverage(d);
         })
-        .catch(() => {});
-    } catch {
-      setLoadError("Failed to load zones — is the API server running?");
+        .catch((err) => { if (!isAbortError(err)) { /* coverage is non-critical */ } });
+    } catch (err) {
+      if (!isAbortError(err) && aliveRef.current && !controller.signal.aborted && myId === fetchIdRef.current) {
+        setLoadError("Failed to load zones — is the API server running?");
+      }
     } finally {
-      setLoading(false);
+      if (aliveRef.current && !controller.signal.aborted && myId === fetchIdRef.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => { void fetchZones(); }, [fetchZones]);
 
-  // Load the saved global zone-layer alignment on mount so calibrate mode opens
-  // with the current live offset (and the map preview matches production).
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch(`${API_BASE}/warehouse-zones/alignment`);
-        if (!res.ok) return;
-        const d = await res.json();
-        if (cancelled) return;
-        const next = {
-          x: Number.isFinite(d?.translateX) ? d.translateX : 0,
-          y: Number.isFinite(d?.translateY) ? d.translateY : 0,
-          s: Number.isFinite(d?.scale) && d.scale > 0 ? d.scale : 1,
-        };
-        setAlign(next);
-        setSavedAlign(next);
-      } catch { /* leave identity offset in place */ }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  // Persist the working alignment offset globally (admin-only PUT).
-  const saveAlignment = useCallback(async () => {
-    setSavingAlign(true);
-    try {
-      const res = await fetch(`${API_BASE}/warehouse-zones/alignment`, {
-        method: "PUT",
-        headers: headers(),
-        body: JSON.stringify({ translateX: align.x, translateY: align.y, scale: align.s }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setSavedAlign({ ...align });
-      toast.success("Alignment saved for all users");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSavingAlign(false);
-    }
-  }, [align, headers]);
-
-  // Nudge the working offset by a translate delta (SVG viewBox units), clamped to ±ALIGN_TRANSLATE_MAX.
-  const nudgeAlign = useCallback((dx: number, dy: number) => {
-    setAlign((prev) => ({
-      ...prev,
-      x: Math.min(ALIGN_TRANSLATE_MAX, Math.max(-ALIGN_TRANSLATE_MAX, prev.x + dx)),
-      y: Math.min(ALIGN_TRANSLATE_MAX, Math.max(-ALIGN_TRANSLATE_MAX, prev.y + dy)),
-    }));
-  }, []);
-
-  // Adjust the working uniform scale, clamped to a sane range.
-  const scaleAlign = useCallback((delta: number) => {
-    setAlign((prev) => ({
-      ...prev,
-      s: Math.min(ALIGN_SCALE_MAX, Math.max(ALIGN_SCALE_MIN, +(prev.s + delta).toFixed(4))),
-    }));
-  }, []);
 
   // ── Keyboard undo / redo shortcuts (Cmd+Z / Ctrl+Z, Cmd+Shift+Z / Ctrl+Shift+Z) ──
   useEffect(() => {
@@ -1016,6 +1049,7 @@ export function ZoneEditor() {
         true,
       );
       if (!ok) return;
+      if (!aliveRef.current) return;
       const zonesToDelete = zonesRef.current.filter((z) => ids.includes(z.id));
       setSaving(true);
       try {
@@ -1030,6 +1064,7 @@ export function ZoneEditor() {
             }),
           ),
         );
+        if (!aliveRef.current) return;
         toast.success(
           ids.length === 1 ? "Zone deleted" : `${ids.length} zones deleted`,
         );
@@ -1038,9 +1073,10 @@ export function ZoneEditor() {
         setSelectionOrder([]);
         await fetchZones();
       } catch (err) {
+        if (!aliveRef.current) return;
         toast.error(err instanceof Error ? err.message : String(err));
       } finally {
-        setSaving(false);
+        if (aliveRef.current) setSaving(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -1066,12 +1102,32 @@ export function ZoneEditor() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // Context menus are deliberately managed outside the zone selection flow:
+  // opening one must not select, move, or dirty the zone.
+  useEffect(() => {
+    const closeOnPointerDown = (e: MouseEvent) => {
+      const target = e.target;
+      if (target instanceof Element && target.closest("[data-zone-context-menu]")) return;
+      setContextMenu(null);
+    };
+    const closeOnEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setContextMenu(null);
+    };
+    document.addEventListener("mousedown", closeOnPointerDown);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnPointerDown);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
+
   const patchZone = useCallback(
-    async (id: number, updates: Partial<Zone>): Promise<boolean> => {
+    async (id: number, updates: Partial<Zone>, signal?: AbortSignal): Promise<boolean> => {
       const res = await fetch(`${API_BASE}/warehouse-zones/${id}`, {
         method: "PATCH",
         headers: headers(),
         body: JSON.stringify(updates),
+        ...(signal ? { signal } : {}),
       });
       if (res.status === 401) { throw new Error("Session expired — please sign in again"); }
       if (!res.ok) {
@@ -1088,6 +1144,7 @@ export function ZoneEditor() {
   const applyUndoRedoRef = useRef<((dir: "undo" | "redo") => Promise<void>) | null>(null);
 
   const applyUndoRedo = useCallback(async (dir: "undo" | "redo") => {
+    if (!aliveRef.current) return;
     if (undoRedoBusyRef.current) return; // drop concurrent key repeats
     undoRedoBusyRef.current = true;
     const srcStack = dir === "undo" ? undoStackRef.current : redoStackRef.current;
@@ -1229,6 +1286,7 @@ export function ZoneEditor() {
           break;
         }
       }
+      if (!aliveRef.current) return;
       // Move the entry between stacks
       if (dir === "undo") {
         undoStackRef.current = undoStackRef.current.slice(0, -1);
@@ -1241,6 +1299,7 @@ export function ZoneEditor() {
       setRedoCount(redoStackRef.current.length);
       await fetchZones();
     } catch (err) {
+      if (!aliveRef.current) return;
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       undoRedoBusyRef.current = false;
@@ -1251,7 +1310,7 @@ export function ZoneEditor() {
 
   // ── Form actions ────────────────────────────────────────────────────────────
   const handleCreate = async () => {
-    if (!pendingRect) return;
+    if (!pendingRect || !aliveRef.current) return;
     if (!form.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
     if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 09)"); return; }
     setSaving(true);
@@ -1276,6 +1335,7 @@ export function ZoneEditor() {
         throw new Error(err.error ?? `HTTP ${res.status}`);
       }
       const { zone } = await res.json() as { zone: Zone };
+      if (!aliveRef.current) return;
       toast.success(`Zone for aisle "${zone.aisleId}" created`);
       pushUndo({ type: "create", zones: [zone] });
       setPendingRect(null);
@@ -1284,9 +1344,10 @@ export function ZoneEditor() {
       setForm({ aisleId: zone.aisleId, sectionNum: zone.sectionNum, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      if (aliveRef.current) setSaving(false);
     }
   };
 
@@ -1297,6 +1358,7 @@ export function ZoneEditor() {
   // concurrent flush for the same zone (onBlur fires, then selection-change effect
   // runs before the PATCH resolves) sees the equality check as true and skips.
   const flushSave = useCallback(async (committedForm: FormState, zoneId: number) => {
+    if (!aliveRef.current) return;
     if (!committedForm.aisleId.trim()) return;
     if (!isValidAisleId(committedForm.aisleId)) return;
     if (JSON.stringify(committedForm) === JSON.stringify(lastSavedFormRef.current)) return;
@@ -1310,56 +1372,34 @@ export function ZoneEditor() {
       isInventory: committedForm.isInventory,
       sortOrder: committedForm.sortOrder,
     };
+    setSaveStatus("saving");
+    saveAbortRef.current?.abort();
+    const controller = new AbortController();
+    saveAbortRef.current = controller;
     try {
-      await patchZone(zoneId, afterMeta);
+      await patchZone(zoneId, afterMeta, controller.signal);
+      if (!aliveRef.current || controller.signal.aborted) return;
       clearDraft(zoneId);
       pushUndo({ type: "edit", id: zoneId, before: beforeMeta, after: afterMeta });
+      setSaveStatus("clean");
       toast.success("Saved");
       await fetchZones();
     } catch (e) {
+      if (isAbortError(e) || !aliveRef.current) return;
       // Persist the unsaved form to localStorage so it can be recovered when
       // the server comes back online and the user re-selects this zone.
       writeDraft(zoneId, committedForm);
+      setSaveStatus("error");
       toast.error(e instanceof Error ? e.message : String(e));
       // Do not restore lastSavedFormRef on failure — selection may have already
       // changed, overwriting it with a different zone's baseline.
     }
   }, [patchZone, pushUndo, fetchZones]);
 
-  const handleSaveEdit = async () => {
-    if (!selectedId) return;
-    // Read committed values — zoneFormRef.current captures rawSection even
-    // if React state hasn't flushed the section-number onBlur yet.
-    const committedForm = zoneFormRef.current?.getCommittedForm() ?? form;
-    if (!committedForm.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
-    if (!isValidAisleId(committedForm.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 09)"); return; }
-    if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
-    const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
-    setSaving(true);
-    try {
-      const afterMeta: MetaSnap = {
-        aisleId: normalizeAisleId(committedForm.aisleId),
-        sectionNum: committedForm.sectionNum,
-        isInventory: committedForm.isInventory,
-        sortOrder: committedForm.sortOrder,
-      };
-      await patchZone(selectedId, afterMeta);
-      clearDraft(selectedId);
-      pushUndo({ type: "edit", id: selectedId, before: beforeMeta, after: afterMeta });
-      lastSavedFormRef.current = { ...committedForm };
-      toast.success("Zone updated");
-      await fetchZones();
-    } catch (e) {
-      writeDraft(selectedId, committedForm);
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleDelete = async () => {
-    if (!selectedId) return;
+    if (!selectedId || !aliveRef.current) return;
     if (!await showConfirm("Delete zone", "Delete this zone? You can undo with Cmd+Z / Ctrl+Z.", true)) return;
+    if (!aliveRef.current) return;
     const zoneToDelete = zones.find((z) => z.id === selectedId);
     setSaving(true);
     try {
@@ -1369,20 +1409,22 @@ export function ZoneEditor() {
       });
       if (res.status === 401) { throw new Error("Session expired — please sign in again"); }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!aliveRef.current) return;
       toast.success("Zone deleted");
       if (zoneToDelete) pushUndo({ type: "delete", zones: [zoneToDelete] });
       setSelectedIds(new Set());
       setSelectionOrder([]);
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      if (aliveRef.current) setSaving(false);
     }
   };
 
   const handleDuplicate = async () => {
-    if (!selectedZone) return;
+    if (!selectedZone || !aliveRef.current) return;
     setSaving(true);
     try {
       const targetAisleId = normalizeAisleId(form.aisleId);
@@ -1406,6 +1448,7 @@ export function ZoneEditor() {
         throw new Error(err.error ?? `HTTP ${res.status}`);
       }
       const { zone } = await res.json() as { zone: Zone };
+      if (!aliveRef.current) return;
       toast.success(`Duplicated → placed to the right`);
       pushUndo({ type: "create", zones: [zone] });
       setSelectedIds(new Set([zone.id]));
@@ -1413,14 +1456,15 @@ export function ZoneEditor() {
       setForm({ aisleId: zone.aisleId, sectionNum: zone.sectionNum, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      if (aliveRef.current) setSaving(false);
     }
   };
 
   const handleMultiDuplicate = async () => {
-    if (selectedZoneList.length === 0) return;
+    if (selectedZoneList.length === 0 || !aliveRef.current) return;
     setSaving(true);
     try {
       const sortedSelection = [...selectedZoneList].sort((a, b) => {
@@ -1453,20 +1497,22 @@ export function ZoneEditor() {
         }),
       );
       const newIds = new Set(results.map((r) => r.zone.id));
+      if (!aliveRef.current) return;
       toast.success(`Duplicated ${newIds.size} zone${newIds.size !== 1 ? "s" : ""} — drag to reposition`);
       pushUndo({ type: "create", zones: results.map((r) => r.zone) });
       setSelectedIds(newIds);
       setSelectionOrder([...newIds]);
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      if (aliveRef.current) setSaving(false);
     }
   };
 
   const handleResetSectionNumToNull = async () => {
-    if (selectedIds.size === 0) return;
+    if (selectedIds.size === 0 || !aliveRef.current) return;
     const undoChanges = [...selectedIds].map((id) => {
       const zone = zones.find((z) => z.id === id);
       return {
@@ -1477,15 +1523,18 @@ export function ZoneEditor() {
     });
     try {
       await Promise.all([...selectedIds].map((id) => patchZone(id, { sectionNum: null })));
+      if (!aliveRef.current) return;
       pushUndo({ type: "multiEdit", changes: undoChanges });
       toast.success(`Reset §number for ${selectedIds.size} zone${selectedIds.size !== 1 ? "s" : ""}`);
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     }
   };
 
   const handleMultiSave = async (updates: Partial<Zone>) => {
+    if (!aliveRef.current) return;
     const n = selectedIds.size;
     const parts: string[] = [];
     if (updates.aisleId) parts.push(`Aisle ID → ${updates.aisleId}`);
@@ -1499,6 +1548,7 @@ export function ZoneEditor() {
     setMultiSaving(true);
     try {
       await Promise.all(jobs.map(({ id, body }) => patchZone(id, body)));
+      if (!aliveRef.current) return;
       pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
       if (updates.sectionNum !== undefined) {
@@ -1511,9 +1561,10 @@ export function ZoneEditor() {
       toast.success(`Updated ${n} zones`);
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setMultiSaving(false);
+      if (aliveRef.current) setMultiSaving(false);
     }
   };
 
@@ -1521,6 +1572,7 @@ export function ZoneEditor() {
   // idsOverride lets the selection-change effect pass the *previous* multi-selection
   // so the save targets the zones the user was actually editing, not the new selection.
   const handleMultiAutoSave = async (idsOverride?: ReadonlySet<number>) => {
+    if (!aliveRef.current) return;
     const ids = idsOverride ?? selectedIds;
     if (multiSaving || ids.size === 0) return;
     const updates: Partial<Zone> = {};
@@ -1543,6 +1595,7 @@ export function ZoneEditor() {
       for (const { id, body } of jobs) {
         await patchZone(id, body);
       }
+      if (!aliveRef.current) return;
       pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
       if (updates.sectionNum !== undefined) {
@@ -1554,15 +1607,16 @@ export function ZoneEditor() {
       toast.success(`Saved ${n} zone${n !== 1 ? "s" : ""}`);
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setMultiSaving(false);
+      if (aliveRef.current) setMultiSaving(false);
     }
   };
 
   // ── Auto-number handler ────────────────────────────────────────────────────
   const handleAutoNumber = async () => {
-    if (autoNumPreview.length === 0) return;
+    if (autoNumPreview.length === 0 || !aliveRef.current) return;
 
     // Pre-flight: catch collisions with non-selected zones BEFORE any DB writes.
     // The two-phase sentinel strategy only parks selected zones, so a non-selected
@@ -1604,6 +1658,7 @@ export function ZoneEditor() {
     try {
       for (const { id, sentinel } of sentinelMap) {
         await patchZone(id, { sectionNum: sentinel });
+        if (!aliveRef.current) return;
       }
       phase1Done = true;
 
@@ -1612,7 +1667,9 @@ export function ZoneEditor() {
         const patch: Partial<Zone> = { sectionNum: newSectionNum };
         if (autoNumSyncSortOrder) patch.sortOrder = preview.newSortOrder;
         await patchZone(id, patch);
+        if (!aliveRef.current) return;
       }
+      if (!aliveRef.current) return;
       // IMPORTANT: pushUndo must remain here — after BOTH phases have fully
       // succeeded — and must never be moved before the try/catch or before the
       // Phase 2 loop.  If it were called before Phase 2 (or before the catch
@@ -1632,8 +1689,10 @@ export function ZoneEditor() {
       toast.success(`Auto-numbered ${n} zone${n !== 1 ? "s" : ""}`);
       await fetchZones();
     } catch (e) {
+      if (!aliveRef.current) return;
       // Always re-sync the UI so the map reflects actual DB state, not stale local state.
       await fetchZones().catch(() => {});
+      if (!aliveRef.current) return;
 
       // Best-effort sentinel rollback: if Phase 1 ran but Phase 2 threw, some zones
       // may be stuck at their negative sentinel values. Restore them to their originals.
@@ -1651,6 +1710,7 @@ export function ZoneEditor() {
             );
             if (stillAtSentinel.length > 0) {
               for (const z of stillAtSentinel) {
+                if (!aliveRef.current) return;
                 const orig = originals.get(z.id);
                 if (orig !== undefined) {
                   const rollbackOk = await patchZone(z.id, { sectionNum: orig }).then(() => true).catch(() => false);
@@ -1658,6 +1718,7 @@ export function ZoneEditor() {
                 }
               }
               await fetchZones().catch(() => {});
+              if (!aliveRef.current) return;
               if (stuckIds.length > 0) {
                 // Rollback PATCHes failed for some zones — surface actionable error.
                 console.error("[ZoneEditor] sentinel rollback failed for zone IDs:", stuckIds);
@@ -1680,23 +1741,25 @@ export function ZoneEditor() {
             `Auto-numbering failed and the rollback also failed. Zones ${affectedIds.join(", ")} may need manual correction.`,
           );
           await fetchZones().catch(() => {});
+          if (!aliveRef.current) return;
           return;
         }
       }
 
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setAutoNumApplying(false);
+      if (aliveRef.current) setAutoNumApplying(false);
     }
   };
 
   const copyCoords = () => {
+    if (!aliveRef.current) return;
     const zone = zones.find((z) => z.id === selectedId);
     if (!zone) return;
     const txt = `${zone.svgX.toFixed(2)} ${zone.svgY.toFixed(2)} ${zone.svgWidth.toFixed(2)} ${zone.svgHeight.toFixed(2)}`;
-    void navigator.clipboard.writeText(txt).then(() =>
-      toast.success("SVG coords copied to clipboard")
-    );
+    void navigator.clipboard.writeText(txt).then(() => {
+      if (aliveRef.current) toast.success("SVG coords copied to clipboard");
+    });
   };
 
   // Sync single-select form when selected zone changes.
@@ -1794,6 +1857,19 @@ export function ZoneEditor() {
 
   // Auto-save when single-select form fields change (debounced 600 ms)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Stop all component-owned asynchronous work when the editor is removed.
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      fetchAbortRef.current?.abort();
+      saveAbortRef.current?.abort();
+      dragAbortRef.current?.abort();
+      fillAbortRef.current?.abort();
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     if (!selectedId || !lastSavedFormRef.current) return;
     if (pendingRect) return;
@@ -1801,12 +1877,16 @@ export function ZoneEditor() {
     if (!isValidAisleId(form.aisleId)) return;
     if (JSON.stringify(form) === JSON.stringify(lastSavedFormRef.current)) return;
 
+    setSaveStatus("dirty");
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     // Capture mutable values for the timer closure.
     const capturedId = selectedId;
     const capturedForm = form;
     autoSaveTimerRef.current = setTimeout(async () => {
+      autoSaveTimerRef.current = null;
+      if (!aliveRef.current) return;
       const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
+      setSaveStatus("saving");
       try {
         const afterMeta: MetaSnap = {
           aisleId: normalizeAisleId(capturedForm.aisleId),
@@ -1814,19 +1894,34 @@ export function ZoneEditor() {
           isInventory: capturedForm.isInventory,
           sortOrder: capturedForm.sortOrder,
         };
-        await patchZone(capturedId, afterMeta);
+        saveAbortRef.current?.abort();
+        const controller = new AbortController();
+        saveAbortRef.current = controller;
+        await patchZone(capturedId, afterMeta, controller.signal);
+        if (!aliveRef.current || controller.signal.aborted) return;
         clearDraft(capturedId);
         pushUndo({ type: "edit", id: capturedId, before: beforeMeta, after: afterMeta });
         lastSavedFormRef.current = { ...capturedForm };
+        setSaveStatus("clean");
         toast.success("Saved");
         await fetchZones();
       } catch (e) {
+        if (isAbortError(e) || !aliveRef.current) return;
         // Server unreachable — save the form locally so the user can recover it.
         writeDraft(capturedId, capturedForm);
+        setSaveStatus("error");
         toast.error(e instanceof Error ? e.message : String(e));
       }
     }, 600);
-    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      // A selection/form replacement makes an in-flight save stale. The next
+      // flush (if any) creates its own controller.
+      saveAbortRef.current?.abort();
+    };
   }, [form, selectedId, pendingRect, fetchZones, patchZone, pushUndo]);
 
   // ── beforeunload guard: flush unsaved form changes on tab close / navigation ──
@@ -1883,21 +1978,41 @@ export function ZoneEditor() {
   }, []);
 
   // ── SVG coordinate utility ──────────────────────────────────────────────────
-  // Returns a point in zone coordinate space (raw svgX/svgY space used by all
-  // stored zone coordinates).  Two transforms are inverted in sequence:
-  //   1. tf    — the pan/zoom canvas transform
-  //   2. align — the zone-layer calibration offset
-  // Both are read from refs so the callback stays stable across renders.
+  // Returns a point in raw SVG space (svgX/svgY space used by all stored zone
+  // coordinates).  Inverts only the outer pan/zoom transform (tf); zones are
+  // rendered directly in that space with no extra alignment offset.
   const getSvgPt = useCallback((clientX: number, clientY: number): Pt => {
     if (!svgRef.current) return { x: 0, y: 0 };
     const rect = svgRef.current.getBoundingClientRect();
-    const svgPt = screenToSvg(clientX, clientY, rect, tfRef.current);
-    const a = alignRef.current;
-    return {
-      x: (svgPt.x - a.x) / a.s,
-      y: (svgPt.y - a.y) / a.s,
-    };
+    return screenToSvg(clientX, clientY, rect, tfRef.current);
   }, []);
+
+  const handlePlaceStandardRect = useCallback(() => {
+    if (!aliveRef.current) return;
+    const rect = placeStandardRect(
+      svgDimsRef.current,
+      { w: standardWidth, h: standardHeight },
+      { snap: snapEnabledRef.current, spacing: gridSpacingRef.current },
+    );
+    setMode("draw");
+    setSelectedIds(new Set());
+    setSelectionOrder([]);
+    setDraftRect(null);
+    setPendingRect(rect);
+    setForm({ aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0 });
+  }, [setForm, standardHeight, standardWidth]);
+
+  const handleZoneContextMenu = (e: React.MouseEvent, zone: Zone) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (
+      !Number.isFinite(zone.svgWidth) ||
+      !Number.isFinite(zone.svgHeight) ||
+      zone.svgWidth <= 0 ||
+      zone.svgHeight <= 0
+    ) return;
+    setContextMenu({ zoneId: zone.id, x: e.clientX, y: e.clientY });
+  };
 
   // ── Rubber-band selection (Shift+drag) ─────────────────────────────────────
   const { rubberRect, onSvgMouseDown: onRubberMouseDown } = useRubberBand({
@@ -1932,6 +2047,9 @@ export function ZoneEditor() {
     // and re-run the useEffect that keeps fillLoadingRef in sync.
     if (fillLoadingRef.current) return;
     fillLoadingRef.current = true;
+    fillAbortRef.current?.abort();
+    const fillController = new AbortController();
+    fillAbortRef.current = fillController;
     setFillLoading(true);
     try {
       // Seed point must be in floor-plan SVG space (what rasterizeSvg/floodFillBounds
@@ -1954,10 +2072,12 @@ export function ZoneEditor() {
 
       // Run rasterise + BFS on the main thread. The 1024-px raster completes
       // in well under 100 ms for typical floor plans — no perceptible jank.
-      const raster = await rasterizeSvg(svgInnerRef.current, dims);
+      const raster = await rasterizeSvg(svgInnerRef.current, dims, fillController.signal);
+      if (!aliveRef.current || fillController.signal.aborted) return;
       const bounds = floodFillBounds(raster.imageData, px, py, darkThreshold);
 
       if (!bounds) {
+        if (!aliveRef.current || fillController.signal.aborted) return;
         toast.error("Click inside a light area, not on a wall or line.");
         return;
       }
@@ -1972,18 +2092,25 @@ export function ZoneEditor() {
         w: bounds.w * scaleX,
         h: bounds.h * scaleY,
       };
-      // Step 2: SVG user units → zone coords (invert align transform)
-      const a = alignRef.current;
+      // Step 2: SVG user units are already zone coords (no alignment offset).
       const rect = {
-        x: (svgRect.x - a.x) / a.s,
-        y: (svgRect.y - a.y) / a.s,
-        w: svgRect.w / a.s,
-        h: svgRect.h / a.s,
+        x: svgRect.x,
+        y: svgRect.y,
+        w: svgRect.w,
+        h: svgRect.h,
       };
 
       // Flash the detected rectangle as a fillFlashRect (~300 ms) for visual feedback.
+      if (!aliveRef.current || fillController.signal.aborted) return;
       setFillFlashRect(rect);
-      await new Promise<void>((r) => setTimeout(r, 300));
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 300);
+        fillController.signal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+      });
+      if (!aliveRef.current || fillController.signal.aborted) return;
       setFillFlashRect(null);
 
       // Commit as pendingRect — opens the sidebar form (same flow as Draw mode).
@@ -1995,12 +2122,13 @@ export function ZoneEditor() {
       // Auto-switch back to Pan so a stray click doesn't trigger another fill.
       setMode("pan");
     } catch (err) {
+      if (isAbortError(err) || !aliveRef.current) return;
       toast.error(err instanceof Error ? err.message : "Fill failed");
     } finally {
       // Reset the ref synchronously so the guard is lifted immediately,
       // matching the synchronous set at the top of the function.
       fillLoadingRef.current = false;
-      setFillLoading(false);
+      if (aliveRef.current) setFillLoading(false);
     }
   }, [setForm]);
 
@@ -2024,17 +2152,6 @@ export function ZoneEditor() {
         return;
       }
 
-      if (state.t === "alignPan") {
-        // Screen delta → SVG-unit delta (align lives inside the tf transform).
-        const s = tfRef.current.s || 1;
-        setAlign((prev) => ({
-          ...prev,
-          x: state.ax + (e.clientX - state.sx) / s,
-          y: state.ay + (e.clientY - state.sy) / s,
-        }));
-        return;
-      }
-
       const p = getSvgPt(e.clientX, e.clientY);
 
       if (state.t === "draw") {
@@ -2045,43 +2162,100 @@ export function ZoneEditor() {
       }
 
       if (state.t === "move") {
-        const base = zonesRef.current.find((z) => z.id === state.id);
+        const base = dragBaseRef.current ?? zonesRef.current.find((z) => z.id === state.id);
         if (!base) return;
-        const updated = { ...base, svgX: p.x - state.ox, svgY: p.y - state.oy };
+        const moved = moveRect(
+          { x: base.svgX, y: base.svgY, w: base.svgWidth, h: base.svgHeight },
+          { x: p.x - state.ox, y: p.y - state.oy },
+          {
+            snap: snapEnabledRef.current,
+            spacing: gridSpacingRef.current,
+            bounds: snapEnabledRef.current ? svgDimsRef.current : undefined,
+          },
+        );
+        const updated = { ...base, svgX: moved.x, svgY: moved.y };
         dragZoneRef.current = updated;
         setDragZone(updated);
         return;
       }
 
+      if (state.t === "pendingResize") {
+        const base = pendingResizeBaseRef.current;
+        if (!base) return;
+        const resized = resizeRect(
+          { x: base.x, y: base.y, w: base.w, h: base.h },
+          state.handle,
+          p,
+          MIN_ZONE_PX / tfRef.current.s,
+          {
+            snap: snapEnabledRef.current,
+            spacing: gridSpacingRef.current,
+            bounds: snapEnabledRef.current ? svgDimsRef.current : undefined,
+          },
+        );
+        const updated = { x: resized.x, y: resized.y, w: resized.w, h: resized.h };
+        pendingRectRef.current = updated;
+        setPendingRect(updated);
+        return;
+      }
+
       if (state.t === "resize") {
-        const base = zonesRef.current.find((z) => z.id === state.id);
+        const base = dragBaseRef.current ?? zonesRef.current.find((z) => z.id === state.id);
         if (!base) return;
         const minSvg = MIN_ZONE_PX / tfRef.current.s;
-        let updated: Zone;
-        const h = state.handle;
-        if (h === "n") {
-          const bottom = base.svgY + base.svgHeight;
-          const newY = Math.min(p.y, bottom - minSvg);
-          updated = { ...base, svgY: newY, svgHeight: bottom - newY };
-        } else if (h === "s") {
-          updated = { ...base, svgHeight: Math.max(minSvg, p.y - base.svgY) };
-        } else if (h === "e") {
-          updated = { ...base, svgWidth: Math.max(minSvg, p.x - base.svgX) };
-        } else if (h === "w") {
-          const right = base.svgX + base.svgWidth;
-          const newX = Math.min(p.x, right - minSvg);
-          updated = { ...base, svgX: newX, svgWidth: right - newX };
-        } else {
-          const r = normRectUtil(state.ax, state.ay, p.x, p.y);
-          updated = { ...base, ...r };
-        }
+        const resized = resizeRect(
+          { x: base.svgX, y: base.svgY, w: base.svgWidth, h: base.svgHeight },
+          state.handle,
+          p,
+          minSvg,
+          {
+            snap: snapEnabledRef.current,
+            spacing: gridSpacingRef.current,
+            bounds: snapEnabledRef.current ? svgDimsRef.current : undefined,
+          },
+        );
+        const updated = {
+          ...base,
+          svgX: resized.x,
+          svgY: resized.y,
+          svgWidth: resized.w,
+          svgHeight: resized.h,
+        };
         dragZoneRef.current = updated;
         setDragZone(updated);
         return;
       }
 
       if (state.t === "multiMove") {
-        const delta = { x: p.x - state.startX, y: p.y - state.startY };
+        const rawDelta = { x: p.x - state.startX, y: p.y - state.startY };
+        let delta = rawDelta;
+        if (snapEnabledRef.current) {
+          const referenceId = multiDragReferenceIdRef.current;
+          const reference = referenceId === null
+            ? null
+            : zonesRef.current.find((z) => z.id === referenceId);
+          if (reference) {
+            const snappedReference = moveRect(
+              { x: reference.svgX, y: reference.svgY, w: reference.svgWidth, h: reference.svgHeight },
+              { x: reference.svgX + rawDelta.x, y: reference.svgY + rawDelta.y },
+              { snap: true, spacing: gridSpacingRef.current, bounds: svgDimsRef.current },
+            );
+            delta = {
+              x: snappedReference.x - reference.svgX,
+              y: snappedReference.y - reference.svgY,
+            };
+          }
+          delta = clampDeltaForRects(
+            [...multiDragOriginsRef.current.entries()].flatMap(([id, origin]) => {
+              const zone = zonesRef.current.find((z) => z.id === id);
+              return zone
+                ? [{ x: origin.x, y: origin.y, w: zone.svgWidth, h: zone.svgHeight }]
+                : [];
+            }),
+            delta,
+            svgDimsRef.current,
+          );
+        }
         setMultiDragDelta(delta);
       }
     };
@@ -2128,51 +2302,115 @@ export function ZoneEditor() {
         return;
       }
 
-      if ((state.t === "move" || state.t === "resize") && dragZoneRef.current) {
+      if (state.t === "move" || state.t === "resize") {
+        if (!aliveRef.current) return;
+        // Capture and clear geometry refs synchronously.
+        const base = dragBaseRef.current;
+        dragBaseRef.current = null;
         const zone = dragZoneRef.current;
-        const original = zonesRef.current.find((z) => z.id === zone.id);
+        dragZoneRef.current = null;
+
+        if (!zone) {
+          // No mousemove occurred (plain click) — clear the guard immediately.
+          isDraggingRef.current = false;
+          return;
+        }
+
+        // Keep isDraggingRef=true through the entire PATCH + commit window so
+        // any stale in-flight fetchZones response cannot overwrite the overlay
+        // while the PATCH is pending or between the PATCH and the authoritative
+        // refetch. The generation counter inside fetchZones rejects responses
+        // that are older than the final authoritative call.
+        const original = base ?? zonesRef.current.find((z) => z.id === zone.id);
+        dragAbortRef.current?.abort();
+        const dragController = new AbortController();
+        dragAbortRef.current = dragController;
         try {
           if (state.t === "move") {
-            await patchZone(zone.id, { svgX: zone.svgX, svgY: zone.svgY });
+            await patchZone(zone.id, { svgX: zone.svgX, svgY: zone.svgY }, dragController.signal);
+            if (!aliveRef.current || dragController.signal.aborted) return;
             if (original) pushUndo({ type: "move", id: zone.id, before: { svgX: original.svgX, svgY: original.svgY }, after: { svgX: zone.svgX, svgY: zone.svgY } });
             toast.success("Position saved");
           } else {
-            await patchZone(zone.id, { svgX: zone.svgX, svgY: zone.svgY, svgWidth: zone.svgWidth, svgHeight: zone.svgHeight });
+            await patchZone(zone.id, { svgX: zone.svgX, svgY: zone.svgY, svgWidth: zone.svgWidth, svgHeight: zone.svgHeight }, dragController.signal);
+            if (!aliveRef.current || dragController.signal.aborted) return;
             if (original) pushUndo({ type: "resize", id: zone.id, before: { svgX: original.svgX, svgY: original.svgY, svgWidth: original.svgWidth, svgHeight: original.svgHeight }, after: { svgX: zone.svgX, svgY: zone.svgY, svgWidth: zone.svgWidth, svgHeight: zone.svgHeight } });
             toast.success("Size saved");
           }
-          await fetch(`${API_BASE}/warehouse-zones`)
-            .then((r) => r.json())
-            .then((d) => {
-              setZones(d.zones ?? []);
-              setDragZone(null);
-            });
+          // Optimistically commit the dragged geometry so the zone stays in
+          // place even if the authoritative refetch is slow.
+          setZones((prev) => prev.map((z) => z.id === zone.id ? { ...z, svgX: zone.svgX, svgY: zone.svgY, svgWidth: zone.svgWidth, svgHeight: zone.svgHeight } : z));
+          setDragZone(null);
+          // Clear the guard just before the authoritative refetch so fetchZones
+          // can update zones. Any older in-flight response is rejected by the
+          // generation counter (myId !== fetchIdRef.current) inside fetchZones.
+          isDraggingRef.current = false;
+          await fetchZones();
         } catch (err) {
+          if (isAbortError(err) || !aliveRef.current) return;
+          isDraggingRef.current = false;
           setDragZone(null);
           toast.error(err instanceof Error ? err.message : String(err));
         }
         return;
       }
 
+      if (state.t === "pendingResize") {
+        pendingResizeBaseRef.current = null;
+        isDraggingRef.current = false;
+        return;
+      }
+
       if (state.t === "multiMove") {
+        if (!aliveRef.current) return;
         const origins = multiDragOriginsRef.current;
         // Only save if there was actual movement
-        const currentDelta = (() => {
+        let currentDelta = (() => {
           if (!svgRef.current) return null;
           const rect = svgRef.current.getBoundingClientRect();
-          const svgPt = screenToSvg(e.clientX, e.clientY, rect, tfRef.current);
-          const a = alignRef.current;
-          const p = { x: (svgPt.x - a.x) / a.s, y: (svgPt.y - a.y) / a.s };
+          const p = screenToSvg(e.clientX, e.clientY, rect, tfRef.current);
           return { x: p.x - state.startX, y: p.y - state.startY };
         })();
+        if (currentDelta && snapEnabledRef.current) {
+          const referenceId = multiDragReferenceIdRef.current;
+          const reference = referenceId === null
+            ? null
+            : origins.has(referenceId)
+              ? zonesRef.current.find((z) => z.id === referenceId)
+              : null;
+          if (reference) {
+            const snappedReference = moveRect(
+              { x: reference.svgX, y: reference.svgY, w: reference.svgWidth, h: reference.svgHeight },
+              { x: reference.svgX + currentDelta.x, y: reference.svgY + currentDelta.y },
+              { snap: true, spacing: gridSpacingRef.current, bounds: svgDimsRef.current },
+            );
+            currentDelta = {
+              x: snappedReference.x - reference.svgX,
+              y: snappedReference.y - reference.svgY,
+            };
+          }
+          currentDelta = clampDeltaForRects(
+            [...origins.entries()].flatMap(([id, origin]) => {
+              const zone = zonesRef.current.find((z) => z.id === id);
+              return zone
+                ? [{ x: origin.x, y: origin.y, w: zone.svgWidth, h: zone.svgHeight }]
+                : [];
+            }),
+            currentDelta,
+            svgDimsRef.current,
+          );
+        }
         setMultiDragDelta(null);
         if (!currentDelta || (Math.abs(currentDelta.x) < 0.5 && Math.abs(currentDelta.y) < 0.5)) return;
+        dragAbortRef.current?.abort();
+        const dragController = new AbortController();
         // Use allSettled so a partial failure is surfaced rather than silently lost.
         const results = await Promise.allSettled(
           [...origins.entries()].map(([id, orig]) =>
-            patchZone(id, { svgX: orig.x + currentDelta.x, svgY: orig.y + currentDelta.y }),
+            patchZone(id, { svgX: orig.x + currentDelta.x, svgY: orig.y + currentDelta.y }, dragController.signal),
           ),
         );
+        if (!aliveRef.current || dragController.signal.aborted) return;
         const failCount = results.filter((r) => r.status === "rejected").length;
         const okCount = results.length - failCount;
         if (failCount === 0) {
@@ -2191,9 +2429,10 @@ export function ZoneEditor() {
           );
         }
         // Always refetch to restore consistent UI state after partial failures.
-        await fetch(`${API_BASE}/warehouse-zones`)
+        await fetch(`${API_BASE}/warehouse-zones`, { signal: dragController.signal })
           .then((r) => r.json())
-          .then((d) => { setZones(d.zones ?? []); });
+          .then((d) => { if (aliveRef.current && !dragController.signal.aborted) setZones(d.zones ?? []); })
+          .catch((err) => { if (!isAbortError(err) && aliveRef.current) toast.error(err instanceof Error ? err.message : String(err)); });
         return;
       }
 
@@ -2206,7 +2445,7 @@ export function ZoneEditor() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp as EventListener);
     };
-  }, [getSvgPt, patchZone, pushUndo, setForm]);
+  }, [fetchZones, getSvgPt, patchZone, pushUndo, setForm]);
 
   // ── React event handlers (attached to SVG element) ──────────────────────────
   const onSvgMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -2229,14 +2468,6 @@ export function ZoneEditor() {
       // Do NOT clear pendingRect here — a failed fill (wall click) should leave
       // any previously drawn pending rect visible.
       ixRef.current = { t: "fillPending", sx: e.clientX, sy: e.clientY };
-    } else if (modeRef.current === "calibrate") {
-      // Drag the whole zone layer. Delta is applied in SVG units (screen / tf.s)
-      // in the move handler; capture the align translate at drag start here.
-      ixRef.current = {
-        t: "alignPan",
-        sx: e.clientX, sy: e.clientY,
-        ax: alignRef.current.x, ay: alignRef.current.y,
-      };
     } else {
       const p = getSvgPt(e.clientX, e.clientY);
       ixRef.current = { t: "draw", x1: p.x, y1: p.y, x2: p.x, y2: p.y };
@@ -2248,9 +2479,7 @@ export function ZoneEditor() {
   const onZoneMouseDown = (e: React.MouseEvent, zone: Zone) => {
     // In Fill mode, don't intercept — let the event reach onSvgMouseDown
     // so the flood-fill triggers normally even when clicking over a zone.
-    // In Calibrate mode, individual zones are not editable — let the event
-    // reach onSvgMouseDown so dragging starts a whole-layer pan instead.
-    if (modeRef.current === "fill" || modeRef.current === "calibrate") return;
+    if (modeRef.current === "fill") return;
     e.stopPropagation();
     if (e.button !== 0) return;
 
@@ -2284,6 +2513,7 @@ export function ZoneEditor() {
         }
       }
       multiDragOriginsRef.current = origins;
+      multiDragReferenceIdRef.current = zone.id;
       setMultiDragDelta(null);
       ixRef.current = { t: "multiMove", startX: p.x, startY: p.y };
       return;
@@ -2296,6 +2526,8 @@ export function ZoneEditor() {
     setSelectionOrder([zone.id]);
     setPendingRect(null);
     const p = getSvgPt(e.clientX, e.clientY);
+    dragBaseRef.current = zone;
+    isDraggingRef.current = true;
     ixRef.current = {
       t: "move",
       id: zone.id,
@@ -2313,10 +2545,38 @@ export function ZoneEditor() {
     if (e.button !== 0) return;
     // Cancel any pending auto-save so the resize PATCH doesn't interleave with it
     if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
+    dragBaseRef.current = zone;
+    isDraggingRef.current = true;
     const anchor = ANCHOR[handle](zone);
     ixRef.current = {
       t: "resize",
       id: zone.id,
+      handle,
+      ax: anchor.x,
+      ay: anchor.y,
+    };
+  };
+
+  const onPendingHandleMouseDown = (e: React.MouseEvent, handle: Handle) => {
+    e.stopPropagation();
+    if (e.button !== 0 || !pendingRectRef.current) return;
+    const pending = pendingRectRef.current;
+    const anchorZone = {
+      id: -1,
+      aisleId: "",
+      sectionNum: null,
+      isInventory: true,
+      svgX: pending.x,
+      svgY: pending.y,
+      svgWidth: pending.w,
+      svgHeight: pending.h,
+      sortOrder: 0,
+    };
+    const anchor = ANCHOR[handle](anchorZone);
+    pendingResizeBaseRef.current = pending;
+    isDraggingRef.current = true;
+    ixRef.current = {
+      t: "pendingResize",
       handle,
       ax: anchor.x,
       ay: anchor.y,
@@ -2358,6 +2618,19 @@ export function ZoneEditor() {
     }
     return zones;
   }, [zones, dragZone, multiDragDelta, selectedIds]);
+
+  const gridCoordinates = useMemo(() => {
+    if (!snapEnabled || gridSpacing <= 0) return { x: [] as number[], y: [] as number[] };
+    const x = Array.from(
+      { length: Math.floor(svgDims.w / gridSpacing) + 1 },
+      (_, i) => i * gridSpacing,
+    );
+    const y = Array.from(
+      { length: Math.floor(svgDims.h / gridSpacing) + 1 },
+      (_, i) => i * gridSpacing,
+    );
+    return { x, y };
+  }, [gridSpacing, snapEnabled, svgDims.h, svgDims.w]);
 
   // ── Auto-number computed values ────────────────────────────────────────────
   // Selected zones ordered by selection sequence (or sortOrder/svgY fallback for rubber-band).
@@ -2441,11 +2714,13 @@ export function ZoneEditor() {
         </div>
       )}
 
-      {/* ── Dev-tool banner ─────────────────────────────────────────────────── */}
+      {/* ── Admin banner ────────────────────────────────────────────────────── */}
       <div style={styles.banner}>
-        <a href="/__mockup" style={styles.backLink}>← Internal Tools</a>
+        {/* ── Row 1: mode buttons + controls ────────────────────────────────── */}
+        <div style={styles.bannerRow}>
+        <a href="/__mockup" style={styles.backLink}>← Admin Tools</a>
         <span style={{ fontWeight: 600 }}>
-          ⚠ DEV TOOL — Warehouse Zone Editor — internal use only
+          Admin — Zone Editor
         </span>
         <div style={styles.modeBar}>
           <ModeBtn active={mode === "pan"} onClick={() => { setMode("pan"); }}>
@@ -2456,9 +2731,6 @@ export function ZoneEditor() {
           </ModeBtn>
           <ModeBtn active={mode === "fill"} onClick={() => { setMode("fill"); setSelectedIds(new Set()); setSelectionOrder([]); setPendingRect(null); }}>
             ⬛ Fill
-          </ModeBtn>
-          <ModeBtn active={mode === "calibrate"} onClick={() => { setMode("calibrate"); setSelectedIds(new Set()); setSelectionOrder([]); setPendingRect(null); setDraftRect(null); }}>
-            ✛ Calibrate
           </ModeBtn>
           <div style={{ width: 1, background: "rgba(255,255,255,0.3)", margin: "0 2px" }} />
           <button
@@ -2536,6 +2808,52 @@ export function ZoneEditor() {
           >
             Reset §
           </button>
+        </div>
+        <div style={styles.gridControls}>
+          <label style={styles.gridToggle}>
+            <input
+              type="checkbox"
+              aria-label="Snap to grid"
+              checked={snapEnabled}
+              onChange={(e) => setSnapEnabled(e.target.checked)}
+              style={{ accentColor: "#f59e0b", cursor: "pointer" }}
+            />
+            <span>Snap to grid</span>
+          </label>
+          <label style={styles.gridSpacingLabel}>
+            <span>Grid</span>
+            <input
+              aria-label="Grid spacing"
+              type="number"
+              min={MIN_GRID_SPACING}
+              max={MAX_GRID_SPACING}
+              step={1}
+              value={gridSpacing}
+              onChange={(e) => {
+                const next = readBoundedNumber(
+                  e.target.value,
+                  gridSpacing,
+                  MIN_GRID_SPACING,
+                  MAX_GRID_SPACING,
+                  true,
+                );
+                setGridSpacing(next);
+              }}
+              style={styles.gridSpacingInput}
+            />
+            <span>SVG units</span>
+          </label>
+          {mode === "draw" && (
+            <button
+              type="button"
+              aria-label="Place standard rectangle"
+              title={`Place ${standardWidth} × ${standardHeight} SVG unit rectangle`}
+              onClick={handlePlaceStandardRect}
+              style={styles.standardButton}
+            >
+              + Standard rectangle
+            </button>
+          )}
         </div>
         {mode === "fill" && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 8 }}>
@@ -2616,123 +2934,71 @@ export function ZoneEditor() {
             </span>
           </div>
         )}
-        {mode === "calibrate" && (() => {
-          const dirty =
-            align.x !== savedAlign.x || align.y !== savedAlign.y || align.s !== savedAlign.s;
-          const xOutOfRange = align.x < -ALIGN_TRANSLATE_MAX || align.x > ALIGN_TRANSLATE_MAX;
-          const yOutOfRange = align.y < -ALIGN_TRANSLATE_MAX || align.y > ALIGN_TRANSLATE_MAX;
-          const sOutOfRange = align.s < ALIGN_SCALE_MIN || align.s > ALIGN_SCALE_MAX;
-          const anyOutOfRange = xOutOfRange || yOutOfRange || sOutOfRange;
-          const nudgeBtn = (label: string, dx: number, dy: number, title: string) => {
-            const atLimit =
-              (dx < 0 && align.x <= -ALIGN_TRANSLATE_MAX) ||
-              (dx > 0 && align.x >= ALIGN_TRANSLATE_MAX) ||
-              (dy < 0 && align.y <= -ALIGN_TRANSLATE_MAX) ||
-              (dy > 0 && align.y >= ALIGN_TRANSLATE_MAX);
-            return (
-              <button
-                key={title}
-                title={atLimit ? `Already at limit (±${ALIGN_TRANSLATE_MAX})` : title}
-                disabled={atLimit}
-                onClick={() => nudgeAlign(dx, dy)}
-                style={{
-                  width: 28, height: 24, padding: 0, fontSize: 13, lineHeight: 1,
-                  background: atLimit ? "#1e293b" : "#334155",
-                  color: atLimit ? "#475569" : "#fff",
-                  border: "1px solid #475569",
-                  borderRadius: 4, cursor: atLimit ? "not-allowed" : "pointer",
-                  opacity: atLimit ? 0.5 : 1,
-                }}
-              >
-                {label}
-              </button>
-            );
-          };
-          return (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 8, flexWrap: "wrap" }}>
-              {/* Nudge — small step */}
-              <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                <span style={{ fontSize: 10, color: "#94a3b8", marginRight: 2 }}>Nudge</span>
-                {nudgeBtn("←", -ALIGN_NUDGE_SMALL, 0, `Left ${ALIGN_NUDGE_SMALL}`)}
-                {nudgeBtn("→", ALIGN_NUDGE_SMALL, 0, `Right ${ALIGN_NUDGE_SMALL}`)}
-                {nudgeBtn("↑", 0, -ALIGN_NUDGE_SMALL, `Up ${ALIGN_NUDGE_SMALL}`)}
-                {nudgeBtn("↓", 0, ALIGN_NUDGE_SMALL, `Down ${ALIGN_NUDGE_SMALL}`)}
-              </div>
-              {/* Nudge — large step */}
-              <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                <span style={{ fontSize: 10, color: "#94a3b8", marginRight: 2 }}>Big</span>
-                {nudgeBtn("«", -ALIGN_NUDGE_LARGE, 0, `Left ${ALIGN_NUDGE_LARGE}`)}
-                {nudgeBtn("»", ALIGN_NUDGE_LARGE, 0, `Right ${ALIGN_NUDGE_LARGE}`)}
-                {nudgeBtn("⤒", 0, -ALIGN_NUDGE_LARGE, `Up ${ALIGN_NUDGE_LARGE}`)}
-                {nudgeBtn("⤓", 0, ALIGN_NUDGE_LARGE, `Down ${ALIGN_NUDGE_LARGE}`)}
-              </div>
-              {/* Uniform scale */}
-              <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                <span style={{ fontSize: 10, color: "#94a3b8", marginRight: 2 }}>Scale</span>
-                <button title={`− ${ALIGN_SCALE_LARGE}`} onClick={() => scaleAlign(-ALIGN_SCALE_LARGE)} style={{ width: 28, height: 24, padding: 0, fontSize: 12, background: "#334155", color: "#fff", border: "1px solid #475569", borderRadius: 4, cursor: "pointer" }}>−−</button>
-                <button title={`− ${ALIGN_SCALE_SMALL}`} onClick={() => scaleAlign(-ALIGN_SCALE_SMALL)} style={{ width: 24, height: 24, padding: 0, fontSize: 13, background: "#334155", color: "#fff", border: "1px solid #475569", borderRadius: 4, cursor: "pointer" }}>−</button>
-                <span style={{ fontSize: 11, color: "#f59e0b", minWidth: 42, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{(align.s * 100).toFixed(0)}%</span>
-                <button title={`+ ${ALIGN_SCALE_SMALL}`} onClick={() => scaleAlign(ALIGN_SCALE_SMALL)} style={{ width: 24, height: 24, padding: 0, fontSize: 13, background: "#334155", color: "#fff", border: "1px solid #475569", borderRadius: 4, cursor: "pointer" }}>+</button>
-                <button title={`+ ${ALIGN_SCALE_LARGE}`} onClick={() => scaleAlign(ALIGN_SCALE_LARGE)} style={{ width: 28, height: 24, padding: 0, fontSize: 12, background: "#334155", color: "#fff", border: "1px solid #475569", borderRadius: 4, cursor: "pointer" }}>++</button>
-              </div>
-              {/* Offset readout */}
-              <span style={{ fontSize: 10, fontVariantNumeric: "tabular-nums", display: "flex", alignItems: "center", gap: 4 }}>
-                <span style={{ color: xOutOfRange ? "#f87171" : "#94a3b8" }}
-                  title={xOutOfRange ? `X must be between −${ALIGN_TRANSLATE_MAX} and ${ALIGN_TRANSLATE_MAX}` : undefined}>
-                  x {align.x.toFixed(1)}{xOutOfRange ? " ⚠" : ""}
-                </span>
-                <span style={{ color: "#475569" }}>·</span>
-                <span style={{ color: yOutOfRange ? "#f87171" : "#94a3b8" }}
-                  title={yOutOfRange ? `Y must be between −${ALIGN_TRANSLATE_MAX} and ${ALIGN_TRANSLATE_MAX}` : undefined}>
-                  y {align.y.toFixed(1)}{yOutOfRange ? " ⚠" : ""}
-                </span>
-              </span>
-              {/* Out-of-range warning banner */}
-              {anyOutOfRange && (
-                <span style={{ fontSize: 10, color: "#fbbf24", background: "#451a03", border: "1px solid #92400e", borderRadius: 4, padding: "2px 6px" }}>
-                  {xOutOfRange && `X out of range (±${ALIGN_TRANSLATE_MAX})`}
-                  {xOutOfRange && yOutOfRange && " · "}
-                  {yOutOfRange && `Y out of range (±${ALIGN_TRANSLATE_MAX})`}
-                  {(xOutOfRange || yOutOfRange) && sOutOfRange && " · "}
-                  {sOutOfRange && `Scale out of range (${ALIGN_SCALE_MIN}–${ALIGN_SCALE_MAX})`}
-                  {" — server will reject"}
-                </span>
-              )}
-              {/* Actions */}
-              <button
-                title="Reset the offset to zero (no shift, 100% scale). Save to apply for all users."
-                onClick={() => setAlign({ ...IDENTITY_ALIGN })}
-                style={{ height: 24, padding: "0 8px", fontSize: 11, background: "#334155", color: "#fff", border: "1px solid #475569", borderRadius: 4, cursor: "pointer" }}
-              >
-                Reset to zero
-              </button>
-              <button
-                title="Discard unsaved changes and revert to the last saved offset"
-                disabled={!dirty || savingAlign}
-                onClick={() => setAlign({ ...savedAlign })}
-                style={{ height: 24, padding: "0 8px", fontSize: 11, background: "transparent", color: dirty ? "#cbd5e1" : "#64748b", border: "1px solid #475569", borderRadius: 4, cursor: dirty && !savingAlign ? "pointer" : "default" }}
-              >
-                Revert
-              </button>
-              <button
-                title={anyOutOfRange ? `Values out of allowed bounds — fix before saving` : "Save this alignment globally — applies to every user's Map tab"}
-                disabled={savingAlign || anyOutOfRange}
-                onClick={() => { void saveAlignment(); }}
-                style={{ height: 24, padding: "0 12px", fontSize: 11, fontWeight: 600, background: anyOutOfRange ? "#7f1d1d" : dirty ? "#16a34a" : "#334155", color: anyOutOfRange ? "#fca5a5" : "#fff", border: anyOutOfRange ? "1px solid #991b1b" : "none", borderRadius: 4, cursor: savingAlign || anyOutOfRange ? "default" : "pointer" }}
-              >
-                {savingAlign ? "Saving…" : anyOutOfRange ? "Out of range" : dirty ? "Save ●" : "Saved"}
-              </button>
-            </div>
-          );
-        })()}
         <span style={styles.hint}>
           scroll-zoom · {mode === "pan"
             ? "drag to pan · Shift+drag to select · Shift+click to multi-select · drag selected to move all"
             : mode === "fill"
               ? "click inside an enclosed area to auto-detect its bounds · switches back to Pan after each fill"
-              : "drag to draw"}
-          {" "}· {(tf.s * 100).toFixed(0)}%
+              : "drag to draw"}{" "}· {(tf.s * 100).toFixed(0)}%
         </span>
+        </div>
+        {/* ── Row 2: global save status ────────────────────────────────────── */}
+        {(() => {
+          const labelText =
+            saveStatus === "dirty"   ? "Unsaved changes ●" :
+            saveStatus === "saving"  ? "Saving…" :
+            saveStatus === "error"   ? "Save failed — retry" :
+            "All changes saved";
+          const labelColor =
+            saveStatus === "dirty"   ? "#fbbf24" :
+            saveStatus === "error"   ? "#f87171" :
+            "rgba(255,255,255,0.55)";
+          const btnDisabled = saveStatus === "clean" || saveStatus === "saving" || !selectedId;
+          const btnLabel = saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Retry" : "Save";
+          const btnBg =
+            saveStatus === "dirty" && selectedId  ? "#16a34a" :
+            saveStatus === "error" && selectedId  ? "#dc2626" :
+            "transparent";
+          return (
+            <div
+              data-testid="save-status-row"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 10,
+                padding: "3px 16px",
+                borderTop: "1px solid rgba(255,255,255,0.15)",
+              }}
+            >
+              <span style={{
+                fontSize: 11,
+                color: labelColor,
+                fontStyle: saveStatus === "saving" ? "italic" : "normal",
+              }}>
+                {labelText}
+              </span>
+              <button
+                disabled={btnDisabled}
+                onClick={() => {
+                  if (selectedId) void flushSave(formRef.current, selectedId);
+                }}
+                style={{
+                  padding: "2px 10px",
+                  borderRadius: 4,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  background: btnBg,
+                  color: btnDisabled ? "rgba(255,255,255,0.3)" : "#fff",
+                  border: `1px solid ${btnDisabled ? "rgba(255,255,255,0.2)" : saveStatus === "error" ? "#dc2626" : saveStatus === "dirty" ? "#16a34a" : "rgba(255,255,255,0.2)"}`,
+                  cursor: btnDisabled ? "default" : "pointer",
+                }}
+              >
+                {btnLabel}
+              </button>
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Content area (below banner) ─────────────────────────────────────── */}
@@ -2750,25 +3016,35 @@ export function ZoneEditor() {
                   ? ixRef.current.t === "pan"
                     ? "grabbing"
                     : "grab"
-                  : mode === "calibrate"
-                    ? ixRef.current.t === "alignPan"
-                      ? "grabbing"
-                      : "grab"
-                    : "crosshair",
+                  : "crosshair",
             }}
             onMouseDown={onSvgMouseDown}
           >
             <g transform={`translate(${tf.x},${tf.y}) scale(${tf.s})`}>
+              {snapEnabled && (
+                <g
+                  data-testid="zone-editor-grid"
+                  data-grid-spacing={gridSpacing}
+                  pointerEvents="none"
+                  stroke="rgba(71,85,105,0.28)"
+                  strokeWidth={1 / tf.s}
+                >
+                  {gridCoordinates.x.map((x) => (
+                    <line key={`grid-x-${x}`} x1={x} y1={0} x2={x} y2={svgDims.h} />
+                  ))}
+                  {gridCoordinates.y.map((y) => (
+                    <line key={`grid-y-${y}`} x1={0} y1={y} x2={svgDims.w} y2={y} />
+                  ))}
+                </g>
+              )}
               {/* Floor plan — embedded as a child <g> inside the SVG so it
                   shares the same coordinate system as zone overlays and stays
                   perfectly crisp at any zoom level (no rasterisation). */}
               <g ref={floorPlanRef} pointerEvents="none" />
 
-              {/* Zone overlays.
-                  The whole zone layer is shifted/scaled by the saved alignment offset
-                  so zones always land on the floor plan at their calibrated position.
-                  getSvgPt inverts both tf and align, keeping pointer↔zone math exact. */}
-              <g transform={`translate(${align.x},${align.y}) scale(${align.s})`}>
+              {/* Zone overlays — rendered directly in raw SVG coordinate space,
+                  matching the Map tab (WarehouseMapViewer). No extra alignment
+                  transform; getSvgPt inverts only tf. */}
               {displayZones.map((zone) => {
                 const sel = selectedIds.has(zone.id);
                 const fill = zone.isInventory
@@ -2791,6 +3067,7 @@ export function ZoneEditor() {
                         zone.isInventory ? undefined : `${12 / tf.s} ${6 / tf.s}`
                       }
                       onMouseDown={(e) => onZoneMouseDown(e, zone)}
+                      onContextMenu={(e) => handleZoneContextMenu(e, zone)}
                       style={{ cursor: sel && selectedIds.size > 1 ? "move" : "pointer" }}
                     />
                     <text
@@ -2869,11 +3146,6 @@ export function ZoneEditor() {
                 );
               })}
 
-              {/* All overlay rects are rendered inside the align <g> because their
-                  coordinates are in zone space (raw svgX/svgY), matching the zones
-                  in this same group. strokeWidth is divided by align.s so strokes
-                  appear at the same screen thickness regardless of calibration scale. */}
-
               {/* Live drawing preview (draw mode — amber dashed) */}
               {draftRect && draftRect.w > 0 && draftRect.h > 0 && (
                 <rect
@@ -2883,8 +3155,8 @@ export function ZoneEditor() {
                   height={draftRect.h}
                   fill="rgba(234,179,8,0.12)"
                   stroke="#eab308"
-                  strokeWidth={sw / align.s}
-                  strokeDasharray={`${14 / tf.s / align.s} ${7 / tf.s / align.s}`}
+                  strokeWidth={sw}
+                  strokeDasharray={`${14 / tf.s} ${7 / tf.s}`}
                   style={{ pointerEvents: "none" }}
                 />
               )}
@@ -2898,25 +3170,77 @@ export function ZoneEditor() {
                   height={fillFlashRect.h}
                   fill="rgba(0,112,255,0.15)"
                   stroke="#0070ff"
-                  strokeWidth={sw / align.s}
-                  strokeDasharray={`${14 / tf.s / align.s} ${7 / tf.s / align.s}`}
+                  strokeWidth={sw}
+                  strokeDasharray={`${14 / tf.s} ${7 / tf.s}`}
                   style={{ pointerEvents: "none" }}
                 />
               )}
 
               {/* Pending rect (drawn, awaiting form submission — blue) */}
               {pendingRect && (
-                <rect
-                  x={pendingRect.x}
-                  y={pendingRect.y}
-                  width={pendingRect.w}
-                  height={pendingRect.h}
-                  fill="rgba(0,112,255,0.15)"
-                  stroke="#0070ff"
-                  strokeWidth={sw / align.s}
-                  strokeDasharray={`${14 / tf.s / align.s} ${7 / tf.s / align.s}`}
-                  style={{ pointerEvents: "none" }}
-                />
+                <>
+                  <rect
+                    x={pendingRect.x}
+                    y={pendingRect.y}
+                    width={pendingRect.w}
+                    height={pendingRect.h}
+                    fill="rgba(0,112,255,0.15)"
+                    stroke="#0070ff"
+                    strokeWidth={sw}
+                    strokeDasharray={`${14 / tf.s} ${7 / tf.s}`}
+                    style={{ pointerEvents: "none" }}
+                  />
+                  {(["n", "s", "e", "w"] as Handle[]).map((h) => {
+                    const cx = h === "e"
+                      ? pendingRect.x + pendingRect.w
+                      : h === "w"
+                        ? pendingRect.x
+                        : pendingRect.x + pendingRect.w / 2;
+                    const cy = h === "s"
+                      ? pendingRect.y + pendingRect.h
+                      : h === "n"
+                        ? pendingRect.y
+                        : pendingRect.y + pendingRect.h / 2;
+                    const w = h === "e" || h === "w" ? hs : hs * 2.5;
+                    const ht = h === "n" || h === "s" ? hs : hs * 2.5;
+                    return (
+                      <rect
+                        key={`pending-edge-${h}`}
+                        x={cx - w / 2}
+                        y={cy - ht / 2}
+                        width={w}
+                        height={ht}
+                        fill="#0070ff"
+                        stroke="#fff"
+                        strokeWidth={1.5 / tf.s}
+                        onMouseDown={(e) => onPendingHandleMouseDown(e, h)}
+                        style={{ cursor: HANDLE_CURSOR[h] }}
+                      />
+                    );
+                  })}
+                  {(["nw", "ne", "sw", "se"] as Handle[]).map((h) => {
+                    const hx = h.includes("e")
+                      ? pendingRect.x + pendingRect.w
+                      : pendingRect.x;
+                    const hy = h.includes("s")
+                      ? pendingRect.y + pendingRect.h
+                      : pendingRect.y;
+                    return (
+                      <rect
+                        key={`pending-corner-${h}`}
+                        x={hx - hs / 2}
+                        y={hy - hs / 2}
+                        width={hs}
+                        height={hs}
+                        fill="#0070ff"
+                        stroke="#fff"
+                        strokeWidth={1.5 / tf.s}
+                        onMouseDown={(e) => onPendingHandleMouseDown(e, h)}
+                        style={{ cursor: HANDLE_CURSOR[h] }}
+                      />
+                    );
+                  })}
+                </>
               )}
 
               {/* Rubber-band selection rectangle (Shift+drag) */}
@@ -2928,17 +3252,75 @@ export function ZoneEditor() {
                   height={rubberRect.h}
                   fill="rgba(59,130,246,0.08)"
                   stroke="#3b82f6"
-                  strokeWidth={sw / align.s}
-                  strokeDasharray={`${10 / tf.s / align.s} ${5 / tf.s / align.s}`}
+                  strokeWidth={sw}
+                  strokeDasharray={`${10 / tf.s} ${5 / tf.s}`}
                   style={{ pointerEvents: "none" }}
                 />
               )}
-              </g>
             </g>
           </svg>
 
           {loading && (
             <div style={styles.loadingBadge}>Loading zones…</div>
+          )}
+          {contextMenu && (
+            <div
+              data-zone-context-menu
+              style={{
+                position: "fixed",
+                left: contextMenu.x,
+                top: contextMenu.y,
+                zIndex: 30,
+                minWidth: 210,
+                padding: 4,
+                border: "1px solid #cbd5e1",
+                borderRadius: 6,
+                background: "#fff",
+                boxShadow: "0 8px 24px rgba(15,23,42,0.2)",
+              }}
+            >
+              <button
+                type="button"
+                data-zone-context-menu
+                onClick={() => {
+                  const zone = zonesRef.current.find((z) => z.id === contextMenu.zoneId);
+                  if (!zone) {
+                    setContextMenu(null);
+                    return;
+                  }
+                  setStandardWidth(
+                    Math.min(
+                      MAX_STANDARD_RECT_SIZE,
+                      Math.max(MIN_STANDARD_RECT_SIZE, Math.round(zone.svgWidth)),
+                    ),
+                  );
+                  setStandardHeight(
+                    Math.min(
+                      MAX_STANDARD_RECT_SIZE,
+                      Math.max(MIN_STANDARD_RECT_SIZE, Math.round(zone.svgHeight)),
+                    ),
+                  );
+                  setContextMenu(null);
+                  toast.success(
+                    `Standard rectangle set to ${Math.round(zone.svgWidth)} × ${Math.round(zone.svgHeight)}`,
+                  );
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "7px 9px",
+                  border: 0,
+                  borderRadius: 4,
+                  background: "transparent",
+                  color: "#1e293b",
+                  textAlign: "left",
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                Set as standard rectangle size
+              </button>
+            </div>
           )}
         </div>
 
@@ -3723,23 +4105,28 @@ const styles = {
   },
   banner: {
     display: "flex",
-    alignItems: "center",
-    gap: 12,
-    padding: "6px 16px",
-    background: "#7c3aed",
+    flexDirection: "column" as const,
+    background: "#1e293b",
     color: "white",
     fontSize: 12,
     flexShrink: 0,
     zIndex: 10,
   },
+  bannerRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "6px 16px",
+  },
   backLink: {
-    color: "rgba(255,255,255,0.85)",
+    color: "#cbd5e1",
     textDecoration: "none",
     fontSize: 12,
     fontWeight: 500,
     padding: "2px 8px",
     borderRadius: 4,
-    border: "1px solid rgba(255,255,255,0.3)",
+    border: "1px solid #475569",
+    background: "rgba(255,255,255,0.08)",
     whiteSpace: "nowrap" as const,
     marginRight: 4,
   },
@@ -3747,6 +4134,49 @@ const styles = {
     display: "flex",
     gap: 6,
     marginLeft: "auto",
+  },
+  gridControls: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    marginLeft: 8,
+    whiteSpace: "nowrap" as const,
+  },
+  gridToggle: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    color: "#f8fafc",
+    fontSize: 11,
+    cursor: "pointer",
+    userSelect: "none" as const,
+  },
+  gridSpacingLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 10,
+  },
+  gridSpacingInput: {
+    width: 48,
+    padding: "3px 4px",
+    border: "1px solid #64748b",
+    borderRadius: 3,
+    background: "#0f172a",
+    color: "#f8fafc",
+    fontSize: 11,
+  } as React.CSSProperties,
+  standardButton: {
+    padding: "4px 9px",
+    borderRadius: 4,
+    background: "#f59e0b",
+    color: "#111827",
+    border: "none",
+    cursor: "pointer",
+    fontSize: 11,
+    fontWeight: 700,
+    whiteSpace: "nowrap" as const,
   },
   hint: {
     fontSize: 11,

@@ -107,6 +107,7 @@ export function AddPartModal({
   };
 
   const handleSubmit = async () => {
+    if (loading) return;
     setError(null);
     if (!validate()) return;
     if (!adminToken) {

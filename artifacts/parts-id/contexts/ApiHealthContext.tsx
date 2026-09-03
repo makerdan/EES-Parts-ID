@@ -13,7 +13,7 @@
  * fetch() itself threw (i.e. err instanceof TypeError), NOT for 4xx/5xx
  * HTTP errors where the server is reachable and returned a response.
  */
-import React, { createContext, useContext } from "react";
+import React, { createContext, useContext, useMemo } from "react";
 
 import { useApp } from "@/contexts/AppContext";
 import { type ApiStatusResult, useApiStatus } from "@/hooks/useApiStatus";
@@ -27,8 +27,37 @@ export function ApiHealthProvider({ children }: { children: React.ReactNode }) {
     apiBase: API_BASE,
     adminToken: isAdmin ? adminToken : null,
   });
+  const {
+    status,
+    restarting,
+    restartState,
+    triggerRestart,
+    checkStatus,
+    bots,
+    probeSingleBot,
+    reportNetworkFailure,
+  } = result;
+  const contextValue = useMemo(() => ({
+    status,
+    restarting,
+    restartState,
+    triggerRestart,
+    checkStatus,
+    bots,
+    probeSingleBot,
+    reportNetworkFailure,
+  }), [
+    status,
+    restarting,
+    restartState,
+    triggerRestart,
+    checkStatus,
+    bots,
+    probeSingleBot,
+    reportNetworkFailure,
+  ]);
   return (
-    <ApiHealthContext.Provider value={result}>
+    <ApiHealthContext.Provider value={contextValue}>
       {children}
     </ApiHealthContext.Provider>
   );

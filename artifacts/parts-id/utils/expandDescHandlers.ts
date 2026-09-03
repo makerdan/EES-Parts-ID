@@ -12,6 +12,8 @@ export type ExpandDescResult = {
   editedText: string;
   savedStatus: "pending" | "saving" | "saved" | "discarded" | "error" | "retrying";
   error?: string | undefined;
+  confidence?: number | null;
+  autoSaved?: boolean;
 };
 
 /**

@@ -67,3 +67,6 @@ if [[ -n "$FOUND" ]]; then
 fi
 
 echo "✓ No hardcoded port fallbacks found in service code."
+
+echo "Checking the registered workflow and cleanup-port contract…"
+node "$SCRIPT_DIR/dev-port-contract.mjs"

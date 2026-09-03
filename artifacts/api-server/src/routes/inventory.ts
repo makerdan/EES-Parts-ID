@@ -40,6 +40,7 @@ import { uploadCatalogImage } from "../lib/objectStorage";
 import { callPoeBotWithChain, PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/poeModelLimits";
 import { inventorySearchLimiter } from "../lib/rateLimiter";
+import { buildReverseVendorMap } from "../lib/vendorMap";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { estimateImageBytes } from "../utils/aiHelpers";
 import { generateKeywords, mergeWithPinned } from "../utils/generateKeywords";
@@ -68,7 +69,8 @@ const enrichSystemPrompt =
   "You are an electrical supplies identifier with a degree in English language specializing in keyword and abbreviation expansion. Convert a single catalog description line into one clear, inventory-friendly sentence. Requirements:\n" +
   "- Use imperial units where applicable (inches, feet, pounds, \u00b0F).\n" +
   "- Fix spacing errors (add missing spaces after commas and around units).\n" +
-  "- Expand all abbreviations and jargon into plain language (e.g., kVA, XFMR \u2192 transformer; 3PH \u2192 three-phase; V \u2192 volts; Y \u2192 wye; FPT/MPT \u2192 female/male pipe thread; AWG \u2192 American Wire Gauge).\n" +
+  "- Expand all abbreviations and jargon into plain language (e.g., kVA, XFMR \u2192 transformer; 3PH \u2192 three-phase; Y \u2192 wye; FPT/MPT \u2192 female/male pipe thread; AWG \u2192 American Wire Gauge).\n" +
+  "- Express electrical quantities with standard compact notation \u2014 no space between the number and unit: volts as V (e.g. 120V), amps as A (e.g. 10A), watts as W (e.g. 500W), hertz as Hz (e.g. 60Hz). For slash-separated voltages, apply the unit to each segment (e.g. 120/240V \u2192 120V/240V). Wye notation such as 208Y/120V is already correct \u2014 leave it unchanged.\n" +
   "- Include essential keywords where present: capacity, phase, primary voltage, secondary voltage, connection (delta/wye), efficiency standard, temperature rise (report both \u00b0C and \u00b0F), enclosure/venting if stated, and any ratings (A, kVA, etc.).\n" +
   "- Do not add unsupported technical specs or assumptions. If you must infer a missing spec, put the inference in parentheses.\n" +
   "- Do not include the phrase 'inventory item' or any meta commentary.\n" +
@@ -102,24 +104,65 @@ const enrichSystemPrompt =
   "- MHF: MHF{phase}{neutral}{ground}{footage} \u2192 '[footage] ft of MHF aluminum mobile home feeder cable.'\n\n" +
   "Example\n" +
   "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
-  "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.\n\n" +
+  "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480V, secondary 208Y/120V, 302 \u00b0F (150 \u00b0C) temperature rise.\n\n" +
+  "OUTPUT FORMAT\n" +
+  "Always respond with a single JSON object on one line. No markdown fences, no extra text.\n" +
+  '{ "expandedDescription": "<one sentence>", "confidence": <integer 0-100> }\n' +
+  "`confidence` is your estimate (0–100) of how accurate and complete the expansion is:\n" +
+  "- 90–100: catalog code is unambiguous; all specs decoded directly.\n" +
+  "- 70–89: minor inference required (e.g., implied conductor material).\n" +
+  "- 50–69: significant assumptions made or ambiguous abbreviations.\n" +
+  "- 0–49: description is too vague to expand reliably.\n\n" +
   "Example\n" +
   "Input: THHN12SOLBL500\n" +
-  "Output: 500' spool of blue THHN-insulated solid copper wire, 12 AWG.\n\n" +
+  'Output: { "expandedDescription": "500\' spool of blue THHN-insulated solid copper wire, 12 AWG.", "confidence": 98 }\n\n' +
   "Example\n" +
   "Input: XHHW40BK1000\n" +
-  "Output: 1000' spool of black XHHW-insulated aluminum wire, 4/0 AWG.\n\n" +
+  'Output: { "expandedDescription": "1000\' spool of black XHHW-insulated aluminum wire, 4/0 AWG.", "confidence": 97 }\n\n' +
   "Example\n" +
   "Input: THHN350OR2500\n" +
-  "Output: 2500' spool of orange THHN-insulated copper wire, 350 KCMIL.\n\n" +
+  'Output: { "expandedDescription": "2500\' spool of orange THHN-insulated copper wire, 350 KCMIL.", "confidence": 97 }\n\n' +
   "Example\n" +
   "Input: RX122WG1000\n" +
-  "Output: 1000 ft roll of 12/2 with ground Romex (NM-B) cable.\n\n" +
+  'Output: { "expandedDescription": "1000 ft roll of 12/2 with ground Romex (NM-B) cable.", "confidence": 96 }\n\n' +
   "Example\n" +
   "Input: 4TRIPLEX1500\n" +
-  "Output: 1500 ft reel of 4 AWG aluminum TRIPLEX 3-conductor cable.";
+  'Output: { "expandedDescription": "1500 ft reel of 4 AWG aluminum TRIPLEX 3-conductor cable.", "confidence": 95 }\n\n' +
+  "Example\n" +
+  "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
+  'Output: { "expandedDescription": "225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480V, secondary 208Y/120V, 302 °F (150 °C) temperature rise.", "confidence": 95 }';
 
 const router = Router();
+
+/**
+ * Normalise electrical unit notation in AI-generated descriptions.
+ * Collapses spelt-out or spaced unit forms to compact notation:
+ *   120 volts -> 120V, 10 amps -> 10A, 500 watts -> 500W, 60 hertz -> 60Hz
+ *   120 V -> 120V, 10 A -> 10A
+ *   120/240V -> 120V/240V  (slash-separated voltages)
+ *   208Y/120V is left unchanged (wye notation, not a plain slash)
+ */
+function normalizeElectricalUnits(text: string): string {
+  // Collapse spelled-out unit names to compact abbreviations
+  let result = text
+    .replace(/(\d+(?:\.\d+)?)\s+volts?\b/gi, "$1V")
+    .replace(/(\d+(?:\.\d+)?)\s+amps?\b/gi, "$1A")
+    .replace(/(\d+(?:\.\d+)?)\s+watts?\b/gi, "$1W")
+    .replace(/(\d+(?:\.\d+)?)\s+hertz\b/gi, "$1Hz");
+
+  // Collapse spaced-unit forms: '120 V' -> '120V', '10 A' -> '10A'
+  // Guard A against AWG: only collapse standalone A (not followed by W or G)
+  result = result
+    .replace(/(\d+(?:\.\d+)?)\s+V\b/g, "$1V")
+    .replace(/(\d+(?:\.\d+)?)\s+A\b(?![WG])/g, "$1A");
+
+  // Normalise slash-separated voltages: 120/240V -> 120V/240V
+  // The left segment is pure digits, so wye notation like 208Y/120V is
+  // unaffected (its left part ends with 'Y', not matched by \d+\/\d+V).
+  result = result.replace(/(\d+)\/(\d+V)\b/g, "$1V/$2");
+
+  return result;
+}
 
 // ── Module-level dictionary cache ─────────────────────────────────────────────
 // These tables are static lookup data that never changes at runtime.  Loading
@@ -153,15 +196,7 @@ async function loadDictionaries(): Promise<DictionaryCache> {
     const synonymMapLookup = new Map(synonyms.map(s => [s.term, s.synonyms]));
     const slangMap = new Map(slang.map(s => [s.slangTerm, s.standardTerms]));
 
-    const reverseVendorMap = new Map<string, string>();
-    const extendedVendors = vendors.filter(v => !v.isPrimary);
-    const primaryVendors = vendors.filter(v => v.isPrimary);
-    for (const v of extendedVendors) {
-      for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
-    }
-    for (const v of primaryVendors) {
-      for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
-    }
+    const reverseVendorMap = buildReverseVendorMap(vendors);
 
     return {
       correctionMap,
@@ -1816,7 +1851,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
 
     for (const item of itemsToExpand) {
       try {
-        const expandedDescription = (
+        const rawText = (
           useOpenAiFallback
             ? await (async () => {
                 const resp = await getOpenAIFallbackClient().chat.completions.create({
@@ -1835,12 +1870,54 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
                 `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`,
               )
         ) || item.description;
+
+        let expandedDescription: string = item.description;
+        let confidence: number | null = null;
+        try {
+          const parsed = JSON.parse(rawText) as { expandedDescription?: string; confidence?: number };
+          expandedDescription = parsed.expandedDescription?.trim() || item.description;
+          confidence = typeof parsed.confidence === "number" ? parsed.confidence : null;
+        } catch {
+          expandedDescription = rawText || item.description;
+          confidence = null;
+        }
+        expandedDescription = normalizeElectricalUnits(expandedDescription);
+
+        let autoSaved = false;
+        if (confidence != null && confidence > 70) {
+          try {
+            // Guard: only write if expandedDescription is still NULL in the DB.
+            // This prevents a second batch run from silently overwriting a
+            // description that an admin has already hand-edited and saved.
+            const result = await db
+              .update(inventoryTable)
+              .set({ expandedDescription, updatedAt: new Date() })
+              .where(
+                and(
+                  eq(inventoryTable.id, item.id),
+                  sql`${inventoryTable.expandedDescription} IS NULL`,
+                ),
+              )
+              .returning({ id: inventoryTable.id });
+            if (result.length > 0) {
+              invalidateReferenceAnswerCache().catch(() => {});
+              autoSaved = true;
+            }
+            // If result is empty the row already had a description — autoSaved
+            // stays false so the SSE event signals the admin to review manually.
+          } catch (dbErr) {
+            reqLogger.warn({ err: dbErr, id: item.id }, "[expand-descriptions] auto-save failed");
+          }
+        }
+
         processed++;
         send({
           id: item.id,
           partNumber: item.catalog,
           originalDescription: item.description,
           expandedDescription,
+          confidence,
+          autoSaved,
           progress: processed,
           total,
         });
@@ -1906,7 +1983,7 @@ router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
     const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
     const userPrompt = `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`;
 
-    const expandedDescription = (
+    const rawText = (
       useOpenAiFallback
         ? await (async () => {
             const resp = await getOpenAIFallbackClient().chat.completions.create({
@@ -1922,11 +1999,24 @@ router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
         : await callPoeBotWithChain("enrich", enrichSystemPrompt, userPrompt)
     ) || item.description;
 
+    let expandedDescription: string = item.description;
+    let confidence: number | null = null;
+    try {
+      const parsed = JSON.parse(rawText) as { expandedDescription?: string; confidence?: number };
+      expandedDescription = parsed.expandedDescription?.trim() || item.description;
+      confidence = typeof parsed.confidence === "number" ? parsed.confidence : null;
+    } catch {
+      expandedDescription = rawText || item.description;
+      confidence = null;
+    }
+    expandedDescription = normalizeElectricalUnits(expandedDescription);
+
     res.json({
       id: item.id,
       partNumber: item.catalog,
       originalDescription: item.description,
       expandedDescription,
+      confidence,
       model: getEnrichModel(),
     });
   } catch (err) {

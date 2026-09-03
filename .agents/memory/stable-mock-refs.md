@@ -32,5 +32,7 @@ jest.mock("expo-camera", () => {
 ## How to apply
 Any time a mock hook returns an object literal or `jest.fn()` inline in its return expression, extract both to module-scope `const` values inside the `jest.mock` factory. This applies to camera permissions, location, push-notification permission hooks, etc.
 
+The same rule applies to `useRouter` when a screen effect lists `router` as a dependency: return one stable router object from the mock factory. An inline object can re-run fetch effects after every state update.
+
 ## Relevant file
 `artifacts/parts-id/__tests__/MeasurePartScreen.test.tsx`

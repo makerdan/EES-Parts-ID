@@ -4,7 +4,8 @@
  * Verifies that:
  *  - The sheet title reads "Aisle {N}" derived from zone.aisleNum (NOT from any
  *    removed `label` field on WarehouseZone).
- *  - The component renders null when zone is null or has no matching inventory.
+ *  - The component renders null when zone is null and shows an empty state when
+ *    no inventory matches the zone's aisle.
  *  - The "Browse this aisle" CTA fires onBrowse(zone) and onClose().
  */
 
@@ -102,13 +103,22 @@ describe("AisleSummarySheet", () => {
     expect(result.toJSON()).toBeNull();
   });
 
-  it("renders null when no inventory items match the zone's aisle", async () => {
+  it("shows a friendly empty-inventory sheet when no items match the zone's aisle", async () => {
     const zone: WarehouseZone = { aisleNum: 5 };
     const inventory = [makeItem(1, ["03-01-001"]), makeItem(2, ["07-02-100"])];
     const result = await render(
       <AisleSummarySheet zone={zone} inventory={inventory} onClose={onClose} onBrowse={onBrowse} />,
     );
-    expect(result.toJSON()).toBeNull();
+    const texts = allText(result.root!);
+    expect(texts).toContain("Aisle 5");
+    expect(texts).toContain("No inventory in this aisle");
+    expect(texts).toContain("Sync your inventory to see parts stored here.");
+
+    const closeButton = result.root!.queryAll(
+      (n: TestInstance) => (n.type as string) === "rn-pressable",
+      { includeSelf: true },
+    ).find(button => allText(button).includes("Close"));
+    expect(closeButton).toBeDefined();
   });
 
   it("renders the title as 'Aisle {aisleNum}' — not from a label field", async () => {

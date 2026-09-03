@@ -129,39 +129,6 @@ async function renderCalibration() {
   return result;
 }
 
-/**
- * Activate "Place" mode for a slot, then simulate a clean click (mousedown +
- * mouseup with ≤ CLICK_SLOP movement) on the SVG canvas.
- *
- * The caller must mock svgEl.getBoundingClientRect() before calling this.
- */
-async function placeAnchor(
-  container: HTMLElement,
-  slotIndex: 0 | 1 | 2,
-  clientX: number,
-  clientY: number,
-) {
-  const label = slotIndex === 0 ? "Place" : "Place";
-  // Find the Place button for the correct slot by aria label / index
-  const placeBtns = Array.from(
-    container.querySelectorAll("button"),
-  ).filter((b) => /^(Place|Re-place)$/i.test(b.textContent?.trim() ?? ""));
-  const btn = placeBtns[slotIndex];
-  if (!btn) throw new Error(`Could not find Place button for slot ${slotIndex}`);
-
-  await act(async () => {
-    fireEvent.click(btn);
-  });
-
-  const svg = container.querySelector("svg")!;
-
-  await act(async () => {
-    fireEvent.mouseDown(svg, { button: 0, clientX, clientY });
-    // No move — counts as a click
-    fireEvent.mouseUp(svg, { clientX, clientY });
-  });
-}
-
 // ---------------------------------------------------------------------------
 // 2. Click-vs-drag slop threshold
 // ---------------------------------------------------------------------------
@@ -1117,5 +1084,107 @@ describe("AnchorCalibration — MFA error surfacing", () => {
     // MFA-specific text must NOT appear anywhere
     expect(screen.queryByText(/two-factor authentication required\./i)).toBeNull();
     expect(screen.queryByText(/Enable 2FA →/i)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. Zone overlay
+// ---------------------------------------------------------------------------
+
+describe("AnchorCalibration — zone overlay", () => {
+  /**
+   * Stub fetch to serve zone and alignment data alongside the required
+   * anchors/floor-plan responses.  All other URLs get a generic 200 OK.
+   */
+  function stubFetchWithZones(
+    zones: Array<{ id: number; svgX: number; svgY: number; svgWidth: number; svgHeight: number }>,
+    alignment: { translateX: number; translateY: number; scale: number },
+  ) {
+    return vi.fn((url: string) => {
+      const u = String(url);
+      if (u.includes("/warehouse-zones/alignment")) {
+        return makeJsonResponse(200, alignment);
+      }
+      if (u.includes("/warehouse-zones")) {
+        return makeJsonResponse(200, { zones });
+      }
+      if (u.includes("/admin/map-anchors")) {
+        return makeJsonResponse(200, { anchors: [] });
+      }
+      // floor-plan/svg and any other endpoint — return non-ok so the component
+      // falls back to the bundled SVG without throwing.
+      return makeJsonResponse(404, {});
+    }) as unknown as typeof global.fetch;
+  }
+
+  const TWO_ZONES = [
+    { id: 1, svgX: 100, svgY: 200, svgWidth: 50, svgHeight: 30 },
+    { id: 2, svgX: 300, svgY: 400, svgWidth: 80, svgHeight: 60 },
+  ];
+  const IDENTITY_ALIGNMENT = { translateX: 0, translateY: 0, scale: 1 };
+  const OFFSET_ALIGNMENT = { translateX: 10, translateY: 20, scale: 1.5 };
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("fetches /warehouse-zones and /warehouse-zones/alignment on mount", async () => {
+    const fetchMock = stubFetchWithZones(TWO_ZONES, IDENTITY_ALIGNMENT);
+    global.fetch = fetchMock;
+
+    await renderCalibration();
+
+    const calls = (fetchMock as ReturnType<typeof vi.fn>).mock.calls.map(
+      ([url]: [string]) => String(url),
+    );
+
+    // Alignment endpoint must have been requested
+    expect(calls.some((u) => u.includes("/warehouse-zones/alignment"))).toBe(true);
+
+    // Base zones endpoint (without /alignment) must also have been requested
+    expect(calls.some((u) => u.includes("/warehouse-zones") && !u.includes("/alignment"))).toBe(true);
+  });
+
+  it("renders one <rect> per returned zone inside the SVG", async () => {
+    global.fetch = stubFetchWithZones(TWO_ZONES, IDENTITY_ALIGNMENT);
+
+    const { container } = await renderCalibration();
+
+    // Zone rects appear after the async fetch resolves
+    await waitFor(() => {
+      const rects = Array.from(container.querySelectorAll("rect"));
+      expect(rects.length).toBe(TWO_ZONES.length);
+    });
+
+    const rects = Array.from(container.querySelectorAll("rect"));
+    const first = rects[0]!;
+    expect(first.getAttribute("x")).toBe(String(TWO_ZONES[0]!.svgX));
+    expect(first.getAttribute("y")).toBe(String(TWO_ZONES[0]!.svgY));
+    expect(first.getAttribute("width")).toBe(String(TWO_ZONES[0]!.svgWidth));
+    expect(first.getAttribute("height")).toBe(String(TWO_ZONES[0]!.svgHeight));
+  });
+
+  it("applies the alignment transform to the wrapping <g> around zone rects", async () => {
+    global.fetch = stubFetchWithZones(TWO_ZONES, OFFSET_ALIGNMENT);
+
+    const { container } = await renderCalibration();
+
+    // Wait until the zone rects are present
+    await waitFor(() => {
+      expect(container.querySelectorAll("rect").length).toBe(TWO_ZONES.length);
+    });
+
+    // Find the <g> whose transform encodes the alignment values
+    const allGs = Array.from(container.querySelectorAll("g[transform]"));
+    const alignmentG = allGs.find((g) => {
+      const t = g.getAttribute("transform") ?? "";
+      return (
+        t.includes(`translate(${OFFSET_ALIGNMENT.translateX},${OFFSET_ALIGNMENT.translateY})`) &&
+        t.includes(`scale(${OFFSET_ALIGNMENT.scale})`)
+      );
+    });
+
+    expect(alignmentG).toBeTruthy();
   });
 });

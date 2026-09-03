@@ -1,17 +1,30 @@
+import * as path from "path";
+
 /**
  * Shared Jest mock factories for native modules used across Map/Zone tests.
  *
  * Usage in a test file (jest.mock factories are hoisted, so reference via require()):
  *
  *   jest.mock("react-native-reanimated",      () => require("./helpers/mapMocks").createReanimatedMock());
- *   jest.mock("react-native-gesture-handler", () => require("./helpers/mapMocks").createGestureHandlerMock());
  *   jest.mock("react-native-svg",             () => require("./helpers/mapMocks").createSvgMock());
  *   jest.mock("expo-asset",                   () => require("./helpers/mapMocks").createExpoAssetMock());
  *   jest.mock("@expo/vector-icons",           () => require("./helpers/mapMocks").createVectorIconsMock());
  *   jest.mock("@/hooks/useColors",            () => require("./helpers/mapMocks").createUseColorsMock());
  *   jest.mock("@/utils/floorPlanCache",       () => require("./helpers/mapMocks").createFloorPlanCacheMock());
  *   jest.mock("@/utils/mapViewport",          () => require("./helpers/mapMocks").createMapViewportMock());
+ *   jest.mock("react-native",                 () => require("./helpers/mapMocks").createReactNativeMock());
  */
+
+/**
+ * react-native — the canonical artifact-wide mock from __mocks__.
+ *
+ * Keeping this behind a factory lets suites that need an explicit jest.mock()
+ * call use the same maintained API surface as suites that rely on
+ * moduleNameMapper.  Do not recreate partial React Native objects inline.
+ */
+export function createReactNativeMock(): Record<string, unknown> {
+  return jest.requireActual(path.resolve(__dirname, "../../__mocks__/react-native.js")) as Record<string, unknown>;
+}
 
 /** react-native-reanimated — full version with Easing and both default and named exports. */
 export function createReanimatedMock(): object {
@@ -40,39 +53,6 @@ export function createReanimatedMock(): object {
     withRepeat:          passThrough,
     Easing: { bezier: () => 0, inOut: passThrough, ease: 0, linear: 0 },
     createAnimatedComponent,
-  };
-}
-
-/** react-native-gesture-handler — full chainable version (covers all gesture methods). */
-export function createGestureHandlerMock(): object {
-  const React = require("react");
-  function makeChainable() {
-    const obj: Record<string, (...args: unknown[]) => typeof obj> = {};
-    [
-      "onBegin", "onUpdate", "onEnd", "onFinalize",
-      "onTouchesDown", "onTouchesUp", "onTouchesCancelled", "onTouchesMoved",
-      "minDistance", "maxDistance", "minPointers", "maxPointers",
-      "averageTouches", "enableTrackpadTwoFingerGesture",
-      "simultaneousWithExternalGesture", "requireExternalGestureToFail",
-      "blocksExternalGesture", "withTestId", "enabled",
-      "shouldCancelWhenOutside", "hitSlop", "activeCursor",
-      "runOnJS", "manualActivation", "numberOfTaps", "maxDuration",
-      "maxDelay", "minNumberOfPointers",
-    ].forEach((m) => { obj[m] = () => obj; });
-    return obj;
-  }
-  return {
-    Gesture: {
-      Pan:          makeChainable,
-      Pinch:        makeChainable,
-      Tap:          makeChainable,
-      LongPress:    makeChainable,
-      Simultaneous: (..._args: unknown[]) => makeChainable(),
-      Exclusive:    (..._args: unknown[]) => makeChainable(),
-      Race:         (..._args: unknown[]) => makeChainable(),
-    },
-    GestureDetector: ({ children }: { children: React.ReactNode }) =>
-      React.createElement(React.Fragment, null, children),
   };
 }
 
@@ -144,7 +124,8 @@ export function createUseColorsMock(): object {
     };
   }>("@/constants/colors").default;
   return {
-    useColors: () => ({ ...colors.light, radius: colors.radius }),
+    useColors:  () => ({ ...colors.light, radius: colors.radius }),
+    useIsDark:  () => false,
   };
 }
 

@@ -37,7 +37,8 @@ const result = await render(<capturedProvider />);
 
 `act(() => { pressable.props.onPress() })` leaves async React work (effects, state updates) pending. The next test's `await render()` fires with unresolved async work, causing "overlapping act() calls" warnings and making the new render's root undefined or stale.
 
-**Fix:** Always use `await act(async () => { pressable.props.onPress() })` for any call that triggers state changes.
+**Fix:** Always await the handler promise inside async act:
+`await act(async () => { await pressable.props.onPress() })` for any call that triggers state changes.
 
 ## Fake timers + await render() inflate timer count
 

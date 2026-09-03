@@ -56,7 +56,7 @@ function formatRelativeTime(isoString: string): string {
   return `${days}d ago`;
 }
 
-type ScanPhase = "idle" | "looking" | "found" | "notfound" | "offline_miss";
+type ScanPhase = "idle" | "looking" | "found" | "notfound" | "offline_miss" | "error";
 
 // ── Main Barcode Screen ────────────────────────────────────────────────────────
 interface BarcodeScreenProps {
@@ -90,6 +90,10 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const pendingCodeRef = useRef<string | null>(null);
   const pendingCommitRef = useRef<(() => Promise<void>) | null>(null);
+  // Last successfully started lookup code — retained for retry after a lookup error
+  const lastLookupCodeRef = useRef<string | null>(null);
+  // Guard against concurrent handleAssign calls from rapid taps (F-034)
+  const isAssigningRef = useRef(false);
 
   const handleShowOnMap = useCallback((item: InventoryItem) => {
     const bins = item.binLocations ?? [];
@@ -186,36 +190,44 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
         if (code === scannedCode) return;
 
         setScannedCode(code);
+        lastLookupCodeRef.current = code;
         setScanPhase("looking");
         setScanError(null);
         setMatchedItem(null);
         setIsOfflineMatch(false);
 
-        const resolution = await resolveBarcodeCode(code);
-        if (resolution.phase === "found") {
-          setMatchedItem(resolution.item);
-          setScanPhase("found");
-          if (!resolution.isOffline) {
-            addEntry({
-              barcode: code,
-              found: true,
-              itemId: resolution.item.id,
-              catalog: resolution.item.catalog,
-              vendor: resolution.item.vendor,
-              timestamp: new Date().toISOString(),
-            });
+        try {
+          const resolution = await resolveBarcodeCode(code);
+          if (resolution.phase === "found") {
+            setMatchedItem(resolution.item);
+            setScanPhase("found");
+            if (!resolution.isOffline) {
+              addEntry({
+                barcode: code,
+                found: true,
+                itemId: resolution.item.id,
+                catalog: resolution.item.catalog,
+                vendor: resolution.item.vendor,
+                timestamp: new Date().toISOString(),
+              });
+            } else {
+              setIsOfflineMatch(true);
+              getFuseCacheSyncedAt().then(setFuseSyncedAt).catch(() => setFuseSyncedAt(null));
+            }
+          } else if (resolution.phase === "notfound") {
+            setScanPhase("notfound");
+            addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
+          } else if (resolution.phase === "offline_miss") {
+            setScanPhase("offline_miss");
           } else {
-            setIsOfflineMatch(true);
-            getFuseCacheSyncedAt().then(setFuseSyncedAt).catch(() => setFuseSyncedAt(null));
+            // API returned a non-404 error (F-024)
+            setScanError("Lookup failed — tap to retry");
+            setScanPhase("error");
           }
-        } else if (resolution.phase === "notfound") {
-          setScanPhase("notfound");
-          addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
-        } else if (resolution.phase === "offline_miss") {
-          setScanPhase("offline_miss");
-        } else {
-          setScanError(resolution.message);
-          setScanPhase("idle");
+        } catch {
+          // Unexpected exception (network crash, timeout, etc.) — unfreeze the UI (F-024)
+          setScanError("Lookup failed — tap to retry");
+          setScanPhase("error");
         }
       };
       pendingCommitRef.current = doCommit;
@@ -239,10 +251,19 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
     try {
       const item = await lookupByBarcode(encodeURIComponent(entry.barcode));
       setHistoryPreviewItem(item);
-    } catch {
-      // Item may have been deleted or is unreachable — nothing to show
+    } catch (err: unknown) {
+      // Distinguish "not found" (item deleted) from a network/server error (F-051)
+      const status =
+        err && typeof err === "object" && "status" in err
+          ? (err as { status: number }).status
+          : null;
+      if (status === 404) {
+        showToast("This item no longer exists in the catalog.", "error");
+      } else {
+        showToast("Could not load item — check your connection and try again.", "error");
+      }
     }
-  }, []);
+  }, [showToast]);
 
   const resetScan = () => {
     clearPendingScan();
@@ -252,12 +273,58 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
     setScanError(null);
     setIsOfflineMatch(false);
     setFuseSyncedAt(null);
+    lastLookupCodeRef.current = null;
   };
+
+  // Retry the last failed lookup without re-scanning (F-024)
+  const retryLookup = useCallback(async () => {
+    const code = lastLookupCodeRef.current;
+    if (!code) return;
+    setScannedCode(code);
+    setScanPhase("looking");
+    setScanError(null);
+    setMatchedItem(null);
+    setIsOfflineMatch(false);
+    try {
+      const resolution = await resolveBarcodeCode(code);
+      if (resolution.phase === "found") {
+        setMatchedItem(resolution.item);
+        setScanPhase("found");
+        if (!resolution.isOffline) {
+          addEntry({
+            barcode: code,
+            found: true,
+            itemId: resolution.item.id,
+            catalog: resolution.item.catalog,
+            vendor: resolution.item.vendor,
+            timestamp: new Date().toISOString(),
+          });
+        } else {
+          setIsOfflineMatch(true);
+          getFuseCacheSyncedAt().then(setFuseSyncedAt).catch(() => setFuseSyncedAt(null));
+        }
+      } else if (resolution.phase === "notfound") {
+        setScanPhase("notfound");
+        addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
+      } else if (resolution.phase === "offline_miss") {
+        setScanPhase("offline_miss");
+      } else {
+        setScanError("Lookup failed — tap to retry");
+        setScanPhase("error");
+      }
+    } catch {
+      setScanError("Lookup failed — tap to retry");
+      setScanPhase("error");
+    }
+  }, [addEntry]);
 
   // ── Assign barcode to unrecognised scan ──────────────────────────────────────
   const handleAssign = useCallback(
     async (item: InventoryItem) => {
+      // Guard against rapid double-taps causing concurrent assignments (F-034)
+      if (isAssigningRef.current) return;
       if (!scannedCode) return;
+      isAssigningRef.current = true;
       setShowAssignPicker(false);
       try {
         const existing = item.barcodes ?? [];
@@ -274,6 +341,8 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
         setMatchedItem((prev) => prev ?? item);
       } catch {
         setScanError("Could not assign barcode. Please try again.");
+      } finally {
+        isAssigningRef.current = false;
       }
     },
     [scannedCode, updateBarcodesMutation, queryClient],
@@ -305,18 +374,21 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
           >
             <Text style={[styles.permBtnText, { color: colors.primaryForeground }]}>Allow Camera Access</Text>
           </Pressable>
-          <Pressable
-            onPress={() => setCameraBypass(true)}
-            style={[styles.permBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: colors.border, marginTop: 8 }]}
-          >
-            <Text style={[styles.permBtnText, { color: colors.mutedForeground }]}>Skip camera (dev only)</Text>
-          </Pressable>
+          {__DEV__ ? (
+            <Pressable
+              onPress={() => setCameraBypass(true)}
+              style={[styles.permBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: colors.border, marginTop: 8 }]}
+            >
+              <Text style={[styles.permBtnText, { color: colors.mutedForeground }]}>Skip camera (dev only)</Text>
+            </Pressable>
+          ) : null}
         </View>
       </SafeAreaView>
     );
   }
 
-  const isCameraActive = !showAssignPicker;
+  // Camera is paused while the assign picker is open or while a lookup is in flight
+  const isCameraActive = !showAssignPicker && scanPhase !== "looking";
   const canCapture = scanPhase === "idle" && !!pendingCode;
 
   return (
@@ -365,6 +437,10 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
                 <ActivityIndicator color="#fff" size="small" />
                 <Text style={styles.scanStatusText}>Looking up…</Text>
               </View>
+            ) : scanPhase === "error" ? (
+              <View style={[styles.scanStatus, { backgroundColor: colors.destructive + "cc" }]}>
+                <Text style={styles.scanStatusText}>Lookup failed</Text>
+              </View>
             ) : canCapture ? (
               <View style={[styles.scanStatus, { backgroundColor: colors.success + "cc" }]}>
                 <Text style={styles.scanStatusText}>Barcode detected — tap Scan</Text>
@@ -377,25 +453,36 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
           </View>
 
         {/* ── Scan button ────────────────────────────────────────────────────── */}
-        {scanPhase === "idle" ? (
+        {scanPhase === "idle" || scanPhase === "error" ? (
           <View style={styles.scanBtnRow}>
-            <Pressable
-              onPress={captureNow}
-              disabled={!canCapture}
-              style={[
-                styles.scanBtn,
-                { backgroundColor: canCapture ? colors.primary : colors.muted, borderColor: canCapture ? colors.primary : colors.border },
-              ]}
-            >
-              <Text style={[styles.scanBtnText, { color: canCapture ? colors.primaryForeground : colors.mutedForeground }]}>
-                {canCapture ? "⬤  Scan" : "Scan"}
-              </Text>
-            </Pressable>
-            {canCapture ? (
-              <Text style={[styles.scanBtnHint, { color: colors.mutedForeground }]}>
-                {pendingCode}
-              </Text>
-            ) : null}
+            {scanPhase === "error" ? (
+              <Pressable
+                onPress={resetScan}
+                style={[styles.scanBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+              >
+                <Text style={[styles.scanBtnText, { color: colors.mutedForeground }]}>↩ Scan Again</Text>
+              </Pressable>
+            ) : (
+              <>
+                <Pressable
+                  onPress={captureNow}
+                  disabled={!canCapture}
+                  style={[
+                    styles.scanBtn,
+                    { backgroundColor: canCapture ? colors.primary : colors.muted, borderColor: canCapture ? colors.primary : colors.border },
+                  ]}
+                >
+                  <Text style={[styles.scanBtnText, { color: canCapture ? colors.primaryForeground : colors.mutedForeground }]}>
+                    {canCapture ? "⬤  Scan" : "Scan"}
+                  </Text>
+                </Pressable>
+                {canCapture ? (
+                  <Text style={[styles.scanBtnHint, { color: colors.mutedForeground }]}>
+                    {pendingCode}
+                  </Text>
+                ) : null}
+              </>
+            )}
           </View>
         ) : null}
 
@@ -547,14 +634,27 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
           </View>
         ) : null}
 
-        {/* ── Error banner ───────────────────────────────────────────────────── */}
+        {/* ── Error banner — shown when a lookup error occurs (F-024) ───────── */}
         {scanError ? (
-          <View style={[styles.errorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "44" }]}>
-            <Text style={[styles.errorText, { color: colors.destructive }]}>⚠ {scanError}</Text>
-            <Pressable onPress={() => setScanError(null)}>
+          <Pressable
+            onPress={() => { void retryLookup(); }}
+            style={[styles.errorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "44" }]}
+          >
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={[styles.errorText, { color: colors.destructive }]}>⚠ {scanError}</Text>
+              {lastLookupCodeRef.current ? (
+                <Text style={[styles.errorRetryHint, { color: colors.destructive }]}>
+                  Tap to retry · {lastLookupCodeRef.current}
+                </Text>
+              ) : null}
+            </View>
+            <Pressable
+              onPress={(e) => { e.stopPropagation(); resetScan(); }}
+              hitSlop={8}
+            >
               <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
             </Pressable>
-          </View>
+          </Pressable>
         ) : null}
 
         {/* ── Offline + no cache hit ─────────────────────────────────────────── */}
@@ -800,8 +900,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 8,
   },
-  errorText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1 },
+  errorText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  errorRetryHint: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
   scannedCode: { fontSize: 12, fontFamily: "Inter_400Regular", marginBottom: 8 },
   rescanBtn: {
     paddingHorizontal: 10,

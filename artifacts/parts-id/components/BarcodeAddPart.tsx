@@ -38,12 +38,13 @@ interface AssignmentEntry {
   item: InventoryItem;
 }
 
-type BulkQueueStatus = "pending" | "assigned" | "skipped";
+type BulkQueueStatus = "pending" | "assigned" | "skipped" | "error";
 
 interface BulkQueueEntry {
   barcode: string;
   status: BulkQueueStatus;
   skippedAt?: number;
+  errorMsg?: string;
 }
 
 type ShelfSession = {
@@ -55,9 +56,52 @@ type ShelfSession = {
 
 const SHELF_SESSION_KEY = "parts_id_shelf_session_v1";
 
-// ── Shelf prefix auto-formatter ────────────────────────────────────────────
-// For all-numeric input, formats as XX-XX-XXX (up to 7 digits).
-// Non-numeric (or mixed) input is passed through unchanged.
+/** Key owned by BulkShelfAssign — used only to detect an in-progress cross-flow session. */
+const BULK_SHELF_ASSIGN_SESSION_KEY = "parts_id_bulk_shelf_session_v1";
+
+// ── BulkShelfAssign cross-flow session validators ──────────────────────────
+// Full nested validation mirrors BulkShelfAssign's own BulkSession shape so
+// malformed or stale blobs — including those with corrupt nested entries —
+// never produce a false cross-flow warning.
+
+const BULK_ROW_SYNC_STATUSES: ReadonlySet<string> = new Set(["pending", "synced", "error"]);
+
+function isValidCrossFlowInventoryItem(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
+  const e = entry as Record<string, unknown>;
+  return typeof e.id === "number" && typeof e.catalog === "string" && typeof e.vendor === "string";
+}
+
+function isValidCrossFlowItemRowState(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    (e.assignedBarcode === null || typeof e.assignedBarcode === "string") &&
+    (e.syncStatus === null || (typeof e.syncStatus === "string" && BULK_ROW_SYNC_STATUSES.has(e.syncStatus))) &&
+    (e.conflictBarcode === null || typeof e.conflictBarcode === "string") &&
+    (e.conflictOwner === null || typeof e.conflictOwner === "string") &&
+    typeof e.flash === "boolean"
+  );
+}
+
+/**
+ * Full shape validation for a BulkShelfAssign session blob.
+ * Validates outer structure, every shelfItems inventory entry, and every
+ * itemRowStates row-state value so malformed nested data is rejected.
+ */
+function isActiveBulkShelfAssignSession(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (
+    typeof v.shelfPrefix !== "string" || v.shelfPrefix.length === 0 ||
+    !Array.isArray(v.shelfItems) ||
+    typeof v.itemRowStates !== "object" || v.itemRowStates === null || Array.isArray(v.itemRowStates) ||
+    (v.targetItemId !== null && typeof v.targetItemId !== "number")
+  ) return false;
+  if (!(v.shelfItems as Array<unknown>).every(isValidCrossFlowInventoryItem)) return false;
+  if (!Object.values(v.itemRowStates as Record<string, unknown>).every(isValidCrossFlowItemRowState)) return false;
+  return true;
+}
 function formatShelfPrefix(raw: string): string {
   const stripped = raw.replace(/-/g, "");
   if (!/^\d*$/.test(stripped)) return raw;
@@ -94,7 +138,9 @@ async function playChime(): Promise<void> {
 }
 
 // ── Session persistence ────────────────────────────────────────────────────
-const BULK_QUEUE_STATUSES: ReadonlySet<string> = new Set(["pending", "assigned", "skipped"]);
+// Writes go through a serial promise-chain queue so a clear can never be
+// overtaken by an in-flight save that was enqueued before it.
+const BULK_QUEUE_STATUSES: ReadonlySet<string> = new Set(["pending", "assigned", "skipped", "error"]);
 
 function isValidAssignmentEntry(entry: unknown): entry is AssignmentEntry {
   if (typeof entry !== 'object' || entry === null) return false;
@@ -112,7 +158,8 @@ function isValidBulkQueueEntry(entry: unknown): entry is BulkQueueEntry {
   return (
     typeof e.barcode === 'string' &&
     typeof e.status === 'string' && BULK_QUEUE_STATUSES.has(e.status) &&
-    (e.skippedAt === undefined || (typeof e.skippedAt === 'number' && Number.isFinite(e.skippedAt)))
+    (e.skippedAt === undefined || (typeof e.skippedAt === 'number' && Number.isFinite(e.skippedAt))) &&
+    (e.errorMsg === undefined || typeof e.errorMsg === 'string')
   );
 }
 
@@ -127,28 +174,6 @@ function isValidShelfSession(value: unknown): value is ShelfSession {
   );
 }
 
-async function saveShelfSession(session: ShelfSession): Promise<void> {
-  try {
-    await AsyncStorage.setItem(SHELF_SESSION_KEY, JSON.stringify(session));
-  } catch { /* non-fatal */ }
-}
-
-async function loadShelfSession(): Promise<ShelfSession | null> {
-  try {
-    const raw = await AsyncStorage.getItem(SHELF_SESSION_KEY);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    return isValidShelfSession(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-async function clearShelfSession(): Promise<void> {
-  try {
-    await AsyncStorage.removeItem(SHELF_SESSION_KEY);
-  } catch { /* non-fatal */ }
-}
 
 interface BarcodeAddPartProps {
   scrollY?: number;
@@ -222,6 +247,10 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   // Session resume banner
   const [resumeSession, setResumeSession] = useState<ShelfSession | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
+  /** True when BulkShelfAssign has an active session that would be silently orphaned. */
+  const [otherFlowActive, setOtherFlowActive] = useState(false);
+  /** True once the admin has dismissed the cross-flow warning for this mount. */
+  const [crossFlowDismissed, setCrossFlowDismissed] = useState(false);
 
   const updateBarcodesMutation = useUpdateItemBarcodes();
   const { data: inventoryPage } = useListInventory({ limit: 500 });
@@ -233,6 +262,10 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   // callback on every inventory poll).
   const allItemsRef = useRef<typeof allItems>(allItems);
   useEffect(() => { allItemsRef.current = allItems; }, [allItems]);
+
+  // Serial write queue — ensures a clear can never be overtaken by an
+  // in-flight save that was enqueued before it (F-036).
+  const sessionWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const allBinLocations = React.useMemo(() => {
     const set = new Set<string>();
@@ -262,24 +295,77 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     loadChime(); // synchronous; errors handled internally
   }, []);
 
-  // Check for a saved session on mount
+  // Check for a saved session on mount; also cross-check for an active BulkShelfAssign session.
   useEffect(() => {
     let cancelled = false;
-    loadShelfSession().then(session => {
-      if (cancelled) return;
-      if (session && session.shelfPrefix) {
-        setResumeSession(session);
-      }
-      setSessionChecked(true);
-    });
-    return () => { cancelled = true; };
-  }, []);
+    void (async () => {
+      try {
+        const [rawSession, otherRaw] = await Promise.all([
+          AsyncStorage.getItem(SHELF_SESSION_KEY).catch(() => null),
+          AsyncStorage.getItem(BULK_SHELF_ASSIGN_SESSION_KEY).catch(() => null),
+        ]);
+        if (cancelled) return;
 
-  // Persist session whenever it changes
+        // Detect when a session blob exists but is invalid/corrupt (F-050)
+        if (rawSession) {
+          let session: ShelfSession | null = null;
+          try {
+            const parsed: unknown = JSON.parse(rawSession);
+            session = isValidShelfSession(parsed) ? parsed : null;
+          } catch {
+            session = null;
+          }
+          if (session?.shelfPrefix) {
+            setResumeSession(session);
+          } else if (session === null) {
+            // Raw data existed but could not be parsed — surface to user (F-050)
+            showToast("Previous session could not be restored.", "error");
+          }
+        }
+
+        // Show cross-flow warning when the other flow has a valid, non-empty session.
+        try {
+          const other = otherRaw ? (JSON.parse(otherRaw) as unknown) : null;
+          setOtherFlowActive(isActiveBulkShelfAssignSession(other));
+        } catch {
+          setOtherFlowActive(false);
+        }
+      } catch {
+        // ignore unexpected errors — session state defaults to empty
+      } finally {
+        if (!cancelled) setSessionChecked(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showToast]);
+
+  // Enqueue a session write through the serial queue so saves cannot
+  // overtake a clear that was issued after them (F-036).
+  const enqueueSessionWrite = useCallback((action: () => Promise<void>) => {
+    sessionWriteQueueRef.current = sessionWriteQueueRef.current
+      .then(action)
+      .catch(() => {
+        showToast("Could not save session — progress may be lost if you restart the app.", "error");
+      });
+  }, [showToast]);
+
+  // Enqueue a session clear through the same queue.
+  // Clear failures surface a toast so the user knows stale session data may
+  // reappear on the next launch (F-036).
+  const enqueueSessionClear = useCallback(() => {
+    sessionWriteQueueRef.current = sessionWriteQueueRef.current
+      .then(() => AsyncStorage.removeItem(SHELF_SESSION_KEY))
+      .catch(() => {
+        showToast("Could not clear session — stale session data may reappear on the next launch.", "error");
+      });
+  }, [showToast]);
+
+  // Persist session whenever it changes — queued so clears always win (F-036).
   useEffect(() => {
     if (!shelfMode) return;
-    saveShelfSession({ shelfPrefix, assignments, bulkQueue, bulkMode });
-  }, [shelfMode, shelfPrefix, assignments, bulkQueue, bulkMode]);
+    const snapshot = { shelfPrefix, assignments, bulkQueue, bulkMode };
+    enqueueSessionWrite(() => AsyncStorage.setItem(SHELF_SESSION_KEY, JSON.stringify(snapshot)));
+  }, [shelfMode, shelfPrefix, assignments, bulkQueue, bulkMode, enqueueSessionWrite]);
 
   const clearPendingScan = useCallback(() => {
     pendingCommitRef.current = null;
@@ -488,12 +574,30 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
         setBulkQueue(prev =>
           prev.map(e => e.barcode === code ? { ...e, status: "assigned" as BulkQueueStatus } : e)
         );
-      } catch {
-        setScanError("Could not assign barcode. Please try again.");
-        setShelfScannedCode(null);
+      } catch (err) {
+        const errorMsg =
+          err instanceof Error ? err.message : "Could not assign barcode. Please try again.";
+        if (bulkMode && code) {
+          // Bulk mode: mark the queue item as failed so it shows an inline Retry row
+          setBulkQueue(prev =>
+            prev.some(e => e.barcode === code)
+              ? prev.map(e =>
+                  e.barcode === code
+                    ? { ...e, status: "error" as BulkQueueStatus, errorMsg }
+                    : e,
+                )
+              : [...prev, { barcode: code, status: "error" as BulkQueueStatus, errorMsg }],
+          );
+          showToast("Assignment failed — tap Retry on the item to try again.", "error");
+        } else {
+          // Non-bulk: surface the error inline and retain shelfScannedCode so the
+          // admin can tap "Retry assignment" without re-scanning.
+          setScanError("Could not assign barcode. Please try again.");
+          // Do NOT clear shelfScannedCode — it is used by the Retry button below.
+        }
       }
     },
-    [shelfScannedCode, updateBarcodesMutation, queryClient, triggerScanFeedback, settings.scanSound],
+    [bulkMode, shelfScannedCode, updateBarcodesMutation, queryClient, triggerScanFeedback, settings.scanSound, showToast],
   );
 
   const handleUndoAssignment = useCallback(
@@ -567,7 +671,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     setLastAssigned(null);
     setResumeSession(null);
     clearPendingScan();
-    clearShelfSession();
+    enqueueSessionClear();
   };
 
   const exitShelfMode = () => {
@@ -580,7 +684,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     setBulkQueue([]);
     setBulkMode(false);
     clearPendingScan();
-    clearShelfSession();
+    enqueueSessionClear();
   };
 
   const isCameraActive = !assignPicker && !shelfAssignPicker && !pendingPhotoItem;
@@ -606,18 +710,42 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
         >
           <Text style={[apStyles.permBtnText, { color: colors.primaryForeground }]}>Enable Camera</Text>
         </Pressable>
-        <Pressable
-          onPress={() => setCameraBypass(true)}
-          style={[apStyles.permBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: colors.border, marginTop: 4 }]}
-        >
-          <Text style={[apStyles.permBtnText, { color: colors.mutedForeground }]}>Skip camera (dev only)</Text>
-        </Pressable>
+        {__DEV__ ? (
+          <Pressable
+            onPress={() => setCameraBypass(true)}
+            style={[apStyles.permBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: colors.border, marginTop: 4 }]}
+          >
+            <Text style={[apStyles.permBtnText, { color: colors.mutedForeground }]}>Skip camera (dev only)</Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   }
 
   return (
     <View>
+      {/* Cross-flow warning banner */}
+      {sessionChecked && otherFlowActive && !crossFlowDismissed ? (
+        <View style={[apStyles.resumeBanner, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "44" }]}>
+          <View style={apStyles.resumeBannerRow}>
+            <Text style={[apStyles.resumeTitle, { color: colors.foreground, flex: 1 }]}>
+              ℹ️ In-progress session in another flow
+            </Text>
+            <Pressable
+              onPress={() => setCrossFlowDismissed(true)}
+              hitSlop={8}
+              accessibilityLabel="Dismiss cross-flow session warning"
+              style={apStyles.crossFlowDismissBtn}
+            >
+              <Text style={[apStyles.crossFlowDismissBtnText, { color: colors.mutedForeground }]}>✕</Text>
+            </Pressable>
+          </View>
+          <Text style={[apStyles.resumeSub, { color: colors.mutedForeground }]}>
+            You have an in-progress shelf session in Bulk Assign by Shelf — open it to continue.
+          </Text>
+        </View>
+      ) : null}
+
       {/* Resume session banner */}
       {sessionChecked && resumeSession && !shelfMode ? (
         <View style={[apStyles.resumeBanner, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "44" }]}>
@@ -635,7 +763,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
               <Text style={[apStyles.resumeBtnText, { color: colors.primaryForeground }]}>Resume session</Text>
             </Pressable>
             <Pressable
-              onPress={() => { setResumeSession(null); clearShelfSession(); }}
+              onPress={() => { setResumeSession(null); enqueueSessionClear(); }}
               style={[apStyles.resumeBtn, { backgroundColor: colors.muted, borderWidth: 1, borderColor: colors.border }]}
             >
               <Text style={[apStyles.resumeBtnText, { color: colors.foreground }]}>Start fresh</Text>
@@ -884,14 +1012,23 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
           {bulkQueue.filter(e => e.status !== "skipped").map((entry) => {
             const isPending = entry.status === "pending";
             const isAssigned = entry.status === "assigned";
-            const statusColor = isAssigned ? colors.success : colors.primary;
-            const statusLabel = isAssigned ? "Assigned" : "Pending";
+            const isError = entry.status === "error";
+            const statusColor = isAssigned
+              ? colors.success
+              : isError
+                ? colors.destructive
+                : colors.primary;
+            const statusLabel = isAssigned ? "Assigned" : isError ? "Failed" : "Pending";
             return (
               <View
                 key={entry.barcode}
                 style={[apStyles.logRow, {
-                  backgroundColor: colors.card,
-                  borderColor: isAssigned ? colors.success + "44" : colors.border,
+                  backgroundColor: isError ? colors.destructive + "0d" : colors.card,
+                  borderColor: isAssigned
+                    ? colors.success + "44"
+                    : isError
+                      ? colors.destructive + "55"
+                      : colors.border,
                 }]}
               >
                 <View style={{ flex: 1 }}>
@@ -918,6 +1055,16 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
                       <Text style={[apStyles.undoBtnText, { color: colors.mutedForeground }]}>Skip</Text>
                     </Pressable>
                   </>
+                ) : isError ? (
+                  <Pressable
+                    onPress={() => {
+                      setShelfScannedCode(entry.barcode);
+                      setShelfAssignPicker(true);
+                    }}
+                    style={[apStyles.undoBtn, { backgroundColor: colors.destructive + "18", borderColor: colors.destructive + "44" }]}
+                  >
+                    <Text style={[apStyles.undoBtnText, { color: colors.destructive }]}>Retry</Text>
+                  </Pressable>
                 ) : (
                   <View style={[apStyles.logBadge, { backgroundColor: colors.success + "22" }]}>
                     <Text style={[apStyles.logBadgeText, { color: colors.success, fontSize: 11 }]}>✓</Text>
@@ -944,8 +1091,27 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
                 </Text>
               </Pressable>
             ) : null}
+            {/* Non-bulk shelf failure: offer a Retry button since the barcode was retained */}
+            {shelfMode && shelfScannedCode && !conflictItem ? (
+              <Pressable
+                onPress={() => { setScanError(null); setShelfAssignPicker(true); }}
+                style={[apStyles.conflictViewBtn, { borderColor: colors.destructive + "55" }]}
+              >
+                <Text style={[apStyles.conflictViewBtnText, { color: colors.destructive }]}>
+                  Retry assignment →
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
-          <Pressable onPress={() => { setScanError(null); setConflictItem(null); }} hitSlop={8}>
+          <Pressable
+            onPress={() => {
+              setScanError(null);
+              setConflictItem(null);
+              // Also clear the retained shelf code on manual dismiss
+              if (shelfMode && !conflictItem) setShelfScannedCode(null);
+            }}
+            hitSlop={8}
+          >
             <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
           </Pressable>
         </View>
@@ -1146,6 +1312,9 @@ const apStyles = StyleSheet.create({
     padding: 14,
     gap: 4,
   },
+  resumeBannerRow: { flexDirection: "row", alignItems: "flex-start" },
+  crossFlowDismissBtn: { marginLeft: 8, padding: 2 },
+  crossFlowDismissBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   resumeTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   resumeSub: { fontSize: 12, fontFamily: "Inter_400Regular" },
   resumeBtns: { flexDirection: "row", gap: 8, marginTop: 10 },

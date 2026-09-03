@@ -22,46 +22,9 @@ import { render, act } from "@testing-library/react-native";
 import type { RenderResult } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 
-jest.mock("react-native", () => {
-  const React = require("react");
-  const noop = () => {};
-  const Animated = {
-    Value: class AnimatedValue {
-      _value: number;
-      constructor(v: number) { this._value = v; }
-      setValue(v: number) { this._value = v; }
-      interpolate() { return this; }
-    },
-    View: ({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) =>
-      React.createElement("rn-animated-view", props, children),
-    loop: () => ({ start: noop, stop: noop, reset: noop }),
-    timing: () => ({ start: noop, stop: noop, reset: noop }),
-  };
-  const Easing = { linear: noop, ease: noop, in: () => noop, out: () => noop };
-  return {
-    Platform:     { OS: "ios", select: (o: Record<string, unknown>) => o.ios ?? o.default },
-    StyleSheet:   { create: (s: unknown) => s, flatten: (s: unknown) => s },
-    View:         ({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) =>
-                    React.createElement("rn-view", props, children),
-    Text:         ({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) =>
-                    React.createElement("Text", props, children),
-    Pressable:    ({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) =>
-                    React.createElement("rn-pressable", props, children),
-    Image:        (props: Record<string, unknown>) =>
-                    React.createElement("rn-image", props),
-    Modal:        ({ children, visible }: { children?: React.ReactNode; visible?: boolean }) =>
-                    visible ? React.createElement("rn-modal", {}, children) : null,
-    StatusBar:    () => null,
-    ActivityIndicator: () => null,
-    PixelRatio:   { get: () => 3 },
-    useColorScheme: () => "light",
-    AppState:     { currentState: "active", addEventListener: jest.fn(() => ({ remove: jest.fn() })) },
-    Animated,
-    Easing,
-    LayoutAnimation: { configureNext: noop, Presets: { easeInEaseOut: {}, linear: {}, spring: {} } },
-    UIManager: { setLayoutAnimationEnabledExperimental: noop },
-  };
-});
+// Use the canonical artifact-wide mock so native APIs cannot drift between
+// description suites.
+jest.mock("react-native", () => require("./helpers/mapMocks").createReactNativeMock());
 
 jest.mock("@expo/vector-icons", () => ({
   Feather: () => null,

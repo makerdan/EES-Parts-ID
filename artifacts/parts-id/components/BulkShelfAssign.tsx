@@ -33,6 +33,28 @@ import { upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 
 const BULK_SESSION_KEY = "parts_id_bulk_shelf_session_v1";
+
+/** Key owned by BarcodeAddPart — used only to detect an in-progress cross-flow session. */
+const BARCODE_ADD_PART_SESSION_KEY = "parts_id_shelf_session_v1";
+
+/**
+ * Full shape validation for a BarcodeAddPart session blob.
+ * Mirrors BarcodeAddPart's isValidShelfSession, isValidAssignmentEntry, and
+ * isValidBulkQueueEntry exactly so malformed or stale blobs — including those
+ * with valid outer arrays but corrupt nested entries — never trigger the
+ * cross-flow warning.
+ */
+const BARCODE_BULK_QUEUE_STATUSES: ReadonlySet<string> = new Set(["pending", "assigned", "skipped"]);
+function isActiveBarcodeAddPartSession(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.shelfPrefix === "string" && v.shelfPrefix.length > 0 &&
+    Array.isArray(v.assignments) && (v.assignments as Array<unknown>).every(isValidBarcodeAssignmentEntry) &&
+    Array.isArray(v.bulkQueue) && (v.bulkQueue as Array<unknown>).every(isValidBarcodeBulkQueueEntry) &&
+    typeof v.bulkMode === "boolean"
+  );
+}
 /**
  * Minimum milliseconds between auto-assign attempts. Prevents the same
  * barcode frame from triggering multiple assignments while the camera
@@ -57,13 +79,22 @@ function formatShelfPrefix(raw: string): string {
  */
 const FETCH_ALL_MAX_PAGES = 500;
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 /** Fetch every page of inventory until all items are collected.
  *  Pass binPrefix to restrict to a shelf; omit it for the full catalog. */
-async function fetchAllInventory(binPrefix?: string): Promise<Array<InventoryItem>> {
+async function fetchAllInventory(binPrefix?: string, signal?: AbortSignal): Promise<Array<InventoryItem>> {
   const pageSize = 500;
   let page = 1;
   const all: Array<InventoryItem> = [];
   while (true) {
+    if (signal?.aborted) {
+      const error = new Error("The inventory request was aborted");
+      error.name = "AbortError";
+      throw error;
+    }
     if (page > FETCH_ALL_MAX_PAGES) {
       // eslint-disable-next-line no-console
       console.error(
@@ -79,7 +110,7 @@ async function fetchAllInventory(binPrefix?: string): Promise<Array<InventoryIte
       page,
       limit: pageSize,
       ...(binPrefix !== undefined ? { binPrefix } : {}),
-    });
+    }, signal ? { signal } : {});
     all.push(...(result.items ?? []));
     if (all.length >= (result.total ?? 0)) break;
     page++;
@@ -114,39 +145,88 @@ async function saveBulkSession(session: BulkSession): Promise<void> {
     await AsyncStorage.setItem(BULK_SESSION_KEY, JSON.stringify(session));
   } catch (err) {
     reportStorageError("Could not save bulk shelf session", err);
+    throw err;
   }
+}
+
+// ── Session shape validators ───────────────────────────────────────────────
+// Full nested validation is used for both loading (isValidBulkSession) and
+// cross-flow detection (isActiveBarcodeAddPartSession) so both code paths
+// share the same protection against malformed or stale persisted blobs.
+
+const ROW_SYNC_STATUSES: ReadonlySet<string> = new Set(["pending", "synced", "error"]);
+
+function isValidInventoryItem(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    typeof e.id === "number" &&
+    Number.isFinite(e.id) &&
+    typeof e.catalog === "string" &&
+    typeof e.vendor === "string"
+  );
+}
+
+function isValidItemRowState(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    (e.assignedBarcode === null || typeof e.assignedBarcode === "string") &&
+    (e.syncStatus === null || (typeof e.syncStatus === "string" && ROW_SYNC_STATUSES.has(e.syncStatus))) &&
+    (e.conflictBarcode === null || typeof e.conflictBarcode === "string") &&
+    (e.conflictOwner === null || typeof e.conflictOwner === "string") &&
+    typeof e.flash === "boolean"
+  );
 }
 
 /**
  * Validate a parsed bulk-session blob before trusting it. AsyncStorage data
  * survives app upgrades, so a stale shape must be rejected (returns null and
  * the stored session is cleared by the caller path via startFresh/clear).
+ * Full nested validation protects against partially-migrated or corrupt blobs.
  */
 function isValidBulkSession(value: unknown): value is BulkSession {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
-  return (
-    typeof v.shelfPrefix === "string" &&
-    Array.isArray(v.shelfItems) &&
-    typeof v.itemRowStates === "object" && v.itemRowStates !== null && !Array.isArray(v.itemRowStates) &&
-    (v.targetItemId === null || typeof v.targetItemId === "number")
-  );
+  if (
+    typeof v.shelfPrefix !== "string" || v.shelfPrefix.trim().length === 0 ||
+    !Array.isArray(v.shelfItems) ||
+    typeof v.itemRowStates !== "object" || v.itemRowStates === null || Array.isArray(v.itemRowStates) ||
+    (v.targetItemId !== null && (typeof v.targetItemId !== "number" || !Number.isFinite(v.targetItemId)))
+  ) return false;
+  if (!(v.shelfItems as Array<unknown>).every(isValidInventoryItem)) return false;
+  const shelfItemIds = new Set((v.shelfItems as Array<InventoryItem>).map(item => item.id));
+  const itemRowStates = v.itemRowStates as Record<string, unknown>;
+  if (!Object.entries(itemRowStates).every(([id, state]) =>
+    shelfItemIds.has(Number(id)) && isValidItemRowState(state)
+  )) return false;
+  if (v.targetItemId !== null && !shelfItemIds.has(v.targetItemId as number)) return false;
+  return true;
 }
 
 async function loadBulkSession(): Promise<BulkSession | null> {
+  let raw: string | null;
   try {
-    const raw = await AsyncStorage.getItem(BULK_SESSION_KEY);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (!isValidBulkSession(parsed)) {
-      // Stale/corrupt persisted shape — discard it so it is not offered again.
-      await AsyncStorage.removeItem(BULK_SESSION_KEY).catch(() => {});
-      return null;
-    }
-    return parsed;
+    raw = await AsyncStorage.getItem(BULK_SESSION_KEY);
   } catch {
     return null;
   }
+  if (!raw) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Invalid JSON cannot be resumed and must not be offered again.
+    await clearBulkSession();
+    return null;
+  }
+  if (!isValidBulkSession(parsed)) {
+    // Stale/corrupt persisted shape — discard it so it is not offered again.
+    await clearBulkSession();
+    return null;
+  }
+  return parsed;
 }
 
 async function clearBulkSession(): Promise<void> {
@@ -203,9 +283,78 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
 
   const [resumeSession, setResumeSession] = useState<BulkSession | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
+  /** True when BarcodeAddPart has an active session that would be silently orphaned. */
+  const [otherFlowActive, setOtherFlowActive] = useState(false);
+  /** True once the admin has dismissed the cross-flow warning for this mount. */
+  const [crossFlowDismissed, setCrossFlowDismissed] = useState(false);
 
   const doneAnimScale = useRef(new Animated.Value(0)).current;
   const doneAnimOpacity = useRef(new Animated.Value(0)).current;
+  const mountedRef = useRef(true);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const sessionGenerationRef = useRef(0);
+  const inventoryRequestRef = useRef<{ id: number; controller: AbortController } | null>(null);
+  const loadingRequestIdRef = useRef<number | null>(null);
+  const flashTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const doneAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  const isSessionCurrent = useCallback((generation: number) =>
+    mountedRef.current && visibleRef.current && sessionGenerationRef.current === generation,
+  []);
+
+  const beginInventoryRequest = useCallback(() => {
+    inventoryRequestRef.current?.controller.abort();
+    const request = {
+      id: (inventoryRequestRef.current?.id ?? 0) + 1,
+      controller: new AbortController(),
+    };
+    inventoryRequestRef.current = request;
+    return request;
+  }, []);
+
+  const refreshAllItems = useCallback((generation: number) => {
+    const request = beginInventoryRequest();
+    void fetchAllInventory(undefined, request.controller.signal)
+      .then((all) => {
+        if (isSessionCurrent(generation) && inventoryRequestRef.current?.id === request.id) {
+          allItemsRef.current = all;
+        }
+      })
+      .catch(() => {});
+  }, [beginInventoryRequest, isSessionCurrent]);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    visibleRef.current = false;
+    sessionGenerationRef.current++;
+    inventoryRequestRef.current?.controller.abort();
+    for (const timer of flashTimersRef.current.values()) clearTimeout(timer);
+    flashTimersRef.current.clear();
+    doneAnimationRef.current?.stop();
+    doneAnimationRef.current = null;
+  }, []);
+
+  /**
+   * F-022: Toast deduplication. Tracks the last toast message + timestamp so
+   * rapid consecutive identical toasts (within 2 s) are suppressed.
+   */
+  const lastToastRef = useRef<{ message: string; ts: number } | null>(null);
+  const showToastDeduped = useCallback(
+    (message: string, kind: Parameters<typeof showToast>[1]) => {
+      const now = Date.now();
+      if (
+        lastToastRef.current &&
+        lastToastRef.current.message === message &&
+        now - lastToastRef.current.ts < 2000
+      ) {
+        return;
+      }
+      lastToastRef.current = { message, ts: now };
+      showToast(message, kind);
+    },
+    [showToast],
+  );
 
   // Used only for the shelf prefix autocomplete chips (lower limit is fine here)
   const { data: suggestPage } = useListInventory({ limit: 500 });
@@ -258,6 +407,33 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
     });
   }, [shelfItems, itemRowStates, filterUnassigned]);
 
+  /**
+   * F-011: True when every item that required syncing has an error state and
+   * none have succeeded. Items with pre-existing barcodes are excluded because
+   * they were never attempted. Requires at least one failed item.
+   */
+  const allFailed = useMemo(() => {
+    if (shelfItems.length === 0) return false;
+    const needsSync = shelfItems.filter(
+      item => !(Array.isArray(item.barcodes) && item.barcodes.length > 0),
+    );
+    if (needsSync.length === 0) return false;
+    return needsSync.every(item => itemRowStates[item.id]?.syncStatus === "error");
+  }, [shelfItems, itemRowStates]);
+
+  /** F-011: Reset all error rows back to unassigned so the user can re-scan. */
+  const handleRetryAll = useCallback(() => {
+    setItemRowStates(prev => {
+      const next = { ...prev };
+      for (const item of shelfItems) {
+        if (next[item.id]?.syncStatus === "error") {
+          delete next[item.id];
+        }
+      }
+      return next;
+    });
+  }, [shelfItems]);
+
   // Server-side count for the shelf prefix preview — uses limit:1 so only
   // the total field matters; the actual items are not loaded here.
   const previewBinPrefix = shelfPrefix.trim() || undefined;
@@ -284,23 +460,52 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
   }, [shelfPrefix, suggestAllItems, previewCountPage]);
 
   useEffect(() => {
+    const generation = ++sessionGenerationRef.current;
     if (!visible) {
       setCameraStarted(false);
+      setResumeSession(null);
+      setSessionChecked(false);
+      setOtherFlowActive(false);
+      inventoryRequestRef.current?.controller.abort();
+      for (const timer of flashTimersRef.current.values()) clearTimeout(timer);
+      flashTimersRef.current.clear();
+      doneAnimationRef.current?.stop();
+      doneAnimationRef.current = null;
       return;
     }
-    loadBulkSession().then(session => {
-      if (session?.shelfPrefix) {
-        setResumeSession(session);
+    setResumeSession(null);
+    setSessionChecked(false);
+    setOtherFlowActive(false);
+    // Load own session and cross-check for an active BarcodeAddPart session concurrently.
+    void Promise.all([
+      loadBulkSession(),
+      AsyncStorage.getItem(BARCODE_ADD_PART_SESSION_KEY).catch(() => null),
+    ]).then(([session, otherRaw]) => {
+      if (!isSessionCurrent(generation)) return;
+      setResumeSession(session);
+      // Show cross-flow warning when the other flow has a valid, non-empty session.
+      try {
+        const other = otherRaw ? (JSON.parse(otherRaw) as unknown) : null;
+        setOtherFlowActive(isActiveBarcodeAddPartSession(other));
+      } catch {
+        setOtherFlowActive(false);
       }
       setSessionChecked(true);
+    }).catch(_err => {
+      if (isSessionCurrent(generation)) setSessionChecked(true);
     });
-  }, [visible]);
+  }, [visible, isSessionCurrent]);
 
   // Persist session whenever key state changes (only during active session)
   useEffect(() => {
     if (step !== "session" || !shelfPrefix) return;
-    saveBulkSession({ shelfPrefix, shelfItems, itemRowStates, targetItemId });
-  }, [step, shelfPrefix, shelfItems, itemRowStates, targetItemId]);
+    const generation = sessionGenerationRef.current;
+    saveBulkSession({ shelfPrefix, shelfItems, itemRowStates, targetItemId }).catch(_err => {
+      if (isSessionCurrent(generation)) {
+        showToast("Session save failed — your progress may not resume after restart", "error");
+      }
+    });
+  }, [step, shelfPrefix, shelfItems, itemRowStates, targetItemId, showToast, isSessionCurrent]);
 
   // Detect completion: all items assigned → transition to "done"
   useEffect(() => {
@@ -313,13 +518,22 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
     doneAnimScale.setValue(0);
     doneAnimOpacity.setValue(0);
     setStep("done");
-    Animated.parallel([
+    doneAnimationRef.current?.stop();
+    const animation = Animated.parallel([
       Animated.spring(doneAnimScale, { toValue: 1, useNativeDriver: true, bounciness: 14 }),
       Animated.timing(doneAnimOpacity, { toValue: 1, useNativeDriver: true, duration: 280 }),
-    ]).start();
+    ]);
+    doneAnimationRef.current = animation;
+    animation.start(() => {
+      if (doneAnimationRef.current === animation) doneAnimationRef.current = null;
+    });
     try {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     } catch {}
+    return () => {
+      animation.stop();
+      if (doneAnimationRef.current === animation) doneAnimationRef.current = null;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignedCount, shelfItems.length, step]);
 
@@ -329,6 +543,8 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
    * the background so conflict detection uses up-to-date catalogue data.
    */
   const applyResume = useCallback((session: BulkSession) => {
+    if (!mountedRef.current || !visibleRef.current) return;
+    const generation = ++sessionGenerationRef.current;
     setShelfPrefix(session.shelfPrefix);
     setShelfItems(session.shelfItems);
     setItemRowStates(session.itemRowStates);
@@ -339,16 +555,21 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
     lastScanRef.current = null;
     setStep("session");
     // Refresh allItemsRef in background — does not block the session start
-    fetchAllInventory().then(all => { allItemsRef.current = all; }).catch(() => {});
-  }, []);
+    refreshAllItems(generation);
+  }, [refreshAllItems]);
 
   const startFresh = useCallback(() => {
+    sessionGenerationRef.current++;
+    inventoryRequestRef.current?.controller.abort();
     setResumeSession(null);
     clearBulkSession();
   }, []);
 
   const handleLoadItems = useCallback(async () => {
-    if (!shelfPrefix.trim()) return;
+    if (!shelfPrefix.trim() || !mountedRef.current || !visibleRef.current) return;
+    const generation = ++sessionGenerationRef.current;
+    const request = beginInventoryRequest();
+    loadingRequestIdRef.current = request.id;
     setLoadError(null);
     setLoadingItems(true);
     setItemRowStates({});
@@ -360,20 +581,32 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
       const prefix = shelfPrefix.trim().toUpperCase();
       // Fetch only the shelf's items (server-side filtered). This is fast
       // because the server returns just the matching rows, not the full catalog.
-      const matching = await fetchAllInventory(prefix);
+      const matching = await fetchAllInventory(prefix, request.controller.signal);
+      if (!isSessionCurrent(generation) || inventoryRequestRef.current?.id !== request.id) return;
       setShelfItems(matching);
       setStep("session");
       // Refresh the full catalog in the background for conflict detection.
       // This mirrors the resume path and does not block entering the session.
-      fetchAllInventory().then(all => { allItemsRef.current = all; }).catch(() => {});
-    } catch {
-      setLoadError("Could not load items — check your connection and try again.");
+      refreshAllItems(generation);
+    } catch (error) {
+      if (isSessionCurrent(generation) && !isAbortError(error)) {
+        setLoadError("Could not load items — check your connection and try again.");
+      }
     } finally {
-      setLoadingItems(false);
+      if (mountedRef.current && sessionGenerationRef.current === generation && loadingRequestIdRef.current === request.id) {
+        setLoadingItems(false);
+        loadingRequestIdRef.current = null;
+      }
     }
-  }, [shelfPrefix]);
+  }, [shelfPrefix, beginInventoryRequest, isSessionCurrent, refreshAllItems]);
 
   const handleClose = useCallback(() => {
+    sessionGenerationRef.current++;
+    inventoryRequestRef.current?.controller.abort();
+    doneAnimationRef.current?.stop();
+    doneAnimationRef.current = null;
+    for (const timer of flashTimersRef.current.values()) clearTimeout(timer);
+    flashTimersRef.current.clear();
     setStep("input");
     setShelfPrefix("");
     setItemRowStates({});
@@ -395,6 +628,8 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
    * invalidates the inventory query cache on success.
    */
   const performAssign = useCallback(async (barcode: string, item: InventoryItem) => {
+    if (!mountedRef.current || !visibleRef.current) return;
+    const generation = sessionGenerationRef.current;
     assigningRef.current = item.id;
     setAssigningId(item.id);
     try {
@@ -405,6 +640,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         upsertItemInBarcodeCache,
       );
       await invalidateListIfNew({ queryClient, wasNew: result.wasNew });
+      if (!isSessionCurrent(generation)) return;
       setItemRowStates(prev => ({
         ...prev,
         [item.id]: {
@@ -418,15 +654,21 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
       try {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch {}
-      setTimeout(() => {
+      const existingTimer = flashTimersRef.current.get(item.id);
+      if (existingTimer !== undefined) clearTimeout(existingTimer);
+      const flashTimer = setTimeout(() => {
+        if (!isSessionCurrent(generation)) return;
         setItemRowStates(prev => {
           const existing = prev[item.id];
           if (!existing) return prev;
           return { ...prev, [item.id]: { ...existing, flash: false } };
         });
+        flashTimersRef.current.delete(item.id);
       }, 800);
+      flashTimersRef.current.set(item.id, flashTimer);
       setTargetItemId(null);
     } catch {
+      if (!isSessionCurrent(generation)) return;
       setItemRowStates(prev => ({
         ...prev,
         [item.id]: {
@@ -437,12 +679,12 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
           flash: false,
         },
       }));
-      showToast("Assignment failed — please try again", "error");
+      showToastDeduped("Assignment failed — please try again", "error");
     } finally {
       assigningRef.current = null;
-      setAssigningId(null);
+      if (isSessionCurrent(generation)) setAssigningId(null);
     }
-  }, [updateBarcodesMutation, queryClient, showToast]);
+  }, [updateBarcodesMutation, queryClient, showToastDeduped, isSessionCurrent]);
 
   /**
    * Undo a barcode assignment made during this session.
@@ -450,6 +692,8 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
    * then resets the row back to "Unassigned" so a new barcode can be scanned.
    */
   const handleUndoAssignment = useCallback(async (item: InventoryItem, barcode: string) => {
+    if (!mountedRef.current || !visibleRef.current) return;
+    const generation = sessionGenerationRef.current;
     setUndoingId(item.id);
     try {
       const liveItem = allItemsRef.current.find(i => i.id === item.id);
@@ -462,18 +706,21 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         revokedBarcode: barcode,
       });
       await upsertItemInBarcodeCache(updated);
+      if (!isSessionCurrent(generation)) return;
       setItemRowStates(prev => {
         const next = { ...prev };
         delete next[item.id];
         return next;
       });
-      showToast("Barcode assignment undone", "info");
+      showToastDeduped("Barcode assignment undone", "info");
     } catch {
-      showToast("Could not undo — please try again", "error");
+      if (isSessionCurrent(generation)) {
+        showToastDeduped("Could not undo — please try again", "error");
+      }
     } finally {
-      setUndoingId(null);
+      if (isSessionCurrent(generation)) setUndoingId(null);
     }
-  }, [updateBarcodesMutation, queryClient, showToast]);
+  }, [updateBarcodesMutation, queryClient, showToastDeduped, isSessionCurrent]);
 
   /**
    * Camera barcode detection handler.
@@ -536,7 +783,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         : unassignedItems[0];
 
       if (!effectiveTarget) {
-        showToast("All items already assigned", "info");
+        showToastDeduped("All items already assigned", "info");
         return;
       }
 
@@ -546,7 +793,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         !!existingRow?.assignedBarcode ||
         (Array.isArray(effectiveTarget.barcodes) && effectiveTarget.barcodes.length > 0);
       if (alreadyHasBarcode) {
-        showToast("Item already has a barcode — tap another item to target it", "info");
+        showToastDeduped("Item already has a barcode — tap another item to target it", "info");
         return;
       }
 
@@ -570,7 +817,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
             flash: false,
           },
         }));
-        showToast(`Barcode owned by ${conflictItem.catalog} — row flagged`, "error");
+        showToastDeduped(`Barcode owned by ${conflictItem.catalog} — row flagged`, "error");
         // Still consume the cooldown so a new barcode is expected
         lastScanRef.current = { code, ts: now };
         return;
@@ -749,6 +996,32 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         {/* ── Input step ───────────────────────────────────────────────────── */}
         {step === "input" ? (
           <ScrollView contentContainerStyle={bsStyles.inputScroll} keyboardShouldPersistTaps="handled">
+            {sessionChecked && otherFlowActive && !crossFlowDismissed ? (
+              <View
+                style={[
+                  bsStyles.resumeBanner,
+                  { backgroundColor: colors.warning + "18", borderColor: colors.warning + "44" },
+                ]}
+              >
+                <View style={bsStyles.resumeBannerRow}>
+                  <Text style={[bsStyles.resumeTitle, { color: colors.foreground, flex: 1 }]}>
+                    ℹ️ In-progress session in another flow
+                  </Text>
+                  <Pressable
+                    onPress={() => setCrossFlowDismissed(true)}
+                    hitSlop={8}
+                    accessibilityLabel="Dismiss cross-flow session warning"
+                    style={bsStyles.crossFlowDismissBtn}
+                  >
+                    <Text style={[bsStyles.crossFlowDismissBtnText, { color: colors.mutedForeground }]}>✕</Text>
+                  </Pressable>
+                </View>
+                <Text style={[bsStyles.resumeSub, { color: colors.mutedForeground }]}>
+                  You have an in-progress shelf session in Scan to Assign Barcode — switch back to continue it.
+                </Text>
+              </View>
+            ) : null}
+
             {sessionChecked && resumeSession ? (
               <View
                 style={[
@@ -961,6 +1234,36 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
                 </Text>
               ) : null}
             </View>
+
+            {/* F-011: All-fail aggregate error card */}
+            {allFailed ? (
+              <View
+                style={[
+                  bsStyles.allFailCard,
+                  {
+                    backgroundColor: colors.destructive + "0d",
+                    borderColor: colors.destructive + "44",
+                  },
+                ]}
+              >
+                <Text style={[bsStyles.allFailTitle, { color: colors.destructive }]}>
+                  ✕ All assignments failed — check your connection
+                </Text>
+                <Text style={[bsStyles.allFailSub, { color: colors.mutedForeground }]}>
+                  {shelfItems.filter(i => itemRowStates[i.id]?.syncStatus === "error").length} item
+                  {shelfItems.filter(i => itemRowStates[i.id]?.syncStatus === "error").length !== 1
+                    ? "s"
+                    : ""}{" "}
+                  failed to sync.
+                </Text>
+                <Pressable
+                  onPress={handleRetryAll}
+                  style={[bsStyles.allFailRetryBtn, { backgroundColor: colors.destructive }]}
+                >
+                  <Text style={[bsStyles.allFailRetryBtnText, { color: "#fff" }]}>Retry All</Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             {/* Item list */}
             <FlatList
@@ -1270,6 +1573,9 @@ const bsStyles = StyleSheet.create({
     gap: 4,
     marginBottom: 16,
   },
+  resumeBannerRow: { flexDirection: "row", alignItems: "flex-start" },
+  crossFlowDismissBtn: { marginLeft: 8, padding: 2 },
+  crossFlowDismissBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   resumeTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   resumeSub: { fontSize: 12, fontFamily: "Inter_400Regular" },
   resumeBtns: { flexDirection: "row", gap: 8, marginTop: 10 },
@@ -1474,4 +1780,43 @@ const bsStyles = StyleSheet.create({
   },
   filterToggleText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   filterCount: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  // F-011: aggregate all-fail error card
+  allFailCard: {
+    marginHorizontal: 12,
+    marginBottom: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+    gap: 6,
+  },
+  allFailTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", lineHeight: 18 },
+  allFailSub: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  allFailRetryBtn: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 2,
+  },
+  allFailRetryBtnText: { fontSize: 13, fontFamily: "Inter_700Bold" },
 });
+
+function isValidBarcodeBulkQueueEntry(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    typeof e.barcode === "string" &&
+    typeof e.status === "string" && BARCODE_BULK_QUEUE_STATUSES.has(e.status) &&
+    (e.skippedAt === undefined || (typeof e.skippedAt === "number" && Number.isFinite(e.skippedAt)))
+  );
+}
+
+function isValidBarcodeAssignmentEntry(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    typeof e.barcode === "string" &&
+    typeof e.item === "object" && e.item !== null &&
+    typeof (e.item as Record<string, unknown>).id === "number"
+  );
+}

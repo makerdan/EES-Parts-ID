@@ -196,6 +196,8 @@ function ChipRow({
               <Pressable
                 key={opt}
                 onPress={() => !disabled && onChange(active ? "" : opt)}
+                accessibilityLabel={`${label}: ${opt}${active ? ", selected" : ""}${disabled ? ", unavailable" : ""}`}
+                accessibilityRole="button"
                 style={[
                   chipStyles.chip,
                   {
@@ -468,6 +470,8 @@ export function FilterPanel({ values, onChange, dimensionCounts, onApply }: Filt
         {!dimCollapsed && onApply && (
           <Pressable
             onPress={onApply}
+            accessibilityLabel="Apply filters"
+            accessibilityRole="button"
             style={[applyBtnStyles.btn, { backgroundColor: colors.primary, marginBottom: 10 }]}
           >
             <Text style={[applyBtnStyles.label, { color: colors.primaryForeground }]}>Apply</Text>

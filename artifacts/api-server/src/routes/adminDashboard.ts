@@ -6,10 +6,19 @@ import {
   inventoryTable,
   screenViewLogTable,
 } from "@workspace/db";
-import { count, eq,sql } from "drizzle-orm";
+import { and, count, eq, gte, lt, sql } from "drizzle-orm";
 import { Router } from "express";
 
 import { logger } from "../lib/logger";
+import { getScreenViewKeyMaterial } from "../lib/screenViewPrivacy";
+import {
+  getSupportAnalyticsWindow,
+  privacySafeCount,
+  SUPPORT_ANALYTICS_MAX_DAILY_ROWS,
+  SUPPORT_ANALYTICS_MAX_FEATURE_ROWS,
+  SUPPORT_ANALYTICS_MAX_SCREEN_ROWS,
+  SUPPORT_ANALYTICS_MIN_CELL_COUNT,
+} from "../lib/supportAnalyticsReport";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
@@ -18,51 +27,64 @@ const router = Router();
 router.get("/dashboard-stats", requireAdminAuth, async (_req, res) => {
   try {
     const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const reportingWindow = getSupportAnalyticsWindow(now);
+    const windowWhere = and(
+      gte(aiRequestLogTable.createdAt, reportingWindow.start),
+      lt(aiRequestLogTable.createdAt, reportingWindow.end),
+    );
+    const screenWindowWhere = and(
+      gte(screenViewLogTable.createdAt, reportingWindow.start),
+      lt(screenViewLogTable.createdAt, reportingWindow.end),
+    );
 
     const [
       aiTotalRows,
-      aiMonthRows,
       aiByFeatureRows,
       screenTotalRows,
-      screenTodayUniqueRows,
+      screenUniqueRows,
       screenByNameRows,
       screenDailyRows,
       inventoryCountRows,
       catalogJobsRows,
       contactCountRows,
     ] = await Promise.all([
-      db.select({ total: count() }).from(aiRequestLogTable),
       db
         .select({ total: count() })
         .from(aiRequestLogTable)
-        .where(sql`${aiRequestLogTable.createdAt} >= ${startOfMonth}`),
+        .where(windowWhere),
       db
         .select({ feature: aiRequestLogTable.feature, total: count() })
         .from(aiRequestLogTable)
-        .groupBy(aiRequestLogTable.feature),
-      db.select({ total: count() }).from(screenViewLogTable),
+        .where(windowWhere)
+        .groupBy(aiRequestLogTable.feature)
+        .limit(SUPPORT_ANALYTICS_MAX_FEATURE_ROWS),
+      db
+        .select({ total: count() })
+        .from(screenViewLogTable)
+        .where(screenWindowWhere),
       db
         .select({ cnt: sql<string>`COUNT(DISTINCT ${screenViewLogTable.visitorHash})` })
         .from(screenViewLogTable)
-        .where(sql`${screenViewLogTable.createdAt} >= ${startOfToday}`),
+        .where(and(screenWindowWhere, sql`${screenViewLogTable.visitorHash} IS NOT NULL`)),
       db
         .select({ screenName: screenViewLogTable.screenName, total: count() })
         .from(screenViewLogTable)
+        .where(screenWindowWhere)
         .groupBy(screenViewLogTable.screenName)
         .orderBy(sql`count(*) DESC`)
-        .limit(20),
+        .having(sql`count(*) >= ${SUPPORT_ANALYTICS_MIN_CELL_COUNT}`)
+        .limit(SUPPORT_ANALYTICS_MAX_SCREEN_ROWS),
       db
         .select({
           date: sql<string>`DATE(${screenViewLogTable.createdAt} AT TIME ZONE 'UTC')`,
           total: count(),
         })
         .from(screenViewLogTable)
-        .where(sql`${screenViewLogTable.createdAt} >= ${thirtyDaysAgo}`)
+        .where(screenWindowWhere)
         .groupBy(sql`DATE(${screenViewLogTable.createdAt} AT TIME ZONE 'UTC')`)
-        .orderBy(sql`DATE(${screenViewLogTable.createdAt} AT TIME ZONE 'UTC') ASC`),
+        .having(sql`count(*) >= ${SUPPORT_ANALYTICS_MIN_CELL_COUNT}`)
+        .orderBy(sql`DATE(${screenViewLogTable.createdAt} AT TIME ZONE 'UTC') ASC`)
+        .limit(SUPPORT_ANALYTICS_MAX_DAILY_ROWS),
       db.select({ total: count() }).from(inventoryTable),
       db
         .select({ total: count() })
@@ -71,17 +93,42 @@ router.get("/dashboard-stats", requireAdminAuth, async (_req, res) => {
       db.select({ total: count() }).from(contactMessagesTable),
     ]);
 
+    const aiTotal = Number(aiTotalRows[0]?.total ?? 0);
+    const screenTotal = Number(screenTotalRows[0]?.total ?? 0);
+    const uniqueVisitors = Number(screenUniqueRows[0]?.cnt ?? 0);
+    const uniqueVisitorsAvailable = getScreenViewKeyMaterial() !== null;
+
     res.json({
+      generatedAt: now.toISOString(),
+      window: {
+        start: reportingWindow.start.toISOString(),
+        end: reportingWindow.end.toISOString(),
+        days: reportingWindow.days,
+      },
+      timezone: reportingWindow.timezone,
+      privacy: {
+        minimumCellCount: SUPPORT_ANALYTICS_MIN_CELL_COUNT,
+        suppressedValue: "Suppressed",
+        uniqueVisitorsAvailable,
+        aggregateOnly: true,
+      },
       ai: {
-        totalAllTime: aiTotalRows[0]?.total ?? 0,
-        totalThisMonth: aiMonthRows[0]?.total ?? 0,
-        byFeature: aiByFeatureRows,
+        requestsInWindow: privacySafeCount(aiTotal),
+        byFeature: aiByFeatureRows.map((row) => ({
+          feature: row.feature,
+          total: privacySafeCount(Number(row.total)),
+        })),
       },
       screenViews: {
-        totalAllTime: screenTotalRows[0]?.total ?? 0,
-        uniqueVisitorsToday: Number(screenTodayUniqueRows[0]?.cnt ?? 0),
-        byScreen: screenByNameRows,
-        dailyLast30Days: screenDailyRows,
+        viewsInWindow: privacySafeCount(screenTotal),
+        uniqueVisitorsInWindow: uniqueVisitorsAvailable ? privacySafeCount(uniqueVisitors) : null,
+        byScreen: screenByNameRows.map((row) => ({
+          screenName: row.screenName,
+          total: Number(row.total),
+        })),
+        dailyInWindow: screenDailyRows
+          .slice(0, SUPPORT_ANALYTICS_MAX_DAILY_ROWS)
+          .map((row) => ({ date: row.date, total: Number(row.total) })),
       },
       summary: {
         inventoryItems: inventoryCountRows[0]?.total ?? 0,

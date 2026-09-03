@@ -24,6 +24,8 @@
  * without forceExit, and surfaces any genuine resource-leak bugs rather than
  * masking them.
  */
+const testConnectionBudget = require("./test-connection-budget.cjs");
+
 const sharedConfig = {
   preset: "ts-jest",
   testEnvironment: "node",
@@ -105,6 +107,10 @@ const sharedConfig = {
     // erased by isolatedModules without needing the RN module to be resolved.
     "^@/utils/searchHelpers$":
       "<rootDir>/../../artifacts/parts-id/utils/searchHelpers.ts",
+    // The floor-plan replacement workflow crosses the API/server boundary
+    // into the pure web scene contract used by WarehouseMapView.
+    "^@/utils/mapViewport$":
+      "<rootDir>/../../artifacts/parts-id/utils/mapViewport.ts",
   },
   // Allow ts-jest to transform the workspace library source files even though
   // they live inside (or are symlinked from) node_modules.
@@ -115,6 +121,18 @@ const sharedConfig = {
     "/node_modules/(?!(?:\\.pnpm/)?(?:@workspace|uuid)[@/])",
   ],
 };
+
+// ── Shared development-database connection budget ────────────────────────────
+//
+// The two Jest projects can have workers alive at the same time. Keep their
+// aggregate worker count deterministic: 2 parallel workers + 1 db-serial
+// worker, each with the Jest-only pool cap of 2 clients = 6 test clients.
+// Global setup uses at most one transient client before workers start. The
+// development API keeps its normal 10-client application pool reserved, for a
+// documented ceiling of 17 clients for this validation shape.
+//
+// Do not raise these values without updating dbPoolBudget.test.ts. The test
+// deliberately checks the arithmetic and the production/test pool split.
 
 module.exports = {
   // globalSetup runs once before all projects — keeps DB preflight + schema
@@ -179,6 +197,7 @@ module.exports = {
         "/vendorPriority\\.integration\\.test\\.ts$",
         "/vendorNameResolutionMap\\.integration\\.test\\.ts$",
       ],
+      maxWorkers: testConnectionBudget.parallelMaxWorkers,
     },
   ],
 };

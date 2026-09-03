@@ -47,6 +47,14 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const updateMutation = useUpdateItemKeywords();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks the live Promise returned by performSaveForId, keyed by item id.
+  // handleClose awaits this to ensure it waits for an already-running drain
+  // rather than just the no-op early return when s.saving is true.
+  const inFlightByIdRef = useRef<Record<number, Promise<void>>>({});
+  // Prevents re-entrant or concurrent close attempts from all three close
+  // paths (footer Done, header ✕, Modal onRequestClose).
+  const closingRef = useRef(false);
+  const [closing, setClosing] = useState(false);
 
   // Per-item save state, keyed by item.id. This isolates the in-flight
   // drain loop from any other item the user might open or close: closing
@@ -89,45 +97,75 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   // guarantees the last edit always lands without dropping intermediate
   // state. See utils/drainSave.ts. Pinning to `id` (not itemRef) means
   // mid-loop item switches cannot cross-contaminate writes.
-  const performSaveForId = useCallback(async (id: number) => {
+  //
+  // The live drain Promise is stored in `inFlightByIdRef[id]` for the
+  // duration of the drain so handleClose can await it. It is stored here
+  // (not at call sites) so that a no-op early return (when s.saving is true)
+  // never overwrites the real running promise with a resolved one.
+  //
+  // A deferred-promise pattern is used so that `inFlightByIdRef[id]` is
+  // assigned synchronously *before* any async work begins. This prevents the
+  // finally block from deleting the ref before the outer assignment can
+  // execute (which would happen if drainSave's first await resolved
+  // synchronously, e.g. in tests with mocked mutations).
+  const performSaveForId = useCallback((id: number): Promise<void> => {
     const s = stateByIdRef.current[id];
-    if (!s) return;
-    if (s.saving) return;
-    if (arraysEqual(s.latest, s.lastSaved)) return;
+    // If a drain is already running, return the real in-flight promise so
+    // callers (including handleClose) can await the actual work — not just a
+    // resolved no-op.
+    if (!s || s.saving) return inFlightByIdRef.current[id] ?? Promise.resolve();
+    if (arraysEqual(s.latest, s.lastSaved)) return Promise.resolve();
+
     if (itemRef.current?.id === id) setSaveStatus("saving");
     s.saving = true;
-    try {
-      await drainSave<Array<string>>({
-        getLatest: () => s.latest,
-        getLastSaved: () => s.lastSaved,
-        setLastSaved: v => {
-          s.lastSaved = v;
-          onKeywordsChanged?.(id, v);
-        },
-        save: async kws => {
-          await updateMutation.mutateAsync({ id, data: { keywords: kws } });
-        },
-        equal: arraysEqual,
-        isRunningRef: { current: false }, // outer `s.saving` already gates re-entry
-      });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-      if (itemRef.current?.id === id) {
-        setSaveStatus("saved");
-        setTimeout(() => {
-          if (itemRef.current?.id === id) setSaveStatus("idle");
-        }, 1800);
+
+    // Create and register the deferred promise synchronously, before the IIFE
+    // begins executing. This guarantees inFlightByIdRef[id] is set to the
+    // real promise before any async boundary — so a fast-resolving drain
+    // cannot reach `finally` (and delete the ref) before it is stored.
+    let settleDrain: () => void = () => { /* set by Promise ctor below */ };
+    const drainPromise = new Promise<void>(resolve => { settleDrain = resolve; });
+    inFlightByIdRef.current[id] = drainPromise;
+
+    void (async () => {
+      try {
+        await drainSave<Array<string>>({
+          getLatest: () => s.latest,
+          getLastSaved: () => s.lastSaved,
+          setLastSaved: v => {
+            s.lastSaved = v;
+            onKeywordsChanged?.(id, v);
+          },
+          save: async kws => {
+            await updateMutation.mutateAsync({ id, data: { keywords: kws } });
+          },
+          equal: arraysEqual,
+          isRunningRef: { current: false }, // outer `s.saving` already gates re-entry
+        });
+        await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+        if (itemRef.current?.id === id) {
+          setSaveStatus("saved");
+          setTimeout(() => {
+            if (itemRef.current?.id === id) setSaveStatus("idle");
+          }, 1800);
+        }
+      } catch (err) {
+        console.warn("KeywordEditor: save failed:", err);
+        s.latest = s.lastSaved;
+        if (itemRef.current?.id === id) {
+          setKeywords(s.lastSaved);
+          setSaveStatus("error");
+        }
+        showToast("Save failed — changes reverted.", "error");
+      } finally {
+        s.saving = false;
+        // Only clear our own promise — do not clobber a newer drain's ref.
+        if (inFlightByIdRef.current[id] === drainPromise) delete inFlightByIdRef.current[id];
+        settleDrain();
       }
-    } catch (err) {
-      console.warn("KeywordEditor: save failed:", err);
-      s.latest = s.lastSaved;
-      if (itemRef.current?.id === id) {
-        setKeywords(s.lastSaved);
-        setSaveStatus("error");
-      }
-      showToast("Save failed — changes reverted.", "error");
-    } finally {
-      s.saving = false;
-    }
+    })();
+
+    return drainPromise;
   }, [updateMutation, queryClient, onKeywordsChanged, showToast]);
 
   // Manual retry — re-runs the drain loop for the currently open item.
@@ -193,18 +231,31 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
     );
   };
 
-  const handleClose = () => {
-    // Cancel any pending debounce timer and flush immediately for the
-    // *currently open* item id. The drain loop is keyed by id, so even if
-    // the user opens a different item before this save finishes, no writes
-    // can cross-contaminate.
+  const handleClose = async () => {
+    // Guard against re-entry: footer Done, header ✕, and onRequestClose all
+    // share this handler — a second tap while the close flush is in progress
+    // must be a no-op.
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+
+    // Cancel any pending debounce so it does not fire after we close.
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
+
     const id = itemRef.current?.id;
-    if (id != null) void performSaveForId(id);
+    if (id != null) {
+      // performSaveForId returns the real in-flight promise when s.saving is
+      // true (so we wait for the running drain to settle), or starts and
+      // returns a new flush when there are pending edits, or resolves
+      // immediately when nothing is pending. A single await covers all cases.
+      await performSaveForId(id);
+    }
+
     onClose();
+    // closingRef / setClosing not reset — the Modal unmounts after onClose().
   };
 
   // All hooks declared — now safe to gate rendering on item
@@ -268,7 +319,13 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
               {item.vendor} · {item.catalog}
             </Text>
           </View>
-          <Pressable onPress={handleClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]} accessibilityLabel="Close keyword editor" accessibilityRole="button">
+          <Pressable
+            onPress={handleClose}
+            disabled={closing}
+            style={[styles.closeBtn, { backgroundColor: colors.muted, opacity: closing ? 0.4 : 1 }]}
+            accessibilityLabel="Close keyword editor"
+            accessibilityRole="button"
+          >
             <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
           </Pressable>
         </View>
@@ -338,9 +395,17 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
         <View style={[styles.footer, { borderTopColor: colors.border }]}>
           <Pressable
             onPress={handleClose}
-            style={[styles.doneBtn, { backgroundColor: colors.primary }]}
+            disabled={saveStatus === "saving" || closing}
+            style={[styles.doneBtn, { backgroundColor: saveStatus === "saving" || closing ? colors.muted : colors.primary }]}
           >
-            <Text style={[styles.doneBtnText, { color: colors.primaryForeground }]}>Done</Text>
+            {saveStatus === "saving" || closing ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <ActivityIndicator size="small" color={colors.mutedForeground} />
+                <Text style={[styles.doneBtnText, { color: colors.mutedForeground }]}>Saving…</Text>
+              </View>
+            ) : (
+              <Text style={[styles.doneBtnText, { color: colors.primaryForeground }]}>Done</Text>
+            )}
           </Pressable>
         </View>
         </DismissKeyboard>
