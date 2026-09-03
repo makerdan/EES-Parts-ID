@@ -58,6 +58,7 @@ export async function verifyAdminRequest({
     if (signal?.aborted) return;
     if (resp.ok) {
       const body = (await resp.json()) as { isAdmin?: boolean };
+      if (signal?.aborted) return;
       const admin = !!body.isAdmin;
       if (shouldNotifyDemotion(wasAdmin, admin)) {
         onDemotion?.();
@@ -68,11 +69,13 @@ export async function verifyAdminRequest({
       let code: string | undefined;
       try {
         const body = (await resp.json()) as { code?: string };
+        if (signal?.aborted) return;
         code = body.code;
       } catch {
         // ignore parse errors — treat as a generic 403
       }
 
+      if (signal?.aborted) return;
       if (code === "MFA_REQUIRED") {
         onMfaRequired?.();
         setIsAdmin(false);

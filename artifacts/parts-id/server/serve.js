@@ -135,12 +135,53 @@ function serveWebOrFallback(urlPath, req, res, landingPageTemplate, appName) {
 const landingPageTemplate = fs.readFileSync(TEMPLATE_PATH, "utf-8");
 const appName = getAppName();
 
+const devPorts = require("../../../scripts/dev-ports.json");
+const API_PORT = parseInt(
+  process.env.API_SERVER_PORT || String(devPorts.NATIVE_API_DEV_PORT),
+  10,
+);
+
+/**
+ * Forward /api/* requests to the API server running on localhost:API_PORT.
+ * Streams status, headers, and body back to the client unchanged.
+ */
+function proxyToApiServer(pathname, search, req, res) {
+  const target = `http://localhost:${API_PORT}${pathname}${search}`;
+  const options = {
+    hostname: "localhost",
+    port: API_PORT,
+    path: `${pathname}${search}`,
+    method: req.method,
+    headers: { ...req.headers, host: `localhost:${API_PORT}` },
+  };
+
+  const proxyReq = http.request(options, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+    proxyRes.pipe(res, { end: true });
+  });
+
+  proxyReq.on("error", (err) => {
+    console.error(`[serve] API proxy error (${target}):`, err.message);
+    if (!res.headersSent) {
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "API server unavailable" }));
+    }
+  });
+
+  req.pipe(proxyReq, { end: true });
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
   let pathname = url.pathname;
 
   if (basePath && pathname.startsWith(basePath)) {
     pathname = pathname.slice(basePath.length) || "/";
+  }
+
+  // Proxy /api/* requests to the API server
+  if (pathname.startsWith("/api/")) {
+    return proxyToApiServer(pathname, url.search, req, res);
   }
 
   // Native Expo Go manifest requests always take priority
@@ -153,14 +194,23 @@ const server = http.createServer((req, res) => {
   serveWebOrFallback(pathname, req, res, landingPageTemplate, appName);
 });
 
-const devPorts = require("../../../scripts/dev-ports.json");
-const port = parseInt(process.env.PORT || String(devPorts.STATIC_SERVER_PORT), 10);
+if (!process.env.PORT) {
+  console.error(
+    "[serve] PORT environment variable is required; refusing to fall back to an unregistered port.",
+  );
+  process.exit(1);
+}
+const port = parseInt(process.env.PORT, 10);
+if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+  console.error(`[serve] Invalid PORT value: "${process.env.PORT}"`);
+  process.exit(1);
+}
 
 server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {
     console.error(
       `[serve] Port ${port} is already in use. ` +
-        `Kill the process holding it (fuser -k ${port}/tcp) and retry.`,
+        `Kill the process holding it (node ../../scripts/free-ports.mjs ${port}) and retry.`,
     );
   } else {
     console.error(`[serve] Server error:`, err);

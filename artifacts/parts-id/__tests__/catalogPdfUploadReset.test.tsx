@@ -129,6 +129,10 @@ jest.mock("@/components/KeyboardDoneInput", () => ({
   },
 }));
 
+jest.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ invalidateQueries: jest.fn().mockResolvedValue(undefined) }),
+}));
+
 // ── Suppress console errors for act() warnings ────────────────────────────────
 
 let origConsoleError: typeof console.error;

@@ -57,6 +57,7 @@ interface Props {
   onResume: (id: number) => void;
   onReviewChanges: (id: number) => void;
   onDismissResumeError: (id: number) => void;
+  onRetryPoll: (id: number) => void;
   colors: FailedJobsSectionColors;
 }
 
@@ -69,6 +70,7 @@ export function FailedJobsSection({
   onResume,
   onReviewChanges,
   onDismissResumeError,
+  onRetryPoll,
   colors,
 }: Props) {
   "use no memo";
@@ -90,7 +92,7 @@ export function FailedJobsSection({
   // list while progress is live, or solely from resumeProgress when done.
   const resumingJobs = failedJobs.filter((j) => inProgressIds.has(j.id));
 
-  // Also synthesise "done" cards for jobs removed from failedJobs after finishing
+  // Synthesise "done" cards for jobs removed from failedJobs after finishing.
   const doneOnlyIds = Object.keys(resumeProgress)
     .map(Number)
     .filter(
@@ -99,11 +101,22 @@ export function FailedJobsSection({
         !failedJobs.find((j) => j.id === id),
     );
 
+  // Active (processing/uploading/stalled) progress entries with no matching
+  // failedJobs entry — e.g. a job opened via deep-link while still processing.
+  const activeOrphanIds = Object.keys(resumeProgress)
+    .map(Number)
+    .filter(
+      (id) =>
+        resumeProgress[id]?.status !== "done" &&
+        !failedJobs.find((j) => j.id === id),
+    );
+
   const hasSomething =
     stillFailedJobs.length > 0 ||
     cancelledJobs.length > 0 ||
     resumingJobs.length > 0 ||
-    doneOnlyIds.length > 0;
+    doneOnlyIds.length > 0 ||
+    activeOrphanIds.length > 0;
 
   if (!hasSomething) return null;
 
@@ -140,6 +153,7 @@ export function FailedJobsSection({
             onReviewChanges={onReviewChanges}
             onDismissError={onDismissResumeError}
             onResume={onResume}
+            onRetryPoll={onRetryPoll}
             colors={colors}
           />
         );
@@ -158,6 +172,26 @@ export function FailedJobsSection({
             onReviewChanges={onReviewChanges}
             onDismissError={onDismissResumeError}
             onResume={onResume}
+            onRetryPoll={onRetryPoll}
+            colors={colors}
+          />
+        );
+      })}
+
+      {/* Active (processing/stalled) cards with no matching failedJobs entry —
+          e.g. jobs opened via deep-link while still processing */}
+      {activeOrphanIds.map((id) => {
+        const progress = resumeProgress[id]!;
+        return (
+          <ResumeProgressCard
+            key={`orphan-${id}`}
+            job={null}
+            jobId={id}
+            progress={progress}
+            onReviewChanges={onReviewChanges}
+            onDismissError={onDismissResumeError}
+            onResume={onResume}
+            onRetryPoll={onRetryPoll}
             colors={colors}
           />
         );
@@ -323,22 +357,75 @@ interface ResumeProgressCardProps {
   onReviewChanges: (id: number) => void;
   onDismissError: (id: number) => void;
   onResume: (id: number) => void;
+  onRetryPoll: (id: number) => void;
   colors: FailedJobsSectionColors;
 }
 
-function ResumeProgressCard({ job, jobId, progress, onReviewChanges, onDismissError, onResume, colors }: ResumeProgressCardProps) {
+function ResumeProgressCard({ job, jobId, progress, onReviewChanges, onDismissError, onResume, onRetryPoll, colors }: ResumeProgressCardProps) {
   const id = job?.id ?? jobId!;
   const vendor = job?.vendor ?? "Unknown vendor";
   const filename = job?.filename ?? "catalog.pdf";
 
   const isDone = progress.status === "done";
   const isFailed = progress.status === "failed";
+  const isStalled = progress.status === "stalled";
   const isUploading = progress.status === "uploading";
   const isChunked = progress.totalChunks != null && progress.totalChunks > 1;
   const pct =
     progress.totalPages && progress.totalPages > 0
       ? Math.min(100, Math.round((progress.processedPages / progress.totalPages) * 100))
       : 0;
+
+  // Stalled card: poll hit the failure threshold; offer a Retry button that
+  // resets the counter and restarts polling (no file upload required).
+  if (isStalled) {
+    const stallMsg = progress.errorMessage ?? "Processing stalled — please retry or contact support";
+    return (
+      <View
+        style={[
+          s.card,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.destructive + "55",
+          },
+        ]}
+      >
+        <View style={s.cardTop}>
+          <View style={s.cardIdent}>
+            <Text style={[s.cardVendor, { color: colors.foreground }]}>{vendor}</Text>
+            <Text style={[s.cardFile, { color: colors.mutedForeground }]} numberOfLines={1}>
+              {filename}
+            </Text>
+          </View>
+          <View style={[s.badge, { backgroundColor: colors.destructive + "18" }]}>
+            <Text style={[s.badgeText, { color: colors.destructive }]}>Stalled</Text>
+          </View>
+        </View>
+
+        <View
+          style={[
+            s.errorBox,
+            {
+              backgroundColor: colors.destructive + "0e",
+              borderColor: colors.destructive + "33",
+            },
+          ]}
+        >
+          <Text style={[s.errorLabel, { color: colors.destructive }]}>Error</Text>
+          <Text style={[s.errorMsg, { color: colors.foreground }]}>{stallMsg}</Text>
+        </View>
+
+        <View style={[s.actions, { justifyContent: "flex-end" }]}>
+          <Pressable
+            onPress={() => onRetryPoll(id)}
+            style={[s.resumeBtn, { backgroundColor: colors.primary + "ff" }]}
+          >
+            <Text style={s.resumeBtnText}>Retry</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   // Re-failed card: destructive styling with the new error message
   if (isFailed) {

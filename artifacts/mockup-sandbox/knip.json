@@ -1,0 +1,17 @@
+{
+  "entry": [
+    "src/main.tsx",
+    "mockupPreviewPlugin.ts",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "src/test-setup.ts",
+    "src/components/ui/**/*.tsx",
+    "src/workers/**/*.ts",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "mockupPreviewPlugin.ts"],
+  "ignore": ["src/__test_stubs__/**"],
+  "ignoreBinaries": ["tsc"],
+  "ignoreDependencies": ["tailwindcss", "tw-animate-css"]
+}

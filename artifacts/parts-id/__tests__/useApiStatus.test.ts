@@ -13,10 +13,10 @@
  *  - no polling when adminToken is null
  *  - triggerRestart sets restarting=true / status="unknown" immediately
  *  - triggerRestart polls /healthz until server responds, then clears restarting
- *  - triggerRestart maps unrecognised healthz status to "ok" after restart
+ *  - triggerRestart does not announce recovery for an unrecognised healthz status
  *  - triggerRestart falls back to status="error" after max attempts
- *  - triggerRestart abandons a hanging restart POST after 10 s and still starts recovery polling
- *  - triggerRestart is a no-op when adminToken is null
+ *  - triggerRestart stops after a hanging restart POST timeout without recovery polling
+ *  - triggerRestart reports authorization when adminToken is null
  *  - second concurrent triggerRestart call is ignored while one is in progress
  *  - AppState "active" restarts polling and resets status when screen is focused
  *  - AppState "active" is a no-op when the screen is not focused
@@ -234,6 +234,55 @@ describe("useApiStatus", () => {
   // ── Focus / blur polling lifecycle ─────────────────────────────────────────
 
   describe("focus/blur polling lifecycle", () => {
+    it("aborts an in-flight health request when the focused screen blurs", async () => {
+      jest.useFakeTimers();
+      let observedSignal: AbortSignal | undefined;
+      mockFetch.mockImplementation((_url, init) => {
+        observedSignal = (init as RequestInit | undefined)?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      });
+
+      const { unmount } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN, intervalMs: 1000 }),
+      );
+
+      act(() => { triggerFocus(); });
+      expect(observedSignal).toBeInstanceOf(AbortSignal);
+      expect(observedSignal?.aborted).toBe(false);
+
+      const blur = capturedFocusCallback?.();
+      act(() => { if (typeof blur === "function") blur(); });
+
+      expect(observedSignal?.aborted).toBe(true);
+      await unmount();
+    });
+
+    it("does not overlap health polls while the previous request is pending", async () => {
+      jest.useFakeTimers();
+      let resolveFetch: ((value: Response) => void) | null = null;
+      mockFetch.mockImplementation(() =>
+        new Promise<Response>(resolve => { resolveFetch = resolve; }),
+      );
+
+      const { unmount } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN, intervalMs: 1000 }),
+      );
+
+      act(() => { triggerFocus(); });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      await act(async () => { jest.advanceTimersByTime(5000); });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        resolveFetch?.({
+          ok: true,
+          json: async () => ({ status: "ok" }),
+        } as Response);
+      });
+      await flushMicrotasks();
+      await unmount();
+    });
+
     it("starts polling immediately on focus and fires again on each interval tick", async () => {
       jest.useFakeTimers();
 
@@ -462,7 +511,7 @@ describe("useApiStatus", () => {
 
       mockFetch.mockImplementation((url) => {
         if (String(url).includes("/admin/restart")) {
-          return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+          return Promise.resolve({ status: 202, ok: true, json: async () => ({ restarting: true }) } as Response);
         }
         return new Promise(() => {});
       });
@@ -484,7 +533,7 @@ describe("useApiStatus", () => {
 
       mockFetch.mockImplementation((url) => {
         if (String(url).includes("/admin/restart")) {
-          return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+          return Promise.resolve({ status: 202, ok: true, json: async () => ({ restarting: true }) } as Response);
         }
         return new Promise(() => {});
       });
@@ -506,13 +555,101 @@ describe("useApiStatus", () => {
       );
     });
 
+    it("reports authorization denial and does not start recovery polling", async () => {
+      mockFetch.mockResolvedValue({
+        status: 403,
+        ok: false,
+        json: async () => ({ error: "Admin access required" }),
+      } as Response);
+
+      const { result } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN }),
+      );
+
+      let outcome: string | undefined;
+      await act(async () => {
+        outcome = await result.current.triggerRestart();
+      });
+
+      expect(outcome).toBe("authorization");
+      expect(result.current.restartState).toBe("authorization");
+      expect(result.current.restarting).toBe(false);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports a rejected request and does not start recovery polling", async () => {
+      mockFetch.mockResolvedValue({
+        status: 409,
+        ok: false,
+        json: async () => ({ code: "RESTART_IN_PROGRESS" }),
+      } as Response);
+
+      const { result } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN }),
+      );
+
+      let outcome: string | undefined;
+      await act(async () => {
+        outcome = await result.current.triggerRestart();
+      });
+
+      expect(outcome).toBe("rejected");
+      expect(result.current.restartState).toBe("rejected");
+      expect(result.current.restarting).toBe(false);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports a server failure and does not start recovery polling", async () => {
+      mockFetch.mockResolvedValue({
+        status: 503,
+        ok: false,
+        json: async () => ({ error: "API restart is unavailable" }),
+      } as Response);
+
+      const { result } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN }),
+      );
+
+      let outcome: string | undefined;
+      await act(async () => {
+        outcome = await result.current.triggerRestart();
+      });
+
+      expect(outcome).toBe("server_failure");
+      expect(result.current.restartState).toBe("server_failure");
+      expect(result.current.restarting).toBe(false);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("requires the accepted restart contract before starting recovery polling", async () => {
+      mockFetch.mockResolvedValue({
+        status: 202,
+        ok: true,
+        json: async () => ({ restarting: false }),
+      } as Response);
+
+      const { result } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN }),
+      );
+
+      let outcome: string | undefined;
+      await act(async () => {
+        outcome = await result.current.triggerRestart();
+      });
+
+      expect(outcome).toBe("server_failure");
+      expect(result.current.restartState).toBe("server_failure");
+      expect(result.current.restarting).toBe(false);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
     it("polls /healthz after restart and clears restarting when server is up", async () => {
       jest.useFakeTimers();
 
       let healthzCallCount = 0;
       mockFetch.mockImplementation((url) => {
         if (String(url).includes("/admin/restart")) {
-          return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+          return Promise.resolve({ status: 202, ok: true, json: async () => ({ restarting: true }) } as Response);
         }
         // /healthz: reject twice, then succeed on the third attempt
         healthzCallCount++;
@@ -529,7 +666,10 @@ describe("useApiStatus", () => {
         useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN }),
       );
 
-      await act(async () => { result.current.triggerRestart(); });
+      let restartOutcome: Promise<string> | null = null;
+      await act(async () => {
+        restartOutcome = result.current.triggerRestart();
+      });
       await flushMicrotasks();
 
       // First resumePoll (fails)
@@ -548,18 +688,18 @@ describe("useApiStatus", () => {
 
       expect(result.current.status).toBe("ok");
       expect(result.current.restarting).toBe(false);
+      expect(await restartOutcome!).toBe("recovered");
     });
 
-    it("maps an unrecognised healthz status to 'ok' after a successful restart", async () => {
+    it("does not announce recovery for an unrecognised healthz status", async () => {
       jest.useFakeTimers();
 
-      // resumePoll returns an unrecognised status ("booting") — the hook maps
-      // that to "ok" (the safe default).  Subsequent polling from startPolling()
-      // returns a normal "ok" so the status stays "ok".
+      // An unrecognised health status is not proof that the server recovered.
+      // The next bounded recovery attempt returns a real healthy response.
       let healthzCallCount = 0;
       mockFetch.mockImplementation((url) => {
         if (String(url).includes("/admin/restart")) {
-          return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+          return Promise.resolve({ status: 202, ok: true, json: async () => ({ restarting: true }) } as Response);
         }
         healthzCallCount++;
         const status = healthzCallCount === 1 ? "booting" : "ok";
@@ -576,7 +716,14 @@ describe("useApiStatus", () => {
       await act(async () => { result.current.triggerRestart(); });
       await flushMicrotasks();
 
-      // First resumePoll fires (gets "booting" → mapped to "ok")
+      // First resumePoll fires but does not complete recovery.
+      await act(async () => { jest.advanceTimersByTime(1500); });
+      await flushMicrotasks();
+
+      expect(result.current.status).toBe("unknown");
+      expect(result.current.restarting).toBe(true);
+
+      // Second resumePoll returns a valid health response.
       await act(async () => { jest.advanceTimersByTime(1500); });
       await flushMicrotasks();
 
@@ -589,7 +736,7 @@ describe("useApiStatus", () => {
 
       mockFetch.mockImplementation((url) => {
         if (String(url).includes("/admin/restart")) {
-          return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+          return Promise.resolve({ status: 202, ok: true, json: async () => ({ restarting: true }) } as Response);
         }
         return Promise.reject(new Error("Server down"));
       });
@@ -611,7 +758,7 @@ describe("useApiStatus", () => {
       expect(result.current.restarting).toBe(false);
     });
 
-    it("abandons a hanging restart POST after 10 s timeout and still starts recovery polling", async () => {
+    it("stops after a hanging restart POST timeout without starting recovery polling", async () => {
       jest.useFakeTimers();
 
       // The restart POST hangs forever — only resolves when its AbortSignal fires
@@ -628,11 +775,8 @@ describe("useApiStatus", () => {
             }
           });
         }
-        // /healthz: succeed immediately so recovery completes cleanly
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({ status: "ok" }),
-        } as Response);
+        // A correct implementation never reaches /healthz after a timeout.
+        throw new Error("unexpected recovery poll");
       });
 
       const { result } = renderHook(() =>
@@ -654,13 +798,40 @@ describe("useApiStatus", () => {
       // The POST was aborted
       expect(restartAborted).toBe(true);
 
-      // Recovery polling should now begin: advance past the 1 500 ms initial delay
+      // Recovery polling must not begin after the request was not accepted.
       await act(async () => { jest.advanceTimersByTime(1500); });
       await flushMicrotasks();
 
-      // Server responded — restarting should be cleared
-      expect(result.current.status).toBe("ok");
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(result.current.status).toBe("unknown");
       expect(result.current.restarting).toBe(false);
+      expect(result.current.restartState).toBe("timeout");
+    });
+
+    it("cleans up an accepted restart when the hook unmounts before recovery", async () => {
+      jest.useFakeTimers();
+
+      mockFetch.mockResolvedValue({
+        status: 202,
+        ok: true,
+        json: async () => ({ restarting: true }),
+      } as Response);
+
+      const { result, unmount } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN }),
+      );
+
+      await act(async () => {
+        result.current.triggerRestart();
+      });
+      await flushMicrotasks();
+      expect(result.current.restartState).toBe("recovering");
+
+      unmount();
+      await act(async () => { jest.advanceTimersByTime(30_000); });
+      await flushMicrotasks();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it("exhausts max attempts when the server hangs (fetch timeout fires instead of rejecting)", async () => {
@@ -668,7 +839,7 @@ describe("useApiStatus", () => {
 
       mockFetch.mockImplementation((url, opts) => {
         if (String(url).includes("/admin/restart")) {
-          return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+          return Promise.resolve({ status: 202, ok: true, json: async () => ({ restarting: true }) } as Response);
         }
         // /healthz: hangs forever — only resolves when the AbortSignal fires
         return new Promise<Response>((_resolve, reject) => {
@@ -702,18 +873,21 @@ describe("useApiStatus", () => {
       expect(result.current.restarting).toBe(false);
     });
 
-    it("is a no-op when adminToken is null", async () => {
+    it("reports authorization when adminToken is null", async () => {
       const { result } = renderHook(() =>
         useApiStatus({ apiBase: API_BASE, adminToken: null }),
       );
 
+      let outcome: string | undefined;
       await act(async () => {
-        await result.current.triggerRestart();
+        outcome = await result.current.triggerRestart();
       });
 
       expect(mockFetch).not.toHaveBeenCalled();
       expect(result.current.restarting).toBe(false);
       expect(result.current.status).toBe("unknown");
+      expect(result.current.restartState).toBe("authorization");
+      expect(outcome).toBe("authorization");
     });
 
     it("ignores a second concurrent triggerRestart call while one is already in progress", async () => {
@@ -723,7 +897,7 @@ describe("useApiStatus", () => {
       mockFetch.mockImplementation((url) => {
         if (String(url).includes("/admin/restart")) {
           restartCallCount++;
-          return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+          return Promise.resolve({ status: 202, ok: true, json: async () => ({ restarting: true }) } as Response);
         }
         return new Promise(() => {});
       });

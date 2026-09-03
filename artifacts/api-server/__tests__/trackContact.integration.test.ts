@@ -81,12 +81,12 @@ afterEach(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("POST /api/track/screen-view", () => {
-  it("returns 204 and logs the screen view with a hashed visitor id", async () => {
-    const screenName = `JEST-SCREEN-${Date.now()}`;
+  it("returns 204 and logs a valid screen view with a rotating keyed visitor id", async () => {
+    const startedAt = new Date();
 
     await supertest(app)
       .post("/api/track/screen-view")
-      .send({ screen: screenName })
+      .send({ version: 1, event: "screen_view", screen: "Search" })
       .expect(204);
 
     // Insert is fire-and-forget via setImmediate — poll until visible
@@ -94,19 +94,30 @@ describe("POST /api/track/screen-view", () => {
       const found = await db
         .select()
         .from(screenViewLogTable)
-        .where(eq(screenViewLogTable.screenName, screenName));
-      return found.length > 0 ? found : null;
+        .where(eq(screenViewLogTable.screenName, "Search"));
+      return found.filter((row) => row.createdAt >= startedAt).slice(-1);
     });
 
-    expect(rows).not.toBeNull();
-    expect(rows![0]!.visitorHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0]!.visitorHash).toMatch(/^[0-9a-f]{64}$/);
     // Raw IP must never be stored
-    expect(rows![0]!.visitorHash).not.toContain(".");
+    expect(rows[0]!.visitorHash).not.toContain(".");
   });
 
-  it("returns 204 without logging when screen is missing or blank", async () => {
-    await supertest(app).post("/api/track/screen-view").send({}).expect(204);
-    await supertest(app).post("/api/track/screen-view").send({ screen: "   " }).expect(204);
+  it("rejects missing, unknown, oversized, and client-identified events", async () => {
+    await supertest(app).post("/api/track/screen-view").send({}).expect(400);
+    await supertest(app)
+      .post("/api/track/screen-view")
+      .send({ version: 1, event: "screen_view", screen: "Unknown Screen" })
+      .expect(400);
+    await supertest(app)
+      .post("/api/track/screen-view")
+      .send({ version: 1, event: "screen_view", screen: "Search", visitorId: "client-id" })
+      .expect(400);
+    await supertest(app)
+      .post("/api/track/screen-view")
+      .send({ version: 2, event: "screen_view", screen: "Search" })
+      .expect(400);
   });
 
   it("returns 429 when the rate limiter rejects the request", async () => {

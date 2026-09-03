@@ -31,7 +31,6 @@ import * as path from "path";
 import {
   createExpoAssetMock,
   createFloorPlanCacheMock,
-  createGestureHandlerMock,
   createMapViewportMock,
   createReanimatedMock,
   createReanimatedMockWithCancelSpy,
@@ -40,6 +39,9 @@ import {
   createSvgMock,
   createUseColorsMock,
 } from "./mapMocks";
+
+// jest.config.js moduleNameMapper routes react-native-gesture-handler to
+// __mocks__/react-native-gesture-handler.js automatically — no jest.mock() needed.
 
 const WAREHOUSE_MAP_VIEW_PATH = path.resolve(
   __dirname,
@@ -289,15 +291,15 @@ function parseGestureChainMethods(
   return result;
 }
 
-describe("createGestureHandlerMock() smoke — every gesture chain method used in WarehouseMapView is mocked", () => {
+describe("react-native-gesture-handler file mock smoke — every gesture chain method used in WarehouseMapView is mocked", () => {
   /**
    * WHY THIS EXISTS
    * ---------------
-   * createGestureHandlerMock() builds chainable gesture objects via a hardcoded
-   * list of method names in makeChainable().  If a new method is added to a
-   * Gesture.Pan / Pinch / Tap chain in WarehouseMapView.tsx but omitted from
-   * that list, the proxy silently swallows the call and tests still pass — the
-   * component actually receives `undefined` at runtime.
+   * The unified file mock at __mocks__/react-native-gesture-handler.js builds
+   * chainable gesture objects via a hardcoded list of method names in
+   * CHAINABLE_METHODS.  If a new method is added to a Gesture.Pan / Pinch / Tap
+   * chain in WarehouseMapView.tsx but omitted from that list, the call returns
+   * `undefined` and tests silently break.
    *
    * This test extracts every method called at depth-0 on gesture chains in the
    * component source and asserts each one exists as a function on the mock
@@ -307,7 +309,7 @@ describe("createGestureHandlerMock() smoke — every gesture chain method used i
    * HOW TO FIX A FAILURE
    * --------------------
    * If this test fails with "X is not a function":
-   *   1. Add X to the method name array inside makeChainable() in mapMocks.ts.
+   *   1. Add X to CHAINABLE_METHODS in __mocks__/react-native-gesture-handler.js.
    * The test itself never needs updating.
    */
 
@@ -317,8 +319,10 @@ describe("createGestureHandlerMock() smoke — every gesture chain method used i
   beforeAll(() => {
     const source = fs.readFileSync(WAREHOUSE_MAP_VIEW_PATH, "utf-8");
     gestureChains = parseGestureChainMethods(source);
+    // Obtain the mock via require() — Jest resolves this to the file mock
+    // because jest.mock("react-native-gesture-handler") is called at the top.
     gestureMock = (
-      createGestureHandlerMock() as { Gesture: typeof gestureMock }
+      require("react-native-gesture-handler") as { Gesture: typeof gestureMock }
     ).Gesture;
   });
 
@@ -331,6 +335,12 @@ describe("createGestureHandlerMock() smoke — every gesture chain method used i
     expect(typeof gestureMock.Pan).toBe("function");
     expect(typeof gestureMock.Pinch).toBe("function");
     expect(typeof gestureMock.Tap).toBe("function");
+  });
+
+  it("mock exports __simulateTap and __resetTap helpers", () => {
+    const gh = require("react-native-gesture-handler") as Record<string, unknown>;
+    expect(typeof gh.__simulateTap).toBe("function");
+    expect(typeof gh.__resetTap).toBe("function");
   });
 
   it("every depth-0 chain method used in WarehouseMapView is callable on the mock chainable object", () => {
@@ -347,7 +357,8 @@ describe("createGestureHandlerMock() smoke — every gesture chain method used i
       for (const method of methods) {
         if (typeof chainable[method] !== "function") {
           failures.push(
-            `  • Gesture.${type}().${method}() — missing from makeChainable() ` +
+            `  • Gesture.${type}().${method}() — missing from CHAINABLE_METHODS ` +
+              `in __mocks__/react-native-gesture-handler.js ` +
               `(got: ${typeof chainable[method]})`,
           );
         }
@@ -357,13 +368,43 @@ describe("createGestureHandlerMock() smoke — every gesture chain method used i
     if (failures.length > 0) {
       throw new Error(
         `The following gesture chain methods are used by WarehouseMapView.tsx ` +
-          `but are missing or not a function in createGestureHandlerMock():\n` +
+          `but are missing or not a function in the file mock:\n` +
           failures.join("\n") +
-          `\n\nFix: add each missing method name to the array inside makeChainable() in mapMocks.ts.`,
+          `\n\nFix: add each missing method name to CHAINABLE_METHODS in ` +
+          `__mocks__/react-native-gesture-handler.js.`,
       );
     }
 
     expect(failures).toEqual([]);
+  });
+
+  it("__simulateTap fires the last registered Gesture.Tap onEnd callback", () => {
+    const gh = require("react-native-gesture-handler") as {
+      Gesture: { Tap: () => Record<string, (...args: unknown[]) => unknown> };
+      __simulateTap: (e?: unknown) => void;
+      __resetTap: () => void;
+    };
+
+    gh.__resetTap();
+
+    let received: unknown = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (gh.Gesture.Tap() as any).runOnJS(true).onEnd((e: unknown) => { received = e; });
+
+    const event = { x: 10, y: 20 };
+    gh.__simulateTap(event);
+    expect(received).toBe(event);
+
+    gh.__resetTap();
+  });
+
+  it("__simulateTap throws when no onEnd has been registered", () => {
+    const gh = require("react-native-gesture-handler") as {
+      __simulateTap: () => void;
+      __resetTap: () => void;
+    };
+    gh.__resetTap();
+    expect(() => gh.__simulateTap()).toThrow("No Gesture.Tap onEnd callback registered");
   });
 });
 
@@ -550,6 +591,83 @@ describe("createUseColorsMock() smoke — every key from the real useColors hook
         `Missing keys in createUseColorsMock():\n` +
           missing.map((k) => `  • ${k}`).join("\n") +
           `\n\nFix: add each missing token to createUseColorsMock().useColors() in mapMocks.ts.`,
+      );
+    }
+
+    expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * Smoke test for createUseColorsMock() — named export coverage.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * createUseColorsMock() must expose a function for every named export of
+ * hooks/useColors.ts.  When `useIsDark` was added to the hook it was not
+ * immediately added to the mock, silently breaking three map test suites with
+ * confusing "useIsDark is not a function" errors deep inside unrelated files.
+ *
+ * The palette-key test above guards against color-token drift, but it only
+ * inspects the *return value* of useColors() — it cannot catch a missing
+ * top-level export like useIsDark that is never called in the test itself.
+ *
+ * HOW IT WORKS
+ * ------------
+ * This test loads the real @/hooks/useColors module via jest.requireActual and
+ * enumerates every export whose runtime value is a function.  Those names
+ * become the expected set.  The mock is loaded via createUseColorsMock() and
+ * each expected name is asserted to be a function.  This covers all TypeScript
+ * export forms — `export function`, `export const`, `export { … }`, re-exports
+ * — not just literal `export function` declarations.  When a developer adds a
+ * new exported hook to useColors.ts, this test fails immediately at the mock
+ * layer with a clear message — no manual update to this test is required.
+ *
+ * HOW TO FIX A FAILURE
+ * --------------------
+ * If this test fails with "Missing function exports in createUseColorsMock(): [X, ...]":
+ *   1. Add X as a function (e.g. `X: () => <sensible default>`) to the object
+ *      returned by createUseColorsMock() in mapMocks.ts.
+ * That's it.  The test itself never needs updating.
+ */
+describe("createUseColorsMock() named-export coverage — every function exported by useColors.ts is present in the mock", () => {
+  let mock: Record<string, unknown>;
+  let expectedFnNames: string[];
+
+  beforeAll(() => {
+    const actual = jest.requireActual<Record<string, unknown>>(
+      "@/hooks/useColors",
+    );
+
+    expectedFnNames = Object.entries(actual)
+      .filter(([, v]) => typeof v === "function")
+      .map(([k]) => k);
+
+    mock = createUseColorsMock() as Record<string, unknown>;
+  });
+
+  it("hooks/useColors.ts exports at least one function (sanity check)", () => {
+    expect(expectedFnNames.length).toBeGreaterThan(0);
+  });
+
+  it("createUseColorsMock() returns an object (sanity check)", () => {
+    expect(typeof mock).toBe("object");
+    expect(mock).not.toBeNull();
+  });
+
+  it("mock has a function for every named export of hooks/useColors.ts", () => {
+    const missing = expectedFnNames.filter(
+      (name) => typeof mock[name] !== "function",
+    );
+
+    if (missing.length > 0) {
+      throw new Error(
+        `The following hooks/useColors.ts function exports are missing or not a ` +
+          `function in createUseColorsMock():\n` +
+          missing.map((n) => `  • ${n} (got: ${typeof mock[n]})`).join("\n") +
+          `\n\nFix: add each missing export as a function to the object returned ` +
+          `by createUseColorsMock() in mapMocks.ts.\n` +
+          `Example: ${missing[0]}: () => false`,
       );
     }
 

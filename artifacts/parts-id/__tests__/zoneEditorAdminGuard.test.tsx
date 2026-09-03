@@ -1,16 +1,15 @@
 /**
- * Tests that the Zone Editor button in MapScreen is guarded by the `isAdmin`
- * flag from AppContext.
+ * Tests that the Zone Editor button in MapScreen is guarded by both the
+ * `isAdmin` flag from AppContext AND the presence of `EXPO_PUBLIC_DOMAIN`.
  *
- * The button lives inside `{isAdmin && <View …>…</View>}` (map.tsx ~line 398).
- * Without a test, a future refactor of that outer guard could silently expose
- * the button to non-admin users.
+ * The button lives inside `{isAdmin && zoneEditorUrl !== null && <View …>…</View>}` (map.tsx).
+ * `zoneEditorUrl` is derived at render time from `process.env.EXPO_PUBLIC_DOMAIN`.
  *
- * Two cases are covered:
- *   A) isAdmin=false — the Pressable with accessibilityLabel "Open Zone Editor"
- *      must NOT appear in the rendered tree.
- *   B) isAdmin=true  — the Pressable with accessibilityLabel "Open Zone Editor"
- *      MUST appear in the rendered tree.
+ * Cases covered:
+ *   A) isAdmin=false → button absent (domain is set — env-setup.js default)
+ *   B) EXPO_PUBLIC_DOMAIN unset → button absent even for admin
+ *   C) EXPO_PUBLIC_DOMAIN set + isAdmin=true → button present, calls Linking.openURL
+ *   D) EXPO_PUBLIC_DOMAIN set + isAdmin=true → does NOT call Clipboard.setStringAsync
  */
 
 // Required for act() to work correctly in the node test environment.
@@ -121,8 +120,7 @@ jest.mock("@/components/BrowseByAisle", () => ({
 jest.mock("react-native-reanimated", () => require("./helpers/mapMocks").createReanimatedMock());
 
 // ─── react-native-gesture-handler ────────────────────────────────────────────
-
-jest.mock("react-native-gesture-handler", () => require("./helpers/mapMocks").createGestureHandlerMock());
+// Handled automatically by moduleNameMapper in jest.config.js
 
 // ─── react-native-svg ────────────────────────────────────────────────────────
 
@@ -141,29 +139,15 @@ jest.mock("@/utils/floorPlanCache", () => require("./helpers/mapMocks").createFl
 jest.mock("@/utils/mapViewport", () => require("./helpers/mapMocks").createMapViewportMock());
 
 // ─── AppContext ───────────────────────────────────────────────────────────────
-// jest.config.js maps @/contexts/AppContext → __mocks__/contexts/AppContext.js
-// which exports useApp as a jest.fn().
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { useApp } = require("@/contexts/AppContext") as { useApp: jest.Mock };
-
-// ─── Per-test teardown ────────────────────────────────────────────────────────
-
-let activeTree: Awaited<ReturnType<typeof render>> | null = null;
-
-afterEach(async () => {
-  if (activeTree) {
-    await activeTree.unmount();
-    activeTree = null;
-  }
-  jest.clearAllMocks();
-});
 
 // ─── Subject under test ───────────────────────────────────────────────────────
 
 import MapScreen from "../app/(tabs)/map";
 
-// ─── Render helper ────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const flushPromises = () =>
   act(async () => {
@@ -171,6 +155,25 @@ const flushPromises = () =>
     await Promise.resolve();
     await Promise.resolve();
   });
+
+/** Saved value of EXPO_PUBLIC_DOMAIN before any test tampers with it. */
+const ORIGINAL_DOMAIN = process.env.EXPO_PUBLIC_DOMAIN;
+
+let activeTree: RenderResult | null = null;
+
+afterEach(async () => {
+  if (activeTree) {
+    await activeTree.unmount();
+    activeTree = null;
+  }
+  // Restore the env var to whatever it was at suite start.
+  if (ORIGINAL_DOMAIN !== undefined) {
+    process.env.EXPO_PUBLIC_DOMAIN = ORIGINAL_DOMAIN;
+  } else {
+    delete process.env.EXPO_PUBLIC_DOMAIN;
+  }
+  jest.clearAllMocks();
+});
 
 async function renderMapScreen(isAdmin: boolean) {
   useApp.mockReturnValue(makeAppMock({ isAdmin }));
@@ -180,7 +183,7 @@ async function renderMapScreen(isAdmin: boolean) {
   return tree;
 }
 
-function findZoneEditorButton(root: Awaited<ReturnType<typeof render>>["root"]) {
+function findZoneEditorButton(root: RenderResult["root"]) {
   return root!.queryAll(
     (n) =>
       (n.type as string) === "rn-pressable" &&
@@ -190,19 +193,64 @@ function findZoneEditorButton(root: Awaited<ReturnType<typeof render>>["root"]) 
 }
 
 // =============================================================================
-// Zone Editor button — isAdmin guard
+// A) isAdmin=false — button must not appear (domain is set by env-setup.js)
 // =============================================================================
 
-describe("MapScreen — Zone Editor button isAdmin guard", () => {
+describe("MapScreen — Zone Editor button hidden when isAdmin=false", () => {
   it("does NOT render the Zone Editor button when isAdmin is false", async () => {
+    process.env.EXPO_PUBLIC_DOMAIN = "test.example.com";
     const tree = await renderMapScreen(false);
-    const buttons = findZoneEditorButton(tree.root);
-    expect(buttons).toHaveLength(0);
+    expect(findZoneEditorButton(tree.root)).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// B) EXPO_PUBLIC_DOMAIN unset — button absent even for admin
+// =============================================================================
+
+describe("MapScreen — Zone Editor button hidden when EXPO_PUBLIC_DOMAIN is unset", () => {
+  it("does NOT render the Zone Editor button when domain is unset (isAdmin=true)", async () => {
+    delete process.env.EXPO_PUBLIC_DOMAIN;
+    const tree = await renderMapScreen(true);
+    expect(findZoneEditorButton(tree.root)).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// C & D) EXPO_PUBLIC_DOMAIN set + isAdmin=true — button present, opens via Linking
+// =============================================================================
+
+describe("MapScreen — Zone Editor button with domain set and isAdmin=true", () => {
+  beforeEach(() => {
+    process.env.EXPO_PUBLIC_DOMAIN = "test.example.com";
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Linking } = require("react-native") as typeof import("react-native");
+    (Linking.openURL as jest.Mock).mockClear();
   });
 
-  it("renders the Zone Editor button when isAdmin is true", async () => {
+  it("renders the Zone Editor button when domain is set and isAdmin=true", async () => {
     const tree = await renderMapScreen(true);
-    const buttons = findZoneEditorButton(tree.root);
-    expect(buttons).toHaveLength(1);
+    expect(findZoneEditorButton(tree.root)).toHaveLength(1);
+  });
+
+  it("pressing the button calls Linking.openURL with the correct URL", async () => {
+    const tree = await renderMapScreen(true);
+    const [btn] = findZoneEditorButton(tree.root);
+    await act(async () => { btn!.props.onPress(); });
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Linking } = require("react-native") as typeof import("react-native");
+    expect(Linking.openURL).toHaveBeenCalledWith(
+      "https://test.example.com/__mockup/zone-editor",
+    );
+  });
+
+  it("pressing the button does NOT call Clipboard.setStringAsync", async () => {
+    const tree = await renderMapScreen(true);
+    const [btn] = findZoneEditorButton(tree.root);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { setStringAsync } = require("expo-clipboard") as { setStringAsync: jest.Mock };
+    setStringAsync.mockClear();
+    await act(async () => { btn!.props.onPress(); });
+    expect(setStringAsync).not.toHaveBeenCalled();
   });
 });

@@ -79,7 +79,42 @@ export function AisleSummarySheet({ zone, inventory, onClose, onBrowse }: AisleS
     return summarise(zone, inventory);
   }, [zone, inventory]);
 
-  if (!zone || !summary) return null;
+  if (!zone) return null;
+
+  // Empty / failed inventory — show a friendly sheet instead of nothing (F-037)
+  if (!summary) {
+    return (
+      <Modal
+        visible
+        transparent
+        animationType="slide"
+        onRequestClose={onClose}
+      >
+        <Pressable style={[sheetStyles.backdrop, { backgroundColor: colors.overlay }]} onPress={onClose} />
+        <View style={[sheetStyles.sheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={[sheetStyles.handle, { backgroundColor: colors.border }]} />
+          <Text style={[sheetStyles.title, { color: colors.foreground }]}>{`Aisle ${zone.aisleNum}`}</Text>
+          <View style={sheetStyles.emptyState}>
+            <Text style={[sheetStyles.emptyIcon]}>📦</Text>
+            <Text style={[sheetStyles.emptyTitle, { color: colors.foreground }]}>
+              No inventory in this aisle
+            </Text>
+            <Text style={[sheetStyles.emptyHint, { color: colors.mutedForeground }]}>
+              Sync your inventory to see parts stored here.
+            </Text>
+          </View>
+          <Pressable
+            onPress={onClose}
+            style={[sheetStyles.cta, { backgroundColor: colors.muted }]}
+          >
+            <Text style={[sheetStyles.ctaText, { color: colors.mutedForeground }]}>
+              Close
+            </Text>
+          </Pressable>
+        </View>
+      </Modal>
+    );
+  }
 
   const sectionHint = zone.sectionNumbers && zone.sectionNumbers.length > 0
     ? `Section ${zone.sectionNumbers.join(", ")}`
@@ -168,4 +203,8 @@ const sheetStyles = StyleSheet.create({
   tagText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   cta: { borderRadius: 10, paddingVertical: 14, alignItems: "center" },
   ctaText: { fontSize: 16, fontFamily: "Inter_700Bold" },
+  emptyState: { alignItems: "center", paddingVertical: 20, paddingHorizontal: 8 },
+  emptyIcon: { fontSize: 36, marginBottom: 10 },
+  emptyTitle: { fontSize: 16, fontFamily: "Inter_700Bold", marginBottom: 6, textAlign: "center" },
+  emptyHint: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 20 },
 });

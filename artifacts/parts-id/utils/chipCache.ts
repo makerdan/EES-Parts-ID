@@ -60,6 +60,7 @@ export async function fetchChipAnswer(
   chipQuestion: string,
   cache: Map<string, CacheEntry>,
   apiBase: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const entry = cache.get(label);
   if (entry !== undefined) {
@@ -73,13 +74,20 @@ export async function fetchChipAnswer(
   try {
     const res = await fetchWithAuth(
       `${apiBase}/reference/quick-lookups/${encodeURIComponent(label)}`,
+      { ...(signal ? { signal } : {}) },
     );
     if (res.ok) {
       const data: { answer: string } = await res.json();
+      if (signal?.aborted) {
+        const error = new Error("The operation was aborted.");
+        error.name = "AbortError";
+        throw error;
+      }
       cache.set(label, { answer: data.answer, fetchedAt: Date.now() });
       return data.answer;
     }
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     // network error — fall through to AI
   }
 
@@ -89,10 +97,16 @@ export async function fetchChipAnswer(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question: chipQuestion }),
+      ...(signal ? { signal } : {}),
     },
   );
   if (!res.ok) throw new Error("AI fallback failed");
   const data: { answer: string } = await res.json();
+  if (signal?.aborted) {
+    const error = new Error("The operation was aborted.");
+    error.name = "AbortError";
+    throw error;
+  }
   cache.set(label, { answer: data.answer, fetchedAt: Date.now() });
   return data.answer;
 }
@@ -100,16 +114,23 @@ export async function fetchChipAnswer(
 export async function prefetchQuickLookups(
   cache: Map<string, CacheEntry>,
   apiBase: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   try {
-    const res = await fetchWithAuth(`${apiBase}/reference/quick-lookups`);
+    const res = await fetchWithAuth(
+      `${apiBase}/reference/quick-lookups`,
+      signal ? { signal } : {},
+    );
     if (!res.ok) return;
     const rows: Array<{ label: string; answer: string }> = await res.json();
+    if (signal?.aborted) return;
     const now = Date.now();
     for (const row of rows) {
+      if (signal?.aborted) return;
       cache.set(row.label, { answer: row.answer, fetchedAt: now });
     }
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     // Non-fatal — cache will be populated on demand
   }
 }

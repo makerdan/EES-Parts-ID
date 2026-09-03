@@ -65,6 +65,17 @@ import {
   runSaveAll,
 } from "@/utils/expandDescHandlers";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
+import {
+  BARCODE_ALIASES,
+  BIN_ALIASES,
+  CATALOG_ALIASES,
+  DESC_ALIASES,
+  findSpreadsheetColumn,
+  normalizeSpreadsheetRows,
+  parseBinCell,
+  parseOds,
+  VENDOR_ALIASES,
+} from "@/utils/importSpreadsheet";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
@@ -136,13 +147,6 @@ type BinDiffSummary = {
   willPreserveBarcodes: number;
   willBarcodeConflicts: number;
 };
-
-// CSV/XLSX cell may pack multiple bins separated by ; or | — split, trim, drop blanks.
-function parseBinCell(cell: string): Array<string> {
-  const trimmed = cell.trim();
-  if (!trimmed) return [];
-  return trimmed.split(/[;|]/).map(b => b.trim()).filter(b => b.length > 0);
-}
 
 type EnrichProgress = {
   progress: number;
@@ -218,6 +222,8 @@ const SseExpandDescDataSchema = z.object({
   error: z.string().optional(),
   progress: z.number().optional(),
   model: z.string().optional(),
+  confidence: z.number().nullable().optional(),
+  autoSaved: z.boolean().optional(),
 });
 const BinDiffSummarySchema = z.object({
   willReplaceBins: z.number(),
@@ -241,17 +247,6 @@ const QueryResultSchema = z.object({
   error: z.string().optional(),
 });
 
-// ── Column header aliases ──────────────────────────────────────────────────
-const VENDOR_ALIASES = ["vendor", "mfr", "manufacturer", "brand", "make", "supplier"];
-const CATALOG_ALIASES = ["catalog", "catalog#", "cat#", "part", "part#", "partno", "item", "itemno", "sku", "model", "partnumber", "part number", "cat no", "catalog no"];
-const DESC_ALIASES = ["description", "desc", "name", "product", "productname", "title", "item description"];
-const BIN_ALIASES = ["bin", "bin location", "binlocation", "location", "loc", "shelf", "aisle", "bin#", "bin no"];
-const BARCODE_ALIASES = ["barcode", "barcodes", "barcode#", "upc", "ean", "gtin"];
-
-function findCol(headers: Array<string>, aliases: Array<string>): number {
-  return aliases.map(a => headers.indexOf(a)).find(i => i >= 0) ?? -1;
-}
-
 // ── Parse CSV text ─────────────────────────────────────────────────────────
 function parseCSV(rawText: string): Array<ParsedRow> {
   // Strip UTF-8 BOM (\uFEFF) if present so Excel-exported files parse correctly.
@@ -260,11 +255,11 @@ function parseCSV(rawText: string): Array<ParsedRow> {
   if (lines.length < 2) return [];
 
   const headers = lines[0]!.split(",").map(h => h.trim().toLowerCase().replace(/['"]/g, ""));
-  const vendorCol = findCol(headers, VENDOR_ALIASES);
-  const catalogCol = findCol(headers, CATALOG_ALIASES);
-  const descCol = findCol(headers, DESC_ALIASES);
-  const binCol = findCol(headers, BIN_ALIASES);
-  const barcodeCol = findCol(headers, BARCODE_ALIASES);
+  const vendorCol = findSpreadsheetColumn(headers, VENDOR_ALIASES);
+  const catalogCol = findSpreadsheetColumn(headers, CATALOG_ALIASES);
+  const descCol = findSpreadsheetColumn(headers, DESC_ALIASES);
+  const binCol = findSpreadsheetColumn(headers, BIN_ALIASES);
+  const barcodeCol = findSpreadsheetColumn(headers, BARCODE_ALIASES);
 
   const rows: Array<ParsedRow> = [];
   for (let i = 1; i < lines.length; i++) {
@@ -327,29 +322,7 @@ async function parseXlsx(uri: string): Promise<Array<ParsedRow>> {
   }
 
   if (!bestRows || bestRows.length < 2) return [];
-
-  const headers = bestRows[0]!.map(h => String(h ?? "").trim().toLowerCase());
-  const vendorCol = findCol(headers, VENDOR_ALIASES);
-  const catalogCol = findCol(headers, CATALOG_ALIASES);
-  const descCol = findCol(headers, DESC_ALIASES);
-  const binCol = findCol(headers, BIN_ALIASES);
-  const barcodeCol = findCol(headers, BARCODE_ALIASES);
-
-  const rows: Array<ParsedRow> = [];
-  for (let i = 1; i < bestRows.length; i++) {
-    const cells = bestRows[i]!.map(c => String(c ?? "").trim());
-    const vendor = vendorCol >= 0 ? cells[vendorCol] ?? "" : "";
-    const catalog = catalogCol >= 0 ? cells[catalogCol] ?? "" : "";
-    if (!vendor && !catalog) continue;
-    rows.push({
-      vendor: vendor || "UNKNOWN",
-      catalog: catalog || "UNKNOWN",
-      description: descCol >= 0 ? cells[descCol] ?? "" : "",
-      binLocations: binCol >= 0 ? parseBinCell(cells[binCol] ?? "") : [],
-      barcodes: barcodeCol >= 0 ? (cells[barcodeCol] ?? "").split(/[,;|]/).map(b => b.trim()).filter(b => b.length > 0) : [],
-    });
-  }
-  return rows;
+  return normalizeSpreadsheetRows(bestRows);
 }
 
 // ── Inventory row component ───────────────────────────────────────────────
@@ -484,9 +457,27 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
           : colors.primary + "33";
   return (
     <View style={{ borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 0, marginTop: 10, backgroundColor: cardBg, borderColor: cardBorder }}>
-      <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.mutedForeground }}>
-        {result.partNumber}
-      </Text>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.mutedForeground }}>
+          {result.partNumber}
+        </Text>
+        {result.confidence != null && (
+          <View style={{
+            borderRadius: 4,
+            paddingHorizontal: 6,
+            paddingVertical: 2,
+            backgroundColor: result.confidence > 70 ? colors.success + "22" : "#f59e0b22",
+          }}>
+            <Text style={{
+              fontSize: 10,
+              fontFamily: "Inter_600SemiBold",
+              color: result.confidence > 70 ? colors.success : "#d97706",
+            }}>
+              {result.confidence} % confidence
+            </Text>
+          </View>
+        )}
+      </View>
       <Text style={{ fontSize: 12, color: colors.mutedForeground, fontFamily: "Inter_400Regular" }}>
         Original: {result.originalDescription}
       </Text>
@@ -572,7 +563,11 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
         </View>
       ) : (
         <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: result.savedStatus === "saved" ? colors.success : colors.mutedForeground }}>
-          {result.savedStatus === "saved" ? "✓ Saved" : "— Discarded"}
+          {result.savedStatus === "saved"
+            ? result.autoSaved && result.confidence != null
+              ? `✓ Auto-saved (${result.confidence} %)`
+              : "✓ Saved"
+            : "— Discarded"}
         </Text>
       )}
     </View>
@@ -589,7 +584,14 @@ export default function UploadScreen() {
   const router = useRouter();
   const { userId: currentClerkUserId } = useAuth();
   const { isAdmin, logoutAdmin, adminToken, showToast } = useApp();
-  const { status: apiStatus, restarting: apiRestarting, triggerRestart, checkStatus, bots: apiBots, probeSingleBot } = useApiHealth();
+  const {
+    status: apiStatus,
+    restarting: apiRestarting,
+    triggerRestart,
+    checkStatus,
+    bots: apiBots,
+    probeSingleBot,
+  } = useApiHealth();
   const apiCheckAnim = useRef(new Animated.Value(1)).current;
   const [apiChecking, setApiChecking] = useState(false);
   const [activeBadge, setActiveBadge] = useState<string | null>(null);
@@ -662,7 +664,27 @@ export default function UploadScreen() {
       "The server will briefly go offline while it restarts.",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Restart", style: "destructive", onPress: () => { triggerRestart(); } },
+        {
+          text: "Restart",
+          style: "destructive",
+          onPress: () => {
+            void triggerRestart().then((outcome) => {
+              if (outcome === "recovered") {
+                Alert.alert("API server recovered", "The API server is back online.");
+              } else if (outcome === "authorization") {
+                Alert.alert("Restart denied", "Admin access with MFA is required.");
+              } else if (outcome === "rejected") {
+                Alert.alert("Restart not accepted", "The API server did not accept the restart request.");
+              } else if (outcome === "timeout") {
+                Alert.alert("Restart timed out", "The API server did not respond in time. It was not treated as restarted.");
+              } else if (outcome === "server_failure") {
+                Alert.alert("Restart failed", "The API server could not process the restart request.");
+              } else if (outcome === "recovery_failed") {
+                Alert.alert("API server did not recover", "The restart was accepted, but the server did not become healthy.");
+              }
+            });
+          },
+        },
       ],
     );
   }, [triggerRestart]);
@@ -682,7 +704,7 @@ export default function UploadScreen() {
   const [parsedRows, setParsedRows] = useState<Array<ParsedRow>>([]);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
+  const [fileType, setFileType] = useState<"csv" | "xlsx" | "ods" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
   const [activeSection, setActiveSection] = useState<"import" | "enrichment" | "warehouse" | "people" | null>(null);
   const [addpartScrollY, setAddpartScrollY] = useState(0);
@@ -756,6 +778,9 @@ export default function UploadScreen() {
   const [replaceListSearch, setReplaceListSearch] = useState("");
 
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
+  const isMountedRef = useRef(true);
+  const screenGenerationRef = useRef(0);
+  const pasteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Build admin auth headers for protected API calls
   const adminHeaders = useMemo<Record<string, string>>(
@@ -768,17 +793,20 @@ export default function UploadScreen() {
   const ACTIVE_SECTION_KEY = "admin_activeSection";
   useEffect(() => {
     AsyncStorage.getItem(ACTIVE_SECTION_KEY).then((val) => {
+      if (!isMountedRef.current) return;
       if (val === "import" || val === "enrichment" || val === "warehouse" || val === "people") {
         setActiveSection(val);
       }
-    }).catch(err => reportStorageError('AsyncStorage read failed (ACTIVE_SECTION_KEY)', err));
+    }).catch(err => {
+      if (isMountedRef.current) reportStorageError('AsyncStorage read failed (ACTIVE_SECTION_KEY)', err);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     if (activeSection === null) {
-      AsyncStorage.removeItem(ACTIVE_SECTION_KEY);
+      AsyncStorage.removeItem(ACTIVE_SECTION_KEY).catch(() => {});
     } else {
-      AsyncStorage.setItem(ACTIVE_SECTION_KEY, activeSection);
+      AsyncStorage.setItem(ACTIVE_SECTION_KEY, activeSection).catch(() => {});
     }
   }, [activeSection]);
 
@@ -789,20 +817,29 @@ export default function UploadScreen() {
   // SSE reader refs — cancelled on unmount to prevent setState on unmounted component
   const enrichReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const expandDescReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+  const enrichControllerRef = useRef<AbortController | null>(null);
+  const expandDescControllerRef = useRef<AbortController | null>(null);
   // Abort flags — set true by the unmount cleanup so catch/finally blocks know
   // not to call setState after the component has been torn down.
   const enrichAbortedRef = useRef(false);
   const expandDescAbortedRef = useRef(false);
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
+      screenGenerationRef.current += 1;
       enrichAbortedRef.current = true;
+      enrichControllerRef.current?.abort();
       enrichReaderRef.current?.cancel().catch(() => {});
       expandDescAbortedRef.current = true;
+      expandDescControllerRef.current?.abort();
       expandDescReaderRef.current?.cancel().catch(() => {});
+      if (pasteDebounceRef.current) {
+        clearTimeout(pasteDebounceRef.current);
+        pasteDebounceRef.current = null;
+      }
     };
   }, []);
-  const pasteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   // Auto-fetch bin-diff preview whenever the raw CSV changes so admins
   // see a replace-warning before they can press Upload.
   // Uses POST /api/admin/upload/preview (raw CSV text) — the same endpoint
@@ -863,21 +900,33 @@ export default function UploadScreen() {
     };
   }, [rawCsv, parsedRows.length, adminToken, logoutAdmin]);
 
-  const bulkPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const measurePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const bulkPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const measurePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bulkPollInFlightRef = useRef(false);
+  const measurePollInFlightRef = useRef(false);
+  const bulkPollGenerationRef = useRef(0);
+  const measurePollGenerationRef = useRef(0);
+  const bulkPollControllerRef = useRef<AbortController | null>(null);
+  const measurePollControllerRef = useRef<AbortController | null>(null);
 
   const stopBulkPoll = useCallback(() => {
     if (bulkPollRef.current !== null) {
-      clearInterval(bulkPollRef.current);
+      clearTimeout(bulkPollRef.current);
       bulkPollRef.current = null;
     }
+    bulkPollGenerationRef.current += 1;
+    bulkPollControllerRef.current?.abort();
+    bulkPollControllerRef.current = null;
   }, []);
 
   const stopMeasurePoll = useCallback(() => {
     if (measurePollRef.current !== null) {
-      clearInterval(measurePollRef.current);
+      clearTimeout(measurePollRef.current);
       measurePollRef.current = null;
     }
+    measurePollGenerationRef.current += 1;
+    measurePollControllerRef.current?.abort();
+    measurePollControllerRef.current = null;
   }, []);
 
   const fetchEnrichSummary = useCallback(async () => {
@@ -901,10 +950,16 @@ export default function UploadScreen() {
   }, [logoutAdmin]);
 
   const pollBulkStatus = useCallback(async () => {
+    if (!isMountedRef.current || bulkPollInFlightRef.current) return;
+    const generation = bulkPollGenerationRef.current;
+    const controller = new AbortController();
+    bulkPollControllerRef.current = controller;
+    bulkPollInFlightRef.current = true;
     try {
       const token = adminTokenRef.current;
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await fetch(`${API_BASE}/inventory/bulk-enrich/status`, { headers });
+      const res = await fetch(`${API_BASE}/inventory/bulk-enrich/status`, { headers, signal: controller.signal });
+      if (!isMountedRef.current || generation !== bulkPollGenerationRef.current || controller.signal.aborted) return;
       if (res.status === 401) {
         stopBulkPoll();
         logoutAdmin();
@@ -913,6 +968,7 @@ export default function UploadScreen() {
       }
       if (!res.ok) return;
       const parsed = BulkJobStatusSchema.safeParse(await res.json());
+      if (!isMountedRef.current || generation !== bulkPollGenerationRef.current || controller.signal.aborted) return;
       if (!parsed.success) { console.warn("[upload] pollBulkStatus unexpected shape:", parsed.error.message); return; }
       const data = parsed.data;
       setBulkJobStatus(data);
@@ -923,22 +979,37 @@ export default function UploadScreen() {
         void fetchEnrichSummary();
       }
     } catch (err) {
-      console.error('[upload] pollBulkStatus', err);
+      if (!controller.signal.aborted) console.error('[upload] pollBulkStatus', err);
+    } finally {
+      bulkPollInFlightRef.current = false;
+      if (bulkPollControllerRef.current === controller) bulkPollControllerRef.current = null;
+      if (isMountedRef.current && generation === bulkPollGenerationRef.current && bulkPollRef.current === null) {
+        bulkPollRef.current = setTimeout(() => {
+          bulkPollRef.current = null;
+          void pollBulkStatus();
+        }, 2000);
+      }
     }
   }, [stopBulkPoll, fetchEnrichSummary, logoutAdmin]);
 
   const startBulkPoll = useCallback(() => {
     stopBulkPoll();
+    bulkPollGenerationRef.current += 1;
     // Fire an immediate fetch so the UI responds before the first 2s tick
     void pollBulkStatus();
-    bulkPollRef.current = setInterval(pollBulkStatus, 2000);
   }, [stopBulkPoll, pollBulkStatus]);
 
   const pollMeasureStatus = useCallback(async () => {
+    if (!isMountedRef.current || measurePollInFlightRef.current) return;
+    const generation = measurePollGenerationRef.current;
+    const controller = new AbortController();
+    measurePollControllerRef.current = controller;
+    measurePollInFlightRef.current = true;
     try {
       const token = adminTokenRef.current;
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await fetch(`${API_BASE}/inventory/enrich-measurements/status`, { headers });
+      const res = await fetch(`${API_BASE}/inventory/enrich-measurements/status`, { headers, signal: controller.signal });
+      if (!isMountedRef.current || generation !== measurePollGenerationRef.current || controller.signal.aborted) return;
       if (res.status === 401) {
         stopMeasurePoll();
         logoutAdmin();
@@ -947,6 +1018,7 @@ export default function UploadScreen() {
       }
       if (!res.ok) return;
       const parsed = MeasureJobStatusSchema.safeParse(await res.json());
+      if (!isMountedRef.current || generation !== measurePollGenerationRef.current || controller.signal.aborted) return;
       if (!parsed.success) { console.warn("[upload] pollMeasureStatus unexpected shape:", parsed.error.message); return; }
       const data = parsed.data;
       setMeasureJobStatus(data);
@@ -957,14 +1029,23 @@ export default function UploadScreen() {
         void fetchEnrichSummary();
       }
     } catch (err) {
-      console.error('[upload] pollMeasureStatus', err);
+      if (!controller.signal.aborted) console.error('[upload] pollMeasureStatus', err);
+    } finally {
+      measurePollInFlightRef.current = false;
+      if (measurePollControllerRef.current === controller) measurePollControllerRef.current = null;
+      if (isMountedRef.current && generation === measurePollGenerationRef.current && measurePollRef.current === null) {
+        measurePollRef.current = setTimeout(() => {
+          measurePollRef.current = null;
+          void pollMeasureStatus();
+        }, 2000);
+      }
     }
   }, [stopMeasurePoll, fetchEnrichSummary, logoutAdmin]);
 
   const startMeasurePoll = useCallback(() => {
     stopMeasurePoll();
+    measurePollGenerationRef.current += 1;
     void pollMeasureStatus();
-    measurePollRef.current = setInterval(pollMeasureStatus, 2000);
   }, [stopMeasurePoll, pollMeasureStatus]);
 
   const handleQueryExport = useCallback(async (format: "csv" | "xlsx") => {
@@ -1152,6 +1233,10 @@ export default function UploadScreen() {
   };
 
   const handleStartExpandDescriptions = async (extraHeaders?: Record<string, string>) => {
+    const generation = screenGenerationRef.current;
+    expandDescControllerRef.current?.abort();
+    const controller = new AbortController();
+    expandDescControllerRef.current = controller;
     expandDescAbortedRef.current = false;
     AsyncStorage.removeItem(EXPAND_DESC_DRAFT_KEY).catch(() => {});
     setExpandDescDraftSavedAt(null);
@@ -1167,7 +1252,9 @@ export default function UploadScreen() {
       const response = await fetch(`${API_BASE}/inventory/expand-descriptions`, {
         method: "POST",
         headers: { ...adminHeaders, ...extraHeaders },
+        signal: controller.signal,
       });
+      if (!isMountedRef.current || generation !== screenGenerationRef.current || controller.signal.aborted) return;
 
       if (!response.ok) {
         if (response.status === 401) {
@@ -1193,6 +1280,7 @@ export default function UploadScreen() {
       let poeChainExhausted = false;
 
       const processLine = (line: string) => {
+        if (!isMountedRef.current || generation !== screenGenerationRef.current || controller.signal.aborted) return;
         if (!line.startsWith("data: ")) return;
         try {
           const rawData: unknown = JSON.parse(line.slice(6));
@@ -1219,8 +1307,10 @@ export default function UploadScreen() {
               originalDescription: data.originalDescription ?? "",
               expandedDescription: data.expandedDescription ?? null,
               editedText: data.expandedDescription ?? "",
-              savedStatus: data.error ? "discarded" : "pending",
+              savedStatus: data.error ? "discarded" : data.autoSaved ? "saved" : "pending",
               error: data.error,
+              confidence: data.confidence ?? null,
+              autoSaved: data.autoSaved ?? false,
             }]);
             if (data.progress != null && data.total != null) {
               setExpandDescProgress({ done: data.progress, total: data.total });
@@ -1231,6 +1321,7 @@ export default function UploadScreen() {
 
       while (true) {
         const { done, value } = await reader.read();
+        if (!isMountedRef.current || generation !== screenGenerationRef.current || controller.signal.aborted) return;
         if (done) break;
         sseBuffer += decoder.decode(value, { stream: true });
         const lines = sseBuffer.split("\n");
@@ -1239,7 +1330,8 @@ export default function UploadScreen() {
       }
       if (sseBuffer.trim()) processLine(sseBuffer.trim());
 
-      if (poeChainExhausted && !extraHeaders?.["x-use-openai-fallback"]) {
+      if (poeChainExhausted && !extraHeaders?.["x-use-openai-fallback"] &&
+        isMountedRef.current && generation === screenGenerationRef.current) {
         Alert.alert(
           "AI Unavailable",
           "All AI bots are currently unavailable. Retry using OpenAI instead?",
@@ -1255,12 +1347,12 @@ export default function UploadScreen() {
 
       expandDescReaderRef.current = null;
     } catch {
-      if (!expandDescAbortedRef.current) {
+      if (!expandDescAbortedRef.current && isMountedRef.current && generation === screenGenerationRef.current) {
         setExpandDescError("Failed to expand descriptions. Check your connection and try again.");
       }
       expandDescReaderRef.current = null;
     } finally {
-      if (!expandDescAbortedRef.current) {
+      if (!expandDescAbortedRef.current && isMountedRef.current && generation === screenGenerationRef.current) {
         setExpandDescRunning(false);
       }
     }
@@ -1434,10 +1526,17 @@ export default function UploadScreen() {
         copyToCacheDirectory: true,
       });
 
+      if (!isMountedRef.current) return;
       if (result.canceled || !result.assets?.[0]) return;
 
       const asset = result.assets[0];
-      setFileName(asset.name);
+      // Clear any previous import before parsing the new selection. This
+      // prevents an invalid or empty workbook from leaving stale rows eligible
+      // for preview/upload.
+      setFileName(null);
+      setFileType(null);
+      setParsedRows([]);
+      setRawCsv(null);
 
       const ext = asset.name.split(".").pop()?.toLowerCase() ?? "";
       let rows: Array<ParsedRow> = [];
@@ -1451,6 +1550,7 @@ export default function UploadScreen() {
         const response = await fetch(asset.uri);
         if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
         const text = await response.text();
+        if (!isMountedRef.current) return;
         rows = parseCSV(text);
         // Normalize through serializeToCsv so the server always receives a
         // canonical header row (Vendor,Catalog,Description,BinLocation) even
@@ -1460,21 +1560,31 @@ export default function UploadScreen() {
         setFileType("csv");
       } else if (["xlsx", "xlsm"].includes(ext)) {
         rows = await parseXlsx(asset.uri);
+        if (!isMountedRef.current) return;
         // Serialize to CSV so we can send it to admin/upload/preview and
         // admin/upload which only accept raw CSV text. skipBinRows is empty
         // at this point (file just loaded), so all bin data is included.
         rawText = serializeToCsv(rows, new Set());
         setFileType("xlsx");
+      } else if (ext === "ods") {
+        rows = await parseOds(asset.uri);
+        if (!isMountedRef.current) return;
+        // ODS is parsed locally, then sent through the same canonical CSV
+        // preview/upload contract as XLSX and CSV imports.
+        rawText = serializeToCsv(rows, new Set());
+        setFileType("ods");
       } else {
         try {
           const response = await fetch(asset.uri);
           if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
           const text = await response.text();
+          if (!isMountedRef.current) return;
           rows = parseCSV(text);
           rawText = serializeToCsv(rows, new Set());
           setFileType("csv");
         } catch {
           rows = await parseXlsx(asset.uri);
+          if (!isMountedRef.current) return;
           rawText = serializeToCsv(rows, new Set());
           setFileType("xlsx");
         }
@@ -1486,6 +1596,7 @@ export default function UploadScreen() {
       }
       setUploadError(null);
       setUploadSuccess(null);
+      setFileName(asset.name);
       setRawCsv(rawText);
       setParsedRows(rows);
     } catch {
@@ -1504,6 +1615,7 @@ export default function UploadScreen() {
       return;
     }
     pasteDebounceRef.current = setTimeout(() => {
+      if (!isMountedRef.current) return;
       const rows = parseCSV(text);
       if (rows.length === 0) {
         setUploadError("No data rows found. Ensure the text has columns: vendor, catalog (required), description, bin (optional).");
@@ -1544,6 +1656,7 @@ export default function UploadScreen() {
         },
         body: JSON.stringify({ csv: csvToSubmit }),
       });
+      if (!isMountedRef.current) return;
 
       if (!response.ok) {
         const bodyParsed = ApiErrorSchema.safeParse(await response.json().catch(() => ({})));
@@ -1557,6 +1670,7 @@ export default function UploadScreen() {
       }
 
       const resultParsed = UploadResultSchema.safeParse(await response.json());
+      if (!isMountedRef.current) return;
       if (!resultParsed.success) { console.warn("[upload] upload result unexpected shape:", resultParsed.error.message); setUploadError("Unexpected response from server — please try again."); return; }
       const result = resultParsed.data;
       setUploadSuccess({ inserted: result.inserted, updated: result.updated, total: result.total });
@@ -1565,15 +1679,19 @@ export default function UploadScreen() {
       setFileName(null);
       setFileType(null);
       setPasteText("");
-      await inventoryQuery.refetch();
+      if (isMountedRef.current) await inventoryQuery.refetch();
     } catch {
-      setUploadError("Upload failed — could not save inventory items. Please try again.");
+      if (isMountedRef.current) setUploadError("Upload failed — could not save inventory items. Please try again.");
     } finally {
-      setUploadPending(false);
+      if (isMountedRef.current) setUploadPending(false);
     }
   };
 
   const handleEnrich = async (idsToEnrich?: Array<number>) => {
+    const generation = screenGenerationRef.current;
+    enrichControllerRef.current?.abort();
+    const controller = new AbortController();
+    enrichControllerRef.current = controller;
     enrichAbortedRef.current = false;
     setEnrichProgress({ progress: 0, total: 0 });
     try {
@@ -1585,7 +1703,9 @@ export default function UploadScreen() {
           ...adminHeaders,
         },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
+      if (!isMountedRef.current || generation !== screenGenerationRef.current || controller.signal.aborted) return;
 
       if (!response.ok) {
         const errBodyParsed = ApiErrorSchema.safeParse(await response.json().catch(() => ({})));
@@ -1613,9 +1733,11 @@ export default function UploadScreen() {
       // an incomplete "data: ..." SSE line.
       let sseBuffer = "";
       const processLine = async (line: string) => {
+        if (!isMountedRef.current || generation !== screenGenerationRef.current || controller.signal.aborted) return;
         if (!line.startsWith("data: ")) return;
         try {
           const data: EnrichProgress = JSON.parse(line.slice(6));
+          if (!isMountedRef.current || generation !== screenGenerationRef.current || controller.signal.aborted) return;
           setEnrichProgress(data);
           if (data.done) await inventoryQuery.refetch();
         } catch (err) {
@@ -1624,6 +1746,7 @@ export default function UploadScreen() {
       };
       while (true) {
         const { done, value } = await reader.read();
+        if (!isMountedRef.current || generation !== screenGenerationRef.current || controller.signal.aborted) return;
         if (done) break;
         sseBuffer += decoder.decode(value, { stream: true });
         const lines = sseBuffer.split("\n");
@@ -1635,7 +1758,7 @@ export default function UploadScreen() {
       if (sseBuffer.trim()) await processLine(sseBuffer);
       enrichReaderRef.current = null;
     } catch {
-      if (!enrichAbortedRef.current) {
+      if (!enrichAbortedRef.current && isMountedRef.current && generation === screenGenerationRef.current) {
         setUploadError("AI enrichment failed — please check your connection and try again.");
         setEnrichProgress(null);
       }
@@ -2067,7 +2190,7 @@ export default function UploadScreen() {
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>📁 Import File</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Accepts: CSV, Excel (.xlsx/.xlsm){"\n"}
+                  Accepts: CSV, Excel (.xlsx/.xlsm), OpenDocument Spreadsheet (.ods){"\n"}
                   Required columns: vendor, catalog{"\n"}
                   Optional: description, bin (or binLocation), barcodes (upc/ean/gtin){"\n"}
                   Multiple bins per row: separate with ; or |{"\n"}
@@ -2076,14 +2199,14 @@ export default function UploadScreen() {
 
                 <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
                   <Text style={[styles.pickBtnText, { color: colors.primary }]}>
-                    📂 Choose CSV or Excel File
+                    📂 Choose CSV, Excel, or ODS File
                   </Text>
                 </Pressable>
 
                 {fileName ? (
                   <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
                     <Text style={[styles.fileChipText, { color: colors.foreground }]}>
-                      {fileType === "xlsx" ? "📊" : "📄"} {fileName}
+                      {fileType === "xlsx" || fileType === "ods" ? "📊" : "📄"} {fileName}
                     </Text>
                   </View>
                 ) : null}
@@ -3072,6 +3195,19 @@ export default function UploadScreen() {
                           <Feather name="maximize" size={20} color={colors.foreground} />
                         </Pressable>
                       ) : null}
+                    </View>
+                    {/* ── Scan to Assign Barcode section heading ── */}
+                    <View style={{ paddingHorizontal: 16, paddingTop: 20, paddingBottom: 4 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+                        <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.mutedForeground, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                          Scan to Assign Barcode
+                        </Text>
+                        <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+                      </View>
+                      <Text style={{ fontSize: 12, fontFamily: "Inter_400Regular", color: colors.mutedForeground, textAlign: "center" }}>
+                        Scan a barcode and assign it to any catalog item, or enter shelf mode to assign barcodes to all items on a shelf.
+                      </Text>
                     </View>
                     <BarcodeAddPart scrollY={addpartScrollY} />
                     <AddPartForm

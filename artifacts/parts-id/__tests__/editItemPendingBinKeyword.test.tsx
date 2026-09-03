@@ -74,6 +74,10 @@ jest.mock("expo-router", () => ({
   useRouter:             jest.fn(() => ({ back: mockRouterBack, replace: mockRouterReplace })),
   useLocalSearchParams:  jest.fn(() => ({ item: JSON.stringify(testItem), section: undefined })),
   useFocusEffect:        jest.fn((cb: () => (() => void) | void) => { cb(); }),
+  useNavigation:         jest.fn(() => ({
+    addListener: jest.fn(() => jest.fn()),
+    dispatch:    jest.fn(),
+  })),
 }));
 
 jest.mock("expo-camera", () => ({

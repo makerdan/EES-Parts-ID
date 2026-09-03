@@ -120,6 +120,14 @@ describe("Pending user → 403 on protected routes", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Approved non-admin → 403 on admin routes", () => {
+  it("GET /api/admin/dashboard-stats with an approved non-admin returns 403", async () => {
+    const res = await supertest(app)
+      .get("/api/admin/dashboard-stats")
+      .set("Authorization", `Bearer ${APPROVED_USER}`)
+      .expect(403);
+    expect(res.body).toHaveProperty("error");
+  });
+
   it("POST /api/admin/upload with an approved non-admin returns 403 (not 401)", async () => {
     const res = await supertest(app)
       .post("/api/admin/upload")
@@ -147,11 +155,45 @@ describe("Approved non-admin → 403 on admin routes", () => {
   });
 });
 
+describe("Admin dashboard — direct unauthenticated access", () => {
+  it("GET /api/admin/dashboard-stats without a token returns 401", async () => {
+    const res = await supertest(app)
+      .get("/api/admin/dashboard-stats")
+      .expect(401);
+    expect(res.body).toHaveProperty("error");
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap admin — request is accepted past auth
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Bootstrap admin — request proceeds past auth", () => {
+  it("GET /api/admin/dashboard-stats returns bounded aggregate metadata", async () => {
+    const res = await supertest(app)
+      .get("/api/admin/dashboard-stats")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(res.body).toEqual(expect.objectContaining({
+      generatedAt: expect.any(String),
+      window: expect.objectContaining({ days: 30 }),
+      timezone: "UTC",
+      privacy: expect.objectContaining({
+        minimumCellCount: 5,
+        aggregateOnly: true,
+      }),
+    }));
+    expect(res.body.screenViews).toEqual(expect.objectContaining({
+      byScreen: expect.any(Array),
+      dailyInWindow: expect.any(Array),
+    }));
+    expect(res.body.screenViews).toHaveProperty("viewsInWindow");
+    expect(res.body.screenViews).toHaveProperty("uniqueVisitorsInWindow");
+    expect(res.body.screenViews).not.toHaveProperty("totalAllTime");
+    expect(res.body.screenViews).not.toHaveProperty("uniqueVisitorsToday");
+  });
+
   it("POST /api/admin/upload with admin is accepted (not 401/403)", async () => {
     const res = await supertest(app)
       .post("/api/admin/upload")

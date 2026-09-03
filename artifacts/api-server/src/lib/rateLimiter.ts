@@ -203,6 +203,7 @@ const IDENTIFY_MAX = Number(process.env.RATE_LIMIT_IDENTIFY_PER_MIN ?? 20);
 const TRANSLATE_MAX = Number(process.env.RATE_LIMIT_TRANSLATE_PER_MIN ?? 60);
 const PART_CARD_MAX = Number(process.env.RATE_LIMIT_PART_CARD_PER_MIN ?? 30);
 const REFERENCE_ASK_MAX = Number(process.env.RATE_LIMIT_REFERENCE_ASK_PER_MIN ?? 20);
+const HELP_ASK_MAX = Number(process.env.RATE_LIMIT_HELP_ASK_PER_MIN ?? 20);
 const CATALOG_PDF_UPLOAD_MAX = Number(process.env.RATE_LIMIT_CATALOG_PDF_UPLOAD_PER_MIN ?? 5);
 const WINDOW_MS = 60_000;
 
@@ -228,6 +229,12 @@ export const referenceAskLimiter = new SlidingWindowRateLimiter({
   maxRequests: REFERENCE_ASK_MAX,
   windowMs: WINDOW_MS,
   namespace: "reference_ask",
+});
+
+export const helpAskLimiter = new SlidingWindowRateLimiter({
+  maxRequests: HELP_ASK_MAX,
+  windowMs: WINDOW_MS,
+  namespace: "help_ask",
 });
 
 export const catalogPdfUploadLimiter = new SlidingWindowRateLimiter({

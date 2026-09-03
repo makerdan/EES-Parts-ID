@@ -49,6 +49,9 @@ function baseRoutes(zones: typeof ZONE_1[], url: string, method: string) {
   if (method === "GET" && url.includes("/warehouse-zones/coverage"))
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ unsortedCount: 0, uncoveredAisles: [] }), text: () => Promise.resolve("") });
 
+  if (url.includes("/warehouse-zones/alignment"))
+    throw new Error(`unexpected alignment fetch: ${url}`);
+
   if (method === "GET" && url.includes("/warehouse-zones"))
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ zones }), text: () => Promise.resolve("") });
 

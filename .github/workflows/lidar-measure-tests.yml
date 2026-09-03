@@ -2,64 +2,74 @@ name: LiDAR Measure Tests
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lidar-measure-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
 
 jobs:
   lidar-measure-tests:
     name: Run LidarMeasureTests
     runs-on: macos-15
-
+    timeout-minutes: 35
+    permissions:
+      contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          node-version: 20
+          persist-credentials: false
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-store-${{ runner.os }}-
-
-      - name: Install JS dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Set up repository toolchain
+        uses: ./.github/actions/setup-node-pnpm
 
       - name: Expo prebuild (generates ios/)
         working-directory: artifacts/parts-id
+        shell: bash
         run: pnpm exec expo prebuild --platform ios --no-install
 
       - name: Cache CocoaPods
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             artifacts/parts-id/ios/Pods
             ~/.cocoapods
-          key: cocoapods-${{ runner.os }}-${{ hashFiles('artifacts/parts-id/ios/Podfile.lock') }}
-          restore-keys: |
-            cocoapods-${{ runner.os }}-
+          key: cocoapods-${{ runner.os }}-${{ runner.arch }}-node-${{ hashFiles('.node-version') }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}-pods-${{ hashFiles('artifacts/parts-id/ios/Podfile.lock') }}
 
       - name: Pod install
         working-directory: artifacts/parts-id/ios
+        shell: bash
         run: pod install
-
-      - name: Install xcpretty
-        run: gem install xcpretty --no-document
 
       - name: Run LidarMeasureTests
         working-directory: artifacts/parts-id
+        shell: bash
         run: |
           set -o pipefail
           xcodebuild test \
+            -resultBundlePath /tmp/LidarMeasureTests.xcresult \
             -workspace ios/PartsID.xcworkspace \
             -scheme lidar-measure-LidarMeasureTests \
             -destination 'platform=iOS Simulator,name=iPhone 16' \
-            | xcpretty
+            2>&1 | tee /tmp/LidarMeasureTests.log
+
+      - name: Retain Apple test results
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lidar-test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/LidarMeasureTests.xcresult
+            /tmp/LidarMeasureTests.log
+          if-no-files-found: ignore
+          retention-days: 7

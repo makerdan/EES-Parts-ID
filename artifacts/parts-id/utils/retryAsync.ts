@@ -15,18 +15,41 @@ export async function retryAsync<T>(
     maxAttempts = 3,
     delayMs = 1000,
     backoff = 1,
-  }: { maxAttempts?: number; delayMs?: number; backoff?: number } = {},
+    signal,
+  }: {
+    maxAttempts?: number;
+    delayMs?: number;
+    backoff?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<T> {
   let lastError: unknown;
   let currentDelay = delayMs;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (signal?.aborted) {
+      throw signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+    }
     try {
       return await fn(attempt);
     } catch (err) {
       lastError = err;
       if (attempt < maxAttempts - 1) {
-        await new Promise<void>((resolve) => setTimeout(resolve, currentDelay));
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
+          }, currentDelay);
+          const onAbort = () => {
+            clearTimeout(timer);
+            reject(signal?.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+          };
+          if (signal?.aborted) {
+            onAbort();
+          } else {
+            signal?.addEventListener("abort", onAbort, { once: true });
+          }
+        });
         currentDelay = Math.round(currentDelay * backoff);
       }
     }

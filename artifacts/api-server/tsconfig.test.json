@@ -1,9 +1,15 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": ".",
+    "rootDir": "../..",
     "types": ["node", "jest"],
     "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/utils/mapViewport": [
+        "../../artifacts/parts-id/utils/mapViewport.ts"
+      ]
+    },
     // Required by clerkProxyReset.integration.runner.ts which uses explicit
     // .ts import paths so that tsx (used to run it outside Jest) can resolve
     // the ESM modules on Node.js v24 where bare imports no longer

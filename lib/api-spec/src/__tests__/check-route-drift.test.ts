@@ -26,6 +26,7 @@ import {
   regexLiteralToOpenApiPath,
   type OpenApiSpec,
 } from "../check-route-drift-helpers";
+import { checkDependencyFloors } from "../check-dependency-floors";
 
 // ── Parsing helpers ───────────────────────────────────────────────────────────
 
@@ -1108,6 +1109,76 @@ describe("checkHandcraftedZodTypes", () => {
     `;
 
     expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+});
+
+// ── checkDependencyFloors ─────────────────────────────────────────────────────
+
+describe("checkDependencyFloors", () => {
+  const manifests = {
+    "lib/api-spec": { devDependencies: { orval: "^8.22.0" } },
+    "artifacts/api-server": { dependencies: { "pdfjs-dist": "^6.2.108" } },
+  };
+
+  const safeLockfile = {
+    importers: {
+      "lib/api-spec": {
+        devDependencies: { orval: { specifier: "^8.22.0", version: "8.22.0" } },
+      },
+      "artifacts/api-server": {
+        dependencies: {
+          "pdfjs-dist": { specifier: "^6.2.108", version: "6.2.108" },
+        },
+      },
+    },
+    packages: {
+      "orval@8.22.0": {},
+      "pdfjs-dist@6.2.108": {},
+      "fast-uri@4.1.3": {},
+      "brace-expansion@5.0.9": {},
+      "qs@6.16.0": {},
+      "js-yaml@3.15.1": {},
+      "js-yaml@4.3.1": {},
+    },
+  };
+
+  it("accepts the patched direct and transitive dependency floors", () => {
+    expect(checkDependencyFloors(safeLockfile, manifests)).toEqual([]);
+  });
+
+  it("reports a lowered manifest and every vulnerable lockfile resolution", () => {
+    const unsafe = {
+      ...safeLockfile,
+      importers: {
+        ...safeLockfile.importers,
+        "lib/api-spec": {
+          devDependencies: { orval: { specifier: "^8.5.2", version: "8.5.3" } },
+        },
+      },
+      packages: {
+        ...safeLockfile.packages,
+        "orval@8.5.3": {},
+        "fast-uri@4.1.2": {},
+        "brace-expansion@5.0.8": {},
+        "qs@6.15.3": {},
+        "js-yaml@3.15.0": {},
+        "js-yaml@4.3.0": {},
+      },
+    };
+
+    const failures = checkDependencyFloors(unsafe, {
+      ...manifests,
+      "lib/api-spec": { devDependencies: { orval: "^8.5.2" } },
+    });
+    expect(failures.map((failure) => failure.dependency)).toEqual(
+      expect.arrayContaining([
+        "orval",
+        "fast-uri",
+        "brace-expansion",
+        "qs",
+        "js-yaml",
+      ]),
+    );
   });
 });
 

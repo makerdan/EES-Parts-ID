@@ -49,6 +49,20 @@ export interface MapAnchor {
   updatedAt: string;
 }
 
+interface ApiWarehouseZone {
+  id: number;
+  svgX: number;
+  svgY: number;
+  svgWidth: number;
+  svgHeight: number;
+}
+
+interface ZoneAlignment {
+  translateX: number;
+  translateY: number;
+  scale: number;
+}
+
 interface SlotForm {
   name: string;
   worldXStr: string;
@@ -68,6 +82,10 @@ function clampScale(s: number): number {
   return Math.max(0.05, Math.min(4, s));
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 type Coord = { x: number; y: number } | null;
 
 export function AnchorCalibration() {
@@ -75,6 +93,9 @@ export function AnchorCalibration() {
   const floorPlanRef = useRef<SVGGElement>(null);
   const [svgInner, setSvgInner] = useState<string>(svgFallbackInner);
   const [tf, setTf] = useState<Transform>({ x: 40, y: 40, s: INITIAL_SCALE });
+
+  const [zones, setZones] = useState<Array<ApiWarehouseZone>>([]);
+  const [zoneAlignment, setZoneAlignment] = useState<ZoneAlignment>({ translateX: 0, translateY: 0, scale: 1 });
 
   const [anchors, setAnchors] = useState<Array<MapAnchor>>([]);
   const [loadError, setLoadError] = useState("");
@@ -102,6 +123,10 @@ export function AnchorCalibration() {
   ]);
   const [status, setStatus] = useState("");
   const successTimers = useRef<[ReturnType<typeof setTimeout> | null, ReturnType<typeof setTimeout> | null, ReturnType<typeof setTimeout> | null]>([null, null, null]);
+  const mountedRef = useRef(true);
+  const anchorsFetchRef = useRef<{ id: number; controller: AbortController } | null>(null);
+  const anchorOperationsRef = useRef<[number, number, number]>([0, 0, 0]);
+  const slotControllersRef = useRef<[AbortController | null, AbortController | null, AbortController | null]>([null, null, null]);
 
   const panRef = useRef<{
     active: boolean;
@@ -121,6 +146,8 @@ export function AnchorCalibration() {
 
   // Latest uploaded floor plan (falls back to the bundled SVG on 404).
   useEffect(() => {
+    const controller = new AbortController();
+    const signal = controller.signal;
     void (async () => {
       const fallback = (
         import.meta.env.VITE_FLOOR_PLAN_API_FALLBACK as string | undefined
@@ -130,16 +157,20 @@ export function AnchorCalibration() {
         urls.push(`${fallback}/floor-plan/svg`);
       for (const url of urls) {
         try {
-          const res = await fetch(url);
+          const res = await fetch(url, { signal });
           if (res.ok) {
-            setSvgInner(extractSvgInner(await res.text()));
+            const raw = await res.text();
+            if (signal.aborted || !mountedRef.current) return;
+            setSvgInner(extractSvgInner(raw));
             return;
           }
-        } catch {
+        } catch (error) {
+          if (isAbortError(error) || signal.aborted) return;
           /* try next */
         }
       }
     })();
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -149,16 +180,29 @@ export function AnchorCalibration() {
   }, [svgInner]);
 
   const refetchAnchors = useCallback(async () => {
+    if (!mountedRef.current) return;
+    anchorsFetchRef.current?.controller.abort();
+    const request = {
+      id: anchorsFetchRef.current ? anchorsFetchRef.current.id + 1 : 1,
+      controller: new AbortController(),
+    };
+    anchorsFetchRef.current = request;
+    const isCurrent = () =>
+      mountedRef.current &&
+      anchorsFetchRef.current?.id === request.id &&
+      !request.controller.signal.aborted;
     try {
       // Clerk session cookie is sent automatically with same-origin requests.
       const res = await fetch(`${API_BASE}/admin/map-anchors`, {
         credentials: "include",
+        signal: request.controller.signal,
       });
       if (!res.ok) {
         if (res.status === 403) {
           try {
             const body = (await res.json()) as { code?: string };
             if (body.code === "MFA_REQUIRED") {
+              if (!isCurrent()) return;
               setLoadMfaRequired(true);
               setLoadError("");
               return;
@@ -168,17 +212,52 @@ export function AnchorCalibration() {
         throw new Error(`HTTP ${res.status}`);
       }
       const data = (await res.json()) as { anchors: Array<MapAnchor> };
+      if (!isCurrent()) return;
       setAnchors(data.anchors ?? []);
       setLoadMfaRequired(false);
       setLoadError("");
-    } catch {
+    } catch (error) {
+      if (!isCurrent() || isAbortError(error)) return;
       setLoadError("Failed to load anchors");
+    } finally {
+      if (anchorsFetchRef.current?.id === request.id) anchorsFetchRef.current = null;
     }
   }, []);
 
   useEffect(() => {
     void refetchAnchors();
   }, [refetchAnchors]);
+
+  // Fetch zone rectangles and alignment on mount (silently swallow errors).
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    void (async () => {
+      try {
+        const [zonesRes, alignRes] = await Promise.all([
+          fetch(`${API_BASE}/warehouse-zones`, { credentials: "include", signal }),
+          fetch(`${API_BASE}/warehouse-zones/alignment`, { credentials: "include", signal }),
+        ]);
+        if (signal.aborted || !mountedRef.current) return;
+        if (zonesRes.ok) {
+          const data = (await zonesRes.json()) as { zones: Array<ApiWarehouseZone> };
+          if (!signal.aborted && mountedRef.current && Array.isArray(data.zones)) setZones(data.zones);
+        }
+        if (alignRes.ok) {
+          const data = (await alignRes.json()) as Partial<ZoneAlignment>;
+          if (signal.aborted || !mountedRef.current) return;
+          const tx = typeof data.translateX === "number" && isFinite(data.translateX) ? data.translateX : 0;
+          const ty = typeof data.translateY === "number" && isFinite(data.translateY) ? data.translateY : 0;
+          const s = typeof data.scale === "number" && isFinite(data.scale) && data.scale > 0 ? data.scale : 1;
+          setZoneAlignment({ translateX: tx, translateY: ty, scale: s });
+        }
+      } catch (error) {
+        if (isAbortError(error) || signal.aborted) return;
+        /* silently ignore — zones are best-effort */
+      }
+    })();
+    return () => controller.abort();
+  }, []);
 
   // Sync forms + placed coordinates from the saved anchors.
   useEffect(() => {
@@ -306,16 +385,32 @@ export function AnchorCalibration() {
     }
   }, []);
 
+  const beginSlotOperation = useCallback((idx: 0 | 1 | 2) => {
+    slotControllersRef.current[idx]?.abort();
+    const controller = new AbortController();
+    slotControllersRef.current[idx] = controller;
+    const id = ++anchorOperationsRef.current[idx];
+    return { controller, id };
+  }, []);
+
   // Cleanup all timers on unmount.
   useEffect(() => {
+    mountedRef.current = true;
     const timers = successTimers.current;
+    const slotControllers = slotControllersRef.current;
     return () => {
+      mountedRef.current = false;
+      anchorsFetchRef.current?.controller.abort();
+      slotControllers.forEach((controller) => controller?.abort());
+      anchorOperationsRef.current = anchorOperationsRef.current.map((id) => id + 1) as typeof anchorOperationsRef.current;
       timers.forEach((t) => { if (t !== null) clearTimeout(t); });
+      timers.fill(null);
     };
   }, []);
 
   const handleSave = useCallback(
     async (idx: 0 | 1 | 2) => {
+      if (!mountedRef.current) return;
       const coord = svgCoords[idx];
       const form = forms[idx];
       const wx = safeParseFloat(form.worldXStr);
@@ -331,6 +426,12 @@ export function AnchorCalibration() {
       }
 
       clearSuccessTimer(idx);
+      const operation = beginSlotOperation(idx);
+      const isCurrent = () =>
+        mountedRef.current &&
+        slotControllersRef.current[idx] === operation.controller &&
+        anchorOperationsRef.current[idx] === operation.id &&
+        !operation.controller.signal.aborted;
       setSlotPhase(idx, "busy");
       setStatus("");
       try {
@@ -338,6 +439,7 @@ export function AnchorCalibration() {
           method: "PUT",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
+          signal: operation.controller.signal,
           body: JSON.stringify({
             name: form.name.trim(),
             svgX: coord.x,
@@ -354,6 +456,7 @@ export function AnchorCalibration() {
             if (body.code === "MFA_REQUIRED") mfaFlag = true;
             else if (body.error) errMsg = body.error;
           } catch { /* ignore parse errors */ }
+          if (!isCurrent()) return;
           if (mfaFlag) {
             setSlotPhase(idx, "error", "MFA_REQUIRED");
             return;
@@ -361,24 +464,32 @@ export function AnchorCalibration() {
           throw new Error(errMsg);
         }
         await refetchAnchors();
+        if (!isCurrent()) return;
         setSlotPhase(idx, "success", `Anchor ${idx + 1} saved.`);
         successTimers.current[idx] = setTimeout(() => {
+          if (!isCurrent()) return;
           setSlotPhase(idx, "idle");
           successTimers.current[idx] = null;
         }, 2500);
       } catch (err) {
+        if (!isCurrent() || isAbortError(err)) return;
         const msg =
           err instanceof Error && err.message
             ? err.message
             : "Save failed — please try again.";
         setSlotPhase(idx, "error", msg);
+      } finally {
+        if (slotControllersRef.current[idx] === operation.controller) {
+          slotControllersRef.current[idx] = null;
+        }
       }
     },
-    [svgCoords, forms, refetchAnchors, setSlotPhase, clearSuccessTimer],
+    [svgCoords, forms, refetchAnchors, setSlotPhase, clearSuccessTimer, beginSlotOperation],
   );
 
   const handleClear = useCallback(
     async (idx: 0 | 1 | 2) => {
+      if (!mountedRef.current) return;
       if (
         !window.confirm(
           `Clear Anchor ${idx + 1}? This removes the anchor point; with fewer than 3 anchors the mobile overlay reverts to ZoneAlignment sliders.`,
@@ -387,12 +498,19 @@ export function AnchorCalibration() {
         return;
       }
       clearSuccessTimer(idx);
+      const operation = beginSlotOperation(idx);
+      const isCurrent = () =>
+        mountedRef.current &&
+        slotControllersRef.current[idx] === operation.controller &&
+        anchorOperationsRef.current[idx] === operation.id &&
+        !operation.controller.signal.aborted;
       setSlotPhase(idx, "busy");
       setStatus("");
       try {
         const res = await fetch(`${API_BASE}/admin/map-anchors/${idx + 1}`, {
           method: "DELETE",
           credentials: "include",
+          signal: operation.controller.signal,
         });
         if (!res.ok) {
           let mfaFlag = false;
@@ -402,6 +520,7 @@ export function AnchorCalibration() {
             if (body.code === "MFA_REQUIRED") mfaFlag = true;
             else if (body.error) errMsg = body.error;
           } catch { /* ignore parse errors */ }
+          if (!isCurrent()) return;
           if (mfaFlag) {
             setSlotPhase(idx, "error", "MFA_REQUIRED");
             return;
@@ -409,16 +528,22 @@ export function AnchorCalibration() {
           throw new Error(errMsg);
         }
         await refetchAnchors();
+        if (!isCurrent()) return;
         setSlotPhase(idx, "idle");
       } catch (err) {
+        if (!isCurrent() || isAbortError(err)) return;
         const msg =
           err instanceof Error && err.message
             ? err.message
             : "Clear failed — please try again.";
         setSlotPhase(idx, "error", msg);
+      } finally {
+        if (slotControllersRef.current[idx] === operation.controller) {
+          slotControllersRef.current[idx] = null;
+        }
       }
     },
-    [refetchAnchors, setSlotPhase, clearSuccessTimer],
+    [refetchAnchors, setSlotPhase, clearSuccessTimer, beginSlotOperation],
   );
 
   const handleDismissError = useCallback((idx: 0 | 1 | 2) => {
@@ -456,9 +581,9 @@ export function AnchorCalibration() {
       `}</style>
       {/* ── Banner ──────────────────────────────────────────────────────────── */}
       <div style={styles.banner}>
-        <a href="/__mockup" style={styles.backLink}>← Internal Tools</a>
+        <a href="/__mockup" style={styles.backLink}>← Admin Tools</a>
         <span style={{ fontWeight: 600 }}>
-          ⚠ DEV TOOL — Anchor Calibration — internal use only
+          Admin — Anchor Calibration
         </span>
         {loadError && <span style={styles.errorPill}>⚠ {loadError}</span>}
         {loadMfaRequired && (
@@ -583,6 +708,9 @@ export function AnchorCalibration() {
                     />
                   </div>
                 </div>
+                <p style={styles.fieldHint}>
+                  Click the map near a zone corner to auto-fill. If the fields stay blank after placing the pin, try a spot closer to a corner.
+                </p>
 
                 <div style={styles.actionRow}>
                   <button
@@ -723,6 +851,28 @@ export function AnchorCalibration() {
             <g transform={`translate(${tf.x},${tf.y}) scale(${tf.s})`}>
               <g ref={floorPlanRef} pointerEvents="none" />
 
+              {/* Zone overlay — rendered beneath anchor markers */}
+              {zones.length > 0 && (
+                <g
+                  transform={`translate(${zoneAlignment.translateX},${zoneAlignment.translateY}) scale(${zoneAlignment.scale})`}
+                  pointerEvents="none"
+                >
+                  {zones.slice(0, 300).map((z) => (
+                    <rect
+                      key={z.id}
+                      x={z.svgX}
+                      y={z.svgY}
+                      width={z.svgWidth}
+                      height={z.svgHeight}
+                      fill="rgba(0,112,255,0.06)"
+                      stroke="#0070ff"
+                      strokeWidth={1 / tf.s}
+                      pointerEvents="none"
+                    />
+                  ))}
+                </g>
+              )}
+
               {/* Anchor markers */}
               {([0, 1, 2] as const).map((idx) => {
                 const coord = svgCoords[idx];
@@ -781,20 +931,21 @@ const styles = {
     alignItems: "center",
     gap: 12,
     padding: "6px 16px",
-    background: "#7c3aed",
+    background: "#1e293b",
     color: "white",
     fontSize: 12,
     flexShrink: 0,
     zIndex: 10,
   },
   backLink: {
-    color: "rgba(255,255,255,0.85)",
+    color: "#cbd5e1",
     textDecoration: "none",
     fontSize: 12,
     fontWeight: 500,
     padding: "2px 8px",
     borderRadius: 4,
-    border: "1px solid rgba(255,255,255,0.3)",
+    border: "1px solid #475569",
+    background: "rgba(255,255,255,0.08)",
     whiteSpace: "nowrap" as const,
     marginRight: 4,
   },
@@ -905,6 +1056,12 @@ const styles = {
   worldRow: {
     display: "flex",
     gap: 8,
+  },
+  fieldHint: {
+    margin: "4px 0 8px",
+    fontSize: 11,
+    color: "#888",
+    lineHeight: 1.5,
   },
   actionRow: {
     display: "flex",

@@ -28,6 +28,19 @@ fi
 MAX_RETRIES=6
 SLEEP_SECS=4
 
+is_healthy_api_body() {
+  # Parse the response instead of matching a substring: an HTML SPA fallback
+  # or {"status":"error"} must never count as backend health.
+  printf '%s' "$1" | node -e '
+    let body = "";
+    process.stdin.on("data", (chunk) => { body += chunk; });
+    process.stdin.on("end", () => {
+      try { process.exit(JSON.parse(body).status === "ok" ? 0 : 1); }
+      catch { process.exit(1); }
+    });
+  '
+}
+
 # Codegen settle window — see wait_for_codegen_settle below.
 #   FLOOR : minimum pause so the file-watcher can notice the codegen writes and
 #           *begin* reloading (polling immediately would see the still-up
@@ -86,7 +99,7 @@ check_api_health() {
     echo "[post-merge] Health check attempt ${i}/${MAX_RETRIES}: GET ${HEALTH_URL}"
     BODY=$(curl -s --max-time 2 "$HEALTH_URL" 2>/dev/null || true)
     # Require both a successful response and the exact expected JSON body.
-    if echo "$BODY" | grep -q '"status":"ok"'; then
+    if is_healthy_api_body "$BODY"; then
       echo "[post-merge] API Server is healthy."
       return 0
     fi
@@ -123,7 +136,7 @@ wait_for_codegen_settle() {
   while [ "$waited" -lt "$CODEGEN_SETTLE_MAX_SECS" ]; do
     local body
     body=$(curl -s --max-time 2 "$HEALTH_URL" 2>/dev/null || true)
-    if echo "$body" | grep -q '"status":"ok"'; then
+    if is_healthy_api_body "$body"; then
       echo "[post-merge] API Server responsive after ~${waited}s — codegen settle complete."
       return 0
     fi
@@ -173,7 +186,7 @@ run_viewbox_sync_check() {
 # check_sibling_services — warn-only liveness probes for the two non-API
 # services. Both are probed through their proxy domains because their local
 # PORT values are dynamic and not visible to this script:
-#   • mockup-sandbox Vite server:  https://$REPLIT_DEV_DOMAIN/__mockup/
+#   • mockup-sandbox Vite server:  https://$REPLIT_DEV_DOMAIN/__mockup/@vite/client
 #   • Expo dev server:             https://$REPLIT_EXPO_DEV_DOMAIN/status
 #     (returns "packager-status:running" — a genuine dev-server response,
 #     not an SPA HTML fallback, so it cannot lie).
@@ -184,8 +197,9 @@ run_viewbox_sync_check() {
 check_sibling_services() {
   local ok=0
   for attempt in 1 2; do
-    if curl -s --max-time 4 -o /dev/null -w "%{http_code}" "https://${REPLIT_DEV_DOMAIN}/__mockup/" 2>/dev/null | grep -q '^200$'; then
-      echo "[post-merge] mockup-sandbox Vite server is responding."
+    canvas_body=$(curl -s --max-time 4 "https://${REPLIT_DEV_DOMAIN}/__mockup/@vite/client" 2>/dev/null || true)
+    if [[ "$canvas_body" == *"@vite/client"* ]]; then
+      echo "[post-merge] mockup-sandbox Vite server is responding with its Vite client."
       ok=1
       break
     fi
@@ -291,7 +305,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   git config --global user.name "Post-Merge Bot" 2>/dev/null || true
 
   echo "[post-merge] Regenerating API client and auto-committing any drift..."
-  timeout 120 pnpm --filter @workspace/api-spec run codegen:fix || {
+  timeout 120 node scripts/serial-lock.mjs --resource codegen --priority 80 -- pnpm --filter @workspace/api-spec run codegen:fix || {
     CODEGEN_EXIT=$?
     if [[ "$CODEGEN_EXIT" -eq 124 ]]; then
       echo "[post-merge] ERROR: codegen:fix timed out after 120s. Aborting."
@@ -317,6 +331,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # proceed as soon as the server responds (up to a bounded max window).  This
   # prevents the first health-check pass from catching the server mid-reload.
   wait_for_codegen_settle
+
+  # The Failure Gate distribution is tracked output. Verify that it contains
+  # the same canonical skill and durable support files before syncing main.
+  node scripts/publish-failure-gate.mjs --check || {
+    echo "[post-merge] ERROR: Failure Gate package is stale. Run 'pnpm run publish:failure-gate' and commit artifacts/failure-gate-skill.zip."
+    exit 1
+  }
 
   # Push latest main branch to GitHub after every successful merge.
   # Uses || true so a network error never causes post-merge to report failure.
@@ -345,21 +366,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
   # All retries failed — gracefully stop any stale process and let the
   # workflow supervisor restart it automatically.
-  echo "[post-merge] API Server did not respond. Sending SIGTERM to stale process..."
-  pkill -TERM -f "artifacts/api-server" 2>/dev/null || true
-
-  # Poll until the process exits (up to ~10 seconds), then SIGKILL if needed.
-  KILL_WAIT=0
-  while kill -0 "$(pgrep -f 'artifacts/api-server' | head -1)" 2>/dev/null; do
-    if [ "$KILL_WAIT" -ge 10 ]; then
-      echo "[post-merge] Process did not exit after ${KILL_WAIT}s — sending SIGKILL."
-      pkill -KILL -f "artifacts/api-server" 2>/dev/null || true
-      break
-    fi
-    sleep 1
-    KILL_WAIT=$((KILL_WAIT + 1))
-  done
-  echo "[post-merge] Stale process stopped. Workflow supervisor will restart the server."
+  API_PORT_FOR_CLEANUP="${PORT:-$(node -e 'const fs=require("fs"); const r=JSON.parse(fs.readFileSync("scripts/dev-ports.json","utf8")); process.stdout.write(String(r.workflowPorts.api));')}"
+  echo "[post-merge] API Server did not respond. Sweeping registered port ${API_PORT_FOR_CLEANUP} via Port Authority..."
+  if ! node scripts/free-ports.mjs "$API_PORT_FOR_CLEANUP"; then
+    echo "[post-merge] ERROR: canonical cleanup could not free API port ${API_PORT_FOR_CLEANUP}; refusing to claim restart succeeded."
+    exit 1
+  fi
+  echo "[post-merge] Stale API holder stopped. Workflow supervisor will restart the server."
 
   # Second health check pass after restart.
   if check_api_health "post-restart"; then

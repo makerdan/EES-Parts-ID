@@ -14,8 +14,14 @@ import { getLogger, logger } from "../lib/logger";
 import { referenceAskLimiter } from "../lib/rateLimiter";
 import { callGemini, callGeminiWithHistory } from "../lib/webSearch";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import helpRouter from "./help";
 
 const router = Router();
+
+// Compatibility namespace for clients that group the app-only Help contract
+// beside the existing Reference assistant. Both paths use the same guarded
+// router and content cache.
+router.use("/help", helpRouter);
 
 const GENERIC_ERROR_MESSAGE =
   "Sorry, the reference assistant ran into a problem. Please try again.";

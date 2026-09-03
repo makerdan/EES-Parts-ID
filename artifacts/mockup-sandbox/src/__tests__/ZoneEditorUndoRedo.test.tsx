@@ -53,6 +53,9 @@ function makeFetchMock(zones = [ZONE_1]) {
     if (method === "GET" && s.includes("/warehouse-zones/coverage"))
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ unsortedCount: 0, uncoveredAisles: [] }), text: () => Promise.resolve("") });
 
+    if (s.includes("/warehouse-zones/alignment"))
+      throw new Error(`unexpected alignment fetch: ${s}`);
+
     if (method === "GET" && s.includes("/warehouse-zones"))
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ zones }), text: () => Promise.resolve("") });
 
