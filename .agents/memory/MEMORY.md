@@ -61,3 +61,4 @@
 - [ESLint import sort order](eslint-import-sort-order.md) — use fix-dry-run output when simple-import-sort rejects valid but noncanonical package/specifier ordering.
 - [Patch published packages instead of vendoring build output](pnpm-patched-published-package.md) — repo-wide dist ignores can silently omit runtime files from directory overrides; patch a pinned registry tarball instead.
 - [GitHub Actions token PR creation policy](github-actions-token-pr-creation.md) — disabling workflow-token PR approval also blocks PR creation; publish a reviewable automation branch instead.
+- [DB fixture ownership watermarks](db-fixture-ownership-watermarks.md) — identify async DB fixtures with a DB-generated ID watermark, not an app-clock timestamp that can drift from the database clock.
