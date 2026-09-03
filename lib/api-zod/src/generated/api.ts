@@ -46,12 +46,24 @@ export const ListInventoryQueryParams = zod.object({
     .describe("Filter items to those stored in bins starting with this prefix"),
 });
 
+export const listInventoryResponseItemsItemOrderPurchaseMin = 0;
+
+export const listInventoryResponseItemsItemOrderQuantityMin = 0;
+
 export const ListInventoryResponse = zod.object({
   items: zod.array(
     zod.object({
       id: zod.number(),
       vendor: zod.string(),
       catalog: zod.string(),
+      orderPurchase: zod
+        .number()
+        .min(listInventoryResponseItemsItemOrderPurchaseMin)
+        .optional(),
+      orderQuantity: zod
+        .number()
+        .min(listInventoryResponseItemsItemOrderQuantityMin)
+        .optional(),
       description: zod.string(),
       binLocations: zod
         .array(zod.string())
@@ -263,6 +275,22 @@ export const SearchInventoryBody = zod.object({
     ),
 });
 
+export const searchInventoryResponseResultsItemItemOrderPurchaseMin = 0;
+
+export const searchInventoryResponseResultsItemItemOrderQuantityMin = 0;
+
+export const searchInventoryResponseResultsItemVariantsItemOrderPurchaseMin = 0;
+
+export const searchInventoryResponseResultsItemVariantsItemOrderQuantityMin = 0;
+
+export const searchInventoryResponseSizeUnknownResultsItemItemOrderPurchaseMin = 0;
+
+export const searchInventoryResponseSizeUnknownResultsItemItemOrderQuantityMin = 0;
+
+export const searchInventoryResponseSizeUnknownResultsItemVariantsItemOrderPurchaseMin = 0;
+
+export const searchInventoryResponseSizeUnknownResultsItemVariantsItemOrderQuantityMin = 0;
+
 export const SearchInventoryResponse = zod
   .object({
     results: zod.array(
@@ -271,6 +299,14 @@ export const SearchInventoryResponse = zod
           id: zod.number(),
           vendor: zod.string(),
           catalog: zod.string(),
+          orderPurchase: zod
+            .number()
+            .min(searchInventoryResponseResultsItemItemOrderPurchaseMin)
+            .optional(),
+          orderQuantity: zod
+            .number()
+            .min(searchInventoryResponseResultsItemItemOrderQuantityMin)
+            .optional(),
           description: zod.string(),
           binLocations: zod
             .array(zod.string())
@@ -341,6 +377,18 @@ export const SearchInventoryResponse = zod
             id: zod.number(),
             vendor: zod.string(),
             catalog: zod.string(),
+            orderPurchase: zod
+              .number()
+              .min(
+                searchInventoryResponseResultsItemVariantsItemOrderPurchaseMin,
+              )
+              .optional(),
+            orderQuantity: zod
+              .number()
+              .min(
+                searchInventoryResponseResultsItemVariantsItemOrderQuantityMin,
+              )
+              .optional(),
             description: zod.string(),
             binLocations: zod
               .array(zod.string())
@@ -420,6 +468,18 @@ export const SearchInventoryResponse = zod
             id: zod.number(),
             vendor: zod.string(),
             catalog: zod.string(),
+            orderPurchase: zod
+              .number()
+              .min(
+                searchInventoryResponseSizeUnknownResultsItemItemOrderPurchaseMin,
+              )
+              .optional(),
+            orderQuantity: zod
+              .number()
+              .min(
+                searchInventoryResponseSizeUnknownResultsItemItemOrderQuantityMin,
+              )
+              .optional(),
             description: zod.string(),
             binLocations: zod
               .array(zod.string())
@@ -490,6 +550,18 @@ export const SearchInventoryResponse = zod
               id: zod.number(),
               vendor: zod.string(),
               catalog: zod.string(),
+              orderPurchase: zod
+                .number()
+                .min(
+                  searchInventoryResponseSizeUnknownResultsItemVariantsItemOrderPurchaseMin,
+                )
+                .optional(),
+              orderQuantity: zod
+                .number()
+                .min(
+                  searchInventoryResponseSizeUnknownResultsItemVariantsItemOrderQuantityMin,
+                )
+                .optional(),
               description: zod.string(),
               binLocations: zod
                 .array(zod.string())
@@ -572,6 +644,10 @@ export const SearchInventoryResponse = zod
 /**
  * @summary Add or update inventory items (upsert by vendor+catalog)
  */
+export const upsertInventoryBatchBodyItemsItemOrderPurchaseMin = 0;
+
+export const upsertInventoryBatchBodyItemsItemOrderQuantityMin = 0;
+
 export const UpsertInventoryBatchBody = zod.object({
   items: zod.array(
     zod.object({
@@ -584,6 +660,15 @@ export const UpsertInventoryBatchBody = zod.object({
         .describe(
           "Bin locations for this part (omit or pass empty array to clear)",
         ),
+      barcodes: zod.array(zod.string()).optional(),
+      orderPurchase: zod
+        .number()
+        .min(upsertInventoryBatchBodyItemsItemOrderPurchaseMin)
+        .optional(),
+      orderQuantity: zod
+        .number()
+        .min(upsertInventoryBatchBodyItemsItemOrderQuantityMin)
+        .optional(),
     }),
   ),
 });
@@ -678,10 +763,22 @@ export const UpdateItemBinsBody = zod.object({
     .describe("Replacement bin-location list. Pass [] to clear all bins."),
 });
 
+export const updateItemBinsResponseOrderPurchaseMin = 0;
+
+export const updateItemBinsResponseOrderQuantityMin = 0;
+
 export const UpdateItemBinsResponse = zod.object({
   id: zod.number(),
   vendor: zod.string(),
   catalog: zod.string(),
+  orderPurchase: zod
+    .number()
+    .min(updateItemBinsResponseOrderPurchaseMin)
+    .optional(),
+  orderQuantity: zod
+    .number()
+    .min(updateItemBinsResponseOrderQuantityMin)
+    .optional(),
   description: zod.string(),
   binLocations: zod
     .array(zod.string())
@@ -745,6 +842,114 @@ export const UpdateItemBinsResponse = zod.object({
 });
 
 /**
+ * @summary Update order purchase and quantity values (admin)
+ */
+export const UpdateItemOrderParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const updateItemOrderBodyOrderPurchaseMin = 0;
+
+export const updateItemOrderBodyOrderQuantityMin = 0;
+
+export const UpdateItemOrderBody = zod.object({
+  orderPurchase: zod.number().min(updateItemOrderBodyOrderPurchaseMin),
+  orderQuantity: zod.number().min(updateItemOrderBodyOrderQuantityMin),
+});
+
+export const updateItemOrderResponseOrderPurchaseMin = 0;
+
+export const updateItemOrderResponseOrderQuantityMin = 0;
+
+export const UpdateItemOrderResponse = zod.object({
+  id: zod.number(),
+  vendor: zod.string(),
+  catalog: zod.string(),
+  orderPurchase: zod
+    .number()
+    .min(updateItemOrderResponseOrderPurchaseMin)
+    .optional(),
+  orderQuantity: zod
+    .number()
+    .min(updateItemOrderResponseOrderQuantityMin)
+    .optional(),
+  description: zod.string(),
+  binLocations: zod
+    .array(zod.string())
+    .describe(
+      "Bin locations where this part is stored (a part may live in multiple bins)",
+    ),
+  aiKeywords: zod.array(zod.string()),
+  barcodes: zod
+    .array(zod.string())
+    .describe("Barcode values associated with this part"),
+  enrichedAt: zod.coerce.date().nullish(),
+  imageUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+    ),
+  thumbnailUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
+    ),
+  imageUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  thumbnailUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  expandedDescription: zod
+    .string()
+    .nullish()
+    .describe(
+      "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+    ),
+  size: zod
+    .string()
+    .nullish()
+    .describe(
+      'Human-readable size label manually entered by an admin (e.g. 1\/2\", 3\/4\", 4\" x 2\") — max 100 chars',
+    ),
+  dimensions: zod
+    .object({
+      length: zod.number().nullish(),
+      width: zod.number().nullish(),
+      height: zod.number().nullish(),
+      diameter: zod.number().nullish(),
+    })
+    .nullish()
+    .describe(
+      "Physical dimensions in millimetres (length, width, height, diameter)",
+    ),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Preview OP/OQ-only inventory upload without writing
+ */
+export const PreviewOrderUploadBody = zod.object({
+  csv: zod.string(),
+});
+
+/**
+ * @summary Apply OP/OQ-only inventory upload to known rows
+ */
+export const UpdateOrderUploadBody = zod.object({
+  csv: zod.string(),
+});
+
+/**
  * @summary Estimate part dimensions from a photo using AI Vision (admin)
  */
 export const EstimateDimensionsBody = zod.object({
@@ -789,10 +994,22 @@ export const UpdateItemDimensionsBody = zod
     "Partial-merge update for physical dimensions; omitted fields are preserved.",
   );
 
+export const updateItemDimensionsResponseOrderPurchaseMin = 0;
+
+export const updateItemDimensionsResponseOrderQuantityMin = 0;
+
 export const UpdateItemDimensionsResponse = zod.object({
   id: zod.number(),
   vendor: zod.string(),
   catalog: zod.string(),
+  orderPurchase: zod
+    .number()
+    .min(updateItemDimensionsResponseOrderPurchaseMin)
+    .optional(),
+  orderQuantity: zod
+    .number()
+    .min(updateItemDimensionsResponseOrderQuantityMin)
+    .optional(),
   description: zod.string(),
   binLocations: zod
     .array(zod.string())
@@ -862,10 +1079,22 @@ export const LookupByBarcodeParams = zod.object({
   code: zod.coerce.string(),
 });
 
+export const lookupByBarcodeResponseOrderPurchaseMin = 0;
+
+export const lookupByBarcodeResponseOrderQuantityMin = 0;
+
 export const LookupByBarcodeResponse = zod.object({
   id: zod.number(),
   vendor: zod.string(),
   catalog: zod.string(),
+  orderPurchase: zod
+    .number()
+    .min(lookupByBarcodeResponseOrderPurchaseMin)
+    .optional(),
+  orderQuantity: zod
+    .number()
+    .min(lookupByBarcodeResponseOrderQuantityMin)
+    .optional(),
   description: zod.string(),
   binLocations: zod
     .array(zod.string())
@@ -941,10 +1170,22 @@ export const UpdateItemBarcodesBody = zod.object({
     .describe("Replacement barcode list. Pass [] to clear all barcodes."),
 });
 
+export const updateItemBarcodesResponseOrderPurchaseMin = 0;
+
+export const updateItemBarcodesResponseOrderQuantityMin = 0;
+
 export const UpdateItemBarcodesResponse = zod.object({
   id: zod.number(),
   vendor: zod.string(),
   catalog: zod.string(),
+  orderPurchase: zod
+    .number()
+    .min(updateItemBarcodesResponseOrderPurchaseMin)
+    .optional(),
+  orderQuantity: zod
+    .number()
+    .min(updateItemBarcodesResponseOrderQuantityMin)
+    .optional(),
   description: zod.string(),
   binLocations: zod
     .array(zod.string())
@@ -1021,10 +1262,22 @@ export const UpdateItemSizeBody = zod.object({
     .describe("Human-readable size label (max 100 chars). Pass null to clear."),
 });
 
+export const updateItemSizeResponseOrderPurchaseMin = 0;
+
+export const updateItemSizeResponseOrderQuantityMin = 0;
+
 export const UpdateItemSizeResponse = zod.object({
   id: zod.number(),
   vendor: zod.string(),
   catalog: zod.string(),
+  orderPurchase: zod
+    .number()
+    .min(updateItemSizeResponseOrderPurchaseMin)
+    .optional(),
+  orderQuantity: zod
+    .number()
+    .min(updateItemSizeResponseOrderQuantityMin)
+    .optional(),
   description: zod.string(),
   binLocations: zod
     .array(zod.string())
@@ -1098,10 +1351,22 @@ export const UpdateItemDescriptionBody = zod.object({
   description: zod.string().describe("Free-text description of the part"),
 });
 
+export const updateItemDescriptionResponseOrderPurchaseMin = 0;
+
+export const updateItemDescriptionResponseOrderQuantityMin = 0;
+
 export const UpdateItemDescriptionResponse = zod.object({
   id: zod.number(),
   vendor: zod.string(),
   catalog: zod.string(),
+  orderPurchase: zod
+    .number()
+    .min(updateItemDescriptionResponseOrderPurchaseMin)
+    .optional(),
+  orderQuantity: zod
+    .number()
+    .min(updateItemDescriptionResponseOrderQuantityMin)
+    .optional(),
   description: zod.string(),
   binLocations: zod
     .array(zod.string())
@@ -1171,10 +1436,22 @@ export const ReenrichItemParams = zod.object({
   id: zod.coerce.number(),
 });
 
+export const reenrichItemResponseOrderPurchaseMin = 0;
+
+export const reenrichItemResponseOrderQuantityMin = 0;
+
 export const ReenrichItemResponse = zod.object({
   id: zod.number(),
   vendor: zod.string(),
   catalog: zod.string(),
+  orderPurchase: zod
+    .number()
+    .min(reenrichItemResponseOrderPurchaseMin)
+    .optional(),
+  orderQuantity: zod
+    .number()
+    .min(reenrichItemResponseOrderQuantityMin)
+    .optional(),
   description: zod.string(),
   binLocations: zod
     .array(zod.string())
@@ -1248,10 +1525,22 @@ export const UpdateItemKeywordsBody = zod.object({
   keywords: zod.array(zod.string()),
 });
 
+export const updateItemKeywordsResponseOrderPurchaseMin = 0;
+
+export const updateItemKeywordsResponseOrderQuantityMin = 0;
+
 export const UpdateItemKeywordsResponse = zod.object({
   id: zod.number(),
   vendor: zod.string(),
   catalog: zod.string(),
+  orderPurchase: zod
+    .number()
+    .min(updateItemKeywordsResponseOrderPurchaseMin)
+    .optional(),
+  orderQuantity: zod
+    .number()
+    .min(updateItemKeywordsResponseOrderQuantityMin)
+    .optional(),
   description: zod.string(),
   binLocations: zod
     .array(zod.string())
@@ -1346,6 +1635,14 @@ export const AiIdentifyPartBody = zod.object({
   textNumbers: zod.string().optional(),
 });
 
+export const aiIdentifyPartResponseResultsItemItemOrderPurchaseMin = 0;
+
+export const aiIdentifyPartResponseResultsItemItemOrderQuantityMin = 0;
+
+export const aiIdentifyPartResponseResultsItemVariantsItemOrderPurchaseMin = 0;
+
+export const aiIdentifyPartResponseResultsItemVariantsItemOrderQuantityMin = 0;
+
 export const AiIdentifyPartResponse = zod.object({
   partNumbers: zod
     .array(zod.string())
@@ -1364,6 +1661,14 @@ export const AiIdentifyPartResponse = zod.object({
         id: zod.number(),
         vendor: zod.string(),
         catalog: zod.string(),
+        orderPurchase: zod
+          .number()
+          .min(aiIdentifyPartResponseResultsItemItemOrderPurchaseMin)
+          .optional(),
+        orderQuantity: zod
+          .number()
+          .min(aiIdentifyPartResponseResultsItemItemOrderQuantityMin)
+          .optional(),
         description: zod.string(),
         binLocations: zod
           .array(zod.string())
@@ -1434,6 +1739,14 @@ export const AiIdentifyPartResponse = zod.object({
           id: zod.number(),
           vendor: zod.string(),
           catalog: zod.string(),
+          orderPurchase: zod
+            .number()
+            .min(aiIdentifyPartResponseResultsItemVariantsItemOrderPurchaseMin)
+            .optional(),
+          orderQuantity: zod
+            .number()
+            .min(aiIdentifyPartResponseResultsItemVariantsItemOrderQuantityMin)
+            .optional(),
           description: zod.string(),
           binLocations: zod
             .array(zod.string())

@@ -12,6 +12,8 @@ import {
   UpdateItemDescriptionResponse,
   UpdateItemDimensionsResponse,
   UpdateItemKeywordsResponse,
+  UpdateItemOrderBody,
+  UpdateItemOrderResponse,
   UpdateItemSizeResponse,
   UploadItemPhotoResponse,
   UpsertBatchPreviewResponse,
@@ -772,6 +774,7 @@ router.post("/search", async (req, res) => {
     // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
     type RawRow = {
       id: number; vendor: string; catalog: string; description: string;
+      order_purchase: number; order_quantity: number;
       bin_locations: Array<string>; ai_keywords: Array<string>; pinned_keywords: Array<string>; barcodes: Array<string>;
       enriched_at: Date | null; image_url: string | null; thumbnail_url: string | null; image_url_2: string | null; thumbnail_url_2: string | null;
       expanded_description: string | null;
@@ -881,7 +884,7 @@ router.post("/search", async (req, res) => {
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
-              i.bin_locations, i.ai_keywords, i.pinned_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.expanded_description, i.size, i.dimensions, i.created_at, i.updated_at,
+              i.order_purchase, i.order_quantity, i.bin_locations, i.ai_keywords, i.pinned_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.expanded_description, i.size, i.dimensions, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 ${inventoryFtsVector('i')},
                 websearch_to_tsquery('english', ${tsQuery})
@@ -960,6 +963,8 @@ router.post("/search", async (req, res) => {
         vendor: row.vendor,
         catalog: row.catalog,
         description: row.description,
+        orderPurchase: Number(row.order_purchase) || 0,
+        orderQuantity: Number(row.order_quantity) || 0,
         // Safe fallbacks for fields not included in the runtime shape-validation filter
         binLocations: Array.isArray(row.bin_locations) ? row.bin_locations as Array<string> : [],
         aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as Array<string> : [],
@@ -1454,11 +1459,18 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
     }
 
     const { items } = req.body as {
-      items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: Array<string>; barcodes?: Array<string> }>;
+      items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: Array<string>; barcodes?: Array<string>; orderPurchase?: number; orderQuantity?: number }>;
     };
 
     if (!items?.length) {
       return void res.status(400).json({ error: "No items provided" });
+    }
+    for (const item of items) {
+      for (const [name, value] of [["orderPurchase", item.orderPurchase], ["orderQuantity", item.orderQuantity]] as const) {
+        if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+          return void res.status(400).json({ error: `${name} must be a non-negative integer` });
+        }
+      }
     }
 
     if (items.length > UPSERT_BATCH_MAX_ITEMS) {
@@ -1502,6 +1514,10 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
             description: item.description ?? "",
             binLocations: item.binLocations ?? [],
             barcodes: item.barcodes ?? [],
+            // -1 is an internal omission sentinel; it is converted to the
+            // column default for newly inserted rows below.
+            orderPurchase: item.orderPurchase === undefined ? -1 : item.orderPurchase,
+            orderQuantity: item.orderQuantity === undefined ? -1 : item.orderQuantity,
             aiKeywords: [],
           }))
         )
@@ -1519,6 +1535,8 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
             // same semantics as binLocations so manual scan assignments survive
             // re-uploads that omit the barcodes column.
             barcodes: sql`CASE WHEN coalesce(array_length(EXCLUDED.barcodes, 1), 0) > 0 THEN EXCLUDED.barcodes ELSE ${inventoryTable.barcodes} END`,
+            orderPurchase: sql`CASE WHEN EXCLUDED.order_purchase >= 0 THEN EXCLUDED.order_purchase ELSE ${inventoryTable.orderPurchase} END`,
+            orderQuantity: sql`CASE WHEN EXCLUDED.order_quantity >= 0 THEN EXCLUDED.order_quantity ELSE ${inventoryTable.orderQuantity} END`,
             updatedAt: sql`now()`,
           },
         })
@@ -1539,6 +1557,27 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
       for (const row of result) {
         if (row.isNew) inserted++;
         else updated++;
+      }
+      // Zero is a meaningful supplied value, while omitted fields preserve the
+      // existing value. The non-null DB column cannot carry omission through
+      // VALUES, so apply explicit zeroes after the batch statement.
+      for (let resultIndex = 0; resultIndex < dedupedChunk.length; resultIndex++) {
+        const item = dedupedChunk[resultIndex]!;
+        const isNewItem = Boolean(result[resultIndex]?.isNew);
+        if (item.orderPurchase === 0 || item.orderQuantity === 0 ||
+            (isNewItem && (item.orderPurchase === undefined || item.orderQuantity === undefined))) {
+          const zeroes: {
+            orderPurchase?: number;
+            orderQuantity?: number;
+            updatedAt: ReturnType<typeof sql>;
+          } = { updatedAt: sql`now()` };
+          if (item.orderPurchase === 0 || (isNewItem && item.orderPurchase === undefined)) zeroes.orderPurchase = 0;
+          if (item.orderQuantity === 0 || (isNewItem && item.orderQuantity === undefined)) zeroes.orderQuantity = 0;
+          await db.update(inventoryTable).set(zeroes).where(and(
+            eq(inventoryTable.vendor, item.vendor.toUpperCase()),
+            eq(inventoryTable.catalog, item.catalog),
+          ));
+        }
       }
     }
 
@@ -2412,6 +2451,32 @@ router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
   } catch (err) {
     reqLogger.error({ err }, "[inventory/bins] Failed to update bins");
     res.status(500).json({ error: "Failed to update bins" });
+  }
+});
+
+// ── PATCH /inventory/:id/order ────────────────────────────────────────────────
+// Admin-only replacement of the two purchasing fields. Both values are
+// required, deliberately strict integers, and may not be negative.
+router.patch("/:id/order", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
+  try {
+    const id = Number(req.params["id"]);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return void res.status(400).json({ error: "Invalid item id" });
+    }
+    const parsed = UpdateItemOrderBody.safeParse(req.body);
+    if (!parsed.success) {
+      return void res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid order values" });
+    }
+    const [updated] = await db.update(inventoryTable)
+      .set({ orderPurchase: parsed.data.orderPurchase, orderQuantity: parsed.data.orderQuantity, updatedAt: new Date() })
+      .where(eq(inventoryTable.id, id))
+      .returning();
+    if (!updated) return void res.status(404).json({ error: "Item not found" });
+    res.json(UpdateItemOrderResponse.parse(updated));
+  } catch (err) {
+    reqLogger.error({ err }, "[inventory/order] Failed to update order fields");
+    res.status(500).json({ error: "Failed to update order fields" });
   }
 });
 

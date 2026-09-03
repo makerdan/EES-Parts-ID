@@ -103,6 +103,10 @@ export interface InventoryItem {
   id: number;
   vendor: string;
   catalog: string;
+  /** @minimum 0 */
+  orderPurchase?: number;
+  /** @minimum 0 */
+  orderQuantity?: number;
   description: string;
   /** Bin locations where this part is stored (a part may live in multiple bins) */
   binLocations: string[];
@@ -306,6 +310,11 @@ export type UpsertInventoryBodyItemsItem = {
   description?: string;
   /** Bin locations for this part (omit or pass empty array to clear) */
   binLocations?: string[];
+  barcodes?: string[];
+  /** @minimum 0 */
+  orderPurchase?: number;
+  /** @minimum 0 */
+  orderQuantity?: number;
 };
 
 export interface UpsertInventoryBody {
@@ -345,6 +354,17 @@ export interface UpdateSizeBody {
 export interface UpdateDescriptionBody {
   /** Free-text description of the part */
   description: string;
+}
+
+export interface UpdateItemOrderBody {
+  /** @minimum 0 */
+  orderPurchase: number;
+  /** @minimum 0 */
+  orderQuantity: number;
+}
+
+export interface CsvUploadBody {
+  csv: string;
 }
 
 export interface DictionaryLookupResponse {

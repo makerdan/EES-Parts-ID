@@ -190,6 +190,63 @@ paths:
         "404":
           description: Item not found
 
+  /inventory/{id}/order:
+    patch:
+      operationId: updateItemOrder
+      tags: [inventory]
+      summary: Update order purchase and quantity values (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateItemOrderBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "400": { description: Invalid non-negative integer values }
+        "401": { description: Admin token required }
+        "404": { description: Item not found }
+
+  /admin/upload/orders/preview:
+    post:
+      operationId: previewOrderUpload
+      tags: [admin]
+      summary: Preview OP/OQ-only inventory upload without writing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CsvUploadBody" }
+      responses:
+        "200": { description: Order upload classification and row details }
+        "400": { description: Invalid CSV or missing OP/OQ header }
+        "401": { description: Admin token required }
+
+  /admin/upload/orders:
+    post:
+      operationId: updateOrderUpload
+      tags: [admin]
+      summary: Apply OP/OQ-only inventory upload to known rows
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CsvUploadBody" }
+      responses:
+        "200": { description: Update and classification counts }
+        "400": { description: Invalid CSV or missing OP/OQ header }
+        "401": { description: Admin token required }
+
   /inventory/estimate-dimensions:
     post:
       operationId: estimateDimensions
@@ -797,6 +854,12 @@ components:
           type: string
         catalog:
           type: string
+        orderPurchase:
+          type: integer
+          minimum: 0
+        orderQuantity:
+          type: integer
+          minimum: 0
         description:
           type: string
         binLocations:
@@ -1171,6 +1234,15 @@ components:
                 items:
                   type: string
                 description: Bin locations for this part (omit or pass empty array to clear)
+              barcodes:
+                type: array
+                items: { type: string }
+              orderPurchase:
+                type: integer
+                minimum: 0
+              orderQuantity:
+                type: integer
+                minimum: 0
             required:
               - vendor
               - catalog
@@ -1251,6 +1323,23 @@ components:
           description: Free-text description of the part
       required:
         - description
+
+    UpdateItemOrderBody:
+      type: object
+      properties:
+        orderPurchase:
+          type: integer
+          minimum: 0
+        orderQuantity:
+          type: integer
+          minimum: 0
+      required: [orderPurchase, orderQuantity]
+
+    CsvUploadBody:
+      type: object
+      properties:
+        csv: { type: string }
+      required: [csv]
 
     DictionaryLookupResponse:
       type: object

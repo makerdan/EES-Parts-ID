@@ -39,6 +39,8 @@ export const inventoryTable = pgTable(
     id: serial("id").primaryKey(),
     vendor: text("vendor").notNull(),
     catalog: text("catalog").notNull(),
+    orderPurchase: integer("order_purchase").notNull().default(0),
+    orderQuantity: integer("order_quantity").notNull().default(0),
     description: text("description").notNull().default(""),
     binLocations: text("bin_locations")
       .array()

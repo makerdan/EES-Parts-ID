@@ -12,4 +12,9 @@ export type UpsertInventoryBodyItemsItem = {
   description?: string;
   /** Bin locations for this part (omit or pass empty array to clear) */
   binLocations?: string[];
+  barcodes?: string[];
+  /** @minimum 0 */
+  orderPurchase?: number;
+  /** @minimum 0 */
+  orderQuantity?: number;
 };

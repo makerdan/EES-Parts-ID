@@ -24,6 +24,7 @@ import type {
   AiReferenceBody,
   CategoryTreeResponse,
   CreateWarehouseZoneBody,
+  CsvUploadBody,
   DeleteUserMe400,
   DeleteUserMe502,
   DeleteWarehouseZone200,
@@ -43,6 +44,7 @@ import type {
   UpdateBinsBody,
   UpdateDescriptionBody,
   UpdateDimensionsBody,
+  UpdateItemOrderBody,
   UpdateKeywordsBody,
   UpdateSizeBody,
   UpdateWarehouseZoneBody,
@@ -740,6 +742,265 @@ export const useUpdateItemBins = <
   TContext
 > => {
   return useMutation(getUpdateItemBinsMutationOptions(options));
+};
+
+/**
+ * @summary Update order purchase and quantity values (admin)
+ */
+export const getUpdateItemOrderUrl = (id: number) => {
+  return `/api/inventory/${id}/order`;
+};
+
+export const updateItemOrder = async (
+  id: number,
+  updateItemOrderBody: UpdateItemOrderBody,
+  options?: RequestInit,
+): Promise<InventoryItem> => {
+  return customFetch<InventoryItem>(getUpdateItemOrderUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateItemOrderBody),
+  });
+};
+
+export const getUpdateItemOrderMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemOrder>>,
+    TError,
+    { id: number; data: BodyType<UpdateItemOrderBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateItemOrder>>,
+  TError,
+  { id: number; data: BodyType<UpdateItemOrderBody> },
+  TContext
+> => {
+  const mutationKey = ["updateItemOrder"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateItemOrder>>,
+    { id: number; data: BodyType<UpdateItemOrderBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateItemOrder(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateItemOrderMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateItemOrder>>
+>;
+export type UpdateItemOrderMutationBody = BodyType<UpdateItemOrderBody>;
+export type UpdateItemOrderMutationError = ErrorType<void>;
+
+/**
+ * @summary Update order purchase and quantity values (admin)
+ */
+export const useUpdateItemOrder = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemOrder>>,
+    TError,
+    { id: number; data: BodyType<UpdateItemOrderBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateItemOrder>>,
+  TError,
+  { id: number; data: BodyType<UpdateItemOrderBody> },
+  TContext
+> => {
+  return useMutation(getUpdateItemOrderMutationOptions(options));
+};
+
+/**
+ * @summary Preview OP/OQ-only inventory upload without writing
+ */
+export const getPreviewOrderUploadUrl = () => {
+  return `/api/admin/upload/orders/preview`;
+};
+
+export const previewOrderUpload = async (
+  csvUploadBody: CsvUploadBody,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getPreviewOrderUploadUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(csvUploadBody),
+  });
+};
+
+export const getPreviewOrderUploadMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof previewOrderUpload>>,
+    TError,
+    { data: BodyType<CsvUploadBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof previewOrderUpload>>,
+  TError,
+  { data: BodyType<CsvUploadBody> },
+  TContext
+> => {
+  const mutationKey = ["previewOrderUpload"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof previewOrderUpload>>,
+    { data: BodyType<CsvUploadBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return previewOrderUpload(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PreviewOrderUploadMutationResult = NonNullable<
+  Awaited<ReturnType<typeof previewOrderUpload>>
+>;
+export type PreviewOrderUploadMutationBody = BodyType<CsvUploadBody>;
+export type PreviewOrderUploadMutationError = ErrorType<void>;
+
+/**
+ * @summary Preview OP/OQ-only inventory upload without writing
+ */
+export const usePreviewOrderUpload = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof previewOrderUpload>>,
+    TError,
+    { data: BodyType<CsvUploadBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof previewOrderUpload>>,
+  TError,
+  { data: BodyType<CsvUploadBody> },
+  TContext
+> => {
+  return useMutation(getPreviewOrderUploadMutationOptions(options));
+};
+
+/**
+ * @summary Apply OP/OQ-only inventory upload to known rows
+ */
+export const getUpdateOrderUploadUrl = () => {
+  return `/api/admin/upload/orders`;
+};
+
+export const updateOrderUpload = async (
+  csvUploadBody: CsvUploadBody,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getUpdateOrderUploadUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(csvUploadBody),
+  });
+};
+
+export const getUpdateOrderUploadMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateOrderUpload>>,
+    TError,
+    { data: BodyType<CsvUploadBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateOrderUpload>>,
+  TError,
+  { data: BodyType<CsvUploadBody> },
+  TContext
+> => {
+  const mutationKey = ["updateOrderUpload"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateOrderUpload>>,
+    { data: BodyType<CsvUploadBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateOrderUpload(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateOrderUploadMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateOrderUpload>>
+>;
+export type UpdateOrderUploadMutationBody = BodyType<CsvUploadBody>;
+export type UpdateOrderUploadMutationError = ErrorType<void>;
+
+/**
+ * @summary Apply OP/OQ-only inventory upload to known rows
+ */
+export const useUpdateOrderUpload = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateOrderUpload>>,
+    TError,
+    { data: BodyType<CsvUploadBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateOrderUpload>>,
+  TError,
+  { data: BodyType<CsvUploadBody> },
+  TContext
+> => {
+  return useMutation(getUpdateOrderUploadMutationOptions(options));
 };
 
 /**

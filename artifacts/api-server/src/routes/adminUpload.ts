@@ -33,7 +33,7 @@
 
 import { db, inventoryTable } from "@workspace/db";
 import { and,eq, or, sql } from "drizzle-orm";
-import { Router } from "express";
+import { Request, Response, Router } from "express";
 
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
@@ -83,6 +83,10 @@ export interface ParsedRow {
   description: string;
   binLocations: Array<string>;
   barcodes: Array<string>;
+  orderPurchase: number;
+  orderQuantity: number;
+  orderPurchasePresent: boolean;
+  orderQuantityPresent: boolean;
 }
 
 /**
@@ -103,6 +107,8 @@ export function parseCsv(csvText: string): Array<ParsedRow> | null {
   const descIdx = header.findIndex(h => h === "description");
   const binIdx = header.findIndex(h => h === "binlocation" || h === "bin" || h === "binnumber");
   const barcodeIdx = header.findIndex(h => h === "barcodes" || h === "barcode" || h === "upc" || h === "ean" || h === "gtin" || h === "barcode#");
+  const opIdx = header.findIndex(h => h === "op" || h === "orderpurchase");
+  const oqIdx = header.findIndex(h => h === "oq" || h === "orderquantity");
 
   const rows: Array<ParsedRow> = [];
   for (let i = 1; i < lines.length; i++) {
@@ -120,12 +126,32 @@ export function parseCsv(csvText: string): Array<ParsedRow> | null {
     const barcodes = barcodeCell
       ? barcodeCell.split(/[,;|]/).map(b => b.trim()).filter(b => b.length > 0)
       : [];
+    const parseOrder = (idx: number, name: string): number => {
+      const value = (idx >= 0 ? fields[idx]?.trim() : "") ?? "";
+      if (!value) return 0;
+      if (!/^\d+$/.test(value)) throw new Error(`${name} must be a non-negative integer`);
+      const parsed = Number(value);
+      if (!Number.isSafeInteger(parsed)) throw new Error(`${name} must be a non-negative integer`);
+      return parsed;
+    };
+    let orderPurchase: number;
+    let orderQuantity: number;
+    try {
+      orderPurchase = parseOrder(opIdx, "OP");
+      orderQuantity = parseOrder(oqIdx, "OQ");
+    } catch {
+      return null;
+    }
     rows.push({
       vendor,
       catalog,
       description: (descIdx >= 0 ? fields[descIdx]?.trim() : "") ?? "",
       binLocations,
       barcodes,
+      orderPurchase,
+      orderQuantity,
+      orderPurchasePresent: opIdx >= 0,
+      orderQuantityPresent: oqIdx >= 0,
     });
   }
   return rows;
@@ -394,6 +420,8 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
             description: row.description,
             binLocations: row.binLocations,
             barcodes: row.barcodes,
+            orderPurchase: row.orderPurchase,
+            orderQuantity: row.orderQuantity,
             aiKeywords: [],
           })
           .onConflictDoUpdate({
@@ -406,6 +434,8 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
               // Preserve existing barcodes when no barcode data is supplied — same
               // semantics as binLocations so manual scan assignments survive re-uploads.
               barcodes: sql`CASE WHEN coalesce(array_length(EXCLUDED.barcodes, 1), 0) > 0 THEN EXCLUDED.barcodes ELSE ${inventoryTable.barcodes} END`,
+              orderPurchase: row.orderPurchasePresent ? sql`EXCLUDED.order_purchase` : inventoryTable.orderPurchase,
+              orderQuantity: row.orderQuantityPresent ? sql`EXCLUDED.order_quantity` : inventoryTable.orderQuantity,
               updatedAt: sql`now()`,
             },
           })
@@ -432,5 +462,55 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
     res.status(500).json({ error: "Upload failed" });
   }
 });
+
+// OP/OQ-only spreadsheet mode. Unlike the normal importer this never creates
+// inventory rows and ignores every non-key/non-order column.
+async function orderUpload(req: Request, res: Response, update: boolean) {
+  try {
+    const csv = req.body?.csv;
+    if (typeof csv !== "string" || !csv.trim()) return void res.status(400).json({ error: "Missing or empty csv field" });
+    const text = csv.startsWith("\uFEFF") ? csv.slice(1) : csv;
+    const header = parseCsvLine(text.split(/\r?\n/).find((line: string) => line.trim()) ?? "")
+      .map(h => h.toLowerCase().replace(/\s+/g, ""));
+    if (!header.some(h => h === "op" || h === "orderpurchase") && !header.some(h => h === "oq" || h === "orderquantity")) {
+      return void res.status(400).json({ error: "OP or OQ header is required" });
+    }
+    const rows = parseCsv(csv);
+    if (!rows) return void res.status(400).json({ error: "Malformed CSV or invalid OP/OQ value" });
+    const keys = rows.map(r => ({ vendor: r.vendor.toUpperCase(), catalog: r.catalog }));
+    const existing = keys.length ? await db.select({ id: inventoryTable.id, vendor: inventoryTable.vendor, catalog: inventoryTable.catalog })
+      .from(inventoryTable).where(or(...keys.map(k => and(eq(inventoryTable.vendor, k.vendor), eq(inventoryTable.catalog, k.catalog))))) : [];
+    const found = new Map(existing.map(r => [`${r.vendor}\0${r.catalog}`, r]));
+    const details = rows.map(r => {
+      const match = found.get(`${r.vendor.toUpperCase()}\0${r.catalog}`);
+      return { vendor: r.vendor, catalog: r.catalog, known: Boolean(match), hasBins: r.binLocations.length > 0,
+        orderPurchase: r.orderPurchase, orderQuantity: r.orderQuantity };
+    });
+    const known = details.filter(r => r.known);
+    if (update) {
+      await db.transaction(async tx => {
+        for (const row of rows) {
+          const match = found.get(`${row.vendor.toUpperCase()}\0${row.catalog}`);
+          if (!match) continue;
+          const values: {
+            orderPurchase?: number;
+            orderQuantity?: number;
+            updatedAt: Date;
+          } = { updatedAt: new Date() };
+          if (row.orderPurchasePresent) values.orderPurchase = row.orderPurchase;
+          if (row.orderQuantityPresent) values.orderQuantity = row.orderQuantity;
+          await tx.update(inventoryTable).set(values).where(eq(inventoryTable.id, match.id));
+        }
+      });
+    }
+    res.json({ known: known.length, unknownWithBins: details.filter(r => !r.known && r.hasBins).length,
+      unknownWithoutBins: details.filter(r => !r.known && !r.hasBins).length, updated: update ? known.length : 0, rows: details });
+  } catch (_err) {
+    res.status(500).json({ error: update ? "Order upload failed" : "Order upload preview failed" });
+  }
+}
+
+router.post("/upload/orders/preview", requireAdminAuth, (req, res) => orderUpload(req, res, false));
+router.post("/upload/orders", requireAdminAuth, (req, res) => orderUpload(req, res, true));
 
 export default router;

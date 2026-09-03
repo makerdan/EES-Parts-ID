@@ -11,6 +11,10 @@ export interface InventoryItem {
   id: number;
   vendor: string;
   catalog: string;
+  /** @minimum 0 */
+  orderPurchase?: number;
+  /** @minimum 0 */
+  orderQuantity?: number;
   description: string;
   /** Bin locations where this part is stored (a part may live in multiple bins) */
   binLocations: string[];
