@@ -12,6 +12,7 @@ import { startServer } from "./lib/startServer";
 import { validateEnv } from "./lib/validateEnv";
 import { applyZoneSectionNumFix } from "./lib/zoneSectionNumFix";
 import { shutdownCatalogPdfLoops } from "./routes/catalogPdf";
+import { recoverCatalogPdfUploadSessions } from "./routes/catalogPdfUpload";
 
 process.on("uncaughtException", (err) => {
   logger.error({ err }, "Uncaught exception — exiting");
@@ -257,7 +258,7 @@ async function pruneAuditLog(): Promise<void> {
 }
 
 Promise.race([
-  Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), applyZoneSectionNumFix(), migrateUsersTable()]),
+  Promise.all([recoverOrphanedJobs(), recoverCatalogPdfUploadSessions(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), applyZoneSectionNumFix(), migrateUsersTable()]),
   migrationsTimeout,
 ])
   .then(() => withStartupTimeout(initProvider(), INIT_PROVIDER_TIMEOUT_MS, "initProvider"))
@@ -311,6 +312,11 @@ Promise.race([
     setInterval(pruneAuditLog, AUDIT_LOG_RETENTION_INTERVAL_MS).unref();
     pruneScreenViewLog();
     setInterval(pruneScreenViewLog, SCREEN_VIEW_RETENTION_INTERVAL_MS).unref();
+    setInterval(() => {
+      recoverCatalogPdfUploadSessions().catch((err) => {
+        logger.error({ err }, "Catalog PDF upload-session reconciliation failed");
+      });
+    }, 15 * 60 * 1000).unref();
   })
   .catch((err) => {
     logger.error({ err }, "Fatal error during server startup — exiting");

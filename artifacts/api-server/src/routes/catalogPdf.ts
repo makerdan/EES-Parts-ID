@@ -558,6 +558,49 @@ async function processPdfPages(
   }
 }
 
+/**
+ * Starts extraction for a durably completed upload. The upload-session route
+ * owns the manifest and job creation; this function owns only the existing
+ * extraction handoff so legacy jobs and new jobs use the same worker.
+ */
+export function launchCatalogPdfBuffer(
+  jobId: number,
+  pdfBuffer: Buffer,
+  normalizedVendor: string,
+  log: typeof logger = logger,
+): void {
+  if (activePdfJobs >= MAX_CONCURRENT_PDF_JOBS) {
+    const retry = setTimeout(() => launchCatalogPdfBuffer(jobId, pdfBuffer, normalizedVendor, log), 1000);
+    retry.unref();
+    log.info({ jobId }, "[catalog-pdf] durable job queued behind concurrency limit");
+    return;
+  }
+  activePdfJobs++;
+  setImmediate(() => trackJobLoop(jobId, (async () => {
+    try {
+      await db.update(catalogPdfJobTable)
+        .set({ status: "processing", startedAt: new Date() })
+        .where(and(eq(catalogPdfJobTable.id, jobId), eq(catalogPdfJobTable.status, "pending")));
+      const pages = await extractPdfPages(pdfBuffer);
+      await db.update(catalogPdfJobTable).set({ totalPages: pages.length })
+        .where(eq(catalogPdfJobTable.id, jobId));
+      await processPdfPages(jobId, pages, 0, normalizedVendor, null, 0, false, undefined, log);
+    } catch (err) {
+      const isCatalogAiError = err instanceof Error && err.name === "CatalogAiError";
+      const errorCode = !isCatalogAiError && isProviderPayloadTooLargeError(err)
+        ? "ai_payload_too_large"
+        : err instanceof Error ? err.message : String(err);
+      await db.update(catalogPdfJobTable)
+        .set({ status: "failed", errorMessage: errorCode, finishedAt: new Date() })
+        .where(eq(catalogPdfJobTable.id, jobId));
+      await revertSessionItems(jobId, log);
+      log.error({ err, jobId }, "[catalog-pdf] durable background processing failed");
+    } finally {
+      activePdfJobs--;
+    }
+  })()));
+}
+
 // ── POST /admin/catalog-pdf ───────────────────────────────────────────────────
 router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);

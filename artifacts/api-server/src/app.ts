@@ -160,6 +160,12 @@ app.use("/api/inventory/estimate-dimensions/search", (req, res, next) => {
 //
 // A 25 MB PDF base64-encodes to ~34 MB; 50 MB provides headroom.
 const LARGE_BODY_LIMIT = "50mb";
+// Durable catalog PDF parts are binary and are intentionally capped below the
+// session manifest's part-size ceiling. This parser runs before the JSON parser.
+app.use(
+  /^\/api\/admin\/catalog-pdf\/upload-sessions\/[^/]+\/parts\/\d+$/,
+  express.raw({ type: ["application/octet-stream", "application/pdf"], limit: "8mb" }),
+);
 const UPLOAD_PATHS = [
   "/api/admin/catalog-pdf",
   "/api/admin/upload",      // CSV/bulk-import uploads (large text payloads)

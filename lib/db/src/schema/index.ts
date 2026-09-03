@@ -2,6 +2,7 @@ export * from "./abbreviation_map";
 export * from "./admin_audit_log";
 export * from "./admin_preferences";
 export * from "./ai_request_log";
+export * from "./catalog_pdf_upload";
 export * from "./contact_messages";
 export * from "./conversations";
 export * from "./electrical_slang_map";

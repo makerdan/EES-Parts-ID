@@ -116,3 +116,53 @@ export async function readFloorPlanSvg(objectPath: string): Promise<Buffer> {
   const [content] = await file.download();
   return content;
 }
+
+const STAGING_PREFIX = "catalog-pdf-staging";
+
+function getCatalogPdfStagingFile(sessionId: string, partIndex: number) {
+  if (!/^[0-9a-f-]{20,80}$/i.test(sessionId) || !Number.isSafeInteger(partIndex) || partIndex < 0) {
+    throw new Error("Invalid catalog PDF staging key");
+  }
+  const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
+  if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
+  const privateDir = process.env["PRIVATE_OBJECT_DIR"] ?? "uploads";
+  return gcs.bucket(bucketId).file(`${privateDir}/${STAGING_PREFIX}/${sessionId}/${partIndex}.part`);
+}
+
+/** Store one upload part under a session-scoped private key. */
+export async function writeCatalogPdfPart(
+  sessionId: string,
+  partIndex: number,
+  bytes: Buffer,
+): Promise<string> {
+  const file = getCatalogPdfStagingFile(sessionId, partIndex);
+  await file.save(bytes, {
+    contentType: "application/octet-stream",
+    resumable: false,
+    preconditionOpts: { ifGenerationMatch: 0 },
+    metadata: { cacheControl: "no-store" },
+  });
+  const privateDir = process.env["PRIVATE_OBJECT_DIR"] ?? "uploads";
+  return `/objects/${privateDir}/${STAGING_PREFIX}/${sessionId}/${partIndex}.part`;
+}
+
+export async function readCatalogPdfPart(
+  sessionId: string,
+  partIndex: number,
+): Promise<Buffer> {
+  const [content] = await getCatalogPdfStagingFile(sessionId, partIndex).download();
+  return content;
+}
+
+/** Idempotent cleanup; missing objects are already in the desired state. */
+export async function deleteCatalogPdfPart(
+  sessionId: string,
+  partIndex: number,
+): Promise<void> {
+  try {
+    await getCatalogPdfStagingFile(sessionId, partIndex).delete({ ignoreNotFound: true });
+  } catch (err) {
+    const code = (err as { code?: number }).code;
+    if (code !== 404) throw err;
+  }
+}
