@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -26,6 +26,15 @@ async function put(path, contents) {
 
 async function expectProjectionError(operation, code) {
   await assert.rejects(operation, (error) => error instanceof AccountSkillProjectionError && error.code === code);
+}
+
+async function exists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 try {
@@ -81,6 +90,16 @@ try {
   assert.equal(await readFile(join(authoredRoot, "SKILL.md"), "utf8"), "# Workspace-authored skill\n");
 
   const concurrentWorkspace = join(root, "concurrent-workspace");
+  const concurrentProjectionRoot = join(concurrentWorkspace, ACCOUNT_SKILLS_PROJECTION_RELATIVE_PATH);
+  const staleStaging = `${concurrentProjectionRoot}.staging-11111111-1111-4111-8111-111111111111`;
+  const staleBackup = `${concurrentProjectionRoot}.backup-22222222-2222-4222-8222-222222222222`;
+  const unrelatedLookalike = `${concurrentProjectionRoot}.staging-not-owned`;
+  const lockPath = `${concurrentProjectionRoot}.lock`;
+  await put(join(staleStaging, "partial.txt"), "interrupted staging fixture\n");
+  await put(join(staleBackup, "partial.txt"), "interrupted backup fixture\n");
+  await put(join(unrelatedLookalike, "keep.txt"), "unrelated fixture\n");
+  await put(lockPath, "");
+  await utimes(lockPath, new Date(0), new Date(0));
   const concurrentResults = await Promise.all([
     syncAccountSkillProjection({ accountSource, workspaceRoot: concurrentWorkspace }),
     syncAccountSkillProjection({ accountSource, workspaceRoot: concurrentWorkspace }),
@@ -90,6 +109,28 @@ try {
     1,
     "serialized concurrent refreshes must install exactly one projection",
   );
+  assert.equal(await exists(staleStaging), false, "a stale owned staging directory must be removed under the lock");
+  assert.equal(await exists(staleBackup), false, "a stale owned backup directory must be removed under the lock");
+  assert.equal(await exists(unrelatedLookalike), true, "a similarly named directory not owned by the projection helper must remain");
+  assert.equal(
+    await readFile(join(concurrentProjectionRoot, "catalog/SKILL.md"), "utf8"),
+    "# Catalog v2\n",
+    "concurrent cleanup must not delete the active serialized refresh",
+  );
+
+  const liveLockWorkspace = join(root, "live-lock-workspace");
+  const liveProjectionRoot = join(liveLockWorkspace, ACCOUNT_SKILLS_PROJECTION_RELATIVE_PATH);
+  const liveStaging = `${liveProjectionRoot}.staging-33333333-3333-4333-8333-333333333333`;
+  await put(join(liveStaging, "active.txt"), "active refresh fixture\n");
+  await put(
+    `${liveProjectionRoot}.lock`,
+    `${JSON.stringify({ format: 1, pid: process.pid, token: "live-owner" })}\n`,
+  );
+  await expectProjectionError(
+    () => syncAccountSkillProjection({ accountSource, workspaceRoot: liveLockWorkspace, lockTimeoutMs: 50 }),
+    "projection-busy",
+  );
+  assert.equal(await exists(liveStaging), true, "a live lock must protect its active staging directory from cleanup");
 
   const contract = await readFile("docs/validation/account-level-skills.md", "utf8");
   assert.match(contract, /account\/platform-managed skill store is authoritative/i);

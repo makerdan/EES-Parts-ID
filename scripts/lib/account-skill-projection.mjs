@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
-  open,
+  link,
   readFile,
   readdir,
   rename,
@@ -18,6 +18,7 @@ export const ACCOUNT_SKILLS_MANIFEST_FILE = "manifest.json";
 const LOCK_WAIT_MS = 25;
 const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
 const SKILL_NAME = /^[a-z0-9][a-z0-9-]*$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export class AccountSkillProjectionError extends Error {
   constructor(code, message) {
@@ -205,18 +206,93 @@ async function validateProjection(root, expectedRevision) {
 async function acquireLock(lockPath, timeoutMs) {
   const startedAt = Date.now();
   while (true) {
+    const token = randomUUID();
+    const candidatePath = `${lockPath}.candidate-${token}`;
+    let acquired = false;
     try {
-      const handle = await open(lockPath, "wx");
+      await writeFile(candidatePath, `${JSON.stringify({ format: 1, pid: process.pid, token })}\n`, { flag: "wx" });
+      try {
+        await link(candidatePath, lockPath);
+        acquired = true;
+      } finally {
+        await rm(candidatePath, { force: true });
+      }
+      if (!acquired) continue;
       return async () => {
-        await handle.close();
-        await rm(lockPath, { force: true });
+        let owner;
+        try {
+          owner = JSON.parse(await readFile(lockPath, "utf8"));
+        } catch {
+          return;
+        }
+        if (owner?.token === token) await rm(lockPath, { force: true });
       };
     } catch (error) {
-      if (error.code !== "EEXIST" || Date.now() - startedAt >= timeoutMs) {
+      if (error.code !== "EEXIST") {
+        throw new AccountSkillProjectionError("projection-busy", `Unable to serialize account skill projection updates: ${lockPath}`);
+      }
+      await rm(candidatePath, { force: true });
+      let owner;
+      try {
+        owner = JSON.parse(await readFile(lockPath, "utf8"));
+      } catch {
+        owner = undefined;
+      }
+      if (owner?.format === 1 && Number.isInteger(owner.pid) && typeof owner.token === "string") {
+        let ownerIsAlive = true;
+        try {
+          process.kill(owner.pid, 0);
+        } catch (ownerError) {
+          ownerIsAlive = ownerError.code !== "ESRCH";
+        }
+        if (!ownerIsAlive) {
+          const abandonedLockPath = `${lockPath}.abandoned-${randomUUID()}`;
+          try {
+            await rename(lockPath, abandonedLockPath);
+          } catch (renameError) {
+            if (renameError.code === "ENOENT") continue;
+            throw new AccountSkillProjectionError("projection-busy", `Unable to recover abandoned projection lock: ${lockPath}`);
+          }
+          await rm(abandonedLockPath, { force: true });
+          continue;
+        }
+      }
+      if (!owner) {
+        let lockStat;
+        try {
+          lockStat = await stat(lockPath);
+        } catch (statError) {
+          if (statError.code === "ENOENT") continue;
+          throw new AccountSkillProjectionError("projection-busy", `Unable to inspect projection lock: ${lockPath}`);
+        }
+        if (Date.now() - lockStat.mtimeMs >= timeoutMs) {
+          const abandonedLockPath = `${lockPath}.abandoned-${randomUUID()}`;
+          try {
+            await rename(lockPath, abandonedLockPath);
+          } catch (renameError) {
+            if (renameError.code === "ENOENT") continue;
+            throw new AccountSkillProjectionError("projection-busy", `Unable to recover abandoned projection lock: ${lockPath}`);
+          }
+          await rm(abandonedLockPath, { force: true });
+          continue;
+        }
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
         throw new AccountSkillProjectionError("projection-busy", `Unable to serialize account skill projection updates: ${lockPath}`);
       }
       await new Promise((resolvePromise) => setTimeout(resolvePromise, LOCK_WAIT_MS));
     }
+  }
+}
+
+async function removeStaleProjectionDirectories(parent, destinationName) {
+  const ownedPrefixes = [`${destinationName}.staging-`, `${destinationName}.backup-`];
+  const entries = await readdir(parent, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const prefix = ownedPrefixes.find((candidate) => entry.name.startsWith(candidate));
+    if (!prefix || !UUID.test(entry.name.slice(prefix.length))) continue;
+    await rm(join(parent, entry.name), { recursive: true, force: true });
   }
 }
 
@@ -252,6 +328,7 @@ export async function syncAccountSkillProjection({
   let stagingRoot;
   let backupRoot;
   try {
+    await removeStaleProjectionDirectories(parent, destination.slice(parent.length + 1));
     const current = await readRevision(sourceBefore.sourceRoot);
     let currentManifest;
     try {
