@@ -65,6 +65,10 @@ jobs:
         shell: bash
         run: pnpm --filter @workspace/db run push-force
 
+      - name: Negative control — force portable validation dependency failure
+        shell: bash
+        run: exit 1
+
       - name: Run the canonical standard-plus validation tier
         shell: bash
         run: pnpm run test-standard-plus
