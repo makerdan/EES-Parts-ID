@@ -105,6 +105,10 @@ const sharedConfig = {
     // erased by isolatedModules without needing the RN module to be resolved.
     "^@/utils/searchHelpers$":
       "<rootDir>/../../artifacts/parts-id/utils/searchHelpers.ts",
+    // The floor-plan replacement workflow crosses the API/server boundary
+    // into the pure web scene contract used by WarehouseMapView.
+    "^@/utils/mapViewport$":
+      "<rootDir>/../../artifacts/parts-id/utils/mapViewport.ts",
   },
   // Allow ts-jest to transform the workspace library source files even though
   // they live inside (or are symlinked from) node_modules.
