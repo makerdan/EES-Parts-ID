@@ -61,6 +61,41 @@ The repository may report observations such as mirror missing, mirror
 unreadable, metadata mismatch, or canonical metadata unavailable. It must not
 claim that the account-level source is current based only on the runtime file.
 
+### Canonical identity and read-only status command
+
+The canonical skill identifier is the validated account-source directory slug
+(`<skill-id>`), not the display name in `SKILL.md`. Canonical revision metadata
+is the non-empty account-wide `.account-revision` value plus the skill's
+SHA-256 fingerprint over its sorted relative file paths and bytes. These values
+are opaque identifiers: consumers compare them exactly and do not interpret
+their format or derive a revision from timestamps.
+
+The supported repository command is:
+
+```sh
+pnpm account-skill:status -- --skill <skill-id>
+```
+
+It is non-mutating. It reads `ACCOUNT_SKILLS_SOURCE` and the platform-owned
+`.local/custom_skills/<skill-id>/.account-skill-metadata.json` sidecar. The
+sidecar has format `1` and the fields `skillId`, `sourceRevision`, and
+`fingerprint`. The command prints a fixed JSON schema to stdout: outcome and
+canonical skill identity, plus revision and fingerprint when the canonical
+source is available, and one bounded reason code for mismatches. It never
+echoes mirror values or prints a skill file, secret, credential, or source path.
+
+| Outcome | Exit | Meaning |
+|---|---:|---|
+| `pass` | 0 | Mirror identity, revision, and fingerprint exactly match the canonical account source |
+| `mismatch` | 1 | Mirror metadata is invalid or differs from canonical metadata |
+| `unavailable-source` | 2 | The canonical account source or revision metadata cannot be read |
+| `missing-mirror` | 3 | The platform mirror metadata sidecar is absent |
+
+Repository consumers may invoke this command and parse its JSON result. They
+must not add a skill registry, copy account instructions, or manufacture the
+platform sidecar. Absence of authoritative source metadata cannot be converted
+to a pass.
+
 ## Ownership and failure handling
 
 | Condition | Owning party | Repository response |
@@ -90,6 +125,14 @@ The runtime mirror is the final downstream copy. It may be refreshed by the
 platform or supported post-merge automation and may carry its own opaque
 fingerprint, but it must never flow back into the account source or workspace
 projection. The repository must not edit `.local/custom_skills` directly.
+
+The supported lifecycle is publication to the account source, platform
+provisioning or refresh of the disposable runtime mirror and metadata sidecar,
+then read-only verification with `account-skill:status`. A repository restart
+may trigger platform provisioning, but repository automation must not simulate
+success by writing the sidecar. A missing or stale sidecar after a supported
+refresh belongs to the account/platform provisioning and sync owner; an
+unavailable canonical source belongs to the account/platform skill owner.
 
 ## Rules for future skill-specific proposals
 

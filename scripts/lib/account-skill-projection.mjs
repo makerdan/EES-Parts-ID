@@ -14,6 +14,7 @@ import { dirname, join, resolve, sep } from "node:path";
 export const ACCOUNT_SKILLS_REVISION_FILE = ".account-revision";
 export const ACCOUNT_SKILLS_PROJECTION_RELATIVE_PATH = ".agents/skills/.account-projections";
 export const ACCOUNT_SKILLS_MANIFEST_FILE = "manifest.json";
+export const ACCOUNT_SKILL_MIRROR_METADATA_FILE = ".account-skill-metadata.json";
 
 const LOCK_WAIT_MS = 25;
 const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
@@ -123,6 +124,71 @@ async function discoverAccountSkills(sourceRoot) {
     skills.push({ name: entry.name, files });
   }
   return skills;
+}
+
+async function readCanonicalSkillMetadata(accountSource, skillName) {
+  assertSkillName(skillName);
+  if (!accountSource) {
+    throw new AccountSkillProjectionError("source-unavailable", "ACCOUNT_SKILLS_SOURCE is required; refusing to use a fallback source");
+  }
+  const { sourceRoot, revision } = await readRevision(accountSource);
+  const skills = await discoverAccountSkills(sourceRoot);
+  const skill = skills.find((candidate) => candidate.name === skillName);
+  if (!skill) {
+    throw new AccountSkillProjectionError("skill-not-found", `Account skill is not published: ${skillName}`);
+  }
+  return {
+    skillId: skillName,
+    sourceRevision: revision,
+    fingerprint: await fingerprintDirectory(join(sourceRoot, skillName), skill.files),
+  };
+}
+
+export async function inspectAccountSkillMirror({
+  accountSource,
+  workspaceRoot = process.cwd(),
+  skillName,
+  mirrorRoot = join(resolve(workspaceRoot), ".local/custom_skills"),
+} = {}) {
+  let canonical;
+  try {
+    canonical = await readCanonicalSkillMetadata(accountSource, skillName);
+  } catch (error) {
+    if (error instanceof AccountSkillProjectionError) {
+      return { outcome: "unavailable-source", skillId: skillName };
+    }
+    throw error;
+  }
+
+  const metadataPath = join(resolve(mirrorRoot), skillName, ACCOUNT_SKILL_MIRROR_METADATA_FILE);
+  let mirror;
+  try {
+    mirror = JSON.parse(await readFile(metadataPath, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return { outcome: "missing-mirror", ...canonical };
+    }
+    return { outcome: "mismatch", ...canonical, reason: "invalid-mirror-metadata" };
+  }
+
+  if (
+    mirror?.format !== 1 ||
+    typeof mirror?.skillId !== "string" ||
+    typeof mirror?.sourceRevision !== "string" ||
+    typeof mirror?.fingerprint !== "string"
+  ) {
+    return { outcome: "mismatch", ...canonical, reason: "invalid-mirror-metadata" };
+  }
+  if (mirror.skillId !== canonical.skillId) {
+    return { outcome: "mismatch", ...canonical, reason: "identity-mismatch" };
+  }
+  if (mirror.sourceRevision !== canonical.sourceRevision) {
+    return { outcome: "mismatch", ...canonical, reason: "revision-mismatch" };
+  }
+  if (mirror.fingerprint !== canonical.fingerprint) {
+    return { outcome: "mismatch", ...canonical, reason: "fingerprint-mismatch" };
+  }
+  return { outcome: "pass", ...canonical };
 }
 
 async function fingerprintDirectory(root, files) {
