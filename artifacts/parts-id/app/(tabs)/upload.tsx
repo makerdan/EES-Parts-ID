@@ -685,6 +685,10 @@ export default function UploadScreen() {
   const [aiStatusProbing, setAiStatusProbing] = useState(false);
   const [aiCatalogueRefreshing, setAiCatalogueRefreshing] = useState(false);
   const [aiRoutesSaving, setAiRoutesSaving] = useState(false);
+  const [aiProvider, setAiProvider] = useState<AiStatusPayload["provider"]>("poe");
+  const [aiProviderSaving, setAiProviderSaving] = useState(false);
+  const [aiProviderSaveState, setAiProviderSaveState] = useState<"saved" | "runtime-only" | null>(null);
+  const [aiProviderError, setAiProviderError] = useState<string | null>(null);
   const aiStatusGenerationRef = useRef(0);
   const aiStatusFetchControllerRef = useRef<AbortController | null>(null);
   const aiStatusProbeControllerRef = useRef<AbortController | null>(null);
@@ -720,6 +724,7 @@ export default function UploadScreen() {
       ) return;
       setAiStatusBots(data.bots ?? {});
       setAiStatus(data.catalogue ? data : null);
+      if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
     } catch (err) {
       if (
         isMountedRef.current &&
@@ -741,6 +746,36 @@ export default function UploadScreen() {
       }
     }
   }, [adminToken, cancelAiStatusRequests]);
+
+  const saveAiProvider = useCallback(async (provider: AiStatusPayload["provider"]) => {
+    if (!adminToken || !API_BASE || aiProviderSaving) return;
+    setAiProviderSaving(true);
+    setAiProviderError(null);
+    setAiProviderSaveState(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-provider`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+      });
+      const data = (await res.json()) as {
+        provider?: AiStatusPayload["provider"];
+        persisted?: boolean;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      if (data.provider !== "poe" && data.provider !== "openai") {
+        throw new Error("The API returned an invalid provider");
+      }
+      setAiProvider(data.provider);
+      setAiStatus((current) => current ? { ...current, provider: data.provider! } : current);
+      setAiProviderSaveState(data.persisted === true ? "saved" : "runtime-only");
+    } catch (err) {
+      setAiProviderError(err instanceof Error ? err.message : "AI provider choice could not be saved");
+    } finally {
+      setAiProviderSaving(false);
+    }
+  }, [adminToken, aiProviderSaving]);
 
   const triggerAiProbe = useCallback(async () => {
     if (!adminToken || !API_BASE || aiStatusProbing) return;
@@ -3556,11 +3591,68 @@ export default function UploadScreen() {
                 {aiStatus ? (
                   <>
                     <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>
-                      Active provider: <Text style={{ color: colors.foreground }}>{aiStatus.provider}</Text>
+                      Active provider: <Text style={{ color: colors.foreground }}>{aiProvider}</Text>
                       {"  "}Catalogue: <Text style={{ color: aiStatus.catalogue.freshness === "fresh" ? "#10b981" : "#f59e0b" }}>
                         {aiStatus.catalogue.freshness}
                       </Text>
                     </Text>
+                    <View style={[styles.aiProviderControl, { borderColor: colors.border }]}>
+                      <Text style={[styles.aiStatusSectionTitle, { color: colors.foreground }]}>Provider choice</Text>
+                      <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                        Changes the runtime provider and saves the choice for future API restarts.
+                      </Text>
+                      <View style={styles.aiProviderButtons}>
+                        {(["poe", "openai"] as const).map((provider) => {
+                          const selected = aiProvider === provider;
+                          return (
+                            <Pressable
+                              key={provider}
+                              onPress={() => void saveAiProvider(provider)}
+                              disabled={aiProviderSaving}
+                              accessibilityLabel={`Use ${provider === "poe" ? "Poe" : "OpenAI"} AI provider`}
+                              style={[
+                                styles.aiProviderButton,
+                                {
+                                  backgroundColor: selected ? colors.primary : colors.card,
+                                  borderColor: selected ? colors.primary : colors.border,
+                                  opacity: aiProviderSaving ? 0.6 : 1,
+                                },
+                              ]}
+                            >
+                              <Text style={[styles.aiProviderButtonText, { color: selected ? colors.primaryForeground : colors.foreground }]}>
+                                {provider === "poe" ? "Poe" : "OpenAI"}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                      {aiProviderSaveState === "saved" ? (
+                        <Text style={[styles.aiProviderSuccess, { color: colors.success }]}>
+                          Provider choice saved and will survive an API restart.
+                        </Text>
+                      ) : aiProviderSaveState === "runtime-only" ? (
+                        <View style={[styles.aiProviderWarning, { backgroundColor: colors.muted, borderColor: colors.warning }]}>
+                          <Text style={[styles.aiProviderWarningText, { color: colors.foreground }]}>
+                            Provider switched for this session, but could not be saved. It may revert after the API restarts.
+                          </Text>
+                          <Pressable
+                            onPress={() => void saveAiProvider(aiProvider)}
+                            disabled={aiProviderSaving}
+                            accessibilityLabel="Retry saving AI provider"
+                            style={[styles.aiProviderRetry, { borderColor: colors.warning }]}
+                          >
+                            <Text style={[styles.aiProviderRetryText, { color: colors.foreground }]}>
+                              {aiProviderSaving ? "Retrying…" : "Retry save"}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+                      {aiProviderError ? (
+                        <Text style={[styles.aiStatusError, { color: colors.destructive }]}>
+                          ⚠ {aiProviderError}
+                        </Text>
+                      ) : null}
+                    </View>
                     {aiStatus.catalogue.error ? (
                       <Text style={[styles.aiStatusMeta, { color: colors.destructive }]}>
                         Last refresh: {aiStatus.catalogue.error}
@@ -4425,6 +4517,15 @@ const styles = StyleSheet.create({
   aiStatusBadgeText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   aiStatusMeta: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
   aiStatusSectionTitle: { fontSize: 14, fontFamily: "Inter_700Bold", marginTop: 6 },
+  aiProviderControl: { borderWidth: 1, borderRadius: 8, padding: 12, marginTop: 10, gap: 6 },
+  aiProviderButtons: { flexDirection: "row", gap: 8, marginTop: 2 },
+  aiProviderButton: { flex: 1, borderWidth: 1, borderRadius: 7, paddingVertical: 8, alignItems: "center" },
+  aiProviderButtonText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  aiProviderSuccess: { fontSize: 12, fontFamily: "Inter_500Medium", lineHeight: 17 },
+  aiProviderWarning: { borderWidth: 1, borderRadius: 7, padding: 9, gap: 8, marginTop: 2 },
+  aiProviderWarningText: { fontSize: 12, fontFamily: "Inter_500Medium", lineHeight: 17 },
+  aiProviderRetry: { alignSelf: "flex-start", borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  aiProviderRetryText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   aiRouteRow: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 9, marginTop: 5, gap: 5 },
   aiRouteHeading: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 8 },
   aiRouteFeature: { fontSize: 13, fontFamily: "Inter_700Bold", textTransform: "capitalize" },

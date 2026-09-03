@@ -181,6 +181,26 @@ describe("Admin AI-provider switch", () => {
 
     expect(laterRead.body).toEqual({ provider: "openai" });
   });
+
+  it("reports a runtime-only switch when persistence fails", async () => {
+    const insertSpy = jest.spyOn(db, "insert").mockImplementationOnce(() => {
+      throw new Error("database unavailable");
+    });
+
+    try {
+      const switched = await supertest(app)
+        .post("/api/admin/ai-provider")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ provider: "openai" })
+        .expect(200);
+
+      expect(switched.body).toEqual({ provider: "openai", persisted: false });
+      expect(aiProvider.getProvider()).toBe("openai");
+      expect(await readPersistedProvider()).toBe("poe");
+    } finally {
+      insertSpy.mockRestore();
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

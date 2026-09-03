@@ -159,6 +159,7 @@ const fetchCalls: FetchCall[] = [];
 let statusResponses: Array<Response | Promise<Response>>;
 let fullProbeResponses: Array<Response | Promise<Response>>;
 let singleProbeResponses: Response[];
+let providerResponses: Response[];
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -210,6 +211,9 @@ function responseFor(url: string): Response | Promise<Response> {
   }
   if (url === `${API_BASE}/admin/ai-status`) {
     return statusResponses.shift() ?? jsonResponse({ bots: {} });
+  }
+  if (url === `${API_BASE}/admin/ai-provider`) {
+    return providerResponses.shift() ?? jsonResponse({ provider: "poe", persisted: true });
   }
   if (url === `${API_BASE}/admin/ai-status/probe`) {
     return fullProbeResponses.shift() ?? jsonResponse({ bots: {} });
@@ -328,6 +332,7 @@ beforeEach(() => {
   ];
   fullProbeResponses = [];
   singleProbeResponses = [];
+  providerResponses = [];
   mockFetch.mockReset();
   mockFetch.mockImplementation((input, init) => {
     const call = { url: String(input), init };
@@ -611,5 +616,66 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
       jsonResponse({ bots: { "late-probe-bot": "error" } }),
     );
     await flushPromises();
+  });
+
+  it("shows recovery guidance for a runtime-only provider switch and retries persistence", async () => {
+    statusResponses = [
+      jsonResponse({
+        provider: "poe",
+        catalogue: {
+          freshness: "fresh",
+          models: [],
+          fetchedAt: null,
+          lastSuccessAt: null,
+          error: null,
+        },
+        bots: {},
+        routes: [],
+        reference: { provider: "gemini", readOnly: true, note: "Read-only" },
+      }),
+    ];
+    providerResponses.push(
+      jsonResponse({ provider: "openai", persisted: false }),
+      jsonResponse({ provider: "openai", persisted: true }),
+    );
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const openAiButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Use OpenAI AI provider",
+    );
+    expect(openAiButton).not.toBeNull();
+    await act(async () => { fireEvent.press(openAiButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("could not be saved");
+    expect(instText(rendered.tree.root!)).toContain("may revert after the API restarts");
+    expect(instText(rendered.tree.root!)).toContain("Retry save");
+    expect(callsFor("/admin/ai-status/probe")).toHaveLength(0);
+    expect(callsFor("/admin/ai-provider")).toHaveLength(1);
+    expect(callsFor("/admin/ai-provider")[0]?.init?.method).toBe("POST");
+    expect(JSON.parse(String(callsFor("/admin/ai-provider")[0]?.init?.body))).toEqual({
+      provider: "openai",
+    });
+
+    const retryButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Retry saving AI provider",
+    );
+    expect(retryButton).not.toBeNull();
+    await act(async () => { fireEvent.press(retryButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("will survive an API restart");
+    expect(callsFor("/admin/ai-provider")).toHaveLength(2);
+    expect(callsFor("/admin/ai-status/probe")).toHaveLength(0);
   });
 });
