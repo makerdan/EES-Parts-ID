@@ -665,15 +665,18 @@ export default function UploadScreen() {
 
   const reprobe = useCallback(async (botName: string) => {
     if (probingBotsRef.current.has(botName)) return;
+    const requestToken = adminToken;
     probingBotsRef.current.add(botName);
     setProbingBots(new Set(probingBotsRef.current));
     try {
       await probeSingleBot(botName);
     } finally {
       probingBotsRef.current.delete(botName);
-      setProbingBots(new Set(probingBotsRef.current));
+      if (isMountedRef.current && adminTokenRef.current === requestToken) {
+        setProbingBots(new Set(probingBotsRef.current));
+      }
     }
-  }, [probeSingleBot]);
+  }, [adminToken, probeSingleBot]);
 
   const [aiStatusBots, setAiStatusBots] = useState<Record<string, string>>({});
   const [aiStatus, setAiStatus] = useState<AiStatusPayload | null>(null);
@@ -682,45 +685,110 @@ export default function UploadScreen() {
   const [aiStatusProbing, setAiStatusProbing] = useState(false);
   const [aiCatalogueRefreshing, setAiCatalogueRefreshing] = useState(false);
   const [aiRoutesSaving, setAiRoutesSaving] = useState(false);
+  const aiStatusGenerationRef = useRef(0);
+  const aiStatusFetchControllerRef = useRef<AbortController | null>(null);
+  const aiStatusProbeControllerRef = useRef<AbortController | null>(null);
+  const cancelAiStatusRequests = useCallback(() => {
+    aiStatusGenerationRef.current += 1;
+    aiStatusFetchControllerRef.current?.abort();
+    aiStatusFetchControllerRef.current = null;
+    aiStatusProbeControllerRef.current?.abort();
+    aiStatusProbeControllerRef.current = null;
+  }, []);
 
   const fetchAiStatus = useCallback(async () => {
     if (!adminToken || !API_BASE) return;
+    cancelAiStatusRequests();
+    const generation = aiStatusGenerationRef.current + 1;
+    aiStatusGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiStatusFetchControllerRef.current = controller;
     setAiStatusLoading(true);
     setAiStatusError(null);
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status`, {
         headers: { Authorization: `Bearer ${adminToken}` },
+        signal: controller.signal,
+        cache: "no-store",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as AiStatusPayload;
+      if (
+        !isMountedRef.current ||
+        generation !== aiStatusGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
       setAiStatusBots(data.bots ?? {});
       setAiStatus(data.catalogue ? data : null);
     } catch (err) {
-      setAiStatusError(err instanceof Error ? err.message : "Failed to load AI status");
+      if (
+        isMountedRef.current &&
+        generation === aiStatusGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusError(err instanceof Error ? err.message : "Failed to load AI status");
+      }
     } finally {
-      setAiStatusLoading(false);
+      if (aiStatusFetchControllerRef.current === controller) {
+        aiStatusFetchControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        generation === aiStatusGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusLoading(false);
+      }
     }
-  }, [adminToken]);
+  }, [adminToken, cancelAiStatusRequests]);
 
   const triggerAiProbe = useCallback(async () => {
     if (!adminToken || !API_BASE || aiStatusProbing) return;
+    cancelAiStatusRequests();
+    const generation = aiStatusGenerationRef.current + 1;
+    aiStatusGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiStatusProbeControllerRef.current = controller;
+    setAiStatusLoading(false);
     setAiStatusProbing(true);
     setAiStatusError(null);
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status/probe`, {
         method: "POST",
         headers: { Authorization: `Bearer ${adminToken}` },
+        signal: controller.signal,
+        cache: "no-store",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as AiStatusPayload;
+      if (
+        !isMountedRef.current ||
+        generation !== aiStatusGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
       setAiStatusBots(data.bots ?? {});
       setAiStatus(data.catalogue ? data : null);
     } catch (err) {
-      setAiStatusError(err instanceof Error ? err.message : "Probe failed");
+      if (
+        isMountedRef.current &&
+        generation === aiStatusGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusError(err instanceof Error ? err.message : "Probe failed");
+      }
     } finally {
-      setAiStatusProbing(false);
+      if (aiStatusProbeControllerRef.current === controller) {
+        aiStatusProbeControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        generation === aiStatusGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusProbing(false);
+      }
     }
-  }, [adminToken, aiStatusProbing]);
+  }, [adminToken, aiStatusProbing, cancelAiStatusRequests]);
 
   const refreshAiCatalogue = useCallback(async () => {
     if (!adminToken || !API_BASE || aiCatalogueRefreshing) return;
@@ -785,10 +853,15 @@ export default function UploadScreen() {
   }, [adminToken, aiRoutesSaving]);
 
   useEffect(() => {
+    cancelAiStatusRequests();
     if (adminToken) {
-      fetchAiStatus();
+      void fetchAiStatus();
+    } else if (isMountedRef.current) {
+      setAiStatusLoading(false);
+      setAiStatusProbing(false);
     }
-  }, [adminToken, fetchAiStatus]);
+    return cancelAiStatusRequests;
+  }, [adminToken, cancelAiStatusRequests, fetchAiStatus]);
 
   const handleRestartPress = useCallback(() => {
     Alert.alert(
@@ -974,12 +1047,13 @@ export default function UploadScreen() {
       expandDescAbortedRef.current = true;
       expandDescControllerRef.current?.abort();
       expandDescReaderRef.current?.cancel().catch(() => {});
+      cancelAiStatusRequests();
       if (pasteDebounceRef.current) {
         clearTimeout(pasteDebounceRef.current);
         pasteDebounceRef.current = null;
       }
     };
-  }, []);
+  }, [cancelAiStatusRequests]);
   // Auto-fetch bin-diff preview whenever the raw CSV changes so admins
   // see a replace-warning before they can press Upload.
   // Uses POST /api/admin/upload/preview (raw CSV text) — the same endpoint

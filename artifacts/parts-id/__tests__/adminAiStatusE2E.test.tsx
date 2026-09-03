@@ -156,7 +156,7 @@ type FetchCall = {
 
 const mockFetch = jest.fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>();
 const fetchCalls: FetchCall[] = [];
-let statusResponses: Response[];
+let statusResponses: Array<Response | Promise<Response>>;
 let fullProbeResponses: Array<Response | Promise<Response>>;
 let singleProbeResponses: Response[];
 
@@ -496,5 +496,120 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
 
     expect(instText(rendered.tree.root!)).toContain("HTTP 503");
     expect(callsFor("/admin/ai-status/probe")).toHaveLength(2);
+  });
+
+  it("aborts the bootstrap status request when the screen unmounts", async () => {
+    let resolveInitialStatus!: (response: Response) => void;
+    statusResponses = [
+      new Promise<Response>((resolve) => {
+        resolveInitialStatus = resolve;
+      }),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const initialCall = callsFor("/admin/ai-status")[0];
+    expect(initialCall?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(initialCall?.init?.signal?.aborted).toBe(false);
+
+    await rendered.tree.unmount();
+    activeTree = null;
+    activeBlur = undefined;
+
+    expect(initialCall?.init?.signal?.aborted).toBe(true);
+
+    resolveInitialStatus(
+      jsonResponse({ bots: { "late-bootstrap-bot": "ok" } }),
+    );
+    await flushPromises();
+  });
+
+  it("ignores a bootstrap response from the replaced admin token", async () => {
+    let resolveOldStatus!: (response: Response) => void;
+    statusResponses = [
+      new Promise<Response>((resolve) => {
+        resolveOldStatus = resolve;
+      }),
+      jsonResponse({ bots: { "new-token-bot": "ok" } }),
+    ];
+    const app = makeAppMock();
+    useApp.mockReturnValue(app);
+
+    const tree = await render(
+      <ApiHealthProvider>
+        <UploadScreen />
+      </ApiHealthProvider>,
+    );
+    activeTree = tree;
+    const blur = capturedFocusCallback?.();
+    activeBlur = blur;
+    await flushPromises();
+
+    app.adminToken = "new-admin-token";
+    await tree.rerender(
+      <ApiHealthProvider>
+        <UploadScreen />
+      </ApiHealthProvider>,
+    );
+    await flushPromises();
+
+    const initialCall = callsFor("/admin/ai-status")[0];
+    expect(initialCall?.init?.signal?.aborted).toBe(true);
+    expect(callsFor("/admin/ai-status")).toHaveLength(2);
+    expect(callsFor("/admin/ai-status")[1]?.init?.headers).toEqual({
+      Authorization: "Bearer new-admin-token",
+    });
+
+    const enrichmentCard = findPressable(tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+    expect(instText(tree.root!)).toContain("new-token-bot");
+
+    resolveOldStatus(jsonResponse({ bots: { "old-token-bot": "ok" } }));
+    await flushPromises();
+
+    expect(instText(tree.root!)).toContain("new-token-bot");
+    expect(instText(tree.root!)).not.toContain("old-token-bot");
+  });
+
+  it("aborts the manual full probe when the screen unmounts", async () => {
+    let resolvePendingProbe!: (response: Response) => void;
+    fullProbeResponses = [
+      new Promise<Response>((resolve) => {
+        resolvePendingProbe = resolve;
+      }),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const probeButton = findPressable(rendered.tree.root!, "Re-run probe");
+    expect(probeButton).not.toBeNull();
+    await act(async () => { fireEvent.press(probeButton!); });
+    await flushPromises();
+
+    const probeCall = callsFor("/admin/ai-status/probe")[0];
+    expect(probeCall?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(probeCall?.init?.signal?.aborted).toBe(false);
+
+    await rendered.tree.unmount();
+    activeTree = null;
+    activeBlur = undefined;
+
+    expect(probeCall?.init?.signal?.aborted).toBe(true);
+
+    resolvePendingProbe(
+      jsonResponse({ bots: { "late-probe-bot": "error" } }),
+    );
+    await flushPromises();
   });
 });
