@@ -198,9 +198,20 @@ function response(body: unknown, status = 200, text = "") {
   };
 }
 
+const oldWorkbookBuffer = new ArrayBuffer(8);
+const newWorkbookBuffer = new ArrayBuffer(8);
+
 const validWorkbook = {
   canceled: false,
   assets: [{ name: "inventory.xlsx", uri: "file://valid-workbook.xlsx" }],
+};
+const oldWorkbook = {
+  canceled: false,
+  assets: [{ name: "old-workbook.xlsx", uri: "file://old-workbook.xlsx" }],
+};
+const newWorkbook = {
+  canceled: false,
+  assets: [{ name: "new-workbook.xlsx", uri: "file://new-workbook.xlsx" }],
 };
 const invalidSelection = {
   canceled: false,
@@ -220,6 +231,14 @@ function configureNetwork() {
   apiRequests.length = 0;
   mockFetch.mockReset();
   mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === "file://old-workbook.xlsx") return {
+      ...response({}),
+      arrayBuffer: async () => oldWorkbookBuffer,
+    };
+    if (url === "file://new-workbook.xlsx") return {
+      ...response({}),
+      arrayBuffer: async () => newWorkbookBuffer,
+    };
     if (url === "file://valid-workbook.xlsx") return response({});
     if (url === "file://invalid-selection.csv") return response({}, 200, "not a workbook");
 
@@ -396,5 +415,94 @@ describe("UploadScreen — administrator spreadsheet import workflow", () => {
     expect(uploadBody.csv).toContain('"ACME","XLSX-001","20A breaker","NEW-B2"');
     expect(apiRequests.findIndex(request => request.url.endsWith("/admin/upload/preview")))
       .toBeLessThan(apiRequests.findIndex(request => request.url.endsWith("/admin/upload")));
+  });
+
+  it("keeps the newest workbook when picker parses resolve out of order", async () => {
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+
+    const importCard = findPressable(screenRoot(), "Data Import");
+    expect(importCard).not.toBeNull();
+    await act(async () => { fireEvent.press(importCard!); });
+
+    const chooseFile = () => findPressable(screenRoot(), "Choose CSV, Excel, or ODS File");
+    expect(chooseFile()).not.toBeNull();
+    let resolveOldPicker!: (result: typeof oldWorkbook) => void;
+    let resolveNewPicker!: (result: typeof newWorkbook) => void;
+    const oldPicker = new Promise<typeof oldWorkbook>(resolve => { resolveOldPicker = resolve; });
+    const newPicker = new Promise<typeof newWorkbook>(resolve => { resolveNewPicker = resolve; });
+    mockGetDocumentAsync
+      .mockImplementationOnce(() => oldPicker);
+
+    const oldRows = [
+      ["Vendor", "Catalog", "Description", "BinLocation"],
+      ["OLDCO", "OLD-001", "old row", "OLD-BIN"],
+    ];
+    const newRows = [
+      ["Vendor", "Catalog", "Description", "BinLocation"],
+      ["NEWCO", "NEW-001", "new row", "NEW-BIN"],
+    ];
+    const pendingSheetReads = new Map<ArrayBuffer, (rows: unknown[][]) => void>();
+    mockReadSheet.mockImplementation((arrayBuffer: ArrayBuffer) =>
+      new Promise<unknown[][]>(resolve => {
+        pendingSheetReads.set(arrayBuffer, resolve);
+      }),
+    );
+
+    await act(async () => { fireEvent.press(chooseFile()!); });
+
+    await act(async () => {
+      resolveOldPicker(oldWorkbook);
+    });
+    await waitFor(() => expect(mockReadSheet).toHaveBeenCalledTimes(1));
+
+    mockGetDocumentAsync.mockImplementationOnce(() => newPicker);
+    await act(async () => { fireEvent.press(chooseFile()!); });
+    expect(mockGetDocumentAsync).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveNewPicker(newWorkbook);
+    });
+    await waitFor(() => expect(mockReadSheet).toHaveBeenCalledTimes(2));
+    expect(pendingSheetReads.has(oldWorkbookBuffer)).toBe(true);
+    expect(pendingSheetReads.has(newWorkbookBuffer)).toBe(true);
+
+    await act(async () => {
+      pendingSheetReads.get(newWorkbookBuffer)!(newRows);
+    });
+    await waitFor(() => {
+      expect(hasText(screenRoot(), "new-workbook.xlsx")).toBe(true);
+      expect(hasText(screenRoot(), "Preview (1 rows)")).toBe(true);
+    });
+
+    // The slower first parser result must not replace the newer workbook or
+    // trigger a second preview request.
+    await act(async () => {
+      pendingSheetReads.get(oldWorkbookBuffer)!(oldRows);
+    });
+    await flushPromises();
+    expect(hasText(screenRoot(), "new-workbook.xlsx")).toBe(true);
+    expect(hasText(screenRoot(), "old-workbook.xlsx")).toBe(false);
+    expect(apiRequests).toHaveLength(1);
+    const previewBody = JSON.parse(String(apiRequests[0]!.init?.body)) as { csv: string };
+    expect(previewBody.csv).toContain('"NEWCO","NEW-001","new row","NEW-BIN"');
+    expect(previewBody.csv).not.toContain('"OLDCO","OLD-001","old row","OLD-BIN"');
+
+    const confirmReplacement = findPressable(screenRoot(), "I understand 1 existing bin assignment");
+    expect(confirmReplacement).not.toBeNull();
+    await act(async () => { fireEvent.press(confirmReplacement!); });
+    const upload = findPressable(screenRoot(), "Upload 1 Items");
+    expect(upload).not.toBeNull();
+    expect(upload!.props.disabled).toBe(false);
+    await act(async () => { fireEvent.press(upload!); });
+    await waitFor(() => {
+      expect(hasText(screenRoot(), "Upload complete — inserted 1, updated 0 (1 total)")).toBe(true);
+    });
+
+    expect(apiRequests).toHaveLength(2);
+    expect(apiRequests[1]!.url).toContain("/admin/upload");
+    const uploadBody = JSON.parse(String(apiRequests[1]!.init?.body)) as { csv: string };
+    expect(uploadBody.csv).toContain('"NEWCO","NEW-001","new row","NEW-BIN"');
+    expect(uploadBody.csv).not.toContain('"OLDCO","OLD-001","old row","OLD-BIN"');
   });
 });

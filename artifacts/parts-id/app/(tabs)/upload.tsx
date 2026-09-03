@@ -918,6 +918,7 @@ export default function UploadScreen() {
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
   const isMountedRef = useRef(true);
   const screenGenerationRef = useRef(0);
+  const fileSelectionGenerationRef = useRef(0);
   const pasteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Build admin auth headers for protected API calls
@@ -966,6 +967,7 @@ export default function UploadScreen() {
     return () => {
       isMountedRef.current = false;
       screenGenerationRef.current += 1;
+      fileSelectionGenerationRef.current += 1;
       enrichAbortedRef.current = true;
       enrichControllerRef.current?.abort();
       enrichReaderRef.current?.cancel().catch(() => {});
@@ -1699,6 +1701,11 @@ export default function UploadScreen() {
   }, [expandDescResults, expandDescStreamDone, expandDescModel, expandDescRemaining]);
 
   const handlePickFile = async () => {
+    const selectionGeneration = fileSelectionGenerationRef.current + 1;
+    fileSelectionGenerationRef.current = selectionGeneration;
+    const isCurrentSelection = () =>
+      isMountedRef.current && fileSelectionGenerationRef.current === selectionGeneration;
+
     setPasteText("");
     if (pasteDebounceRef.current) clearTimeout(pasteDebounceRef.current);
     try {
@@ -1716,7 +1723,7 @@ export default function UploadScreen() {
         copyToCacheDirectory: true,
       });
 
-      if (!isMountedRef.current) return;
+      if (!isCurrentSelection()) return;
       if (result.canceled || !result.assets?.[0]) return;
 
       const asset = result.assets[0];
@@ -1740,7 +1747,7 @@ export default function UploadScreen() {
         const response = await fetch(asset.uri);
         if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
         const text = await response.text();
-        if (!isMountedRef.current) return;
+        if (!isCurrentSelection()) return;
         rows = parseCSV(text);
         // Normalize through serializeToCsv so the server always receives a
         // canonical header row (Vendor,Catalog,Description,BinLocation) even
@@ -1750,7 +1757,7 @@ export default function UploadScreen() {
         setFileType("csv");
       } else if (["xlsx", "xlsm"].includes(ext)) {
         rows = await parseXlsx(asset.uri);
-        if (!isMountedRef.current) return;
+        if (!isCurrentSelection()) return;
         // Serialize to CSV so we can send it to admin/upload/preview and
         // admin/upload which only accept raw CSV text. skipBinRows is empty
         // at this point (file just loaded), so all bin data is included.
@@ -1758,7 +1765,7 @@ export default function UploadScreen() {
         setFileType("xlsx");
       } else if (ext === "ods") {
         rows = await parseOds(asset.uri);
-        if (!isMountedRef.current) return;
+        if (!isCurrentSelection()) return;
         // ODS is parsed locally, then sent through the same canonical CSV
         // preview/upload contract as XLSX and CSV imports.
         rawText = serializeToCsv(rows, new Set());
@@ -1768,18 +1775,19 @@ export default function UploadScreen() {
           const response = await fetch(asset.uri);
           if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
           const text = await response.text();
-          if (!isMountedRef.current) return;
+          if (!isCurrentSelection()) return;
           rows = parseCSV(text);
           rawText = serializeToCsv(rows, new Set());
           setFileType("csv");
         } catch {
           rows = await parseXlsx(asset.uri);
-          if (!isMountedRef.current) return;
+          if (!isCurrentSelection()) return;
           rawText = serializeToCsv(rows, new Set());
           setFileType("xlsx");
         }
       }
 
+      if (!isCurrentSelection()) return;
       if (rows.length === 0) {
         setUploadError("No data rows found. Ensure your file has columns named: vendor, catalog (required), description, bin (optional).");
         return;
@@ -1790,6 +1798,7 @@ export default function UploadScreen() {
       setRawCsv(rawText);
       setParsedRows(rows);
     } catch (err) {
+      if (!isCurrentSelection()) return;
       setUploadError(err instanceof Error && err.message.includes("must be")
         ? err.message
         : "Failed to read file. Please try again.");
