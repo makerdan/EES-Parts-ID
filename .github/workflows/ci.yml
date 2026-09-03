@@ -41,6 +41,11 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/testdb
       CI: true
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
       - name: Set up repository toolchain
         uses: ./.github/actions/setup-node-pnpm
 

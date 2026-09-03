@@ -85,6 +85,17 @@ function validateWorkflowContract(files, coverage) {
       errors.push(`setup-node-pnpm: mutable or malformed action reference ${reference}`);
     }
   }
+  if (setupReferences.some((reference) => reference.startsWith("actions/checkout@"))) {
+    errors.push("setup-node-pnpm: local composite action cannot perform the initial checkout");
+  }
+
+  for (const [name, text] of Object.entries({ "ci.yml": ci, "lidar-measure-tests.yml": lidar, "scheduled-audit.yml": audit })) {
+    const checkoutIndex = text.indexOf("uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683");
+    const setupIndex = text.indexOf("uses: ./.github/actions/setup-node-pnpm");
+    if (checkoutIndex < 0 || setupIndex < 0 || checkoutIndex > setupIndex) {
+      errors.push(`${name}: pinned checkout must run before the local setup action`);
+    }
+  }
 
   for (const event of ["pull_request:", "merge_group:", "push:", "workflow_dispatch:"]) {
     if (!new RegExp(`^  ${event.replace(":", "\\:")}`, "m").test(ci)) {
@@ -100,6 +111,12 @@ function validateWorkflowContract(files, coverage) {
   }
   if (!/^  schedule:/m.test(audit) || !/^  workflow_dispatch:/m.test(audit)) errors.push("scheduled-audit.yml: missing schedule/manual events");
   if (!/^  schedule:/m.test(readme) || !/^  workflow_dispatch:/m.test(readme)) errors.push("sync-readme.yml: missing schedule/manual events");
+  if (!/branch="automation\/sync-readme"/.test(readme) || !/compare\/main\.\.\.\$\{branch\}\?expand=1/.test(readme)) {
+    errors.push("sync-readme.yml: protected-branch maintenance must publish a reviewable automation branch");
+  }
+  if (/git push origin "HEAD:\$\{GITHUB_REF_NAME\}"/.test(readme)) {
+    errors.push("sync-readme.yml: must not push maintenance changes directly to the protected default branch");
+  }
 
   if (!/^permissions:\n\s+contents:\s+read\s*$/m.test(ci)) errors.push("ci.yml: must default to read-only contents");
   if (/contents:\s+write/.test(ci) || /contents:\s+write/.test(lidar) || /contents:\s+write/.test(audit)) {
