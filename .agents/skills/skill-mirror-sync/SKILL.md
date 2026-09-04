@@ -1,17 +1,18 @@
 ---
 name: skill-mirror-sync
 description: >-
-  Audit, project, verify, or repair account-managed skills and their disposable
-  runtime mirrors. Use when source selection, projection freshness, metadata,
-  interrupted refreshes, locks, or mirror parity are uncertain.
+  Add, audit, project, invoke, validate, verify, or repair account-managed
+  skills and their disposable runtime mirrors. Use when source selection,
+  projection freshness, metadata, interrupted refreshes, locks, or mirror
+  parity are uncertain.
 ---
 
 # Skill Mirror Sync
 
-Use this skill for account-managed skill projection and runtime-mirror
-investigations. Keep the boundary one-way and fail closed: the account source
-is authoritative, the workspace projection is generated, and the runtime
-mirror is disposable.
+Use this skill when adding, auditing, invoking, validating, repairing, or
+investigating an account-managed skill projection or runtime mirror. Keep the
+boundary one-way and fail closed: the account source is authoritative, the
+workspace projection is generated, and the runtime mirror is disposable.
 
 ## Authority and boundaries
 
