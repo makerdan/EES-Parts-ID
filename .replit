@@ -157,6 +157,10 @@ args = "parts-id-typecheck"
 task = "workflow.run"
 args = "typecheck:libs"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "security-audit"
+
 [[workflows.workflow]]
 name = "post-merge-health-test"
 author = "agent"
@@ -307,6 +311,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "bash -c 'for i in 1 2 3; do pnpm -w run typecheck:libs && exit 0; sleep 2; done; exit 1'"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "security-audit"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm audit --audit-level=high"
 
 [workflows.workflow.metadata]
 isValidation = true
