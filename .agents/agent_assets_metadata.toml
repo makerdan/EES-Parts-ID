@@ -75,3 +75,17 @@ mtime_ms = 1788495773026
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/c4758bda-5ae5-468c-a7a7-39cd0f2013cb/33a7bf09-5923-4568-852c-2e5b5a271914"
 storage_version_token = "1788495776776345"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "a51sPjG7lgFrjANQ_Fiwx"
+uri = "file://exports/install-github-actions.zip"
+type = "unspecified"
+title = "Install GitHub Actions"
+description = "Canonical Install GitHub Actions skill packaged as a verified ZIP archive. Contains install-github-actions/SKILL.md."
+logical_id = "8898d41c-8906-46dd-9c82-7694edd7f379"
+content_hash = "sha256:61f3bcdf135c73d55093a9adcb10603e1e57480ddaba6a8f0039ad1f47776758"
+size = 9436
+mtime_ms = 1788495868925
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/8898d41c-8906-46dd-9c82-7694edd7f379/6ab811f0-31f5-4053-903f-1b14dfc25c4c"
+storage_version_token = "1788495873285736"
+content_type = "application/octet-stream"
