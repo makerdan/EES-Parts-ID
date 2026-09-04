@@ -37,6 +37,9 @@ type MessageRow = {
   readAt: string | null;
 };
 
+const MARK_READ_ERROR_MESSAGE =
+  "Could not mark message as read. It remains unread. Please try again.";
+
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60_000);
@@ -60,22 +63,26 @@ function MessageItem({
   onMarkRead: (id: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [readError, setReadError] = useState(false);
   const isUnread = !row.readAt;
 
-  const handlePress = async () => {
-    setExpanded((v) => !v);
-    if (isUnread) {
-      try {
-        const response = await fetch(`${API_BASE}/contact/${row.id}/read`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${adminToken}` },
-        });
-        if (!response.ok) throw new Error(`Server error ${response.status}`);
-        onMarkRead(row.id);
-      } catch {
-        // Non-critical — ignore
-      }
+  const markRead = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/contact/${row.id}/read`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      if (!response.ok) throw new Error(`Server error ${response.status}`);
+      onMarkRead(row.id);
+      setReadError(false);
+    } catch {
+      setReadError(true);
     }
+  };
+
+  const handlePress = () => {
+    setExpanded((v) => !v);
+    if (isUnread) void markRead();
   };
 
   return (
@@ -114,9 +121,43 @@ function MessageItem({
         />
       </View>
       {expanded ? (
-        <Text style={[styles.body, { color: colors.foreground, borderTopColor: colors.border }]}>
-          {row.body}
-        </Text>
+        <>
+          <Text style={[styles.body, { color: colors.foreground, borderTopColor: colors.border }]}>
+            {row.body}
+          </Text>
+          {readError ? (
+            <View style={[styles.readError, { backgroundColor: colors.destructive + "12" }]}>
+              <Text
+                style={[styles.readErrorText, { color: colors.destructive }]}
+                accessibilityRole="alert"
+              >
+                {MARK_READ_ERROR_MESSAGE}
+              </Text>
+              <View style={styles.readErrorActions}>
+                <Pressable
+                  onPress={() => void markRead()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry marking message as read"
+                  style={[styles.readErrorButton, { borderColor: colors.destructive }]}
+                >
+                  <Text style={[styles.readErrorButtonText, { color: colors.destructive }]}>
+                    Retry
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setReadError(false)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss mark as read error"
+                  style={styles.dismissErrorButton}
+                >
+                  <Text style={[styles.dismissErrorText, { color: colors.mutedForeground }]}>
+                    Dismiss
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+        </>
       ) : null}
     </Pressable>
   );
@@ -300,4 +341,11 @@ const styles = StyleSheet.create({
     marginTop: 2,
     borderTopWidth: 1,
   },
+  readError: { borderRadius: 8, padding: 10, gap: 8 },
+  readErrorText: { fontSize: 12, fontFamily: "Inter_600SemiBold", lineHeight: 18 },
+  readErrorActions: { flexDirection: "row", alignItems: "center", gap: 12 },
+  readErrorButton: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 6 },
+  readErrorButtonText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  dismissErrorButton: { paddingVertical: 6 },
+  dismissErrorText: { fontSize: 12, fontFamily: "Inter_400Regular" },
 });

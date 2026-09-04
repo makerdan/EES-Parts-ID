@@ -154,6 +154,18 @@ function findPressable(root: Inst, text: string): Inst | null {
   );
 }
 
+function findPressableByLabel(root: Inst, label: string): Inst | null {
+  return (
+    root
+      .queryAll(
+        (node: TestInstance) =>
+          (node.type as string) === "rn-pressable" && node.props.accessibilityLabel === label,
+        { includeSelf: true },
+      )
+      .at(0) ?? null
+  );
+}
+
 function hasExactText(root: Inst, text: string): boolean {
   return root
     .queryAll(
@@ -286,15 +298,36 @@ describe("AdminInboxScreen — protected inbox workflow", () => {
     });
 
     expect(instText(getRoot())).toContain("The label is worn off. Can you help?");
+    expect(instText(getRoot())).toContain(
+      "Could not mark message as read. It remains unread. Please try again.",
+    );
     expect(hasExactText(getRoot(), "1")).toBe(true);
     const failedRow = findPressable(getRoot(), "Need help identifying a part");
     expect(flattenStyle(failedRow!.props.style).borderLeftWidth).toBe(3);
+
+    const dismissButton = findPressableByLabel(getRoot(), "Dismiss mark as read error");
+    expect(dismissButton).not.toBeNull();
+    await act(async () => {
+      void fireEvent.press(dismissButton!);
+      await flushPromises();
+    });
+
+    expect(instText(getRoot())).not.toContain(
+      "Could not mark message as read. It remains unread. Please try again.",
+    );
+    expect(hasExactText(getRoot(), "1")).toBe(true);
   });
 
-  it("keeps an unread message unread when the server rejects the mark-as-read response", async () => {
+  it("shows the same feedback for a server rejection and marks the message read after retry", async () => {
+    let patchAttempts = 0;
     mockFetch.mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "PATCH") {
-        return Promise.resolve(jsonResponse({ error: "Message not found" }, false, 404));
+        patchAttempts += 1;
+        return Promise.resolve(
+          patchAttempts === 1
+            ? jsonResponse({ error: "Message not found" }, false, 404)
+            : jsonResponse({ id: UNREAD_ID }),
+        );
       }
       return Promise.resolve(jsonResponse([CONTACT_ROWS[0]]));
     });
@@ -313,9 +346,28 @@ describe("AdminInboxScreen — protected inbox workflow", () => {
     });
 
     expect(instText(getRoot())).toContain("The label is worn off. Can you help?");
+    expect(instText(getRoot())).toContain(
+      "Could not mark message as read. It remains unread. Please try again.",
+    );
     expect(hasExactText(getRoot(), "1")).toBe(true);
     const failedRow = findPressable(getRoot(), "Need help identifying a part");
     expect(flattenStyle(failedRow!.props.style).borderLeftWidth).toBe(3);
+
+    const retryButton = findPressableByLabel(getRoot(), "Retry marking message as read");
+    expect(retryButton).not.toBeNull();
+
+    await act(async () => {
+      void fireEvent.press(retryButton!);
+      await flushPromises();
+    });
+
+    expect(patchAttempts).toBe(2);
+    expect(hasExactText(getRoot(), "1")).toBe(false);
+    expect(instText(getRoot())).not.toContain(
+      "Could not mark message as read. It remains unread. Please try again.",
+    );
+    const updatedRow = findPressable(getRoot(), "Need help identifying a part");
+    expect(flattenStyle(updatedRow!.props.style).borderLeftWidth).toBe(1);
   });
 });
 
