@@ -55,7 +55,12 @@ const mockOpenAIConstructor = jest
     return inst;
   });
 
-jest.mock("openai", () => mockOpenAIConstructor);
+jest.mock("openai", () => {
+  const { attachOpenAIErrorClasses } = jest.requireActual(
+    "./helpers/openaiMock",
+  ) as typeof import("./helpers/openaiMock");
+  return attachOpenAIErrorClasses(mockOpenAIConstructor);
+});
 
 // ── Drizzle fluent-chain mock for initProvider() ──────────────────────────────
 const mockDbLimit = jest.fn();

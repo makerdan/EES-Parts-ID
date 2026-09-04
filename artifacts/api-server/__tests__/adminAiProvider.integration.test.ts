@@ -29,11 +29,14 @@ process.env.SKIP_ADMIN_MFA = "true";
 
 // ── Provider boundary mock ──────────────────────────────────────────────────────
 const mockCompletionsCreate = jest.fn();
-const mockOpenAIConstructor = jest.fn().mockImplementation(() => ({
-  chat: { completions: { create: mockCompletionsCreate } },
-}));
-
-jest.mock("openai", () => mockOpenAIConstructor);
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "./helpers/openaiMock",
+  ) as typeof import("./helpers/openaiMock");
+  return createOpenAIMock(jest, () => ({
+    chat: { completions: { create: mockCompletionsCreate } },
+  }));
+});
 
 // Routes import the workspace AI integration transitively. Keep those imports
 // inert as well; the admin provider route itself only needs the OpenAI boundary.

@@ -29,11 +29,14 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 }));
 
 // Mock OpenAI so probePoeBotsOnStartup and probeSinglePoeBot use our mock
-jest.mock("openai", () =>
-  jest.fn().mockImplementation(() => ({
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "./helpers/openaiMock",
+  ) as typeof import("./helpers/openaiMock");
+  return createOpenAIMock(jest, () => ({
     chat: { completions: { create: mockCreate } },
-  })),
-);
+  }));
+});
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";

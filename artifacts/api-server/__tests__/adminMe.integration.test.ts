@@ -32,11 +32,12 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
-jest.mock("openai", () =>
-  jest.fn().mockImplementation(() => ({
-    chat: { completions: { create: jest.fn() } },
-  })),
-);
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "./helpers/openaiMock",
+  ) as typeof import("./helpers/openaiMock");
+  return createOpenAIMock(jest);
+});
 
 import supertest from "supertest";
 import app from "../src/app";
