@@ -68,13 +68,14 @@ import {
   seedEditableItem,
   seedTestUser,
   cleanupTestUser,
+  workerQualifiedUserId,
 } from "./helpers/testDb";
 import type { EditableItem } from "./helpers/testDb";
 
 // ── Test-wide state ───────────────────────────────────────────────────────────
 
 const ADMIN_TOKEN = ADMIN_TEST_USER_ID;
-const NON_ADMIN_USER = "jest-edit-nonadmin";
+const NON_ADMIN_USER = workerQualifiedUserId("jest-edit-nonadmin");
 
 let item: EditableItem;
 

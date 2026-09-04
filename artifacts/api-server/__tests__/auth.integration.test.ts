@@ -38,18 +38,24 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
+import { db, usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { seedTestUser, cleanupTestUser } from "./helpers/testDb";
+import {
+  cleanupTestUser,
+  seedTestUser,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 // The bootstrap admin authenticates simply by presenting their Clerk user id.
 const adminToken = ADMIN_TEST_USER_ID;
 
 // An approved, non-admin user (role='user').
-const APPROVED_USER = "jest-auth-approved-user";
+const APPROVED_USER = workerQualifiedUserId("jest-auth-approved-user");
 // A user awaiting approval.
-const PENDING_USER = "jest-auth-pending-user";
+const PENDING_USER = workerQualifiedUserId("jest-auth-pending-user");
 
 beforeAll(async () => {
   // seedTestUser derives the email from the clerkUserId, so parallel suites
@@ -62,6 +68,31 @@ afterAll(async () => {
   await cleanupTestUser(APPROVED_USER);
   await cleanupTestUser(PENDING_USER);
 }, 15_000);
+
+describe("user fixture ownership", () => {
+  it("keeps a concurrent-run decoy when this worker cleans up its user", async () => {
+    const ownedUser = workerQualifiedUserId("jest-auth-cleanup");
+    const concurrentRunDecoy = workerQualifiedUserId(
+      "jest-auth-cleanup",
+      "other-process-1",
+    );
+
+    await Promise.all([
+      seedTestUser({ clerkUserId: ownedUser }),
+      seedTestUser({ clerkUserId: concurrentRunDecoy }),
+    ]);
+
+    await cleanupTestUser(ownedUser);
+
+    const remainingDecoy = await db
+      .select({ clerkUserId: usersTable.clerkUserId })
+      .from(usersTable)
+      .where(eq(usersTable.clerkUserId, concurrentRunDecoy));
+
+    expect(remainingDecoy).toEqual([{ clerkUserId: concurrentRunDecoy }]);
+    await cleanupTestUser(concurrentRunDecoy);
+  });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Protected routes — no token → 401

@@ -45,10 +45,14 @@ import { eq } from "drizzle-orm";
 
 import app from "../src/app";
 import { HELP_ASSISTANT_LIMITS } from "../src/lib/helpAssistant";
-import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
+import {
+  cleanupTestUser,
+  seedTestUser,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 
-const WORKER = "jest-help-assistant-worker";
-const ADMIN = "jest-help-assistant-admin";
+const WORKER = workerQualifiedUserId("jest-help-assistant-worker");
+const ADMIN = workerQualifiedUserId("jest-help-assistant-admin");
 
 beforeAll(async () => {
   await seedTestUser({ clerkUserId: WORKER, status: "approved", role: "user" });
