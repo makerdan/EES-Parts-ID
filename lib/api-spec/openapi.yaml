@@ -131,6 +131,36 @@ paths:
             text/event-stream: {}
 
   /inventory/{id}/photo:
+    get:
+      operationId: getItemPhoto
+      tags: [inventory]
+      summary: Read a private part photo through the authenticated API
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: slot
+          in: query
+          required: true
+          schema:
+            type: integer
+            enum: [1, 2]
+        - name: variant
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [full, thumbnail]
+      responses:
+        "200":
+          description: Private image bytes
+          content:
+            image/jpeg: {}
+            image/png: {}
+        "401": { description: Authentication required }
+        "404": { description: Photo not found }
     patch:
       operationId: uploadItemPhoto
       tags: [inventory]
@@ -189,6 +219,63 @@ paths:
           description: Admin token required
         "404":
           description: Item not found
+
+  /inventory/{id}/order:
+    patch:
+      operationId: updateItemOrder
+      tags: [inventory]
+      summary: Update order purchase and quantity values (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateItemOrderBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "400": { description: Invalid non-negative integer values }
+        "401": { description: Admin token required }
+        "404": { description: Item not found }
+
+  /admin/upload/orders/preview:
+    post:
+      operationId: previewOrderUpload
+      tags: [admin]
+      summary: Preview OP/OQ-only inventory upload without writing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CsvUploadBody" }
+      responses:
+        "200": { description: Order upload classification and row details }
+        "400": { description: Invalid CSV or missing OP/OQ header }
+        "401": { description: Admin token required }
+
+  /admin/upload/orders:
+    post:
+      operationId: updateOrderUpload
+      tags: [admin]
+      summary: Apply OP/OQ-only inventory upload to known rows
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CsvUploadBody" }
+      responses:
+        "200": { description: Update and classification counts }
+        "400": { description: Invalid CSV or missing OP/OQ header }
+        "401": { description: Admin token required }
 
   /inventory/estimate-dimensions:
     post:
@@ -468,11 +555,11 @@ paths:
       summary: List all warehouse zone overlays
       responses:
         "200":
-          description: List of warehouse zones
+          description: Public warehouse layout geometry
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WarehouseZoneListResponse"
+                $ref: "#/components/schemas/PublicWarehouseZoneListResponse"
     post:
       operationId: createWarehouseZone
       tags: [inventory]
@@ -492,6 +579,20 @@ paths:
                 $ref: "#/components/schemas/WarehouseZoneResponse"
         "401":
           description: Admin token required
+
+  /warehouse-zones/anchors:
+    get:
+      operationId: listPublicMapAnchors
+      tags: [inventory]
+      summary: List public warehouse map calibration anchors
+      description: Returns only the SVG and world coordinates needed to align the public warehouse layout.
+      responses:
+        "200":
+          description: Public map anchor points
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicMapAnchorListResponse"
 
   /warehouse-zones/{id}:
     patch:
@@ -553,7 +654,7 @@ paths:
       operationId: getZoneAlignment
       tags: [inventory]
       summary: Get the global zone-layer alignment offset
-      description: Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Readable by all approved users. Defaults to identity (0, 0, 1) when never calibrated.
+      description: Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Public read. Defaults to identity (0, 0, 1) when never calibrated.
       responses:
         "200":
           description: Current zone-layer alignment
@@ -628,6 +729,84 @@ paths:
                 $ref: "#/components/schemas/AdminRestartResponse"
         "401":
           description: Admin token required
+
+  /admin/ai-status:
+    get:
+      operationId: getAdminAiStatus
+      tags: [admin]
+      summary: Get Poe catalogue, probe health, and effective AI routes
+      responses:
+        "200":
+          description: Protected AI routing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "401": { description: Admin token required }
+        "403": { description: Admin access required }
+
+  /admin/ai-status/catalogue/refresh:
+    post:
+      operationId: refreshAdminPoeCatalogue
+      tags: [admin]
+      summary: Refresh the live Poe model catalogue
+      responses:
+        "200":
+          description: Refreshed or stale last-good status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "401": { description: Admin token required }
+        "503": { description: Poe catalogue unavailable }
+
+  /admin/ai-status/routes:
+    put:
+      operationId: updateAdminAiRoutes
+      tags: [admin]
+      summary: Save capability-safe Poe fallback choices
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAiRoutesUpdate"
+      responses:
+        "200":
+          description: Updated AI routing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "400": { description: Invalid or incompatible fallback choices }
+        "401": { description: Admin token required }
+        "503": { description: Could not persist fallback choices }
+
+  /admin/ai-status/routes/reset:
+    post:
+      operationId: resetAdminAiRoutes
+      tags: [admin]
+      summary: Reset Poe fallback choices to code defaults
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                feature:
+                  type: string
+                  enum: [enrich, identify, dimensions, catalog]
+      responses:
+        "200":
+          description: Reset AI routing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "400": { description: Unknown feature }
+        "401": { description: Admin token required }
+        "503": { description: Could not persist reset }
 
   /ai/reference:
     post:
@@ -797,6 +976,12 @@ components:
           type: string
         catalog:
           type: string
+        orderPurchase:
+          type: integer
+          minimum: 0
+        orderQuantity:
+          type: integer
+          minimum: 0
         description:
           type: string
         binLocations:
@@ -1171,6 +1356,15 @@ components:
                 items:
                   type: string
                 description: Bin locations for this part (omit or pass empty array to clear)
+              barcodes:
+                type: array
+                items: { type: string }
+              orderPurchase:
+                type: integer
+                minimum: 0
+              orderQuantity:
+                type: integer
+                minimum: 0
             required:
               - vendor
               - catalog
@@ -1251,6 +1445,23 @@ components:
           description: Free-text description of the part
       required:
         - description
+
+    UpdateItemOrderBody:
+      type: object
+      properties:
+        orderPurchase:
+          type: integer
+          minimum: 0
+        orderQuantity:
+          type: integer
+          minimum: 0
+      required: [orderPurchase, orderQuantity]
+
+    CsvUploadBody:
+      type: object
+      properties:
+        csv: { type: string }
+      required: [csv]
 
     DictionaryLookupResponse:
       type: object
@@ -1343,6 +1554,78 @@ components:
         - manufacturerVerified
         - summary
         - results
+
+    PublicWarehouseZoneItem:
+      type: object
+      description: Non-sensitive geometry required to render a warehouse zone.
+      properties:
+        aisleId:
+          type: string
+        sectionNum:
+          type: integer
+          nullable: true
+        isInventory:
+          type: boolean
+        svgX:
+          type: number
+        svgY:
+          type: number
+        svgWidth:
+          type: number
+        svgHeight:
+          type: number
+        sortOrder:
+          type: integer
+      required:
+        - aisleId
+        - sectionNum
+        - isInventory
+        - svgX
+        - svgY
+        - svgWidth
+        - svgHeight
+        - sortOrder
+
+    PublicWarehouseZoneListResponse:
+      type: object
+      properties:
+        zones:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicWarehouseZoneItem"
+      required:
+        - zones
+
+    PublicMapAnchorItem:
+      type: object
+      description: Non-sensitive coordinates required to align warehouse zone geometry.
+      properties:
+        name:
+          type: string
+        svgX:
+          type: number
+        svgY:
+          type: number
+        worldX:
+          type: number
+        worldY:
+          type: number
+      required:
+        - name
+        - svgX
+        - svgY
+        - worldX
+        - worldY
+
+    PublicMapAnchorListResponse:
+      type: object
+      properties:
+        anchors:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicMapAnchorItem"
+      required:
+        - anchors
 
     WarehouseZoneItem:
       type: object
@@ -1481,6 +1764,103 @@ components:
           type: boolean
       required:
         - restarting
+
+    PoeModelCapabilities:
+      type: object
+      properties:
+        text: { type: boolean, nullable: true }
+        vision: { type: boolean, nullable: true }
+        structuredOutput: { type: boolean, nullable: true }
+      required: [text, vision, structuredOutput]
+
+    PoeCatalogueModel:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        modalities:
+          type: array
+          items: { type: string }
+        capabilities:
+          $ref: "#/components/schemas/PoeModelCapabilities"
+      required: [id, name, modalities, capabilities]
+
+    PoeCatalogue:
+      type: object
+      properties:
+        freshness:
+          type: string
+          enum: [fresh, stale, unavailable]
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/PoeCatalogueModel"
+        fetchedAt: { type: string, format: date-time, nullable: true }
+        lastSuccessAt: { type: string, format: date-time, nullable: true }
+        error: { type: string, nullable: true }
+      required: [freshness, models, fetchedAt, lastSuccessAt, error]
+
+    PoeFeatureRoute:
+      type: object
+      properties:
+        feature:
+          type: string
+          enum: [enrich, identify, dimensions, catalog]
+        primary: { type: string }
+        fallbacks:
+          type: array
+          items: { type: string }
+        effective:
+          type: array
+          items: { type: string }
+      required: [feature, primary, fallbacks, effective]
+
+    AdminAiStatus:
+      type: object
+      properties:
+        provider: { type: string, enum: [poe, openai] }
+        catalogue:
+          $ref: "#/components/schemas/PoeCatalogue"
+        bots:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, timeout, "404", error]
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PoeFeatureRoute"
+        overrides:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+        reference:
+          type: object
+          properties:
+            provider: { type: string, enum: [gemini] }
+            readOnly: { type: boolean }
+            note: { type: string }
+          required: [provider, readOnly, note]
+      required: [provider, catalogue, bots, routes, overrides, reference]
+
+    AdminAiRoutesUpdate:
+      type: object
+      properties:
+        feature:
+          type: string
+          enum: [enrich, identify, dimensions, catalog]
+        fallbacks:
+          type: array
+          maxItems: 5
+          items: { type: string, minLength: 1 }
+        routes:
+          type: object
+          additionalProperties:
+            type: array
+            maxItems: 5
+            items: { type: string, minLength: 1 }
+      description: Provide either one feature/fallbacks pair or a routes object.
 
     AiReferenceBody:
       type: object

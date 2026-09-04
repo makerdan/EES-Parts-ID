@@ -163,10 +163,11 @@ externalPort = 3002
 [userenv]
 
 [userenv.shared]
-ADMIN_CLERK_USER_ID = "user_3G1GaTHFmaxu9rUzvKJqaNIk0nv"
+DATABASE_ENV = "development"
 SKIP_ADMIN_MFA = "true"
 
 [userenv.production]
+DATABASE_ENV = "production"
 CORS_ALLOWED_ORIGINS = "https://eespartsid.replit.app"
 REPLIT_INTERNAL_APP_DOMAIN = "eespartsid.replit.app"
 

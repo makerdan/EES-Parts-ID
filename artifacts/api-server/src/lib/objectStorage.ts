@@ -50,10 +50,75 @@ const gcs = new Storage({
   projectId: "",
 } as StorageOptions);
 
+const PRIVATE_NAMESPACE = "private";
+const CATALOG_IMAGE_NAMESPACE = `${PRIVATE_NAMESPACE}/catalog-images`;
+const CATALOG_PDF_STAGING_NAMESPACE = `${PRIVATE_NAMESPACE}/catalog-pdf-staging`;
+const PUBLIC_FLOOR_PLAN_NAMESPACE = "public/floor-plan";
+
+function privateObjectDir(): string {
+  return (process.env["PRIVATE_OBJECT_DIR"] ?? "uploads").replace(/^\/+|\/+$/g, "");
+}
+
+function objectPathToGcsPath(objectPath: string): string {
+  if (!objectPath.startsWith("/objects/")) {
+    throw new Error("Invalid object path");
+  }
+  const gcsPath = objectPath.slice("/objects/".length);
+  if (!gcsPath || gcsPath.includes("..") || gcsPath.includes("\\") || gcsPath.includes("\0")) {
+    throw new Error("Invalid object path");
+  }
+  return gcsPath;
+}
+
 /**
- * Upload an image buffer to GCS and return the public-serving object path.
- * Returns a path like "/objects/catalog-images/<uuid>.png" which callers
- * should store in the database and serve via the storage endpoint.
+ * Private object paths are deliberately allow-listed. In particular, a path
+ * under the public warehouse-map namespace can never be passed to a private
+ * delete/read operation, even if a caller accidentally supplies it.
+ *
+ * The two legacy prefixes are accepted for cleanup and read compatibility with
+ * objects written before the namespace hardening. New writes always use the
+ * private namespace above.
+ */
+export function isPrivateObjectPath(objectPath: string): boolean {
+  let gcsPath: string;
+  try {
+    gcsPath = objectPathToGcsPath(objectPath);
+  } catch {
+    return false;
+  }
+  const root = `${privateObjectDir()}/`;
+  return (
+    gcsPath.startsWith(`${root}${PRIVATE_NAMESPACE}/`) ||
+    gcsPath.startsWith(`${root}catalog-images/`) ||
+    gcsPath.startsWith(`${root}${CATALOG_PDF_STAGING_NAMESPACE.slice(PRIVATE_NAMESPACE.length + 1)}/`)
+  );
+}
+
+export function isPublicFloorPlanObjectPath(objectPath: string): boolean {
+  let gcsPath: string;
+  try {
+    gcsPath = objectPathToGcsPath(objectPath);
+  } catch {
+    return false;
+  }
+  return gcsPath === `${privateObjectDir()}/${PUBLIC_FLOOR_PLAN_NAMESPACE}/warehouse-map.svg`;
+}
+
+function requirePrivateObjectPath(objectPath: string): string {
+  if (!isPrivateObjectPath(objectPath)) {
+    throw new Error("Object is not in a private namespace");
+  }
+  return objectPathToGcsPath(objectPath);
+}
+
+function privateObjectPath(namespace: string, extension: string): string {
+  return `/objects/${privateObjectDir()}/${namespace}/${randomUUID()}.${extension}`;
+}
+
+/**
+ * Upload an image buffer to the private catalog-image namespace and return a
+ * controlled object reference. The reference is stored server-side and is
+ * never a public bucket URL; clients receive an authenticated API image route.
  */
 export async function uploadCatalogImage(
   imageBuffer: Buffer,
@@ -62,10 +127,9 @@ export async function uploadCatalogImage(
   const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
   if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
 
-  const privateDir = process.env["PRIVATE_OBJECT_DIR"] ?? "uploads";
   const ext = contentType === "image/jpeg" ? "jpg" : "png";
-  const filename = `catalog-images/${randomUUID()}.${ext}`;
-  const fullPath = `${privateDir}/${filename}`;
+  const objectPath = privateObjectPath(CATALOG_IMAGE_NAMESPACE, ext);
+  const fullPath = objectPathToGcsPath(objectPath);
 
   const bucket = gcs.bucket(bucketId);
   const file = bucket.file(fullPath);
@@ -73,22 +137,24 @@ export async function uploadCatalogImage(
   await file.save(imageBuffer, {
     contentType,
     resumable: false,
-    metadata: { cacheControl: "public, max-age=31536000" },
+    metadata: {
+      cacheControl: "private, no-store",
+      metadata: { visibility: "authenticated-app", purpose: "catalog-image" },
+    },
   });
 
-  return `/objects/${fullPath}`;
+  return objectPath;
 }
 
 /**
- * Upload a floor plan SVG to GCS under a deterministic well-known path.
+ * Upload a floor plan SVG to GCS under the dedicated public layout namespace.
  * Overwrites any previous upload. Returns the serving object path.
  */
 export async function uploadFloorPlanSvg(svgContent: string): Promise<string> {
   const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
   if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
 
-  const privateDir = process.env["PRIVATE_OBJECT_DIR"] ?? "uploads";
-  const fullPath = `${privateDir}/floor-plan/warehouse-map.svg`;
+  const fullPath = `${privateObjectDir()}/${PUBLIC_FLOOR_PLAN_NAMESPACE}/warehouse-map.svg`;
 
   const bucket = gcs.bucket(bucketId);
   const file = bucket.file(fullPath);
@@ -110,9 +176,89 @@ export async function readFloorPlanSvg(objectPath: string): Promise<Buffer> {
   const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
   if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
 
-  const gcsPath = objectPath.replace(/^\/objects\//, "");
+  if (!isPublicFloorPlanObjectPath(objectPath)) {
+    throw new Error("Object is not a warehouse floor-plan asset");
+  }
+  const gcsPath = objectPathToGcsPath(objectPath);
   const bucket = gcs.bucket(bucketId);
   const file = bucket.file(gcsPath);
   const [content] = await file.download();
   return content;
+}
+
+/** Read a private object after verifying it is in an allow-listed namespace. */
+export async function readPrivateObject(objectPath: string): Promise<Buffer> {
+  const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
+  if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
+
+  const bucket = gcs.bucket(bucketId);
+  const [content] = await bucket.file(requirePrivateObjectPath(objectPath)).download();
+  return content;
+}
+
+/**
+ * Idempotently delete a private object. Public warehouse-map objects are
+ * rejected before a storage call so cleanup can never remove shared map data.
+ */
+async function deletePrivateObject(objectPath: string | null | undefined): Promise<void> {
+  if (!objectPath) return;
+  const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
+  if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
+
+  const bucket = gcs.bucket(bucketId);
+  await bucket.file(requirePrivateObjectPath(objectPath)).delete({ ignoreNotFound: true });
+}
+
+/** Delete a set of private objects while tolerating already-cleaned objects. */
+export async function deletePrivateObjects(objectPaths: Array<string | null | undefined>): Promise<void> {
+  const paths = [...new Set(objectPaths.filter((value): value is string => Boolean(value)))];
+  await Promise.all(paths.map((objectPath) => deletePrivateObject(objectPath)));
+}
+
+function getCatalogPdfStagingFile(sessionId: string, partIndex: number) {
+  if (!/^[0-9a-f-]{20,80}$/i.test(sessionId) || !Number.isSafeInteger(partIndex) || partIndex < 0) {
+    throw new Error("Invalid catalog PDF staging key");
+  }
+  const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
+  if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
+  return gcs.bucket(bucketId).file(
+    `${privateObjectDir()}/${CATALOG_PDF_STAGING_NAMESPACE}/${sessionId}/${partIndex}.part`,
+  );
+}
+
+/** Store one upload part under a session-scoped private key. */
+export async function writeCatalogPdfPart(
+  sessionId: string,
+  partIndex: number,
+  bytes: Buffer,
+): Promise<string> {
+  const file = getCatalogPdfStagingFile(sessionId, partIndex);
+  await file.save(bytes, {
+    contentType: "application/octet-stream",
+    resumable: false,
+    preconditionOpts: { ifGenerationMatch: 0 },
+    metadata: { cacheControl: "no-store" },
+  });
+  return `/objects/${privateObjectDir()}/${CATALOG_PDF_STAGING_NAMESPACE}/${sessionId}/${partIndex}.part`;
+}
+
+export async function readCatalogPdfPart(
+  sessionId: string,
+  partIndex: number,
+): Promise<Buffer> {
+  const [content] = await getCatalogPdfStagingFile(sessionId, partIndex).download();
+  return content;
+}
+
+/** Idempotent cleanup; missing objects are already in the desired state. */
+export async function deleteCatalogPdfPart(
+  sessionId: string,
+  partIndex: number,
+): Promise<void> {
+  try {
+    await getCatalogPdfStagingFile(sessionId, partIndex).delete({ ignoreNotFound: true });
+  } catch (err) {
+    const code = (err as { code?: number }).code;
+    if (code !== 404) throw err;
+  }
 }

@@ -14,6 +14,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 
 const authState = {
@@ -81,6 +82,7 @@ function makeApiFixture(options: FixtureOptions = {}) {
   const calls: Array<[string, RequestInit | undefined]> = [];
   const admin = options.admin ?? true;
   const rejectSaves = options.rejectSaves ?? false;
+  let anchorLoadFailuresRemaining = 0;
 
   const fetchMock = vi.fn((url: string, init?: RequestInit) => {
     calls.push([url, init]);
@@ -122,6 +124,12 @@ function makeApiFixture(options: FixtureOptions = {}) {
     }
 
     if (path === "/api/admin/map-anchors" && method === "GET") {
+      if (anchorLoadFailuresRemaining > 0) {
+        anchorLoadFailuresRemaining -= 1;
+        return Promise.resolve(
+          jsonResponse(503, { error: "Calibration temporarily unavailable" }),
+        );
+      }
       return Promise.resolve(
         jsonResponse(200, {
           anchors: [...persisted.values()].sort((a, b) => a.id - b.id),
@@ -156,7 +164,14 @@ function makeApiFixture(options: FixtureOptions = {}) {
     return Promise.resolve(jsonResponse(404, { error: "Unhandled test request" }));
   });
 
-  return { persisted, calls, fetchMock };
+  return {
+    persisted,
+    calls,
+    fetchMock,
+    failNextAnchorLoads(count = 1) {
+      anchorLoadFailuresRemaining += count;
+    },
+  };
 }
 
 function setCalibrationRoute() {
@@ -183,7 +198,7 @@ async function renderRoute() {
     result = render(<App />);
   });
   await waitFor(() => {
-    expect(screen.getByText("Admin — Anchor Calibration")).toBeTruthy();
+    expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
   });
   return result;
 }
@@ -390,5 +405,119 @@ describe("web Anchor Calibration routed workflow", () => {
         new URL(url).pathname.includes("/api/warehouse-zones"),
       ),
     ).toBe(false);
+  });
+
+  it("refreshes another open session after shared anchors are saved and cleared", async () => {
+    const fixture = makeApiFixture();
+    global.fetch = fixture.fetchMock as unknown as typeof global.fetch;
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const firstSession = await renderRoute();
+    const secondSession = await renderRoute();
+    const first = within(firstSession.container);
+    const second = within(secondSession.container);
+    const firstSvg = firstSession.container.querySelector("svg")!;
+    mockMapRect(firstSvg);
+
+    await placePoint(
+      firstSvg,
+      first.getAllByRole("button", { name: /^Place$/ })[0]!,
+      180,
+      120,
+    );
+    const firstInputs = first.getAllByRole("textbox");
+    await act(async () => {
+      fireEvent.change(firstInputs[0]!, { target: { value: "North Door" } });
+      fireEvent.change(firstInputs[1]!, { target: { value: "12.5" } });
+      fireEvent.change(firstInputs[2]!, { target: { value: "7.3" } });
+      fireEvent.click(first.getByRole("button", { name: "Save Anchor 1" }));
+    });
+    await waitFor(() => {
+      expect(fixture.persisted.size).toBe(1);
+      expect(first.getByRole("button", { name: "Anchor 1 saved" })).toBeTruthy();
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      const inputs = second.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("North Door");
+      expect((inputs[1] as HTMLInputElement).value).toBe("12.5");
+      expect((inputs[2] as HTMLInputElement).value).toBe("7.3");
+      expect(second.getByText(/x: 777\.8,\s+y: 444\.4/)).toBeTruthy();
+      expect(second.getByText("1/3 saved · scroll to zoom · drag to pan · 18%")).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.click(first.getByRole("button", { name: "Clear" }));
+    });
+    await waitFor(() => {
+      expect(fixture.persisted.size).toBe(0);
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      const inputs = second.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("");
+      expect((inputs[1] as HTMLInputElement).value).toBe("");
+      expect((inputs[2] as HTMLInputElement).value).toBe("");
+      expect(second.getAllByText("Not placed")).toHaveLength(3);
+      expect(second.getByText("0/3 saved · scroll to zoom · drag to pan · 18%")).toBeTruthy();
+    });
+  });
+
+  it("keeps the last known mapping visible and shows the load error after refresh fails", async () => {
+    const fixture = makeApiFixture();
+    global.fetch = fixture.fetchMock as unknown as typeof global.fetch;
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const firstSession = await renderRoute();
+    const secondSession = await renderRoute();
+    const first = within(firstSession.container);
+    const second = within(secondSession.container);
+    const firstSvg = firstSession.container.querySelector("svg")!;
+    mockMapRect(firstSvg);
+
+    await placePoint(
+      firstSvg,
+      first.getAllByRole("button", { name: /^Place$/ })[0]!,
+      180,
+      120,
+    );
+    const firstInputs = first.getAllByRole("textbox");
+    await act(async () => {
+      fireEvent.change(firstInputs[0]!, { target: { value: "North Door" } });
+      fireEvent.change(firstInputs[1]!, { target: { value: "12.5" } });
+      fireEvent.change(firstInputs[2]!, { target: { value: "7.3" } });
+      fireEvent.click(first.getByRole("button", { name: "Save Anchor 1" }));
+    });
+    await waitFor(() => {
+      expect(fixture.persisted.size).toBe(1);
+    });
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      const inputs = second.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("North Door");
+      expect(second.getByText(/x: 777\.8,\s+y: 444\.4/)).toBeTruthy();
+    });
+
+    fixture.failNextAnchorLoads(2);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      expect(second.getByText("⚠ Failed to load anchors")).toBeTruthy();
+      const inputs = second.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("North Door");
+      expect((inputs[1] as HTMLInputElement).value).toBe("12.5");
+      expect((inputs[2] as HTMLInputElement).value).toBe("7.3");
+      expect(second.getByText(/x: 777\.8,\s+y: 444\.4/)).toBeTruthy();
+      expect(second.getByText("1/3 saved · scroll to zoom · drag to pan · 18%")).toBeTruthy();
+    });
   });
 });

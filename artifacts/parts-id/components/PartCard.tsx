@@ -35,6 +35,10 @@ interface PartCardProps {
   catalog: string;
   vendor?: string;
   description?: string;
+  /** Authoritative inventory order-purchase quantity for the displayed item. */
+  orderPurchase?: number | undefined;
+  /** Authoritative inventory order-quantity value for the displayed item. */
+  orderQuantity?: number | undefined;
   /** When true the section auto-expands immediately on mount (e.g. top Photo ID result). */
   autoExpand?: boolean;
 }
@@ -66,7 +70,14 @@ function SkeletonRow({ width, colors }: { width: number | string; colors: Return
   );
 }
 
-export function PartCard({ catalog, vendor, description, autoExpand = false }: PartCardProps) {
+export function PartCard({
+  catalog,
+  vendor,
+  description,
+  orderPurchase,
+  orderQuantity,
+  autoExpand = false,
+}: PartCardProps) {
   "use no memo";
   const colors = useColors();
   const [open, setOpen] = useState(false);
@@ -212,6 +223,21 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
 
       {open ? (
         <View style={pcStyles.body}>
+          <View
+            style={[pcStyles.inventoryGrid, { borderColor: colors.border }]}
+            accessible
+            accessibilityLabel={`Inventory data: OP ${orderPurchase ?? 0}, OQ ${orderQuantity ?? 0}`}
+          >
+            <View style={[pcStyles.specRow, { borderBottomColor: colors.border }]}>
+              <Text style={[pcStyles.specLabel, { color: colors.mutedForeground }]}>OP</Text>
+              <Text style={[pcStyles.specValue, { color: colors.foreground }]}>{orderPurchase ?? 0}</Text>
+            </View>
+            <View style={[pcStyles.specRow, pcStyles.specRowLast]}>
+              <Text style={[pcStyles.specLabel, { color: colors.mutedForeground }]}>OQ</Text>
+              <Text style={[pcStyles.specValue, { color: colors.foreground }]}>{orderQuantity ?? 0}</Text>
+            </View>
+          </View>
+
           {fetchState.status === "loading" ? (
             <View style={pcStyles.skeletonBlock}>
               <SkeletonRow width="55%" colors={colors} />
@@ -371,6 +397,11 @@ const pcStyles = StyleSheet.create({
     lineHeight: 18,
   },
   specGrid: {
+    borderRadius: 6,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  inventoryGrid: {
     borderRadius: 6,
     borderWidth: 1,
     overflow: "hidden",

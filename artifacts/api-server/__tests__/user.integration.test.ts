@@ -25,22 +25,26 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import { clerkClient } from "@clerk/express";
 import { db, usersTable } from "@workspace/db";
-import { eq, like } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import supertest from "supertest";
 
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
+import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
 
-const USER_PREFIX = "jest-userdel-";
+const TEST_INSTANCE = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
+const USER_PREFIX = `jest-userdel-${TEST_INSTANCE}-`;
+const seededUserIds = new Set<string>();
 
 async function seedApprovedUser(clerkUserId: string): Promise<void> {
-  await db
-    .insert(usersTable)
-    .values({ clerkUserId, email: `${clerkUserId}@test.example`, status: "approved", role: "user" })
-    .onConflictDoUpdate({
-      target: usersTable.clerkUserId,
-      set: { status: "approved", role: "user" },
-    });
+  seededUserIds.add(clerkUserId);
+  await seedTestUser({ clerkUserId, status: "approved", role: "user" });
+}
+
+async function cleanupUsers(): Promise<void> {
+  const userIds = [...seededUserIds];
+  seededUserIds.clear();
+  await Promise.all(userIds.map(cleanupTestUser));
 }
 
 beforeAll(() => {
@@ -52,7 +56,7 @@ beforeAll(() => {
 
 afterAll(async () => {
   delete process.env.ADMIN_CLERK_USER_ID;
-  await db.delete(usersTable).where(like(usersTable.clerkUserId, `${USER_PREFIX}%`));
+  await cleanupUsers();
 }, 15_000);
 
 afterEach(() => {
@@ -152,5 +156,42 @@ describe("DELETE /api/user/me", () => {
       .from(usersTable)
       .where(eq(usersTable.clerkUserId, userId));
     expect(remaining).toHaveLength(1);
+  });
+});
+
+describe("user deletion fixture cleanup", () => {
+  it("does not remove same-prefix rows owned by another suite", async () => {
+    const ownedUser = `${USER_PREFIX}owned`;
+    const otherSuiteUser = `${USER_PREFIX}other-suite`;
+    await seedApprovedUser(ownedUser);
+    await db
+      .insert(usersTable)
+      .values({
+        clerkUserId: otherSuiteUser,
+        email: `${otherSuiteUser}@jest.test.example`,
+        status: "approved",
+        role: "user",
+      })
+      .onConflictDoNothing();
+
+    try {
+      await cleanupUsers();
+
+      const [remainingOwnedUser] = await db
+        .select()
+        .from(usersTable)
+        .where(eq(usersTable.clerkUserId, ownedUser));
+      const [remainingOtherSuiteUser] = await db
+        .select()
+        .from(usersTable)
+        .where(eq(usersTable.clerkUserId, otherSuiteUser));
+
+      expect(remainingOwnedUser).toBeUndefined();
+      expect(remainingOtherSuiteUser?.clerkUserId).toBe(otherSuiteUser);
+    } finally {
+      await db
+        .delete(usersTable)
+        .where(inArray(usersTable.clerkUserId, [ownedUser, otherSuiteUser]));
+    }
   });
 });

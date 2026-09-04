@@ -6,6 +6,23 @@
 import { db, pool, inventoryTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 
+const TEST_WORKER_INSTANCE = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
+
+/**
+ * Qualify a test identity with the current Jest worker and Node process.
+ *
+ * The process component distinguishes simultaneous Jest invocations of the
+ * same suite; the worker component distinguishes workers within one
+ * invocation. Callers must pass the resulting id to cleanupTestUser so
+ * cleanup remains exact and owned by this suite.
+ */
+export function workerQualifiedUserId(
+  baseId: string,
+  workerInstance = TEST_WORKER_INSTANCE,
+): string {
+  return `${baseId}-${workerInstance}`;
+}
+
 /**
  * Seed (or update) a test user row, race-safe under parallel Jest workers.
  *

@@ -12,6 +12,7 @@
  */
 
 import { adminPreferencesTable,db } from "@workspace/db";
+import { getPoeClient, listPoeModels, type PoeCatalogueModel,resetPoeClient } from "@workspace/integrations-poe-server";
 import { eq } from "drizzle-orm";
 import OpenAI from "openai";
 
@@ -25,18 +26,6 @@ if (rawProvider !== "poe" && rawProvider !== "openai") {
   throw new Error(
     `AI_PROVIDER must be "poe" or "openai", got "${rawProvider}"`,
   );
-}
-
-function buildPoeClient(): OpenAI {
-  if (!process.env.POE_API_KEY2) {
-    throw new Error(
-      "POE_API_KEY2 must be set when AI_PROVIDER=poe. Did you forget to add the Poe API key secret?",
-    );
-  }
-  return new OpenAI({
-    apiKey: process.env.POE_API_KEY2,
-    baseURL: "https://api.poe.com/v1",
-  });
 }
 
 function buildOpenAIClient(): OpenAI {
@@ -57,7 +46,7 @@ function buildOpenAIClient(): OpenAI {
 }
 
 function buildClient(provider: AIProvider): OpenAI {
-  return provider === "openai" ? buildOpenAIClient() : buildPoeClient();
+  return provider === "openai" ? buildOpenAIClient() : getPoeClient();
 }
 
 // ── Mutable runtime state ─────────────────────────────────────────────────────
@@ -71,11 +60,199 @@ let _provider: AIProvider = rawProvider as AIProvider;
 // actually called (and validateEnv() will have already logged a clear warning).
 let _client: OpenAI | null = null;
 
+export type PoeFeature = "enrich" | "identify" | "dimensions" | "catalog";
+export type PoeCatalogueFreshness = "fresh" | "stale" | "unavailable";
+export type PoeProbeStatus = "ok" | "timeout" | "404" | "error";
+
+export interface PoeFeatureRoute {
+  feature: PoeFeature;
+  primary: string;
+  fallbacks: Array<string>;
+  effective: Array<string>;
+}
+
+export interface PoeCatalogueSnapshot {
+  freshness: PoeCatalogueFreshness;
+  models: Array<PoeCatalogueModel>;
+  fetchedAt: string | null;
+  lastSuccessAt: string | null;
+  error: string | null;
+}
+
+const _catalogue: {
+  models: Array<PoeCatalogueModel>;
+  fetchedAt: Date | null;
+  lastSuccessAt: Date | null;
+  freshness: PoeCatalogueFreshness;
+  error: string | null;
+} = {
+  models: [],
+  fetchedAt: null,
+  lastSuccessAt: null,
+  freshness: "unavailable",
+  error: null,
+};
+let _catalogueRefreshInFlight: Promise<PoeCatalogueSnapshot> | null = null;
+let _fallbackOverrides: Partial<Record<PoeFeature, Array<string>>> = {};
+
+function snapshotCatalogue(): PoeCatalogueSnapshot {
+  return {
+    freshness: _catalogue.freshness,
+    models: _catalogue.models.map((model) => ({
+      ...model,
+      modalities: [...model.modalities],
+      capabilities: { ...model.capabilities },
+    })),
+    fetchedAt: _catalogue.fetchedAt?.toISOString() ?? null,
+    lastSuccessAt: _catalogue.lastSuccessAt?.toISOString() ?? null,
+    error: _catalogue.error,
+  };
+}
+
+/**
+ * Refresh the live catalogue once for all concurrent callers. A failed
+ * refresh never discards a previously successful snapshot.
+ */
+export function refreshPoeCatalogue(): Promise<PoeCatalogueSnapshot> {
+  if (_catalogueRefreshInFlight) return _catalogueRefreshInFlight;
+  _catalogueRefreshInFlight = listPoeModels()
+    .then((models) => {
+      _catalogue.models = models;
+      _catalogue.fetchedAt = new Date();
+      _catalogue.lastSuccessAt = _catalogue.fetchedAt;
+      _catalogue.freshness = "fresh";
+      _catalogue.error = null;
+      return snapshotCatalogue();
+    })
+    .catch((err: unknown) => {
+      _catalogue.fetchedAt = new Date();
+      _catalogue.freshness = _catalogue.lastSuccessAt ? "stale" : "unavailable";
+      _catalogue.error = err instanceof Error ? err.message : String(err);
+      return snapshotCatalogue();
+    })
+    .finally(() => {
+      _catalogueRefreshInFlight = null;
+    });
+  return _catalogueRefreshInFlight;
+}
+
+export function getPoeCatalogueSnapshot(): PoeCatalogueSnapshot {
+  return snapshotCatalogue();
+}
+
+function primaryForFeature(feature: PoeFeature): string {
+  switch (feature) {
+    case "enrich": return POE_ENRICH_BOT;
+    case "identify": return POE_IDENTIFY_BOT;
+    case "dimensions": return POE_DIMENSIONS_BOT;
+    case "catalog": return _effectiveCatalogBotName;
+  }
+}
+
+function requiredCapabilities(feature: PoeFeature): { text: boolean; vision: boolean; structuredOutput: boolean } {
+  return {
+    text: true,
+    vision: feature !== "enrich",
+    structuredOutput: true,
+  };
+}
+
+function modelIsCompatible(feature: PoeFeature, modelName: string): boolean {
+  const model = _catalogue.models.find((candidate) => candidate.id === modelName || candidate.name === modelName);
+  if (!model) return false;
+  const required = requiredCapabilities(feature);
+  return Object.entries(required).every(([key, needed]) => {
+    if (!needed) return true;
+    const capability = model.capabilities[key as keyof typeof model.capabilities];
+    if (capability === false) return false;
+    if (capability === true) return true;
+    return _botProbeResults.get(modelName) === "ok";
+  });
+}
+
+function effectiveFallbacks(feature: PoeFeature): Array<string> {
+  const configured = _fallbackOverrides[feature] ?? DEFAULT_FALLBACKS[feature];
+  if (_catalogue.models.length === 0) return [...configured];
+  return configured.filter((model) => modelIsCompatible(feature, model));
+}
+
+export function getPoeFeatureRoutes(): Array<PoeFeatureRoute> {
+  return (["enrich", "identify", "dimensions", "catalog"] as Array<PoeFeature>).map((feature) => {
+    const primary = primaryForFeature(feature);
+    const fallbacks = effectiveFallbacks(feature).filter((model) => model !== primary);
+    return { feature, primary, fallbacks, effective: [primary, ...fallbacks] };
+  });
+}
+
+export function getPoeFallbackOverrides(): Partial<Record<PoeFeature, Array<string>>> {
+  return Object.fromEntries(
+    Object.entries(_fallbackOverrides).map(([feature, models]) => [feature, [...(models ?? [])]]),
+  ) as Partial<Record<PoeFeature, Array<string>>>;
+}
+
+export function validatePoeFallbacks(
+  feature: PoeFeature,
+  models: unknown,
+): { ok: true; models: Array<string> } | { ok: false; error: string } {
+  if (!Array.isArray(models) || models.some((model) => typeof model !== "string" || !model.trim())) {
+    return { ok: false, error: "fallbacks must be an array of model names" };
+  }
+  const primary = primaryForFeature(feature);
+  const normalized = models.map((model) => model.trim());
+  if (new Set(normalized).size !== normalized.length) {
+    return { ok: false, error: "fallbacks must not contain duplicates" };
+  }
+  if (normalized.includes(primary)) {
+    return { ok: false, error: "The code-configured primary model cannot be a fallback" };
+  }
+  if (_catalogue.models.length === 0) {
+    return { ok: false, error: "Refresh the Poe catalogue before saving fallback models" };
+  }
+  const incompatible = normalized.find((model) => !modelIsCompatible(feature, model));
+  if (incompatible) {
+    return { ok: false, error: `${incompatible} is unavailable or lacks the capabilities required by ${feature}` };
+  }
+  return { ok: true, models: normalized };
+}
+
+export function setPoeFallbacks(feature: PoeFeature, models: unknown): { ok: true; models: Array<string> } | { ok: false; error: string } {
+  const validated = validatePoeFallbacks(feature, models);
+  if (!validated.ok) return validated;
+  _fallbackOverrides = { ..._fallbackOverrides, [feature]: [...validated.models] };
+  return validated;
+}
+
+export function resetPoeFallbacks(feature?: PoeFeature): void {
+  if (!feature) {
+    _fallbackOverrides = {};
+    return;
+  }
+  const next = { ..._fallbackOverrides };
+  delete next[feature];
+  _fallbackOverrides = next;
+}
+
+function restorePoeFallbacks(value: unknown): void {
+  if (!value || typeof value !== "object") {
+    _fallbackOverrides = {};
+    return;
+  }
+  const next: Partial<Record<PoeFeature, Array<string>>> = {};
+  for (const feature of ["enrich", "identify", "dimensions", "catalog"] as Array<PoeFeature>) {
+    const models = (value as Record<string, unknown>)[feature];
+    if (Array.isArray(models) && models.every((model) => typeof model === "string")) {
+      next[feature] = [...new Set(models as Array<string>)];
+    }
+  }
+  _fallbackOverrides = next;
+}
+
 /**
  * Switch the active AI provider at runtime without restarting the server.
  * Throws if the required environment variables for the target provider are missing.
  */
 export function setProvider(provider: AIProvider): void {
+  if (provider === "poe") resetPoeClient();
   const next = buildClient(provider); // validate env vars first — may throw
   _provider = provider;
   _client = next;
@@ -89,7 +266,10 @@ export function setProvider(provider: AIProvider): void {
 export async function initProvider(): Promise<void> {
   try {
     const rows = await db
-      .select({ aiProvider: adminPreferencesTable.aiProvider })
+      .select({
+        aiProvider: adminPreferencesTable.aiProvider,
+        aiFallbackModels: adminPreferencesTable.aiFallbackModels,
+      })
       .from(adminPreferencesTable)
       .where(eq(adminPreferencesTable.id, 1))
       .limit(1);
@@ -98,6 +278,7 @@ export async function initProvider(): Promise<void> {
     if (persisted === "poe" || persisted === "openai") {
       setProvider(persisted);
     }
+    restorePoeFallbacks(rows[0]?.aiFallbackModels);
   } catch (err) {
     logger.warn({ err }, "initProvider: failed to read persisted AI provider from DB — falling back to env var default");
   }
@@ -163,6 +344,13 @@ export const POE_CATALOG_BOT_FALLBACK = "Gemini-2.5-Pro";
  */
 let _effectiveCatalogBotName: string = POE_CATALOG_BOT;
 
+const DEFAULT_FALLBACKS: Record<PoeFeature, Array<string>> = {
+  enrich: [POE_IDENTIFY_BOT],
+  identify: [POE_CATALOG_BOT],
+  dimensions: [POE_CATALOG_BOT],
+  catalog: [POE_IDENTIFY_BOT],
+};
+
 // ── Model defaults (re-derived at call time via helpers below) ────────────────
 
 /**
@@ -218,6 +406,8 @@ export function getAllPoeModelNames(): Array<string> {
     POE_IDENTIFY_BOT,   // identify (photo-based)
     POE_DIMENSIONS_BOT, // dimensions
     POE_CATALOG_BOT,    // catalog PDF extraction
+    ..._catalogue.models.map((model) => model.name),
+    ...getPoeFeatureRoutes().flatMap((route) => route.effective),
   ];
   return [...new Set(names)];
 }
@@ -229,8 +419,6 @@ export function getAllPoeModelNames(): Array<string> {
  * Used by callPoeBotWithChain() and tryPoeBotChain() to resolve the ordered
  * fallback chain.
  */
-export type PoeFeature = "enrich" | "identify" | "dimensions" | "catalog";
-
 /**
  * Returns the ordered list of Poe bot names to attempt for the given feature.
  * The primary bot is first; vision-capable alternates follow.
@@ -238,17 +426,7 @@ export type PoeFeature = "enrich" | "identify" | "dimensions" | "catalog";
  * probePoeBotsOnStartup() if POE_CATALOG_BOT returned 404).
  */
 export function getPoeChainForFeature(feature: PoeFeature): Array<string> {
-  const catalogBot = _effectiveCatalogBotName;
-  switch (feature) {
-    case "enrich":
-      return [POE_ENRICH_BOT, POE_IDENTIFY_BOT];
-    case "identify":
-      return [POE_IDENTIFY_BOT, catalogBot];
-    case "dimensions":
-      return [POE_DIMENSIONS_BOT, catalogBot];
-    case "catalog":
-      return [catalogBot, POE_IDENTIFY_BOT];
-  }
+  return getPoeFeatureRoutes().find((route) => route.feature === feature)?.effective ?? [];
 }
 
 /**

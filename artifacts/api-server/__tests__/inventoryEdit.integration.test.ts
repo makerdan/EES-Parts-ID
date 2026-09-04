@@ -49,7 +49,12 @@ jest.mock("../src/utils/imageResize", () => ({
 }));
 
 jest.mock("../src/utils/aiHelpers", () => ({
-  estimateImageBytes: jest.fn().mockReturnValue(1024),
+  ...(
+    jest.requireActual("./helpers/aiHelpersMock") as typeof import("./helpers/aiHelpersMock")
+  ).createAiHelpersMock(
+    jest.requireActual("../src/utils/aiHelpers"),
+    { estimateImageBytes: 1024 },
+  ),
 }));
 
 // ── Imports ───────────────────────────────────────────────────────────────────
@@ -114,9 +119,9 @@ function withAuth(req: supertest.Test, token?: string): supertest.Test {
   return token ? req.set("Authorization", `Bearer ${token}`) : req;
 }
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // Auth guard — every write route must reject unauthenticated / non-admin callers
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("Edit route auth guard", () => {
   // Clear TEST_DEFAULT_AUTH_USER so no-token requests actually get 401,
@@ -169,9 +174,9 @@ describe("Edit route auth guard", () => {
   }
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/description
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/description — happy paths", () => {
   it("updates description and commits the value to the DB", async () => {
@@ -267,9 +272,9 @@ describe("PATCH /api/inventory/:id/description — error paths", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/expanded-description
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/expanded-description — happy paths", () => {
   it("updates expanded description and returns { success: true }", async () => {
@@ -320,9 +325,9 @@ describe("PATCH /api/inventory/:id/expanded-description — happy paths", () => 
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/bins
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/bins — happy paths", () => {
   afterEach(async () => {
@@ -410,9 +415,9 @@ describe("PATCH /api/inventory/:id/bins — error paths", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/barcodes
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/barcodes — happy paths", () => {
   afterEach(async () => {
@@ -480,9 +485,9 @@ describe("PATCH /api/inventory/:id/barcodes — error paths", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/keywords
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
   afterEach(async () => {
@@ -542,9 +547,9 @@ describe("PATCH /api/inventory/:id/keywords — error paths", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/dimensions
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/dimensions — happy paths", () => {
   afterEach(async () => {
@@ -643,9 +648,9 @@ describe("PATCH /api/inventory/:id/dimensions — error paths", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/photo — remove only (GCS upload stubbed)
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/photo — remove", () => {
   it("removes slot-1 photo and commits null imageUrl to DB", async () => {

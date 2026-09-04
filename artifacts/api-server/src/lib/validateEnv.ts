@@ -12,15 +12,41 @@
  * to either file, add a corresponding entry here.
  */
 
+import {
+  CLIENT_PUBLIC_ENV_VARS,
+  type EnvironmentSource,
+  SERVER_ONLY_ENV_VARS,
+} from "@workspace/db/runtime-data-boundary";
+
 import { logger } from "./logger";
 
-interface EnvCheck {
+export interface EnvCheck {
   name: string;
   description: string;
-  condition?: () => boolean;
+  condition?: (env: EnvironmentSource) => boolean;
 }
 
 const REQUIRED_IN_PRODUCTION: Array<EnvCheck> = [
+  {
+    name: "DATABASE_ENV",
+    description:
+      "Explicit Replit database target. Production API processes must use DATABASE_ENV=production.",
+  },
+  {
+    name: "DATABASE_URL",
+    description:
+      "Replit-provided PostgreSQL connection string used only by server-side packages.",
+  },
+  {
+    name: "CLERK_PUBLISHABLE_KEY",
+    description:
+      "Clerk publishable key used by the API server to resolve the configured Clerk instance.",
+  },
+  {
+    name: "CLERK_SECRET_KEY",
+    description:
+      "Clerk secret key used server-side to verify sessions and call Clerk's Backend API.",
+  },
   {
     name: "CORS_ALLOWED_ORIGINS",
     description:
@@ -32,23 +58,58 @@ const REQUIRED_IN_PRODUCTION: Array<EnvCheck> = [
     description:
       "Poe API key required when AI_PROVIDER=poe (the default). " +
       "Without this, all AI features (identify, enrich, catalog) will fail.",
-    condition: () => (process.env.AI_PROVIDER ?? "poe").toLowerCase() === "poe",
+    condition: (env) => (env.AI_PROVIDER ?? "poe").toLowerCase() === "poe",
   },
   {
     name: "AI_INTEGRATIONS_OPENAI_BASE_URL",
     description:
       "OpenAI-compatible base URL required when AI_PROVIDER=openai. " +
       "Provision the OpenAI integration in Replit to obtain this value.",
-    condition: () => (process.env.AI_PROVIDER ?? "poe").toLowerCase() === "openai",
+    condition: (env) =>
+      (env.AI_PROVIDER ?? "poe").toLowerCase() === "openai",
   },
   {
     name: "AI_INTEGRATIONS_OPENAI_API_KEY",
     description:
       "OpenAI API key required when AI_PROVIDER=openai. " +
       "Provision the OpenAI integration in Replit to obtain this value.",
-    condition: () => (process.env.AI_PROVIDER ?? "poe").toLowerCase() === "openai",
+    condition: (env) =>
+      (env.AI_PROVIDER ?? "poe").toLowerCase() === "openai",
   },
 ];
+
+export function getMissingProductionEnvVars(
+  env: EnvironmentSource = process.env,
+): Array<EnvCheck> {
+  return REQUIRED_IN_PRODUCTION.filter((check) => {
+    if (check.condition && !check.condition(env)) {
+      return false;
+    }
+    return !env[check.name];
+  });
+}
+
+export function getEnvironmentContract() {
+  return {
+    serverOnly: [...SERVER_ONLY_ENV_VARS],
+    clientPublic: [...CLIENT_PUBLIC_ENV_VARS],
+    productionRequired: REQUIRED_IN_PRODUCTION.map((check) => check.name),
+  } as const;
+}
+
+export function formatMissingProductionEnvError(
+  missing: ReadonlyArray<EnvCheck>,
+): string {
+  const lines = missing.map(
+    (check) => `  • ${check.name}\n      ${check.description}`,
+  );
+
+  return [
+    `Server cannot start — ${missing.length} required environment variable${missing.length === 1 ? " is" : "s are"} missing in production:`,
+    ...lines,
+    "Set the missing variables in Replit Secrets or the deployment environment and redeploy.",
+  ].join("\n");
+}
 
 /**
  * Validates that all required-in-production environment variables are present.
@@ -62,28 +123,15 @@ export function validateEnv(): void {
     return;
   }
 
-  const missing: Array<EnvCheck> = REQUIRED_IN_PRODUCTION.filter((check) => {
-    if (check.condition && !check.condition()) {
-      return false;
-    }
-    return !process.env[check.name];
-  });
+  const missing = getMissingProductionEnvVars();
 
   if (missing.length === 0) {
     return;
   }
 
-  const lines = missing.map(
-    (check) => `  • ${check.name}\n      ${check.description}`,
-  );
-
   logger.error(
     { missingVars: missing.map((c) => c.name) },
-    [
-      `Server cannot start — ${missing.length} required environment variable${missing.length === 1 ? " is" : "s are"} missing in production:`,
-      ...lines,
-      "Set the missing variables and redeploy.",
-    ].join("\n"),
+    formatMissingProductionEnvError(missing),
   );
 
   process.exit(1);

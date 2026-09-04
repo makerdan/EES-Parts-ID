@@ -1,6 +1,7 @@
 /**
  * Integration tests for the reference routes:
  *  - POST /api/reference/ask (SSE streaming and JSON mode)
+ *  - GET  /api/reference/ask-log (admin-only recent Q&A log)
  *  - GET  /api/reference/quick-lookups
  *  - GET  /api/reference/quick-lookups/:label
  *  - POST /api/reference/quick-lookups/:label (AI fallback + DB write-back)
@@ -73,10 +74,33 @@ import supertest from "supertest";
 import app from "../src/app";
 import { db } from "@workspace/db";
 import { quickLookupCacheTable } from "@workspace/db";
+import { referenceLogTable } from "@workspace/db";
+import { usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
 const TEST_LABEL = "JEST-REF-TEST-LABEL";
+const ASK_LOG_QUESTION = "JEST-REF-ASK-LOG-QUESTION";
+const UNKNOWN_USER = "jest-reference-ask-log-unknown-user";
+const NON_ADMIN_ASK_LOG_USER = "jest-reference-ask-log-nonadmin";
+
+const ADMIN_ONLY_REFERENCE_ENDPOINTS = [
+  {
+    name: "GET /api/reference/ask-log",
+    request: () => supertest(app).get("/api/reference/ask-log"),
+  },
+  {
+    name: "POST /api/reference/quick-lookups/:label",
+    request: () =>
+      supertest(app)
+        .post(`/api/reference/quick-lookups/${TEST_LABEL}`)
+        .send({ question: "What is this?" }),
+  },
+  {
+    name: "GET /api/reference/help/admin",
+    request: () => supertest(app).get("/api/reference/help/admin"),
+  },
+] as const;
 
 /**
  * Reconstruct the full answer text from an SSE response body by concatenating
@@ -110,6 +134,18 @@ async function cleanupTestLabel() {
 beforeAll(async () => {
   process.env.ADMIN_CLERK_USER_ID = "jest-admin-user";
   process.env.TEST_DEFAULT_AUTH_USER = "jest-admin-user";
+  await db
+    .insert(usersTable)
+    .values({
+      clerkUserId: NON_ADMIN_ASK_LOG_USER,
+      email: `${NON_ADMIN_ASK_LOG_USER}@test.example`,
+      status: "approved",
+      role: "user",
+    })
+    .onConflictDoUpdate({
+      target: usersTable.clerkUserId,
+      set: { status: "approved", role: "user" },
+    });
   await ensureQuickLookupTable();
   await cleanupTestLabel();
 });
@@ -118,6 +154,9 @@ afterAll(async () => {
   delete process.env.TEST_DEFAULT_AUTH_USER;
   delete process.env.ADMIN_CLERK_USER_ID;
   await cleanupTestLabel();
+  await db
+    .delete(usersTable)
+    .where(eq(usersTable.clerkUserId, NON_ADMIN_ASK_LOG_USER));
 });
 
 beforeEach(() => {
@@ -275,6 +314,115 @@ describe("POST /api/reference/ask — admin knowledge scoping", () => {
     expect(prompt).not.toContain("Measure tab (admin only");
     expect(prompt).not.toContain("SQL console");
   });
+});
+
+// ── GET /api/reference/ask-log — admin-only recent Q&A log ────────────────────
+
+describe("GET /api/reference/ask-log", () => {
+  beforeAll(async () => {
+    await db
+      .insert(referenceLogTable)
+      .values({
+        question: ASK_LOG_QUESTION,
+        answer: "Jest reference answer",
+        matchedItemCount: 1,
+      });
+  });
+
+  afterAll(async () => {
+    await db
+      .delete(referenceLogTable)
+      .where(eq(referenceLogTable.question, ASK_LOG_QUESTION));
+    await db
+      .delete(usersTable)
+      .where(eq(usersTable.clerkUserId, UNKNOWN_USER));
+  });
+
+  it("rejects requests without an authenticated session", async () => {
+    const previousDefaultUser = process.env.TEST_DEFAULT_AUTH_USER;
+    delete process.env.TEST_DEFAULT_AUTH_USER;
+
+    try {
+      const res = await supertest(app).get("/api/reference/ask-log").expect(401);
+      expect(res.body).toEqual({ error: "Authentication required" });
+    } finally {
+      if (previousDefaultUser === undefined) {
+        delete process.env.TEST_DEFAULT_AUTH_USER;
+      } else {
+        process.env.TEST_DEFAULT_AUTH_USER = previousDefaultUser;
+      }
+    }
+  });
+
+  it("rejects an unknown identity without returning log rows", async () => {
+    const unknownRes = await supertest(app)
+      .get("/api/reference/ask-log")
+      .set("Authorization", `Bearer ${UNKNOWN_USER}`)
+      .expect(403);
+
+    expect(unknownRes.body).not.toHaveProperty("rows");
+    expect(unknownRes.body).not.toHaveProperty(ASK_LOG_QUESTION);
+  });
+
+  it("rejects an approved non-admin without returning log rows", async () => {
+    const nonAdminRes = await supertest(app)
+      .get("/api/reference/ask-log")
+      .set("Authorization", `Bearer ${NON_ADMIN_ASK_LOG_USER}`)
+      .expect(403);
+
+    expect(nonAdminRes.body).toEqual({ error: "Admin access required" });
+  });
+
+  it("returns recent log rows to an authorized administrator", async () => {
+    const res = await supertest(app)
+      .get("/api/reference/ask-log")
+      .set("Authorization", "Bearer jest-admin-user")
+      .expect(200);
+
+    expect(res.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          question: ASK_LOG_QUESTION,
+          answer: "Jest reference answer",
+          matchedItemCount: 1,
+        }),
+      ]),
+    );
+  });
+});
+
+// ── Admin-only reference endpoint authorization contract ─────────────────────
+
+describe("Admin-only reference endpoints", () => {
+  it.each(ADMIN_ONLY_REFERENCE_ENDPOINTS)(
+    "$name rejects an anonymous request",
+    async ({ request }) => {
+      const previousDefaultUser = process.env.TEST_DEFAULT_AUTH_USER;
+      delete process.env.TEST_DEFAULT_AUTH_USER;
+
+      try {
+        const res = await request().expect(401);
+        expect(res.body).toEqual({ error: "Authentication required" });
+      } finally {
+        if (previousDefaultUser === undefined) {
+          delete process.env.TEST_DEFAULT_AUTH_USER;
+        } else {
+          process.env.TEST_DEFAULT_AUTH_USER = previousDefaultUser;
+        }
+      }
+    },
+  );
+
+  it.each(ADMIN_ONLY_REFERENCE_ENDPOINTS)(
+    "$name rejects an approved non-admin",
+    async ({ request }) => {
+      const res = await request()
+        .set("Authorization", `Bearer ${NON_ADMIN_ASK_LOG_USER}`)
+        .expect(403);
+
+      expect(res.body).toEqual({ error: "Admin access required" });
+    },
+  );
 });
 
 // ── GET /api/reference/quick-lookups ──────────────────────────────────────────

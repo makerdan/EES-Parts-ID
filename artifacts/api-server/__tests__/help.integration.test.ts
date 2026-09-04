@@ -35,12 +35,16 @@ import {
   validateHelpRecords,
 } from "../src/lib/helpContent";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
+import {
+  cleanupTestUser,
+  seedTestUser,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 
-const APPROVED_USER = "jest-help-approved-user";
-const PENDING_USER = "jest-help-pending-user";
-const BANNED_USER = "jest-help-banned-user";
-const STALE_ADMIN_USER = "jest-help-stale-admin-user";
+const APPROVED_USER = workerQualifiedUserId("jest-help-approved-user");
+const PENDING_USER = workerQualifiedUserId("jest-help-pending-user");
+const BANNED_USER = workerQualifiedUserId("jest-help-banned-user");
+const STALE_ADMIN_USER = workerQualifiedUserId("jest-help-stale-admin-user");
 
 beforeAll(async () => {
   await seedTestUser({ clerkUserId: APPROVED_USER, status: "approved", role: "user" });

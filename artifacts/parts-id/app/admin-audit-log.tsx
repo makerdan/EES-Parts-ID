@@ -43,6 +43,19 @@ type AuditLogPage = {
 
 const PAGE_SIZE = 50;
 
+function mergeAuditRows(existingRows: Array<AuditRow>, incomingRows: Array<AuditRow>): Array<AuditRow> {
+  const seenIds = new Set(existingRows.map((row) => row.id));
+  const mergedRows = [...existingRows];
+
+  for (const row of incomingRows) {
+    if (seenIds.has(row.id)) continue;
+    seenIds.add(row.id);
+    mergedRows.push(row);
+  }
+
+  return mergedRows;
+}
+
 const ACTION_CONFIG: Record<AuditRow["action"], { label: string; bg: string; fg: string }> = {
   approve: { label: "Approved", bg: "#10b98120", fg: "#10b981" },
   ban:     { label: "Banned",   bg: "#ef444420", fg: "#ef4444" },
@@ -125,7 +138,7 @@ export default function AdminAuditLogScreen() {
     setError(null);
     try {
       const page = await fetchPage(null, adminToken);
-      setRows(page.rows);
+      setRows(mergeAuditRows([], page.rows));
       nextCursorRef.current = page.nextCursor;
       hasMoreRef.current = page.nextCursor !== null;
     } catch (err) {
@@ -142,7 +155,7 @@ export default function AdminAuditLogScreen() {
     setLoadingMore(true);
     try {
       const page = await fetchPage(nextCursorRef.current, adminToken);
-      setRows((prev) => [...prev, ...page.rows]);
+      setRows((prev) => mergeAuditRows(prev, page.rows));
       nextCursorRef.current = page.nextCursor;
       hasMoreRef.current = page.nextCursor !== null;
     } catch (err) {

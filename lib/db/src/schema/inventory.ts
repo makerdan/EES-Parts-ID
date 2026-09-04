@@ -39,6 +39,8 @@ export const inventoryTable = pgTable(
     id: serial("id").primaryKey(),
     vendor: text("vendor").notNull(),
     catalog: text("catalog").notNull(),
+    orderPurchase: integer("order_purchase").notNull().default(0),
+    orderQuantity: integer("order_quantity").notNull().default(0),
     description: text("description").notNull().default(""),
     binLocations: text("bin_locations")
       .array()
@@ -167,6 +169,9 @@ export type PdfJobStatus = (typeof PDF_JOB_STATUS)[number];
 
 export const catalogPdfJobTable = pgTable("catalog_pdf_job", {
   id: serial("id").primaryKey(),
+  // Clerk owner for lifecycle cleanup. Nullable for legacy jobs created before
+  // private-upload ownership was recorded.
+  ownerClerkUserId: text("owner_clerk_user_id"),
   vendor: text("vendor").notNull(),
   filename: text("filename").notNull(),
   status: text("status").notNull().default("pending"),

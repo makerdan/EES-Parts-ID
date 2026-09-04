@@ -30,6 +30,7 @@ const mockUpdate = jest.fn(() => ({ set: mockUpdateSet }));
 
 // ── Select-chain mocks ─────────────────────────────────────────────────────────
 const mockSelectWhere = jest.fn();
+const mockSelectLimit = jest.fn();
 const mockSelectFrom = jest.fn(() => ({ where: mockSelectWhere }));
 const mockSelect = jest.fn(() => ({ from: mockSelectFrom }));
 
@@ -84,6 +85,8 @@ jest.mock("../lib/answerCache", () => ({
 
 jest.mock("../lib/objectStorage", () => ({
   uploadCatalogImage: jest.fn(),
+  isPrivateObjectPath: jest.fn((path: string) => path.startsWith("/objects/uploads/private/")),
+  deletePrivateObjects: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("../utils/generateKeywords", () => ({
@@ -96,7 +99,9 @@ jest.mock("../utils/imageResize", () => ({
 }));
 
 jest.mock("../utils/aiHelpers", () => ({
-  estimateImageBytes: jest.fn(),
+  ...(
+    jest.requireActual("../../__tests__/helpers/aiHelpersMock") as typeof import("../../__tests__/helpers/aiHelpersMock")
+  ).createAiHelpersMock(jest.requireActual("../utils/aiHelpers")),
 }));
 
 // ── Imports ────────────────────────────────────────────────────────────────────
@@ -151,7 +156,12 @@ beforeEach(() => {
   // Restore select chain
   mockSelect.mockReturnValue({ from: mockSelectFrom });
   mockSelectFrom.mockReturnValue({ where: mockSelectWhere });
-  mockSelectWhere.mockResolvedValue([]);
+  mockSelectWhere.mockImplementation(() => {
+    const result = Promise.resolve([]);
+    Object.assign(result, { limit: mockSelectLimit });
+    return result;
+  });
+  mockSelectLimit.mockResolvedValue([]);
 
   // Photo route defaults
   (resizeImages as jest.Mock).mockResolvedValue({
@@ -162,14 +172,14 @@ beforeEach(() => {
   (uploadCatalogImage as jest.Mock).mockResolvedValue("https://gcs.example.com/img.jpg");
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /inventory/:id/photo
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/42/photo — upload slot 1", () => {
   it("returns 200 with imageUrl set when GCS upload succeeds", async () => {
-    const fullUrl = "https://gcs.example.com/full.jpg";
-    const thumbUrl = "https://gcs.example.com/thumb.jpg";
+    const fullUrl = "/objects/uploads/private/catalog-images/full.jpg";
+    const thumbUrl = "/objects/uploads/private/catalog-images/thumb.jpg";
     (uploadCatalogImage as jest.Mock)
       .mockResolvedValueOnce(fullUrl)
       .mockResolvedValueOnce(thumbUrl);
@@ -182,16 +192,16 @@ describe("PATCH /api/inventory/42/photo — upload slot 1", () => {
       .send({ imageBase64: SMALL_BASE64, mimeType: "image/jpeg", slot: 1 });
 
     expect(res.status).toBe(200);
-    expect(res.body.imageUrl).toBe(fullUrl);
-    expect(res.body.thumbnailUrl).toBe(thumbUrl);
+    expect(res.body.imageUrl).toBe("/api/inventory/42/photo?slot=1&variant=full");
+    expect(res.body.thumbnailUrl).toBe("/api/inventory/42/photo?slot=1&variant=thumbnail");
     expect(res.body.imageUrl2).toBeNull();
   });
 });
 
 describe("PATCH /api/inventory/42/photo — upload slot 2", () => {
   it("returns 200 with imageUrl2 set when GCS upload succeeds for slot 2", async () => {
-    const full2 = "https://gcs.example.com/full2.jpg";
-    const thumb2 = "https://gcs.example.com/thumb2.jpg";
+    const full2 = "/objects/uploads/private/catalog-images/full2.jpg";
+    const thumb2 = "/objects/uploads/private/catalog-images/thumb2.jpg";
     (uploadCatalogImage as jest.Mock)
       .mockResolvedValueOnce(full2)
       .mockResolvedValueOnce(thumb2);
@@ -204,8 +214,8 @@ describe("PATCH /api/inventory/42/photo — upload slot 2", () => {
       .send({ imageBase64: SMALL_BASE64, mimeType: "image/jpeg", slot: 2 });
 
     expect(res.status).toBe(200);
-    expect(res.body.imageUrl2).toBe(full2);
-    expect(res.body.thumbnailUrl2).toBe(thumb2);
+    expect(res.body.imageUrl2).toBe("/api/inventory/42/photo?slot=2&variant=full");
+    expect(res.body.thumbnailUrl2).toBe("/api/inventory/42/photo?slot=2&variant=thumbnail");
     expect(res.body.imageUrl).toBeNull();
   });
 });
@@ -318,9 +328,9 @@ describe("PATCH /api/inventory/42/photo — server errors", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /inventory/:id/description
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/42/description — valid inputs", () => {
   it("returns 200 for a 500-character description (at the limit)", async () => {
@@ -387,9 +397,9 @@ describe("PATCH /api/inventory/42/description — not found", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /inventory/:id/bins
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/42/bins — normalization", () => {
   it("deduplicates case-insensitively, preserving first-occurrence casing", async () => {
@@ -513,9 +523,9 @@ describe("PATCH /api/inventory/42/bins — not found", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /inventory/:id/dimensions
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/42/dimensions — valid inputs", () => {
   it("returns 200 for a partial update (only length); preserves other fields from DB", async () => {
@@ -584,9 +594,9 @@ describe("PATCH /api/inventory/42/dimensions — not found", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /inventory/:id/keywords
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/42/keywords — validation errors", () => {
   it("returns 400 when keywords is not an array", async () => {

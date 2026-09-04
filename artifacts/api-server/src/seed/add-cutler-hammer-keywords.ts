@@ -12,7 +12,10 @@
  */
 
 import { db, pool } from "@workspace/db";
+import { assertDatabaseExecutionMode } from "@workspace/db/runtime-data-boundary";
 import { sql } from "drizzle-orm";
+
+assertDatabaseExecutionMode("seed");
 
 async function addCutlerHammerKeywords() {
   console.log('Adding "Cutler-Hammer" keyword to BAB-series breakers...');
