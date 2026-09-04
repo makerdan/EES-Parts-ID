@@ -9,5 +9,8 @@
   },
   "dependencies": {
     "openai": "^6.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
   }
 }
