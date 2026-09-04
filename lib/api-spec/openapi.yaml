@@ -131,6 +131,36 @@ paths:
             text/event-stream: {}
 
   /inventory/{id}/photo:
+    get:
+      operationId: getItemPhoto
+      tags: [inventory]
+      summary: Read a private part photo through the authenticated API
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: slot
+          in: query
+          required: true
+          schema:
+            type: integer
+            enum: [1, 2]
+        - name: variant
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [full, thumbnail]
+      responses:
+        "200":
+          description: Private image bytes
+          content:
+            image/jpeg: {}
+            image/png: {}
+        "401": { description: Authentication required }
+        "404": { description: Photo not found }
     patch:
       operationId: uploadItemPhoto
       tags: [inventory]

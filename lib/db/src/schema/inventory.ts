@@ -169,6 +169,9 @@ export type PdfJobStatus = (typeof PDF_JOB_STATUS)[number];
 
 export const catalogPdfJobTable = pgTable("catalog_pdf_job", {
   id: serial("id").primaryKey(),
+  // Clerk owner for lifecycle cleanup. Nullable for legacy jobs created before
+  // private-upload ownership was recorded.
+  ownerClerkUserId: text("owner_clerk_user_id"),
   vendor: text("vendor").notNull(),
   filename: text("filename").notNull(),
   status: text("status").notNull().default("pending"),

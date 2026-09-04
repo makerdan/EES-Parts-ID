@@ -45,6 +45,7 @@ export const ROUTE_ACCESS_MATRIX: ReadonlyArray<RouteAccessEntry> = [
   { method: "POST", path: "/api/inventory/search", access: "approved-user" },
   { method: "GET", path: "/api/inventory/categories", access: "approved-user" },
   { method: "GET", path: "/api/inventory/barcode/:barcode", access: "approved-user" },
+  { method: "GET", path: "/api/inventory/:id/photo", access: "approved-user" },
   { method: "POST", path: "/api/reference/ask", access: "approved-user" },
   { method: "GET", path: "/api/reference/quick-lookups", access: "approved-user" },
   { method: "GET", path: "/api/reference/quick-lookups/:label", access: "approved-user" },

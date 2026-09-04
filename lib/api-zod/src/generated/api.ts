@@ -322,6 +322,21 @@ export const EnrichInventoryResponse = zod.unknown()
 
 
 /**
+ * @summary Read a private part photo through the authenticated API
+ */
+export const GetItemPhotoParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetItemPhotoQueryParams = zod.object({
+  "slot": zod.union([zod.literal(1),zod.literal(2)]),
+  "variant": zod.enum(['full', 'thumbnail'])
+})
+
+export const GetItemPhotoResponse = zod.unknown()
+
+
+/**
  * @summary Upload or remove a part photo (admin)
  */
 export const UploadItemPhotoParams = zod.object({

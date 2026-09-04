@@ -38,6 +38,7 @@ import type {
   EstimateDimensionsBody,
   EstimateDimensionsResponse,
   GetAdminAuditLogParams,
+  GetItemPhotoParams,
   HealthStatus,
   InventoryItem,
   InventoryListResponse,
@@ -541,6 +542,95 @@ export const useEnrichInventory = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getEnrichInventoryMutationOptions(options));
     }
+
+export const getGetItemPhotoUrl = (id: number,
+    params: GetItemPhotoParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/inventory/${id}/photo?${stringifiedParams}` : `/api/inventory/${id}/photo`
+}
+
+/**
+ * @summary Read a private part photo through the authenticated API
+ */
+export const getItemPhoto = async (id: number,
+    params: GetItemPhotoParams, options?: RequestInit): Promise<Blob> => {
+
+  return customFetch<Blob>(getGetItemPhotoUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetItemPhotoQueryKey = (id: number,
+    params?: GetItemPhotoParams,) => {
+    return [
+    `/api/inventory/${id}/photo`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetItemPhotoQueryOptions = <TData = Awaited<ReturnType<typeof getItemPhoto>>, TError = ErrorType<void>>(id: number,
+    params: GetItemPhotoParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getItemPhoto>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetItemPhotoQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getItemPhoto>>> = ({ signal }) => getItemPhoto(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getItemPhoto>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetItemPhotoQueryResult = NonNullable<Awaited<ReturnType<typeof getItemPhoto>>>
+export type GetItemPhotoQueryError = ErrorType<void>
+
+
+/**
+ * @summary Read a private part photo through the authenticated API
+ */
+
+export function useGetItemPhoto<TData = Awaited<ReturnType<typeof getItemPhoto>>, TError = ErrorType<void>>(
+ id: number,
+    params: GetItemPhotoParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getItemPhoto>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetItemPhotoQueryOptions(id,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getUploadItemPhotoUrl = (id: number,) => {
 

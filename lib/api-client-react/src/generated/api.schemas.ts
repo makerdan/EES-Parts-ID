@@ -589,6 +589,27 @@ limit?: number;
 binPrefix?: string;
 };
 
+export type GetItemPhotoParams = {
+slot: GetItemPhotoSlot;
+variant: GetItemPhotoVariant;
+};
+
+export type GetItemPhotoSlot = typeof GetItemPhotoSlot[keyof typeof GetItemPhotoSlot];
+
+
+export const GetItemPhotoSlot = {
+  NUMBER_1: 1,
+  NUMBER_2: 2,
+} as const;
+
+export type GetItemPhotoVariant = typeof GetItemPhotoVariant[keyof typeof GetItemPhotoVariant];
+
+
+export const GetItemPhotoVariant = {
+  full: 'full',
+  thumbnail: 'thumbnail',
+} as const;
+
 export type LookupDictionaryParams = {
 term: string;
 };

@@ -8,6 +8,7 @@ not inferred from this file.
 | Canonical local check | Remote owner / exact command | Coverage and decision | Event scope | Evidence |
 |---|---|---|---|---|
 | gate-guard | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tracked workflow |
+| public-repository-boundary | `CI / required` → `pnpm run test-standard-plus` | direct portable boundary scan; historical findings require owner-led remediation | PR, merge queue, main push, manual | inferred from tier manifest |
 | plan-gate-fix | none | local-only: task-plan archive and task provenance are not available in an untrusted PR checkout | local task validation | intentional local-only |
 | plan-gate-check | none | local-only: task-plan tier ceiling is enforced by Replit task validation | local task validation | intentional local-only |
 | plan-gate-stubs | none | local-only: task-plan archive inspection is intentionally excluded | local task validation | intentional local-only |

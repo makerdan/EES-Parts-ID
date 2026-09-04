@@ -101,13 +101,18 @@ async function expireSession(sessionId: string): Promise<void> {
   await cleanupCatalogPdfUploadSession(sessionId);
 }
 
-async function cleanupCatalogPdfUploadSession(sessionId: string): Promise<void> {
+async function cleanupCatalogPdfUploadSession(
+  sessionId: string,
+  removePartMetadata = true,
+): Promise<void> {
   const parts = await db
     .select({ partIndex: catalogPdfUploadPartTable.partIndex })
     .from(catalogPdfUploadPartTable)
     .where(eq(catalogPdfUploadPartTable.sessionId, sessionId));
   await Promise.all(parts.map((part) => deleteCatalogPdfPart(sessionId, part.partIndex)));
-  await db.delete(catalogPdfUploadPartTable).where(eq(catalogPdfUploadPartTable.sessionId, sessionId));
+  if (removePartMetadata) {
+    await db.delete(catalogPdfUploadPartTable).where(eq(catalogPdfUploadPartTable.sessionId, sessionId));
+  }
   await db
     .update(catalogPdfUploadSessionTable)
     .set({ cleanupAt: new Date(), updatedAt: new Date() })
@@ -344,6 +349,7 @@ router.post("/catalog-pdf/upload-sessions/:sessionId/complete", requireAdminAuth
         return { kind: "bad-pdf" as const };
       }
       const [job] = await tx.insert(catalogPdfJobTable).values({
+        ownerClerkUserId: locked.ownerClerkUserId,
         vendor: locked.vendor,
         filename: locked.filename,
         status: "pending",
@@ -367,11 +373,25 @@ router.post("/catalog-pdf/upload-sessions/:sessionId/complete", requireAdminAuth
       missingPartIndices: transition.missing,
       requestId: requestId(res),
     });
-    if (transition.kind === "bad-file") return void fail(res, 422, "WHOLE_FILE_CHECKSUM_MISMATCH", "The staged PDF failed whole-file verification.");
-    if (transition.kind === "bad-pdf") return void fail(res, 422, "INVALID_PDF", "The staged file is not a readable PDF.");
+    if (transition.kind === "bad-file") {
+      await cleanupCatalogPdfUploadSession(session.id);
+      return void fail(res, 422, "WHOLE_FILE_CHECKSUM_MISMATCH", "The staged PDF failed whole-file verification.");
+    }
+    if (transition.kind === "bad-pdf") {
+      await cleanupCatalogPdfUploadSession(session.id);
+      return void fail(res, 422, "INVALID_PDF", "The staged file is not a readable PDF.");
+    }
     if (transition.kind === "terminal" || transition.kind === "missing") return void fail(res, 409, "UPLOAD_SESSION_TERMINAL", "Upload session is no longer open.");
-    if (!transition.jobId) return void fail(res, 500, "PROCESSING_JOB_CREATE_FAILED", "Could not create the catalog processing job.");
-    if ("pdf" in transition && transition.pdf) launchCatalogPdfBuffer(transition.jobId, transition.pdf, session.vendor);
+    if (!transition.jobId) {
+      await cleanupCatalogPdfUploadSession(session.id);
+      return void fail(res, 500, "PROCESSING_JOB_CREATE_FAILED", "Could not create the catalog processing job.");
+    }
+    if ("pdf" in transition && transition.pdf) {
+      launchCatalogPdfBuffer(transition.jobId, transition.pdf, session.vendor);
+      // The worker owns the assembled Buffer now, so remove source bytes while
+      // retaining the completed manifest's metadata for status/history reads.
+      await cleanupCatalogPdfUploadSession(session.id, false);
+    }
     res.json({ sessionId: session.id, status: "completed", jobId: String(transition.jobId), processingJobId: String(transition.jobId) });
   } catch (err) {
     res.locals.logger?.error?.({ err, sessionId: session.id, jobId }, "[catalog-pdf-upload] completion failed");
@@ -419,6 +439,7 @@ export async function recoverCatalogPdfUploadSessions(): Promise<void> {
     sessionId: catalogPdfUploadSessionTable.id,
     jobId: catalogPdfUploadSessionTable.processingJobId,
     vendor: catalogPdfUploadSessionTable.vendor,
+    cleanupAt: catalogPdfUploadSessionTable.cleanupAt,
   }).from(catalogPdfUploadSessionTable)
     .innerJoin(catalogPdfJobTable, eq(catalogPdfJobTable.id, catalogPdfUploadSessionTable.processingJobId))
     .where(and(
@@ -427,6 +448,10 @@ export async function recoverCatalogPdfUploadSessions(): Promise<void> {
     ));
   for (const row of pending) {
     if (!row.jobId) continue;
+    // A completed session's source bytes are removed after the worker is
+    // handed the assembled buffer. Its retained part rows are metadata only;
+    // never attempt to read those already-cleaned objects after a restart.
+    if (row.cleanupAt) continue;
     const parts = await db.select().from(catalogPdfUploadPartTable)
       .where(eq(catalogPdfUploadPartTable.sessionId, row.sessionId))
       .orderBy(asc(catalogPdfUploadPartTable.partIndex));

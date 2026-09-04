@@ -25,7 +25,7 @@ import { and, desc, eq, inArray, isNull,lt, or, sql } from "drizzle-orm";
 import { Router } from "express";
 
 import { getLogger, logger } from "../lib/logger";
-import { uploadCatalogImage } from "../lib/objectStorage";
+import { deletePrivateObjects, uploadCatalogImage } from "../lib/objectStorage";
 import { PoeBotChainExhaustedError } from "../lib/poeBot";
 import { catalogPdfUploadLimiter } from "../lib/rateLimiter";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
@@ -77,6 +77,16 @@ setInterval(() => {
 }, 10 * 60 * 1000).unref();
 
 const router = Router();
+
+async function cleanupPrivateObjects(
+  paths: Array<string | null | undefined>,
+): Promise<void> {
+  // Isolated route tests may provide a reduced storage mock. Production always
+  // has the helper, while this guard keeps those tests focused on DB behavior.
+  if (typeof deletePrivateObjects === "function") {
+    await deletePrivateObjects(paths);
+  }
+}
 
 // ── Image helper ──────────────────────────────────────────────────────────────
 type PageCtx = {
@@ -278,6 +288,20 @@ export async function shutdownCatalogPdfLoops(timeoutMs = 10_000): Promise<void>
 // mid-run so partial writes never remain visible to clients.
 async function revertSessionItems(jobId: number, log: typeof logger = logger): Promise<void> {
   try {
+    const rows = await db
+      .select({
+        id: inventoryTable.id,
+        imageUrl: inventoryTable.imageUrl,
+        imageUrl2: inventoryTable.imageUrl2,
+      })
+      .from(inventoryTable)
+      .where(
+        and(
+          eq(inventoryTable.catalogPdfJobId, jobId),
+          sql`${inventoryTable.imageSource} = 'pdf_extraction'`,
+        ),
+      );
+
     await db
       .update(inventoryTable)
       .set({
@@ -296,6 +320,9 @@ async function revertSessionItems(jobId: number, log: typeof logger = logger): P
           sql`${inventoryTable.imageSource} = 'pdf_extraction'`,
         ),
       );
+    await cleanupPrivateObjects(
+      rows.flatMap((row) => [row.imageUrl, row.imageUrl2]),
+    );
   } catch (revertErr) {
     log.error({ err: revertErr, jobId }, "[catalog-pdf] Failed to revert session items on job failure");
   }
@@ -446,6 +473,8 @@ async function processPdfPages(
           id: inventoryTable.id,
           description: inventoryTable.description,
           imageSource: inventoryTable.imageSource,
+          imageUrl: inventoryTable.imageUrl,
+          imageUrl2: inventoryTable.imageUrl2,
         })
         .from(inventoryTable)
         .where(eq(inventoryTable.id, match.inventoryId))
@@ -485,7 +514,7 @@ async function processPdfPages(
       }
 
       const incomingConfidence = match.similarityScore * entry.confidence;
-      await db
+      const [updated] = await db
         .update(inventoryTable)
         .set({
           description: entry.description || existing.description,
@@ -505,7 +534,16 @@ async function processPdfPages(
               lt(inventoryTable.imageConfidence, incomingConfidence),
             ),
           ),
-        );
+        )
+        .returning({ id: inventoryTable.id });
+
+      if (!updated) {
+        // A lower-confidence result can lose the conditional update. Do not
+        // leave newly generated private images orphaned in that case.
+        await cleanupPrivateObjects([imageUrl, imageUrl2]).catch(() => {});
+      } else {
+        await cleanupPrivateObjects([existing.imageUrl, existing.imageUrl2]).catch(() => {});
+      }
 
       if (imageUrl) imagesMatched++;
       matchedParts++;
@@ -704,6 +742,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
       const [parentRow] = await db
         .insert(catalogPdfJobTable)
         .values({
+          ownerClerkUserId: adminUserId,
           vendor: normalizedVendor,
           filename: filename.trim(),
           status: "pending",
@@ -776,6 +815,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   // rows; we fetch the existing child job and return it to the client so it can
   // resume polling without creating a duplicate.
   const insertValues = {
+    ownerClerkUserId: adminUserId,
     vendor: normalizedVendor,
     filename: filename.trim(),
     status: "pending" as const,

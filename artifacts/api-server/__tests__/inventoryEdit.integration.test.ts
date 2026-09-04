@@ -48,9 +48,13 @@ jest.mock("../src/utils/imageResize", () => ({
   }),
 }));
 
-jest.mock("../src/utils/aiHelpers", () => ({
-  estimateImageBytes: jest.fn().mockReturnValue(1024),
-}));
+jest.mock("../src/utils/aiHelpers", () => {
+  const actual = jest.requireActual("../src/utils/aiHelpers");
+  return {
+    ...actual,
+    estimateImageBytes: jest.fn().mockReturnValue(1024),
+  };
+});
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
