@@ -2,12 +2,12 @@ diff --git a/dist/index.cjs b/dist/index.cjs
 index f563aee..461fefb 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -2,6 +2,7 @@
+@@ -2,5 +2,7 @@
  
  Object.defineProperty(exports, '__esModule', { value: true });
  
 +var fs = require('node:fs');
- 
++
  // lib/types/utils.ts
  var decoder = new TextDecoder();
 @@ -164,6 +165,9 @@ var HEIF = {

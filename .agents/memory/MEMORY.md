@@ -60,7 +60,7 @@
 - [Mapped Jest context mocks](mapped-jest-context-mocks.md) — when a path is mapped to a manual mock, configure that exported mock instance; a separate local spy may not be consumed by the screen.
 - [Orval barrel append behavior](orval-barrel-append.md) — normalize managed barrel exports because newer Orval runs can append duplicates instead of replacing them.
 - [ESLint import sort order](eslint-import-sort-order.md) — use fix-dry-run output when simple-import-sort rejects valid but noncanonical package/specifier ordering.
-- [Patch published packages instead of vendoring build output](pnpm-patched-published-package.md) — repo-wide dist ignores can silently omit runtime files from directory overrides; patch a pinned registry tarball instead.
+- [Patched published packages](pnpm-patched-published-package.md) — use pinned registry tarballs, validate patch context against pristine files, and prove it with a frozen install.
 - [GitHub Actions token PR creation policy](github-actions-token-pr-creation.md) — disabling workflow-token PR approval also blocks PR creation; publish a reviewable automation branch instead.
 - [DB fixture ownership watermarks](db-fixture-ownership-watermarks.md) — identify async DB fixtures with a DB-generated ID watermark, not an app-clock timestamp that can drift from the database clock.
 - [Runtime data boundary](runtime-data-boundary.md) — require explicit database modes, reject production in tooling, and delay database imports until startup validation runs.
