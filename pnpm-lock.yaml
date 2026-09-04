@@ -560,6 +560,9 @@ importers:
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.9.4
       '@types/react':
         specifier: ~19.1.10
         version: 19.1.17
@@ -813,12 +816,20 @@ importers:
       p-retry:
         specifier: ^7.1.1
         version: 7.1.1
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.9.4
 
   lib/integrations-poe-server:
     dependencies:
       openai:
         specifier: ^6.27.0
         version: 6.35.0(ws@8.21.0)(zod@4.4.3)
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.9.4
 
   lib/zone-validation: {}
 
