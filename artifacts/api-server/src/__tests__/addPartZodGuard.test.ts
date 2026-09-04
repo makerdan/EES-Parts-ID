@@ -92,13 +92,14 @@ jest.mock("../lib/objectStorage", () => ({
 }));
 
 // ── Image helpers mocks ────────────────────────────────────────────────────────
-jest.mock("../utils/aiHelpers", () => {
-  const actual = jest.requireActual("../utils/aiHelpers");
-  return {
-    ...actual,
-    estimateImageBytes: jest.fn().mockReturnValue(1024),
-  };
-});
+jest.mock("../utils/aiHelpers", () => ({
+  ...(
+    jest.requireActual("../../__tests__/helpers/aiHelpersMock") as typeof import("../../__tests__/helpers/aiHelpersMock")
+  ).createAiHelpersMock(
+    jest.requireActual("../utils/aiHelpers"),
+    { estimateImageBytes: 1024 },
+  ),
+}));
 
 jest.mock("../utils/imageResize", () => ({
   resizeImages: jest.fn().mockResolvedValue({

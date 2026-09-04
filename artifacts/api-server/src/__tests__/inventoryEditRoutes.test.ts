@@ -98,13 +98,11 @@ jest.mock("../utils/imageResize", () => ({
   resizeImages: jest.fn(),
 }));
 
-jest.mock("../utils/aiHelpers", () => {
-  const actual = jest.requireActual("../utils/aiHelpers");
-  return {
-    ...actual,
-    estimateImageBytes: jest.fn(),
-  };
-});
+jest.mock("../utils/aiHelpers", () => ({
+  ...(
+    jest.requireActual("../../__tests__/helpers/aiHelpersMock") as typeof import("../../__tests__/helpers/aiHelpersMock")
+  ).createAiHelpersMock(jest.requireActual("../utils/aiHelpers")),
+}));
 
 // ── Imports ────────────────────────────────────────────────────────────────────
 import supertest from "supertest";
@@ -174,9 +172,9 @@ beforeEach(() => {
   (uploadCatalogImage as jest.Mock).mockResolvedValue("https://gcs.example.com/img.jpg");
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /inventory/:id/photo
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/42/photo — upload slot 1", () => {
   it("returns 200 with imageUrl set when GCS upload succeeds", async () => {
@@ -330,9 +328,9 @@ describe("PATCH /api/inventory/42/photo — server errors", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /inventory/:id/description
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/42/description — valid inputs", () => {
   it("returns 200 for a 500-character description (at the limit)", async () => {
@@ -399,9 +397,9 @@ describe("PATCH /api/inventory/42/description — not found", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /inventory/:id/bins
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/42/bins — normalization", () => {
   it("deduplicates case-insensitively, preserving first-occurrence casing", async () => {
@@ -525,9 +523,9 @@ describe("PATCH /api/inventory/42/bins — not found", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /inventory/:id/dimensions
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/42/dimensions — valid inputs", () => {
   it("returns 200 for a partial update (only length); preserves other fields from DB", async () => {
@@ -596,9 +594,9 @@ describe("PATCH /api/inventory/42/dimensions — not found", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /inventory/:id/keywords
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/42/keywords — validation errors", () => {
   it("returns 400 when keywords is not an array", async () => {
