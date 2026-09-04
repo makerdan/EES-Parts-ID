@@ -62,6 +62,7 @@
 - [ESLint import sort order](eslint-import-sort-order.md) — use fix-dry-run output when simple-import-sort rejects valid but noncanonical package/specifier ordering.
 - [Patch published packages instead of vendoring build output](pnpm-patched-published-package.md) — repo-wide dist ignores can silently omit runtime files from directory overrides; patch a pinned registry tarball instead.
 - [GitHub Actions token PR creation policy](github-actions-token-pr-creation.md) — disabling workflow-token PR approval also blocks PR creation; publish a reviewable automation branch instead.
+- [Exact-tree GitHub snapshot transport](github-exact-tree-snapshot-transport.md) — when raw blob API uploads are blocked, use a temporary shallow clone and verify tree identity before pushing.
 - [DB fixture ownership watermarks](db-fixture-ownership-watermarks.md) — identify async DB fixtures with a DB-generated ID watermark, not an app-clock timestamp that can drift from the database clock.
 - [Runtime data boundary](runtime-data-boundary.md) — require explicit database modes, reject production in tooling, and delay database imports until startup validation runs.
 - [API auth before body parsing](api-auth-before-body-parsing.md) — method-aware public route matching and pre-parser auth prevent write-prefix leaks and unauthenticated upload buffering.
