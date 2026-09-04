@@ -932,7 +932,6 @@ export const AskReferenceResponse = zod.unknown()
  */
 export const ListWarehouseZonesResponse = zod.object({
   "zones": zod.array(zod.object({
-  "id": zod.number(),
   "aisleId": zod.string(),
   "sectionNum": zod.number().nullable(),
   "isInventory": zod.boolean(),
@@ -940,10 +939,8 @@ export const ListWarehouseZonesResponse = zod.object({
   "svgY": zod.number(),
   "svgWidth": zod.number(),
   "svgHeight": zod.number(),
-  "sortOrder": zod.number(),
-  "createdAt": zod.coerce.date(),
-  "updatedAt": zod.coerce.date()
-}))
+  "sortOrder": zod.number()
+}).describe('Non-sensitive geometry required to render a warehouse zone.'))
 })
 
 
@@ -978,6 +975,21 @@ export const CreateWarehouseZoneResponse = zod.object({
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
+})
+
+
+/**
+ * Returns only the SVG and world coordinates needed to align the public warehouse layout.
+ * @summary List public warehouse map calibration anchors
+ */
+export const ListPublicMapAnchorsResponse = zod.object({
+  "anchors": zod.array(zod.object({
+  "name": zod.string(),
+  "svgX": zod.number(),
+  "svgY": zod.number(),
+  "worldX": zod.number(),
+  "worldY": zod.number()
+}).describe('Non-sensitive coordinates required to align warehouse zone geometry.'))
 })
 
 
@@ -1032,7 +1044,7 @@ export const DeleteWarehouseZoneResponse = zod.object({
 
 
 /**
- * Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Readable by all approved users. Defaults to identity (0, 0, 1) when never calibrated.
+ * Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Public read. Defaults to identity (0, 0, 1) when never calibrated.
  * @summary Get the global zone-layer alignment offset
  */
 export const getZoneAlignmentResponseTranslateXMin = -10000;

@@ -20,6 +20,7 @@ jest.mock("@google-cloud/storage", () => ({
 
 import {
   deletePrivateObjects,
+  isPublicFloorPlanObjectPath,
   isPrivateObjectPath,
   readFloorPlanSvg,
   uploadCatalogImage,
@@ -42,6 +43,8 @@ describe("private object storage policy", () => {
     expect(isPrivateObjectPath("/objects/uploads/catalog-images/legacy.jpg")).toBe(true);
     expect(isPrivateObjectPath("/objects/uploads/private/catalog-pdf-staging/session/0.part")).toBe(true);
     expect(isPrivateObjectPath("/objects/uploads/floor-plan/warehouse-map.svg")).toBe(false);
+    expect(isPublicFloorPlanObjectPath("/objects/uploads/public/floor-plan/warehouse-map.svg")).toBe(true);
+    expect(isPublicFloorPlanObjectPath("/objects/uploads/private/catalog-images/private.jpg")).toBe(false);
     expect(isPrivateObjectPath("/objects/uploads/private/../floor-plan/warehouse-map.svg")).toBe(false);
     expect(isPrivateObjectPath("https://storage.example/private.jpg")).toBe(false);
   });

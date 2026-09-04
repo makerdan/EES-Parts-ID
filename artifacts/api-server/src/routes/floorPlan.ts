@@ -1,9 +1,9 @@
 /**
  * Floor Plan routes:
- *   GET  /api/floor-plan/meta              — public, returns { hash, updatedAt } or 404
+ *   GET  /api/floor-plan/meta              — public, returns { hash }
  *   GET  /api/floor-plan/svg               — public, streams the stored SVG bytes or 404
  *   GET  /api/floor-plan/tiles/:z/:x/:y.png — public, returns a PNG tile (cached to disk)
- *   POST /api/floor-plan/tiles/warmup      — public, async-generates z0–z2 tiles (202)
+ *   POST /api/floor-plan/tiles/warmup      — approved-user, async-generates z0–z2 tiles (202)
  *   POST /api/admin/floor-plan             — admin-only, accepts { svg: string }, uploads to GCS
  */
 
@@ -284,15 +284,17 @@ router.get("/floor-plan/meta", async (_req, res) => {
   try {
     const meta = await getLatestMeta();
     // When a real floor plan has been uploaded AND object storage is configured,
-    // return its hash and upload timestamp.
+    // return only the content hash needed for client cache validation.
     if (meta && process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID) {
-      res.json({ hash: meta.hash, updatedAt: meta.uploadedAt });
+      res.set("Cache-Control", "public, max-age=300, s-maxage=300, stale-while-revalidate=60");
+      res.json({ hash: meta.hash });
       return;
     }
     // Fall back to the bundled SVG so the client always has a floor plan to
     // display even before an admin uploads one or when object storage is absent.
     const hash = getBundledSvgHash();
-    res.json({ hash, updatedAt: new Date(0).toISOString() });
+    res.set("Cache-Control", "public, max-age=60, s-maxage=60, stale-while-revalidate=30");
+    res.json({ hash });
   } catch {
     res.status(500).json({ error: "Failed to fetch floor plan metadata" });
   }
@@ -366,15 +368,30 @@ router.get("/floor-plan/tiles/:z/:x/:y", async (req, res) => {
     }
 
     const meta = await getLatestMeta();
-    if (!meta) {
-      res.status(404).json({ error: "No floor plan uploaded yet" });
-      return;
+    let svgBuffer: Buffer;
+    let svgHash: string;
+    if (meta && process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID) {
+      try {
+        svgBuffer = await readFloorPlanSvg(meta.objectPath);
+        svgHash = meta.hash;
+      } catch (storageErr) {
+        const e = storageErr as { code?: number; message?: string };
+        logger.warn(
+          { errCode: e.code, errMsg: e.message },
+          "floor-plan/tiles storage read failed — falling back to bundled SVG",
+        );
+        svgBuffer = getBundledSvg();
+        svgHash = getBundledSvgHash();
+      }
+    } else {
+      svgBuffer = getBundledSvg();
+      svgHash = getBundledSvgHash();
     }
 
     // ETag is stable for the lifetime of a given (svgHash, z, x, y) tuple.
     // Changing the floor plan produces a new hash and therefore a new ETag,
     // which forces CDN/proxy to fetch the updated tile.
-    const etag = `"${meta.hash}-${z}-${x}-${y}"`;
+    const etag = `"${svgHash}-${z}-${x}-${y}"`;
     res.set("ETag", etag);
     res.set("Cache-Control", "public, max-age=86400");
 
@@ -383,8 +400,7 @@ router.get("/floor-plan/tiles/:z/:x/:y", async (req, res) => {
       return;
     }
 
-    const svgBuffer = await readFloorPlanSvg(meta.objectPath);
-    const pngBuffer = await generateTile(svgBuffer, meta.hash, z, x, y);
+    const pngBuffer = await generateTile(svgBuffer, svgHash, z, x, y);
 
     res.set("Content-Type", "image/png");
     res.send(pngBuffer);

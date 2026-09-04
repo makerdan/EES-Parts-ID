@@ -1,5 +1,6 @@
 import {
   CreateWarehouseZoneBody,
+  ListPublicMapAnchorsResponse,
   ListWarehouseZonesResponse,
   UpdateWarehouseZoneBody,
   UpdateWarehouseZoneResponse,
@@ -19,26 +20,47 @@ function normalizeAisleId(v: string): string {
 }
 
 const router = Router();
+const PUBLIC_LAYOUT_CACHE_CONTROL =
+  "public, max-age=300, s-maxage=300, stale-while-revalidate=60";
 
 // GET /warehouse-zones
 router.get("/", async (_req, res) => {
   try {
     const zones = await db
-      .select()
+      .select({
+        aisleId: warehouseZoneTable.aisleId,
+        sectionNum: warehouseZoneTable.sectionNum,
+        isInventory: warehouseZoneTable.isInventory,
+        svgX: warehouseZoneTable.svgX,
+        svgY: warehouseZoneTable.svgY,
+        svgWidth: warehouseZoneTable.svgWidth,
+        svgHeight: warehouseZoneTable.svgHeight,
+        sortOrder: warehouseZoneTable.sortOrder,
+      })
       .from(warehouseZoneTable)
       .orderBy(asc(warehouseZoneTable.sortOrder), asc(warehouseZoneTable.aisleId));
+    res.set("Cache-Control", PUBLIC_LAYOUT_CACHE_CONTROL);
     res.json(ListWarehouseZonesResponse.parse({ zones }));
   } catch {
     res.status(500).json({ error: "Failed to list zones" });
   }
 });
 
-// GET /warehouse-zones/anchors — public read (all authenticated users)
+// GET /warehouse-zones/anchors — public read
 // Returns the saved anchor points used to compute the affine zone-overlay transform.
 router.get("/anchors", async (_req, res) => {
   try {
-    const rows = await db.select().from(mapAnchorPointsTable);
-    res.json({ anchors: rows });
+    const anchors = await db
+      .select({
+        name: mapAnchorPointsTable.name,
+        svgX: mapAnchorPointsTable.svgX,
+        svgY: mapAnchorPointsTable.svgY,
+        worldX: mapAnchorPointsTable.worldX,
+        worldY: mapAnchorPointsTable.worldY,
+      })
+      .from(mapAnchorPointsTable);
+    res.set("Cache-Control", PUBLIC_LAYOUT_CACHE_CONTROL);
+    res.json(ListPublicMapAnchorsResponse.parse({ anchors }));
   } catch {
     res.status(500).json({ error: "Failed to list map anchors" });
   }
@@ -127,8 +149,8 @@ function isAlignmentInRange(x: number, y: number, s: number): boolean {
 
 // GET /warehouse-zones/alignment
 // Returns the global zone-layer calibration offset (translate + uniform scale)
-// applied uniformly to every zone overlay on the Map tab. Readable by all
-// approved users (no admin guard). Defaults to identity (0, 0, 1) when the
+// applied uniformly to every zone overlay on the Map tab. Public read. Defaults
+// to identity (0, 0, 1) when the
 // admin_preferences row is absent or the columns were never set.
 //
 // If the stored value is out of the allowed range (scale 0.1–5, translate ±10000)
@@ -159,10 +181,12 @@ router.get("/alignment", async (_req, res) => {
         `Re-save the calibration in the Zone Editor to fix this.`,
       );
       res.set("X-Alignment-Warning", "stored-out-of-range");
+      res.set("Cache-Control", PUBLIC_LAYOUT_CACHE_CONTROL);
       res.json({ translateX: 0, translateY: 0, scale: 1 });
       return;
     }
 
+    res.set("Cache-Control", PUBLIC_LAYOUT_CACHE_CONTROL);
     res.json({ translateX: x, translateY: y, scale: s });
   } catch {
     res.status(500).json({ error: "Failed to fetch zone alignment" });

@@ -51,10 +51,10 @@ export const ROUTE_ACCESS_MATRIX: ReadonlyArray<RouteAccessEntry> = [
   { method: "GET", path: "/api/reference/quick-lookups/:label", access: "approved-user" },
   { method: "POST", path: "/api/track/screen-view", access: "approved-user" },
   { method: "DELETE", path: "/api/user/me", access: "approved-user" },
-  { method: "GET", path: "/api/warehouse-zones", access: "approved-user" },
-  { method: "GET", path: "/api/warehouse-zones/anchors", access: "approved-user" },
+  { method: "GET", path: "/api/warehouse-zones", access: "public" },
+  { method: "GET", path: "/api/warehouse-zones/anchors", access: "public" },
   { method: "GET", path: "/api/warehouse-zones/coverage", access: "approved-user" },
-  { method: "GET", path: "/api/warehouse-zones/alignment", access: "approved-user" },
+  { method: "GET", path: "/api/warehouse-zones/alignment", access: "public" },
 
   // Admin self-check intentionally remains callable by any approved user.
   { method: "GET", path: "/api/admin/me", access: "approved-user" },

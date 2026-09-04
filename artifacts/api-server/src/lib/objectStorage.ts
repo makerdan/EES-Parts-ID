@@ -53,6 +53,7 @@ const gcs = new Storage({
 const PRIVATE_NAMESPACE = "private";
 const CATALOG_IMAGE_NAMESPACE = `${PRIVATE_NAMESPACE}/catalog-images`;
 const CATALOG_PDF_STAGING_NAMESPACE = `${PRIVATE_NAMESPACE}/catalog-pdf-staging`;
+const PUBLIC_FLOOR_PLAN_NAMESPACE = "public/floor-plan";
 
 function privateObjectDir(): string {
   return (process.env["PRIVATE_OBJECT_DIR"] ?? "uploads").replace(/^\/+|\/+$/g, "");
@@ -93,14 +94,14 @@ export function isPrivateObjectPath(objectPath: string): boolean {
   );
 }
 
-function isPublicFloorPlanObjectPath(objectPath: string): boolean {
+export function isPublicFloorPlanObjectPath(objectPath: string): boolean {
   let gcsPath: string;
   try {
     gcsPath = objectPathToGcsPath(objectPath);
   } catch {
     return false;
   }
-  return gcsPath === `${privateObjectDir()}/floor-plan/warehouse-map.svg`;
+  return gcsPath === `${privateObjectDir()}/${PUBLIC_FLOOR_PLAN_NAMESPACE}/warehouse-map.svg`;
 }
 
 function requirePrivateObjectPath(objectPath: string): string {
@@ -146,15 +147,14 @@ export async function uploadCatalogImage(
 }
 
 /**
- * Upload a floor plan SVG to GCS under a deterministic well-known path.
+ * Upload a floor plan SVG to GCS under the dedicated public layout namespace.
  * Overwrites any previous upload. Returns the serving object path.
  */
 export async function uploadFloorPlanSvg(svgContent: string): Promise<string> {
   const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
   if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
 
-  const privateDir = process.env["PRIVATE_OBJECT_DIR"] ?? "uploads";
-  const fullPath = `${privateDir}/floor-plan/warehouse-map.svg`;
+  const fullPath = `${privateObjectDir()}/${PUBLIC_FLOOR_PLAN_NAMESPACE}/warehouse-map.svg`;
 
   const bucket = gcs.bucket(bucketId);
   const file = bucket.file(fullPath);

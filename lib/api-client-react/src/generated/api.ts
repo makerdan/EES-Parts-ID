@@ -44,6 +44,8 @@ import type {
   InventoryListResponse,
   ListInventoryParams,
   LookupDictionaryParams,
+  PublicMapAnchorListResponse,
+  PublicWarehouseZoneListResponse,
   ResetAdminAiRoutesBody,
   SearchInventoryBody,
   SearchInventoryResponse,
@@ -59,7 +61,6 @@ import type {
   UploadPhotoResponse,
   UpsertInventoryBody,
   UpsertInventoryResponse,
-  WarehouseZoneListResponse,
   WarehouseZoneResponse,
   ZoneAlignment
 } from './api.schemas';
@@ -1806,9 +1807,9 @@ export const getListWarehouseZonesUrl = () => {
 /**
  * @summary List all warehouse zone overlays
  */
-export const listWarehouseZones = async ( options?: RequestInit): Promise<WarehouseZoneListResponse> => {
+export const listWarehouseZones = async ( options?: RequestInit): Promise<PublicWarehouseZoneListResponse> => {
 
-  return customFetch<WarehouseZoneListResponse>(getListWarehouseZonesUrl(),
+  return customFetch<PublicWarehouseZoneListResponse>(getListWarehouseZonesUrl(),
   {
     ...options,
     method: 'GET'
@@ -1942,6 +1943,84 @@ export const useCreateWarehouseZone = <TError = ErrorType<void>,
       > => {
       return useMutation(getCreateWarehouseZoneMutationOptions(options));
     }
+
+export const getListPublicMapAnchorsUrl = () => {
+
+
+
+
+  return `/api/warehouse-zones/anchors`
+}
+
+/**
+ * Returns only the SVG and world coordinates needed to align the public warehouse layout.
+ * @summary List public warehouse map calibration anchors
+ */
+export const listPublicMapAnchors = async ( options?: RequestInit): Promise<PublicMapAnchorListResponse> => {
+
+  return customFetch<PublicMapAnchorListResponse>(getListPublicMapAnchorsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListPublicMapAnchorsQueryKey = () => {
+    return [
+    `/api/warehouse-zones/anchors`
+    ] as const;
+    }
+
+
+export const getListPublicMapAnchorsQueryOptions = <TData = Awaited<ReturnType<typeof listPublicMapAnchors>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listPublicMapAnchors>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPublicMapAnchorsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPublicMapAnchors>>> = ({ signal }) => listPublicMapAnchors({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPublicMapAnchors>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListPublicMapAnchorsQueryResult = NonNullable<Awaited<ReturnType<typeof listPublicMapAnchors>>>
+export type ListPublicMapAnchorsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List public warehouse map calibration anchors
+ */
+
+export function useListPublicMapAnchors<TData = Awaited<ReturnType<typeof listPublicMapAnchors>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listPublicMapAnchors>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListPublicMapAnchorsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getUpdateWarehouseZoneUrl = (id: number,) => {
 
@@ -2095,7 +2174,7 @@ export const getGetZoneAlignmentUrl = () => {
 }
 
 /**
- * Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Readable by all approved users. Defaults to identity (0, 0, 1) when never calibrated.
+ * Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Public read. Defaults to identity (0, 0, 1) when never calibrated.
  * @summary Get the global zone-layer alignment offset
  */
 export const getZoneAlignment = async ( options?: RequestInit): Promise<ZoneAlignment> => {

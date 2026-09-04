@@ -555,11 +555,11 @@ paths:
       summary: List all warehouse zone overlays
       responses:
         "200":
-          description: List of warehouse zones
+          description: Public warehouse layout geometry
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WarehouseZoneListResponse"
+                $ref: "#/components/schemas/PublicWarehouseZoneListResponse"
     post:
       operationId: createWarehouseZone
       tags: [inventory]
@@ -579,6 +579,20 @@ paths:
                 $ref: "#/components/schemas/WarehouseZoneResponse"
         "401":
           description: Admin token required
+
+  /warehouse-zones/anchors:
+    get:
+      operationId: listPublicMapAnchors
+      tags: [inventory]
+      summary: List public warehouse map calibration anchors
+      description: Returns only the SVG and world coordinates needed to align the public warehouse layout.
+      responses:
+        "200":
+          description: Public map anchor points
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicMapAnchorListResponse"
 
   /warehouse-zones/{id}:
     patch:
@@ -640,7 +654,7 @@ paths:
       operationId: getZoneAlignment
       tags: [inventory]
       summary: Get the global zone-layer alignment offset
-      description: Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Readable by all approved users. Defaults to identity (0, 0, 1) when never calibrated.
+      description: Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Public read. Defaults to identity (0, 0, 1) when never calibrated.
       responses:
         "200":
           description: Current zone-layer alignment
@@ -1540,6 +1554,78 @@ components:
         - manufacturerVerified
         - summary
         - results
+
+    PublicWarehouseZoneItem:
+      type: object
+      description: Non-sensitive geometry required to render a warehouse zone.
+      properties:
+        aisleId:
+          type: string
+        sectionNum:
+          type: integer
+          nullable: true
+        isInventory:
+          type: boolean
+        svgX:
+          type: number
+        svgY:
+          type: number
+        svgWidth:
+          type: number
+        svgHeight:
+          type: number
+        sortOrder:
+          type: integer
+      required:
+        - aisleId
+        - sectionNum
+        - isInventory
+        - svgX
+        - svgY
+        - svgWidth
+        - svgHeight
+        - sortOrder
+
+    PublicWarehouseZoneListResponse:
+      type: object
+      properties:
+        zones:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicWarehouseZoneItem"
+      required:
+        - zones
+
+    PublicMapAnchorItem:
+      type: object
+      description: Non-sensitive coordinates required to align warehouse zone geometry.
+      properties:
+        name:
+          type: string
+        svgX:
+          type: number
+        svgY:
+          type: number
+        worldX:
+          type: number
+        worldY:
+          type: number
+      required:
+        - name
+        - svgX
+        - svgY
+        - worldX
+        - worldY
+
+    PublicMapAnchorListResponse:
+      type: object
+      properties:
+        anchors:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicMapAnchorItem"
+      required:
+        - anchors
 
     WarehouseZoneItem:
       type: object

@@ -136,6 +136,9 @@ describe("route access matrix completeness", () => {
       "GET /api/floor-plan/meta",
       "GET /api/floor-plan/svg",
       "GET /api/floor-plan/tiles/:z/:x/:y",
+      "GET /api/warehouse-zones",
+      "GET /api/warehouse-zones/anchors",
+      "GET /api/warehouse-zones/alignment",
     ]);
   });
 });

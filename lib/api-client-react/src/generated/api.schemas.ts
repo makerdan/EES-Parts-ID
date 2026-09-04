@@ -392,6 +392,39 @@ export interface AiIdentifyResponse {
   results: SearchResult[];
 }
 
+/**
+ * Non-sensitive geometry required to render a warehouse zone.
+ */
+export interface PublicWarehouseZoneItem {
+  aisleId: string;
+  sectionNum: number | null;
+  isInventory: boolean;
+  svgX: number;
+  svgY: number;
+  svgWidth: number;
+  svgHeight: number;
+  sortOrder: number;
+}
+
+export interface PublicWarehouseZoneListResponse {
+  zones: PublicWarehouseZoneItem[];
+}
+
+/**
+ * Non-sensitive coordinates required to align warehouse zone geometry.
+ */
+export interface PublicMapAnchorItem {
+  name: string;
+  svgX: number;
+  svgY: number;
+  worldX: number;
+  worldY: number;
+}
+
+export interface PublicMapAnchorListResponse {
+  anchors: PublicMapAnchorItem[];
+}
+
 export interface WarehouseZoneItem {
   id: number;
   aisleId: string;
