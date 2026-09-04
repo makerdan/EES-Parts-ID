@@ -159,6 +159,7 @@ const fetchCalls: FetchCall[] = [];
 let statusResponses: Array<Response | Promise<Response>>;
 let fullProbeResponses: Array<Response | Promise<Response>>;
 let singleProbeResponses: Response[];
+let catalogueRefreshResponses: Array<Response | Promise<Response>>;
 let providerResponses: Response[];
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
@@ -214,6 +215,9 @@ function responseFor(url: string): Response | Promise<Response> {
   }
   if (url === `${API_BASE}/admin/ai-provider`) {
     return providerResponses.shift() ?? jsonResponse({ provider: "poe", persisted: true });
+  }
+  if (url === `${API_BASE}/admin/ai-status/catalogue/refresh`) {
+    return catalogueRefreshResponses.shift() ?? jsonResponse({ bots: {} });
   }
   if (url === `${API_BASE}/admin/ai-status/probe`) {
     return fullProbeResponses.shift() ?? jsonResponse({ bots: {} });
@@ -332,6 +336,7 @@ beforeEach(() => {
   ];
   fullProbeResponses = [];
   singleProbeResponses = [];
+  catalogueRefreshResponses = [];
   providerResponses = [];
   mockFetch.mockReset();
   mockFetch.mockImplementation((input, init) => {
@@ -355,9 +360,9 @@ afterEach(async () => {
   jest.clearAllMocks();
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // The complete rendered workflow
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 describe("UploadScreen — rendered admin AI Status workflow", () => {
   it("loads the initial status with GET and renders each returned bot result", async () => {
     const rendered = await renderAdminUpload();
@@ -616,6 +621,100 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
       jsonResponse({ bots: { "late-probe-bot": "error" } }),
     );
     await flushPromises();
+  });
+
+  it("aborts and ignores a catalogue refresh when the screen unmounts", async () => {
+    let resolvePendingRefresh!: (response: Response) => void;
+    catalogueRefreshResponses = [
+      new Promise<Response>((resolve) => {
+        resolvePendingRefresh = resolve;
+      }),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const refreshButton = findPressable(rendered.tree.root!, "Refresh models");
+    expect(refreshButton).not.toBeNull();
+    await act(async () => { fireEvent.press(refreshButton!); });
+    await flushPromises();
+
+    const refreshCall = callsFor("/admin/ai-status/catalogue/refresh")[0];
+    expect(refreshCall?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(refreshCall?.init?.signal?.aborted).toBe(false);
+
+    await rendered.tree.unmount();
+    activeTree = null;
+    activeBlur = undefined;
+
+    expect(refreshCall?.init?.signal?.aborted).toBe(true);
+
+    resolvePendingRefresh(
+      jsonResponse({ bots: { "late-catalogue-bot": "ok" } }),
+    );
+    await flushPromises();
+  });
+
+  it("ignores a catalogue refresh response after the admin token is replaced", async () => {
+    let resolveOldRefresh!: (response: Response) => void;
+    catalogueRefreshResponses = [
+      new Promise<Response>((resolve) => {
+        resolveOldRefresh = resolve;
+      }),
+    ];
+    const app = makeAppMock();
+    useApp.mockReturnValue(app);
+
+    const tree = await render(
+      <ApiHealthProvider>
+        <UploadScreen />
+      </ApiHealthProvider>,
+    );
+    activeTree = tree;
+    const blur = capturedFocusCallback?.();
+    activeBlur = blur;
+    await flushPromises();
+
+    const enrichmentCard = findPressable(tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const refreshButton = findPressable(tree.root!, "Refresh models");
+    expect(refreshButton).not.toBeNull();
+    await act(async () => { fireEvent.press(refreshButton!); });
+    await flushPromises();
+
+    const refreshCall = callsFor("/admin/ai-status/catalogue/refresh")[0];
+    expect(refreshCall?.init?.signal?.aborted).toBe(false);
+
+    app.adminToken = "new-admin-token";
+    await tree.rerender(
+      <ApiHealthProvider>
+        <UploadScreen />
+      </ApiHealthProvider>,
+    );
+    await flushPromises();
+
+    expect(refreshCall?.init?.signal?.aborted).toBe(true);
+    expect(findPressable(tree.root!, "Refresh models")).not.toBeNull();
+
+    resolveOldRefresh(
+      jsonResponse({
+        error: "late-catalogue-error",
+      }, false, 503),
+    );
+    await flushPromises();
+
+    expect(instText(tree.root!)).not.toContain("late-catalogue-error");
+    expect(instText(tree.root!)).not.toContain("Catalogue refresh failed");
+    expect(findPressable(tree.root!, "Refresh models")).not.toBeNull();
   });
 
   it("shows recovery guidance for a runtime-only provider switch and retries persistence", async () => {

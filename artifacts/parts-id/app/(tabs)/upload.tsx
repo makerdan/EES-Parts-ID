@@ -692,12 +692,19 @@ export default function UploadScreen() {
   const aiStatusGenerationRef = useRef(0);
   const aiStatusFetchControllerRef = useRef<AbortController | null>(null);
   const aiStatusProbeControllerRef = useRef<AbortController | null>(null);
+  const aiCatalogueGenerationRef = useRef(0);
+  const aiCatalogueControllerRef = useRef<AbortController | null>(null);
   const cancelAiStatusRequests = useCallback(() => {
     aiStatusGenerationRef.current += 1;
     aiStatusFetchControllerRef.current?.abort();
     aiStatusFetchControllerRef.current = null;
     aiStatusProbeControllerRef.current?.abort();
     aiStatusProbeControllerRef.current = null;
+  }, []);
+  const cancelAiCatalogueRefresh = useCallback(() => {
+    aiCatalogueGenerationRef.current += 1;
+    aiCatalogueControllerRef.current?.abort();
+    aiCatalogueControllerRef.current = null;
   }, []);
 
   const fetchAiStatus = useCallback(async () => {
@@ -827,23 +834,53 @@ export default function UploadScreen() {
 
   const refreshAiCatalogue = useCallback(async () => {
     if (!adminToken || !API_BASE || aiCatalogueRefreshing) return;
+    cancelAiCatalogueRefresh();
+    const requestToken = adminToken;
+    const generation = aiCatalogueGenerationRef.current + 1;
+    aiCatalogueGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiCatalogueControllerRef.current = controller;
     setAiCatalogueRefreshing(true);
     setAiStatusError(null);
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status/catalogue/refresh`, {
         method: "POST",
         headers: { Authorization: `Bearer ${adminToken}` },
+        signal: controller.signal,
       });
       const data = (await res.json()) as AiStatusPayload;
+      if (
+        !isMountedRef.current ||
+        adminTokenRef.current !== requestToken ||
+        generation !== aiCatalogueGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
       setAiStatus(data.catalogue ? data : null);
       setAiStatusBots(data.bots ?? {});
       if (!res.ok && data.catalogue?.error) throw new Error(data.catalogue.error);
     } catch (err) {
-      setAiStatusError(err instanceof Error ? err.message : "Catalogue refresh failed");
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiCatalogueGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusError(err instanceof Error ? err.message : "Catalogue refresh failed");
+      }
     } finally {
-      setAiCatalogueRefreshing(false);
+      if (aiCatalogueControllerRef.current === controller) {
+        aiCatalogueControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiCatalogueGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiCatalogueRefreshing(false);
+      }
     }
-  }, [adminToken, aiCatalogueRefreshing]);
+  }, [adminToken, aiCatalogueRefreshing, cancelAiCatalogueRefresh]);
 
   const saveAiRoutes = useCallback(async (routes: Array<{ feature: string; fallbacks: Array<string> }>) => {
     if (!adminToken || !API_BASE || aiRoutesSaving) return;
@@ -889,14 +926,21 @@ export default function UploadScreen() {
 
   useEffect(() => {
     cancelAiStatusRequests();
+    cancelAiCatalogueRefresh();
+    if (isMountedRef.current) {
+      setAiCatalogueRefreshing(false);
+    }
     if (adminToken) {
       void fetchAiStatus();
     } else if (isMountedRef.current) {
       setAiStatusLoading(false);
       setAiStatusProbing(false);
     }
-    return cancelAiStatusRequests;
-  }, [adminToken, cancelAiStatusRequests, fetchAiStatus]);
+    return () => {
+      cancelAiStatusRequests();
+      cancelAiCatalogueRefresh();
+    };
+  }, [adminToken, cancelAiCatalogueRefresh, cancelAiStatusRequests, fetchAiStatus]);
 
   const handleRestartPress = useCallback(() => {
     Alert.alert(
@@ -1083,12 +1127,13 @@ export default function UploadScreen() {
       expandDescControllerRef.current?.abort();
       expandDescReaderRef.current?.cancel().catch(() => {});
       cancelAiStatusRequests();
+      cancelAiCatalogueRefresh();
       if (pasteDebounceRef.current) {
         clearTimeout(pasteDebounceRef.current);
         pasteDebounceRef.current = null;
       }
     };
-  }, [cancelAiStatusRequests]);
+  }, [cancelAiCatalogueRefresh, cancelAiStatusRequests]);
   // Auto-fetch bin-diff preview whenever the raw CSV changes so admins
   // see a replace-warning before they can press Upload.
   // Uses POST /api/admin/upload/preview (raw CSV text) — the same endpoint
