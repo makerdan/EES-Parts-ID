@@ -1,8 +1,8 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index f563aee..461fefb 100644
+index bde0210..461fefb 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -2,5 +2,7 @@
+@@ -2,6 +2,8 @@
  
  Object.defineProperty(exports, '__esModule', { value: true });
  
@@ -10,7 +10,8 @@ index f563aee..461fefb 100644
 +
  // lib/types/utils.ts
  var decoder = new TextDecoder();
-@@ -164,6 +165,9 @@ var HEIF = {
+ var toUTF8String = (input, start = 0, end = input.length) => decoder.decode(input.slice(start, end));
+@@ -163,6 +165,9 @@ var HEIF = {
      while (currentOffset < ipcoBox.offset + ipcoBox.size) {
        const ispeBox = findBox(input, "ispe", currentOffset);
        if (!ispeBox) break;
@@ -20,7 +21,7 @@ index f563aee..461fefb 100644
        const rawWidth = readUInt32BE(input, ispeBox.offset + 12);
        const rawHeight = readUInt32BE(input, ispeBox.offset + 16);
        const clapBox = findBox(input, "clap", currentOffset);
-@@ -254,9 +258,13 @@ var ICNS = {
+@@ -253,9 +258,13 @@ var ICNS = {
      const images = [];
      while (imageOffset < fileLength && imageOffset < inputLength) {
        const imageHeader = readImageHeader(input, imageOffset);
@@ -35,7 +36,7 @@ index f563aee..461fefb 100644
      }
      if (images.length === 0) {
        throw new TypeError("Invalid ICNS, no sizes found");
-@@ -488,6 +496,9 @@ function extractPartialStreams(input) {
+@@ -487,6 +496,9 @@ function extractPartialStreams(input) {
    while (offset < input.length) {
      const jxlpBox = findBox(input, "jxlp", offset);
      if (!jxlpBox) break;
@@ -45,7 +46,7 @@ index f563aee..461fefb 100644
      partialStreams.push(
        input.slice(jxlpBox.offset + 12, jxlpBox.offset + jxlpBox.size)
      );
-@@ -969,6 +980,9 @@ var globalOptions = {
+@@ -968,6 +980,9 @@ var globalOptions = {
    disabledTypes: []
  };
  function imageSize(input) {
@@ -204,4 +205,3 @@ index 49b0c4c..5a736df 100644
      partialStreams.push(
        input.slice(jxlpBox.offset + 12, jxlpBox.offset + jxlpBox.size)
      );
-\ No newline at end of file

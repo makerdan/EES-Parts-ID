@@ -26,3 +26,14 @@ while failing the next clean `pnpm install`.
 **How to apply:** Before accepting a patch update, check it against the pristine
 registry package, synchronize its SHA-256 in the lockfile, and run
 `pnpm install --frozen-lockfile` through the normal post-merge path.
+
+Patch files must also end with a real newline. A missing patch EOF newline can
+make the final added source line concatenate with the following package line,
+even when a package-manager install appears to complete.
+
+**Why:** The image-size JXL module had a syntactically valid but corrupted
+applied line when its patch ended without a newline; the defect was only
+visible when applying the patch to a pristine tree.
+
+**How to apply:** Inspect patch bytes and run `git apply --check` against the
+exact extracted registry package before updating the lockfile hash.
