@@ -240,6 +240,30 @@ try {
   assert.match(contract, /missing-mirror/);
   assert.match(contract, /must not add a skill registry/i);
 
+  const canonicalSkill = await readFile(".agents/skills/skill-mirror-sync/SKILL.md", "utf8");
+  const canonicalSkillText = canonicalSkill.replace(/\s+/g, " ");
+  assert.match(canonicalSkill, /^---\nname: skill-mirror-sync\n/m, "canonical skill must use lowercase identity frontmatter");
+  assert.match(canonicalSkillText, /ACCOUNT_SKILLS_SOURCE.*authoritative/i);
+  assert.match(canonicalSkillText, /\.agents\/skills\/\.account-projections\//);
+  assert.match(canonicalSkillText, /recursively enumerate.*regular.*files/i);
+  assert.match(canonicalSkillText, /SHA-256.*relative path.*bytes/i);
+  assert.match(canonicalSkillText, /read-only.*command/i);
+  assert.match(canonicalSkillText, /serialized.*lock/i);
+  assert.match(canonicalSkillText, /atomic.*rename/i);
+  assert.match(canonicalSkillText, /interrupted refresh/i);
+  assert.match(canonicalSkillText, /never edit it directly/i);
+  assert.match(canonicalSkillText, /never flows back/i);
+  assert.match(canonicalSkillText, /MD5 is not an authoritative fingerprint/i);
+  assert.doesNotMatch(
+    canonicalSkillText,
+    /directly copy.*canonical.*runtime|canonical.*directly.*runtime.*copy/i,
+    "canonical skill must not endorse a direct canonical-to-runtime copy",
+  );
+  assert.ok(
+    canonicalSkill.split("\n").length < 500,
+    "canonical skill must remain under 500 lines",
+  );
+
   const implementation = await readFile("scripts/lib/account-skill-projection.mjs", "utf8");
   const inspectionImplementation = implementation.slice(
     implementation.indexOf("export async function inspectAccountSkillMirror"),
