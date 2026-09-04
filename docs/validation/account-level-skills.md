@@ -30,9 +30,35 @@ Account-managed content may only be replaced inside the explicit
 source is unavailable, invocation fails closed even when an older projection
 exists.
 
-The projection helper and invocation loader are repository validation tooling;
-they do not edit `.local/custom_skills` and do not publish account content into
-tracked files.
+The projection helper, its public all-skills command, and the invocation loader
+are repository tooling; they do not edit `.local/custom_skills` and do not
+publish account content into tracked files.
+
+## Supported all-skills projection command
+
+The only repository-owned projection mutation command is:
+
+```sh
+ACCOUNT_SKILLS_SOURCE=/platform/account-skills pnpm account-skills:sync
+```
+
+It requires the explicit source and invokes the validated, serialized, atomic
+all-skills projection helper exactly once. Its JSON output is bounded to the
+outcome, whether the generated projection changed, the projected skill count,
+or a stable failure reason. It does not expose source paths or skill contents.
+
+A successful refresh reconciles the generated namespace to the complete source:
+new and changed files are copied recursively, removed account skills disappear,
+and stale or incomplete projections are repaired. Workspace-authored skills
+outside `.account-projections` remain untouched. If the source is unavailable
+or malformed, the command fails closed and an older projection must not be
+loaded or presented as current.
+
+Invocation-time loading also validates and, when necessary, refreshes the whole
+projection before selecting one skill. It is not a separate per-skill copy
+mechanism. Runtime-mirror verification remains the read-only status operation
+documented below; repository commands and workflows never provision or repair
+`.local/custom_skills` or its metadata sidecars.
 
 ## Supported validation surface
 
@@ -61,7 +87,7 @@ The repository may report observations such as mirror missing, mirror
 unreadable, metadata mismatch, or canonical metadata unavailable. It must not
 claim that the account-level source is current based only on the runtime file.
 
-### Canonical identity and read-only status command
+### Canonical identity and read-only runtime-mirror status command
 
 The canonical skill identifier is the validated account-source directory slug
 (`<skill-id>`), not the display name in `SKILL.md`. Canonical revision metadata

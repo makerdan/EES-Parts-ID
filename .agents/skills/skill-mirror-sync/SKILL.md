@@ -55,7 +55,22 @@ Before loading a skill, validate the source and projection:
 
 ## Safe refresh and loading
 
-Refresh only through the supported projection helper:
+Project every currently published account skill with the only supported
+repository mutation command:
+
+```sh
+ACCOUNT_SKILLS_SOURCE=/platform/account-skills pnpm account-skills:sync
+```
+
+The source variable is required. The command reports only a bounded JSON
+outcome, whether the generated projection changed, and the projected skill
+count. It does not print source paths or skill contents. If the source is
+unavailable or malformed, the command fails without treating an older
+projection as current. Do not add another sync command or workflow around the
+helper.
+
+The command invokes the all-skills projection helper once. Refresh follows this
+contract:
 
 1. Acquire its serialized, ownership-aware lock before inspecting or changing
    the projection. If a lock is live or cannot be safely inspected, report
@@ -78,11 +93,15 @@ Refresh only through the supported projection helper:
    requested skill is absent or validation fails, fail closed. Return only
    supported content from the validated projection.
 
+Invocation-time loading uses the same helper before selecting one projected
+skill, so it validates and refreshes the complete account projection rather than
+copying one skill independently.
+
 An interrupted refresh is handled by the same ownership-safe cleanup on the
 next supported refresh. Do not manually rescue partial files, merge staging
 contents, or load a prior projection while the source is unavailable.
 
-## Read-only mirror status
+## Read-only runtime-mirror status
 
 Use the supported non-mutating command:
 
@@ -100,11 +119,12 @@ the canonical account metadata. Interpret outcomes as:
 - `unavailable-source` (exit 2): canonical source or revision cannot be read;
 - `missing-mirror` (exit 3): the platform mirror sidecar is absent.
 
-Status is read-only. Do not write the mirror, sidecar, projection, or source
-just to make a check pass. Do not print skill contents, source paths, secrets,
+Status is distinct from all-skills projection and invocation-time loading. It is
+read-only and must not write the mirror, sidecar, projection, or source just to
+make a check pass. Do not print skill contents, source paths, secrets,
 credentials, mirror values, or private account instructions. Missing
-authoritative metadata is unknown/unavailable, not a pass. If the platform
-does not expose authoritative mirror metadata, parity is unknown.
+authoritative metadata is unknown/unavailable, not a pass. If the platform does
+not expose authoritative mirror metadata, parity is unknown.
 
 ## Failure ownership and reporting
 

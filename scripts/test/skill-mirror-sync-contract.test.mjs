@@ -22,6 +22,7 @@ const workspaceRoot = join(root, "workspace");
 const projectionRoot = join(workspaceRoot, ACCOUNT_SKILLS_PROJECTION_RELATIVE_PATH);
 const authoredRoot = join(workspaceRoot, ".agents/skills/catalog");
 const statusCommand = resolve("scripts/account-skill-status.mjs");
+const syncCommand = resolve("scripts/account-skills-sync.mjs");
 
 async function put(path, contents) {
   await mkdir(join(path, ".."), { recursive: true });
@@ -49,6 +50,14 @@ function runStatus(source = accountSource) {
   });
 }
 
+function runSync(source = accountSource, cwd = workspaceRoot) {
+  return spawnSync(process.execPath, [syncCommand], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, ACCOUNT_SKILLS_SOURCE: source },
+  });
+}
+
 try {
   await put(join(accountSource, ".account-revision"), "account-rev-1\n");
   await put(join(accountSource, "catalog/SKILL.md"), "# Catalog v1\n");
@@ -56,12 +65,20 @@ try {
   await put(join(accountSource, "review/SKILL.md"), "# Review\n");
   await put(join(authoredRoot, "SKILL.md"), "# Workspace-authored skill\n");
 
-  const first = await syncAccountSkillProjection({ accountSource, workspaceRoot });
-  assert.equal(first.changed, true, "the first invocation must create a projection");
+  const firstCommand = runSync();
+  assert.equal(firstCommand.status, 0, firstCommand.stderr);
+  assert.deepEqual(JSON.parse(firstCommand.stdout), {
+    outcome: "projected",
+    changed: true,
+    skillCount: 2,
+  });
   assert.equal(await readFile(join(projectionRoot, "catalog/references/guide.md"), "utf8"), "supporting file\n");
   const firstManifest = JSON.parse(await readFile(join(projectionRoot, ACCOUNT_SKILLS_MANIFEST_FILE), "utf8"));
   assert.equal(firstManifest.sourceRevision, "account-rev-1");
   assert.deepEqual(firstManifest.skills.catalog.files, ["references/guide.md", "SKILL.md"]);
+  assert.deepEqual(Object.keys(firstManifest.skills).sort(), ["catalog", "review"]);
+  const first = await syncAccountSkillProjection({ accountSource, workspaceRoot });
+  assert.equal(first.changed, false, "the public command must install through the canonical helper");
 
   const loadedV1 = await loadAccountSkill({ accountSource, workspaceRoot, skillName: "catalog" });
   assert.equal(loadedV1.contents, "# Catalog v1\n");
@@ -150,6 +167,20 @@ try {
     outcome: "unavailable-source",
     skillId: "catalog",
   });
+  const unavailableSync = runSync(join(root, "missing-account-source"));
+  assert.equal(unavailableSync.status, 1);
+  assert.deepEqual(JSON.parse(unavailableSync.stdout), {
+    outcome: "failed",
+    reason: "source-unavailable",
+  });
+  assert.doesNotMatch(unavailableSync.stdout, /missing-account-source|account-skill-projection-/);
+  const malformedSync = runSync(malformedSource);
+  assert.equal(malformedSync.status, 1);
+  assert.deepEqual(JSON.parse(malformedSync.stdout), {
+    outcome: "failed",
+    reason: "invalid-account-source",
+  });
+  assert.doesNotMatch(malformedSync.stdout, /malformed-source|unexpected\.txt/);
 
   await writeFile(join(accountSource, "catalog/SKILL.md"), "# Catalog v2\n");
   await writeFile(join(accountSource, ".account-revision"), "account-rev-2\n");
@@ -178,7 +209,10 @@ try {
 
   await rm(join(accountSource, "review"), { recursive: true });
   await writeFile(join(accountSource, ".account-revision"), "account-rev-5\n");
-  await syncAccountSkillProjection({ accountSource, workspaceRoot });
+  const reconciledCommand = runSync();
+  assert.equal(reconciledCommand.status, 0, reconciledCommand.stderr);
+  assert.equal(JSON.parse(reconciledCommand.stdout).changed, true);
+  assert.equal(await exists(join(projectionRoot, "review")), false, "the public command must remove unpublished projected skills");
   await assert.rejects(
     () => loadAccountSkill({ accountSource, workspaceRoot, skillName: "review" }),
     (error) => error instanceof AccountSkillProjectionError && error.code === "skill-not-found",
@@ -236,6 +270,7 @@ try {
   assert.match(contract, /fingerprint/i);
   assert.match(contract, /recursive/i);
   assert.match(contract, /account-skill:status/);
+  assert.match(contract, /account-skills:sync/);
   assert.match(contract, /unavailable-source/);
   assert.match(contract, /missing-mirror/);
   assert.match(contract, /must not add a skill registry/i);
@@ -248,6 +283,7 @@ try {
   assert.match(canonicalSkillText, /recursively enumerate.*regular.*files/i);
   assert.match(canonicalSkillText, /SHA-256.*relative path.*bytes/i);
   assert.match(canonicalSkillText, /read-only.*command/i);
+  assert.match(canonicalSkillText, /account-skills:sync/);
   assert.match(canonicalSkillText, /serialized.*lock/i);
   assert.match(canonicalSkillText, /atomic.*rename/i);
   assert.match(canonicalSkillText, /interrupted refresh/i);
@@ -265,6 +301,10 @@ try {
   );
 
   const implementation = await readFile("scripts/lib/account-skill-projection.mjs", "utf8");
+  const syncImplementation = await readFile("scripts/account-skills-sync.mjs", "utf8");
+  assert.match(syncImplementation, /syncAccountSkillProjection/);
+  assert.doesNotMatch(syncImplementation, /\b(writeFile|mkdir|rename|rm|cp)\s*\(/);
+  assert.doesNotMatch(syncImplementation, /\.local\/custom_skills|ACCOUNT_SKILL_MIRROR_METADATA_FILE/);
   const inspectionImplementation = implementation.slice(
     implementation.indexOf("export async function inspectAccountSkillMirror"),
     implementation.indexOf("async function fingerprintDirectory"),
@@ -276,6 +316,18 @@ try {
   );
   const ignored = await readFile(".gitignore", "utf8");
   assert.match(ignored, /\/\.agents\/skills\/\.account-projections\//);
+  const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+  assert.equal(packageJson.scripts["account-skills:sync"], "node scripts/account-skills-sync.mjs");
+  const repositoryWiring = await Promise.all([
+    readFile("package.json", "utf8"),
+    readFile(".replit", "utf8"),
+    readFile("scripts/account-skills-sync.mjs", "utf8"),
+  ]);
+  assert.doesNotMatch(
+    repositoryWiring.join("\n"),
+    /(?:cp|copy|rsync|writeFile|rename|mkdir).{0,120}\.local\/custom_skills|\.local\/custom_skills.{0,120}(?:cp|copy|rsync|writeFile|rename|mkdir)/i,
+    "repository command and workflow wiring must not write the platform runtime mirror",
+  );
   const generatedProjectionPath = ".agents/skills/.account-projections/catalog/SKILL.md";
   assert.ok(
     scanPaths([generatedProjectionPath], new Map([[generatedProjectionPath, "# generated fixture\n"]])).some((finding) =>

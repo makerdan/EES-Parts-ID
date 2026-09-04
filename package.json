@@ -11,6 +11,7 @@
     "codegen:check": "pnpm --filter @workspace/api-spec run codegen:check",
     "maintain:validation-baseline": "node scripts/maintain-validation-baseline.mjs",
     "publish:failure-gate": "node scripts/publish-failure-gate.mjs",
+    "account-skills:sync": "node scripts/account-skills-sync.mjs",
     "account-skill:status": "node scripts/account-skill-status.mjs",
     "test-fast": "node scripts/serial-lock.mjs --resource validation --priority 100 -- node scripts/run-tier.mjs fast --allow-no-plan",
     "test-standard": "node scripts/serial-lock.mjs --resource validation --priority 100 -- node scripts/run-tier.mjs standard --allow-no-plan",
