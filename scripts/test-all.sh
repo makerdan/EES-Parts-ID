@@ -29,6 +29,13 @@ pnpm --filter @workspace/api-spec run codegen:ensure || {
   exit 1
 }
 
+# Keep the API Jest wrapper's focused/full-run selection contract exercised by
+# the canonical workspace test command.
+node scripts/test/api-suite-floor-contract.test.mjs || {
+  echo "[test-all] ERROR: API suite-floor contract failed."
+  exit 1
+}
+
 # ── Suite definitions: name:pnpm-filter:budget-seconds:runner ────────────────
 # runner: jest | vitest
 SUITES=(
