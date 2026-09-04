@@ -75,14 +75,18 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 }));
 
 // ── Imports ───────────────────────────────────────────────────────────────────
+import { db, usersTable } from "@workspace/db";
+import { eq, inArray } from "drizzle-orm";
 import supertest from "supertest";
+
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { db, usersTable } from "@workspace/db";
-import { eq, like } from "drizzle-orm";
+import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const FIXTURE_PREFIX = "jest-itg-user-";
+const TEST_INSTANCE = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
+const FIXTURE_PREFIX = `jest-itg-user-${TEST_INSTANCE}-`;
+const seededUserIds = new Set<string>();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // The bootstrap admin authenticates by presenting their Clerk user id.
@@ -103,14 +107,8 @@ async function seedUser(
   status: "pending" | "approved" | "banned" = "pending",
   role: "user" | "admin" = "user",
 ) {
-  const email = emailFor(clerkUserId);
-  await db
-    .insert(usersTable)
-    .values({ clerkUserId, email, status, role })
-    .onConflictDoUpdate({
-      target: usersTable.clerkUserId,
-      set: { email, status, role },
-    });
+  seededUserIds.add(clerkUserId);
+  await seedTestUser({ clerkUserId, status, role });
 }
 
 /** Seeds an approved, non-admin user and returns its Clerk user id (= token). */
@@ -121,9 +119,9 @@ async function seedNonAdmin(): Promise<string> {
 }
 
 async function cleanupUsers() {
-  await db
-    .delete(usersTable)
-    .where(like(usersTable.clerkUserId, `${FIXTURE_PREFIX}%`));
+  const userIds = [...seededUserIds];
+  seededUserIds.clear();
+  await Promise.all(userIds.map(cleanupTestUser));
 }
 
 // ── Setup / teardown ──────────────────────────────────────────────────────────
@@ -652,5 +650,42 @@ describe("GET /api/admin/me", () => {
       .set("Authorization", `Bearer ${userId}`)
       .expect(200);
     expect(afterDemote.body).toEqual({ isAdmin: false });
+  });
+});
+
+describe("admin users fixture cleanup", () => {
+  it("does not remove same-prefix rows owned by another suite", async () => {
+    const ownedUser = `${FIXTURE_PREFIX}owned`;
+    const otherSuiteUser = `${FIXTURE_PREFIX}other-suite`;
+    await seedUser(ownedUser, "approved");
+    await db
+      .insert(usersTable)
+      .values({
+        clerkUserId: otherSuiteUser,
+        email: emailFor(otherSuiteUser),
+        status: "approved",
+        role: "user",
+      })
+      .onConflictDoNothing();
+
+    try {
+      await cleanupUsers();
+
+      const [remainingOwnedUser] = await db
+        .select()
+        .from(usersTable)
+        .where(eq(usersTable.clerkUserId, ownedUser));
+      const [remainingOtherSuiteUser] = await db
+        .select()
+        .from(usersTable)
+        .where(eq(usersTable.clerkUserId, otherSuiteUser));
+
+      expect(remainingOwnedUser).toBeUndefined();
+      expect(remainingOtherSuiteUser?.clerkUserId).toBe(otherSuiteUser);
+    } finally {
+      await db
+        .delete(usersTable)
+        .where(inArray(usersTable.clerkUserId, [ownedUser, otherSuiteUser]));
+    }
   });
 });

@@ -255,6 +255,59 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     });
   });
 
+  it("renders overlapping pages once while preserving the next-page cursor", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(firstPage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          rows: [
+            auditRow(100, "target-next", "promote"),
+            auditRow(99, "target-older", "ban"),
+            auditRow(98, "target-oldest", "demote"),
+          ],
+          nextCursor: null,
+        }),
+      );
+
+    const screen = await renderScreen();
+    const loadMore = findPressableByAccessibilityLabel(
+      screen.root!,
+      "Load more audit log entries",
+    );
+    expect(loadMore).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.press(loadMore!);
+      await Promise.resolve();
+    });
+    await flushPromises();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:3001/api/admin/audit-log?limit=50&before_id=100",
+      { headers: { Authorization: "Bearer admin-token-abc" } },
+    );
+    expect(instText(screen.root!)).toContain("4 events");
+    expect(instText(screen.root!)).not.toContain("5 events");
+    expect(instText(screen.root!)).not.toContain("4 events+");
+
+    const targets = renderedTargets(screen.root!);
+    expect(targets).toEqual([
+      "target-newest",
+      "target-next",
+      "target-older",
+      "target-oldest",
+    ]);
+    expect(new Set(targets).size).toBe(targets.length);
+    expect(
+      findPressableByAccessibilityLabel(screen.root!, "Load more audit log entries"),
+    ).toBeNull();
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
   it("shows the load-more error and retries without duplicating the first page", async () => {
     mockFetch
       .mockResolvedValueOnce(jsonResponse(firstPage))

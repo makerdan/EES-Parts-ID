@@ -39,13 +39,19 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
+import { db, usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { seedTestUser, cleanupTestUser } from "./helpers/testDb";
+import {
+  cleanupTestUser,
+  seedTestUser,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 const ADMIN_TOKEN = ADMIN_TEST_USER_ID;
-const NON_ADMIN_USER = "jest-writeauth-user";
+const NON_ADMIN_USER = workerQualifiedUserId("jest-writeauth-user");
 
 beforeAll(async () => {
   // seedTestUser derives the email from the clerkUserId, so parallel suites
@@ -57,6 +63,31 @@ beforeAll(async () => {
 afterAll(async () => {
   await cleanupTestUser(NON_ADMIN_USER);
 }, 15_000);
+
+describe("user fixture ownership", () => {
+  it("keeps a concurrent-run decoy when this worker cleans up its user", async () => {
+    const ownedUser = workerQualifiedUserId("jest-writeauth-cleanup");
+    const concurrentRunDecoy = workerQualifiedUserId(
+      "jest-writeauth-cleanup",
+      "other-process-1",
+    );
+
+    await Promise.all([
+      seedTestUser({ clerkUserId: ownedUser }),
+      seedTestUser({ clerkUserId: concurrentRunDecoy }),
+    ]);
+
+    await cleanupTestUser(ownedUser);
+
+    const remainingDecoy = await db
+      .select({ clerkUserId: usersTable.clerkUserId })
+      .from(usersTable)
+      .where(eq(usersTable.clerkUserId, concurrentRunDecoy));
+
+    expect(remainingDecoy).toEqual([{ clerkUserId: concurrentRunDecoy }]);
+    await cleanupTestUser(concurrentRunDecoy);
+  });
+});
 
 /** Runs the standard no-token / non-admin / admin assertions for one route. */
 function describeWriteGuard(

@@ -36,6 +36,8 @@ lib/
   api-zod/        # Generated Zod validators
   api-client-react/ # Generated React Query hooks
 scripts/          # CI helpers, codegen, port guards
+data/
+  public/            # intentionally public warehouse layout reference data
 ```
 
 ## Getting started
@@ -54,14 +56,44 @@ pnpm install
 
 ### Environment secrets
 
-| Secret | Purpose |
+Set server-only values in the Replit Secrets pane. Do not put them in `.env`
+files, mobile code, or client build configuration.
+
+| Server value | Purpose |
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string |
+| `DATABASE_ENV` | Explicit database target: `development`, `test`, or `production` |
 | `SESSION_SECRET` | Express session signing key |
 | `CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` | Clerk authentication |
-| `APP_PASSWORD` | App-level password gate |
 | `AI_INTEGRATIONS_OPENAI_API_KEY` | OpenAI via Replit proxy |
 | `POE_API_KEY2` | Poe AI fallback |
+| `DEFAULT_OBJECT_STORAGE_BUCKET_ID` | Replit Object Storage bucket used by server uploads |
+
+Only explicitly public `EXPO_PUBLIC_*` values belong in the client build:
+`EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`, API origins, the Clerk proxy URL, and
+public tool domains. Never expose `DATABASE_URL`, `CLERK_SECRET_KEY`, AI keys,
+or object-storage configuration to the mobile/web bundle.
+
+Inventory imports must read a source file supplied outside the repository:
+
+```bash
+DATABASE_ENV=development DATABASE_URL="$DATABASE_URL" pnpm --filter @workspace/api-server exec tsx \
+  src/seed/import-spreadsheet.ts /path/to/inventory.xlsx
+```
+
+Seed and import commands refuse `DATABASE_ENV=production`. Use a separate
+development or test Replit PostgreSQL database and set `DATABASE_ENV` explicitly
+before running them. Schema synchronization follows the same rule:
+
+```bash
+DATABASE_ENV=development pnpm --filter @workspace/db run push
+```
+
+The deployed API uses `DATABASE_ENV=production` and Replit-hosted PostgreSQL.
+There is no embedded database or database export workflow. Do not commit
+inventory exports, uploaded documents, database backups, or operational logs.
+See [public repository readiness](docs/public-repository-readiness.md) for the
+public/private data boundary and the deterministic repository check.
 
 ### Run (development)
 

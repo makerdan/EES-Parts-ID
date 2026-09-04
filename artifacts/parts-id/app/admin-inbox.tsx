@@ -66,10 +66,11 @@ function MessageItem({
     setExpanded((v) => !v);
     if (isUnread) {
       try {
-        await fetch(`${API_BASE}/contact/${row.id}/read`, {
+        const response = await fetch(`${API_BASE}/contact/${row.id}/read`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${adminToken}` },
         });
+        if (!response.ok) throw new Error(`Server error ${response.status}`);
         onMarkRead(row.id);
       } catch {
         // Non-critical — ignore

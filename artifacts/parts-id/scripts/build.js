@@ -222,6 +222,36 @@ function getExpoPublicReplId() {
   return process.env.REPL_ID || process.env.EXPO_PUBLIC_REPL_ID;
 }
 
+// Expo's public env convention is an allowlist, not a license to pass server
+// credentials into a client build. Metro still needs the inherited process
+// environment for its toolchain, so remove all server-only and unknown public
+// variables before starting it.
+const SERVER_ONLY_ENV_VARS = [
+  "DATABASE_URL",
+  "DATABASE_ENV",
+  "AI_PROVIDER",
+  "CORS_ALLOWED_ORIGINS",
+  "CLERK_PUBLISHABLE_KEY",
+  "CLERK_SECRET_KEY",
+  "AI_INTEGRATIONS_GEMINI_API_KEY",
+  "AI_INTEGRATIONS_GEMINI_BASE_URL",
+  "AI_INTEGRATIONS_OPENAI_API_KEY",
+  "AI_INTEGRATIONS_OPENAI_BASE_URL",
+  "POE_API_KEY2",
+  "DEFAULT_OBJECT_STORAGE_BUCKET_ID",
+  "PRIVATE_OBJECT_DIR",
+  "SESSION_SECRET",
+];
+
+const CLIENT_PUBLIC_ENV_VARS = new Set([
+  "EXPO_PUBLIC_API_BASE",
+  "EXPO_PUBLIC_APP_URL",
+  "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY",
+  "EXPO_PUBLIC_CLERK_PROXY_URL",
+  "EXPO_PUBLIC_DOMAIN",
+  "EXPO_PUBLIC_REPL_ID",
+]);
+
 async function startMetro(expoPublicDomain, expoPublicReplId) {
   const isRunning = await checkMetroHealth();
   if (isRunning) {
@@ -239,6 +269,14 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
     EXPO_PUBLIC_CLERK_PROXY_URL: resolveClerkProxyUrl(expoPublicDomain),
     NODE_OPTIONS: "--max-old-space-size=4096",
   };
+  for (const name of SERVER_ONLY_ENV_VARS) {
+    delete env[name];
+  }
+  for (const name of Object.keys(env)) {
+    if (name.startsWith("EXPO_PUBLIC_") && !CLIENT_PUBLIC_ENV_VARS.has(name)) {
+      delete env[name];
+    }
+  }
 
   const clerkError = getClerkAuthConfigError(
     env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY,

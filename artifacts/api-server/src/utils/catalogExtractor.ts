@@ -10,9 +10,16 @@
  *     → imageIndex / imageIndex2 are 0-based indices into that array.
  */
 
+import {
+  type AiCatalogEntry,
+  AiCatalogEntrySchema,
+  AiCatalogResponseSchema,
+} from "@workspace/api-zod";
+
 import { getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
 import { MAX_REQUEST_BYTES_GEMINI_3_1_PRO } from "../lib/poeModelLimits";
+import { extractJsonValueFromText } from "./aiHelpers";
 
 export interface ImageRegion {
   x: number;
@@ -159,25 +166,16 @@ export async function extractCatalogPage(
           }),
         );
 
-    const raw = response.choices[0]?.message?.content ?? "[]";
-    const match = raw.match(/\[[\s\S]*?\]/);
-    if (!match) return { entries: [], rawText: raw };
+    const raw = response.choices[0]?.message?.content ?? "";
+    const parsedResult = AiCatalogResponseSchema.safeParse(
+      extractJsonValueFromText(raw),
+    );
+    if (!parsedResult.success) return { entries: [], rawText: raw };
 
-    const parsed = JSON.parse(match[0]) as Array<unknown>;
-    if (!Array.isArray(parsed)) return { entries: [], rawText: raw };
-
-    const entries = parsed
-      .filter((e): e is Record<string, unknown> => {
-        const entry = e as Partial<CatalogEntry>;
-        return (
-          typeof entry.catalogNumber === "string" &&
-          entry.catalogNumber.trim().length > 0 &&
-          typeof entry.description === "string" &&
-          typeof entry.confidence === "number"
-        );
-      })
-      .map((e) => {
-        const entry = e as Record<string, unknown>;
+    const entries = parsedResult.data
+      .map((value) => AiCatalogEntrySchema.safeParse(value))
+      .filter((result): result is { success: true; data: AiCatalogEntry } => result.success)
+      .map(({ data: entry }) => {
         const hasPartImage = !!entry["hasPartImage"];
         const imageRegion = hasPartImage ? parseRegion(entry["imageRegion"]) : null;
         const imageRegion2 = hasPartImage ? parseRegion(entry["imageRegion2"]) : null;

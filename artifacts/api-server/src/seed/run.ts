@@ -1,5 +1,9 @@
+import { assertDatabaseExecutionMode } from "@workspace/db/runtime-data-boundary";
+
 import { seedAllDictionaries } from "./dictionaries";
 import { seedQuickLookupChips, seedReferenceAnswerCacheFromChips } from "./quickLookupChips";
+
+assertDatabaseExecutionMode("seed");
 
 Promise.resolve()
   .then(() => seedAllDictionaries())

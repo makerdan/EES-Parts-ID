@@ -21,7 +21,7 @@ pnpm workspace monorepo using TypeScript. **Parts ID** — Expo (React Native) e
 ## Artifacts
 
 ### parts-id (Expo mobile app)
-- Password-only login (server-side: APP_PASSWORD secret validates via POST /api/auth/app-login and returns a signed session token; password never ships in the JS bundle)
+- Clerk authentication; the client receives only the Clerk publishable key and public API/origin configuration
 - **Google OAuth redirect URL**: set `EXPO_PUBLIC_APP_URL` to the canonical production origin (e.g. `https://your-app.replit.app`). The web OAuth callback is built from this value so the redirect URL is predictable. In Clerk Dashboard → Paths → "Allowed redirect URLs" add `https://your-app.replit.app/sso-callback`. Without this entry Google rejects the redirect and the user sees a blank page. Omit the env var in local dev — it falls back to `window.location.origin`.
 - 3 tabs: Search, Photo ID, Upload/Inventory
 - Dark industrial amber theme (primary: #f59e0b, dark bg: #0d1117)
@@ -47,7 +47,12 @@ Tables: `inventory`, `abbreviation_map`, `vendor_map`, `synonym_map`, `misspelli
 
 ### Seed Data
 210 abbreviations, 66 vendors, 177 synonyms, 283 misspellings, 144 slang entries
-Seed: `node --import tsx/esm --no-warnings src/seed/run.ts` from `artifacts/api-server/`
+Seed: `DATABASE_ENV=development node --import tsx/esm --no-warnings src/seed/run.ts` from `artifacts/api-server/`
+
+`DATABASE_URL` is provided by Replit PostgreSQL and is server-only. The API
+requires `DATABASE_ENV=production` in deployment; tests require `test`; seed
+and schema commands reject `production`. Never place database URLs, Clerk
+secret material, AI keys, or object-storage settings in the mobile/web bundle.
 
 ## Key Commands
 
@@ -219,6 +224,7 @@ it in sync with this table when checks change. Note: `tsc` subsumes
 | _(new)_ | `plan-gate-check` | fast (strict Failure Gate lint) |
 | _(new)_ | `plan-gate-stubs` | fast (stub-placeholder warning count; always exits 0) |
 | _(new)_ | `regression-guard-fix` / `regression-guard` | fast (task-scoped declaration repair then strict check) |
+| _(new)_ | `skill-mirror-sync-contract` | fast (account authority, local projection, and downstream mirror boundary) |
 | _(new)_ | `failure-gate-contract` | standard (focused integration contract) |
 | `api-server-coverage` | `api-server-coverage` | standard-plus / heavy |
 | `api-server-typecheck` | `api-server-typecheck` | fast (via `tsc`) |

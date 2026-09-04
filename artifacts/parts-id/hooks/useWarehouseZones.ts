@@ -26,29 +26,33 @@ export const ZONES_CACHE_KEY = "parts_id_warehouse_zones_v1";
 /** Minimum time between foreground-triggered re-fetches (2 minutes). */
 const FOREGROUND_REFETCH_TTL_MS = 2 * 60 * 1000;
 
+export type ZoneId = number | string;
+
 export type ApiWarehouseZone = {
-  id: number;
+  /** Database ids are not part of the public API; this is client-local when derived. */
+  id: ZoneId;
   aisleId: string;
-  sectionNum: number;
+  sectionNum: number | null;
   isInventory: boolean;
   svgX: number;
   svgY: number;
   svgWidth: number;
   svgHeight: number;
   sortOrder: number;
-  createdAt: string;
-  updatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 /** A saved anchor point mapping an SVG coordinate to a world (zone-space) coordinate. */
 export type MapAnchorRow = {
-  id: number;
+  /** Database ids are not part of the public API; this is client-local when derived. */
+  id: ZoneId;
   name: string;
   svgX: number;
   svgY: number;
   worldX: number;
   worldY: number;
-  updatedAt: string;
+  updatedAt?: string;
 };
 
 /** Global zone-layer calibration offset applied uniformly to every zone. */
@@ -75,6 +79,42 @@ type ZoneCache = {
   alignment?: ZoneAlignment;
   anchors?: Array<MapAnchorRow>;
 };
+
+function publicZoneId(zone: Omit<ApiWarehouseZone, "id">): string {
+  return [
+    zone.aisleId,
+    zone.sectionNum ?? "none",
+    zone.svgX,
+    zone.svgY,
+    zone.svgWidth,
+    zone.svgHeight,
+    zone.sortOrder,
+  ].join(":");
+}
+
+function normalizeZones(rawZones: unknown): Array<ApiWarehouseZone> {
+  if (!Array.isArray(rawZones)) return [];
+  return rawZones.filter((zone): zone is Omit<ApiWarehouseZone, "id"> & Partial<Pick<ApiWarehouseZone, "id">> => {
+    return Boolean(zone && typeof zone === "object");
+  }).map((zone) => ({
+    ...zone,
+    id: typeof zone.id === "number" || typeof zone.id === "string"
+      ? zone.id
+      : publicZoneId(zone),
+  }));
+}
+
+function normalizeAnchors(rawAnchors: unknown): Array<MapAnchorRow> {
+  if (!Array.isArray(rawAnchors)) return [];
+  return rawAnchors.filter((anchor): anchor is Omit<MapAnchorRow, "id"> & Partial<Pick<MapAnchorRow, "id">> => {
+    return Boolean(anchor && typeof anchor === "object");
+  }).map((anchor) => ({
+    ...anchor,
+    id: typeof anchor.id === "number" || typeof anchor.id === "string"
+      ? anchor.id
+      : `anchor:${anchor.name}`,
+  }));
+}
 
 export function useWarehouseZones() {
   const [zones, setZones] = useState<Array<ApiWarehouseZone>>([]);
@@ -123,7 +163,8 @@ export function useWarehouseZones() {
         retryAsync(async () => {
           const res = await fetchWithAuth(`${API_BASE}/warehouse-zones`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.json() as Promise<{ zones: Array<ApiWarehouseZone> }>;
+          const json = (await res.json()) as { zones?: unknown };
+          return { zones: normalizeZones(json.zones) };
         }),
         (async (): Promise<{ alignment: ZoneAlignment; stale: boolean }> => {
           try {
@@ -139,8 +180,8 @@ export function useWarehouseZones() {
           try {
             const res = await fetchWithAuth(`${API_BASE}/warehouse-zones/anchors`);
             if (!res.ok) return [];
-            const json = (await res.json()) as { anchors: Array<MapAnchorRow> };
-            return Array.isArray(json.anchors) ? json.anchors : [];
+            const json = (await res.json()) as { anchors?: unknown };
+            return normalizeAnchors(json.anchors);
           } catch {
             return [];
           }
@@ -197,9 +238,9 @@ export function useWarehouseZones() {
         if (raw) {
           const cached: ZoneCache = JSON.parse(raw);
           if (mountedRef.current) {
-            setZones(cached.zones);
+            setZones(normalizeZones(cached.zones));
             setAlignment(normalizeAlignment(cached.alignment));
-            if (Array.isArray(cached.anchors)) setAnchors(cached.anchors);
+            if (Array.isArray(cached.anchors)) setAnchors(normalizeAnchors(cached.anchors));
             setLoading(false);
             hasDataRef.current = true;
           }

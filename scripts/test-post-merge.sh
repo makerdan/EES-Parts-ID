@@ -399,9 +399,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 10: pnpm install in background — script continues and exits 0
-# Verifies that when the lockfile changes the script still exits 0 (install
-# is fire-and-forget; failure is logged to /tmp, not fatal to post-merge).
+# Test 10: pnpm install in background — successful install is collected
+# Verifies that when the lockfile changes the script waits for the bounded
+# background install and continues after it exits successfully.
 # ---------------------------------------------------------------------------
 MOCK_BIN_DIR=$(mktemp -d)
 # Mock `timeout` that exits 0 immediately (background install completes fast).
@@ -437,8 +437,72 @@ for _attempt in 1 2 3; do
 done
 rm -rf "$MOCK_BIN_DIR"
 
-assert_exit     "install timeout — exits non-zero"         0 "$INSTALL_BG_EXIT"
-assert_contains "install timeout — prints timeout message" "background" "$INSTALL_BG_OUTPUT"
+assert_exit     "background install — exits zero"              0 "$INSTALL_BG_EXIT"
+assert_contains "background install — reports background work" "background" "$INSTALL_BG_OUTPUT"
+
+# ---------------------------------------------------------------------------
+# Test 10b: dependency install completes before codegen starts
+#
+# The install mock deliberately pauses before creating a completion sentinel.
+# The codegen mock fails if that sentinel is absent. This catches the production
+# race where a lockfile-changing merge ran codegen with stale or missing tools
+# while `pnpm install --frozen-lockfile` was still running.
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR_ORDER=$(mktemp -d)
+INSTALL_COMPLETE_FILE="$MOCK_BIN_DIR_ORDER/install_complete"
+CODEGEN_CALLED_FILE="$MOCK_BIN_DIR_ORDER/codegen_called"
+CODEGEN_EARLY_FILE="$MOCK_BIN_DIR_ORDER/codegen_started_early"
+
+cat > "$MOCK_BIN_DIR_ORDER/timeout" << MOCKEOF
+#!/bin/bash
+if [[ "\$*" == *"pnpm install --frozen-lockfile"* ]]; then
+  command sleep 0.2
+  touch "$INSTALL_COMPLETE_FILE"
+  exit 0
+fi
+if [[ "\$*" == *"codegen:fix"* ]]; then
+  touch "$CODEGEN_CALLED_FILE"
+  if [[ ! -f "$INSTALL_COMPLETE_FILE" ]]; then
+    touch "$CODEGEN_EARLY_FILE"
+    exit 77
+  fi
+  exit 0
+fi
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR_ORDER/timeout"
+
+cat > "$MOCK_BIN_DIR_ORDER/git" << 'MOCKEOF'
+#!/bin/bash
+if [[ "$*" == *"diff --name-only"* ]]; then
+  echo "pnpm-lock.yaml"
+fi
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR_ORDER/git"
+
+cat > "$MOCK_BIN_DIR_ORDER/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR_ORDER/curl"
+
+ORDER_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR_ORDER:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+ORDER_EXIT=$?
+
+assert_exit "install ordering — post-merge exits zero" 0 "$ORDER_EXIT"
+if [[ -f "$CODEGEN_CALLED_FILE" ]]; then
+  pass "install ordering — codegen was reached"
+else
+  fail "install ordering — codegen was not reached"
+fi
+if [[ -f "$INSTALL_COMPLETE_FILE" && ! -f "$CODEGEN_EARLY_FILE" ]]; then
+  pass "install ordering — install completed before codegen"
+else
+  fail "install ordering — codegen started before install completed"
+fi
+assert_contains "install ordering — wait is reported" "before dependency-sensitive steps" "$ORDER_OUTPUT"
+rm -rf "$MOCK_BIN_DIR_ORDER"
 
 # ---------------------------------------------------------------------------
 # Test 11: verify-fts step is present in post-merge.sh
@@ -717,21 +781,20 @@ assert_exit     "codegen:fix commit fail — post-merge exits non-zero"  1 "$COD
 assert_contains "codegen:fix commit fail — prints error message"       "codegen:fix failed" "$CODEGEN_FAIL_OUTPUT"
 
 # ---------------------------------------------------------------------------
-# Test 18: background install exits non-zero — script logs warning and proceeds
+# Test 18: background install exits non-zero — script fails before codegen
 #
 # Spawns post-merge.sh with:
 #   - mock git  : reports pnpm-lock.yaml changed so the install branch is taken
 #   - mock timeout: exits 1 when called for pnpm install (failed install);
-#                   passes through all other timeout-wrapped commands so codegen
-#                   and db-push steps succeed normally
-#   - mock pnpm : exits 0 for all calls (codegen:fix, etc.)
-#   - mock curl : returns '{"status":"ok"}' so the health check passes
+#                   passes through all other timeout-wrapped commands
+#   - mock pnpm : records if a dependency-sensitive command is reached
 #
 # Verifies:
-#   (a) the WARNING message about the non-zero install exit is logged
-#   (b) post-merge proceeds to the health check and exits 0 (not aborted)
+#   (a) the ERROR message about the non-zero install exit is logged
+#   (b) post-merge exits 1 before codegen or the health check
 # ---------------------------------------------------------------------------
 MOCK_BIN_DIR18=$(mktemp -d)
+INSTALL_FAIL_CODEGEN_FILE="$MOCK_BIN_DIR18/codegen_reached"
 
 cat > "$MOCK_BIN_DIR18/git" << 'MOCKEOF'
 #!/bin/bash
@@ -754,8 +817,11 @@ fi
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR18/timeout"
 
-cat > "$MOCK_BIN_DIR18/pnpm" << 'MOCKEOF'
+cat > "$MOCK_BIN_DIR18/pnpm" << MOCKEOF
 #!/bin/bash
+if echo "\$*" | grep -q 'codegen:fix'; then
+  touch "$INSTALL_FAIL_CODEGEN_FILE"
+fi
 exit 0
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR18/pnpm"
@@ -768,11 +834,15 @@ chmod +x "$MOCK_BIN_DIR18/curl"
 
 INSTALL_FAIL_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR18:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
 INSTALL_FAIL_EXIT=$?
-rm -rf "$MOCK_BIN_DIR18"
 
-assert_exit     "install fail — script exits 0 (warning, not abort)"          0 "$INSTALL_FAIL_EXIT"
-assert_contains "install fail — WARNING message logged"                        "WARNING: background install exited" "$INSTALL_FAIL_OUTPUT"
-assert_contains "install fail — proceeds to health check after install wait"   "health check" "$INSTALL_FAIL_OUTPUT"
+assert_exit     "install fail — script exits non-zero" 1 "$INSTALL_FAIL_EXIT"
+assert_contains "install fail — ERROR message logged" "ERROR: background install exited" "$INSTALL_FAIL_OUTPUT"
+if [[ ! -f "$INSTALL_FAIL_CODEGEN_FILE" && "$INSTALL_FAIL_OUTPUT" != *"Starting API health check"* ]]; then
+  pass "install fail — aborts before codegen and health check"
+else
+  fail "install fail — dependency-sensitive work continued after install failure"
+fi
+rm -rf "$MOCK_BIN_DIR18"
 
 # ---------------------------------------------------------------------------
 # Test 19: env:check exits 0 — all server env vars are documented
@@ -1448,11 +1518,10 @@ else
   fail "cleanup-trap — post-merge.sh is missing the background-install cleanup trap"
 fi
 
-# Behavioral check: an aborted post-merge.sh must not leave its background
-# install running.  Mocks: git reports the lockfile changed (install branch
-# taken), the mocked `timeout` starts a long-lived sleep for the install call
-# but fails the codegen:fix call, so post-merge takes its early-abort exit-1
-# path while the fake install is still running.  The EXIT trap must kill it.
+# Behavioral check: an interrupted post-merge.sh must not leave its background
+# install running. Mocks report a lockfile change and start a long-lived fake
+# install. The test sends SIGTERM while post-merge is waiting for that install;
+# the TERM/EXIT trap must terminate the child before the script exits.
 MOCK_BIN_DIR36=$(mktemp -d)
 BG_MARKER36="$MOCK_BIN_DIR36/bg_running"
 # Distinctive duration so pgrep cannot match unrelated sleeps.
@@ -1465,8 +1534,7 @@ echo "pnpm-lock.yaml"
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR36/git"
 
-# timeout: long-lived fake install for the `pnpm install` call; hard failure
-# for codegen:fix so post-merge aborts (exit 1) while the install runs.
+# timeout: long-lived fake install for the `pnpm install` call.
 cat > "$MOCK_BIN_DIR36/timeout" << MOCKEOF
 #!/bin/bash
 shift
@@ -1490,11 +1558,28 @@ echo '{"status":"ok"}'
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR36/curl"
 
-CLEANUP36_OUTPUT=$(PATH="$MOCK_BIN_DIR36:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" \
-  bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
-CLEANUP36_EXIT=$?
+PATH="$MOCK_BIN_DIR36:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" \
+  bash "$SCRIPT_DIR/post-merge.sh" > "$MOCK_BIN_DIR36/output" 2>&1 &
+CLEANUP36_PID=$!
 
-assert_exit "cleanup-trap behavioral — post-merge aborts (exit 1) on codegen failure" 1 "$CLEANUP36_EXIT"
+for _attempt in $(seq 1 50); do
+  [[ -f "$BG_MARKER36" ]] && break
+  command sleep 0.05
+done
+
+if [[ -f "$BG_MARKER36" ]]; then
+  kill -TERM "$CLEANUP36_PID" 2>/dev/null || true
+fi
+
+CLEANUP36_EXIT=0
+wait "$CLEANUP36_PID" 2>/dev/null || CLEANUP36_EXIT=$?
+CLEANUP36_OUTPUT=$(cat "$MOCK_BIN_DIR36/output" 2>/dev/null || true)
+
+if [[ "$CLEANUP36_EXIT" -ne 0 ]]; then
+  pass "cleanup-trap behavioral — interrupted post-merge exits non-zero"
+else
+  fail "cleanup-trap behavioral — interrupted post-merge unexpectedly exits zero"
+fi
 
 if [[ ! -f "$BG_MARKER36" ]]; then
   fail "cleanup-trap behavioral — background install never started (mock setup problem)"

@@ -120,12 +120,14 @@ const CONTACT_ROWS = [
 
 type MockResponse = {
   ok: boolean;
+  status: number;
   json: () => Promise<unknown>;
 };
 
-function jsonResponse(value: unknown, ok = true): MockResponse {
+function jsonResponse(value: unknown, ok = true, status = ok ? 200 : 500): MockResponse {
   return {
     ok,
+    status,
     json: async () => value,
   };
 }
@@ -267,6 +269,33 @@ describe("AdminInboxScreen — protected inbox workflow", () => {
   it("keeps an unread message unread when the mark-as-read request fails", async () => {
     mockFetch.mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "PATCH") return Promise.reject(new Error("network down"));
+      return Promise.resolve(jsonResponse([CONTACT_ROWS[0]]));
+    });
+
+    activeTree = await render(React.createElement(AdminInboxScreen));
+    await act(async () => {
+      await flushPromises();
+    });
+
+    const unreadRow = findPressable(getRoot(), "Need help identifying a part");
+    expect(unreadRow).not.toBeNull();
+
+    await act(async () => {
+      void fireEvent.press(unreadRow!);
+      await flushPromises();
+    });
+
+    expect(instText(getRoot())).toContain("The label is worn off. Can you help?");
+    expect(hasExactText(getRoot(), "1")).toBe(true);
+    const failedRow = findPressable(getRoot(), "Need help identifying a part");
+    expect(flattenStyle(failedRow!.props.style).borderLeftWidth).toBe(3);
+  });
+
+  it("keeps an unread message unread when the server rejects the mark-as-read response", async () => {
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        return Promise.resolve(jsonResponse({ error: "Message not found" }, false, 404));
+      }
       return Promise.resolve(jsonResponse([CONTACT_ROWS[0]]));
     });
 

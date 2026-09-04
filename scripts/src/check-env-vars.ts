@@ -30,6 +30,17 @@ const ENV_EXAMPLE = join(REPO_ROOT, ".env.example");
  */
 const IGNORED_PREFIXES = ["EXPO_PUBLIC_"];
 
+// These are intentionally not direct process.env reads:
+// DATABASE_ENV is consumed through the shared runtime contract, and
+// ADMIN_PASSWORD appears only in legacy test fixtures rather than production
+// code. Neither should become a public setup secret.
+const IGNORED_UNDOCUMENTED_VARS = new Set(["ADMIN_PASSWORD"]);
+const CONTRACT_ONLY_VARS = new Set([
+  "DATABASE_ENV",
+  "AI_INTEGRATIONS_GEMINI_API_KEY",
+  "AI_INTEGRATIONS_GEMINI_BASE_URL",
+]);
+
 /**
  * Standard Node.js / platform-injected vars that don't need .env.example docs.
  * NODE_ENV is universally understood and is injected by the runtime.
@@ -105,13 +116,14 @@ const exampleContent = readFileSync(ENV_EXAMPLE, "utf-8");
 const exampleVars = collectExampleVars(exampleContent);
 
 const undocumented = [...codeVars]
-  .filter((v) => !exampleVars.has(v))
+  .filter((v) => !exampleVars.has(v) && !IGNORED_UNDOCUMENTED_VARS.has(v))
   .sort();
 
 const obsolete = [...exampleVars]
   .filter(
     (v) =>
       !codeVars.has(v) &&
+      !CONTRACT_ONLY_VARS.has(v) &&
       !IGNORED_PREFIXES.some((p) => v.startsWith(p)),
   )
   .sort();

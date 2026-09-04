@@ -169,6 +169,101 @@ export function extractJsonFromText(text: string): Record<string, unknown> | nul
 }
 
 /**
+ * Extract the first balanced JSON object or array from model text.
+ *
+ * Unlike extractJsonFromText, this helper also permits arrays, which are used
+ * by catalogue extraction. It still rejects primitive JSON values so a model
+ * response cannot accidentally satisfy an object-shaped contract.
+ */
+export function extractJsonValueFromText(text: string): Record<string, unknown> | Array<unknown> | null {
+  const start = text.search(/[{[]/);
+  if (start === -1) return null;
+
+  const open = text[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let end = -1;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+
+  if (end === -1) return null;
+
+  try {
+    const parsed: unknown = JSON.parse(text.slice(start, end + 1));
+    if (parsed === null || typeof parsed !== "object") return null;
+    return parsed as Record<string, unknown> | Array<unknown>;
+  } catch {
+    return null;
+  }
+}
+
+interface RuntimeSchema<T> {
+  safeParse(value: unknown):
+    | { success: true; data: T }
+    | { success: false; error: unknown };
+}
+
+export class MalformedAiResponseError extends Error {
+  readonly feature: string;
+
+  constructor(feature: string) {
+    super(`AI response did not match the expected ${feature} format`);
+    this.name = "MalformedAiResponseError";
+    this.feature = feature;
+  }
+}
+
+/**
+ * Validate model-generated JSON at the shared runtime boundary.
+ *
+ * Callers that have an established safe fallback may use the fallback
+ * overload. Persistence-oriented callers should use parseAiResponse directly
+ * so malformed output becomes an error before any write is attempted.
+ */
+export function parseAiResponse<T>(
+  rawText: string,
+  schema: RuntimeSchema<T>,
+  feature: string,
+): T {
+  const result = schema.safeParse(extractJsonValueFromText(rawText));
+  if (!result.success) throw new MalformedAiResponseError(feature);
+  return result.data;
+}
+
+export function parseAiResponseOr<T>(
+  rawText: string,
+  schema: RuntimeSchema<T>,
+  feature: string,
+  fallback: T,
+): T {
+  try {
+    return parseAiResponse(rawText, schema, feature);
+  } catch (err) {
+    if (!(err instanceof MalformedAiResponseError)) throw err;
+    return fallback;
+  }
+}
+
+/**
  * Normalize a raw AI analysis object into a fully-typed AiAnalysis,
  * providing safe defaults for every field.
  * When `parsed` is null (AI returned non-JSON prose), search terms are left

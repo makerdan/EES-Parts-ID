@@ -137,6 +137,10 @@ export default function CatalogReviewScreen() {
   const resumePollRef = useRef<Record<number, ReturnType<typeof setInterval>>>({});
   // Count consecutive poll failures per jobId (reset on success).
   const pollFailCountRef = useRef<Record<number, number>>({});
+  const screenLifecycleRef = useRef(0);
+  const fetchGenerationRef = useRef(0);
+  const fetchControllerRef = useRef<AbortController | null>(null);
+  const resumePollControllerRef = useRef<Record<number, AbortController>>({});
   const [infoDialog, setInfoDialog] = useState<{ visible: boolean; title: string; message: string }>({
     visible: false, title: "", message: "",
   });
@@ -216,8 +220,33 @@ export default function CatalogReviewScreen() {
     [adminToken],
   );
 
+  // Invalidate all work owned by the previous screen/token lifecycle. The
+  // generation check below is still needed because aborting a fetch cannot
+  // prevent a response that has already resolved from running its continuation.
+  useEffect(() => {
+    const lifecycle = ++screenLifecycleRef.current;
+    fetchControllerRef.current?.abort();
+    return () => {
+      if (screenLifecycleRef.current === lifecycle) {
+        screenLifecycleRef.current += 1;
+      }
+      fetchControllerRef.current?.abort();
+      fetchControllerRef.current = null;
+    };
+  }, [adminToken, jobId]);
+
   const fetchItems = useCallback(async (isRefresh = false) => {
     if (!adminToken) return;
+    const lifecycle = screenLifecycleRef.current;
+    const generation = ++fetchGenerationRef.current;
+    fetchControllerRef.current?.abort();
+    const controller = new AbortController();
+    fetchControllerRef.current = controller;
+    const isCurrentRequest = () =>
+      screenLifecycleRef.current === lifecycle &&
+      fetchGenerationRef.current === generation &&
+      !controller.signal.aborted;
+
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
@@ -227,20 +256,28 @@ export default function CatalogReviewScreen() {
         : `${API_BASE}/admin/catalog-pdf/reviews`;
 
       const requests: Array<Promise<Response>> = [
-        fetch(url, { headers: authHeaders }),
+        fetch(url, { headers: authHeaders, signal: controller.signal }),
       ];
       if (!jobId) {
-        requests.push(fetch(`${API_BASE}/admin/catalog-pdf/failed-jobs`, { headers: authHeaders }));
+        requests.push(fetch(`${API_BASE}/admin/catalog-pdf/failed-jobs`, {
+          headers: authHeaders,
+          signal: controller.signal,
+        }));
       } else {
-        requests.push(fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, { headers: authHeaders }));
+        requests.push(fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, {
+          headers: authHeaders,
+          signal: controller.signal,
+        }));
       }
 
       const [reviewRes, secondRes] = await Promise.all(requests);
+      if (!isCurrentRequest()) return;
 
       // requests always contains at least the review fetch, so reviewRes is defined.
       if (reviewRes!.status === 401) { logoutAdmin(); return; }
       if (!reviewRes!.ok) throw new Error("Failed to load");
       const data = await reviewRes!.json() as { items: Array<ReviewItem> };
+      if (!isCurrentRequest()) return;
 
       // Group by upload session (catalogPdfJobId)
       const groupMap = new Map<number | null, SessionGroup>();
@@ -257,6 +294,7 @@ export default function CatalogReviewScreen() {
       );
 
       if (secondRes) {
+        if (!isCurrentRequest()) return;
         if (secondRes.status === 401) { logoutAdmin(); return; }
         if (secondRes.ok) {
           if (jobId) {
@@ -270,6 +308,7 @@ export default function CatalogReviewScreen() {
               imagesMatched?: number;
               unmatchedParts?: Array<{ catalogNumber: string; description: string }>;
             };
+            if (!isCurrentRequest()) return;
             setJobSummary({
               vendor: statusData.vendor ?? "",
               partsFound: statusData.partsFound ?? 0,
@@ -304,54 +343,80 @@ export default function CatalogReviewScreen() {
             }
           } else {
             const failedData = await secondRes.json() as { jobs: Array<FailedJob> };
+            if (!isCurrentRequest()) return;
             setFailedJobs(failedData.jobs);
           }
         } else if (jobId) {
+          if (!isCurrentRequest()) return;
           setError("Could not load job status — try refreshing.");
         }
       }
     } catch (err) {
+      if (!isCurrentRequest()) return;
       if (err instanceof TypeError) reportNetworkFailure();
       setError("Could not load review data. Check your connection.");
     } finally {
-      if (isRefresh) setRefreshing(false);
-      else setLoading(false);
+      if (isCurrentRequest()) {
+        if (isRefresh) setRefreshing(false);
+        else setLoading(false);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminToken, jobId, reportNetworkFailure]);
 
-  useEffect(() => { fetchItems(); }, [fetchItems]);
+  useEffect(() => { void fetchItems(); }, [fetchItems]);
 
   // Helper: start (or re-start) polling the status endpoint for a given jobId.
   // Stored in a ref so it can be called from handleResume AND the remount effect.
   const startPollForJobRef = useRef<(id: number, headers: Record<string, string>) => void>(
     () => undefined,
   );
+  const stopPollForJob = (id: number) => {
+    const interval = resumePollRef.current[id];
+    if (interval) clearInterval(interval);
+    delete resumePollRef.current[id];
+    resumePollControllerRef.current[id]?.abort();
+    delete resumePollControllerRef.current[id];
+    delete pollFailCountRef.current[id];
+  };
+
   startPollForJobRef.current = (id: number, headers: Record<string, string>) => {
-    if (resumePollRef.current[id]) {
-      clearInterval(resumePollRef.current[id]);
-    }
+    stopPollForJob(id);
+    const lifecycle = screenLifecycleRef.current;
+    const controller = new AbortController();
+    resumePollControllerRef.current[id] = controller;
     // Reset failure counter whenever the poll (re)starts.
     pollFailCountRef.current[id] = 0;
+    const isCurrentPoll = () =>
+      screenLifecycleRef.current === lifecycle &&
+      resumePollControllerRef.current[id] === controller &&
+      !controller.signal.aborted;
+
     resumePollRef.current[id] = setInterval(async () => {
+      if (!isCurrentPoll()) return;
       try {
-        const statusRes = await fetch(`${API_BASE}/admin/catalog-pdf/${id}/status`, { headers });
+        const statusRes = await fetch(`${API_BASE}/admin/catalog-pdf/${id}/status`, {
+          headers,
+          signal: controller.signal,
+        });
+        if (!isCurrentPoll()) return;
         if (!statusRes.ok) {
           // Non-2xx response counts as a failure.
           pollFailCountRef.current[id] = (pollFailCountRef.current[id] ?? 0) + 1;
           if (pollFailCountRef.current[id] >= POLL_FAIL_THRESHOLD) {
-            clearInterval(resumePollRef.current[id]);
-            delete resumePollRef.current[id];
-            setResumeProgress((prev) => ({
-              ...prev,
-              [id]: {
-                status: "stalled",
-                processedPages: prev[id]?.processedPages ?? 0,
-                totalPages: prev[id]?.totalPages ?? null,
-                matchedParts: prev[id]?.matchedParts ?? 0,
-                errorMessage: "Processing stalled — please retry or contact support",
-              },
-            }));
+            stopPollForJob(id);
+            if (screenLifecycleRef.current === lifecycle) {
+              setResumeProgress((prev) => ({
+                ...prev,
+                [id]: {
+                  status: "stalled",
+                  processedPages: prev[id]?.processedPages ?? 0,
+                  totalPages: prev[id]?.totalPages ?? null,
+                  matchedParts: prev[id]?.matchedParts ?? 0,
+                  errorMessage: "Processing stalled — please retry or contact support",
+                },
+              }));
+            }
           }
           return;
         }
@@ -362,6 +427,7 @@ export default function CatalogReviewScreen() {
           matchedParts: number;
           errorMessage: string | null;
         };
+        if (!isCurrentPoll()) return;
         // Successful response — reset failure counter.
         pollFailCountRef.current[id] = 0;
         setResumeProgress((prev) => ({
@@ -375,33 +441,36 @@ export default function CatalogReviewScreen() {
           },
         }));
         if (body.status === "done" || body.status === "failed" || body.status === "cancelled") {
-          clearInterval(resumePollRef.current[id]);
-          delete resumePollRef.current[id];
-          setResumingId((prev) => (prev === id ? null : prev));
-          if (body.status === "done") {
-            setFailedJobs((prev) => prev.filter((j) => j.id !== id));
-            void invalidateListCache({ queryClient });
-            void queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+          stopPollForJob(id);
+          if (screenLifecycleRef.current === lifecycle) {
+            setResumingId((prev) => (prev === id ? null : prev));
+            if (body.status === "done") {
+              setFailedJobs((prev) => prev.filter((j) => j.id !== id));
+              void invalidateListCache({ queryClient });
+              void queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+            }
+            fetchItems();
           }
-          fetchItems();
         }
       } catch (err) {
+        if (!isCurrentPoll() || controller.signal.aborted) return;
         // Network error counts as a failure.
         console.error('[catalog-review] poll status', err);
         pollFailCountRef.current[id] = (pollFailCountRef.current[id] ?? 0) + 1;
         if (pollFailCountRef.current[id] >= POLL_FAIL_THRESHOLD) {
-          clearInterval(resumePollRef.current[id]);
-          delete resumePollRef.current[id];
-          setResumeProgress((prev) => ({
-            ...prev,
-            [id]: {
-              status: "stalled",
-              processedPages: prev[id]?.processedPages ?? 0,
-              totalPages: prev[id]?.totalPages ?? null,
-              matchedParts: prev[id]?.matchedParts ?? 0,
-              errorMessage: "Processing stalled — please retry or contact support",
-            },
-          }));
+          stopPollForJob(id);
+          if (screenLifecycleRef.current === lifecycle) {
+            setResumeProgress((prev) => ({
+              ...prev,
+              [id]: {
+                status: "stalled",
+                processedPages: prev[id]?.processedPages ?? 0,
+                totalPages: prev[id]?.totalPages ?? null,
+                matchedParts: prev[id]?.matchedParts ?? 0,
+                errorMessage: "Processing stalled — please retry or contact support",
+              },
+            }));
+          }
         }
       }
     }, 3000);
@@ -430,10 +499,11 @@ export default function CatalogReviewScreen() {
     return () => {
       // Clear all active polls when the screen unmounts (they will be
       // re-attached on the next mount via the effect above).
-      for (const interval of Object.values(pollMap)) {
-        clearInterval(interval);
+      for (const key of Object.keys(pollMap)) {
+        stopPollForJob(Number(key));
       }
       resumePollRef.current = {};
+      resumePollControllerRef.current = {};
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminToken]);

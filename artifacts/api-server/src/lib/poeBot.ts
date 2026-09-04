@@ -14,6 +14,12 @@
  * when a Poe API key has run out of credits.
  */
 
+import {
+  getPoeClient,
+  isPoeAuthError,
+  isPoeTransientError,
+  withPoeRequestTimeout,
+} from "@workspace/integrations-poe-server";
 import OpenAI from "openai";
 
 import {
@@ -27,17 +33,6 @@ import {
 } from "./aiProvider";
 import { logger } from "./logger";
 
-let _client: OpenAI | null = null;
-
-function getClient(): OpenAI {
-  if (!_client) {
-    const apiKey = process.env["POE_API_KEY2"];
-    if (!apiKey) throw new Error("POE_API_KEY2 is not set");
-    _client = new OpenAI({ apiKey, baseURL: "https://api.poe.com/v1" });
-  }
-  return _client;
-}
-
 export class PoeHttpError extends Error {
   readonly status: number;
   constructor(status: number, statusText: string) {
@@ -48,19 +43,11 @@ export class PoeHttpError extends Error {
 }
 
 export function isPoeCallAuthError(err: unknown): boolean {
-  return (
-    err instanceof OpenAI.AuthenticationError ||
-    err instanceof OpenAI.PermissionDeniedError
-  );
+  return isPoeAuthError(err);
 }
 
 export function isPoeCallTransientError(err: unknown): boolean {
-  return (
-    err instanceof OpenAI.RateLimitError ||
-    err instanceof OpenAI.InternalServerError ||
-    err instanceof OpenAI.APIConnectionError ||
-    err instanceof OpenAI.APIConnectionTimeoutError
-  );
+  return isPoeTransientError(err);
 }
 
 /**
@@ -88,14 +75,19 @@ export async function callPoeBot(
   systemInstruction: string,
   userMessage: string,
 ): Promise<string> {
-  const response = await getClient().chat.completions.create({
-    model: botName,
-    max_completion_tokens: 512,
-    messages: [
-      { role: "system", content: systemInstruction },
-      { role: "user", content: userMessage },
-    ],
-  });
+  const response = await withPoeRequestTimeout((signal) =>
+    getPoeClient().chat.completions.create(
+      {
+        model: botName,
+        max_completion_tokens: 512,
+        messages: [
+          { role: "system", content: systemInstruction },
+          { role: "user", content: userMessage },
+        ],
+      },
+      { signal },
+    ),
+  );
   return response.choices[0]?.message?.content?.trim() ?? "";
 }
 
@@ -284,7 +276,7 @@ export async function tryPoeBotChain<T>(
     if (!isFirstAttempt) await sleep(getChainRetryDelayMs());
     isFirstAttempt = false;
     try {
-      return await fn(getClient(), botName);
+      return await withPoeRequestTimeout(() => fn(getPoeClient(), botName));
     } catch (err) {
       if (isPoeCallAuthError(err)) throw err;
       chainErr = err;

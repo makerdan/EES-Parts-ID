@@ -54,7 +54,7 @@ function buildMocks(role: "admin" | "user" | undefined = "admin") {
   const status = jest.fn().mockReturnValue({ json });
   const res = {
     locals: {
-      appUser: { clerkUserId: "jest-mfa-admin-user", role },
+      appUser: { clerkUserId: "jest-mfa-admin-user", status: "approved", role },
       isBootstrapAdmin: false,
     },
     status,

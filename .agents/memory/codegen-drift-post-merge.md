@@ -27,3 +27,5 @@ Manual cleanup is no longer needed — post-merge handles it automatically.
 2. **`... could not be found`/`is not a module` typecheck errors under `lib/api-*/src/generated` or `dist`.** These are the codegen RACE: validations run in parallel and `codegen:check` runs orval which *cleans the output folder* mid-run, so a concurrent `parts-id-typecheck`/`tsc --build` reads the folder while it's empty. The same typecheck passes in isolation.
 
 **How to apply:** If your task did NOT intentionally change the OpenAPI spec or generated files, and these are the only failures, they are environment-blocked — verify your real changes typecheck in isolation, then mark complete with a skip_validation_reason. Do NOT keep regenerating; it won't help and adds noise to your diff.
+
+When a task intentionally changes the OpenAPI spec, stage the regenerated client files before running `codegen:check`; that check compares the regenerated output with the index, while post-merge will commit the staged generated changes with the task.

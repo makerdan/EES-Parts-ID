@@ -143,6 +143,7 @@ jest.mock("@/components/ConfirmDialog", () => ({
 // without needing to interact with the full card UI.
 
 let capturedOnResume: ((jobId: number) => void) | null = null;
+let capturedSetResumeProgress: jest.Mock;
 
 jest.mock("@/components/FailedJobsSection", () => ({
   FailedJobsSection: (props: {
@@ -227,6 +228,7 @@ let activeTree: RenderResult | null = null;
 beforeEach(() => {
   capturedInfoDialogProps = { visible: false, title: "", message: "" };
   capturedOnResume = null;
+  capturedSetResumeProgress = jest.fn();
   jest.clearAllMocks();
 
   // Provide the full AppContext value that CatalogReviewScreen needs.
@@ -235,7 +237,7 @@ beforeEach(() => {
       adminToken: "test-admin-tok",
       isAdmin: true,
       resumeProgress: {},
-      setResumeProgress: jest.fn(),
+      setResumeProgress: capturedSetResumeProgress,
     }),
   );
 
@@ -251,6 +253,8 @@ afterEach(async () => {
     await activeTree.unmount();
     activeTree = null;
   }
+  jest.clearAllTimers();
+  jest.useRealTimers();
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -549,5 +553,162 @@ describe("CatalogReviewScreen — handleResume post-409 status fetch returns non
     expect(capturedInfoDialogProps.message).not.toContain(
       "No resumable chunks found",
     );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// D — lifecycle cancellation
+//
+// Bootstrap and resume-poll requests can outlive the screen.  They must carry
+// an AbortSignal and ignore late responses so abandoned screens do not update
+// state or restart follow-up work.
+// ══════════════════════════════════════════════════════════════════════════════
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+describe("CatalogReviewScreen — lifecycle cancellation", () => {
+  it("aborts review and failed-job bootstrap requests on unmount", async () => {
+    mockUseLocalSearchParams.mockReturnValue({});
+    const reviewResponse = deferred<Response>();
+    const failedJobsResponse = deferred<Response>();
+    const signals: AbortSignal[] = [];
+
+    global.fetch = jest.fn().mockImplementation((url: string, options?: RequestInit) => {
+      signals.push(options?.signal as AbortSignal);
+      return url.includes("/reviews")
+        ? reviewResponse.promise
+        : failedJobsResponse.promise;
+    });
+
+    activeTree = await render(<CatalogReviewScreen />);
+    expect(signals).toHaveLength(2);
+
+    await activeTree.unmount();
+    activeTree = null;
+
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+
+    reviewResponse.resolve(makeResponse(200, { items: [] }));
+    failedJobsResponse.resolve(makeResponse(200, { jobs: [] }));
+    await flush();
+
+    expect(capturedSetResumeProgress).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a late deep-link response after the admin token changes", async () => {
+    mockUseLocalSearchParams.mockReturnValue({ jobId: "42" });
+    const oldReviewResponse = deferred<Response>();
+    const oldStatusResponse = deferred<Response>();
+    const signals: AbortSignal[] = [];
+    let requestCount = 0;
+
+    global.fetch = jest.fn().mockImplementation((url: string, options?: RequestInit) => {
+      signals.push(options?.signal as AbortSignal);
+      requestCount += 1;
+      if (requestCount === 1) return oldReviewResponse.promise;
+      if (requestCount === 2) return oldStatusResponse.promise;
+      return Promise.resolve(
+        url.includes("/reviews")
+          ? makeResponse(200, { items: [] })
+          : makeResponse(200, { status: "done", unmatchedParts: [] }),
+      );
+    });
+
+    const oldSetResumeProgress = capturedSetResumeProgress;
+    activeTree = await render(<CatalogReviewScreen />);
+
+    useApp.mockReturnValue(
+      makeAppMock({
+        adminToken: "new-admin-token",
+        isAdmin: true,
+        resumeProgress: {},
+        setResumeProgress: jest.fn(),
+      }),
+    );
+    await activeTree.rerender(<CatalogReviewScreen />);
+
+    expect(signals.slice(0, 2).every((signal) => signal.aborted)).toBe(true);
+
+    oldReviewResponse.resolve(makeResponse(200, { items: [] }));
+    oldStatusResponse.resolve(makeResponse(200, {
+      status: "processing",
+      processedPages: 1,
+      totalPages: 2,
+      matchedParts: 1,
+      unmatchedParts: [],
+    }));
+    await flush();
+
+    expect(oldSetResumeProgress).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it("aborts an in-flight resume poll and does not refresh after unmount", async () => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
+    mockUseLocalSearchParams.mockReturnValue({});
+    const pollResponse = deferred<Response>();
+    const pollSignals: AbortSignal[] = [];
+
+    global.fetch = jest.fn().mockImplementation((url: string, options?: RequestInit) => {
+      if (url.includes("/status")) {
+        pollSignals.push(options?.signal as AbortSignal);
+        return pollResponse.promise;
+      }
+      return Promise.resolve(
+        url.includes("/reviews")
+          ? makeResponse(200, { items: [] })
+          : makeResponse(200, { jobs: [] }),
+      );
+    });
+
+    useApp.mockReturnValue(
+      makeAppMock({
+        adminToken: "test-admin-tok",
+        isAdmin: true,
+        resumeProgress: {
+          42: {
+            status: "processing",
+            processedPages: 1,
+            totalPages: 2,
+            matchedParts: 0,
+            errorMessage: null,
+          },
+        },
+        setResumeProgress: capturedSetResumeProgress,
+      }),
+    );
+    activeTree = await render(
+      <CatalogReviewScreen />,
+    );
+    await flush();
+
+    await act(async () => {
+      jest.advanceTimersByTime(3000);
+      await Promise.resolve();
+    });
+    expect(pollSignals).toHaveLength(1);
+
+    await activeTree.unmount();
+    activeTree = null;
+    expect(pollSignals[0]!.aborted).toBe(true);
+
+    pollResponse.resolve(makeResponse(200, {
+      status: "done",
+      processedPages: 2,
+      totalPages: 2,
+      matchedParts: 1,
+      errorMessage: null,
+    }));
+    await flush();
+
+    expect(capturedSetResumeProgress).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(3);
   });
 });

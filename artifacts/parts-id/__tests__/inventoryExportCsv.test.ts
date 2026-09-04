@@ -61,7 +61,7 @@ describe("escapeField", () => {
 
 describe("INVENTORY_CSV_HEADER", () => {
   it("contains the expected column names in order", () => {
-    expect(INVENTORY_CSV_HEADER).toBe("Vendor,Catalog,Description,BinLocation,Barcodes");
+    expect(INVENTORY_CSV_HEADER).toBe("Vendor,Catalog,Description,BinLocation,Barcodes,OP,OQ");
   });
 });
 

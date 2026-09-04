@@ -1,9 +1,15 @@
 import { clerkClient } from "@clerk/express";
-import { db, usersTable } from "@workspace/db";
+import {
+  catalogPdfUploadPartTable,
+  catalogPdfUploadSessionTable,
+  db,
+  usersTable,
+} from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { Router } from "express";
 
 import { logger } from "../lib/logger";
+import { deleteCatalogPdfPart } from "../lib/objectStorage";
 
 const router = Router();
 
@@ -26,6 +32,31 @@ router.delete("/me", async (req, res) => {
   }
 
   try {
+    // Remove all staged PDF source parts owned by this account before removing
+    // its database row. The operation is idempotent: missing objects are
+    // already clean and failed deletes are logged for retry rather than
+    // turning a successful account deletion into a partial data leak.
+    const sessions = await db
+      .select({ id: catalogPdfUploadSessionTable.id })
+      .from(catalogPdfUploadSessionTable)
+      .where(eq(catalogPdfUploadSessionTable.ownerClerkUserId, clerkUserId));
+    for (const session of sessions) {
+      const parts = await db
+        .select({ partIndex: catalogPdfUploadPartTable.partIndex })
+        .from(catalogPdfUploadPartTable)
+        .where(eq(catalogPdfUploadPartTable.sessionId, session.id));
+      await Promise.all(
+        parts.map((part) => deleteCatalogPdfPart(session.id, part.partIndex)),
+      );
+      await db
+        .delete(catalogPdfUploadPartTable)
+        .where(eq(catalogPdfUploadPartTable.sessionId, session.id));
+      await db
+        .update(catalogPdfUploadSessionTable)
+        .set({ cleanupAt: new Date(), updatedAt: new Date() })
+        .where(eq(catalogPdfUploadSessionTable.id, session.id));
+    }
+
     const deleted = await db
       .delete(usersTable)
       .where(eq(usersTable.clerkUserId, clerkUserId))
