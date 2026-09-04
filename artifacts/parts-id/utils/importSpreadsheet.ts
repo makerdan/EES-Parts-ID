@@ -22,11 +22,22 @@ export const CATALOG_ALIASES = [
 export const DESC_ALIASES = ["description", "desc", "name", "product", "productname", "title", "item description"];
 export const BIN_ALIASES = ["bin", "bin location", "binlocation", "location", "loc", "shelf", "aisle", "bin#", "bin no"];
 export const BARCODE_ALIASES = ["barcode", "barcodes", "barcode#", "upc", "ean", "gtin"];
+export const OP_ALIASES = ["op", "order purchase", "orderpurchase", "order purchase qty", "orderpurchaseqty"];
+export const OQ_ALIASES = ["oq", "order quantity", "orderquantity", "order qty", "orderqty"];
 
 type SpreadsheetRows = ReadonlyArray<ReadonlyArray<unknown>>;
 
 function normalizeHeader(value: unknown): string {
   return String(value ?? "").trim().toLowerCase().replace(/['"]/g, "");
+}
+
+function parseOptionalInteger(value: string, label: string, rowNumber: number): number {
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed))) {
+    throw new Error(`${label} must be a non-negative whole number (row ${rowNumber})`);
+  }
+  return Number(trimmed);
 }
 
 export function findSpreadsheetColumn(headers: Array<string>, aliases: ReadonlyArray<string>): number {
@@ -58,6 +69,8 @@ export function normalizeSpreadsheetRows(
   const descCol = findSpreadsheetColumn(headers, DESC_ALIASES);
   const binCol = findSpreadsheetColumn(headers, BIN_ALIASES);
   const barcodeCol = findSpreadsheetColumn(headers, BARCODE_ALIASES);
+  const opCol = findSpreadsheetColumn(headers, OP_ALIASES);
+  const oqCol = findSpreadsheetColumn(headers, OQ_ALIASES);
 
   const rows: Array<ParsedRow> = [];
   for (let i = 1; i < sourceRows.length; i++) {
@@ -73,6 +86,8 @@ export function normalizeSpreadsheetRows(
       barcodes: barcodeCol >= 0
         ? (cells[barcodeCol] ?? "").split(/[,;|]/).map(barcode => barcode.trim()).filter(barcode => barcode.length > 0)
         : [],
+      ...(opCol >= 0 ? { op: parseOptionalInteger(cells[opCol] ?? "", "OP", i + 1), opProvided: true } : {}),
+      ...(oqCol >= 0 ? { oq: parseOptionalInteger(cells[oqCol] ?? "", "OQ", i + 1), oqProvided: true } : {}),
     });
   }
   return rows;

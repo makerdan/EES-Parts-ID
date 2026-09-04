@@ -60,7 +60,10 @@ const mockSet = jest.fn(() => ({ where: mockUpdateWhere }));
 const mockUpdate = jest.fn(() => ({ set: mockSet }));
 const mockExecute = jest.fn().mockResolvedValue(undefined);
 const mockSelectWhere = jest.fn().mockResolvedValue([]);
-const mockSelectFrom = jest.fn(() => ({ where: mockSelectWhere }));
+const mockSelectFrom = jest.fn(() => ({
+  where: mockSelectWhere,
+  innerJoin: jest.fn(() => ({ where: mockSelectWhere })),
+}));
 const mockSelect = jest.fn(() => ({ from: mockSelectFrom }));
 
 jest.mock("@workspace/db", () => ({
@@ -75,14 +78,27 @@ jest.mock("@workspace/db", () => ({
     errorMessage: "err_col",
     finishedAt: "finished_col",
   },
+  catalogPdfUploadSessionTable: {
+    id: "upload_session_id_col",
+    status: "upload_session_status_col",
+    expiresAt: "upload_session_expires_col",
+    processingJobId: "upload_session_job_id_col",
+    vendor: "upload_session_vendor_col",
+  },
+  catalogPdfUploadPartTable: {
+    sessionId: "upload_part_session_id_col",
+    partIndex: "upload_part_index_col",
+  },
   warehouseZoneTable: { id: "id_col", sectionNum: "section_col" },
   adminPreferencesTable: { id: "id_col", aiProvider: "ai_provider_col" },
 }));
 
 // ── drizzle-orm mock ──────────────────────────────────────────────────────────
 jest.mock("drizzle-orm", () => ({
+  and: jest.fn(),
   eq: jest.fn(),
   inArray: jest.fn(),
+  lt: jest.fn(),
   sql: jest.fn(),
 }));
 

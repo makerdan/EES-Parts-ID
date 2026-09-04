@@ -14,7 +14,7 @@
 import { Platform } from "react-native";
 
 import { API_BASE } from "@/utils/apiBase";
-import { fetchWithAuth } from "@/utils/appAuth";
+import { fetchWithAuth, getAuthToken } from "@/utils/appAuth";
 
 /**
  * Return the API URL for tile (z, x, y).
@@ -43,7 +43,7 @@ export function tileApiUrl(z: number, x: number, y: number): string {
  *                  when that optimisation lands.
  */
 export async function warmupTiles(_svgHash: string): Promise<void> {
-  if (Platform.OS === "web" || !API_BASE) return;
+  if (Platform.OS === "web" || !API_BASE || !getAuthToken()) return;
   try {
     await fetchWithAuth(`${API_BASE}/floor-plan/tiles/warmup`, { method: "POST" });
   } catch {

@@ -15,8 +15,13 @@ jest.mock("expo-font", () => ({
   loadAsync: jest.fn(() => Promise.resolve()),
 }));
 
+const mockPartCard = jest.fn((_props: Record<string, unknown>) => null);
+
 jest.mock("@/components/PartCard", () => ({
-  PartCard: () => null,
+  PartCard: (props: Record<string, unknown>) => {
+    mockPartCard(props);
+    return null;
+  },
 }));
 
 jest.mock("@/components/PhotoLightbox", () => ({
@@ -160,6 +165,27 @@ describe("ResultCard — size variant dropdown", () => {
       { includeSelf: true },
     );
     expect(catalogTexts.length).toBeGreaterThan(0);
+  });
+
+  it("passes the selected variant's OP and OQ to PartCard", async () => {
+    mockPartCard.mockClear();
+    const original = makeItem({ catalog: "BOLT-001", orderPurchase: 2, orderQuantity: 8 });
+    const variant = makeVariant("BOLT-002");
+    Object.assign(variant, { orderPurchase: 0, orderQuantity: 16 });
+    const result = makeResult(original, [variant]);
+    const rendered = await render(<ResultCard result={result} rank={0} />);
+
+    await act(async () => {
+      findAllWithTestID(rendered.root!, `select-variant-${variant.id}`)[0]!.props.onPress();
+    });
+
+    const lastProps = mockPartCard.mock.lastCall?.[0] as
+      | { orderPurchase?: number; orderQuantity?: number }
+      | undefined;
+    expect(lastProps).toEqual(expect.objectContaining({
+      orderPurchase: 0,
+      orderQuantity: 16,
+    }));
   });
 
   it("shows back button after selecting a variant", async () => {

@@ -16,8 +16,9 @@
 
 import { db, pool } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
+import { assertDatabaseExecutionMode } from "@workspace/db/runtime-data-boundary";
 import { poeErrorMessage } from "@workspace/integrations-poe-server";
-import { eq,sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { generateKeywords, mergeWithPinned, type PoeEnrichedError } from "../utils/generateKeywords";
 
@@ -26,6 +27,8 @@ const CONCURRENCY  = parseInt(process.env["ENRICH_CONCURRENCY"]  ?? "5",   10);
 const DELAY_MS     = parseInt(process.env["ENRICH_DELAY_MS"]     ?? "200", 10);
 const MAX_RETRIES  = parseInt(process.env["ENRICH_RETRIES"]      ?? "3",   10);
 const MODEL        = process.env["ENRICH_MODEL"] ?? "gpt-4o-mini";
+
+assertDatabaseExecutionMode("seed");
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));

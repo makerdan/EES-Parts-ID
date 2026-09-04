@@ -7,62 +7,141 @@ type = "image"
 title = "parts-id-icon"
 
 [[outputs]]
-id = "VwOyleKCerWpReTZG4eXv"
-uri = "file://.local/tasks/merged-tasks-record.txt"
-type = "text"
-title = "Merged Tasks Record (updated)"
-
-[[outputs]]
-id = "upIFKTsl-iuEspeuhoF84"
-uri = "file://warehouse_zones_backup_2026-07-05.csv"
-type = "table"
-title = "Zone shapes backup — 819 rows (2026-07-05)"
-
-[[outputs]]
-id = "by8gWjyMiVIzJb-sze6ZR"
-uri = "file://.local/custom_skills/port-authority/SKILL.md"
-type = "text"
-title = "Port Authority Skill"
-
-[[outputs]]
-id = "qLCUJNB0zcz1O89UowrA2"
-uri = "file://.local/custom_skills/port-authority-heavy/SKILL.md"
-type = "text"
-title = "Port Authority - Heavy Skill"
-
-[[outputs]]
-id = "dOrnfmGXy3yV9pBfaRGWz"
-uri = "file://scripts/port-authority-skill.md"
-type = "text"
-title = "Port Authority Skill"
-
-[[outputs]]
-id = "SNVmILKVjZlCwIfUTu2lJ"
-uri = "file://scripts/port-authority-heavy-skill.md"
-type = "text"
-title = "Port Authority - Heavy Skill"
-
-[[outputs]]
-id = "-8JJQzoe_MRlgdHwBe_Mt"
-uri = "file://scripts/port-authority-skills.zip"
+id = "NNglCA1nyGUFmKS-2O3AI"
+uri = "file://exports/skill-mirror-sync.zip"
 type = "unspecified"
-title = "Port Authority Skills"
+title = "Skill Mirror Sync"
+description = "Canonical Skill Mirror Sync skill packaged as a ZIP archive. Contains skill-mirror-sync/SKILL.md."
+logical_id = "c4758bda-5ae5-468c-a7a7-39cd0f2013cb"
+content_hash = "sha256:1a60651fc9dfcb40518c17eb76771eadfb9b41425243e3204e6630a0df95b8f1"
+size = 3319
+mtime_ms = 1788495773026
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/c4758bda-5ae5-468c-a7a7-39cd0f2013cb/33a7bf09-5923-4568-852c-2e5b5a271914"
+storage_version_token = "1788495776776345"
+content_type = "application/octet-stream"
 
 [[outputs]]
-id = "app3bxOEk54AmepISGVqN"
-uri = "file://artifacts/failure-gate-skill.zip"
+id = "NNglCA1nyGUFmKS-2O3AI"
+uri = "file://exports/skill-mirror-sync.zip"
 type = "unspecified"
-title = "Failure Gate — SKILL.md"
+title = "Skill Mirror Sync"
+description = "Canonical Skill Mirror Sync skill packaged as a ZIP archive. Contains skill-mirror-sync/SKILL.md."
+logical_id = "c4758bda-5ae5-468c-a7a7-39cd0f2013cb"
+content_hash = "sha256:1a60651fc9dfcb40518c17eb76771eadfb9b41425243e3204e6630a0df95b8f1"
+size = 3319
+mtime_ms = 1788495773026
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/c4758bda-5ae5-468c-a7a7-39cd0f2013cb/33a7bf09-5923-4568-852c-2e5b5a271914"
+storage_version_token = "1788495776776345"
+content_type = "application/octet-stream"
 
 [[outputs]]
-id = "dm8G808uNohnX-004O9KQ"
-uri = "file://artifacts/task-triage-skill.zip"
+id = "NNglCA1nyGUFmKS-2O3AI"
+uri = "file://exports/skill-mirror-sync.zip"
 type = "unspecified"
-title = "Task Triage — SKILL.md"
+title = "Skill Mirror Sync"
+description = "Canonical Skill Mirror Sync skill packaged as a ZIP archive. Contains skill-mirror-sync/SKILL.md."
+logical_id = "c4758bda-5ae5-468c-a7a7-39cd0f2013cb"
+content_hash = "sha256:1a60651fc9dfcb40518c17eb76771eadfb9b41425243e3204e6630a0df95b8f1"
+size = 3319
+mtime_ms = 1788495773026
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/c4758bda-5ae5-468c-a7a7-39cd0f2013cb/33a7bf09-5923-4568-852c-2e5b5a271914"
+storage_version_token = "1788495776776345"
+content_type = "application/octet-stream"
 
 [[outputs]]
-id = "3luBc7yMaHqVNjrkjikVB"
-uri = "file://exports/react-render-audit.zip"
+id = "NNglCA1nyGUFmKS-2O3AI"
+uri = "file://exports/skill-mirror-sync.zip"
 type = "unspecified"
-title = "React Render & Memory Audit skill"
-description = "Canonical ZIP archive of .agents/skills/react-render-audit, containing SKILL.md."
+title = "Skill Mirror Sync"
+description = "Canonical Skill Mirror Sync skill packaged as a ZIP archive. Contains skill-mirror-sync/SKILL.md."
+logical_id = "c4758bda-5ae5-468c-a7a7-39cd0f2013cb"
+content_hash = "sha256:1a60651fc9dfcb40518c17eb76771eadfb9b41425243e3204e6630a0df95b8f1"
+size = 3319
+mtime_ms = 1788495773026
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/c4758bda-5ae5-468c-a7a7-39cd0f2013cb/33a7bf09-5923-4568-852c-2e5b5a271914"
+storage_version_token = "1788495776776345"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "NNglCA1nyGUFmKS-2O3AI"
+uri = "file://exports/skill-mirror-sync.zip"
+type = "unspecified"
+title = "Skill Mirror Sync"
+description = "Canonical Skill Mirror Sync skill packaged as a ZIP archive. Contains skill-mirror-sync/SKILL.md."
+logical_id = "c4758bda-5ae5-468c-a7a7-39cd0f2013cb"
+content_hash = "sha256:1a60651fc9dfcb40518c17eb76771eadfb9b41425243e3204e6630a0df95b8f1"
+size = 3319
+mtime_ms = 1788495773026
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/c4758bda-5ae5-468c-a7a7-39cd0f2013cb/33a7bf09-5923-4568-852c-2e5b5a271914"
+storage_version_token = "1788495776776345"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "NNglCA1nyGUFmKS-2O3AI"
+uri = "file://exports/skill-mirror-sync.zip"
+type = "unspecified"
+title = "Skill Mirror Sync"
+description = "Canonical Skill Mirror Sync skill packaged as a ZIP archive. Contains skill-mirror-sync/SKILL.md."
+logical_id = "c4758bda-5ae5-468c-a7a7-39cd0f2013cb"
+content_hash = "sha256:1a60651fc9dfcb40518c17eb76771eadfb9b41425243e3204e6630a0df95b8f1"
+size = 3319
+mtime_ms = 1788495773026
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/c4758bda-5ae5-468c-a7a7-39cd0f2013cb/33a7bf09-5923-4568-852c-2e5b5a271914"
+storage_version_token = "1788495776776345"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "NNglCA1nyGUFmKS-2O3AI"
+uri = "file://exports/skill-mirror-sync.zip"
+type = "unspecified"
+title = "Skill Mirror Sync"
+description = "Canonical Skill Mirror Sync skill packaged as a ZIP archive. Contains skill-mirror-sync/SKILL.md."
+logical_id = "c4758bda-5ae5-468c-a7a7-39cd0f2013cb"
+content_hash = "sha256:1a60651fc9dfcb40518c17eb76771eadfb9b41425243e3204e6630a0df95b8f1"
+size = 3319
+mtime_ms = 1788495773026
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/c4758bda-5ae5-468c-a7a7-39cd0f2013cb/33a7bf09-5923-4568-852c-2e5b5a271914"
+storage_version_token = "1788495776776345"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "NNglCA1nyGUFmKS-2O3AI"
+uri = "file://exports/skill-mirror-sync.zip"
+type = "unspecified"
+title = "Skill Mirror Sync"
+description = "Canonical Skill Mirror Sync skill packaged as a ZIP archive. Contains skill-mirror-sync/SKILL.md."
+logical_id = "c4758bda-5ae5-468c-a7a7-39cd0f2013cb"
+content_hash = "sha256:1a60651fc9dfcb40518c17eb76771eadfb9b41425243e3204e6630a0df95b8f1"
+size = 3319
+mtime_ms = 1788495773026
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/c4758bda-5ae5-468c-a7a7-39cd0f2013cb/33a7bf09-5923-4568-852c-2e5b5a271914"
+storage_version_token = "1788495776776345"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "NNglCA1nyGUFmKS-2O3AI"
+uri = "file://exports/skill-mirror-sync.zip"
+type = "unspecified"
+title = "Skill Mirror Sync"
+description = "Canonical Skill Mirror Sync skill packaged as a ZIP archive. Contains skill-mirror-sync/SKILL.md."
+logical_id = "c4758bda-5ae5-468c-a7a7-39cd0f2013cb"
+content_hash = "sha256:1a60651fc9dfcb40518c17eb76771eadfb9b41425243e3204e6630a0df95b8f1"
+size = 3319
+mtime_ms = 1788495773026
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/c4758bda-5ae5-468c-a7a7-39cd0f2013cb/33a7bf09-5923-4568-852c-2e5b5a271914"
+storage_version_token = "1788495776776345"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "a51sPjG7lgFrjANQ_Fiwx"
+uri = "file://exports/install-github-actions.zip"
+type = "unspecified"
+title = "Install GitHub Actions"
+description = "Canonical Install GitHub Actions skill packaged as a verified ZIP archive. Contains install-github-actions/SKILL.md."
+logical_id = "8898d41c-8906-46dd-9c82-7694edd7f379"
+content_hash = "sha256:61f3bcdf135c73d55093a9adcb10603e1e57480ddaba6a8f0039ad1f47776758"
+size = 9436
+mtime_ms = 1788495868925
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/8898d41c-8906-46dd-9c82-7694edd7f379/6ab811f0-31f5-4053-903f-1b14dfc25c4c"
+storage_version_token = "1788495873285736"
+content_type = "application/octet-stream"

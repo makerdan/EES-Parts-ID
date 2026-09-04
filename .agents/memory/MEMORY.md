@@ -1,3 +1,4 @@
+- [Public repository boundary scans](public-repository-boundary-scans.md) — scan tracked source while excluding the guard’s own negative controls and generated bundles; history listings need an explicit output buffer.
 - [SVG viewBox origin normalization](svg-viewbox-origin-normalization.md) — sharp rasterizes relative to SVG viewBox origin; rewrite to "0 0 W H" before tiling so tiles and zone overlay share the same coordinate frame.
 - [ts-jest inline tsconfig paths](ts-jest-paths.md) — inline tsconfig object in jest.config.js does NOT inherit from tsconfig.json; must re-declare all paths explicitly.
 - [Metro silent HTTP 500 in production build](metro-oom-build.md) — React Compiler Babel worker crash (NOT OOM) causes silent Metro HTTP 500; fix with "use no memo" on large components.
@@ -59,3 +60,10 @@
 - [Mapped Jest context mocks](mapped-jest-context-mocks.md) — when a path is mapped to a manual mock, configure that exported mock instance; a separate local spy may not be consumed by the screen.
 - [Orval barrel append behavior](orval-barrel-append.md) — normalize managed barrel exports because newer Orval runs can append duplicates instead of replacing them.
 - [ESLint import sort order](eslint-import-sort-order.md) — use fix-dry-run output when simple-import-sort rejects valid but noncanonical package/specifier ordering.
+- [Patch published packages instead of vendoring build output](pnpm-patched-published-package.md) — repo-wide dist ignores can silently omit runtime files from directory overrides; patch a pinned registry tarball instead.
+- [GitHub Actions token PR creation policy](github-actions-token-pr-creation.md) — disabling workflow-token PR approval also blocks PR creation; publish a reviewable automation branch instead.
+- [DB fixture ownership watermarks](db-fixture-ownership-watermarks.md) — identify async DB fixtures with a DB-generated ID watermark, not an app-clock timestamp that can drift from the database clock.
+- [Runtime data boundary](runtime-data-boundary.md) — require explicit database modes, reject production in tooling, and delay database imports until startup validation runs.
+- [API auth before body parsing](api-auth-before-body-parsing.md) — method-aware public route matching and pre-parser auth prevent write-prefix leaks and unauthenticated upload buffering.
+- [Contract assertion normalization](contract-assertion-normalization.md) — static prose contracts should be checked semantically rather than by physical line wrapping.
+- [Jest hoisted shared mock factories](jest-hoisted-shared-mock-factories.md) — load shared helpers inside hoisted mock callbacks and pass in jest.requireActual modules to avoid TDZ failures.

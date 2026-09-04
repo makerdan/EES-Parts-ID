@@ -61,7 +61,7 @@ import { z } from "zod";
 
 import { useColors, useIsDark } from "@/hooks/useColors";
 import { useMapZoomSteps } from "@/hooks/useMapInteraction";
-import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
+import type { ApiWarehouseZone, ZoneId } from "@/hooks/useWarehouseZones";
 import { API_BASE } from "@/utils/apiBase";
 import { fetchWithAuth } from "@/utils/appAuth";
 import { warmupTiles } from "@/utils/floorPlan";
@@ -446,7 +446,7 @@ export function ZoneOverlayItem({
             <>
               <AnimatedSvgText
                 x={zone.svgX + zone.svgWidth / 2}
-                y={zone.sectionNum > 0 ? cycleLabelYCenter - lineSpacing / 2 : cycleLabelYCenter}
+                y={zone.sectionNum !== null && zone.sectionNum > 0 ? cycleLabelYCenter - lineSpacing / 2 : cycleLabelYCenter}
                 fontWeight="bold"
                 fill={labelColor}
                 textAnchor="middle"
@@ -455,7 +455,7 @@ export function ZoneOverlayItem({
               >
                 {zone.aisleId}
               </AnimatedSvgText>
-              {zone.sectionNum > 0 && (
+              {zone.sectionNum !== null && zone.sectionNum > 0 && (
                 <AnimatedSvgText
                   x={zone.svgX + zone.svgWidth / 2}
                   y={cycleLabelYCenter + lineSpacing / 2}
@@ -570,7 +570,7 @@ export function ZoneOverlayItem({
           ? zone.svgY + zone.svgHeight / 2 + 20
           : zone.svgY + zone.svgHeight / 2;
         const lineSpacing = baseFontSize * 0.9;
-        const aisleY = zone.sectionNum > 0 ? yCenter - lineSpacing / 2 : yCenter;
+         const aisleY = zone.sectionNum !== null && zone.sectionNum > 0 ? yCenter - lineSpacing / 2 : yCenter;
         const sectionY = yCenter + lineSpacing / 2;
         const textFill = isPinned ? "#b45309" : isVariantPinned ? "#6d28d9" : labelColor;
         return (
@@ -586,7 +586,7 @@ export function ZoneOverlayItem({
             >
               {zone.aisleId}
             </AnimatedSvgText>
-            {zone.sectionNum > 0 && (
+            {zone.sectionNum !== null && zone.sectionNum > 0 && (
               <AnimatedSvgText
                 x={zone.svgX + zone.svgWidth / 2}
                 y={sectionY}
@@ -797,11 +797,11 @@ export interface WarehouseMapViewProps {
   onZoneLongPress?: ((zone: ApiWarehouseZone) => void) | undefined;
   isAdmin?: boolean | undefined;
   cycleMode?: boolean | undefined;
-  countedZoneIds?: ReadonlySet<number> | undefined;
+  countedZoneIds?: ReadonlySet<ZoneId> | undefined;
   /** Zone IDs of primary search result pins — highlighted amber on the map. */
-  pinnedZoneIds?: ReadonlySet<number> | undefined;
+  pinnedZoneIds?: ReadonlySet<ZoneId> | undefined;
   /** Zone IDs of variant/related-size pins — highlighted purple on the map. */
-  variantZoneIds?: ReadonlySet<number> | undefined;
+  variantZoneIds?: ReadonlySet<ZoneId> | undefined;
   /** Maps aisleNum → first bin code (e.g. "17-06-204") to render as a label inside the pinned zone. */
   pinnedBinLabels?: ReadonlyMap<number, string> | undefined;
   /** Maps aisleNum → list of section numbers for primary pins — drives section-level 3D pin markers. */
@@ -834,7 +834,7 @@ export interface WarehouseMapViewProps {
    * ID of the zone currently selected (action menu open). The matching zone
    * is rendered with a highlighted stroke and fill tint.
    */
-  selectedZoneId?: number | undefined;
+  selectedZoneId?: ZoneId | undefined;
   /**
    * Called when the user starts a pan gesture on the map. Use this to dismiss
    * any selection state (e.g. the zone action menu).

@@ -6,12 +6,15 @@
  *  - src/seed/bulk-enrich.ts standalone script
  */
 
+import { AiKeywordsResponseSchema } from "@workspace/api-zod";
+
 import { getEnrichModel } from "../lib/aiProvider";
 import {
   callPoeBotWithChain,
   isPoeCallAuthError,
   isPoeCallTransientError,
 } from "../lib/poeBot";
+import { parseAiResponse } from "./aiHelpers";
 
 export interface EnrichItem {
   vendor: string;
@@ -129,16 +132,10 @@ export async function generateKeywords(
     enriched.cause = err;
     throw enriched;
   }
-  let keywords: Array<string> = [];
-  try {
-    const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
-    if (Array.isArray(parsed)) keywords = parsed.map(String).slice(0, 10);
-  } catch {
-    keywords = text
-      .split(/[,\n]/)
-      .map((k: string) => k.trim().replace(/["[\]]/g, ""))
-      .filter((k: string) => k.length > 1)
-      .slice(0, 10);
-  }
-  return keywords.filter((k) => !isJunkKeyword(k));
+  const keywords = parseAiResponse(
+    text,
+    AiKeywordsResponseSchema,
+    "keyword enrichment",
+  );
+  return keywords.slice(0, 10).filter((k) => !isJunkKeyword(k));
 }

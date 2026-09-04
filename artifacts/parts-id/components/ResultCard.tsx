@@ -531,6 +531,8 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
           catalog={activeItem.catalog}
           vendor={activeItem.vendor ?? ""}
           description={activeItem.description ?? activeItem.expandedDescription ?? ""}
+          orderPurchase={activeItem.orderPurchase}
+          orderQuantity={activeItem.orderQuantity}
           autoExpand={autoExpandPartCard}
         />
 

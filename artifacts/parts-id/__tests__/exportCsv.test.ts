@@ -2,7 +2,7 @@
  * Unit tests for utils/exportCsv.ts
  *
  * Covers: correct header, field escaping, empty arrays, multi-bin/barcode
- * joining, and multi-row output. No mocks needed — pure function.
+ * joining, order fields, and multi-row output. No mocks needed — pure function.
  */
 
 import {
@@ -42,7 +42,7 @@ describe("escapeField", () => {
 describe("INVENTORY_CSV_HEADER", () => {
   it("is the expected column list in order", () => {
     expect(INVENTORY_CSV_HEADER).toBe(
-      "Vendor,Catalog,Description,BinLocation,Barcodes",
+      "Vendor,Catalog,Description,BinLocation,Barcodes,OP,OQ",
     );
   });
 });
@@ -62,12 +62,16 @@ describe("serializeInventoryToCsv", () => {
         description: "20A 1P Breaker",
         binLocations: ["A1-01"],
         barcodes: ["012345678901"],
+        op: 12,
+        oq: 48,
       },
     ];
     const csv = serializeInventoryToCsv(items);
     const [header, row] = csv.split("\n");
     expect(header).toBe(INVENTORY_CSV_HEADER);
-    expect(row).toBe('"EATON","BR120","20A 1P Breaker","A1-01","012345678901"');
+    expect(row).toBe(
+      '"EATON","BR120","20A 1P Breaker","A1-01","012345678901","12","48"',
+    );
   });
 
   it("produces blank BinLocation cell when binLocations is empty", () => {
@@ -82,7 +86,7 @@ describe("serializeInventoryToCsv", () => {
     ];
     const csv = serializeInventoryToCsv(items);
     const row = csv.split("\n")[1]!;
-    expect(row).toBe('"EATON","BR120","20A 1P Breaker","",""');
+    expect(row).toBe('"EATON","BR120","20A 1P Breaker","","","0","0"');
   });
 
   it("produces blank Barcodes cell when barcodes is empty", () => {
@@ -96,7 +100,7 @@ describe("serializeInventoryToCsv", () => {
       },
     ];
     const row = serializeInventoryToCsv(items).split("\n")[1]!;
-    expect(row).toBe('"HUBBELL","HBL5262I","Ivory receptacle","B2-03",""');
+    expect(row).toBe('"HUBBELL","HBL5262I","Ivory receptacle","B2-03","","0","0"');
   });
 
   it("joins multiple bin locations with semicolons", () => {
@@ -110,7 +114,9 @@ describe("serializeInventoryToCsv", () => {
       },
     ];
     const row = serializeInventoryToCsv(items).split("\n")[1]!;
-    expect(row).toBe('"SIEMENS","Q120","20A breaker","A1-01;B3-07;C5-12",""');
+    expect(row).toBe(
+      '"SIEMENS","Q120","20A breaker","A1-01;B3-07;C5-12","","0","0"',
+    );
   });
 
   it("joins multiple barcodes with commas (within the quoted field)", () => {
@@ -124,7 +130,9 @@ describe("serializeInventoryToCsv", () => {
       },
     ];
     const row = serializeInventoryToCsv(items).split("\n")[1]!;
-    expect(row).toBe('"LEVITON","5320","Outlet","","111111,222222,333333"');
+    expect(row).toBe(
+      '"LEVITON","5320","Outlet","","111111,222222,333333","0","0"',
+    );
   });
 
   it("escapes double quotes in field values", () => {
@@ -138,7 +146,7 @@ describe("serializeInventoryToCsv", () => {
       },
     ];
     const row = serializeInventoryToCsv(items).split("\n")[1]!;
-    expect(row).toBe('"ACME","X1","3/4"" conduit fitting","",""');
+    expect(row).toBe('"ACME","X1","3/4"" conduit fitting","","","0","0"');
   });
 
   it("separates multiple rows with newlines", () => {
@@ -149,8 +157,8 @@ describe("serializeInventoryToCsv", () => {
     const lines = serializeInventoryToCsv(items).split("\n");
     expect(lines).toHaveLength(3); // header + 2 data rows
     expect(lines[0]).toBe(INVENTORY_CSV_HEADER);
-    expect(lines[1]).toBe('"A","C1","D1","",""');
-    expect(lines[2]).toBe('"B","C2","D2","",""');
+    expect(lines[1]).toBe('"A","C1","D1","","","0","0"');
+    expect(lines[2]).toBe('"B","C2","D2","","","0","0"');
   });
 
   it("round-trips a realistic multi-bin, multi-barcode item", () => {
@@ -161,11 +169,13 @@ describe("serializeInventoryToCsv", () => {
         description: "20A 1P QO breaker",
         binLocations: ["E1-04", "E1-05"],
         barcodes: ["785901234567", "785901234568"],
+        op: 7,
+        oq: 21,
       },
     ];
     const row = serializeInventoryToCsv(items).split("\n")[1]!;
     expect(row).toBe(
-      '"SQUARE D","QO120","20A 1P QO breaker","E1-04;E1-05","785901234567,785901234568"',
+      '"SQUARE D","QO120","20A 1P QO breaker","E1-04;E1-05","785901234567,785901234568","7","21"',
     );
   });
 });

@@ -8,11 +8,15 @@ not inferred from this file.
 | Canonical local check | Remote owner / exact command | Coverage and decision | Event scope | Evidence |
 |---|---|---|---|---|
 | gate-guard | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tracked workflow |
+| skill-mirror-sync-contract | `CI / required` → `pnpm run test-standard-plus` | direct portable account-skill projection contract | PR, merge queue, main push, manual | inferred from tier manifest |
+| public-repository-boundary | `CI / required` → `pnpm run test-standard-plus` | direct portable boundary scan; historical findings require owner-led remediation | PR, merge queue, main push, manual | inferred from tier manifest |
 | plan-gate-fix | none | local-only: task-plan archive and task provenance are not available in an untrusted PR checkout | local task validation | intentional local-only |
 | plan-gate-check | none | local-only: task-plan tier ceiling is enforced by Replit task validation | local task validation | intentional local-only |
 | plan-gate-stubs | none | local-only: task-plan archive inspection is intentionally excluded | local task validation | intentional local-only |
 | regression-guard-fix | none | local-only: task-scoped plan declaration repair is not a remote merge check | local task validation | intentional local-only |
 | regression-guard | none | local-only: task-scoped regression declaration ownership stays with Replit | local task validation | intentional local-only |
+| patched-dependencies-contract | `CI / required` → `pnpm run test-standard-plus` | direct portable regression coverage for patch context and final-newline failures | PR, merge queue, main push, manual | inferred from tier manifest |
+| patched-dependencies | `CI / required` → `pnpm run test-standard-plus` | exact published package extraction, lock hash verification, and patch applicability check | PR, merge queue, main push, manual | inferred from tier manifest |
 | tsc | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage via the fast tier | PR, merge queue, main push, manual | inferred from tier manifest |
 | lint | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | lint-mocks | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |

@@ -60,14 +60,18 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 }));
 
 // ── Imports ────────────────────────────────────────────────────────────────
+import { type AdminAuditAction, adminAuditLogTable, db, usersTable } from "@workspace/db";
+import { and, eq, gte, inArray } from "drizzle-orm";
 import supertest from "supertest";
+
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { type AdminAuditAction, adminAuditLogTable, db, usersTable } from "@workspace/db";
-import { and, eq, gte, like } from "drizzle-orm";
+import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const FIXTURE_PREFIX = "jest-audit-";
+const TEST_INSTANCE = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
+const FIXTURE_PREFIX = `jest-audit-${TEST_INSTANCE}-`;
+const seededUserIds = new Set<string>();
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function makeAdminToken(): string {
@@ -83,14 +87,8 @@ async function seedUser(
   status: "pending" | "approved" | "banned" = "pending",
   role: "user" | "admin" = "user",
 ) {
-  const email = `${clerkUserId.toLowerCase()}@jest.test.example`;
-  await db
-    .insert(usersTable)
-    .values({ clerkUserId, email, status, role })
-    .onConflictDoUpdate({
-      target: usersTable.clerkUserId,
-      set: { email, status, role },
-    });
+  seededUserIds.add(clerkUserId);
+  await seedTestUser({ clerkUserId, status, role });
 }
 
 async function seedNonAdmin(): Promise<string> {
@@ -117,20 +115,20 @@ async function countAuditRows(
   return rows.length;
 }
 
-async function cleanupUsers() {
-  await db.delete(usersTable).where(like(usersTable.clerkUserId, `${FIXTURE_PREFIX}%`));
-}
-
-async function cleanupAuditRows() {
-  await db
-    .delete(adminAuditLogTable)
-    .where(like(adminAuditLogTable.targetClerkUserId, `${FIXTURE_PREFIX}%`));
+async function cleanupFixtures(): Promise<void> {
+  const userIds = [...seededUserIds];
+  if (userIds.length > 0) {
+    await Promise.all(userIds.map(cleanupTestUser));
+    await db
+      .delete(adminAuditLogTable)
+      .where(inArray(adminAuditLogTable.targetClerkUserId, userIds));
+  }
+  seededUserIds.clear();
 }
 
 // ── Setup / teardown ───────────────────────────────────────────────────────
 afterEach(async () => {
-  await cleanupUsers();
-  await cleanupAuditRows();
+  await cleanupFixtures();
 });
 
 
@@ -423,6 +421,42 @@ describe("GET /api/admin/audit-log — authenticated", () => {
     const dates = filtered.map((r) => new Date(r.createdAt as string).getTime());
     for (let i = 1; i < dates.length; i++) {
       expect(dates[i - 1]!).toBeGreaterThanOrEqual(dates[i]!);
+    }
+  });
+});
+
+describe("audit log fixture cleanup", () => {
+  it("does not remove same-prefix rows owned by another suite", async () => {
+    const ownedUser = `${FIXTURE_PREFIX}owned`;
+    const otherSuiteUser = `${FIXTURE_PREFIX}other-suite`;
+    await seedUser(ownedUser, "approved");
+    const [otherSuiteAuditRow] = await db
+      .insert(adminAuditLogTable)
+      .values({
+        adminClerkUserId: ADMIN_TEST_USER_ID,
+        targetClerkUserId: otherSuiteUser,
+        action: "approve",
+      })
+      .returning({ id: adminAuditLogTable.id });
+
+    try {
+      await cleanupFixtures();
+
+      const [remainingOwnedUser] = await db
+        .select()
+        .from(usersTable)
+        .where(eq(usersTable.clerkUserId, ownedUser));
+      const [remainingOtherSuiteAuditRow] = await db
+        .select()
+        .from(adminAuditLogTable)
+        .where(eq(adminAuditLogTable.id, otherSuiteAuditRow!.id));
+
+      expect(remainingOwnedUser).toBeUndefined();
+      expect(remainingOtherSuiteAuditRow?.targetClerkUserId).toBe(otherSuiteUser);
+    } finally {
+      await db
+        .delete(adminAuditLogTable)
+        .where(eq(adminAuditLogTable.id, otherSuiteAuditRow!.id));
     }
   });
 });

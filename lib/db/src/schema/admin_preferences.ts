@@ -1,4 +1,4 @@
-import { bigint, boolean, doublePrecision,integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { bigint, boolean, doublePrecision, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 export const adminPreferencesTable = pgTable("admin_preferences", {
   id: integer("id").primaryKey().default(1),
@@ -10,6 +10,7 @@ export const adminPreferencesTable = pgTable("admin_preferences", {
   shelfPrefix: text("shelf_prefix"),
   shelfStep: integer("shelf_step"),
   aiProvider: text("ai_provider"),
+  aiFallbackModels: jsonb("ai_fallback_models").$type<Record<string, Array<string>>>(),
   // Global zone-layer alignment calibration applied uniformly to every zone on
   // the Map tab (translate in SVG units + uniform scale). Defaults to identity.
   zoneAlignX: doublePrecision("zone_align_x").notNull().default(0),

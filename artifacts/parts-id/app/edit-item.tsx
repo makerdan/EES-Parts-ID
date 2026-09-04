@@ -131,6 +131,8 @@ export default function EditItemScreen() {
   }, [isLoading, isAdmin, saveStatus]);
 
   const [description, setDescription] = useState(item?.description ?? "");
+  const [op, setOp] = useState(String(item?.orderPurchase ?? 0));
+  const [oq, setOq] = useState(String(item?.orderQuantity ?? 0));
   const [size, setSize] = useState(item?.size ?? "");
   const [sizeSaving, setSizeSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [sizeError, setSizeError] = useState<string | null>(null);
@@ -153,6 +155,7 @@ export default function EditItemScreen() {
     barcodes?: string;
     keywords?: string;
     dimensions?: string;
+    opoq?: string;
     photo?: string;
     photo2?: string;
   }>({});
@@ -522,6 +525,13 @@ export default function EditItemScreen() {
       newDims.width !== (oldDims.width ?? null) ||
       newDims.height !== (oldDims.height ?? null) ||
       newDims.diameter !== (oldDims.diameter ?? null);
+      const parsedOp = Number(op.trim() || "0");
+      const parsedOq = Number(oq.trim() || "0");
+      if (![parsedOp, parsedOq].every((value) => Number.isSafeInteger(value) && value >= 0)) {
+        setFieldSaveErrors({ opoq: "OP and OQ must be non-negative whole numbers." });
+        setSaveStatus("error");
+        return;
+      }
 
     try {
       const ops: Array<{ field: string; restoreFn: () => void; promise: Promise<unknown> }> = [];
@@ -566,6 +576,26 @@ export default function EditItemScreen() {
           field: "keywords",
           restoreFn: () => setKeywords(current.aiKeywords ?? []),
           promise: updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords: finalKeywords } }),
+        });
+      }
+
+      if (parsedOp !== (current.orderPurchase ?? 0) || parsedOq !== (current.orderQuantity ?? 0)) {
+        ops.push({
+          field: "opoq",
+          restoreFn: () => {
+            setOp(String(current.orderPurchase ?? 0));
+            setOq(String(current.orderQuantity ?? 0));
+          },
+          promise: fetch(`${API_BASE}/inventory/${current.id}/order`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+            body: JSON.stringify({ orderPurchase: parsedOp, orderQuantity: parsedOq }),
+          }).then(async (res) => {
+            if (!res.ok) {
+              const d = await res.json().catch(() => ({})) as { error?: string };
+              throw new Error(d.error ?? `HTTP ${res.status}`);
+            }
+          }),
         });
       }
 
@@ -721,6 +751,7 @@ export default function EditItemScreen() {
                 ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
                 ...(succeededFields.has("barcodes") ? { barcodes: finalBarcodes } : {}),
                 ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
+                ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq } : {}),
                 ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
                 ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
               };
@@ -776,6 +807,7 @@ export default function EditItemScreen() {
             barcodes: "Barcodes",
             keywords: "Keywords",
             dimensions: "Dimensions",
+            opoq: "OP/OQ",
             photo: "Photo 1",
             photo2: "Photo 2",
           };
@@ -803,6 +835,8 @@ export default function EditItemScreen() {
             binLocations: finalBins,
             barcodes: finalBarcodes,
             ...(dimsChanged ? { dimensions: newDims } : {}),
+            orderPurchase: parsedOp,
+            orderQuantity: parsedOq,
             ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
             ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
           };
@@ -889,6 +923,8 @@ export default function EditItemScreen() {
     JSON.stringify(bins) !== JSON.stringify(item.binLocations ?? []) ||
     JSON.stringify(barcodes) !== JSON.stringify(item.barcodes ?? []) ||
     JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []) ||
+    Number(op.trim() || "0") !== (item.orderPurchase ?? 0) ||
+    Number(oq.trim() || "0") !== (item.orderQuantity ?? 0) ||
     parseDimField(dimLength) !== (existingDims?.length ?? null) ||
     parseDimField(dimWidth) !== (existingDims?.width ?? null) ||
     parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
@@ -990,6 +1026,38 @@ export default function EditItemScreen() {
           />
           {fieldSaveErrors.description ? (
             <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.description}</Text>
+          ) : null}
+
+          {/* Inventory controls */}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 24 }}>
+            <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>INVENTORY CONTROLS</Text>
+            {committedFields.has("opoq") ? (
+              <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+            ) : null}
+          </View>
+          <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
+            OP and OQ are non-negative whole numbers.
+          </Text>
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+            {([
+              ["OP", op, setOp],
+              ["OQ", oq, setOq],
+            ] as const).map(([label, value, setter]) => (
+              <View key={label} style={{ flex: 1 }}>
+                <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>{label}</Text>
+                <KeyboardDoneInput
+                  value={value}
+                  onChangeText={(v) => { setter(v.replace(/[^0-9]/g, "")); setSaveStatus("idle"); }}
+                  placeholder="0"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="number-pad"
+                  style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.opoq ? colors.destructive : colors.border, color: colors.foreground }]}
+                />
+              </View>
+            ))}
+          </View>
+          {fieldSaveErrors.opoq ? (
+            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.opoq}</Text>
           ) : null}
 
           {/* Size */}

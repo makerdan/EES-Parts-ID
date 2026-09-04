@@ -21,7 +21,7 @@
 
 export interface AnchorPoint {
   /** Slot 1–3. */
-  id: number;
+  id: number | string;
   name: string;
   /** Point tapped on the floor-plan SVG (viewBox coordinate space). */
   svgX: number;

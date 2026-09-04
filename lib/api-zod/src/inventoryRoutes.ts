@@ -4,6 +4,8 @@ const InventoryItemSchema = z.object({
   id: z.number(),
   vendor: z.string(),
   catalog: z.string(),
+  orderPurchase: z.number().int().nonnegative(),
+  orderQuantity: z.number().int().nonnegative(),
   description: z.string(),
   binLocations: z
     .array(z.string())
@@ -83,6 +85,7 @@ const BinDiffRowSchema = z.object({
 export const PatchExpandedDescriptionBody = z.object({
   expandedDescription: z.string().max(2000).nullable(),
 });
+
 
 /** 200 response for POST /inventory/upsert-batch/preview */
 export const UpsertBatchPreviewResponse = z.object({

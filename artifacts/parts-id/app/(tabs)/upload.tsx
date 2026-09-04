@@ -72,6 +72,8 @@ import {
   DESC_ALIASES,
   findSpreadsheetColumn,
   normalizeSpreadsheetRows,
+  OP_ALIASES,
+  OQ_ALIASES,
   parseBinCell,
   parseOds,
   VENDOR_ALIASES,
@@ -86,6 +88,25 @@ type ExpandDescDraft = {
   model: string | null;
   remaining: number | null;
   savedAt: number;
+};
+
+type AiStatusPayload = {
+  provider: "poe" | "openai";
+  catalogue: {
+    freshness: "fresh" | "stale" | "unavailable";
+    models: Array<{
+      id: string;
+      name: string;
+      modalities: Array<string>;
+      capabilities: { text: boolean | null; vision: boolean | null; structuredOutput: boolean | null };
+    }>;
+    fetchedAt: string | null;
+    lastSuccessAt: string | null;
+    error: string | null;
+  };
+  bots: Record<string, string>;
+  routes: Array<{ feature: string; primary: string; fallbacks: Array<string>; effective: Array<string> }>;
+  reference: { provider: string; readOnly: boolean; note: string };
 };
 
 const SQL_EXAMPLES: Array<{ label: string; group: string; sql: string }> = [
@@ -146,6 +167,25 @@ type BinDiffSummary = {
   willAddBarcodes: number;
   willPreserveBarcodes: number;
   willBarcodeConflicts: number;
+};
+
+type ImportMode = "full" | "opoq";
+type OpoqUnknownRow = ParsedRow & {
+  hasBin: boolean;
+  orderPurchase: number;
+  orderQuantity: number;
+};
+type OpoqPreview = {
+  known: number;
+  unknownWithBins: number;
+  unknownWithoutBins: number;
+  unknownRows: Array<OpoqUnknownRow>;
+};
+type OpoqResult = {
+  knownUpdated: number;
+  unknownAdded: number;
+  unknownSkipped: number;
+  failures: number;
 };
 
 type EnrichProgress = {
@@ -240,6 +280,19 @@ const BulkJobWrapperSchema = z.object({ job: BulkJobStatusSchema });
 const MeasureJobWrapperSchema = z.object({ job: MeasureJobStatusSchema });
 const ApiErrorSchema = z.object({ error: z.string().optional() });
 const UploadResultSchema = z.object({ inserted: z.number(), updated: z.number(), total: z.number() });
+const OpoqPreviewSchema = z.object({
+  known: z.number(),
+  unknownWithBins: z.number(),
+  unknownWithoutBins: z.number(),
+  rows: z.array(z.object({
+    vendor: z.string(),
+    catalog: z.string(),
+    known: z.boolean(),
+    hasBins: z.boolean(),
+    orderPurchase: z.number(),
+    orderQuantity: z.number(),
+  })),
+});
 const QueryResultSchema = z.object({
   columns: z.array(z.string()).optional(),
   rows: z.array(z.record(z.string(), z.unknown())).optional(),
@@ -260,6 +313,16 @@ function parseCSV(rawText: string): Array<ParsedRow> {
   const descCol = findSpreadsheetColumn(headers, DESC_ALIASES);
   const binCol = findSpreadsheetColumn(headers, BIN_ALIASES);
   const barcodeCol = findSpreadsheetColumn(headers, BARCODE_ALIASES);
+  const opCol = findSpreadsheetColumn(headers, OP_ALIASES);
+  const oqCol = findSpreadsheetColumn(headers, OQ_ALIASES);
+  const parseInteger = (value: string, label: string, rowNumber: number) => {
+    const trimmed = value.trim();
+    if (!trimmed) return 0;
+    if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed))) {
+      throw new Error(`${label} must be a non-negative whole number (row ${rowNumber})`);
+    }
+    return Number(trimmed);
+  };
 
   const rows: Array<ParsedRow> = [];
   for (let i = 1; i < lines.length; i++) {
@@ -273,6 +336,8 @@ function parseCSV(rawText: string): Array<ParsedRow> {
       description: descCol >= 0 ? cells[descCol]?.trim() ?? "" : "",
       binLocations: binCol >= 0 ? parseBinCell(cells[binCol] ?? "") : [],
       barcodes: barcodeCol >= 0 ? (cells[barcodeCol] ?? "").trim().split(/[,;|]/).map(b => b.trim()).filter(b => b.length > 0) : [],
+      ...(opCol >= 0 ? { op: parseInteger(cells[opCol] ?? "", "OP", i + 1), opProvided: true } : {}),
+      ...(oqCol >= 0 ? { oq: parseInteger(cells[oqCol] ?? "", "OQ", i + 1), oqProvided: true } : {}),
     });
   }
   return rows;
@@ -600,63 +665,238 @@ export default function UploadScreen() {
 
   const reprobe = useCallback(async (botName: string) => {
     if (probingBotsRef.current.has(botName)) return;
+    const requestToken = adminToken;
     probingBotsRef.current.add(botName);
     setProbingBots(new Set(probingBotsRef.current));
     try {
       await probeSingleBot(botName);
     } finally {
       probingBotsRef.current.delete(botName);
-      setProbingBots(new Set(probingBotsRef.current));
+      if (isMountedRef.current && adminTokenRef.current === requestToken) {
+        setProbingBots(new Set(probingBotsRef.current));
+      }
     }
-  }, [probeSingleBot]);
+  }, [adminToken, probeSingleBot]);
 
   const [aiStatusBots, setAiStatusBots] = useState<Record<string, string>>({});
+  const [aiStatus, setAiStatus] = useState<AiStatusPayload | null>(null);
   const [aiStatusLoading, setAiStatusLoading] = useState(false);
   const [aiStatusError, setAiStatusError] = useState<string | null>(null);
   const [aiStatusProbing, setAiStatusProbing] = useState(false);
+  const [aiCatalogueRefreshing, setAiCatalogueRefreshing] = useState(false);
+  const [aiRoutesSaving, setAiRoutesSaving] = useState(false);
+  const [aiProvider, setAiProvider] = useState<AiStatusPayload["provider"]>("poe");
+  const [aiProviderSaving, setAiProviderSaving] = useState(false);
+  const [aiProviderSaveState, setAiProviderSaveState] = useState<"saved" | "runtime-only" | null>(null);
+  const [aiProviderError, setAiProviderError] = useState<string | null>(null);
+  const aiStatusGenerationRef = useRef(0);
+  const aiStatusFetchControllerRef = useRef<AbortController | null>(null);
+  const aiStatusProbeControllerRef = useRef<AbortController | null>(null);
+  const cancelAiStatusRequests = useCallback(() => {
+    aiStatusGenerationRef.current += 1;
+    aiStatusFetchControllerRef.current?.abort();
+    aiStatusFetchControllerRef.current = null;
+    aiStatusProbeControllerRef.current?.abort();
+    aiStatusProbeControllerRef.current = null;
+  }, []);
 
   const fetchAiStatus = useCallback(async () => {
     if (!adminToken || !API_BASE) return;
+    cancelAiStatusRequests();
+    const generation = aiStatusGenerationRef.current + 1;
+    aiStatusGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiStatusFetchControllerRef.current = controller;
     setAiStatusLoading(true);
     setAiStatusError(null);
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status`, {
         headers: { Authorization: `Bearer ${adminToken}` },
+        signal: controller.signal,
+        cache: "no-store",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { bots: Record<string, string> };
+      const data = (await res.json()) as AiStatusPayload;
+      if (
+        !isMountedRef.current ||
+        generation !== aiStatusGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
       setAiStatusBots(data.bots ?? {});
+      setAiStatus(data.catalogue ? data : null);
+      if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
     } catch (err) {
-      setAiStatusError(err instanceof Error ? err.message : "Failed to load AI status");
+      if (
+        isMountedRef.current &&
+        generation === aiStatusGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusError(err instanceof Error ? err.message : "Failed to load AI status");
+      }
     } finally {
-      setAiStatusLoading(false);
+      if (aiStatusFetchControllerRef.current === controller) {
+        aiStatusFetchControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        generation === aiStatusGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusLoading(false);
+      }
     }
-  }, [adminToken]);
+  }, [adminToken, cancelAiStatusRequests]);
+
+  const saveAiProvider = useCallback(async (provider: AiStatusPayload["provider"]) => {
+    if (!adminToken || !API_BASE || aiProviderSaving) return;
+    setAiProviderSaving(true);
+    setAiProviderError(null);
+    setAiProviderSaveState(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-provider`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+      });
+      const data = (await res.json()) as {
+        provider?: AiStatusPayload["provider"];
+        persisted?: boolean;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      if (data.provider !== "poe" && data.provider !== "openai") {
+        throw new Error("The API returned an invalid provider");
+      }
+      setAiProvider(data.provider);
+      setAiStatus((current) => current ? { ...current, provider: data.provider! } : current);
+      setAiProviderSaveState(data.persisted === true ? "saved" : "runtime-only");
+    } catch (err) {
+      setAiProviderError(err instanceof Error ? err.message : "AI provider choice could not be saved");
+    } finally {
+      setAiProviderSaving(false);
+    }
+  }, [adminToken, aiProviderSaving]);
 
   const triggerAiProbe = useCallback(async () => {
     if (!adminToken || !API_BASE || aiStatusProbing) return;
+    cancelAiStatusRequests();
+    const generation = aiStatusGenerationRef.current + 1;
+    aiStatusGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiStatusProbeControllerRef.current = controller;
+    setAiStatusLoading(false);
     setAiStatusProbing(true);
     setAiStatusError(null);
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status/probe`, {
         method: "POST",
         headers: { Authorization: `Bearer ${adminToken}` },
+        signal: controller.signal,
+        cache: "no-store",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { bots: Record<string, string> };
+      const data = (await res.json()) as AiStatusPayload;
+      if (
+        !isMountedRef.current ||
+        generation !== aiStatusGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
+      setAiStatusBots(data.bots ?? {});
+      setAiStatus(data.catalogue ? data : null);
+    } catch (err) {
+      if (
+        isMountedRef.current &&
+        generation === aiStatusGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusError(err instanceof Error ? err.message : "Probe failed");
+      }
+    } finally {
+      if (aiStatusProbeControllerRef.current === controller) {
+        aiStatusProbeControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        generation === aiStatusGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusProbing(false);
+      }
+    }
+  }, [adminToken, aiStatusProbing, cancelAiStatusRequests]);
+
+  const refreshAiCatalogue = useCallback(async () => {
+    if (!adminToken || !API_BASE || aiCatalogueRefreshing) return;
+    setAiCatalogueRefreshing(true);
+    setAiStatusError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-status/catalogue/refresh`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      const data = (await res.json()) as AiStatusPayload;
+      setAiStatus(data.catalogue ? data : null);
+      setAiStatusBots(data.bots ?? {});
+      if (!res.ok && data.catalogue?.error) throw new Error(data.catalogue.error);
+    } catch (err) {
+      setAiStatusError(err instanceof Error ? err.message : "Catalogue refresh failed");
+    } finally {
+      setAiCatalogueRefreshing(false);
+    }
+  }, [adminToken, aiCatalogueRefreshing]);
+
+  const saveAiRoutes = useCallback(async (routes: Array<{ feature: string; fallbacks: Array<string> }>) => {
+    if (!adminToken || !API_BASE || aiRoutesSaving) return;
+    setAiRoutesSaving(true);
+    setAiStatusError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-status/routes`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ routes: Object.fromEntries(routes.map((route) => [route.feature, route.fallbacks])) }),
+      });
+      const data = (await res.json()) as AiStatusPayload & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setAiStatus(data.catalogue ? data : null);
       setAiStatusBots(data.bots ?? {});
     } catch (err) {
-      setAiStatusError(err instanceof Error ? err.message : "Probe failed");
+      setAiStatusError(err instanceof Error ? err.message : "Fallback choices could not be saved");
     } finally {
-      setAiStatusProbing(false);
+      setAiRoutesSaving(false);
     }
-  }, [adminToken, aiStatusProbing]);
+  }, [adminToken, aiRoutesSaving]);
+
+  const resetAiRoutes = useCallback(async () => {
+    if (!adminToken || !API_BASE || aiRoutesSaving) return;
+    setAiRoutesSaving(true);
+    setAiStatusError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-status/routes/reset`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = (await res.json()) as AiStatusPayload & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setAiStatus(data);
+      setAiStatusBots(data.bots ?? {});
+    } catch (err) {
+      setAiStatusError(err instanceof Error ? err.message : "Fallback choices could not be reset");
+    } finally {
+      setAiRoutesSaving(false);
+    }
+  }, [adminToken, aiRoutesSaving]);
 
   useEffect(() => {
+    cancelAiStatusRequests();
     if (adminToken) {
-      fetchAiStatus();
+      void fetchAiStatus();
+    } else if (isMountedRef.current) {
+      setAiStatusLoading(false);
+      setAiStatusProbing(false);
     }
-  }, [adminToken, fetchAiStatus]);
+    return cancelAiStatusRequests;
+  }, [adminToken, cancelAiStatusRequests, fetchAiStatus]);
 
   const handleRestartPress = useCallback(() => {
     Alert.alert(
@@ -705,6 +945,7 @@ export default function UploadScreen() {
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | "ods" | null>(null);
+  const [importMode, setImportMode] = useState<ImportMode>("full");
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
   const [activeSection, setActiveSection] = useState<"import" | "enrichment" | "warehouse" | "people" | null>(null);
   const [addpartScrollY, setAddpartScrollY] = useState(0);
@@ -776,10 +1017,16 @@ export default function UploadScreen() {
   const [skipBinRows, setSkipBinRows] = useState<Set<number>>(new Set());
   const [replaceListOpen, setReplaceListOpen] = useState(false);
   const [replaceListSearch, setReplaceListSearch] = useState("");
+  const [opoqPreview, setOpoqPreview] = useState<OpoqPreview | null>(null);
+  const [opoqPreviewPending, setOpoqPreviewPending] = useState(false);
+  const [opoqPreviewFailed, setOpoqPreviewFailed] = useState(false);
+  const [selectedUnknownRows, setSelectedUnknownRows] = useState<Set<number>>(new Set());
+  const [opoqResult, setOpoqResult] = useState<OpoqResult | null>(null);
 
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
   const isMountedRef = useRef(true);
   const screenGenerationRef = useRef(0);
+  const fileSelectionGenerationRef = useRef(0);
   const pasteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Build admin auth headers for protected API calls
@@ -828,18 +1075,20 @@ export default function UploadScreen() {
     return () => {
       isMountedRef.current = false;
       screenGenerationRef.current += 1;
+      fileSelectionGenerationRef.current += 1;
       enrichAbortedRef.current = true;
       enrichControllerRef.current?.abort();
       enrichReaderRef.current?.cancel().catch(() => {});
       expandDescAbortedRef.current = true;
       expandDescControllerRef.current?.abort();
       expandDescReaderRef.current?.cancel().catch(() => {});
+      cancelAiStatusRequests();
       if (pasteDebounceRef.current) {
         clearTimeout(pasteDebounceRef.current);
         pasteDebounceRef.current = null;
       }
     };
-  }, []);
+  }, [cancelAiStatusRequests]);
   // Auto-fetch bin-diff preview whenever the raw CSV changes so admins
   // see a replace-warning before they can press Upload.
   // Uses POST /api/admin/upload/preview (raw CSV text) — the same endpoint
@@ -855,10 +1104,62 @@ export default function UploadScreen() {
       setReplaceConfirmed(false);
       setSkipBinRows(new Set());
       setReplaceListOpen(false);
+      setOpoqPreview(null);
+      setOpoqPreviewFailed(false);
+      setSelectedUnknownRows(new Set());
       return;
     }
     if (!adminToken) return;
     const controller = new AbortController();
+    if (importMode === "opoq") {
+      setOpoqPreviewPending(true);
+      setOpoqPreviewFailed(false);
+      setOpoqPreview(null);
+      fetch(`${API_BASE}/admin/upload/orders/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        signal: controller.signal,
+        body: JSON.stringify({ csv: rawCsv }),
+      }).then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(body.error ?? "OP/OQ preview failed");
+        }
+        const parsed = OpoqPreviewSchema.safeParse(await response.json());
+        if (!parsed.success) throw new Error("Unexpected OP/OQ preview response");
+        const unknownRows = parsed.data.rows
+          .map((row, index) => ({ row, source: parsedRows[index] }))
+          .filter(({ row }) => !row.known)
+          .map(({ row, source }) => ({
+            vendor: row.vendor,
+            catalog: row.catalog,
+            description: source?.description ?? "",
+            binLocations: source?.binLocations ?? [],
+            barcodes: source?.barcodes ?? [],
+            op: source?.op ?? row.orderPurchase,
+            oq: source?.oq ?? row.orderQuantity,
+            orderPurchase: row.orderPurchase,
+            orderQuantity: row.orderQuantity,
+            hasBin: row.hasBins,
+          }));
+        setOpoqPreview({
+          known: parsed.data.known,
+          unknownWithBins: parsed.data.unknownWithBins,
+          unknownWithoutBins: parsed.data.unknownWithoutBins,
+          unknownRows,
+        });
+        setSelectedUnknownRows(new Set());
+      }).catch((err) => {
+        if (err instanceof Error && err.name === "AbortError") return;
+        if (isMountedRef.current) {
+          setOpoqPreviewFailed(true);
+          setUploadError(err instanceof Error ? err.message : "OP/OQ preview failed");
+        }
+      }).finally(() => {
+        if (!controller.signal.aborted && isMountedRef.current) setOpoqPreviewPending(false);
+      });
+      return () => controller.abort();
+    }
     setBinDiffPending(true);
     setBinDiffFailed(false);
     setBinDiff(null);
@@ -898,7 +1199,7 @@ export default function UploadScreen() {
     return () => {
       controller.abort();
     };
-  }, [rawCsv, parsedRows.length, adminToken, logoutAdmin]);
+  }, [rawCsv, parsedRows.length, adminToken, logoutAdmin, importMode]);
 
   const bulkPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const measurePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1509,6 +1810,11 @@ export default function UploadScreen() {
   }, [expandDescResults, expandDescStreamDone, expandDescModel, expandDescRemaining]);
 
   const handlePickFile = async () => {
+    const selectionGeneration = fileSelectionGenerationRef.current + 1;
+    fileSelectionGenerationRef.current = selectionGeneration;
+    const isCurrentSelection = () =>
+      isMountedRef.current && fileSelectionGenerationRef.current === selectionGeneration;
+
     setPasteText("");
     if (pasteDebounceRef.current) clearTimeout(pasteDebounceRef.current);
     try {
@@ -1526,7 +1832,7 @@ export default function UploadScreen() {
         copyToCacheDirectory: true,
       });
 
-      if (!isMountedRef.current) return;
+      if (!isCurrentSelection()) return;
       if (result.canceled || !result.assets?.[0]) return;
 
       const asset = result.assets[0];
@@ -1550,7 +1856,7 @@ export default function UploadScreen() {
         const response = await fetch(asset.uri);
         if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
         const text = await response.text();
-        if (!isMountedRef.current) return;
+        if (!isCurrentSelection()) return;
         rows = parseCSV(text);
         // Normalize through serializeToCsv so the server always receives a
         // canonical header row (Vendor,Catalog,Description,BinLocation) even
@@ -1560,7 +1866,7 @@ export default function UploadScreen() {
         setFileType("csv");
       } else if (["xlsx", "xlsm"].includes(ext)) {
         rows = await parseXlsx(asset.uri);
-        if (!isMountedRef.current) return;
+        if (!isCurrentSelection()) return;
         // Serialize to CSV so we can send it to admin/upload/preview and
         // admin/upload which only accept raw CSV text. skipBinRows is empty
         // at this point (file just loaded), so all bin data is included.
@@ -1568,7 +1874,7 @@ export default function UploadScreen() {
         setFileType("xlsx");
       } else if (ext === "ods") {
         rows = await parseOds(asset.uri);
-        if (!isMountedRef.current) return;
+        if (!isCurrentSelection()) return;
         // ODS is parsed locally, then sent through the same canonical CSV
         // preview/upload contract as XLSX and CSV imports.
         rawText = serializeToCsv(rows, new Set());
@@ -1578,18 +1884,19 @@ export default function UploadScreen() {
           const response = await fetch(asset.uri);
           if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
           const text = await response.text();
-          if (!isMountedRef.current) return;
+          if (!isCurrentSelection()) return;
           rows = parseCSV(text);
           rawText = serializeToCsv(rows, new Set());
           setFileType("csv");
         } catch {
           rows = await parseXlsx(asset.uri);
-          if (!isMountedRef.current) return;
+          if (!isCurrentSelection()) return;
           rawText = serializeToCsv(rows, new Set());
           setFileType("xlsx");
         }
       }
 
+      if (!isCurrentSelection()) return;
       if (rows.length === 0) {
         setUploadError("No data rows found. Ensure your file has columns named: vendor, catalog (required), description, bin (optional).");
         return;
@@ -1599,8 +1906,11 @@ export default function UploadScreen() {
       setFileName(asset.name);
       setRawCsv(rawText);
       setParsedRows(rows);
-    } catch {
-      setUploadError("Failed to read file. Please try again.");
+    } catch (err) {
+      if (!isCurrentSelection()) return;
+      setUploadError(err instanceof Error && err.message.includes("must be")
+        ? err.message
+        : "Failed to read file. Please try again.");
     }
   };
 
@@ -1635,11 +1945,55 @@ export default function UploadScreen() {
     // Defensive guard: never commit an upload if the preview hasn't successfully
     // loaded. The UI already keeps the button disabled in this state, but this
     // guard adds a function-level safety net in case of unexpected state drift.
-    if (binDiffPending || binDiffFailed || binDiff === null) return;
+    if (importMode === "opoq") {
+      if (opoqPreviewPending || opoqPreviewFailed || !opoqPreview) return;
+    } else if (binDiffPending || binDiffFailed || binDiff === null) return;
     setUploadError(null);
     setUploadSuccess(null);
     setUploadPending(true);
     try {
+      if (importMode === "opoq") {
+        const response = await fetch(`${API_BASE}/admin/upload/orders`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...adminHeaders },
+          body: JSON.stringify({ csv: rawCsv }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(body.error ?? "OP/OQ update failed");
+        }
+        const result = await response.json() as { updated?: number };
+        const eligible = opoqPreview!.unknownRows.filter((row) => row.hasBin);
+        const selected = eligible.filter((row) => selectedUnknownRows.has(opoqPreview!.unknownRows.indexOf(row)));
+        let unknownAdded = 0;
+        let failures = 0;
+        if (selected.length > 0) {
+          const addResponse = await fetch(`${API_BASE}/admin/upload`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...adminHeaders },
+            body: JSON.stringify({ csv: serializeToCsv(selected, new Set()) }),
+          });
+          if (!addResponse.ok) {
+            failures = 1;
+          } else {
+            const added = await addResponse.json() as { inserted?: number };
+            unknownAdded = added.inserted ?? selected.length;
+          }
+        }
+        setOpoqResult({
+          knownUpdated: result.updated ?? 0,
+          unknownAdded,
+          unknownSkipped: opoqPreview!.unknownRows.length - selected.length,
+          failures,
+        });
+        await inventoryQuery.refetch();
+        setParsedRows([]);
+        setRawCsv(null);
+        setFileName(null);
+        setFileType(null);
+        setPasteText("");
+        return;
+      }
       // Build the CSV to submit. For rows where the admin toggled "skip bin
       // update" we rebuild the CSV with those bin cells blanked so the server
       // preserves the existing assignment instead of overwriting it.
@@ -2098,6 +2452,16 @@ export default function UploadScreen() {
               </View>
             </View>
           ) : null}
+          {opoqResult ? (
+            <View style={[styles.inlineBanner, styles.successBanner, { backgroundColor: "#10b98115", borderColor: "#10b98155" }]}>
+              <Text style={[styles.inlineBannerText, { color: "#059669" }]}>
+                OP/OQ update complete — {opoqResult.knownUpdated} known updated · {opoqResult.unknownAdded} added · {opoqResult.unknownSkipped} skipped · {opoqResult.failures} failed
+              </Text>
+              <Pressable onPress={() => setOpoqResult(null)} style={styles.bannerClose}>
+                <Text style={{ color: "#059669", fontSize: 14 }}>✕</Text>
+              </Pressable>
+            </View>
+          ) : null}
 
           {/* ── Hub home & section views ─────────────────────────────── */}
           {activeSection === null ? (
@@ -2196,6 +2560,39 @@ export default function UploadScreen() {
                   Multiple bins per row: separate with ; or |{"\n"}
                   Multiple barcodes per row: separate with , ; or |
                 </Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                  {([
+                    ["full", "Full Catalog Import"],
+                    ["opoq", "Update OP/OQ Only"],
+                  ] as const).map(([value, label]) => (
+                    <Pressable
+                      key={value}
+                      onPress={() => {
+                        setImportMode(value);
+                        setOpoqResult(null);
+                        setUploadError(null);
+                      }}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        paddingHorizontal: 8,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: importMode === value ? colors.primary : colors.border,
+                        backgroundColor: importMode === value ? colors.primary + "18" : colors.muted,
+                      }}
+                    >
+                      <Text style={{ color: importMode === value ? colors.primary : colors.mutedForeground, fontSize: 12, fontFamily: "Inter_600SemiBold", textAlign: "center" }}>
+                        {label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                {importMode === "opoq" ? (
+                  <Text style={[styles.cardHint, { color: colors.mutedForeground, marginTop: 8 }]}>
+                    Only OP/OQ values for known parts will change. Unknown rows are shown for review; rows with bins can optionally be added.
+                  </Text>
+                ) : null}
 
                 <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
                   <Text style={[styles.pickBtnText, { color: colors.primary }]}>
@@ -2250,8 +2647,51 @@ export default function UploadScreen() {
                   <Text style={[styles.cardTitle, { color: colors.foreground }]}>
                     Preview ({parsedRows.length} rows)
                   </Text>
+                  {importMode === "opoq" ? (
+                    <View style={[styles.diffCard, { backgroundColor: colors.muted, marginBottom: 10 }]}>
+                      {opoqPreviewPending ? (
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <ActivityIndicator size="small" color={colors.primary} />
+                          <Text style={[styles.diffText, { color: colors.mutedForeground }]}>Classifying known parts and review rows…</Text>
+                        </View>
+                      ) : opoqPreview ? (
+                        <>
+                          <Text style={[styles.diffText, { color: colors.foreground }]}>
+                            Known parts to update: {opoqPreview.known}
+                          </Text>
+                          <Text style={[styles.diffText, { color: colors.warning }]}>
+                            Unknown with bins: {opoqPreview.unknownWithBins} (eligible to add)
+                          </Text>
+                          <Text style={[styles.diffText, { color: colors.mutedForeground }]}>
+                            Unknown without bins: {opoqPreview.unknownWithoutBins} (skipped for review)
+                          </Text>
+                          {opoqPreview.unknownRows.map((row, index) => (
+                            <Pressable
+                              key={`${row.vendor}-${row.catalog}-${index}`}
+                              disabled={!row.hasBin}
+                              onPress={() => setSelectedUnknownRows((previous) => {
+                                const next = new Set(previous);
+                                if (next.has(index)) next.delete(index); else next.add(index);
+                                return next;
+                              })}
+                              style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8, opacity: row.hasBin ? 1 : 0.55 }}
+                            >
+                              <View style={[styles.checkbox, { borderColor: row.hasBin ? colors.warning : colors.border, backgroundColor: selectedUnknownRows.has(index) ? colors.warning : "transparent" }]}>
+                                {selectedUnknownRows.has(index) ? <Text style={{ color: colors.primaryForeground, fontSize: 11 }}>✓</Text> : null}
+                              </View>
+                              <Text style={[styles.diffText, { color: colors.foreground, flex: 1 }]}>
+                                {row.vendor} {row.catalog} · OP {row.orderPurchase} / OQ {row.orderQuantity}{row.hasBin ? "" : " · no bin — review only"}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </>
+                      ) : opoqPreviewFailed ? (
+                        <Text style={[styles.diffText, { color: colors.destructive }]}>Could not preview OP/OQ updates. Re-select the file to retry.</Text>
+                      ) : null}
+                    </View>
+                  ) : null}
 
-                  {(() => {
+                  {importMode === "full" ? (() => {
                     const hasBarcodes = parsedRows.some(r => r.barcodes.length > 0);
                     return (
                       <>
@@ -2354,7 +2794,7 @@ export default function UploadScreen() {
                         })}
                       </>
                     );
-                  })()}
+                  })() : null}
 
                   {parsedRows.length > 8 ? (
                     <Text style={[styles.moreRows, { color: colors.mutedForeground }]}>
@@ -2363,12 +2803,12 @@ export default function UploadScreen() {
                   ) : null}
 
                   {/* Bin diff summary / warning */}
-                  {binDiffPending ? (
+                  {importMode === "full" && binDiffPending ? (
                     <View style={[styles.diffCard, { backgroundColor: colors.muted }]}>
                       <ActivityIndicator size="small" color={colors.primary} />
                       <Text style={[styles.diffText, { color: colors.mutedForeground, marginLeft: 8 }]}>Checking for bin conflicts…</Text>
                     </View>
-                  ) : binDiff ? (
+                  ) : importMode === "full" && binDiff ? (
                     <>
                       {/* Summary chips */}
                       <View style={styles.diffSummaryRow}>
@@ -2582,7 +3022,7 @@ export default function UploadScreen() {
                   ) : null}
 
                   {/* Preview failed — hard block with retry hint */}
-                  {binDiffFailed ? (
+                  {importMode === "full" && binDiffFailed ? (
                     <View style={[styles.diffCard, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "44", borderWidth: 1, marginTop: 10 }]}>
                       <Text style={[styles.diffText, { color: colors.destructive }]}>
                         ⚠ Could not check for bin conflicts. Upload is disabled until the check succeeds. Please re-select the file, re-paste, or re-authenticate and try again.
@@ -2593,15 +3033,21 @@ export default function UploadScreen() {
                   {/* Upload button — gated on confirmation when replacements exist,
                       and blocked entirely until preview has been successfully loaded */}
                   {(() => {
-                    const pendingReplacements = binDiff
+                    const pendingReplacements = importMode === "full" && binDiff
                       ? activeReplacementCount(binDiff.willReplaceBins, skipBinRows, binDiff.rows)
                       : 0;
                     const needsConfirm = pendingReplacements > 0 && !replaceConfirmed;
-                    const hasConflicts = binDiff ? binDiff.willBarcodeConflicts > 0 : false;
+                    const hasConflicts = importMode === "full" && binDiff ? binDiff.willBarcodeConflicts > 0 : false;
                     // Block upload if preview hasn't been fetched yet (pending or failed)
-                    const previewRequired = binDiffPending || binDiffFailed || binDiff === null;
+                    const previewRequired = importMode === "opoq"
+                      ? opoqPreviewPending || opoqPreviewFailed || opoqPreview === null
+                      : binDiffPending || binDiffFailed || binDiff === null;
                     const isDisabled = uploadPending || previewRequired || needsConfirm || hasConflicts;
-                    const btnLabel = binDiffPending
+                    const btnLabel = importMode === "opoq"
+                      ? opoqPreviewPending
+                        ? "Checking OP/OQ updates…"
+                        : `Update OP/OQ (${opoqPreview?.known ?? 0})`
+                      : binDiffPending
                       ? "Checking conflicts…"
                       : hasConflicts
                         ? `✕ Fix ${binDiff!.willBarcodeConflicts} barcode conflict${binDiff!.willBarcodeConflicts !== 1 ? "s" : ""} to upload`
@@ -3092,20 +3538,26 @@ export default function UploadScreen() {
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <View style={styles.aiStatusHeader}>
                   <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 AI Status</Text>
-                  <Pressable
-                    onPress={aiStatusProbing ? undefined : triggerAiProbe}
-                    disabled={aiStatusProbing}
-                    style={[
-                      styles.aiProbeBtn,
-                      { borderColor: aiStatusProbing ? colors.border : colors.primary },
-                    ]}
-                  >
-                    {aiStatusProbing ? (
-                      <ActivityIndicator size="small" color={colors.primary} />
-                    ) : (
-                      <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Re-run probe</Text>
-                    )}
-                  </Pressable>
+                  <View style={styles.aiStatusActions}>
+                    <Pressable
+                      onPress={aiStatusProbing ? undefined : triggerAiProbe}
+                      disabled={aiStatusProbing}
+                      style={[styles.aiProbeBtn, { borderColor: aiStatusProbing ? colors.border : colors.primary }]}
+                    >
+                      {aiStatusProbing ? <ActivityIndicator size="small" color={colors.primary} /> : (
+                        <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Re-run probe</Text>
+                      )}
+                    </Pressable>
+                    <Pressable
+                      onPress={aiCatalogueRefreshing ? undefined : refreshAiCatalogue}
+                      disabled={aiCatalogueRefreshing}
+                      style={[styles.aiProbeBtn, { borderColor: aiCatalogueRefreshing ? colors.border : colors.primary }]}
+                    >
+                      {aiCatalogueRefreshing ? <ActivityIndicator size="small" color={colors.primary} /> : (
+                        <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Refresh models</Text>
+                      )}
+                    </Pressable>
+                  </View>
                 </View>
                 {aiStatusLoading && Object.keys(aiStatusBots).length === 0 ? (
                   <ActivityIndicator size="small" color={colors.primary} style={{ alignSelf: "flex-start" }} />
@@ -3136,6 +3588,147 @@ export default function UploadScreen() {
                     })}
                   </View>
                 )}
+                {aiStatus ? (
+                  <>
+                    <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>
+                      Active provider: <Text style={{ color: colors.foreground }}>{aiProvider}</Text>
+                      {"  "}Catalogue: <Text style={{ color: aiStatus.catalogue.freshness === "fresh" ? "#10b981" : "#f59e0b" }}>
+                        {aiStatus.catalogue.freshness}
+                      </Text>
+                    </Text>
+                    <View style={[styles.aiProviderControl, { borderColor: colors.border }]}>
+                      <Text style={[styles.aiStatusSectionTitle, { color: colors.foreground }]}>Provider choice</Text>
+                      <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                        Changes the runtime provider and saves the choice for future API restarts.
+                      </Text>
+                      <View style={styles.aiProviderButtons}>
+                        {(["poe", "openai"] as const).map((provider) => {
+                          const selected = aiProvider === provider;
+                          return (
+                            <Pressable
+                              key={provider}
+                              onPress={() => void saveAiProvider(provider)}
+                              disabled={aiProviderSaving}
+                              accessibilityLabel={`Use ${provider === "poe" ? "Poe" : "OpenAI"} AI provider`}
+                              style={[
+                                styles.aiProviderButton,
+                                {
+                                  backgroundColor: selected ? colors.primary : colors.card,
+                                  borderColor: selected ? colors.primary : colors.border,
+                                  opacity: aiProviderSaving ? 0.6 : 1,
+                                },
+                              ]}
+                            >
+                              <Text style={[styles.aiProviderButtonText, { color: selected ? colors.primaryForeground : colors.foreground }]}>
+                                {provider === "poe" ? "Poe" : "OpenAI"}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                      {aiProviderSaveState === "saved" ? (
+                        <Text style={[styles.aiProviderSuccess, { color: colors.success }]}>
+                          Provider choice saved and will survive an API restart.
+                        </Text>
+                      ) : aiProviderSaveState === "runtime-only" ? (
+                        <View style={[styles.aiProviderWarning, { backgroundColor: colors.muted, borderColor: colors.warning }]}>
+                          <Text style={[styles.aiProviderWarningText, { color: colors.foreground }]}>
+                            Provider switched for this session, but could not be saved. It may revert after the API restarts.
+                          </Text>
+                          <Pressable
+                            onPress={() => void saveAiProvider(aiProvider)}
+                            disabled={aiProviderSaving}
+                            accessibilityLabel="Retry saving AI provider"
+                            style={[styles.aiProviderRetry, { borderColor: colors.warning }]}
+                          >
+                            <Text style={[styles.aiProviderRetryText, { color: colors.foreground }]}>
+                              {aiProviderSaving ? "Retrying…" : "Retry save"}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+                      {aiProviderError ? (
+                        <Text style={[styles.aiStatusError, { color: colors.destructive }]}>
+                          ⚠ {aiProviderError}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {aiStatus.catalogue.error ? (
+                      <Text style={[styles.aiStatusMeta, { color: colors.destructive }]}>
+                        Last refresh: {aiStatus.catalogue.error}
+                      </Text>
+                    ) : null}
+                    <Text style={[styles.aiStatusSectionTitle, { color: colors.foreground }]}>Safe Poe fallbacks</Text>
+                    <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                      Primaries are code-owned. Only catalogue models with the required capabilities can be selected as fallbacks.
+                    </Text>
+                    {aiStatus.routes.map((route) => {
+                      const eligible = aiStatus.catalogue.models.filter((model) => {
+                        if (route.feature !== "enrich" && model.capabilities.vision === false) return false;
+                        if (model.capabilities.text === false || model.capabilities.structuredOutput === false) return false;
+                        return !route.fallbacks.includes(model.name) && model.name !== route.primary;
+                      });
+                      const update = (fallbacks: Array<string>) => {
+                        void saveAiRoutes(aiStatus.routes.map((item) => (
+                          item.feature === route.feature ? { feature: item.feature, fallbacks } : { feature: item.feature, fallbacks: item.fallbacks }
+                        )));
+                      };
+                      return (
+                        <View key={route.feature} style={[styles.aiRouteRow, { borderTopColor: colors.border }]}>
+                          <View style={styles.aiRouteHeading}>
+                            <Text style={[styles.aiRouteFeature, { color: colors.foreground }]}>{route.feature}</Text>
+                            <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>Primary: {route.primary}</Text>
+                          </View>
+                          {route.fallbacks.length === 0 ? (
+                            <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>No configured fallbacks</Text>
+                          ) : route.fallbacks.map((model, index) => (
+                            <View key={model} style={styles.aiFallbackRow}>
+                              <Text style={[styles.aiFallbackText, { color: colors.foreground }]}>{index + 1}. {model}</Text>
+                              <View style={styles.aiFallbackActions}>
+                                <Pressable disabled={index === 0 || aiRoutesSaving} onPress={() => {
+                                  const next = [...route.fallbacks];
+                                  const current = next[index];
+                                  const previous = next[index - 1];
+                                  if (!current || !previous) return;
+                                  next[index - 1] = current;
+                                  next[index] = previous;
+                                  update(next);
+                                }}><Text style={[styles.aiRouteAction, { color: index === 0 ? colors.muted : colors.primary }]}>↑</Text></Pressable>
+                                <Pressable disabled={index === route.fallbacks.length - 1 || aiRoutesSaving} onPress={() => {
+                                  const next = [...route.fallbacks];
+                                  const current = next[index];
+                                  const following = next[index + 1];
+                                  if (!current || !following) return;
+                                  next[index] = following;
+                                  next[index + 1] = current;
+                                  update(next);
+                                }}><Text style={[styles.aiRouteAction, { color: index === route.fallbacks.length - 1 ? colors.muted : colors.primary }]}>↓</Text></Pressable>
+                                <Pressable disabled={aiRoutesSaving} onPress={() => update(route.fallbacks.filter((item) => item !== model))}>
+                                  <Text style={[styles.aiRouteAction, { color: colors.destructive }]}>×</Text>
+                                </Pressable>
+                              </View>
+                            </View>
+                          ))}
+                          {eligible[0] ? (
+                            <Pressable disabled={aiRoutesSaving} onPress={() => update([...route.fallbacks, eligible[0]!.name])}>
+                              <Text style={[styles.aiAddFallback, { color: colors.primary }]}>+ Add {eligible[0]!.name}</Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      );
+                    })}
+                    <View style={styles.aiRouteFooter}>
+                      <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>
+                        Reference assistant: Gemini (read-only)
+                      </Text>
+                      <Pressable disabled={aiRoutesSaving} onPress={resetAiRoutes}>
+                        <Text style={[styles.aiAddFallback, { color: colors.primary }]}>
+                          {aiRoutesSaving ? "Saving…" : "Reset fallbacks"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </>
+                ) : null}
               </View>
 
             </ScrollView>
@@ -3911,7 +4504,8 @@ const styles = StyleSheet.create({
   queryExportRow: { flexDirection: "row", gap: 8, paddingTop: 4 },
   queryExportBtn: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: "center", justifyContent: "center", minHeight: 40 },
   queryExportBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  aiStatusHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  aiStatusHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  aiStatusActions: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1 },
   aiProbeBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, minWidth: 44, alignItems: "center" },
   aiProbeBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   aiStatusError: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
@@ -3921,6 +4515,26 @@ const styles = StyleSheet.create({
   aiStatusBadge: { flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   aiStatusBadgeDot: { fontSize: 8 },
   aiStatusBadgeText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  aiStatusMeta: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  aiStatusSectionTitle: { fontSize: 14, fontFamily: "Inter_700Bold", marginTop: 6 },
+  aiProviderControl: { borderWidth: 1, borderRadius: 8, padding: 12, marginTop: 10, gap: 6 },
+  aiProviderButtons: { flexDirection: "row", gap: 8, marginTop: 2 },
+  aiProviderButton: { flex: 1, borderWidth: 1, borderRadius: 7, paddingVertical: 8, alignItems: "center" },
+  aiProviderButtonText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  aiProviderSuccess: { fontSize: 12, fontFamily: "Inter_500Medium", lineHeight: 17 },
+  aiProviderWarning: { borderWidth: 1, borderRadius: 7, padding: 9, gap: 8, marginTop: 2 },
+  aiProviderWarningText: { fontSize: 12, fontFamily: "Inter_500Medium", lineHeight: 17 },
+  aiProviderRetry: { alignSelf: "flex-start", borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  aiProviderRetryText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  aiRouteRow: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 9, marginTop: 5, gap: 5 },
+  aiRouteHeading: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 8 },
+  aiRouteFeature: { fontSize: 13, fontFamily: "Inter_700Bold", textTransform: "capitalize" },
+  aiFallbackRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 26 },
+  aiFallbackText: { flex: 1, fontSize: 12, fontFamily: "Inter_500Medium" },
+  aiFallbackActions: { flexDirection: "row", gap: 10 },
+  aiRouteAction: { fontSize: 17, fontFamily: "Inter_700Bold", minWidth: 16, textAlign: "center" },
+  aiAddFallback: { fontSize: 12, fontFamily: "Inter_600SemiBold", paddingVertical: 3 },
+  aiRouteFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 },
   shelfEntryBanner: {
     flexDirection: "row",
     alignItems: "center",

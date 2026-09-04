@@ -95,11 +95,11 @@ export async function hasCurrentAdminAccess(req: Request): Promise<boolean> {
 
 export function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
   const appUser = res.locals.appUser as
-    | { clerkUserId: string; role?: string }
+    | { clerkUserId: string; status?: string; role?: string }
     | undefined;
 
   if (appUser) {
-    if (appUser.role === "admin") {
+    if (appUser.status === "approved" && appUser.role === "admin") {
       // Emit an audit-level warning for every request made under the bootstrap
       // admin identity so these privileged actions are visible in deployment logs.
       if (res.locals.isBootstrapAdmin) {
@@ -140,12 +140,12 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
   (async () => {
     try {
       const rows = await db
-        .select({ role: usersTable.role })
+        .select({ role: usersTable.role, status: usersTable.status })
         .from(usersTable)
         .where(eq(usersTable.clerkUserId, userId))
         .limit(1);
 
-      if (rows[0]?.role === "admin") {
+      if (rows[0]?.role === "admin" && rows[0]?.status === "approved") {
         if (rejectIfMfaMissing(req, res)) return;
         next();
       } else {

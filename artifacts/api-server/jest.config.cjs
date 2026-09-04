@@ -77,6 +77,8 @@ const sharedConfig = {
     "^pdfjs-dist/legacy/build/pdf\\.mjs$": "<rootDir>/__mocks__/pdfjs-dist-legacy.cjs",
     "^@workspace/db$":
       "<rootDir>/../../lib/db/src/index.ts",
+    "^@workspace/db/runtime-data-boundary$":
+      "<rootDir>/../../lib/db/src/runtimeDataBoundary.ts",
     "^@workspace/api-zod$":
       "<rootDir>/../../lib/api-zod/src/index.ts",
     "^@workspace/integrations-openai-ai-server/batch$":

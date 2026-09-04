@@ -93,7 +93,12 @@ jest.mock("../lib/objectStorage", () => ({
 
 // ── Image helpers mocks ────────────────────────────────────────────────────────
 jest.mock("../utils/aiHelpers", () => ({
-  estimateImageBytes: jest.fn().mockReturnValue(1024),
+  ...(
+    jest.requireActual("../../__tests__/helpers/aiHelpersMock") as typeof import("../../__tests__/helpers/aiHelpersMock")
+  ).createAiHelpersMock(
+    jest.requireActual("../utils/aiHelpers"),
+    { estimateImageBytes: 1024 },
+  ),
 }));
 
 jest.mock("../utils/imageResize", () => ({
@@ -117,6 +122,8 @@ function makeWellFormedRow(overrides: Record<string, unknown> = {}) {
     id: 1,
     vendor: "ACME",
     catalog: "X-001",
+    orderPurchase: 5,
+    orderQuantity: 10,
     description: "Test part",
     binLocations: [],
     aiKeywords: [],

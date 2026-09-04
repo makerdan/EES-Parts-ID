@@ -7,7 +7,22 @@
  * use-time downstream.  A valid object must still be returned unchanged.
  */
 
-import { extractJsonFromText } from "../utils/aiHelpers";
+import {
+  extractJsonFromText,
+  MalformedAiResponseError,
+} from "../utils/aiHelpers";
+import { createAiHelpersMock } from "../../__tests__/helpers/aiHelpersMock";
+
+describe("createAiHelpersMock", () => {
+  it("preserves real exports and supports an estimateImageBytes override", () => {
+    const actual = jest.requireActual("../utils/aiHelpers") as typeof import("../utils/aiHelpers");
+    const mocked = createAiHelpersMock(actual, { estimateImageBytes: 1234 });
+
+    expect(mocked.MalformedAiResponseError).toBe(MalformedAiResponseError);
+    expect(mocked.checkImagePayloadSize).toBe(actual.checkImagePayloadSize);
+    expect(mocked.estimateImageBytes("ignored")).toBe(1234);
+  });
+});
 
 describe("extractJsonFromText", () => {
   // Mutation-proof: the input parses to a valid JS array, so this case only

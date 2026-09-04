@@ -2,6 +2,8 @@ import { getAuth } from "@clerk/express";
 import {
   AddPartConflictResponse,
   AddPartResponse,
+  AiDimensionsResponseSchema,
+  AiEnrichmentResponseSchema,
   EstimateDimensionsResponse,
   LookupByBarcodeResponse,
   PatchExpandedDescriptionBody,
@@ -12,6 +14,8 @@ import {
   UpdateItemDescriptionResponse,
   UpdateItemDimensionsResponse,
   UpdateItemKeywordsResponse,
+  UpdateItemOrderBody,
+  UpdateItemOrderResponse,
   UpdateItemSizeResponse,
   UploadItemPhotoResponse,
   UpsertBatchPreviewResponse,
@@ -36,13 +40,24 @@ import Fuse from "fuse.js";
 import { getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 import { getLogger, logger } from "../lib/logger";
-import { uploadCatalogImage } from "../lib/objectStorage";
+import {
+  deletePrivateObjects,
+  isPrivateObjectPath,
+  readPrivateObject,
+  uploadCatalogImage,
+} from "../lib/objectStorage";
 import { callPoeBotWithChain, PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/poeModelLimits";
 import { inventorySearchLimiter } from "../lib/rateLimiter";
 import { buildReverseVendorMap } from "../lib/vendorMap";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
-import { estimateImageBytes } from "../utils/aiHelpers";
+import { requireAppAuth } from "../middlewares/requireAppAuth";
+import {
+  estimateImageBytes,
+  MalformedAiResponseError,
+  parseAiResponse,
+  parseAiResponseOr,
+} from "../utils/aiHelpers";
 import { generateKeywords, mergeWithPinned } from "../utils/generateKeywords";
 import { resizeImages } from "../utils/imageResize";
 import { expandMeasurements } from "../utils/measurementConversion";
@@ -134,6 +149,64 @@ const enrichSystemPrompt =
 
 const router = Router();
 
+type InventoryImageFields = {
+  id: number;
+  imageUrl?: string | null;
+  thumbnailUrl?: string | null;
+  imageUrl2?: string | null;
+  thumbnailUrl2?: string | null;
+};
+
+function privateImageDeliveryUrl(
+  itemId: number,
+  objectPath: string | null | undefined,
+  slot: 1 | 2,
+  variant: "full" | "thumbnail",
+): string | null {
+  // Legacy external URLs are intentionally not returned. They are not under
+  // this server's access-control boundary and must be migrated or re-uploaded.
+  if (
+    !objectPath ||
+    typeof isPrivateObjectPath !== "function" ||
+    !isPrivateObjectPath(objectPath)
+  ) {
+    return null;
+  }
+  return `/api/inventory/${itemId}/photo?slot=${slot}&variant=${variant}`;
+}
+
+/** Convert database object references into authenticated client references. */
+function toClientInventoryItem<T extends InventoryImageFields>(item: T): T {
+  return {
+    ...item,
+    imageUrl: privateImageDeliveryUrl(item.id, item.imageUrl, 1, "full"),
+    thumbnailUrl: privateImageDeliveryUrl(item.id, item.thumbnailUrl, 1, "thumbnail"),
+    imageUrl2: privateImageDeliveryUrl(item.id, item.imageUrl2, 2, "full"),
+    thumbnailUrl2: privateImageDeliveryUrl(item.id, item.thumbnailUrl2, 2, "thumbnail"),
+  };
+}
+
+function imageObjectPaths(item: InventoryImageFields): Array<string | null | undefined> {
+  return [item.imageUrl, item.thumbnailUrl, item.imageUrl2, item.thumbnailUrl2];
+}
+
+async function cleanupInventoryImages(item: InventoryImageFields, log: typeof logger): Promise<void> {
+  if (typeof deletePrivateObjects !== "function") return;
+  try {
+    await deletePrivateObjects(imageObjectPaths(item));
+  } catch (err) {
+    // DB references are cleared independently. Cleanup is idempotent and can
+    // be retried by an operator without exposing the old object to clients.
+    log.error({ err, itemId: item.id }, "[inventory] private image cleanup failed");
+  }
+}
+
+async function cleanupUploadedPaths(paths: Array<string>): Promise<void> {
+  if (typeof deletePrivateObjects === "function") {
+    await deletePrivateObjects(paths);
+  }
+}
+
 /**
  * Normalise electrical unit notation in AI-generated descriptions.
  * Collapses spelt-out or spaced unit forms to compact notation:
@@ -162,6 +235,27 @@ function normalizeElectricalUnits(text: string): string {
   result = result.replace(/(\d+)\/(\d+V)\b/g, "$1V/$2");
 
   return result;
+}
+
+function parseEnrichmentResponse(rawText: string): {
+  expandedDescription: string;
+  confidence: number;
+} {
+  const parsed = parseAiResponse(
+    rawText,
+    AiEnrichmentResponseSchema,
+    "description enrichment",
+  );
+  return {
+    expandedDescription: normalizeElectricalUnits(parsed.expandedDescription),
+    confidence: parsed.confidence,
+  };
+}
+
+function safeEnrichmentErrorMessage(err: unknown): string {
+  return err instanceof MalformedAiResponseError
+    ? "AI response was invalid"
+    : String(err);
 }
 
 // ── Module-level dictionary cache ─────────────────────────────────────────────
@@ -280,7 +374,7 @@ router.get("/", async (req, res) => {
     ]);
 
     res.json({
-      items: items.map(item => ({
+      items: items.map(item => toClientInventoryItem({
         ...item,
         binLocations: item.binLocations,
         aiKeywords: item.aiKeywords,
@@ -522,7 +616,7 @@ router.post("/search", async (req, res) => {
       }
 
       const toResult = (item: typeof inventoryTable.$inferSelect, matchReason: string) => ({
-        item,
+        item: toClientInventoryItem(item),
         confidence: 1.0,
         matchReason,
         seriesBase: getSeriesBase(item.vendor, item.catalog, item.description)?.key ?? null,
@@ -626,7 +720,7 @@ router.post("/search", async (req, res) => {
       }
 
       const toUncatResult = (item: typeof inventoryTable.$inferSelect) => ({
-        item,
+        item: toClientInventoryItem(item),
         confidence: 1.0,
         matchReason: "uncategorized browse",
         seriesBase: getSeriesBase(item.vendor, item.catalog, item.description)?.key ?? null,
@@ -702,7 +796,7 @@ router.post("/search", async (req, res) => {
 
       const sizeRows = (sizeItems as { rows: Array<unknown> }).rows as Array<typeof inventoryTable.$inferSelect>;
       const toSizeResult = (item: typeof inventoryTable.$inferSelect, matchReason: string) => ({
-        item,
+        item: toClientInventoryItem(item),
         confidence: 1.0,
         matchReason,
         seriesBase: getSeriesBase((item as { vendor: string }).vendor, (item as { catalog: string }).catalog, (item as { description: string }).description)?.key ?? null,
@@ -772,6 +866,7 @@ router.post("/search", async (req, res) => {
     // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
     type RawRow = {
       id: number; vendor: string; catalog: string; description: string;
+      order_purchase: number; order_quantity: number;
       bin_locations: Array<string>; ai_keywords: Array<string>; pinned_keywords: Array<string>; barcodes: Array<string>;
       enriched_at: Date | null; image_url: string | null; thumbnail_url: string | null; image_url_2: string | null; thumbnail_url_2: string | null;
       expanded_description: string | null;
@@ -881,7 +976,7 @@ router.post("/search", async (req, res) => {
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
-              i.bin_locations, i.ai_keywords, i.pinned_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.expanded_description, i.size, i.dimensions, i.created_at, i.updated_at,
+              i.order_purchase, i.order_quantity, i.bin_locations, i.ai_keywords, i.pinned_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.expanded_description, i.size, i.dimensions, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 ${inventoryFtsVector('i')},
                 websearch_to_tsquery('english', ${tsQuery})
@@ -960,6 +1055,8 @@ router.post("/search", async (req, res) => {
         vendor: row.vendor,
         catalog: row.catalog,
         description: row.description,
+        orderPurchase: Number(row.order_purchase) || 0,
+        orderQuantity: Number(row.order_quantity) || 0,
         // Safe fallbacks for fields not included in the runtime shape-validation filter
         binLocations: Array.isArray(row.bin_locations) ? row.bin_locations as Array<string> : [],
         aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as Array<string> : [],
@@ -1167,16 +1264,16 @@ router.post("/search", async (req, res) => {
     });
 
     const finalResults = aboveThreshold.map(r => ({
-      item: r.item,
+      item: toClientInventoryItem(r.item),
       confidence: r.confidence,
       matchReason: r.reason,
       seriesBase: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.key ?? null,
       seriesLabel: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.label ?? null,
-      variants: (variantMap.get(r.item.id) ?? []),
+      variants: (variantMap.get(r.item.id) ?? []).map(toClientInventoryItem),
     }));
 
     const sizeUnknownResults = sizeUnknownItems.map(r => ({
-      item: r.item,
+      item: toClientInventoryItem(r.item),
       confidence: r.confidence,
       matchReason: r.reason,
       seriesBase: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.key ?? null,
@@ -1253,11 +1350,12 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
       .from(inventoryTable)
       .where(and(eq(inventoryTable.vendor, upperVendor), eq(inventoryTable.catalog, trimmedCatalog)));
 
-    if (existing.length > 0) {
+    const existingItem = existing[0];
+    if (existingItem) {
       return void res.status(409).json(
         AddPartConflictResponse.parse({
           error: `Part already exists: ${upperVendor} / ${trimmedCatalog}`,
-          existingItem: existing[0],
+          existingItem: toClientInventoryItem(existingItem),
         }),
       );
     }
@@ -1272,6 +1370,9 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
         aiKeywords: [],
       })
       .returning();
+    if (!created) {
+      return void res.status(500).json({ error: "Failed to create part" });
+    }
 
     // If the caller included an image, upload it now. If the upload fails we
     // delete the just-created row so the client can retry without hitting a
@@ -1287,13 +1388,16 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
           error: `Image too large (${mb} MB) — please reduce the photo size and try again (limit is 10 MB).`,
         });
       }
+      const uploadedPaths: Array<string> = [];
       try {
         const rawBuffer = Buffer.from(imageBase64, "base64");
         const { fullBuffer, thumbnailBuffer } = await resizeImages(rawBuffer);
-        const [uploadedUrl, uploadedThumbUrl] = await Promise.all([
+        const uploaded = await Promise.all([
           uploadCatalogImage(fullBuffer, "image/jpeg"),
           uploadCatalogImage(thumbnailBuffer, "image/jpeg"),
         ]);
+        uploadedPaths.push(...uploaded);
+        const [uploadedUrl, uploadedThumbUrl] = uploaded;
         const [withPhoto] = await db
           .update(inventoryTable)
           .set({ imageUrl: uploadedUrl, thumbnailUrl: uploadedThumbUrl, updatedAt: new Date() })
@@ -1301,6 +1405,9 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
           .returning();
         if (withPhoto) finalItem = withPhoto;
       } catch (uploadErr) {
+        // The upload may have succeeded before the DB update failed. The
+        // helper is intentionally best-effort and idempotent.
+        await cleanupUploadedPaths(uploadedPaths).catch(() => {});
         await db.delete(inventoryTable).where(eq(inventoryTable.id, created.id)).catch(() => {});
         reqLogger.error({ err: uploadErr }, "[inventory/add-part] Photo upload failed — rolling back inserted row");
         return void res.status(500).json({ error: "Failed to upload photo — part was not saved." });
@@ -1308,7 +1415,7 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
     }
 
     invalidateReferenceAnswerCache().catch(() => {});
-    res.status(201).json(AddPartResponse.parse({ item: finalItem }));
+    res.status(201).json(AddPartResponse.parse({ item: toClientInventoryItem(finalItem) }));
   } catch (err) {
     reqLogger.error({ err }, "[inventory/add-part] Failed to add part");
     res.status(500).json({ error: "Failed to add part" });
@@ -1454,11 +1561,18 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
     }
 
     const { items } = req.body as {
-      items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: Array<string>; barcodes?: Array<string> }>;
+      items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: Array<string>; barcodes?: Array<string>; orderPurchase?: number; orderQuantity?: number }>;
     };
 
     if (!items?.length) {
       return void res.status(400).json({ error: "No items provided" });
+    }
+    for (const item of items) {
+      for (const [name, value] of [["orderPurchase", item.orderPurchase], ["orderQuantity", item.orderQuantity]] as const) {
+        if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+          return void res.status(400).json({ error: `${name} must be a non-negative integer` });
+        }
+      }
     }
 
     if (items.length > UPSERT_BATCH_MAX_ITEMS) {
@@ -1502,6 +1616,10 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
             description: item.description ?? "",
             binLocations: item.binLocations ?? [],
             barcodes: item.barcodes ?? [],
+            // -1 is an internal omission sentinel; it is converted to the
+            // column default for newly inserted rows below.
+            orderPurchase: item.orderPurchase === undefined ? -1 : item.orderPurchase,
+            orderQuantity: item.orderQuantity === undefined ? -1 : item.orderQuantity,
             aiKeywords: [],
           }))
         )
@@ -1519,6 +1637,8 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
             // same semantics as binLocations so manual scan assignments survive
             // re-uploads that omit the barcodes column.
             barcodes: sql`CASE WHEN coalesce(array_length(EXCLUDED.barcodes, 1), 0) > 0 THEN EXCLUDED.barcodes ELSE ${inventoryTable.barcodes} END`,
+            orderPurchase: sql`CASE WHEN EXCLUDED.order_purchase >= 0 THEN EXCLUDED.order_purchase ELSE ${inventoryTable.orderPurchase} END`,
+            orderQuantity: sql`CASE WHEN EXCLUDED.order_quantity >= 0 THEN EXCLUDED.order_quantity ELSE ${inventoryTable.orderQuantity} END`,
             updatedAt: sql`now()`,
           },
         })
@@ -1539,6 +1659,27 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
       for (const row of result) {
         if (row.isNew) inserted++;
         else updated++;
+      }
+      // Zero is a meaningful supplied value, while omitted fields preserve the
+      // existing value. The non-null DB column cannot carry omission through
+      // VALUES, so apply explicit zeroes after the batch statement.
+      for (let resultIndex = 0; resultIndex < dedupedChunk.length; resultIndex++) {
+        const item = dedupedChunk[resultIndex]!;
+        const isNewItem = Boolean(result[resultIndex]?.isNew);
+        if (item.orderPurchase === 0 || item.orderQuantity === 0 ||
+            (isNewItem && (item.orderPurchase === undefined || item.orderQuantity === undefined))) {
+          const zeroes: {
+            orderPurchase?: number;
+            orderQuantity?: number;
+            updatedAt: ReturnType<typeof sql>;
+          } = { updatedAt: sql`now()` };
+          if (item.orderPurchase === 0 || (isNewItem && item.orderPurchase === undefined)) zeroes.orderPurchase = 0;
+          if (item.orderQuantity === 0 || (isNewItem && item.orderQuantity === undefined)) zeroes.orderQuantity = 0;
+          await db.update(inventoryTable).set(zeroes).where(and(
+            eq(inventoryTable.vendor, item.vendor.toUpperCase()),
+            eq(inventoryTable.catalog, item.catalog),
+          ));
+        }
       }
     }
 
@@ -1640,7 +1781,7 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
   } catch (err) {
     reqLogger.error({ err }, "[inventory/enrich-sse] SSE enrichment failed");
-    res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
+    res.write(`data: ${JSON.stringify({ error: safeEnrichmentErrorMessage(err) })}\n\n`);
     res.end();
   }
 });
@@ -1869,19 +2010,9 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
                 enrichSystemPrompt,
                 `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`,
               )
-        ) || item.description;
+        );
 
-        let expandedDescription: string = item.description;
-        let confidence: number | null = null;
-        try {
-          const parsed = JSON.parse(rawText) as { expandedDescription?: string; confidence?: number };
-          expandedDescription = parsed.expandedDescription?.trim() || item.description;
-          confidence = typeof parsed.confidence === "number" ? parsed.confidence : null;
-        } catch {
-          expandedDescription = rawText || item.description;
-          confidence = null;
-        }
-        expandedDescription = normalizeElectricalUnits(expandedDescription);
+        const { expandedDescription, confidence } = parseEnrichmentResponse(rawText);
 
         let autoSaved = false;
         if (confidence != null && confidence > 70) {
@@ -1933,7 +2064,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
           partNumber: item.catalog,
           originalDescription: item.description,
           expandedDescription: null,
-          error: String(aiErr),
+          error: safeEnrichmentErrorMessage(aiErr),
           progress: processed,
           total,
         });
@@ -1997,19 +2128,9 @@ router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
             return resp.choices[0]?.message?.content?.trim() ?? "";
           })()
         : await callPoeBotWithChain("enrich", enrichSystemPrompt, userPrompt)
-    ) || item.description;
+    );
 
-    let expandedDescription: string = item.description;
-    let confidence: number | null = null;
-    try {
-      const parsed = JSON.parse(rawText) as { expandedDescription?: string; confidence?: number };
-      expandedDescription = parsed.expandedDescription?.trim() || item.description;
-      confidence = typeof parsed.confidence === "number" ? parsed.confidence : null;
-    } catch {
-      expandedDescription = rawText || item.description;
-      confidence = null;
-    }
-    expandedDescription = normalizeElectricalUnits(expandedDescription);
+    const { expandedDescription, confidence } = parseEnrichmentResponse(rawText);
 
     res.json({
       id: item.id,
@@ -2024,7 +2145,11 @@ router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
       return void res.status(503).json({ error: "poe_chain_exhausted" });
     }
     reqLogger.error({ err }, "[expand-description single] failed");
-    res.status(500).json({ error: String(err) });
+    res.status(500).json({
+      error: err instanceof MalformedAiResponseError
+        ? "Description expansion failed"
+        : String(err),
+    });
   }
 });
 
@@ -2317,7 +2442,7 @@ router.get(/^\/barcode\/(.+)$/, async (req, res) => {
       .limit(1);
 
     if (!item) return void res.status(404).json({ error: "No item found for that barcode" });
-    res.json(LookupByBarcodeResponse.parse(item));
+    res.json(LookupByBarcodeResponse.parse(toClientInventoryItem(item)));
   } catch (err) {
     reqLogger.error({ err }, "[inventory/barcode-lookup] Barcode lookup failed");
     res.status(500).json({ error: "Barcode lookup failed" });
@@ -2353,7 +2478,7 @@ router.patch("/:id/barcodes", requireAdminAuth, async (req, res) => {
       .returning();
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
-    res.json(UpdateItemBarcodesResponse.parse(updated));
+    res.json(UpdateItemBarcodesResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
     reqLogger.error({ err }, "[inventory/barcodes] Failed to update barcodes");
     res.status(500).json({ error: "Failed to update barcodes" });
@@ -2408,10 +2533,36 @@ router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
       .returning();
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
-    res.json(UpdateItemBinsResponse.parse(updated));
+    res.json(UpdateItemBinsResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
     reqLogger.error({ err }, "[inventory/bins] Failed to update bins");
     res.status(500).json({ error: "Failed to update bins" });
+  }
+});
+
+// ── PATCH /inventory/:id/order ────────────────────────────────────────────────
+// Admin-only replacement of the two purchasing fields. Both values are
+// required, deliberately strict integers, and may not be negative.
+router.patch("/:id/order", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
+  try {
+    const id = Number(req.params["id"]);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return void res.status(400).json({ error: "Invalid item id" });
+    }
+    const parsed = UpdateItemOrderBody.safeParse(req.body);
+    if (!parsed.success) {
+      return void res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid order values" });
+    }
+    const [updated] = await db.update(inventoryTable)
+      .set({ orderPurchase: parsed.data.orderPurchase, orderQuantity: parsed.data.orderQuantity, updatedAt: new Date() })
+      .where(eq(inventoryTable.id, id))
+      .returning();
+    if (!updated) return void res.status(404).json({ error: "Item not found" });
+    res.json(UpdateItemOrderResponse.parse(toClientInventoryItem(updated)));
+  } catch (err) {
+    reqLogger.error({ err }, "[inventory/order] Failed to update order fields");
+    res.status(500).json({ error: "Failed to update order fields" });
   }
 });
 
@@ -2438,7 +2589,7 @@ router.patch("/:id/size", requireAdminAuth, async (req, res) => {
       .returning();
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
-    res.json(UpdateItemSizeResponse.parse(updated));
+    res.json(UpdateItemSizeResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
     reqLogger.error({ err }, "[inventory/size] Failed to update size");
     res.status(500).json({ error: "Failed to update size" });
@@ -2469,7 +2620,7 @@ router.patch("/:id/description", requireAdminAuth, async (req, res) => {
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     invalidateReferenceAnswerCache().catch(() => {});
-    res.json(UpdateItemDescriptionResponse.parse(updated));
+    res.json(UpdateItemDescriptionResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
     reqLogger.error({ err }, "[inventory/description] Failed to update description");
     res.status(500).json({ error: "Failed to update description" });
@@ -2510,7 +2661,7 @@ router.patch("/:id/enrich", requireAdminAuth, async (req, res) => {
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     invalidateReferenceAnswerCache().catch(() => {});
-    res.json(ReenrichItemResponse.parse(updated));
+    res.json(ReenrichItemResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
     reqLogger.error({ err }, "[inventory/enrich] Failed to enrich item");
     res.status(500).json({ error: "Failed to enrich item" });
@@ -2557,10 +2708,74 @@ router.patch("/:id/keywords", requireAdminAuth, async (req, res) => {
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     invalidateReferenceAnswerCache().catch(() => {});
-    res.json(UpdateItemKeywordsResponse.parse(updated));
+    res.json(UpdateItemKeywordsResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
     reqLogger.error({ err }, "[inventory/keywords] Failed to update keywords");
     res.status(500).json({ error: "Failed to update keywords" });
+  }
+});
+
+// ── GET /inventory/:id/photo ──────────────────────────────────────────────────
+// Private image delivery. The database stores an object reference, while the
+// client receives this route instead of a durable /objects URL. Authentication
+// is explicit here as defense in depth for tests and alternate router mounts.
+router.get("/:id/photo", requireAppAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
+  const id = Number(req.params["id"]);
+  const slot = req.query["slot"] === "2" ? 2 : req.query["slot"] === "1" ? 1 : null;
+  const variant =
+    req.query["variant"] === "thumbnail"
+      ? "thumbnail"
+      : req.query["variant"] === "full"
+        ? "full"
+        : null;
+
+  if (!Number.isSafeInteger(id) || id <= 0 || slot === null || variant === null) {
+    res.status(400).json({ error: "Invalid photo reference" });
+    return;
+  }
+
+  try {
+    const [item] = await db
+      .select({
+        id: inventoryTable.id,
+        imageUrl: inventoryTable.imageUrl,
+        thumbnailUrl: inventoryTable.thumbnailUrl,
+        imageUrl2: inventoryTable.imageUrl2,
+        thumbnailUrl2: inventoryTable.thumbnailUrl2,
+      })
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, id))
+      .limit(1);
+
+    if (!item) {
+      res.status(404).json({ error: "Photo not found" });
+      return;
+    }
+
+    const objectPath =
+      slot === 2
+        ? variant === "thumbnail" ? item.thumbnailUrl2 : item.imageUrl2
+        : variant === "thumbnail" ? item.thumbnailUrl : item.imageUrl;
+    if (!objectPath || !isPrivateObjectPath(objectPath)) {
+      // Do not disclose whether a legacy/public reference exists.
+      res.status(404).json({ error: "Photo not found" });
+      return;
+    }
+
+    const content = await readPrivateObject(objectPath);
+    res.set({
+      "Cache-Control": "private, no-store, max-age=0",
+      "Content-Disposition": "inline",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Type": objectPath.toLowerCase().endsWith(".jpg")
+        ? "image/jpeg"
+        : "image/png",
+    });
+    res.status(200).send(content);
+  } catch (err) {
+    reqLogger.error({ err, id, slot, variant }, "[inventory/photo] Private image read failed");
+    res.status(404).json({ error: "Photo not found" });
   }
 });
 
@@ -2584,6 +2799,11 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
     const isSlot2 = slot === 2;
 
     if (remove === true) {
+      const [before] = await db
+        .select()
+        .from(inventoryTable)
+        .where(eq(inventoryTable.id, id))
+        .limit(1);
       const patch = isSlot2
         ? { imageUrl2: null, thumbnailUrl2: null, updatedAt: new Date() }
         : { imageUrl: null, thumbnailUrl: null, updatedAt: new Date() };
@@ -2593,13 +2813,21 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
         .where(eq(inventoryTable.id, id))
         .returning();
       if (!updated) return void res.status(404).json({ error: "Item not found" });
+      if (before) {
+        await cleanupInventoryImages(
+          isSlot2
+            ? { ...before, imageUrl: before.imageUrl2, thumbnailUrl: before.thumbnailUrl2, imageUrl2: null, thumbnailUrl2: null }
+            : { ...before, imageUrl2: null, thumbnailUrl2: null },
+          reqLogger,
+        );
+      }
       invalidateReferenceAnswerCache().catch(() => {});
       const parsedRemove = UploadItemPhotoResponse.parse(updated);
       return void res.json({
-        imageUrl: parsedRemove.imageUrl ?? null,
-        thumbnailUrl: parsedRemove.thumbnailUrl ?? null,
-        imageUrl2: parsedRemove.imageUrl2 ?? null,
-        thumbnailUrl2: parsedRemove.thumbnailUrl2 ?? null,
+        imageUrl: privateImageDeliveryUrl(id, parsedRemove.imageUrl, 1, "full"),
+        thumbnailUrl: privateImageDeliveryUrl(id, parsedRemove.thumbnailUrl, 1, "thumbnail"),
+        imageUrl2: privateImageDeliveryUrl(id, parsedRemove.imageUrl2, 2, "full"),
+        thumbnailUrl2: privateImageDeliveryUrl(id, parsedRemove.thumbnailUrl2, 2, "thumbnail"),
       });
     }
 
@@ -2619,10 +2847,24 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
     const rawBuffer = Buffer.from(imageBase64, "base64");
     const { fullBuffer, thumbnailBuffer } = await resizeImages(rawBuffer);
 
-    const [uploadedUrl, uploadedThumbUrl] = await Promise.all([
+    const uploadedPaths: Array<string> = [];
+    const uploaded = await Promise.all([
       uploadCatalogImage(fullBuffer, "image/jpeg"),
       uploadCatalogImage(thumbnailBuffer, "image/jpeg"),
     ]);
+    uploadedPaths.push(...uploaded);
+    const [uploadedUrl, uploadedThumbUrl] = uploaded;
+
+    const [before] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, id))
+      .limit(1);
+    if (!before) {
+      await cleanupUploadedPaths(uploadedPaths).catch(() => {});
+      // The update below remains the authoritative existence check. This also
+      // keeps mocked/test database adapters compatible with the write path.
+    }
 
     const patch = isSlot2
       ? { imageUrl2: uploadedUrl, thumbnailUrl2: uploadedThumbUrl, updatedAt: new Date() }
@@ -2634,14 +2876,25 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
       .where(eq(inventoryTable.id, id))
       .returning();
 
-    if (!updated) return void res.status(404).json({ error: "Item not found" });
+    if (!updated) {
+      await cleanupUploadedPaths(uploadedPaths).catch(() => {});
+      return void res.status(404).json({ error: "Item not found" });
+    }
+    if (before) {
+      await cleanupInventoryImages(
+        isSlot2
+          ? { ...before, imageUrl: before.imageUrl2, thumbnailUrl: before.thumbnailUrl2, imageUrl2: null, thumbnailUrl2: null }
+          : { ...before, imageUrl2: null, thumbnailUrl2: null },
+        reqLogger,
+      );
+    }
     invalidateReferenceAnswerCache().catch(() => {});
     const parsed = UploadItemPhotoResponse.parse(updated);
     res.json({
-      imageUrl: parsed.imageUrl ?? null,
-      thumbnailUrl: parsed.thumbnailUrl ?? null,
-      imageUrl2: parsed.imageUrl2 ?? null,
-      thumbnailUrl2: parsed.thumbnailUrl2 ?? null,
+      imageUrl: privateImageDeliveryUrl(id, parsed.imageUrl, 1, "full"),
+      thumbnailUrl: privateImageDeliveryUrl(id, parsed.thumbnailUrl, 1, "thumbnail"),
+      imageUrl2: privateImageDeliveryUrl(id, parsed.imageUrl2, 2, "full"),
+      thumbnailUrl2: privateImageDeliveryUrl(id, parsed.thumbnailUrl2, 2, "thumbnail"),
     });
   } catch (err) {
     const id = req.params["id"] ?? "unknown";
@@ -2693,7 +2946,7 @@ router.patch("/:id/dimensions", requireAdminAuth, async (req, res) => {
       .returning();
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
-    res.json(UpdateItemDimensionsResponse.parse(updated));
+    res.json(UpdateItemDimensionsResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
     reqLogger.error({ err }, "[inventory/dimensions] Failed to update dimensions");
     res.status(500).json({ error: "Failed to update dimensions" });
@@ -2885,35 +3138,26 @@ async function callDimensionAi(imageBase64: string, mimeType: string, useOpenAiF
 }
 
 function parseDimensionResponse(raw: string): { length: number | null; width: number | null; height: number | null; diameter: number | null } {
-  // Extract the first balanced JSON object from the response.
-  // The flat regex /\{[^}]*\}/ fails on nested braces, so we scan manually.
-  let parsed: Record<string, unknown> = {};
-  const start = raw.indexOf("{");
-  if (start !== -1) {
-    let depth = 0;
-    let end = -1;
-    for (let i = start; i < raw.length; i++) {
-      if (raw[i] === "{") depth++;
-      else if (raw[i] === "}") {
-        depth--;
-        if (depth === 0) { end = i; break; }
-      }
-    }
-    if (end !== -1) {
-      try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { /* keep {} */ }
-    }
-  }
+  const parsed = parseAiResponseOr(
+    raw,
+    AiDimensionsResponseSchema,
+    "dimensions",
+    AiDimensionsResponseSchema.parse({
+      length: null,
+      width: null,
+      height: null,
+      diameter: null,
+    }),
+  );
 
-  const sanitize = (v: unknown): number | null => {
-    const n = Number(v);
-    return isFinite(n) && n > 0 && n <= 100_000 ? Math.round(n * 10) / 10 : null;
-  };
+  const round = (value: number | null): number | null =>
+    value === null ? null : Math.round(value * 10) / 10;
 
   return {
-    length: sanitize(parsed.length),
-    width: sanitize(parsed.width),
-    height: sanitize(parsed.height),
-    diameter: sanitize(parsed.diameter),
+    length: round(parsed.length),
+    width: round(parsed.width),
+    height: round(parsed.height),
+    diameter: round(parsed.diameter),
   };
 }
 
@@ -3019,6 +3263,13 @@ router.delete("/:id", requireAdminAuth, async (req, res) => {
     const id = parseInt(String(req.params["id"] ?? "0"));
     if (!id) return void res.status(400).json({ error: "Invalid item id" });
 
+    const [before] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, id))
+      .limit(1);
+    if (!before) return void res.status(404).json({ error: "Item not found" });
+
     const [deleted] = await db
       .delete(inventoryTable)
       .where(eq(inventoryTable.id, id))
@@ -3026,6 +3277,7 @@ router.delete("/:id", requireAdminAuth, async (req, res) => {
 
     if (!deleted) return void res.status(404).json({ error: "Item not found" });
 
+    await cleanupInventoryImages(before, reqLogger);
     invalidateReferenceAnswerCache().catch(() => {});
     res.status(200).json({ deleted: true });
   } catch (err) {

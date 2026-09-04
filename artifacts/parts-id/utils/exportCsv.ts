@@ -4,10 +4,12 @@ export interface CsvInventoryRow {
   description: string;
   binLocations: Array<string>;
   barcodes: Array<string>;
+  op?: number;
+  oq?: number;
 }
 
 export const INVENTORY_CSV_HEADER =
-  "Vendor,Catalog,Description,BinLocation,Barcodes";
+  "Vendor,Catalog,Description,BinLocation,Barcodes,OP,OQ";
 
 export function escapeField(v: string): string {
   return `"${v.replace(/"/g, '""')}"`;
@@ -17,7 +19,7 @@ export function serializeInventoryToCsv(items: Array<CsvInventoryRow>): string {
   const lines = items.map((item) => {
     const bin = item.binLocations.join(";");
     const barcodes = item.barcodes.join(",");
-    return [item.vendor, item.catalog, item.description, bin, barcodes]
+    return [item.vendor, item.catalog, item.description, bin, barcodes, String(item.op ?? 0), String(item.oq ?? 0)]
       .map(escapeField)
       .join(",");
   });

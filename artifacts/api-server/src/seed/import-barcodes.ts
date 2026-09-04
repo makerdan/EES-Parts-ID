@@ -17,8 +17,11 @@ import { resolve } from "node:path";
 
 import { db, pool } from "@workspace/db";
 import { inventoryFtsVector, inventoryTable } from "@workspace/db";
+import { assertDatabaseExecutionMode } from "@workspace/db/runtime-data-boundary";
 import { eq, sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
+
+assertDatabaseExecutionMode("seed");
 
 const filePath = process.argv[2];
 if (!filePath) {

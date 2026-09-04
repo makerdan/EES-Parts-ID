@@ -62,11 +62,15 @@ import { eq } from "drizzle-orm";
 import type { Express } from "express";
 
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
+import {
+  cleanupTestUser,
+  seedTestUser,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 import type * as AiProviderModule from "../src/lib/aiProvider";
 
 // ── Test state ──────────────────────────────────────────────────────────────────
-const NON_ADMIN_USER_ID = "jest-ai-provider-nonadmin";
+const NON_ADMIN_USER_ID = workerQualifiedUserId("jest-ai-provider-nonadmin");
 const adminToken = ADMIN_TEST_USER_ID;
 
 let app: Express;
@@ -176,6 +180,26 @@ describe("Admin AI-provider switch", () => {
       .expect(200);
 
     expect(laterRead.body).toEqual({ provider: "openai" });
+  });
+
+  it("reports a runtime-only switch when persistence fails", async () => {
+    const insertSpy = jest.spyOn(db, "insert").mockImplementationOnce(() => {
+      throw new Error("database unavailable");
+    });
+
+    try {
+      const switched = await supertest(app)
+        .post("/api/admin/ai-provider")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ provider: "openai" })
+        .expect(200);
+
+      expect(switched.body).toEqual({ provider: "openai", persisted: false });
+      expect(aiProvider.getProvider()).toBe("openai");
+      expect(await readPersistedProvider()).toBe("poe");
+    } finally {
+      insertSpy.mockRestore();
+    }
   });
 });
 

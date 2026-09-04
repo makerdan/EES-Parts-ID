@@ -149,6 +149,23 @@ app.use("/api/inventory/estimate-dimensions/search", (req, res, next) => {
   next();
 });
 
+// Clerk middleware resolves the publishable key from the incoming request host
+// so the same server can serve multiple Clerk custom domains. Falls back to
+// CLERK_PUBLISHABLE_KEY when the host doesn't map to a custom domain.
+//
+// Keep Clerk and the common app guard before body parsers. Protected uploads
+// must not cause Express to buffer a large unauthenticated body before rejecting
+// the request. Public routes are explicitly selected by routeAccessMatrix.
+app.use(
+  clerkMiddleware((req) => ({
+    publishableKey: publishableKeyFromHost(
+      getClerkProxyHost(req) ?? "",
+      process.env.CLERK_PUBLISHABLE_KEY,
+    ),
+  })),
+);
+app.use("/api", requireAppAuth);
+
 // ── Per-route body size limits ─────────────────────────────────────────────────
 // Upload routes accept large base64 payloads. All other routes are capped at
 // 1 MB to prevent resource exhaustion via oversized payloads on lightweight
@@ -160,6 +177,12 @@ app.use("/api/inventory/estimate-dimensions/search", (req, res, next) => {
 //
 // A 25 MB PDF base64-encodes to ~34 MB; 50 MB provides headroom.
 const LARGE_BODY_LIMIT = "50mb";
+// Durable catalog PDF parts are binary and are intentionally capped below the
+// session manifest's part-size ceiling. This parser runs before the JSON parser.
+app.use(
+  /^\/api\/admin\/catalog-pdf\/upload-sessions\/[^/]+\/parts\/\d+$/,
+  express.raw({ type: ["application/octet-stream", "application/pdf"], limit: "8mb" }),
+);
 const UPLOAD_PATHS = [
   "/api/admin/catalog-pdf",
   "/api/admin/upload",      // CSV/bulk-import uploads (large text payloads)
@@ -186,19 +209,6 @@ app.use(PHOTO_ROUTE_RE, express.urlencoded({ extended: true, limit: LARGE_BODY_L
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
-// Clerk middleware resolves the publishable key from the incoming request host
-// so the same server can serve multiple Clerk custom domains. Falls back to
-// CLERK_PUBLISHABLE_KEY when the host doesn't map to a custom domain.
-app.use(
-  clerkMiddleware((req) => ({
-    publishableKey: publishableKeyFromHost(
-      getClerkProxyHost(req) ?? "",
-      process.env.CLERK_PUBLISHABLE_KEY,
-    ),
-  })),
-);
-
-app.use("/api", requireAppAuth);
 app.use("/api", router);
 
 // ── Global error handler ─────────────────────────────────────────────────────

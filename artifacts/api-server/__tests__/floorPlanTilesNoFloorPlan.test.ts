@@ -3,7 +3,8 @@
  *
  * The real database is not used here — @workspace/db is fully mocked so that
  * getLatestMeta() always returns null, regardless of what rows exist in the
- * shared dev database.  This makes the 404 behaviour testable in isolation.
+ * shared dev database. The bundled floor plan remains available as the public
+ * bootstrap layout.
  */
 
 // ── Mock OpenAI BEFORE app is imported ────────────────────────────────────────
@@ -57,28 +58,28 @@ import supertest from "supertest";
 import app from "../src/app";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Suite — no floor plan in DB → 404
+// Suite — no floor plan in DB → bundled fallback
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("GET /api/floor-plan/tiles — no floor plan uploaded", () => {
-  it("returns 404 for z=0 tile when no floor plan exists", async () => {
+  it("returns the bundled fallback tile for z=0 when no upload exists", async () => {
     const res = await supertest(app)
       .get("/api/floor-plan/tiles/0/0/0")
-      .expect(404);
-    expect(res.body).toHaveProperty("error");
+      .expect(200);
+    expect(res.headers["content-type"]).toMatch(/image\/png/);
   });
 
-  it("returns 404 for a z=4 tile when no floor plan exists", async () => {
+  it("returns the bundled fallback tile at z=4 when no upload exists", async () => {
     const res = await supertest(app)
       .get("/api/floor-plan/tiles/4/7/7")
-      .expect(404);
-    expect(res.body).toHaveProperty("error");
+      .expect(200);
+    expect(res.headers["content-type"]).toMatch(/image\/png/);
   });
 
-  it("returns 404 with .png suffix when no floor plan exists", async () => {
+  it("returns the bundled fallback tile with .png suffix", async () => {
     const res = await supertest(app)
       .get("/api/floor-plan/tiles/0/0/0.png")
-      .expect(404);
-    expect(res.body).toHaveProperty("error");
+      .expect(200);
+    expect(res.headers["content-type"]).toMatch(/image\/png/);
   });
 });

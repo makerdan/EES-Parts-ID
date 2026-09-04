@@ -196,7 +196,7 @@ describe("syncRetryTimer logout cleanup — clearTimeout called when logout fire
     function HarnessWithSpy({
       registerLogoutHandler: reg,
     }: { registerLogoutHandler: RegisterLogoutHandler }) {
-      const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+      const timerRef = useRef<number | ReturnType<typeof setTimeout> | null>(null);
 
       useEffect(() => {
         timerRef.current = setTimeout(retrySpy, 30_000);
@@ -245,7 +245,7 @@ describe("syncRetryTimer logout cleanup — clearTimeout called when logout fire
     function HarnessTimerOnly({
       registerLogoutHandler: reg,
     }: { registerLogoutHandler: RegisterLogoutHandler }) {
-      const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+      const timerRef = useRef<number | ReturnType<typeof setTimeout> | null>(null);
 
       useEffect(() => {
         timerRef.current = setTimeout(retrySpy, 50);

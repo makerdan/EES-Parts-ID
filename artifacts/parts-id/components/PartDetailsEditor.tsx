@@ -86,6 +86,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const updateBinsMutation = useUpdateItemBins();
   const updateKeywordsMutation = useUpdateItemKeywords();
   const [description, setDescription] = useState(item?.description ?? "");
+  const [op, setOp] = useState(String(item?.orderPurchase ?? 0));
+  const [oq, setOq] = useState(String(item?.orderQuantity ?? 0));
   const [bins, setBins] = useState<Array<string>>(item?.binLocations ?? []);
   const [newBin, setNewBin] = useState("");
   const [keywords, setKeywords] = useState<Array<string>>(item?.aiKeywords ?? []);
@@ -97,6 +99,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     bins?: string;
     keywords?: string;
     dimensions?: string;
+    opoq?: string;
     photo?: string;
     photo2?: string;
   }>({});
@@ -182,6 +185,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     if (!current) return;
     const dims = current?.dimensions;
     setDescription(current.description ?? "");
+    setOp(String(current.orderPurchase ?? 0));
+    setOq(String(current.orderQuantity ?? 0));
     setBins(current.binLocations ?? []);
     setKeywords(current.aiKeywords ?? []);
     setNewBin("");
@@ -463,7 +468,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     );
 
     type SaveOp = {
-      field: "description" | "bins" | "keywords" | "dimensions" | "photo" | "photo2";
+      field: "description" | "bins" | "keywords" | "dimensions" | "opoq" | "photo" | "photo2";
       promise: Promise<unknown>;
       restoreFn: () => void;
     };
@@ -483,6 +488,33 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
             Authorization: `Bearer ${adminToken}`,
           },
           body: JSON.stringify({ description: description.trim() }),
+        }).then(async (res) => {
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({})) as { error?: string };
+            throw new Error(data.error ?? `HTTP ${res.status}`);
+          }
+        }),
+      });
+    }
+
+    const parsedOp = Number(op.trim() || "0");
+    const parsedOq = Number(oq.trim() || "0");
+    if (![parsedOp, parsedOq].every((value) => Number.isSafeInteger(value) && value >= 0)) {
+      setFieldSaveErrors({ opoq: "OP and OQ must be non-negative whole numbers." });
+      setSaveStatus("error");
+      return;
+    }
+    if (parsedOp !== (current.orderPurchase ?? 0) || parsedOq !== (current.orderQuantity ?? 0)) {
+      ops.push({
+        field: "opoq",
+        restoreFn: () => {
+          setOp(String(current.orderPurchase ?? 0));
+          setOq(String(current.orderQuantity ?? 0));
+        },
+        promise: fetch(`${API_BASE}/inventory/${current.id}/order`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+          body: JSON.stringify({ orderPurchase: parsedOp, orderQuantity: parsedOq }),
         }).then(async (res) => {
           if (!res.ok) {
             const data = await res.json().catch(() => ({})) as { error?: string };
@@ -705,6 +737,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
             ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
             ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
             ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
+            ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq } : {}),
             ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
             ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
           };
@@ -743,6 +776,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         bins: "Bins",
         keywords: "Keywords",
         dimensions: "Dimensions",
+        opoq: "OP/OQ",
         photo: "Photo 1",
         photo2: "Photo 2",
       };
@@ -767,6 +801,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           binLocations: finalBins,
           aiKeywords: finalKeywords,
           dimensions: dimsChanged ? newDims : (i.dimensions ?? null),
+          orderPurchase: parsedOp,
+          orderQuantity: parsedOq,
           ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
           ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
         };
@@ -985,6 +1021,38 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
             />
             {fieldSaveErrors.description ? (
               <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.description}</Text>
+            ) : null}
+
+            {/* Inventory controls */}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 20 }}>
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>INVENTORY CONTROLS</Text>
+              {committedFields.has("opoq") ? (
+                <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+              ) : null}
+            </View>
+            <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
+              OP and OQ are non-negative whole numbers.
+            </Text>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+              {([
+                ["OP", op, setOp],
+                ["OQ", oq, setOq],
+              ] as const).map(([label, value, setter]) => (
+                <View key={label} style={{ flex: 1 }}>
+                  <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>{label}</Text>
+                  <KeyboardDoneInput
+                    value={value}
+                    onChangeText={(v) => { setter(v.replace(/[^0-9]/g, "")); setSaveStatus("idle"); }}
+                    placeholder="0"
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="number-pad"
+                    style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.opoq ? colors.destructive : colors.border, color: colors.foreground }]}
+                  />
+                </View>
+              ))}
+            </View>
+            {fieldSaveErrors.opoq ? (
+              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.opoq}</Text>
             ) : null}
 
             {/* Expanded Description (admin enrichment — saved independently) */}

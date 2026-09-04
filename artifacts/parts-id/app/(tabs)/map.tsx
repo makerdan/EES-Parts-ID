@@ -42,7 +42,7 @@ function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
   const aisleNum = parseInt(zone.aisleId, 10) || 0;
   return {
     aisleNum,
-    sectionNumbers: [zone.sectionNum],
+    ...(zone.sectionNum === null ? {} : { sectionNumbers: [zone.sectionNum] }),
   };
 }
 
@@ -195,22 +195,26 @@ export default function MapScreen() {
    * a pinned section, regardless of section parity.
    */
   const pinnedZoneIds = useMemo(() => {
-    const ids = new Set<number>();
+    const ids = new Set<ApiWarehouseZone["id"]>();
     for (const zone of zones) {
       const aisleNum = parseInt(zone.aisleId, 10);
       const sections = pinnedSections.get(aisleNum);
-      if (sections && sections.includes(zone.sectionNum)) ids.add(zone.id);
+      if (zone.sectionNum !== null && sections && sections.includes(zone.sectionNum)) {
+        ids.add(zone.id);
+      }
     }
     return ids;
   }, [zones, pinnedSections]);
 
   /** Same as pinnedZoneIds but for variant/related-size pins. */
   const variantZoneIds = useMemo(() => {
-    const ids = new Set<number>();
+    const ids = new Set<ApiWarehouseZone["id"]>();
     for (const zone of zones) {
       const aisleNum = parseInt(zone.aisleId, 10);
       const sections = variantSections.get(aisleNum);
-      if (sections && sections.includes(zone.sectionNum)) ids.add(zone.id);
+      if (zone.sectionNum !== null && sections && sections.includes(zone.sectionNum)) {
+        ids.add(zone.id);
+      }
     }
     return ids;
   }, [zones, variantSections]);
@@ -278,7 +282,7 @@ export default function MapScreen() {
     if (zoneTooltipTimer.current) clearTimeout(zoneTooltipTimer.current);
     if (cycleCountTooltipTimer.current) clearTimeout(cycleCountTooltipTimer.current);
   }, []);
-  const [countedZoneIds, setCountedZoneIds] = useState<Set<number>>(new Set());
+  const [countedZoneIds, setCountedZoneIds] = useState<Set<ApiWarehouseZone["id"]>>(new Set());
 
   React.useEffect(() => {
     let alive = true;

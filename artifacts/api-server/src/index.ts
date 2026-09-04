@@ -1,17 +1,7 @@
-import { adminAuditLogTable, catalogPdfJobTable, db } from "@workspace/db";
 import { eq, lt, sql } from "drizzle-orm";
 
-import app from "./app";
-import { initProvider, probePoeBotsOnStartup } from "./lib/aiProvider";
 import { logger } from "./lib/logger";
-import {
-  pruneScreenViewLog,
-  SCREEN_VIEW_RETENTION_INTERVAL_MS,
-} from "./lib/screenViewRetention";
-import { startServer } from "./lib/startServer";
 import { validateEnv } from "./lib/validateEnv";
-import { applyZoneSectionNumFix } from "./lib/zoneSectionNumFix";
-import { shutdownCatalogPdfLoops } from "./routes/catalogPdf";
 
 process.on("uncaughtException", (err) => {
   logger.error({ err }, "Uncaught exception — exiting");
@@ -37,12 +27,34 @@ if (!Number.isInteger(port) || port <= 0 || port > 65535) {
 
 validateEnv();
 
-if (process.env["SKIP_ADMIN_MFA"] === "true" && isDev) {
+async function startApplication(): Promise<void> {
+  // Keep all database and server-route imports behind validateEnv(). This
+  // makes production startup report every missing secret instead of failing
+  // during a transitive database-pool import before the validator can run.
+  const { adminAuditLogTable, catalogPdfJobTable, db } = await import(
+    "@workspace/db"
+  );
+  const { default: app } = await import("./app");
+  const { initProvider, probePoeBotsOnStartup } = await import(
+    "./lib/aiProvider"
+  );
+  const {
+    pruneScreenViewLog,
+    SCREEN_VIEW_RETENTION_INTERVAL_MS,
+  } = await import("./lib/screenViewRetention");
+  const { startServer } = await import("./lib/startServer");
+  const { applyZoneSectionNumFix } = await import("./lib/zoneSectionNumFix");
+  const { shutdownCatalogPdfLoops } = await import("./routes/catalogPdf");
+  const { recoverCatalogPdfUploadSessions } = await import(
+    "./routes/catalogPdfUpload"
+  );
+
+  if (process.env["SKIP_ADMIN_MFA"] === "true" && isDev) {
   logger.warn(
     { SKIP_ADMIN_MFA: "true" },
     "Admin MFA enforcement is DISABLED (SKIP_ADMIN_MFA=true) — admin accounts are not protected by MFA",
   );
-}
+  }
 
 async function recoverOrphanedJobs(): Promise<void> {
   try {
@@ -92,6 +104,7 @@ async function migrateAdminPreferences(): Promise<void> {
         ADD COLUMN IF NOT EXISTS shelf_prefix TEXT,
         ADD COLUMN IF NOT EXISTS shelf_step INTEGER,
         ADD COLUMN IF NOT EXISTS ai_provider TEXT,
+        ADD COLUMN IF NOT EXISTS ai_fallback_models JSONB,
         ADD COLUMN IF NOT EXISTS revoked_before BIGINT NOT NULL DEFAULT 0
     `);
   } catch (err) {
@@ -197,10 +210,10 @@ async function migrateUsersTable(): Promise<void> {
   }
 }
 
-const STARTUP_MIGRATIONS_TIMEOUT_MS = 25_000;
+  const STARTUP_MIGRATIONS_TIMEOUT_MS = 25_000;
 // unref(): these are fallback timers only — they must never be the thing
 // keeping the process (or a Jest worker) alive after everything else is done.
-const migrationsTimeout = new Promise<void>((resolve) =>
+  const migrationsTimeout = new Promise<void>((resolve) =>
   setTimeout(() => {
     logger.warn(
       { timeoutMs: STARTUP_MIGRATIONS_TIMEOUT_MS },
@@ -210,7 +223,7 @@ const migrationsTimeout = new Promise<void>((resolve) =>
   }, STARTUP_MIGRATIONS_TIMEOUT_MS).unref(),
 );
 
-const INIT_PROVIDER_TIMEOUT_MS = 8_000;
+  const INIT_PROVIDER_TIMEOUT_MS = 8_000;
 
 function withStartupTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T | void> {
   let timer: NodeJS.Timeout | undefined;
@@ -231,11 +244,11 @@ function withStartupTimeout<T>(promise: Promise<T>, timeoutMs: number, label: st
 // ── Audit log retention ───────────────────────────────────────────────────────
 // Deletes admin_audit_log rows older than AUDIT_LOG_RETENTION_DAYS (default 90).
 // Runs once at startup and then every 24 hours.
-const AUDIT_LOG_RETENTION_DAYS = Math.max(
+  const AUDIT_LOG_RETENTION_DAYS = Math.max(
   1,
   Number(process.env["AUDIT_LOG_RETENTION_DAYS"] ?? 90) || 90,
 );
-const AUDIT_LOG_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  const AUDIT_LOG_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 async function pruneAuditLog(): Promise<void> {
   try {
@@ -255,16 +268,24 @@ async function pruneAuditLog(): Promise<void> {
   }
 }
 
-Promise.race([
-  Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), applyZoneSectionNumFix(), migrateUsersTable()]),
-  migrationsTimeout,
-])
-  .then(() => withStartupTimeout(initProvider(), INIT_PROVIDER_TIMEOUT_MS, "initProvider"))
-  // The dev workflow has already performed the canonical stale-holder sweep.
-  // Do not retry or silently move the listener after a conflict: the startup
-  // error must identify the owner and the recovery command.
-  .then(() => startServer(app, port, 0))
-  .then((server) => {
+  Promise.race([
+    Promise.all([
+      recoverOrphanedJobs(),
+      recoverCatalogPdfUploadSessions(),
+      initQuickLookupCache(),
+      migrateAdminPreferences(),
+      migrateWarehouseZoneNullSectionNum(),
+      applyZoneSectionNumFix(),
+      migrateUsersTable(),
+    ]),
+    migrationsTimeout,
+  ])
+    .then(() => withStartupTimeout(initProvider(), INIT_PROVIDER_TIMEOUT_MS, "initProvider"))
+    // The dev workflow has already performed the canonical stale-holder sweep.
+    // Do not retry or silently move the listener after a conflict: the startup
+    // error must identify the owner and the recovery command.
+    .then(() => startServer(app, port, 0))
+    .then((server) => {
     // Hard cap on total shutdown time: if draining hangs (slow AI call, DB
     // stall), force-exit so the platform doesn't have to SIGKILL us.
     const SHUTDOWN_HARD_LIMIT_MS = 20_000;
@@ -310,8 +331,16 @@ Promise.race([
     setInterval(pruneAuditLog, AUDIT_LOG_RETENTION_INTERVAL_MS).unref();
     pruneScreenViewLog();
     setInterval(pruneScreenViewLog, SCREEN_VIEW_RETENTION_INTERVAL_MS).unref();
+    setInterval(() => {
+      recoverCatalogPdfUploadSessions().catch((err) => {
+        logger.error({ err }, "Catalog PDF upload-session reconciliation failed");
+      });
+    }, 15 * 60 * 1000).unref();
   })
   .catch((err) => {
     logger.error({ err }, "Fatal error during server startup — exiting");
     process.exit(1);
   });
+}
+
+void startApplication();
