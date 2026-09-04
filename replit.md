@@ -249,6 +249,21 @@ it in sync with this table when checks change. Note: `tsc` subsumes
 | `typecheck:libs` | `typecheck-libs` | fast (via `tsc`) |
 | `verify-fts` | `verify-fts` | standard-plus / heavy |
 
+### Public release security boundary
+
+The repository intentionally publishes application source and minimized
+warehouse layout references only. Replit-hosted PostgreSQL, Object Storage,
+Secrets, Clerk sessions, analytics, logs, support data, and uploaded catalog or
+part files remain runtime-private. Never commit those values or files.
+
+Read [the security policy](SECURITY.md), [the public data classification](docs/public-data-classification.md),
+[the public release checklist](docs/public-release-checklist.md), and [the
+GitHub protection status](docs/validation/github-protection-status.md) before
+publishing source or layout changes. The public-repository boundary check is
+the first-class `public-repository-boundary` step in `test-fast` and is run
+through the existing GitHub validation tier; do not add a second workflow for
+it.
+
 ### Port Authority contract
 
 Development ports are declared once in `scripts/dev-ports.json`. Its workflow,

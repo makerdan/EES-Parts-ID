@@ -59,6 +59,9 @@ branch-protection and ruleset endpoints are available.
 - `scripts/validation-steps.mjs` — registers the contract check in standard.
 - `package.json` — records the exact pnpm package manager.
 - `docs/validation/github-actions-coverage.md` — complete local-to-remote matrix.
+- `docs/validation/github-protection-status.md` — dated read-only evidence for
+  repository security and branch protections; disabled or unavailable controls
+  are marked `owner-action-required` rather than reported as enabled.
 
 ## Live repository state
 
@@ -79,6 +82,9 @@ branch-protection and ruleset endpoints are available.
 | SHA pinning policy | `true` | configured |
 | Default workflow token | `read` | confirmed |
 | Workflow token PR approval | `can_approve_pull_request_reviews: false` | confirmed |
+| Secret scanning | API reported secret scanning disabled | owner action required; see [protection status](github-protection-status.md) |
+| Push protection | no enabled push-protection setting returned | owner action required; see [protection status](github-protection-status.md) |
+| Dependency alerts | API reported vulnerability/Dependabot alerts disabled | owner action required; see [protection status](github-protection-status.md) |
 | Temporary negative branch | branch ref returns 404 after cleanup | deleted |
 | Temporary README-fix branch | branch ref returns 404 after cleanup | deleted |
 | README automation branch | `automation/sync-readme` at `8d7d92dcc65f0fdccde6452e35d0bf4f9617b976` | reviewable maintenance output |

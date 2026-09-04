@@ -1,10 +1,10 @@
 # Public repository readiness
 
-**Assessment date:** 2026-09-03
+**Assessment date:** 2026-09-04
 **Scope:** current tracked tree and reachable Git history
-**Current-tree status:** boundary guard passes after the private-data cleanup in
-this changeset. **Repository visibility status:** owner action is still
-required because sensitive historical objects remain reachable from Git history.
+**Current-tree status:** boundary guard passes. **Repository visibility status:**
+the repository is public, but release readiness remains blocked because private
+historical objects remain reachable from Git history.
 
 ## Intentionally public
 
@@ -37,10 +37,10 @@ layout data must remain source-oriented and reviewable.
 
 ## Reachable-history findings
 
-The history scan found prior private material that is no longer in the current
-tree:
+The 2026-09-04 history scan found 100 private paths that are no longer in the
+current tree:
 
-- 95 historical `attached_assets/...` paths, including uploaded reports,
+- Historical `attached_assets/...` paths, including uploaded reports,
   catalog documents, screenshots, and diagnostic logs.
 - A historical `inventory_export.csv` containing inventory rows and bin
   locations.
@@ -74,7 +74,18 @@ synthetic examples, database migrations, and intentional public layout
 sources. Any historical findings are reported for owner remediation rather
 than silently treated as purged.
 
-## Owner checklist before visibility change
+## Release documents
+
+- [Security policy](../SECURITY.md) — responsible disclosure, supported
+  versions, secret handling, and the Clerk/Replit boundary.
+- [Public data classification](public-data-classification.md) — what may be
+  tracked and where runtime-private data belongs.
+- [Public release checklist](public-release-checklist.md) — required repository,
+  history, runtime, authorization, upload, map, and GitHub evidence.
+- [GitHub protection status](validation/github-protection-status.md) — dated
+  read-only evidence that distinguishes verified controls from owner action.
+
+## Owner checklist before release
 
 - [ ] Complete and verify the reachable-history purge for the findings above.
 - [ ] Run a provider secret scanner over every rewritten ref and rotate any

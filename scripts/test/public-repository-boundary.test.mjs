@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getTierSteps } from "../validation-steps.mjs";
 
 const ROOT = join(fileURLToPath(new URL("../..", import.meta.url)));
 const ALLOWED_ARCHIVES = new Set([
@@ -17,6 +18,10 @@ const ALLOWED_ARCHIVES = new Set([
   "artifacts/task-triage-skill.zip",
 ]);
 const PUBLIC_LAYOUT_PATH = "data/public/warehouse-zones.csv";
+const SECURITY_POLICY_PATH = "SECURITY.md";
+const DATA_CLASSIFICATION_PATH = "docs/public-data-classification.md";
+const RELEASE_CHECKLIST_PATH = "docs/public-release-checklist.md";
+const PROTECTION_STATUS_PATH = "docs/validation/github-protection-status.md";
 const SAFE_EMAIL_DOMAINS = new Set([
   "example.com",
   "example.org",
@@ -180,6 +185,54 @@ function contentFindings(filePath, content) {
   return findings;
 }
 
+function assertReleaseDocumentation() {
+  const security = readFileSync(join(ROOT, SECURITY_POLICY_PATH), "utf8");
+  const classification = readFileSync(join(ROOT, DATA_CLASSIFICATION_PATH), "utf8");
+  const checklist = readFileSync(join(ROOT, RELEASE_CHECKLIST_PATH), "utf8");
+  const protectionStatus = readFileSync(join(ROOT, PROTECTION_STATUS_PATH), "utf8");
+  const coverage = readFileSync(join(ROOT, "docs/validation/github-actions-coverage.md"), "utf8");
+  const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
+
+  for (const heading of ["Supported versions", "Reporting a vulnerability", "Secret and credential handling", "Clerk and Replit boundaries"]) {
+    assert(security.includes(`## ${heading}`), `security policy is missing "${heading}"`);
+  }
+  for (const phrase of ["public map/layout data", "Replit Secrets", "database exports", "uploaded files", "Do not commit"]) {
+    assert(security.toLowerCase().includes(phrase.toLowerCase()), `security policy is missing "${phrase}"`);
+  }
+
+  for (const phrase of ["Public source", "Public layout reference", "Private runtime data", "Private uploaded objects", "Secret material", "Replit-hosted PostgreSQL"]) {
+    assert(classification.includes(phrase), `data classification is missing "${phrase}"`);
+  }
+
+  for (const phrase of [
+    "public-repository-boundary.test.mjs",
+    "routeAuthorizationMatrix.integration.test.ts",
+    "privateObjectAccess.integration.test.ts",
+    "publicWarehouseLayout.integration.test.ts",
+    "tracked-tree and history scan",
+    "Secret scanning",
+    "owner-action-required",
+  ]) {
+    assert(checklist.includes(phrase), `release checklist is missing "${phrase}"`);
+  }
+
+  const statusValues = [...protectionStatus.matchAll(/`(verified|owner-action-required|unverified)`/g)].map((match) => match[1]);
+  assert(statusValues.includes("verified"), "protection status does not distinguish verified controls");
+  assert(statusValues.includes("owner-action-required"), "protection status does not distinguish owner action");
+  assert(statusValues.includes("unverified"), "protection status does not define unverified evidence");
+  for (const control of ["Secret scanning", "Push protection", "Dependency alerts", "Required validation"]) {
+    assert(protectionStatus.includes(`| ${control} |`), `protection status is missing "${control}"`);
+  }
+  assert(/Secret scanning \| `owner-action-required`/.test(protectionStatus), "disabled secret scanning is reported as enabled");
+  assert(/Push protection \| `owner-action-required`/.test(protectionStatus), "push protection is reported as enabled without evidence");
+  assert(/Dependency alerts \| `owner-action-required`/.test(protectionStatus), "dependency alerts are reported as enabled without evidence");
+
+  const boundaryStep = getTierSteps("fast").find(([name]) => name === "public-repository-boundary");
+  assert(boundaryStep?.[1] === "node scripts/test/public-repository-boundary.test.mjs", "boundary guard is not registered in test-fast");
+  assert(coverage.includes("| public-repository-boundary | `CI / required` → `pnpm run test-standard-plus`"), "boundary guard is not mapped to the existing GitHub validation path");
+  assert((ci.match(/pnpm run test-standard-plus/g) ?? []).length === 1, "CI duplicates or omits the canonical validation tier");
+}
+
 export function scanPaths(paths, contents = new Map()) {
   const findings = [];
   for (const filePath of paths) {
@@ -199,6 +252,8 @@ export function scanHistoryMetadata() {
 }
 
 function runSelfTests() {
+  assertReleaseDocumentation();
+
   const synthetic = new Map([
     [PUBLIC_LAYOUT_PATH, "aisle_key,section,is_inventory,svg_x\nA-1,1,t,0"],
     ["fixtures/synthetic-users.json", '{"email":"worker@example.com","id":"fixture-user-001"}'],

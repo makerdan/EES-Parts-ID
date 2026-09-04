@@ -94,6 +94,10 @@ There is no embedded database or database export workflow. Do not commit
 inventory exports, uploaded documents, database backups, or operational logs.
 See [public repository readiness](docs/public-repository-readiness.md) for the
 public/private data boundary and the deterministic repository check.
+Contributors must also read the [security policy](SECURITY.md), [public data
+classification](docs/public-data-classification.md), and [public release
+checklist](docs/public-release-checklist.md) before publishing source or map
+assets.
 
 ### Run (development)
 
