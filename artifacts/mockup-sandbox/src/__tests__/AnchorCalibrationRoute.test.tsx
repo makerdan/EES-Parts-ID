@@ -24,13 +24,14 @@ const authState = {
 
 const redirectToSignIn = vi.fn();
 const signOut = vi.fn();
+const clerkState = { redirectToSignIn, signOut };
 
 vi.mock("@clerk/react", () => ({
   ClerkProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SignIn: () => null,
   SignUp: () => null,
   useAuth: () => authState,
-  useClerk: () => ({ redirectToSignIn, signOut }),
+  useClerk: () => clerkState,
 }));
 
 vi.mock("../auth/clerkConfig", () => ({
@@ -178,6 +179,10 @@ function setCalibrationRoute() {
   window.history.replaceState({}, "", "/anchor-calibration");
 }
 
+function resetRoute() {
+  window.history.replaceState({}, "", "/");
+}
+
 function mockMapRect(svg: SVGSVGElement) {
   vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
     left: 0,
@@ -243,13 +248,16 @@ describe("web Anchor Calibration routed workflow", () => {
 
   afterEach(() => {
     cleanup();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    setCalibrationRoute();
+    resetRoute();
   });
 
   it("loads, places, saves, reloads, and clears persisted calibration anchors", async () => {
     const fixture = makeApiFixture();
-    global.fetch = fixture.fetchMock as unknown as typeof global.fetch;
+    vi.stubGlobal("fetch", fixture.fetchMock);
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const { container } = await renderRoute();
@@ -349,7 +357,7 @@ describe("web Anchor Calibration routed workflow", () => {
 
   it("shows rejected saves without mutating data and blocks non-admins before protected loads", async () => {
     const rejectedFixture = makeApiFixture({ rejectSaves: true });
-    global.fetch = rejectedFixture.fetchMock as unknown as typeof global.fetch;
+    vi.stubGlobal("fetch", rejectedFixture.fetchMock);
 
     const { container } = await renderRoute();
     const svg = container.querySelector("svg")!;
@@ -381,7 +389,7 @@ describe("web Anchor Calibration routed workflow", () => {
     cleanup();
     authState.isSignedIn = true;
     const deniedFixture = makeApiFixture({ admin: false });
-    global.fetch = deniedFixture.fetchMock as unknown as typeof global.fetch;
+    vi.stubGlobal("fetch", deniedFixture.fetchMock);
     setCalibrationRoute();
     await act(async () => {
       render(<App />);
@@ -409,7 +417,7 @@ describe("web Anchor Calibration routed workflow", () => {
 
   it("refreshes another open session after shared anchors are saved and cleared", async () => {
     const fixture = makeApiFixture();
-    global.fetch = fixture.fetchMock as unknown as typeof global.fetch;
+    vi.stubGlobal("fetch", fixture.fetchMock);
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const firstSession = await renderRoute();
@@ -471,7 +479,7 @@ describe("web Anchor Calibration routed workflow", () => {
 
   it("keeps the last known mapping visible and shows the load error after refresh fails", async () => {
     const fixture = makeApiFixture();
-    global.fetch = fixture.fetchMock as unknown as typeof global.fetch;
+    vi.stubGlobal("fetch", fixture.fetchMock);
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const firstSession = await renderRoute();
