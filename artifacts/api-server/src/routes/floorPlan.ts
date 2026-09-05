@@ -118,9 +118,33 @@ const WARMUP_MAX_Z = 2;
 
 /** Number of discrete zoom levels (z0–z4). */
 const MAX_Z = 4;
+const TILE_COORDINATE_PATTERN = /^[0-9]+$/;
 
 function tileGridSize(z: number): number {
   return Math.pow(2, z);
+}
+
+/**
+ * Parse one raw tile path segment without accepting parseInt-style prefixes.
+ * Y may carry exactly one, lowercase `.png` suffix; all other characters are
+ * rejected before numeric conversion so malformed URLs cannot share a tile
+ * cache key or ETag with a valid coordinate.
+ */
+function parseTileCoordinate(
+  rawSegment: string | undefined,
+  allowPngSuffix = false,
+): number | null {
+  if (typeof rawSegment !== "string") return null;
+
+  const segment =
+    allowPngSuffix && rawSegment.endsWith(".png")
+      ? rawSegment.slice(0, -".png".length)
+      : rawSegment;
+
+  if (!TILE_COORDINATE_PATTERN.test(segment)) return null;
+
+  const coordinate = Number(segment);
+  return Number.isSafeInteger(coordinate) ? coordinate : null;
 }
 
 function tileCachePath(svgHash: string, z: number, x: number, y: number): string {
@@ -348,15 +372,24 @@ router.get("/floor-plan/svg", async (_req, res) => {
 //   The ETag is derived from the SVG content hash and tile coordinates so
 //   CDNs and mobile clients can skip re-downloading unchanged tiles with a
 //   304 Not Modified response.
+const TILE_PATH_WITH_EMPTY_SEGMENT = /^\/floor-plan\/tiles\/([^/]*)\/([^/]*)\/([^/]*)\/?$/;
+
+router.get(TILE_PATH_WITH_EMPTY_SEGMENT, (req, res, next) => {
+  const match = req.path.match(TILE_PATH_WITH_EMPTY_SEGMENT);
+  if (match?.slice(1).some((segment) => segment === "")) {
+    res.status(400).json({ error: "Invalid tile coordinates" });
+    return;
+  }
+  next();
+});
+
 router.get("/floor-plan/tiles/:z/:x/:y", async (req, res) => {
   try {
-    const z = parseInt(req.params.z, 10);
-    const x = parseInt(req.params.x, 10);
-    // Strip .png extension from y if present (route param captures the full segment)
-    const yStr = req.params.y.replace(/\.png$/, "");
-    const y = parseInt(yStr, 10);
+    const z = parseTileCoordinate(req.params.z);
+    const x = parseTileCoordinate(req.params.x);
+    const y = parseTileCoordinate(req.params.y, true);
 
-    if (!isFinite(z) || !isFinite(x) || !isFinite(y) || z < 0 || z > MAX_Z) {
+    if (z === null || x === null || y === null || z > MAX_Z) {
       res.status(400).json({ error: "Invalid tile coordinates" });
       return;
     }

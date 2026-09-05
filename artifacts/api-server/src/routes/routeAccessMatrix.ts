@@ -165,6 +165,16 @@ export function isPublicRoute(method: string, path: string): boolean {
   // public by default.
   if (typeof method !== "string") return false;
   const normalizedMethod = method.toUpperCase() === "HEAD" ? "GET" : method.toUpperCase();
+  // Keep malformed tile coordinates public as well as valid ones so the tile
+  // route can return its deterministic 400 contract without requiring a
+  // session. This is deliberately shape-limited and method-aware; it does not
+  // make the POST warmup endpoint public.
+  if (
+    normalizedMethod === "GET" &&
+    /^\/(?:api\/)?floor-plan\/tiles\/[^/]*\/[^/]*\/[^/]*\/?$/.test(path)
+  ) {
+    return true;
+  }
   return ROUTE_ACCESS_MATRIX.some(
     (entry) =>
       entry.access === "public" &&
