@@ -19,33 +19,14 @@ const mockCompletionsCreate = jest.fn().mockResolvedValue({
   choices: [{ message: { role: "assistant", content: "hi" } }],
 });
 
-class MockRateLimitError extends Error {}
-class MockInternalServerError extends Error {}
-class MockAPIConnectionError extends Error {}
-class MockAPIConnectionTimeoutError extends Error {}
-class MockAuthenticationError extends Error {}
-class MockPermissionDeniedError extends Error {}
-
-const mockOpenAIConstructor = jest
-  .fn()
-  .mockImplementation(() => ({
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "../../__tests__/helpers/openaiMock",
+  ) as typeof import("../../__tests__/helpers/openaiMock");
+  return createOpenAIMock(jest, () => ({
     chat: { completions: { create: mockCompletionsCreate } },
   }));
-
-(mockOpenAIConstructor as unknown as Record<string, unknown>).RateLimitError =
-  MockRateLimitError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).InternalServerError =
-  MockInternalServerError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).APIConnectionError =
-  MockAPIConnectionError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).APIConnectionTimeoutError =
-  MockAPIConnectionTimeoutError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).AuthenticationError =
-  MockAuthenticationError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).PermissionDeniedError =
-  MockPermissionDeniedError;
-
-jest.mock("openai", () => mockOpenAIConstructor);
+});
 
 // ── Standard workspace mocks ──────────────────────────────────────────────────
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
@@ -71,14 +52,16 @@ import supertest from "supertest";
 
 import app from "../app";
 import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
-import { seedTestUser, cleanupTestUser } from "../../__tests__/helpers/testDb";
+import {
+  seedTestUser,
+  cleanupTestUser,
+  workerQualifiedUserId,
+} from "../../__tests__/helpers/testDb";
 
-// ── Fixed test Clerk user ids ─────────────────────────────────────────────────
-// All ids share the "jest-approval-" prefix so the afterAll cleanup can
-// remove them with a single LIKE query without touching unrelated rows.
-const PENDING_USER   = "jest-approval-pending";
-const TO_BAN_USER    = "jest-approval-tobanned";
-const NON_ADMIN_USER = "jest-approval-nonadmin";
+// ── Worker-owned test Clerk user ids ──────────────────────────────────────────
+const PENDING_USER = workerQualifiedUserId("jest-approval-pending");
+const TO_BAN_USER = workerQualifiedUserId("jest-approval-tobanned");
+const NON_ADMIN_USER = workerQualifiedUserId("jest-approval-nonadmin");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 /** Bearer header for the bootstrap admin. */

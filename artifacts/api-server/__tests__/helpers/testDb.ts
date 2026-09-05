@@ -130,14 +130,9 @@ export async function cleanupFixtures() {
 }
 
 /**
- * Close the shared PostgreSQL pool so Jest can exit cleanly.
- * Idempotent — safe to call from multiple test files in the same worker
- * process (pool.end() throws if called twice; this guard prevents that).
- *
- * jest.integrationSetup.cjs registers a global afterAll that calls this
- * function after every test file, so individual test files rarely need to
- * import or call closePool() directly. Only use it in special cases where
- * the global teardown order is insufficient.
+ * Explicit pool shutdown is retained only for standalone tooling that owns
+ * the process. Jest integration suites must not call this: the pool is shared
+ * across files and remains available until the worker exits.
  */
 let _poolEnded = false;
 export async function closePool() {
@@ -176,7 +171,11 @@ export interface EditableItem {
   expandedDescription: string | null;
 }
 
-const EDITABLE_CATALOG = "JEST-EDIT-ITEM-001";
+export function editableCatalogForWorker(
+  workerInstance = TEST_WORKER_INSTANCE,
+): string {
+  return workerQualifiedUserId("JEST-EDIT-ITEM-001", workerInstance);
+}
 
 /**
  * Insert a single item with a full set of mutable fields for edit integration
@@ -184,14 +183,17 @@ const EDITABLE_CATALOG = "JEST-EDIT-ITEM-001";
  *
  * The item is cleaned up by calling `cleanupEditableItem()`.
  */
-export async function seedEditableItem(): Promise<EditableItem> {
-  await db.delete(inventoryTable).where(eq(inventoryTable.catalog, EDITABLE_CATALOG));
+export async function seedEditableItem(
+  workerInstance = TEST_WORKER_INSTANCE,
+): Promise<EditableItem> {
+  const catalog = editableCatalogForWorker(workerInstance);
+  await db.delete(inventoryTable).where(eq(inventoryTable.catalog, catalog));
 
   const [row] = await db
     .insert(inventoryTable)
     .values({
       vendor: "JEST-EDIT-VENDOR",
-      catalog: EDITABLE_CATALOG,
+      catalog,
       description: "Original editable description",
       binLocations: ["EDIT-BIN-01", "EDIT-BIN-02"],
       aiKeywords: ["relay", "motor"],
@@ -217,25 +219,43 @@ export async function seedEditableItem(): Promise<EditableItem> {
 }
 
 /** Remove the editable item seeded by seedEditableItem. Idempotent. */
-export async function cleanupEditableItem(): Promise<void> {
-  // Guard: if the pool was already closed (e.g. by the db-serial project's
-  // global teardown before the parallel project's afterAll runs), skip silently.
-  if (_poolEnded) return;
-  await pool.query("DELETE FROM inventory WHERE catalog = $1", [EDITABLE_CATALOG]);
+export async function cleanupEditableItem(
+  workerInstance = TEST_WORKER_INSTANCE,
+): Promise<void> {
+  await db
+    .delete(inventoryTable)
+    .where(eq(inventoryTable.catalog, editableCatalogForWorker(workerInstance)));
 }
 
 /** Convenience: standard fixtures used across multiple suites. */
-export const STANDARD_FIXTURES: FixtureItem[] = [
-  {
-    vendor: "EATON",
-    catalog: "JEST-ITG-BR120",
-    description: "1 Pole 20A 120/240V Breaker",
-    binLocations: ["B-01"],
-  },
-  {
-    vendor: "HUBBELL",
-    catalog: "JEST-ITG-HBL5262I",
-    description: "20A 125V Duplex Receptacle Ivory",
-    binLocations: ["C-07"],
-  },
-];
+export function standardFixtureCatalogsForWorker(
+  workerInstance = TEST_WORKER_INSTANCE,
+) {
+  return {
+    breaker: workerQualifiedUserId("JEST-ITG-BR120", workerInstance),
+    receptacle: workerQualifiedUserId("JEST-ITG-HBL5262I", workerInstance),
+  } as const;
+}
+
+export function standardFixturesForWorker(
+  workerInstance = TEST_WORKER_INSTANCE,
+): FixtureItem[] {
+  const catalogs = standardFixtureCatalogsForWorker(workerInstance);
+  return [
+    {
+      vendor: "EATON",
+      catalog: catalogs.breaker,
+      description: "1 Pole 20A 120/240V Breaker",
+      binLocations: ["B-01"],
+    },
+    {
+      vendor: "HUBBELL",
+      catalog: catalogs.receptacle,
+      description: "20A 125V Duplex Receptacle Ivory",
+      binLocations: ["C-07"],
+    },
+  ];
+}
+
+export const STANDARD_FIXTURE_CATALOGS = standardFixtureCatalogsForWorker();
+export const STANDARD_FIXTURES = standardFixturesForWorker();

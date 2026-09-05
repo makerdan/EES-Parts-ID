@@ -26,21 +26,26 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 
 import app from "../src/app";
-import { cleanupFixtures, seedFixtures } from "./helpers/testDb";
+import { cleanupFixtures, seedFixtures, workerQualifiedUserId } from "./helpers/testDb";
+import { setTestEnv } from "./helpers/testEnv";
 
+const TEST_ADMIN_USER_ID = workerQualifiedUserId("jest-admin-user");
+let restoreTestEnv: (() => void) | undefined;
 beforeAll(async () => {
-  process.env.ADMIN_CLERK_USER_ID = "jest-admin-user";
-  process.env.TEST_DEFAULT_AUTH_USER = "jest-admin-user";
+  restoreTestEnv = setTestEnv({
+    ADMIN_CLERK_USER_ID: TEST_ADMIN_USER_ID,
+    TEST_DEFAULT_AUTH_USER: TEST_ADMIN_USER_ID,
+  });
   await seedFixtures([
     {
       vendor: "EATON",
-      catalog: "JEST-ITG-CAT-BR120",
+      catalog: workerQualifiedUserId("JEST-ITG-CAT-BR120"),
       description: "1 Pole 20A 120/240V Circuit Breaker",
       dimensions: { width: 25, height: 80, length: null, diameter: null },
     },
     {
       vendor: "HUBBELL",
-      catalog: "JEST-ITG-CAT-RECEP",
+      catalog: workerQualifiedUserId("JEST-ITG-CAT-RECEP"),
       description: "20A 125V Duplex Receptacle Ivory",
       dimensions: { width: 45, height: 105, length: null, diameter: null },
     },
@@ -49,8 +54,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await cleanupFixtures();
-  delete process.env.TEST_DEFAULT_AUTH_USER;
-  delete process.env.ADMIN_CLERK_USER_ID;
+  restoreTestEnv?.();
 }, 30_000);
 
 const CATEGORIES_TIMEOUT = 30_000;

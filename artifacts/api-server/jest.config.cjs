@@ -15,14 +15,11 @@
  *                fixture rows that are isolated per suite, so concurrent
  *                execution is safe.
  *
- * closePool() in testDb.ts is guarded with a flag so that the second (or
- * later) test file running in the same Jest worker process does not crash when
- * it tries to close a pool that was already ended by the previous file.
- * jest.integrationSetup.cjs registers a global afterAll that calls closePool()
- * after every test file, ensuring the pool is closed even in test files that
- * never explicitly import closePool().  This allows Jest to exit cleanly
- * without forceExit, and surfaces any genuine resource-leak bugs rather than
- * masking them.
+ * The shared pool is intentionally not closed by individual test files or
+ * setup hooks. It is configured to allow the worker to exit once idle, while
+ * suite cleanup remains free to use the pool through its own afterAll hooks.
+ * A per-file pool shutdown would make neighboring suites race against a
+ * closed shared resource.
  */
 const testConnectionBudget = require("./test-connection-budget.cjs");
 

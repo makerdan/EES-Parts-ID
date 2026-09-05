@@ -70,6 +70,7 @@ import {
   cleanupTestUser,
   workerQualifiedUserId,
 } from "./helpers/testDb";
+import { setTestEnv } from "./helpers/testEnv";
 import type { EditableItem } from "./helpers/testDb";
 
 // ── Test-wide state ───────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ const ADMIN_TOKEN = ADMIN_TEST_USER_ID;
 const NON_ADMIN_USER = workerQualifiedUserId("jest-edit-nonadmin");
 
 let item: EditableItem;
+let restoreTestEnv: (() => void) | undefined;
 
 /** Re-fetch the live DB row so we can assert what was actually committed. */
 async function fetchRow(id: number) {
@@ -98,22 +100,13 @@ beforeAll(async () => {
   item = await seedEditableItem();
 
   // Authenticate all subsequent requests as admin by default.
-  process.env.TEST_DEFAULT_AUTH_USER = ADMIN_TOKEN;
+  restoreTestEnv = setTestEnv({ TEST_DEFAULT_AUTH_USER: ADMIN_TOKEN });
 }, 30_000);
 
 afterAll(async () => {
-  delete process.env.TEST_DEFAULT_AUTH_USER;
-  // Cleanup can race the db-serial project's global pool teardown when Jest
-  // runs both projects sequentially in the same process.  Silently skip on
-  // pool-ended to avoid a false "suite failed" from afterAll errors; the
-  // seedEditableItem() guard (DELETE before INSERT) ensures idempotency on
-  // the next run anyway.
-  try {
-    await cleanupEditableItem();
-    await cleanupTestUser(NON_ADMIN_USER);
-  } catch {
-    // pool already closed — no-op
-  }
+  restoreTestEnv?.();
+  await cleanupEditableItem();
+  await cleanupTestUser(NON_ADMIN_USER);
 }, 30_000);
 
 function withAuth(req: supertest.Test, token?: string): supertest.Test {
@@ -127,8 +120,13 @@ function withAuth(req: supertest.Test, token?: string): supertest.Test {
 describe("Edit route auth guard", () => {
   // Clear TEST_DEFAULT_AUTH_USER so no-token requests actually get 401,
   // then restore it so the rest of the suite keeps the admin default.
-  beforeAll(() => { delete process.env.TEST_DEFAULT_AUTH_USER; });
-  afterAll(() => { process.env.TEST_DEFAULT_AUTH_USER = ADMIN_TOKEN; });
+  let restoreAuthDefault: (() => void) | undefined;
+  beforeAll(() => {
+    restoreAuthDefault = setTestEnv({ TEST_DEFAULT_AUTH_USER: undefined });
+  });
+  afterAll(() => {
+    restoreAuthDefault?.();
+  });
 
   type GuardRoute = {
     label: string;

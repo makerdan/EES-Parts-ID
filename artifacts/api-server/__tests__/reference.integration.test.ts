@@ -78,11 +78,17 @@ import { referenceLogTable } from "@workspace/db";
 import { usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
+import { workerQualifiedUserId } from "./helpers/testDb";
+import { setTestEnv } from "./helpers/testEnv";
 
-const TEST_LABEL = "JEST-REF-TEST-LABEL";
-const ASK_LOG_QUESTION = "JEST-REF-ASK-LOG-QUESTION";
-const UNKNOWN_USER = "jest-reference-ask-log-unknown-user";
-const NON_ADMIN_ASK_LOG_USER = "jest-reference-ask-log-nonadmin";
+const TEST_LABEL = workerQualifiedUserId("JEST-REF-TEST-LABEL");
+const ASK_LOG_QUESTION = workerQualifiedUserId("JEST-REF-ASK-LOG-QUESTION");
+const UNKNOWN_USER = workerQualifiedUserId("jest-reference-ask-log-unknown-user");
+const NON_ADMIN_ASK_LOG_USER = workerQualifiedUserId(
+  "jest-reference-ask-log-nonadmin",
+);
+const REFERENCE_ADMIN_USER = workerQualifiedUserId("jest-reference-admin");
+let restoreTestEnv: (() => void) | undefined;
 
 const ADMIN_ONLY_REFERENCE_ENDPOINTS = [
   {
@@ -132,8 +138,10 @@ async function cleanupTestLabel() {
 }
 
 beforeAll(async () => {
-  process.env.ADMIN_CLERK_USER_ID = "jest-admin-user";
-  process.env.TEST_DEFAULT_AUTH_USER = "jest-admin-user";
+  restoreTestEnv = setTestEnv({
+    ADMIN_CLERK_USER_ID: REFERENCE_ADMIN_USER,
+    TEST_DEFAULT_AUTH_USER: REFERENCE_ADMIN_USER,
+  });
   await db
     .insert(usersTable)
     .values({
@@ -151,8 +159,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  delete process.env.TEST_DEFAULT_AUTH_USER;
-  delete process.env.ADMIN_CLERK_USER_ID;
+  restoreTestEnv?.();
   await cleanupTestLabel();
   await db
     .delete(usersTable)
@@ -260,7 +267,7 @@ function firstSystemInstruction(): string {
 }
 
 describe("POST /api/reference/ask — admin knowledge scoping", () => {
-  const NON_ADMIN_USER = "jest-nonadmin-user";
+  const NON_ADMIN_USER = workerQualifiedUserId("jest-reference-nonadmin-user");
 
   beforeAll(async () => {
     // Seed an approved, non-admin user so requests authenticated as this user
@@ -278,7 +285,7 @@ describe("POST /api/reference/ask — admin knowledge scoping", () => {
   });
 
   it("admin request: system prompt INCLUDES admin-only knowledge", async () => {
-    // Default auth user (jest-admin-user) is the bootstrap admin.
+    // The scoped default auth user is this suite's bootstrap admin.
     mockGenerateContent.mockResolvedValueOnce({ text: "Answer." });
 
     await supertest(app)
@@ -339,18 +346,13 @@ describe("GET /api/reference/ask-log", () => {
   });
 
   it("rejects requests without an authenticated session", async () => {
-    const previousDefaultUser = process.env.TEST_DEFAULT_AUTH_USER;
-    delete process.env.TEST_DEFAULT_AUTH_USER;
+    const restoreAuth = setTestEnv({ TEST_DEFAULT_AUTH_USER: undefined });
 
     try {
       const res = await supertest(app).get("/api/reference/ask-log").expect(401);
       expect(res.body).toEqual({ error: "Authentication required" });
     } finally {
-      if (previousDefaultUser === undefined) {
-        delete process.env.TEST_DEFAULT_AUTH_USER;
-      } else {
-        process.env.TEST_DEFAULT_AUTH_USER = previousDefaultUser;
-      }
+      restoreAuth();
     }
   });
 
@@ -376,7 +378,7 @@ describe("GET /api/reference/ask-log", () => {
   it("returns recent log rows to an authorized administrator", async () => {
     const res = await supertest(app)
       .get("/api/reference/ask-log")
-      .set("Authorization", "Bearer jest-admin-user")
+      .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
       .expect(200);
 
     expect(res.body).toEqual(
@@ -397,18 +399,13 @@ describe("Admin-only reference endpoints", () => {
   it.each(ADMIN_ONLY_REFERENCE_ENDPOINTS)(
     "$name rejects an anonymous request",
     async ({ request }) => {
-      const previousDefaultUser = process.env.TEST_DEFAULT_AUTH_USER;
-      delete process.env.TEST_DEFAULT_AUTH_USER;
+      const restoreAuth = setTestEnv({ TEST_DEFAULT_AUTH_USER: undefined });
 
       try {
         const res = await request().expect(401);
         expect(res.body).toEqual({ error: "Authentication required" });
       } finally {
-        if (previousDefaultUser === undefined) {
-          delete process.env.TEST_DEFAULT_AUTH_USER;
-        } else {
-          process.env.TEST_DEFAULT_AUTH_USER = previousDefaultUser;
-        }
+        restoreAuth();
       }
     },
   );

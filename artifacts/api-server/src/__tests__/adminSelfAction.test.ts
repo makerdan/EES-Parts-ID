@@ -15,33 +15,14 @@ const mockCompletionsCreate = jest.fn().mockResolvedValue({
   choices: [{ message: { role: "assistant", content: "hi" } }],
 });
 
-class MockRateLimitError extends Error {}
-class MockInternalServerError extends Error {}
-class MockAPIConnectionError extends Error {}
-class MockAPIConnectionTimeoutError extends Error {}
-class MockAuthenticationError extends Error {}
-class MockPermissionDeniedError extends Error {}
-
-const mockOpenAIConstructor = jest
-  .fn()
-  .mockImplementation(() => ({
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "../../__tests__/helpers/openaiMock",
+  ) as typeof import("../../__tests__/helpers/openaiMock");
+  return createOpenAIMock(jest, () => ({
     chat: { completions: { create: mockCompletionsCreate } },
   }));
-
-(mockOpenAIConstructor as unknown as Record<string, unknown>).RateLimitError =
-  MockRateLimitError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).InternalServerError =
-  MockInternalServerError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).APIConnectionError =
-  MockAPIConnectionError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).APIConnectionTimeoutError =
-  MockAPIConnectionTimeoutError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).AuthenticationError =
-  MockAuthenticationError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).PermissionDeniedError =
-  MockPermissionDeniedError;
-
-jest.mock("openai", () => mockOpenAIConstructor);
+});
 
 // ── Standard workspace mocks ──────────────────────────────────────────────────
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
@@ -67,12 +48,15 @@ import supertest from "supertest";
 
 import app from "../app";
 import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
-import { seedTestUser, cleanupTestUser } from "../../__tests__/helpers/testDb";
+import {
+  cleanupTestUser,
+  seedTestUser,
+  workerQualifiedUserId,
+} from "../../__tests__/helpers/testDb";
 
-// ── Fixed test Clerk user ids ─────────────────────────────────────────────────
-// All ids share the "jest-selfaction-" prefix for isolated cleanup.
-const PROMOTED_ADMIN = "jest-selfaction-promoted";
-const TARGET_USER    = "jest-selfaction-target";
+// ── Worker-owned test Clerk user ids ──────────────────────────────────────────
+const PROMOTED_ADMIN = workerQualifiedUserId("jest-selfaction-promoted");
+const TARGET_USER = workerQualifiedUserId("jest-selfaction-target");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 /** Bearer header for the bootstrap admin. */
@@ -204,7 +188,7 @@ describe("POST /api/admin/users/:id/approve — self-action guard", () => {
 
 describe("DELETE /api/admin/users/:id — delete guards", () => {
   // A dedicated user that each success-path test can safely delete.
-  const DELETABLE_USER = "jest-selfaction-deletable";
+  const DELETABLE_USER = workerQualifiedUserId("jest-selfaction-deletable");
 
   beforeEach(async () => {
     // Re-seed before every test so the success case always finds a row.

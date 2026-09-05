@@ -59,7 +59,7 @@ import { eq, inArray } from "drizzle-orm";
 
 import app from "../src/app";
 import { awaitJobTermination } from "../src/routes/catalogPdf";
-import { signAdminToken } from "./helpers/adminAuth";
+import { ADMIN_TEST_USER_ID, signAdminToken } from "./helpers/adminAuth";
 import {
   catalogPdfUploadPartTable,
   catalogPdfUploadSessionTable,
@@ -147,7 +147,7 @@ describe("durable catalog PDF upload session", () => {
       .set(auth)
       .expect(404);
     await db.update(catalogPdfUploadSessionTable)
-      .set({ ownerClerkUserId: "jest-admin-user" })
+      .set({ ownerClerkUserId: ADMIN_TEST_USER_ID })
       .where(eq(catalogPdfUploadSessionTable.id, sessionId));
 
     for (let index = 1; index < Math.ceil(pdf.length / 4); index++) {

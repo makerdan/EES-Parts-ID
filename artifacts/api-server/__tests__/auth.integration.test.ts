@@ -315,8 +315,9 @@ describe("Warehouse zones — write endpoints require admin", () => {
 });
 
 describe("Warehouse zones — read requires only app auth", () => {
-  it("GET /api/warehouse-zones without token → 401", async () => {
-    await supertest(app).get("/api/warehouse-zones").expect(401);
+  it("GET /api/warehouse-zones is public → 200", async () => {
+    const res = await supertest(app).get("/api/warehouse-zones").expect(200);
+    expect(res.body).toHaveProperty("zones");
   });
 
   it("GET /api/warehouse-zones as approved non-admin → 200", async () => {

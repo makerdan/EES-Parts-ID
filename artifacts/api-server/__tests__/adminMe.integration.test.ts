@@ -42,10 +42,14 @@ jest.mock("openai", () => {
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { seedTestUser, cleanupTestUser } from "./helpers/testDb";
+import {
+  seedTestUser,
+  cleanupTestUser,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 
-const NONADMIN_USER_ID = "me-test-nonadmin-user";
-const PROMOTED_ADMIN_USER_ID = "me-test-promoted-admin";
+const NONADMIN_USER_ID = workerQualifiedUserId("me-test-nonadmin-user");
+const PROMOTED_ADMIN_USER_ID = workerQualifiedUserId("me-test-promoted-admin");
 
 afterAll(async () => {
   await cleanupTestUser(NONADMIN_USER_ID);

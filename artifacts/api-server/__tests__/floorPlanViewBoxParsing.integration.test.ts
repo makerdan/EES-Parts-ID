@@ -42,9 +42,10 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // The name begins with `mock` so Jest's hoisted factory may reference it, and it
 // is re-used below to derive the seeded hash (generateTile verifies the buffer
 // hash matches the requested floor-plan hash).
+const mockFixtureInstance = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
 const mockSingleQuoteSvg =
   "<svg xmlns='http://www.w3.org/2000/svg' viewBox='100 200 800 400'>" +
-  "<rect x='0' y='0' width='800' height='400' fill='green'/></svg>";
+  `<rect x='0' y='0' width='800' height='400' fill='green'/><!-- ${mockFixtureInstance} --></svg>`;
 
 jest.mock("../src/lib/objectStorage", () => ({
   readFloorPlanSvg: jest.fn(() => Promise.resolve(Buffer.from(mockSingleQuoteSvg, "utf8"))),
@@ -73,12 +74,12 @@ import path from "node:path";
 
 import supertest from "supertest";
 import app from "../src/app";
-import { db, floorPlanMetaTable, pool } from "@workspace/db";
+import { db, floorPlanMetaTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 // ── Test fixture constants ────────────────────────────────────────────────────
 const TEST_HASH = crypto.createHash("sha256").update(mockSingleQuoteSvg).digest("hex");
-const TEST_OBJECT_PATH = "/objects/jest-test/floor-plan/single-quote.svg";
+const TEST_OBJECT_PATH = `/objects/jest-test/${mockFixtureInstance}/floor-plan/single-quote.svg`;
 
 // Tile-pyramid constants mirror routes/floorPlan.ts (TILE_PX=512, z0 => 1×1).
 const TILE_PX = 512;
@@ -107,7 +108,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await cleanupFloorPlan();
-  await pool.end();
 }, 15_000);
 
 describe("floor-plan tiles — single-quoted viewBox parsing & origin normalisation", () => {

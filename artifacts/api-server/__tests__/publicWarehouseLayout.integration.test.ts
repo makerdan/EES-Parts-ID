@@ -25,9 +25,10 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
+const PUBLIC_LAYOUT_INSTANCE = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
 const PUBLIC_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
-  '<rect width="100" height="100"/></svg>';
+  `<rect width="100" height="100"/><!-- ${PUBLIC_LAYOUT_INSTANCE} --></svg>`;
 
 jest.mock("../src/lib/objectStorage", () => ({
   readFloorPlanSvg: jest.fn(() => Promise.resolve(Buffer.from(PUBLIC_SVG, "utf8"))),
@@ -48,13 +49,26 @@ jest.mock("sharp", () => {
 import crypto from "node:crypto";
 
 import supertest from "supertest";
-import { db, floorPlanMetaTable, mapAnchorPointsTable, pool, warehouseZoneTable } from "@workspace/db";
+import {
+  db,
+  floorPlanMetaTable,
+  mapAnchorPointsTable,
+  warehouseZoneTable,
+} from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
 
 import app from "../src/app";
+import { workerQualifiedUserId } from "./helpers/testDb";
+import { setTestEnv } from "./helpers/testEnv";
 
-const LAYOUT_AISLE = "JEST-PUBLIC-LAYOUT";
-const ANCHOR_PREFIX = "JEST-PUBLIC-ANCHOR-";
+const LAYOUT_AISLE = workerQualifiedUserId("JEST-PUBLIC-LAYOUT");
+const ANCHOR_PREFIX = `${workerQualifiedUserId("JEST-PUBLIC-ANCHOR")}-`;
+const ANCHOR_ID_BASE =
+  100_000 +
+  [...workerQualifiedUserId("JEST-PUBLIC-ANCHOR-ID")].reduce(
+    (hash, character) => (hash * 31 + character.charCodeAt(0)) % 800_000,
+    0,
+  );
 const SVG_HASH = crypto.createHash("sha256").update(PUBLIC_SVG).digest("hex");
 let insertedAnchorIds: number[] = [];
 let expectedAnchors: Array<{
@@ -64,6 +78,7 @@ let expectedAnchors: Array<{
   worldX: number;
   worldY: number;
 }> = [];
+let restoreTestEnv: (() => void) | undefined;
 
 async function cleanupFixtures(): Promise<void> {
   await db.delete(warehouseZoneTable).where(eq(warehouseZoneTable.aisleId, LAYOUT_AISLE));
@@ -74,7 +89,9 @@ async function cleanupFixtures(): Promise<void> {
 }
 
 beforeAll(async () => {
-  process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID = "jest-public-layout-bucket";
+  restoreTestEnv = setTestEnv({
+    DEFAULT_OBJECT_STORAGE_BUCKET_ID: "jest-public-layout-bucket",
+  });
   await cleanupFixtures();
   await db.insert(warehouseZoneTable).values({
     aisleId: LAYOUT_AISLE,
@@ -86,25 +103,26 @@ beforeAll(async () => {
     svgHeight: 40,
     sortOrder: 9876,
   });
-  const existingAnchors = await db.select().from(mapAnchorPointsTable);
-  if (existingAnchors.length === 0) {
-    const seededAnchors = [
-      { id: 1, name: `${ANCHOR_PREFIX}1`, svgX: 10, svgY: 10, worldX: 0, worldY: 0 },
-      { id: 2, name: `${ANCHOR_PREFIX}2`, svgX: 90, svgY: 10, worldX: 80, worldY: 0 },
-      { id: 3, name: `${ANCHOR_PREFIX}3`, svgX: 10, svgY: 90, worldX: 0, worldY: 80 },
-    ];
-    await db.insert(mapAnchorPointsTable).values(seededAnchors);
-    insertedAnchorIds = seededAnchors.map((anchor) => anchor.id);
-    expectedAnchors = seededAnchors.map(({ name, svgX, svgY, worldX, worldY }) => ({
-      name, svgX, svgY, worldX, worldY,
-    }));
-  } else {
-    expectedAnchors = existingAnchors.map(({ name, svgX, svgY, worldX, worldY }) => ({
-      name, svgX, svgY, worldX, worldY,
-    }));
-  }
+  const existingAnchors = await db
+    .select()
+    .from(mapAnchorPointsTable);
+  const seededAnchors = await db.insert(mapAnchorPointsTable).values([
+    { id: ANCHOR_ID_BASE + 1, name: `${ANCHOR_PREFIX}1`, svgX: 10, svgY: 10, worldX: 0, worldY: 0 },
+    { id: ANCHOR_ID_BASE + 2, name: `${ANCHOR_PREFIX}2`, svgX: 90, svgY: 10, worldX: 80, worldY: 0 },
+    { id: ANCHOR_ID_BASE + 3, name: `${ANCHOR_PREFIX}3`, svgX: 10, svgY: 90, worldX: 0, worldY: 80 },
+  ]).returning();
+  insertedAnchorIds = seededAnchors.map((anchor) => anchor.id);
+  expectedAnchors = [...existingAnchors, ...seededAnchors].map(
+    ({ name, svgX, svgY, worldX, worldY }) => ({
+      name,
+      svgX,
+      svgY,
+      worldX,
+      worldY,
+    }),
+  );
   await db.insert(floorPlanMetaTable).values({
-    objectPath: "/objects/uploads/public/floor-plan/warehouse-map.svg",
+    objectPath: `/objects/uploads/public/floor-plan/${PUBLIC_LAYOUT_INSTANCE}/warehouse-map.svg`,
     hash: SVG_HASH,
     uploadedAt: new Date("2099-01-01T00:00:00.000Z"),
   });
@@ -115,8 +133,7 @@ afterAll(async () => {
   if (insertedAnchorIds.length > 0) {
     await db.delete(mapAnchorPointsTable).where(inArray(mapAnchorPointsTable.id, insertedAnchorIds));
   }
-  delete process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
-  await pool.end();
+  restoreTestEnv?.();
 }, 15_000);
 
 describe("anonymous warehouse layout", () => {

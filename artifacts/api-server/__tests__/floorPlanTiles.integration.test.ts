@@ -40,9 +40,10 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // hoisted factory may reference it) and re-used below to derive TEST_HASH.  The
 // tile route's generateTile() now verifies sha256(svgBuffer) === svgHash before
 // serving, so the seeded floor-plan hash MUST equal the hash of these bytes.
+const mockFixtureInstance = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
 const mockFloorPlanSvg =
   '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">' +
-  '<rect width="100" height="100" fill="blue"/></svg>';
+  `<rect width="100" height="100" fill="blue"/><!-- ${mockFixtureInstance} --></svg>`;
 
 jest.mock("../src/lib/objectStorage", () => ({
   readFloorPlanSvg: jest.fn(() => Promise.resolve(Buffer.from(mockFloorPlanSvg, "utf8"))),
@@ -70,7 +71,7 @@ import crypto from "node:crypto";
 
 import supertest from "supertest";
 import app from "../src/app";
-import { db, floorPlanMetaTable, pool } from "@workspace/db";
+import { db, floorPlanMetaTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 // ── Test fixture constants ────────────────────────────────────────────────────
@@ -78,7 +79,7 @@ import { eq } from "drizzle-orm";
 // readFloorPlanSvg — generateTile() now rejects tiles whose buffer hash does not
 // match the requested floor-plan hash.
 const TEST_HASH = crypto.createHash("sha256").update(mockFloorPlanSvg).digest("hex");
-const TEST_OBJECT_PATH = "/objects/jest-test/floor-plan/warehouse-map.svg";
+const TEST_OBJECT_PATH = `/objects/jest-test/${mockFixtureInstance}/floor-plan/warehouse-map.svg`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function seedFloorPlan() {
@@ -94,15 +95,6 @@ async function cleanupFloorPlan() {
     .where(eq(floorPlanMetaTable.hash, TEST_HASH));
 }
 
-beforeAll(() => {
-  process.env.ADMIN_CLERK_USER_ID = "jest-admin-user";
-  process.env.TEST_DEFAULT_AUTH_USER = "jest-admin-user";
-});
-afterAll(() => {
-  delete process.env.TEST_DEFAULT_AUTH_USER;
-  delete process.env.ADMIN_CLERK_USER_ID;
-});
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Suite — valid floor plan in DB → 200 / 400
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,7 +106,6 @@ describe("GET /api/floor-plan/tiles — floor plan present", () => {
 
   afterAll(async () => {
     await cleanupFloorPlan();
-    await pool.end();
   }, 15_000);
 
   // ── 200 success cases ───────────────────────────────────────────────────────
