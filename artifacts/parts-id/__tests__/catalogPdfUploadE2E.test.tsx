@@ -220,6 +220,7 @@ afterEach(async () => {
   jest.clearAllMocks();
   mockWriteAsStringAsync.mockResolvedValue(undefined);
   mockDeleteAsync.mockResolvedValue(undefined);
+  delete (global as unknown as { fetch?: unknown }).fetch;
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -365,6 +366,16 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
 describe("CatalogPdfUpload — full happy path: picker → read → first chunk upload attempt", () => {
   /** Set up a mock upload task that never resolves (so tests can assert without waiting). */
   function installPendingUploadTask(): jest.Mock {
+    // The current component probes the durable-session endpoint first. Return
+    // the documented "not available" response so these assertions exercise
+    // the legacy native upload contract deterministically.
+    const { Platform } = require("react-native") as { Platform: { OS: string } };
+    (Platform as { OS: string }).OS = "ios";
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({}),
+    });
     const uploadAsync = jest.fn(() => new Promise<never>(() => {})); // hangs forever
     mockCreateUploadTask.mockReturnValue({ uploadAsync, cancelAsync: jest.fn() });
     return uploadAsync;
@@ -1613,6 +1624,13 @@ describe("CatalogPdfUpload — poll abort safety on unmount / stopPolling mid-fl
 
     (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(
       (url: string, opts: RequestInit) => {
+        if (url.includes("/upload-sessions")) {
+          return Promise.resolve({
+            ok: false,
+            status: 404,
+            json: async () => ({}),
+          });
+        }
         capturedSignal = opts?.signal as AbortSignal | undefined;
         return fetchImpl(url, opts);
       },
