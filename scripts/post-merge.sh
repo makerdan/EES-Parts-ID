@@ -365,8 +365,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     exit 1
   }
 
-  # Push latest main branch to GitHub after every successful merge.
-  # Uses || true so a network error never causes post-merge to report failure.
+  # Enforce the protected snapshot-PR synchronization boundary. The helper is
+  # intentionally a safe no-op; routine post-merge recovery must never publish
+  # local Git history or push directly to protected GitHub main.
   bash "$(dirname "$0")/sync-github.sh" || true
 
   # First health check pass.

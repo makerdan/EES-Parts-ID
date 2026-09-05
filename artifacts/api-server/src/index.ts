@@ -343,4 +343,7 @@ async function pruneAuditLog(): Promise<void> {
   });
 }
 
-void startApplication();
+void startApplication().catch((err: unknown) => {
+  logger.error({ err }, "Fatal error before server startup initialized — exiting");
+  process.exit(1);
+});

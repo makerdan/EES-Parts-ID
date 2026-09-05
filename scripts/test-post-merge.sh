@@ -65,14 +65,14 @@ sleep() { :; }
 # The sleep() override above only applies to functions sourced into THIS
 # shell; a spawned `bash post-merge.sh` gets the real /bin/sleep.  Without
 # this, every spawn pays the 2s codegen-settle floor (~11 spawns ≈ 22s), and
-# sync-github.sh performs a real network push whenever GITHUB_TOKEN is set.
+# sync-github.sh is an explicit no-op that enforces protected snapshot sync.
 #
 #   CODEGEN_SETTLE_* = 0  — wait_for_codegen_settle returns immediately
 #                           (sleep 0 + empty poll window); the settle
 #                           behaviour itself is unit-tested via the sourced
 #                           function in Tests 23/24 with mocked sleep.
-#   GITHUB_TOKEN=""       — sync-github.sh's -z guard fires and it exits 0
-#                           without any network call.
+#   GITHUB_TOKEN=""       — keeps spawned environments credential-free even
+#                           though sync-github.sh never reads the token.
 #
 # Every subprocess spawn below is prefixed with:
 #   env "${FAST_SPAWN_ENV[@]}" ...
@@ -1722,6 +1722,51 @@ assert_exit "Port Authority recovery — focused contention and cleanup tests" \
 if [[ "$PORT_AUTHORITY_EXIT" -ne 0 ]]; then
   echo "  Port Authority test output:"
   echo "$PORT_AUTHORITY_OUTPUT" | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
+# Test 42: API development startup declares its database target and preserves
+#          import-time diagnostics
+#
+# The shared database package deliberately rejects ambiguous execution modes.
+# The managed API workflow launches the package's dev script directly, so that
+# command must own DATABASE_ENV=development. The outer startApplication catch
+# keeps failures in its initial dynamic imports from degrading to an opaque
+# unhandled-rejection `{}` log.
+# ---------------------------------------------------------------------------
+API_SERVER_PKG="$SCRIPT_DIR/../artifacts/api-server/package.json"
+API_SERVER_INDEX="$SCRIPT_DIR/../artifacts/api-server/src/index.ts"
+
+if [[ -f "$API_SERVER_PKG" ]] &&
+   node -e '
+     const dev = require(process.argv[1]).scripts?.dev ?? "";
+     process.exit(/\bNODE_ENV=development\b/.test(dev) &&
+                  /\bDATABASE_ENV=development\b/.test(dev) ? 0 : 1);
+   ' "$API_SERVER_PKG"; then
+  pass "api-dev-runtime — development command declares NODE_ENV and DATABASE_ENV explicitly"
+else
+  fail "api-dev-runtime — API dev command must declare NODE_ENV=development and DATABASE_ENV=development"
+fi
+
+if [[ -f "$API_SERVER_INDEX" ]] &&
+   grep -q 'startApplication().catch' "$API_SERVER_INDEX" &&
+   grep -q 'Fatal error before server startup initialized' "$API_SERVER_INDEX"; then
+  pass "api-startup-diagnostics — import-time startup failures have a serialized top-level catch"
+else
+  fail "api-startup-diagnostics — startApplication must catch and log import-time failures with the err serializer"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 43: routine post-merge recovery cannot bypass protected GitHub sync
+# ---------------------------------------------------------------------------
+GITHUB_SYNC_SCRIPT="$SCRIPT_DIR/sync-github.sh"
+if [[ -f "$GITHUB_SYNC_SCRIPT" ]] &&
+   grep -q 'protected snapshot PR flow' "$GITHUB_SYNC_SCRIPT" &&
+   ! grep -q 'RDC34-Parts-ID' "$GITHUB_SYNC_SCRIPT" &&
+   ! grep -Eq 'GITHUB_TOKEN.*github\\.com|git[^#]*push[^#]*main' "$GITHUB_SYNC_SCRIPT"; then
+  pass "github-sync-boundary — helper cannot expose credentials, target the obsolete repository, or push main directly"
+else
+  fail "github-sync-boundary — sync helper must be a protected-snapshot no-op without credential URLs or direct main pushes"
 fi
 
 # ---------------------------------------------------------------------------
