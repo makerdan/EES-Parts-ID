@@ -36,8 +36,8 @@ Present this decision before continuing:
    GitHub Actions work continues.
 2. **Private path:** If the user declines to make the repository public, record
    that the current private plan may paywall branch-protection and ruleset
-   capabilities. Any available paid-plan choice must be selected by the user
-   outside this skill; do not invent membership or plan names and do not choose
+   capabilities. Any available paid-plan choices must be selected by the user outside
+   this skill; do not invent membership or plan names and do not choose
    one for them. Record the resulting limitations as unavailable or unknown
    evidence before proceeding with the private path.
 
