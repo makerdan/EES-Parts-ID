@@ -48,6 +48,18 @@ automatically. Require explicit authorization separately for any later remote
  mutation, and require the user to perform and provide confirmation of any
  visibility change.
 
+Record the gate outcome before continuing, using all four fields below:
+
+- **Observed visibility:** `public`, `private`, or `unknown`, with the exact
+  read-only evidence source.
+- **User-selected path:** public or private. No response is not a selection.
+- **Visibility-change confirmation:** required only for the public path; record
+  the user's confirmation and the subsequent read-only re-check.
+- **Private-plan limitations:** required only for the private path; record each
+  branch-protection or ruleset capability as available, unavailable, or unknown
+  from read-only evidence. Never convert an unavailable or unknown capability
+  into a claim that merge protection is active.
+
 ### Selected package inventory
 
 The supplied Install GitHub Actions package contains only this `SKILL.md`.
