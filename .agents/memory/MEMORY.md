@@ -68,3 +68,4 @@
 - [API auth before body parsing](api-auth-before-body-parsing.md) — method-aware public route matching and pre-parser auth prevent write-prefix leaks and unauthenticated upload buffering.
 - [Contract assertion normalization](contract-assertion-normalization.md) — static prose contracts should be checked semantically rather than by physical line wrapping.
 - [Jest hoisted shared mock factories](jest-hoisted-shared-mock-factories.md) — load shared helpers inside hoisted mock callbacks and pass in jest.requireActual modules to avoid TDZ failures.
+- [Schema-validated .replit replacement](dot-replit-schema-replacement.md) — write complete TOML to a temp file and use the validator/replacer instead of patching .replit directly.
