@@ -84,7 +84,15 @@ try {
   assert.equal(loadedV1.contents, "# Catalog v1\n");
   assert.equal(await readFile(join(authoredRoot, "SKILL.md"), "utf8"), "# Workspace-authored skill\n");
 
-  const canonicalMetadata = first.manifest.skills.catalog;
+  await writeFile(join(accountSource, "catalog/SKILL.md"), "# Catalog same revision\n");
+  const loadedSameRevision = await loadAccountSkill({ accountSource, workspaceRoot, skillName: "catalog" });
+  assert.equal(
+    loadedSameRevision.contents,
+    "# Catalog same revision\n",
+    "invocation must refresh when source bytes change without a revision change",
+  );
+
+  const canonicalMetadata = { fingerprint: loadedSameRevision.fingerprint };
   const mirrorRoot = join(workspaceRoot, ".local/custom_skills");
   assert.deepEqual(
     await inspectAccountSkillMirror({ accountSource, workspaceRoot, skillName: "catalog", mirrorRoot }),
@@ -247,6 +255,21 @@ try {
     "# Catalog v2\n",
     "concurrent cleanup must not delete the active serialized refresh",
   );
+
+  const malformedLockWorkspace = join(root, "malformed-lock-workspace");
+  const malformedLockProjectionRoot = join(
+    malformedLockWorkspace,
+    ACCOUNT_SKILLS_PROJECTION_RELATIVE_PATH,
+  );
+  const malformedLockPath = `${malformedLockProjectionRoot}.lock`;
+  await put(malformedLockPath, `${JSON.stringify({ format: 1, pid: process.pid, token: "" })}\n`);
+  await utimes(malformedLockPath, new Date(0), new Date(0));
+  const recoveredMalformedLock = await syncAccountSkillProjection({
+    accountSource,
+    workspaceRoot: malformedLockWorkspace,
+    lockTimeoutMs: 50,
+  });
+  assert.equal(recoveredMalformedLock.changed, true, "malformed structured locks must recover only after the stale timeout");
 
   const liveLockWorkspace = join(root, "live-lock-workspace");
   const liveProjectionRoot = join(liveLockWorkspace, ACCOUNT_SKILLS_PROJECTION_RELATIVE_PATH);
