@@ -137,6 +137,8 @@ Classify before remediating:
 | Account content, revision, or publication is wrong | Account/platform skill owner | Report identity and bounded result; do not patch a mirror |
 | Mirror is missing or stale after supported refresh | Account/platform provisioning or sync owner | Report environment, identity, and opaque metadata; request platform remediation |
 | Canonical source or validation metadata is unavailable | Account/platform owner | Report unavailable and preserve fail-closed loading |
+| Projection manifest, file list, or fingerprint is invalid | Repository maintainer | Repair the projection contract or implementation; never load the invalid projection |
+| Runtime sidecar identity, revision, or fingerprint mismatches | Account/platform provisioning or sync owner | Report mismatch and request platform remediation; do not edit the mirror |
 | Lock is live, unreadable, or not provably abandoned | Repository maintainer | Report busy or blocked; never remove active ownership or bypass serialization |
 | Projection implementation, boundary, or focused contract is wrong | Repository maintainer | Fix the repository contract or implementation |
 
