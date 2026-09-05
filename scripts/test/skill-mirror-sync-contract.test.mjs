@@ -42,11 +42,15 @@ async function exists(path) {
   }
 }
 
-function runStatus(source = accountSource) {
+function runStatus(source = accountSource, mirrorRoot) {
   return spawnSync(process.execPath, [statusCommand, "--skill", "catalog"], {
     cwd: workspaceRoot,
     encoding: "utf8",
-    env: { ...process.env, ACCOUNT_SKILLS_SOURCE: source },
+    env: {
+      ...process.env,
+      ACCOUNT_SKILLS_SOURCE: source,
+      ...(mirrorRoot ? { ACCOUNT_SKILLS_MIRROR_ROOT: mirrorRoot } : {}),
+    },
   });
 }
 
@@ -127,6 +131,42 @@ try {
     "skillId",
     "sourceRevision",
   ]);
+  const platformMirrorRoot = join(root, "platform-runtime-mirror");
+  await put(
+    join(platformMirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
+    `${JSON.stringify({
+      format: 1,
+      skillId: "catalog",
+      sourceRevision: "account-rev-1",
+      fingerprint: canonicalMetadata.fingerprint,
+    })}\n`,
+  );
+  await put(
+    join(mirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
+    '{"format":1,"skillId":"catalog","sourceRevision":"wrong","fingerprint":"wrong"}\n',
+  );
+  const platformRootCommand = runStatus(accountSource, platformMirrorRoot);
+  assert.equal(platformRootCommand.status, 0);
+  assert.deepEqual(JSON.parse(platformRootCommand.stdout), {
+    outcome: "pass",
+    skillId: "catalog",
+    sourceRevision: "account-rev-1",
+    fingerprint: canonicalMetadata.fingerprint,
+  });
+  assert.doesNotMatch(platformRootCommand.stdout, /platform-runtime-mirror|Catalog v1|Catalog same revision/);
+  await put(
+    join(platformMirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
+    '{"format":1,"skillId":"catalog","sourceRevision":"wrong","fingerprint":"wrong"}\n',
+  );
+  const platformMismatchCommand = runStatus(accountSource, platformMirrorRoot);
+  assert.equal(platformMismatchCommand.status, 1);
+  assert.deepEqual(JSON.parse(platformMismatchCommand.stdout), {
+    outcome: "mismatch",
+    skillId: "catalog",
+    sourceRevision: "account-rev-1",
+    fingerprint: canonicalMetadata.fingerprint,
+    reason: "revision-mismatch",
+  });
   await put(
     join(mirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
     '{"format":1,"skillId":"catalog","sourceRevision":"wrong","fingerprint":"wrong"}\n',
@@ -156,6 +196,14 @@ try {
   const unavailableCommand = runStatus(join(root, "missing-account-source"));
   assert.equal(unavailableCommand.status, 2);
   assert.equal(JSON.parse(unavailableCommand.stdout).outcome, "unavailable-source");
+  const missingPlatformRootCommand = runStatus(accountSource, join(root, "missing-platform-root"));
+  assert.equal(missingPlatformRootCommand.status, 3);
+  assert.deepEqual(JSON.parse(missingPlatformRootCommand.stdout), {
+    outcome: "missing-mirror",
+    skillId: "catalog",
+    sourceRevision: "account-rev-1",
+    fingerprint: canonicalMetadata.fingerprint,
+  });
 
   const missingRevisionSource = join(root, "missing-revision-source");
   await put(join(missingRevisionSource, "catalog/SKILL.md"), "# Catalog\n");
@@ -343,6 +391,7 @@ try {
   assert.match(contract, /fingerprint/i);
   assert.match(contract, /recursive/i);
   assert.match(contract, /account-skill:status/);
+  assert.match(contract, /ACCOUNT_SKILLS_MIRROR_ROOT/);
   assert.match(contract, /account-skills:sync/);
   assert.match(contract, /unavailable-source/);
   assert.match(contract, /missing-mirror/);
@@ -374,6 +423,8 @@ try {
   );
 
   const implementation = await readFile("scripts/lib/account-skill-projection.mjs", "utf8");
+  const statusImplementation = await readFile("scripts/account-skill-status.mjs", "utf8");
+  assert.match(statusImplementation, /ACCOUNT_SKILLS_MIRROR_ROOT/);
   const syncImplementation = await readFile("scripts/account-skills-sync.mjs", "utf8");
   assert.match(syncImplementation, /syncAccountSkillProjection/);
   assert.doesNotMatch(syncImplementation, /\b(writeFile|mkdir|rename|rm|cp)\s*\(/);

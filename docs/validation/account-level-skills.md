@@ -103,12 +103,15 @@ pnpm account-skill:status -- --skill <skill-id>
 ```
 
 It is non-mutating. It reads `ACCOUNT_SKILLS_SOURCE` and the platform-owned
-`.local/custom_skills/<skill-id>/.account-skill-metadata.json` sidecar. The
-sidecar has format `1` and the fields `skillId`, `sourceRevision`, and
-`fingerprint`. The command prints a fixed JSON schema to stdout: outcome and
-canonical skill identity, plus revision and fingerprint when the canonical
-source is available, and one bounded reason code for mismatches. It never
-echoes mirror values or prints a skill file, secret, credential, or source path.
+`.local/custom_skills/<skill-id>/.account-skill-metadata.json` sidecar. An
+environment-aware platform may provide a different mirror root through
+`ACCOUNT_SKILLS_MIRROR_ROOT`; when unset, the conventional workspace-relative
+`.local/custom_skills` root is used. The sidecar has format `1` and the fields
+`skillId`, `sourceRevision`, and `fingerprint`. The command prints a fixed JSON
+schema to stdout: outcome and canonical skill identity, plus revision and
+fingerprint when the canonical source is available, and one bounded reason code
+for mismatches. It never echoes mirror values or prints a skill file, secret,
+credential, or source path.
 
 | Outcome | Exit | Meaning |
 |---|---:|---|
@@ -119,8 +122,9 @@ echoes mirror values or prints a skill file, secret, credential, or source path.
 
 Repository consumers may invoke this command and parse its JSON result. They
 must not add a skill registry, copy account instructions, or manufacture the
-platform sidecar. Absence of authoritative source metadata cannot be converted
-to a pass.
+platform sidecar. The check reports `missing-mirror` when the supplied platform
+root or sidecar is absent; that is an explicitly unknown platform state, not a
+pass. Absence of authoritative source metadata cannot be converted to a pass.
 
 ## Ownership and failure handling
 

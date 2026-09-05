@@ -18,6 +18,7 @@ if (!skillName) {
     const result = await inspectAccountSkillMirror({
       accountSource: process.env.ACCOUNT_SKILLS_SOURCE,
       skillName,
+      mirrorRoot: process.env.ACCOUNT_SKILLS_MIRROR_ROOT || undefined,
     });
     process.stdout.write(`${JSON.stringify(result)}\n`);
     process.exitCode = EXIT_CODES[result.outcome];
