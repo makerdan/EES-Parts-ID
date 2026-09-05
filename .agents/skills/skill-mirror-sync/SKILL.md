@@ -30,7 +30,9 @@ workspace projection is generated, and the runtime mirror is disposable.
   A runtime mirror never flows back into either upstream stage, and repository
   automation must not simulate platform provisioning by writing its sidecar.
 - Do not copy private account instructions, credentials, secrets, or a
-  reconstructed registry into tracked repository files.
+  reconstructed registry into tracked repository files, and never fabricate
+  source paths, revisions, fingerprints, manifests, sidecar metadata, or
+  success results.
 
 ## Source and fingerprint contract
 
@@ -135,13 +137,14 @@ Classify before remediating:
 | Account content, revision, or publication is wrong | Account/platform skill owner | Report identity and bounded result; do not patch a mirror |
 | Mirror is missing or stale after supported refresh | Account/platform provisioning or sync owner | Report environment, identity, and opaque metadata; request platform remediation |
 | Canonical source or validation metadata is unavailable | Account/platform owner | Report unavailable and preserve fail-closed loading |
+| Lock is live, unreadable, or not provably abandoned | Repository maintainer | Report busy or blocked; never remove active ownership or bypass serialization |
 | Projection implementation, boundary, or focused contract is wrong | Repository maintainer | Fix the repository contract or implementation |
 
 Reports should contain the skill ID, environment, validation surface, bounded
 outcome, and opaque revision or SHA-256 fingerprint when available. Include a
 timestamp only if the reporting system requires it. Never fabricate a source
-path, revision, fingerprint, manifest, sidecar, or success result. Hand-editing
-`.local/custom_skills` is never remediation.
+path, revision, fingerprint, manifest, sidecar metadata, or success result.
+Hand-editing `.local/custom_skills` is never remediation.
 
 ## Prohibited shortcuts
 
