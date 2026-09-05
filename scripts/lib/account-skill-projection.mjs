@@ -415,6 +415,7 @@ export async function syncAccountSkillProjection({
   accountSource,
   workspaceRoot = process.cwd(),
   lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS,
+  afterInstall,
 } = {}) {
   if (!accountSource) {
     throw new AccountSkillProjectionError("source-unavailable", "ACCOUNT_SKILLS_SOURCE is required; refusing to use a fallback source");
@@ -461,11 +462,12 @@ export async function syncAccountSkillProjection({
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
+    let installedDestination = false;
     try {
-      let installedDestination = false;
       await rename(stagingRoot, destination);
       stagingRoot = undefined;
       installedDestination = true;
+      if (afterInstall) await afterInstall({ destination, source: sourceAfter });
       await validateProjection(destination, sourceAfter);
     } catch (error) {
       if (installedDestination) {

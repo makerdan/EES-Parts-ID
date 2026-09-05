@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -226,6 +226,56 @@ try {
     (error) => error instanceof AccountSkillProjectionError && error.code === "skill-not-found",
   );
   assert.equal(await readFile(join(authoredRoot, "SKILL.md"), "utf8"), "# Workspace-authored skill\n");
+
+  const interruptedWorkspace = join(root, "interrupted-install-workspace");
+  const interruptedSource = join(root, "interrupted-account-skills");
+  const interruptedProjectionRoot = join(
+    interruptedWorkspace,
+    ACCOUNT_SKILLS_PROJECTION_RELATIVE_PATH,
+  );
+  const interruptedSkillsParent = join(interruptedWorkspace, ".agents/skills");
+  const interruptedLookalike = `${interruptedProjectionRoot}.staging-not-owned`;
+  await put(join(interruptedSource, ".account-revision"), "account-rev-5\n");
+  await put(join(interruptedSource, "catalog/SKILL.md"), "# Catalog v2\n");
+  await put(join(interruptedLookalike, "keep.txt"), "unrelated interrupted fixture\n");
+  const interruptedInitial = await loadAccountSkill({
+    accountSource: interruptedSource,
+    workspaceRoot: interruptedWorkspace,
+    skillName: "catalog",
+  });
+  assert.equal(interruptedInitial.contents, "# Catalog v2\n");
+  await writeFile(join(interruptedSource, "catalog/SKILL.md"), "# Catalog interrupted v6\n");
+  await writeFile(join(interruptedSource, ".account-revision"), "account-rev-6\n");
+  await expectProjectionError(
+    () =>
+      syncAccountSkillProjection({
+        accountSource: interruptedSource,
+        workspaceRoot: interruptedWorkspace,
+        afterInstall: async ({ destination }) => {
+          await rm(join(destination, "catalog/SKILL.md"));
+        },
+      }),
+    "atomic-install-failed",
+  );
+  assert.equal(
+    await readFile(join(interruptedProjectionRoot, "catalog/SKILL.md"), "utf8"),
+    "# Catalog v2\n",
+    "a failed post-install validation must restore the prior complete projection",
+  );
+  assert.equal(
+    JSON.parse(await readFile(join(interruptedProjectionRoot, ACCOUNT_SKILLS_MANIFEST_FILE), "utf8")).sourceRevision,
+    "account-rev-5",
+    "rollback must restore the prior projection manifest",
+  );
+  assert.deepEqual(
+    (await readdir(interruptedSkillsParent)).filter(
+      (entry) =>
+        entry.startsWith(".account-projections.staging-") ||
+        entry.startsWith(".account-projections.backup-"),
+    ),
+    [".account-projections.staging-not-owned"],
+    "owned staging and backup artifacts must be cleaned without touching lookalikes",
+  );
 
   const concurrentWorkspace = join(root, "concurrent-workspace");
   const concurrentProjectionRoot = join(concurrentWorkspace, ACCOUNT_SKILLS_PROJECTION_RELATIVE_PATH);
