@@ -19,16 +19,21 @@
  *   imageUrl/imageSource/imageConfidence/catalogPdfJobId.
  */
 
-import { getAuth } from "@clerk/express";
 import { catalogPdfJobTable,db,inventoryTable } from "@workspace/db";
 import { and, desc, eq, inArray, isNull,lt, or, sql } from "drizzle-orm";
 import { Router } from "express";
 
+import {
+  catalogPdfOwnerWhere,
+  isCatalogPdfLegacyOwner,
+  ownedCatalogPdfChildWhere,
+  ownedCatalogPdfJobWhere,
+} from "../lib/catalogPdfOwnership";
 import { getLogger, logger } from "../lib/logger";
 import { deletePrivateObjects, uploadCatalogImage } from "../lib/objectStorage";
 import { PoeBotChainExhaustedError } from "../lib/poeBot";
 import { catalogPdfUploadLimiter } from "../lib/rateLimiter";
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import { getAdminClerkUserId, requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { isProviderPayloadTooLargeError } from "../utils/aiHelpers";
 import type { ImageRegion } from "../utils/catalogExtractor";
 import { CatalogAiError,extractCatalogPage } from "../utils/catalogExtractor";
@@ -644,9 +649,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);
   // Per-admin upload rate limit: prevents a compromised admin account from
   // flooding the background processing queue with many rapid uploads.
-  const adminUserId = (res.locals.appUser as { clerkUserId: string } | undefined)?.clerkUserId
-    ?? getAuth(req)?.userId
-    ?? String(req.ip ?? "unknown");
+  const adminUserId = getAdminClerkUserId(req, res);
   const uploadRateCheck = await catalogPdfUploadLimiter.check(adminUserId, res.locals.requestId as string | undefined);
   if (!uploadRateCheck.allowed) {
     res.set("Retry-After", String(Math.ceil(uploadRateCheck.retryAfterMs / 1000)));
@@ -766,7 +769,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
       const [parentRow] = await db
         .select({ id: catalogPdfJobTable.id, chunkCount: catalogPdfJobTable.chunkCount })
         .from(catalogPdfJobTable)
-        .where(eq(catalogPdfJobTable.id, pid))
+        .where(ownedCatalogPdfJobWhere(pid, adminUserId))
         .limit(1);
 
       if (!parentRow) {
@@ -795,17 +798,20 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
         and(
           eq(catalogPdfJobTable.parentJobId, resolvedParentJobId),
           eq(catalogPdfJobTable.chunkIndex, chunkIndex),
+          catalogPdfOwnerWhere(adminUserId),
           inArray(catalogPdfJobTable.status, ["failed", "cancelled"]),
           eq(catalogPdfJobTable.processedPages, 0),
         ),
       );
 
-    await db.execute(sql`
-      UPDATE catalog_pdf_job
-      SET status = 'processing', error_message = NULL, finished_at = NULL
-      WHERE id = ${resolvedParentJobId}
-        AND status = 'failed'
-    `);
+    await db
+      .update(catalogPdfJobTable)
+      .set({ status: "processing", errorMessage: null, finishedAt: null })
+      .where(and(
+        eq(catalogPdfJobTable.id, resolvedParentJobId),
+        catalogPdfOwnerWhere(adminUserId),
+        eq(catalogPdfJobTable.status, "failed"),
+      ));
   }
 
   // ── Create child (or legacy) job record ───────────────────────────────────
@@ -848,6 +854,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
           and(
             eq(catalogPdfJobTable.parentJobId, resolvedParentJobId),
             eq(catalogPdfJobTable.chunkIndex, chunkIndex),
+            catalogPdfOwnerWhere(adminUserId),
           ),
         )
         .limit(1);
@@ -970,6 +977,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
 // ── POST /admin/catalog-pdf/:jobId/cancel ─────────────────────────────────────
 router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);
+  const ownerClerkUserId = getAdminClerkUserId(req, res);
   const jobId = Number(req.params["jobId"]);
   if (!Number.isFinite(jobId)) {
     res.status(400).json({ error: "Invalid jobId" });
@@ -980,7 +988,7 @@ router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => 
     const [jobRow] = await db
       .select({ id: catalogPdfJobTable.id, status: catalogPdfJobTable.status })
       .from(catalogPdfJobTable)
-      .where(eq(catalogPdfJobTable.id, jobId))
+      .where(ownedCatalogPdfJobWhere(jobId, ownerClerkUserId))
       .limit(1);
 
     if (!jobRow) {
@@ -998,14 +1006,16 @@ router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => 
     await db
       .update(catalogPdfJobTable)
       .set({ status: "cancelled", finishedAt: new Date() })
-      .where(eq(catalogPdfJobTable.id, jobId));
+      .where(ownedCatalogPdfJobWhere(jobId, ownerClerkUserId));
 
-    await db.execute(sql`
-      UPDATE catalog_pdf_job
-      SET status = 'cancelled', finished_at = NOW()
-      WHERE parent_job_id = ${jobId}
-        AND status IN ('pending', 'processing')
-    `);
+    await db
+      .update(catalogPdfJobTable)
+      .set({ status: "cancelled", finishedAt: new Date() })
+      .where(and(
+        eq(catalogPdfJobTable.parentJobId, jobId),
+        catalogPdfOwnerWhere(ownerClerkUserId),
+        inArray(catalogPdfJobTable.status, ["pending", "processing"]),
+      ));
 
     reqLogger.info({ jobId }, "[catalog-pdf] cancel requested");
     res.json({ ok: true, jobId: String(jobId) });
@@ -1018,11 +1028,12 @@ router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => 
 // ── GET /admin/catalog-pdf/:jobId/status ──────────────────────────────────────
 router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
   const jobId = String(req.params["jobId"] ?? "");
+  const ownerClerkUserId = getAdminClerkUserId(req, res);
 
   const [row] = await db
     .select()
     .from(catalogPdfJobTable)
-    .where(eq(catalogPdfJobTable.id, Number(jobId)))
+    .where(ownedCatalogPdfJobWhere(Number(jobId), ownerClerkUserId))
     .limit(1);
 
   if (!row) {
@@ -1045,7 +1056,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
         errorMessage: catalogPdfJobTable.errorMessage,
       })
       .from(catalogPdfJobTable)
-      .where(eq(catalogPdfJobTable.parentJobId, Number(jobId)));
+      .where(ownedCatalogPdfChildWhere(Number(jobId), ownerClerkUserId));
 
     const totalPages = children.reduce((s, c) => s + (c.totalPages ?? 0), 0);
     const processedPages = children.reduce((s, c) => s + c.processedPages, 0);
@@ -1165,6 +1176,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
 // (child jobs are hidden — only the parent appears in admin-facing lists).
 router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);
+  const ownerClerkUserId = getAdminClerkUserId(req, res);
   try {
     const rows = await db
       .select({
@@ -1184,6 +1196,7 @@ router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
         inArray(catalogPdfJobTable.status, ["failed", "done_with_errors", "cancelled"]),
         eq(catalogPdfJobTable.dismissed, false),
         isNull(catalogPdfJobTable.parentJobId),
+        catalogPdfOwnerWhere(ownerClerkUserId),
       ))
       .orderBy(desc(catalogPdfJobTable.createdAt));
 
@@ -1197,9 +1210,7 @@ router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
 // ── POST /admin/catalog-pdf/:jobId/resume ─────────────────────────────────────
 router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => {
   // Rate limit (same per-admin limiter as upload: each resume triggers heavy work).
-  const resumeAdminUserId = (res.locals.appUser as { clerkUserId: string } | undefined)?.clerkUserId
-    ?? getAuth(req)?.userId
-    ?? String(req.ip ?? "unknown");
+  const resumeAdminUserId = getAdminClerkUserId(req, res);
   const resumeRateCheck = await catalogPdfUploadLimiter.check(resumeAdminUserId);
   if (!resumeRateCheck.allowed) {
     res.set("Retry-After", String(Math.ceil(resumeRateCheck.retryAfterMs / 1000)));
@@ -1216,7 +1227,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
   const [jobRow] = await db
     .select()
     .from(catalogPdfJobTable)
-    .where(eq(catalogPdfJobTable.id, jobId))
+    .where(ownedCatalogPdfJobWhere(jobId, resumeAdminUserId))
     .limit(1);
 
   if (!jobRow) {
@@ -1255,12 +1266,14 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
   // The parent was marked failed when this child failed. Resuming the child means
   // processing is back in-flight, so the parent should reflect that.
   if (jobRow.parentJobId !== null) {
-    await db.execute(sql`
-      UPDATE catalog_pdf_job
-      SET status = 'processing', error_message = NULL, finished_at = NULL
-      WHERE id = ${jobRow.parentJobId}
-        AND status = 'failed'
-    `);
+    await db
+      .update(catalogPdfJobTable)
+      .set({ status: "processing", errorMessage: null, finishedAt: null })
+      .where(and(
+        eq(catalogPdfJobTable.id, jobRow.parentJobId),
+        catalogPdfOwnerWhere(resumeAdminUserId),
+        eq(catalogPdfJobTable.status, "failed"),
+      ));
   }
 
   // ── Validate the PDF payload after confirming the job is resumable ───────────
@@ -1309,7 +1322,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
   await db
     .update(catalogPdfJobTable)
     .set({ status: "processing", errorMessage: null, finishedAt: null })
-    .where(eq(catalogPdfJobTable.id, jobId));
+    .where(ownedCatalogPdfJobWhere(jobId, resumeAdminUserId));
 
   const useOpenAiFallbackResume = req.headers["x-use-openai-fallback"] === "true";
 
@@ -1325,7 +1338,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
       await db
         .update(catalogPdfJobTable)
         .set({ totalPages: pages.length })
-        .where(eq(catalogPdfJobTable.id, jobId));
+        .where(ownedCatalogPdfJobWhere(jobId, resumeAdminUserId));
 
       const resumeLogger = getLogger(res);
       await processPdfPages(
@@ -1345,7 +1358,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
       await db
         .update(catalogPdfJobTable)
         .set({ status: "failed", errorMessage: msg, finishedAt: new Date() })
-        .where(eq(catalogPdfJobTable.id, jobId));
+        .where(ownedCatalogPdfJobWhere(jobId, resumeAdminUserId));
       await revertSessionItems(jobId, resumeLogger);
       resumeLogger.error({ err, jobId }, "[catalog-pdf] resume failed");
     } finally {
@@ -1363,6 +1376,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
 // failed-jobs list.
 router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);
+  const ownerClerkUserId = getAdminClerkUserId(req, res);
   const jobId = Number(req.params["jobId"]);
   if (!Number.isFinite(jobId)) {
     res.status(400).json({ error: "Invalid jobId" });
@@ -1374,6 +1388,7 @@ router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) =>
       .set({ dismissed: true })
       .where(and(
         eq(catalogPdfJobTable.id, jobId),
+        catalogPdfOwnerWhere(ownerClerkUserId),
         inArray(catalogPdfJobTable.status, ["failed", "cancelled"]),
       ))
       .returning({ id: catalogPdfJobTable.id });
@@ -1392,6 +1407,7 @@ router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) =>
 // ── GET /admin/catalog-pdf/reviews ────────────────────────────────────────────
 router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);
+  const ownerClerkUserId = getAdminClerkUserId(req, res);
   try {
     const jobIdFilter = req.query["jobId"] ? Number(req.query["jobId"]) : null;
 
@@ -1409,12 +1425,31 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
     // jobId.
     let effectiveJobIds: Array<number> | null = null;
     if (jobIdFilter !== null) {
+      const [requestedJob] = await db
+        .select({ id: catalogPdfJobTable.id })
+        .from(catalogPdfJobTable)
+        .where(ownedCatalogPdfJobWhere(jobIdFilter, ownerClerkUserId))
+        .limit(1);
+      if (!requestedJob) {
+        return void res.status(404).json({ error: "Job not found" });
+      }
+
       const childRows = await db
         .select({ id: catalogPdfJobTable.id })
         .from(catalogPdfJobTable)
-        .where(eq(catalogPdfJobTable.parentJobId, jobIdFilter));
+        .where(ownedCatalogPdfChildWhere(jobIdFilter, ownerClerkUserId));
 
       effectiveJobIds = [jobIdFilter, ...childRows.map((c) => c.id)];
+    } else {
+      const ownedJobs = await db
+        .select({ id: catalogPdfJobTable.id })
+        .from(catalogPdfJobTable)
+        .where(catalogPdfOwnerWhere(ownerClerkUserId));
+      effectiveJobIds = ownedJobs.map((job) => job.id);
+    }
+
+    if (effectiveJobIds.length === 0) {
+      return void res.json({ items: [], total: 0 });
     }
 
     const rows = await db
@@ -1432,12 +1467,10 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
       })
       .from(inventoryTable)
       .where(
-        effectiveJobIds !== null
-          ? and(
-              sql`${inventoryTable.imageSource} = 'pdf_extraction'`,
-              inArray(inventoryTable.catalogPdfJobId, effectiveJobIds),
-            )
-          : sql`${inventoryTable.imageSource} = 'pdf_extraction'`,
+        and(
+          sql`${inventoryTable.imageSource} = 'pdf_extraction'`,
+          inArray(inventoryTable.catalogPdfJobId, effectiveJobIds),
+        ),
       )
       .orderBy(desc(inventoryTable.catalogPdfJobId), desc(inventoryTable.updatedAt));
 
@@ -1454,7 +1487,10 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
           parentJobId: catalogPdfJobTable.parentJobId,
         })
         .from(catalogPdfJobTable)
-        .where(inArray(catalogPdfJobTable.id, jobIds));
+        .where(and(
+          inArray(catalogPdfJobTable.id, jobIds),
+          catalogPdfOwnerWhere(ownerClerkUserId),
+        ));
     }
 
     const jobMap = new Map(jobs.map((j) => [j.id, j]));
@@ -1479,7 +1515,10 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
             parentJobId: catalogPdfJobTable.parentJobId,
           })
           .from(catalogPdfJobTable)
-          .where(inArray(catalogPdfJobTable.id, parentIds));
+          .where(and(
+            inArray(catalogPdfJobTable.id, parentIds),
+            catalogPdfOwnerWhere(ownerClerkUserId),
+          ));
         parentJobCache = new Map(parentRows.map((p) => [p.id, p]));
       }
     }
@@ -1509,6 +1548,7 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
 
 // ── POST /admin/catalog-pdf/reviews/:id/revert ────────────────────────────────
 router.post("/catalog-pdf/reviews/:id/revert", requireAdminAuth, async (req, res) => {
+  const ownerClerkUserId = getAdminClerkUserId(req, res);
   const id = Number(req.params["id"]);
   if (!id || isNaN(id)) {
     return void res.status(400).json({ error: "Invalid item ID" });
@@ -1529,6 +1569,24 @@ router.post("/catalog-pdf/reviews/:id/revert", requireAdminAuth, async (req, res
   }
 
   try {
+    let effectiveJobIds: Set<number> | null = null;
+    if (jobIdContext !== null) {
+      const [contextJob] = await db
+        .select({ id: catalogPdfJobTable.id })
+        .from(catalogPdfJobTable)
+        .where(ownedCatalogPdfJobWhere(jobIdContext, ownerClerkUserId))
+        .limit(1);
+      if (!contextJob) {
+        return void res.status(404).json({ error: "Item not found" });
+      }
+
+      const childRows = await db
+        .select({ id: catalogPdfJobTable.id })
+        .from(catalogPdfJobTable)
+        .where(ownedCatalogPdfChildWhere(jobIdContext, ownerClerkUserId));
+      effectiveJobIds = new Set([jobIdContext, ...childRows.map((child) => child.id)]);
+    }
+
     const [row] = await db
       .select({
         id: inventoryTable.id,
@@ -1544,26 +1602,39 @@ router.post("/catalog-pdf/reviews/:id/revert", requireAdminAuth, async (req, res
       return void res.status(404).json({ error: "Item not found" });
     }
 
-    if (row.imageSource !== "pdf_extraction") {
-      return void res.status(400).json({ error: "Item was not updated by PDF extraction" });
-    }
-
-    // Guard: when a jobId context was provided, verify the item's catalogPdfJobId
-    // is either the job itself or one of its child jobs (chunk-race winner case).
-    if (jobIdContext !== null) {
-      const childRows = await db
+    const catalogPdfJobId = row.catalogPdfJobId;
+    if (catalogPdfJobId === null) {
+      if (!isCatalogPdfLegacyOwner(ownerClerkUserId)) {
+        return void res.status(404).json({ error: "Item not found" });
+      }
+      if (jobIdContext !== null) {
+        return void res.status(400).json({ error: "Item does not belong to the specified job" });
+      }
+    } else {
+      const [ownedJob] = await db
         .select({ id: catalogPdfJobTable.id })
         .from(catalogPdfJobTable)
-        .where(eq(catalogPdfJobTable.parentJobId, jobIdContext));
+        .where(ownedCatalogPdfJobWhere(catalogPdfJobId, ownerClerkUserId))
+        .limit(1);
+      if (!ownedJob) {
+        return void res.status(404).json({ error: "Item not found" });
+      }
 
-      const effectiveJobIds = new Set([jobIdContext, ...childRows.map((c) => c.id)]);
-
-      if (row.catalogPdfJobId === null || !effectiveJobIds.has(row.catalogPdfJobId)) {
+      // Guard: when a jobId context was provided, verify the item's
+      // catalogPdfJobId is either the job itself or one of its child jobs.
+      if (jobIdContext !== null && !effectiveJobIds?.has(catalogPdfJobId)) {
         return void res.status(400).json({ error: "Item does not belong to the specified job" });
       }
     }
 
-    await db
+    if (row.imageSource !== "pdf_extraction") {
+      return void res.status(400).json({ error: "Item was not updated by PDF extraction" });
+    }
+
+    const jobIdMatch = catalogPdfJobId === null
+      ? isNull(inventoryTable.catalogPdfJobId)
+      : eq(inventoryTable.catalogPdfJobId, catalogPdfJobId);
+    const reverted = await db
       .update(inventoryTable)
       .set({
         description: row.previousDescription ?? "",
@@ -1575,7 +1646,16 @@ router.post("/catalog-pdf/reviews/:id/revert", requireAdminAuth, async (req, res
         catalogPdfJobId: null,
         updatedAt: new Date(),
       })
-      .where(eq(inventoryTable.id, id));
+      .where(and(
+        eq(inventoryTable.id, id),
+        jobIdMatch,
+        sql`${inventoryTable.imageSource} = 'pdf_extraction'`,
+      ))
+      .returning({ id: inventoryTable.id });
+
+    if (reverted.length === 0) {
+      return void res.status(404).json({ error: "Item not found" });
+    }
 
     res.json({ ok: true });
   } catch (err) {

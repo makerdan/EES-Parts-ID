@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { getAuth } from "@clerk/express";
 import {
   catalogPdfJobTable,
   catalogPdfUploadPartTable,
@@ -16,7 +15,7 @@ import {
   writeCatalogPdfPart,
 } from "../lib/objectStorage";
 import { catalogPdfUploadLimiter } from "../lib/rateLimiter";
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import { getAdminClerkUserId, requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { validatePdf } from "../utils/pdfProcessor";
 import { launchCatalogPdfBuffer } from "./catalogPdf";
 
@@ -35,9 +34,7 @@ function requestId(res: Response): string | undefined {
 }
 
 function adminId(req: Request, res: Response): string {
-  return (res.locals.appUser as { clerkUserId?: string } | undefined)?.clerkUserId
-    ?? getAuth(req)?.userId
-    ?? "unknown";
+  return getAdminClerkUserId(req, res);
 }
 
 function fail(res: Response, status: number, code: string, error: string): void {

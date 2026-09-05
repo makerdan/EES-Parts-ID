@@ -93,6 +93,17 @@ export async function hasCurrentAdminAccess(req: Request): Promise<boolean> {
   return rows[0]?.role === "admin" && rows[0]?.status === "approved";
 }
 
+/**
+ * Returns the Clerk identity that passed the app and admin guards.
+ *
+ * Routes use this instead of independently choosing between appUser and the
+ * Clerk session, so resource ownership always follows the approved app user.
+ */
+export function getAdminClerkUserId(req: Request, res: Response): string {
+  const appUser = res.locals.appUser as { clerkUserId?: string } | undefined;
+  return appUser?.clerkUserId ?? getAuth(req)?.userId ?? "unknown";
+}
+
 export function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
   const appUser = res.locals.appUser as
     | { clerkUserId: string; status?: string; role?: string }
