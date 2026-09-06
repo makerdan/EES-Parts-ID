@@ -395,7 +395,7 @@ async function removeStaleProjectionDirectories(parent, destinationName) {
   }
 }
 
-async function buildProjection({ sourceSnapshot, stagingRoot }) {
+async function buildProjection({ sourceSnapshot, stagingRoot, afterSkillCopy }) {
   const manifest = { format: 1, sourceRevision: sourceSnapshot.revision, skills: {} };
   for (const [skillName, record] of Object.entries(sourceSnapshot.skills)) {
     await copySkill(sourceSnapshot.sourceRoot, stagingRoot, {
@@ -406,6 +406,7 @@ async function buildProjection({ sourceSnapshot, stagingRoot }) {
       files: record.files,
       fingerprint: record.fingerprint,
     };
+    if (afterSkillCopy) await afterSkillCopy({ skillName, source: sourceSnapshot, stagingRoot });
   }
   await writeFile(join(stagingRoot, ACCOUNT_SKILLS_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
@@ -417,6 +418,7 @@ export async function syncAccountSkillProjection({
   lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS,
   afterInstall,
   restoreBackup = async ({ backupRoot, destination }) => rename(backupRoot, destination),
+  afterSkillCopy,
 } = {}) {
   if (!accountSource) {
     throw new AccountSkillProjectionError("source-unavailable", "ACCOUNT_SKILLS_SOURCE is required; refusing to use a fallback source");
@@ -445,7 +447,7 @@ export async function syncAccountSkillProjection({
 
     stagingRoot = `${destination}.staging-${randomUUID()}`;
     await mkdir(stagingRoot, { recursive: true });
-    const manifest = await buildProjection({ sourceSnapshot, stagingRoot });
+    const manifest = await buildProjection({ sourceSnapshot, stagingRoot, afterSkillCopy });
     const sourceAfter = await readSourceSnapshot(sourceSnapshot.sourceRoot);
     if (
       sourceAfter.revision !== sourceSnapshot.revision ||

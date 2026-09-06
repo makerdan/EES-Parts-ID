@@ -275,6 +275,64 @@ try {
   );
   assert.equal(await readFile(join(authoredRoot, "SKILL.md"), "utf8"), "# Workspace-authored skill\n");
 
+  const changedDuringBuildWorkspace = join(root, "changed-during-build-workspace");
+  const changedDuringBuildSource = join(root, "changed-during-build-account-skills");
+  const changedDuringBuildProjectionRoot = join(
+    changedDuringBuildWorkspace,
+    ACCOUNT_SKILLS_PROJECTION_RELATIVE_PATH,
+  );
+  const changedDuringBuildSkillsParent = join(changedDuringBuildWorkspace, ".agents/skills");
+  await put(join(changedDuringBuildSource, ".account-revision"), "account-rev-1\n");
+  await put(join(changedDuringBuildSource, "catalog/SKILL.md"), "# Catalog baseline\n");
+  await put(join(changedDuringBuildSource, "review/SKILL.md"), "# Review baseline\n");
+  await loadAccountSkill({
+    accountSource: changedDuringBuildSource,
+    workspaceRoot: changedDuringBuildWorkspace,
+    skillName: "catalog",
+  });
+  await writeFile(join(changedDuringBuildSource, "catalog/SKILL.md"), "# Catalog pending v2\n");
+  await writeFile(join(changedDuringBuildSource, ".account-revision"), "account-rev-2\n");
+  let changedDuringBuild = false;
+  await expectProjectionError(
+    () =>
+      syncAccountSkillProjection({
+        accountSource: changedDuringBuildSource,
+        workspaceRoot: changedDuringBuildWorkspace,
+        afterSkillCopy: async ({ skillName }) => {
+          if (skillName !== "catalog") return;
+          changedDuringBuild = true;
+          await writeFile(join(changedDuringBuildSource, "review/SKILL.md"), "# Review changed mid-refresh\n");
+          await writeFile(join(changedDuringBuildSource, ".account-revision"), "account-rev-3\n");
+        },
+      }),
+    "source-changed",
+  );
+  assert.equal(changedDuringBuild, true, "the fixture must mutate the source while staging is still being built");
+  assert.equal(
+    await readFile(join(changedDuringBuildProjectionRoot, "catalog/SKILL.md"), "utf8"),
+    "# Catalog baseline\n",
+    "a source mutation during staging must leave the prior projection readable",
+  );
+  assert.equal(
+    await readFile(join(changedDuringBuildProjectionRoot, "review/SKILL.md"), "utf8"),
+    "# Review baseline\n",
+    "a source mutation during staging must not partially replace the prior projection",
+  );
+  assert.equal(
+    JSON.parse(await readFile(join(changedDuringBuildProjectionRoot, ACCOUNT_SKILLS_MANIFEST_FILE), "utf8")).sourceRevision,
+    "account-rev-1",
+    "a source mutation during staging must leave the prior projection manifest intact",
+  );
+  assert.deepEqual(
+    (await readdir(changedDuringBuildSkillsParent)).filter(
+      (entry) =>
+        entry.startsWith(".account-projections.staging-") ||
+        entry.startsWith(".account-projections.backup-"),
+    ),
+    [],
+    "source-changed refreshes must clean owned staging and backup artifacts",
+  );
+
   const interruptedWorkspace = join(root, "interrupted-install-workspace");
   const interruptedSource = join(root, "interrupted-account-skills");
   const interruptedProjectionRoot = join(
