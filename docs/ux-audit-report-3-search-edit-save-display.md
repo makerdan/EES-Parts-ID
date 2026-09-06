@@ -37,14 +37,16 @@
 | Low | 1 |
 | **Total** | **8** |
 
+F-070 and F-074 are resolved in the current source; the counts above preserve the original audit run.
+
 ## Scenario coverage
 | State | Audit result |
 |---|---|
 | Keyword/description/bin success | Server-success handling, per-field cache patching, success badge, and return navigation are present. The returned Search card is not reliably updated because the screen renders mutation-local data rather than the cache the editor patches (F-069). |
-| API rejection (4xx/5xx) | Main editors use `Promise.allSettled`, restore failed field controls, preserve successful fields, and show field/aggregate errors. Keyword auto-save reverts and exposes Retry. Prior silent-close and dimension-rollback issues are fixed. |
-| Timeout / hung connection | Search has an 8-second cached fallback and visible feedback. Edit requests have no deadline or cancellation, so Save can remain pending indefinitely (F-070). |
+| API rejection (4xx/5xx) | Main editors use `Promise.allSettled`, restore failed field controls, preserve successful fields, and show field/aggregate errors. Keyword auto-save preserves pending edits and exposes Retry. Prior silent-close and dimension-rollback issues are fixed. |
+| Timeout / hung connection | Search has an 8-second cached fallback and visible feedback. Inventory edit writes now have a shared 10-second abortable deadline, timeout/offline messages, field-level Retry actions, and unmount cancellation. |
 | Offline fallback | Search labels cached fallback. Main saves fail visibly when the transport rejects, but standalone field saves can leave durable offline caches stale after an online success (F-071). |
-| Rapid repeat | Keyword auto-save drains serially and close is guarded. Main save handlers rely on render-time button disabling but have no synchronous handler mutex (F-074). |
+| Rapid repeat | Keyword auto-save drains serially and close is guarded. Main Save handlers now use a synchronous in-flight mutex, including same-tick duplicate activation protection. |
 | Partial field failure | Succeeded fields stay committed and are named; failed fields revert and are named. This is a partial commit, not an atomic save. The UI is actionable, but cross-cache reconciliation remains dependent on invalidation. |
 | Unsaved exit | The routed Edit Item guards most back/cancel exits. Unsaved size is omitted from its dirty calculation (F-073). `PartDetailsEditor` closes without any dirty prompt (F-072). |
 | Return to Search | Navigation works, but the current card can retain the pre-edit mutation result (F-069). |
@@ -90,17 +92,13 @@ generated mutation semantics; do not couple the mock query-cache updater to muta
 ### F-070 · J12 Save on slow/offline link · Phase 3 (Silent Failure)
 **Journey:** Change a field → Save while the write connection stalls
 
-**Failure:** Edit writes use raw `fetch` or generated mutations without an `AbortSignal` deadline.
-`Promise.allSettled` cannot finish while even one request remains pending. The screen can stay on
-`Saving…` indefinitely, with no timeout/offline distinction, retry state, or cancellation path;
-the routed screen's unsaved-navigation guard can also keep the admin trapped in an ambiguous
-in-flight state.
+**Resolved:** Inventory edit writes now run through a shared deadline runner. The runner aborts
+the transport and rejects independently if a non-cooperative request never settles, so
+`Promise.allSettled` cannot leave the screen in `Saving…` forever. Timeout, offline, and session
+errors are distinct; failed field values remain available with Retry, and unmount aborts work.
 
-**Fix:** `app/edit-item.tsx` (`handleSave`, `handleSaveSize`,
-`handleSaveExpandedDesc`, `handleClearExpandedDesc`) and
-`components/PartDetailsEditor.tsx` (the equivalent handlers) — route writes through a shared
-abortable request helper with a bounded deadline; classify timeout/network failures, retain the
-pending edit, show a field-level Retry, and abort outstanding work on unmount.
+**Regression coverage:** `utils/inventoryWrite.ts` covers a never-resolving request, while
+`partDetailsEditorSaveRollback.test.tsx` covers bounded save behavior alongside rollback.
 
 ---
 
@@ -153,14 +151,12 @@ keep the dirty baseline synchronized only after a confirmed size save.
 ### F-074 · J12 Rapid repeat Save · Phase 4 (Double-submit)
 **Journey:** Change fields → activate Save twice before the disabled render commits
 
-**Failure:** Both main `handleSave` functions lack a synchronous in-flight mutex. The button is
-disabled when `saveStatus === "saving"`, but two handler entries in the same render window can
-start duplicate request sets with independent snapshots. Responses can race cache restoration,
-partial-success patches, and final invalidation.
+**Resolved:** Both main Save handlers now set a synchronous in-flight mutex before awaiting any
+request. A second activation from the same render window returns without creating another
+snapshot or request set.
 
-**Fix:** `app/edit-item.tsx` and `components/PartDetailsEditor.tsx` (`handleSave`) — add a
-`saveInFlightRef` checked and set before starting any request, clear it in `finally`, and keep all
-Save entry points disabled while it is set.
+**Regression coverage:** `partDetailsEditorSaveRollback.test.tsx` activates Save twice in the
+same tick and asserts that only one request set is dispatched.
 
 ---
 
@@ -207,8 +203,8 @@ the editor can say “Saved, but refresh failed” without rolling back persiste
 - **Admin control:** Edit is supplied only when `isAdmin`; the control has a per-item accessibility
   label and button role.
 - **Unrelated rows:** item-id patch functions preserve unrelated entries, but whole-cache snapshot
-  restoration during overlapping saves can overwrite concurrent external changes; F-074 reduces
-  the reachable same-screen race.
+  restoration during overlapping saves can overwrite concurrent external changes; the synchronous
+  Save mutex reduces the reachable same-screen race.
 
 ## Existing test-harness boundary
 - `searchEditKeywordFlow.test.tsx` mounts the real screens but replaces `ResultCard`, generated
@@ -229,8 +225,8 @@ the editor can say “Saved, but refresh failed” without rolling back persiste
    values.
 2. Confirm the returned card visually updates without submitting another search; repository
    evidence predicts failure F-069.
-3. Throttle a write request so it never resolves; confirm the current indefinite `Saving…` state
-   and all available exit gestures.
+3. Throttle a write request so it never resolves; confirm the 10-second timeout message, field
+   Retry action, preserved edit, and safe exit after unmount.
 4. Render maximum-length catalog/vendor/description/bin/keyword values at narrow and wide
    viewports; check overlap, clipping, readable wrapping, touch targets, and Dynamic Type.
 5. Open the same result in two browser tabs, save in one, and check the other without refresh and

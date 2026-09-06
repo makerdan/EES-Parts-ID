@@ -502,7 +502,7 @@ describe("EditItemScreen – stale-dims regression", () => {
     expect(dimsPatchCalls).toHaveLength(0);
   });
 
-  it("reverts dim fields to itemRef.current dimensions when the dims PATCH fails", async () => {
+  it("keeps failed dim edits available for field-level retry when the dims PATCH fails", async () => {
     testItem = makeItem({
       description: "Original description",
       dimensions:  { length: 5, width: null, height: null, diameter: null } as unknown as Exclude<InventoryItem["dimensions"], undefined>,
@@ -540,13 +540,13 @@ describe("EditItemScreen – stale-dims regression", () => {
     const saveBtn = findPressable(result.root!, "Save Details");
     await act(async () => { fireEvent.press(saveBtn!); });
 
-    // After partial failure the dim length field should be reverted to the
-    // original value from itemRef.current.dimensions (5 → "5").
+    // After partial failure the dim length field should remain available for
+    // the field-level Retry action (the pending value is "10").
     const lengthInputAfter = result.root!!.queryAll(
       (n: TestInstance) => (n.type as string) === "rn-textinput" && n.props.placeholder === "–",
       { includeSelf: true },
     ).find((n: TestInstance) => n.props.value !== "") ?? null;
     expect(lengthInputAfter).not.toBeNull();
-    expect(lengthInputAfter!.props.value).toBe("5");
+    expect(lengthInputAfter!.props.value).toBe("10");
   });
 });

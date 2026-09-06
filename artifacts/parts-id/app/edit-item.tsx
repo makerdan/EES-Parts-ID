@@ -4,6 +4,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { InventoryItem, InventoryListResponse, SearchInventoryResponse } from "@workspace/api-client-react";
 import {
   getListInventoryQueryKey,
+  updateItemBarcodes,
+  updateItemBins,
+  updateItemKeywords,
   useUpdateItemBarcodes,
   useUpdateItemBins,
   useUpdateItemKeywords,
@@ -36,7 +39,8 @@ import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 import { API_BASE } from "@/utils/apiBase";
-import { evictDeletedItemFromAllCaches, invalidateAllCachesAfterSave } from "@/utils/editItemCache";
+import { evictDeletedItemFromAllCaches, invalidateAllCachesAfterSave, invalidateListCache } from "@/utils/editItemCache";
+import { inventorySaveErrorMessage, isAbortError, runInventoryWrite } from "@/utils/inventoryWrite";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
 function fmtDim(v: number | null | undefined): string {
@@ -57,10 +61,44 @@ export default function EditItemScreen() {
   const { adminToken, isAdmin, isLoading, pendingLidarDims, setPendingLidarDims } = useApp();
   const { item: itemParam, section: sectionParam } = useLocalSearchParams<{ item: string; section?: string }>();
   const queryClient = useQueryClient();
+  const writeControllersRef = useRef(new Set<AbortController>());
+  const mountedRef = useRef(true);
+  const saveInFlightRef = useRef(false);
+  const fetchWrite = useCallback(
+    (url: string, init: RequestInit) =>
+      runInventoryWrite(writeControllersRef.current, signal => fetch(url, { ...init, signal })),
+    [],
+  );
+  const updateBinsMutation = useUpdateItemBins({
+    mutation: {
+      mutationFn: ({ id, data }) =>
+        runInventoryWrite(writeControllersRef.current, signal => updateItemBins(id, data, { signal })),
+    },
+  });
+  const updateBarcodesMutation = useUpdateItemBarcodes({
+    mutation: {
+      mutationFn: ({ id, data }) =>
+        runInventoryWrite(writeControllersRef.current, signal => updateItemBarcodes(id, data, { signal })),
+    },
+  });
+  const updateKeywordsMutation = useUpdateItemKeywords({
+    mutation: {
+      mutationFn: ({ id, data }) =>
+        runInventoryWrite(writeControllersRef.current, signal => updateItemKeywords(id, data, { signal })),
+    },
+  });
   const scrollViewRef = useRef<ScrollView>(null);
   const sectionYRef = useRef<Record<string, number>>({});
   const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => { return () => { if (navTimerRef.current !== null) clearTimeout(navTimerRef.current); }; }, []);
+  useEffect(() => {
+    const controllers = writeControllersRef.current;
+    return () => {
+      mountedRef.current = false;
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
+      if (navTimerRef.current !== null) clearTimeout(navTimerRef.current);
+    };
+  }, []);
 
   // Track unsaved changes across renders so the beforeRemove guard can read
   // the latest value without causing the effect to re-register on every edit.
@@ -107,9 +145,6 @@ export default function EditItemScreen() {
     return unsubscribe;
   }, [navigation, requestExit]);
 
-  const updateBinsMutation = useUpdateItemBins();
-  const updateBarcodesMutation = useUpdateItemBarcodes();
-  const updateKeywordsMutation = useUpdateItemKeywords();
 
   const item: InventoryItem | null = (() => {
     try { return itemParam ? (JSON.parse(itemParam) as InventoryItem) : null; }
@@ -134,6 +169,7 @@ export default function EditItemScreen() {
   const [op, setOp] = useState(String(item?.orderPurchase ?? 0));
   const [oq, setOq] = useState(String(item?.orderQuantity ?? 0));
   const [size, setSize] = useState(item?.size ?? "");
+  const savedSizeRef = useRef((item?.size ?? "").trim());
   const [sizeSaving, setSizeSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [sizeError, setSizeError] = useState<string | null>(null);
   const [expandedDescription, setExpandedDescription] = useState(item?.expandedDescription ?? "");
@@ -271,9 +307,8 @@ export default function EditItemScreen() {
     }
     setSizeSaving("saving");
     setSizeError(null);
-    const prevSize = current?.size ?? null;
     try {
-      const res = await fetch(`${API_BASE}/inventory/${current.id}/size`, {
+      const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/size`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
         body: JSON.stringify({ size: size.trim() || null }),
@@ -282,21 +317,36 @@ export default function EditItemScreen() {
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
+      const listKeyPrefixSize = getListInventoryQueryKey()[0];
       const newSizeVal = size.trim() || null;
-      const updatedItem = { ...current, size: newSizeVal };
-      itemRef.current = updatedItem;
-      const cacheResult = await invalidateAllCachesAfterSave({
-        queryClient,
-        asyncStorage: AsyncStorage,
-        itemId: updatedItem.id,
-        updatedItem,
-      });
+      const patchSize = (i: InventoryItem): InventoryItem =>
+        i.id === current.id ? { ...i, ...(({ size: newSizeVal } as unknown) as Partial<InventoryItem>) } : i;
+      queryClient.setQueriesData<InventoryListResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefixSize },
+        (old) => old ? { ...old, items: old.items.map(patchSize) } : old,
+      );
+      queryClient.setQueriesData<SearchInventoryResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+        (old) => {
+          if (!old) return old;
+          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+            r.item.id === current.id ? { ...r, item: patchSize(r.item) } : r;
+          return {
+            ...old,
+            results: old.results.map(patchResult),
+            // exactOptionalPropertyTypes: only include the optional key when present
+            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
+          };
+        },
+      );
+      await invalidateListCache({ queryClient });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      savedSizeRef.current = newSizeVal ?? "";
       setSizeSaving("saved");
-      if (cacheResult && !cacheResult.ok) setSizeError("Saved, but refresh failed. Search may be stale.");
     } catch (err) {
-      setSizeError(err instanceof Error ? err.message : "Save failed");
+      if (!mountedRef.current || isAbortError(err)) return;
+      setSizeError(inventorySaveErrorMessage(err, "Could not save size. Check connection and retry."));
       setSizeSaving("error");
-      setSize(prevSize ?? "");
     }
   };
 
@@ -306,7 +356,7 @@ export default function EditItemScreen() {
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
     try {
-      const res = await fetch(`${API_BASE}/inventory/${current.id}/expanded-description`, {
+      const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/expanded-description`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
         body: JSON.stringify({ expandedDescription: expandedDescription.trim() || null }),
@@ -317,18 +367,33 @@ export default function EditItemScreen() {
       }
       savedExpandedDescRef.current = expandedDescription.trim();
       const savedText = expandedDescription.trim() || null;
-      const updatedItem = { ...current, expandedDescription: savedText };
-      itemRef.current = updatedItem;
-      const cacheResult = await invalidateAllCachesAfterSave({
-        queryClient,
-        asyncStorage: AsyncStorage,
-        itemId: updatedItem.id,
-        updatedItem,
-      });
+      const listKeyPrefixSave = getListInventoryQueryKey()[0];
+      const patchExpandedSave = (i: InventoryItem): InventoryItem =>
+        i.id === current.id ? { ...i, expandedDescription: savedText } : i;
+      queryClient.setQueriesData<InventoryListResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefixSave },
+        (old) => old ? { ...old, items: old.items.map(patchExpandedSave) } : old,
+      );
+      queryClient.setQueriesData<SearchInventoryResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+        (old) => {
+          if (!old) return old;
+          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+            r.item.id === current.id ? { ...r, item: patchExpandedSave(r.item) } : r;
+          return {
+            ...old,
+            results: old.results.map(patchResult),
+            // exactOptionalPropertyTypes: only include the optional key when present
+            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
+          };
+        },
+      );
+      await invalidateListCache({ queryClient });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       setExpandedDescSaving("saved");
-      if (cacheResult && !cacheResult.ok) setExpandedDescError("Saved, but refresh failed. Search may be stale.");
     } catch (err) {
-      setExpandedDescError(err instanceof Error ? err.message : "Save failed");
+      if (!mountedRef.current || isAbortError(err)) return;
+      setExpandedDescError(inventorySaveErrorMessage(err, "Could not save expanded description. Check connection and retry."));
       setExpandedDescSaving("error");
     }
   };
@@ -336,12 +401,11 @@ export default function EditItemScreen() {
   const handleClearExpandedDesc = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) return;
-    const previousText = expandedDescription;
     setExpandedDescription("");
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
     try {
-      const res = await fetch(`${API_BASE}/inventory/${current.id}/expanded-description`, {
+      const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/expanded-description`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
         body: JSON.stringify({ expandedDescription: null }),
@@ -351,19 +415,33 @@ export default function EditItemScreen() {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
       savedExpandedDescRef.current = "";
-      const updatedItem = { ...current, expandedDescription: null };
-      itemRef.current = updatedItem;
-      const cacheResult = await invalidateAllCachesAfterSave({
-        queryClient,
-        asyncStorage: AsyncStorage,
-        itemId: updatedItem.id,
-        updatedItem,
-      });
+      const listKeyPrefixClear = getListInventoryQueryKey()[0];
+      const patchExpandedClear = (i: InventoryItem): InventoryItem =>
+        i.id === current.id ? { ...i, expandedDescription: null } : i;
+      queryClient.setQueriesData<InventoryListResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefixClear },
+        (old) => old ? { ...old, items: old.items.map(patchExpandedClear) } : old,
+      );
+      queryClient.setQueriesData<SearchInventoryResponse>(
+        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+        (old) => {
+          if (!old) return old;
+          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+            r.item.id === current.id ? { ...r, item: patchExpandedClear(r.item) } : r;
+          return {
+            ...old,
+            results: old.results.map(patchResult),
+            // exactOptionalPropertyTypes: only include the optional key when present
+            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
+          };
+        },
+      );
+      await invalidateListCache({ queryClient });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       setExpandedDescSaving("saved");
-      if (cacheResult && !cacheResult.ok) setExpandedDescError("Saved, but refresh failed. Search may be stale.");
     } catch (err) {
-      setExpandedDescription(previousText);
-      setExpandedDescError(err instanceof Error ? err.message : "Clear failed");
+      if (!mountedRef.current || isAbortError(err)) return;
+      setExpandedDescError(inventorySaveErrorMessage(err, "Could not clear expanded description. Check connection and retry."));
       setExpandedDescSaving("error");
     }
   };
@@ -386,7 +464,7 @@ export default function EditItemScreen() {
           onPress: async () => {
             setDeleting(true);
             try {
-              const res = await fetch(`${API_BASE}/inventory/${current.id}`, {
+              const res = await fetchWrite(`${API_BASE}/inventory/${current.id}`, {
                 method: "DELETE",
                 headers: { Authorization: `Bearer ${adminToken}` },
               });
@@ -414,9 +492,9 @@ export default function EditItemScreen() {
         },
       ],
     );
-  }, [adminToken, queryClient, router]);
+  }, [adminToken, queryClient, router, fetchWrite]);
 
-  const handleSave = async () => {
+  const saveInventory = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) {
       setErrorMsg("Admin session expired. Tap Cancel, re-unlock as admin, then try again.");
@@ -500,7 +578,7 @@ export default function EditItemScreen() {
         ops.push({
           field: "description",
           restoreFn: () => setDescription(current.description ?? ""),
-          promise: fetch(`${API_BASE}/inventory/${current.id}/description`, {
+          promise: fetchWrite(`${API_BASE}/inventory/${current.id}/description`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
             body: JSON.stringify({ description: description.trim() }),
@@ -544,7 +622,7 @@ export default function EditItemScreen() {
             setOp(String(current.orderPurchase ?? 0));
             setOq(String(current.orderQuantity ?? 0));
           },
-          promise: fetch(`${API_BASE}/inventory/${current.id}/order`, {
+          promise: fetchWrite(`${API_BASE}/inventory/${current.id}/order`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
             body: JSON.stringify({ orderPurchase: parsedOp, orderQuantity: parsedOq }),
@@ -567,7 +645,7 @@ export default function EditItemScreen() {
             setDimHeight(fmtDim(savedDims?.height));
             setDimDiameter(fmtDim(savedDims?.diameter));
           },
-          promise: fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
+          promise: fetchWrite(`${API_BASE}/inventory/${current.id}/dimensions`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
             body: JSON.stringify(newDims),
@@ -595,7 +673,7 @@ export default function EditItemScreen() {
             restoreFn: () => setPhotoUri1(prevPhotoUri1),
             promise: (async () => {
               const base64 = await FileSystem.readAsStringAsync(slot1Uri, { encoding: "base64" });
-              const res = await fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+              const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/photo`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
                 body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg", slot: 1 }),
@@ -613,7 +691,7 @@ export default function EditItemScreen() {
           ops.push({
             field: "photo",
             restoreFn: () => setPhotoUri1(prevPhotoUri1),
-            promise: fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+            promise: fetchWrite(`${API_BASE}/inventory/${current.id}/photo`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
               body: JSON.stringify({ remove: true, slot: 1 }),
@@ -637,7 +715,7 @@ export default function EditItemScreen() {
             restoreFn: () => setPhotoUri2(prevPhotoUri2),
             promise: (async () => {
               const base64 = await FileSystem.readAsStringAsync(slot2Uri, { encoding: "base64" });
-              const res = await fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+              const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/photo`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
                 body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg", slot: 2 }),
@@ -655,7 +733,7 @@ export default function EditItemScreen() {
           ops.push({
             field: "photo2",
             restoreFn: () => setPhotoUri2(prevPhotoUri2),
-            promise: fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+            promise: fetchWrite(`${API_BASE}/inventory/${current.id}/photo`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
               body: JSON.stringify({ remove: true, slot: 2 }),
@@ -672,17 +750,15 @@ export default function EditItemScreen() {
 
       if (ops.length > 0) {
         const settled = await Promise.allSettled(ops.map(o => o.promise));
+        if (!mountedRef.current) return;
 
         const failedIndices = settled
           .map((r, i) => r.status === "rejected" ? i : -1)
           .filter(i => i >= 0);
 
         if (failedIndices.length > 0) {
-          // Revert UI state for each field that failed.
-          for (const i of failedIndices) {
-            // failedIndices are valid indices into ops.
-            ops[i]!.restoreFn();
-          }
+          // Keep failed field values in the form so the field-level Retry
+          // action can resubmit the exact pending edit.
 
           // Which fields succeeded?
           const succeededFields = new Set(
@@ -699,40 +775,53 @@ export default function EditItemScreen() {
             queryClient.setQueryData(key, data);
           }
 
-          let cacheRefreshFailed = false;
           if (succeededFields.size > 0) {
-            const updatedItem: InventoryItem = {
-              ...current,
-              ...(succeededFields.has("description") ? { description: description.trim() } : {}),
-              ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
-              ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
-              ...(succeededFields.has("barcodes") ? { barcodes: finalBarcodes } : {}),
-              ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
-              ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq } : {}),
-              ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
-              ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
+            const patchItemPartial = (i: InventoryItem): InventoryItem => {
+              if (i.id !== current.id) return i;
+              return {
+                ...i,
+                ...(succeededFields.has("description") ? { description: description.trim() } : {}),
+                ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
+                ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
+                ...(succeededFields.has("barcodes") ? { barcodes: finalBarcodes } : {}),
+                ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
+                ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq } : {}),
+                ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+                ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
+              };
             };
-            itemRef.current = updatedItem;
-            const cacheResult = await invalidateAllCachesAfterSave({
-              queryClient,
-              asyncStorage: AsyncStorage,
-              itemId: updatedItem.id,
-              updatedItem,
-            });
-            cacheRefreshFailed = cacheResult ? !cacheResult.ok : false;
+            queryClient.setQueriesData<InventoryListResponse>(
+              { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+              (old) => old ? { ...old, items: old.items.map(patchItemPartial) } : old,
+            );
+            queryClient.setQueriesData<SearchInventoryResponse>(
+              { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+              (old) => {
+                if (!old) return old;
+                const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+                  r.item.id === current.id ? { ...r, item: patchItemPartial(r.item) } : r;
+                return {
+            ...old,
+            results: old.results.map(patchResult),
+            // exactOptionalPropertyTypes: only include the optional key when present
+            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
+          };
+              },
+            );
             if (succeededFields.has("photo") && capturedImageUrl !== undefined) setPhotoUri1(capturedImageUrl);
             if (succeededFields.has("photo2") && capturedImageUrl2 !== undefined) setPhotoUri2(capturedImageUrl2);
           }
 
+          await queryClient.invalidateQueries(
+            { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+          );
+          await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+
           const newFieldErrors: typeof fieldSaveErrors = {};
-          let has401 = false;
           settled.forEach((result, i) => {
             if (result.status === "rejected") {
-              const msg = result.reason instanceof Error ? result.reason.message : String(result.reason ?? "Save failed");
-              if (msg.includes("401")) has401 = true;
-              newFieldErrors[ops[i]!.field as keyof typeof fieldSaveErrors] = has401
-                ? "Session expired — re-unlock admin access"
-                : "Could not save — check connection";
+              newFieldErrors[ops[i]!.field as keyof typeof fieldSaveErrors] =
+                inventorySaveErrorMessage(result.reason);
             }
           });
           setFieldSaveErrors(newFieldErrors);
@@ -757,8 +846,7 @@ export default function EditItemScreen() {
           const parts: Array<string> = [];
           if (savedLabels.length > 0) parts.push(`${savedLabels.join(", ")} saved`);
           if (failedLabels.length > 0) parts.push(`${failedLabels.join(", ")} failed`);
-          if (cacheRefreshFailed) parts.push("Saved, but refresh failed");
-          if (has401) {
+          if (Object.values(newFieldErrors).some(message => message.includes("Session expired"))) {
             setErrorMsg("Admin session expired. Re-unlock and try again.");
           } else {
             setErrorMsg(parts.join(" · ") + " — check connection and retry");
@@ -767,46 +855,60 @@ export default function EditItemScreen() {
           return;
         }
 
-        // All fields saved — update every cache before navigating away.
-        const updatedItem: InventoryItem = {
-          ...current,
-          description: description.trim(),
-          aiKeywords: finalKeywords,
-          binLocations: finalBins,
-          barcodes: finalBarcodes,
-          ...(dimsChanged ? { dimensions: newDims } : {}),
-          orderPurchase: parsedOp,
-          orderQuantity: parsedOq,
-          ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
-          ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
+        // All fields saved — patch cache and navigate away.
+        const patchItem = (i: InventoryItem): InventoryItem => {
+          if (i.id !== current.id) return i;
+          return {
+            ...i,
+            description: description.trim(),
+            aiKeywords: finalKeywords,
+            binLocations: finalBins,
+            barcodes: finalBarcodes,
+            ...(dimsChanged ? { dimensions: newDims } : {}),
+            orderPurchase: parsedOp,
+            orderQuantity: parsedOq,
+            ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+            ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
+          };
         };
-        itemRef.current = updatedItem;
+        queryClient.setQueriesData<InventoryListResponse>(
+          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+          (old) => {
+            if (!old) return old;
+            return { ...old, items: old.items.map(patchItem) };
+          },
+        );
+        queryClient.setQueriesData<SearchInventoryResponse>(
+          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+          (old) => {
+            if (!old) return old;
+            const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+              r.item.id === current.id ? { ...r, item: patchItem(r.item) } : r;
+            return {
+              ...old,
+              results: old.results.map(patchResult),
+              // exactOptionalPropertyTypes: only include the optional key when present
+              ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
+            };
+          },
+        );
 
         if (capturedImageUrl !== undefined) setPhotoUri1(capturedImageUrl);
         if (capturedImageUrl2 !== undefined) setPhotoUri2(capturedImageUrl2);
 
-        const cacheResult = await invalidateAllCachesAfterSave({
+        await invalidateAllCachesAfterSave({
           queryClient,
           asyncStorage: AsyncStorage,
-          itemId: updatedItem.id,
-          updatedItem,
+          itemId: current.id,
         });
-        if (cacheResult && !cacheResult.ok) setErrorMsg("Saved, but refresh failed. Search may be stale.");
       }
 
       setSaveStatus("saved");
       discardConfirmedRef.current = true;
       navTimerRef.current = setTimeout(() => router.back(), 500);
     } catch (err) {
-      const msg = err && typeof err === "object" && "message" in err
-        ? String((err as { message: unknown }).message) : "Save failed";
-      if (msg.includes("401")) {
-        setErrorMsg("Admin session expired. Re-unlock and try again.");
-      } else if (msg && msg !== "Save failed" && !msg.startsWith("HTTP 5")) {
-        setErrorMsg(msg);
-      } else {
-        setErrorMsg("Could not save changes. Check connection and try again.");
-      }
+      if (!mountedRef.current || isAbortError(err)) return;
+      setErrorMsg(inventorySaveErrorMessage(err, "Could not save changes. Check connection and try again."));
       setSaveStatus("error");
 
       for (const [key, data] of inventorySnapshot) {
@@ -819,6 +921,24 @@ export default function EditItemScreen() {
         { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
       );
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+    }
+  };
+
+  const handleSave = async () => {
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
+    try {
+      await saveInventory();
+    } finally {
+      saveInFlightRef.current = false;
+    }
+  };
+  const retryFieldSave = () => { void handleSave(); };
+  const retryExpandedDescription = () => {
+    if (!expandedDescription.trim() && itemRef.current?.expandedDescription) {
+      void handleClearExpandedDesc();
+    } else {
+      void handleSaveExpandedDesc();
     }
   };
 
@@ -846,6 +966,7 @@ export default function EditItemScreen() {
     JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []) ||
     Number(op.trim() || "0") !== (item.orderPurchase ?? 0) ||
     Number(oq.trim() || "0") !== (item.orderQuantity ?? 0) ||
+    size.trim() !== savedSizeRef.current ||
     parseDimField(dimLength) !== (existingDims?.length ?? null) ||
     parseDimField(dimWidth) !== (existingDims?.width ?? null) ||
     parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
@@ -914,7 +1035,12 @@ export default function EditItemScreen() {
               onChange={(uri) => { setPhotoUri1(uri); setSaveStatus("idle"); }}
             />
             {fieldSaveErrors.photo ? (
-              <Text style={[s.fieldHint, { color: colors.destructive }]}>{fieldSaveErrors.photo}</Text>
+              <View style={s.fieldErrorRow}>
+                <Text style={[s.fieldHint, { color: colors.destructive }]}>{fieldSaveErrors.photo}</Text>
+                <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving photo">
+                  <Text style={[s.retryText, { color: colors.destructive }]}>Retry</Text>
+                </Pressable>
+              </View>
             ) : null}
             <PartPhotoPicker
               slot={2}
@@ -923,7 +1049,12 @@ export default function EditItemScreen() {
               onChange={(uri) => { setPhotoUri2(uri); setSaveStatus("idle"); }}
             />
             {fieldSaveErrors.photo2 ? (
-              <Text style={[s.fieldHint, { color: colors.destructive }]}>{fieldSaveErrors.photo2}</Text>
+              <View style={s.fieldErrorRow}>
+                <Text style={[s.fieldHint, { color: colors.destructive }]}>{fieldSaveErrors.photo2}</Text>
+                <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving second photo">
+                  <Text style={[s.retryText, { color: colors.destructive }]}>Retry</Text>
+                </Pressable>
+              </View>
             ) : null}
           </View>
 
@@ -946,7 +1077,12 @@ export default function EditItemScreen() {
             autoCapitalize="sentences"
           />
           {fieldSaveErrors.description ? (
-            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.description}</Text>
+            <View style={s.fieldErrorRow}>
+              <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.description}</Text>
+              <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving description">
+                <Text style={[s.retryText, { color: colors.destructive }]}>Retry</Text>
+              </Pressable>
+            </View>
           ) : null}
 
           {/* Inventory controls */}
@@ -978,7 +1114,12 @@ export default function EditItemScreen() {
             ))}
           </View>
           {fieldSaveErrors.opoq ? (
-            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.opoq}</Text>
+            <View style={s.fieldErrorRow}>
+              <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.opoq}</Text>
+              <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving OP and OQ">
+                <Text style={[s.retryText, { color: colors.destructive }]}>Retry</Text>
+              </Pressable>
+            </View>
           ) : null}
 
           {/* Size */}
@@ -1002,25 +1143,30 @@ export default function EditItemScreen() {
             />
             <Pressable
               onPress={handleSaveSize}
-              disabled={sizeSaving === "saving" || size.trim() === (item?.size ?? "") || size.length > 100}
+              disabled={sizeSaving === "saving" || size.trim() === savedSizeRef.current || size.length > 100}
               style={[
                 s.saveBtn,
                 {
                   marginTop: 0,
                   backgroundColor:
-                    (sizeSaving === "saving" || size.trim() === (item?.size ?? "") || size.length > 100)
+                    (sizeSaving === "saving" || size.trim() === savedSizeRef.current || size.length > 100)
                       ? colors.muted
                       : colors.primary,
                 },
               ]}
             >
-              <Text style={[s.saveBtnText, { color: (sizeSaving === "saving" || size.trim() === (item?.size ?? "") || size.length > 100) ? colors.mutedForeground : colors.primaryForeground }]}>
+              <Text style={[s.saveBtnText, { color: (sizeSaving === "saving" || size.trim() === savedSizeRef.current || size.length > 100) ? colors.mutedForeground : colors.primaryForeground }]}>
                 Save
               </Text>
             </Pressable>
           </View>
           {sizeSaving === "error" && sizeError ? (
-            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{sizeError}</Text>
+            <View style={s.fieldErrorRow}>
+              <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{sizeError}</Text>
+              <Pressable onPress={handleSaveSize} accessibilityRole="button" accessibilityLabel="Retry saving size">
+                <Text style={[s.retryText, { color: colors.destructive }]}>Retry</Text>
+              </Pressable>
+            </View>
           ) : null}
           {sizeSaving === "saved" ? (
             <Text style={{ color: colors.success, fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 4 }}>✓ Saved</Text>
@@ -1070,7 +1216,12 @@ export default function EditItemScreen() {
             </Pressable>
           </View>
           {expandedDescSaving === "error" && expandedDescError ? (
-            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{expandedDescError}</Text>
+            <View style={s.fieldErrorRow}>
+              <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{expandedDescError}</Text>
+              <Pressable onPress={retryExpandedDescription} accessibilityRole="button" accessibilityLabel="Retry saving expanded description">
+                <Text style={[s.retryText, { color: colors.destructive }]}>Retry</Text>
+              </Pressable>
+            </View>
           ) : null}
           {expandedDescSaving === "saved" ? (
             <Text style={{ color: colors.success, fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 4 }}>✓ Saved</Text>
@@ -1158,7 +1309,12 @@ export default function EditItemScreen() {
             </Pressable>
           </View>
           {fieldSaveErrors.bins ? (
-            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.bins}</Text>
+            <View style={s.fieldErrorRow}>
+              <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.bins}</Text>
+              <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving bins">
+                <Text style={[s.retryText, { color: colors.destructive }]}>Retry</Text>
+              </Pressable>
+            </View>
           ) : null}
           </View>
 
@@ -1221,7 +1377,12 @@ export default function EditItemScreen() {
             </Pressable>
           </View>
           {fieldSaveErrors.barcodes ? (
-            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.barcodes}</Text>
+            <View style={s.fieldErrorRow}>
+              <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.barcodes}</Text>
+              <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving barcodes">
+                <Text style={[s.retryText, { color: colors.destructive }]}>Retry</Text>
+              </Pressable>
+            </View>
           ) : null}
           </View>
 
@@ -1317,7 +1478,12 @@ export default function EditItemScreen() {
             </View>
           </View>
           {fieldSaveErrors.dimensions ? (
-            <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.dimensions}</Text>
+            <View style={s.fieldErrorRow}>
+              <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.dimensions}</Text>
+              <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving dimensions">
+                <Text style={[s.retryText, { color: colors.destructive }]}>Retry</Text>
+              </Pressable>
+            </View>
           ) : null}
           {(dimLength || dimWidth || dimHeight || dimDiameter) ? (
             <Text style={[s.dimSummary, { color: colors.primary }]}>
@@ -1539,6 +1705,8 @@ const s = StyleSheet.create({
     marginBottom: 6,
   },
   fieldHint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic", marginBottom: 10, lineHeight: 16 },
+  fieldErrorRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  retryText: { fontSize: 12, fontFamily: "Inter_700Bold", textDecorationLine: "underline" },
   descInput: {
     borderWidth: 1,
     borderRadius: 8,

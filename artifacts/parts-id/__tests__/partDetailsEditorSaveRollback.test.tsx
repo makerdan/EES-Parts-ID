@@ -613,3 +613,31 @@ describe("PartDetailsEditor – handleSave onSettled invalidation on success", (
     expect(invalidateCalls).toContainEqual(["searchInventory"]);
   });
 });
+
+describe("PartDetailsEditor – synchronous save re-entry guard", () => {
+  it("does not dispatch a second request set when Save is activated twice in one tick", async () => {
+    let resolveSave!: () => void;
+    mockBinsMutateAsync.mockImplementation(
+      () => new Promise<void>(resolve => { resolveSave = resolve; }),
+    );
+    autoConfirmAlert();
+
+    const item = makeItem({ binLocations: ["AISLE-01"] });
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
+    );
+    activeTree = result;
+
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
+    await act(async () => { fireEvent.press(removeBinBtn!); });
+    const saveBtn = findPressable(result.root!, "Save Details");
+
+    await act(async () => {
+      const firstSave = saveBtn!.props.onPress() as Promise<void>;
+      const secondSave = saveBtn!.props.onPress() as Promise<void>;
+      expect(mockBinsMutateAsync).toHaveBeenCalledTimes(1);
+      resolveSave();
+      await Promise.all([firstSave, secondSave]);
+    });
+  });
+});
