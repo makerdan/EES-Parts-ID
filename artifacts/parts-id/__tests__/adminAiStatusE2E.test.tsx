@@ -160,6 +160,7 @@ let statusResponses: Array<Response | Promise<Response>>;
 let fullProbeResponses: Array<Response | Promise<Response>>;
 let singleProbeResponses: Response[];
 let catalogueRefreshResponses: Array<Response | Promise<Response>>;
+let routeMutationResponses: Array<Response | Promise<Response>>;
 let providerResponses: Response[];
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
@@ -168,6 +169,27 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
     status,
     json: async () => body,
   } as Response;
+}
+
+function aiRoutesStatusResponse(fallbacks: string[] = []): Response {
+  return jsonResponse({
+    provider: "poe",
+    catalogue: {
+      freshness: "fresh",
+      models: [{
+        id: "fallback-bot",
+        name: "Fallback Bot",
+        modalities: ["text"],
+        capabilities: { text: true, vision: true, structuredOutput: true },
+      }],
+      fetchedAt: "2026-09-05T00:00:00.000Z",
+      lastSuccessAt: "2026-09-05T00:00:00.000Z",
+      error: null,
+    },
+    bots: { [FIRST_BOT]: "ok" },
+    routes: [{ feature: "enrich", primary: "Primary Bot", fallbacks }],
+    reference: { provider: "gemini", readOnly: true, note: "Read-only" },
+  });
 }
 
 function makeAppMock() {
@@ -218,6 +240,12 @@ function responseFor(url: string): Response | Promise<Response> {
   }
   if (url === `${API_BASE}/admin/ai-status/catalogue/refresh`) {
     return catalogueRefreshResponses.shift() ?? jsonResponse({ bots: {} });
+  }
+  if (
+    url === `${API_BASE}/admin/ai-status/routes` ||
+    url === `${API_BASE}/admin/ai-status/routes/reset`
+  ) {
+    return routeMutationResponses.shift() ?? jsonResponse({ bots: {} });
   }
   if (url === `${API_BASE}/admin/ai-status/probe`) {
     return fullProbeResponses.shift() ?? jsonResponse({ bots: {} });
@@ -304,8 +332,8 @@ const flushPromises = () =>
     for (let index = 0; index < 8; index++) await Promise.resolve();
   });
 
-async function renderAdminUpload() {
-  useApp.mockReturnValue(makeAppMock());
+async function renderAdminUpload(app = makeAppMock()) {
+  useApp.mockReturnValue(app);
   const tree = await render(
     <ApiHealthProvider>
       <UploadScreen />
@@ -337,6 +365,7 @@ beforeEach(() => {
   fullProbeResponses = [];
   singleProbeResponses = [];
   catalogueRefreshResponses = [];
+  routeMutationResponses = [];
   providerResponses = [];
   mockFetch.mockReset();
   mockFetch.mockImplementation((input, init) => {
@@ -715,6 +744,168 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     expect(instText(tree.root!)).not.toContain("late-catalogue-error");
     expect(instText(tree.root!)).not.toContain("Catalogue refresh failed");
     expect(findPressable(tree.root!, "Refresh models")).not.toBeNull();
+  });
+
+  it("aborts and ignores a fallback save when the screen unmounts", async () => {
+    let resolvePendingSave!: (response: Response) => void;
+    routeMutationResponses = [
+      new Promise<Response>((resolve) => {
+        resolvePendingSave = resolve;
+      }),
+    ];
+    statusResponses = [aiRoutesStatusResponse()];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const addFallbackButton = findPressable(rendered.tree.root!, "+ Add Fallback Bot");
+    expect(addFallbackButton).not.toBeNull();
+    await act(async () => { fireEvent.press(addFallbackButton!); });
+    await flushPromises();
+
+    const saveCall = callsFor("/admin/ai-status/routes")[0];
+    expect(saveCall?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(saveCall?.init?.signal?.aborted).toBe(false);
+
+    await rendered.tree.unmount();
+    activeTree = null;
+    activeBlur = undefined;
+
+    expect(saveCall?.init?.signal?.aborted).toBe(true);
+    resolvePendingSave(aiRoutesStatusResponse(["Fallback Bot"]));
+    await flushPromises();
+  });
+
+  it("ignores a fallback save response after the admin token is replaced", async () => {
+    let resolveOldSave!: (response: Response) => void;
+    routeMutationResponses = [
+      new Promise<Response>((resolve) => {
+        resolveOldSave = resolve;
+      }),
+    ];
+    statusResponses = [aiRoutesStatusResponse(), aiRoutesStatusResponse()];
+    const app = makeAppMock();
+
+    const rendered = await renderAdminUpload(app);
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const addFallbackButton = findPressable(rendered.tree.root!, "+ Add Fallback Bot");
+    expect(addFallbackButton).not.toBeNull();
+    await act(async () => { fireEvent.press(addFallbackButton!); });
+    await flushPromises();
+
+    const saveCall = callsFor("/admin/ai-status/routes")[0];
+    expect(saveCall?.init?.signal?.aborted).toBe(false);
+
+    app.adminToken = "new-admin-token";
+    await rendered.tree.rerender(
+      <ApiHealthProvider>
+        <UploadScreen />
+      </ApiHealthProvider>,
+    );
+    await flushPromises();
+
+    expect(saveCall?.init?.signal?.aborted).toBe(true);
+    resolveOldSave(aiRoutesStatusResponse(["Late Fallback Bot"]));
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).not.toContain("Late Fallback Bot");
+    expect(findPressable(rendered.tree.root!, "+ Add Fallback Bot")?.props.disabled).toBe(false);
+  });
+
+  it("aborts and ignores a fallback reset when the screen unmounts", async () => {
+    let resolvePendingReset!: (response: Response) => void;
+    routeMutationResponses = [
+      new Promise<Response>((resolve) => {
+        resolvePendingReset = resolve;
+      }),
+    ];
+    statusResponses = [aiRoutesStatusResponse(["Fallback Bot"])];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const resetButton = findPressable(rendered.tree.root!, "Reset fallbacks");
+    expect(resetButton).not.toBeNull();
+    await act(async () => { fireEvent.press(resetButton!); });
+    await flushPromises();
+
+    const resetCall = callsFor("/admin/ai-status/routes/reset")[0];
+    expect(resetCall?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(resetCall?.init?.signal?.aborted).toBe(false);
+
+    await rendered.tree.unmount();
+    activeTree = null;
+    activeBlur = undefined;
+
+    expect(resetCall?.init?.signal?.aborted).toBe(true);
+    resolvePendingReset(aiRoutesStatusResponse());
+    await flushPromises();
+  });
+
+  it("ignores a fallback reset response after the admin token is replaced", async () => {
+    let resolveOldReset!: (response: Response) => void;
+    routeMutationResponses = [
+      new Promise<Response>((resolve) => {
+        resolveOldReset = resolve;
+      }),
+    ];
+    statusResponses = [
+      aiRoutesStatusResponse(["Fallback Bot"]),
+      aiRoutesStatusResponse(["Fallback Bot"]),
+    ];
+    const app = makeAppMock();
+
+    const rendered = await renderAdminUpload(app);
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const resetButton = findPressable(rendered.tree.root!, "Reset fallbacks");
+    expect(resetButton).not.toBeNull();
+    await act(async () => { fireEvent.press(resetButton!); });
+    await flushPromises();
+
+    const resetCall = callsFor("/admin/ai-status/routes/reset")[0];
+    expect(resetCall?.init?.signal?.aborted).toBe(false);
+
+    app.adminToken = "new-admin-token";
+    await rendered.tree.rerender(
+      <ApiHealthProvider>
+        <UploadScreen />
+      </ApiHealthProvider>,
+    );
+    await flushPromises();
+
+    expect(resetCall?.init?.signal?.aborted).toBe(true);
+    resolveOldReset(jsonResponse({ error: "late-reset-error" }, false, 503));
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).not.toContain("late-reset-error");
+    expect(instText(rendered.tree.root!)).not.toContain("Fallback choices could not be reset");
+    expect(findPressable(rendered.tree.root!, "Reset fallbacks")?.props.disabled).toBe(false);
   });
 
   it("shows recovery guidance for a runtime-only provider switch and retries persistence", async () => {

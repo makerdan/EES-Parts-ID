@@ -694,6 +694,8 @@ export default function UploadScreen() {
   const aiStatusProbeControllerRef = useRef<AbortController | null>(null);
   const aiCatalogueGenerationRef = useRef(0);
   const aiCatalogueControllerRef = useRef<AbortController | null>(null);
+  const aiRoutesGenerationRef = useRef(0);
+  const aiRoutesControllerRef = useRef<AbortController | null>(null);
   const cancelAiStatusRequests = useCallback(() => {
     aiStatusGenerationRef.current += 1;
     aiStatusFetchControllerRef.current?.abort();
@@ -705,6 +707,11 @@ export default function UploadScreen() {
     aiCatalogueGenerationRef.current += 1;
     aiCatalogueControllerRef.current?.abort();
     aiCatalogueControllerRef.current = null;
+  }, []);
+  const cancelAiRoutes = useCallback(() => {
+    aiRoutesGenerationRef.current += 1;
+    aiRoutesControllerRef.current?.abort();
+    aiRoutesControllerRef.current = null;
   }, []);
 
   const fetchAiStatus = useCallback(async () => {
@@ -884,6 +891,12 @@ export default function UploadScreen() {
 
   const saveAiRoutes = useCallback(async (routes: Array<{ feature: string; fallbacks: Array<string> }>) => {
     if (!adminToken || !API_BASE || aiRoutesSaving) return;
+    cancelAiRoutes();
+    const requestToken = adminToken;
+    const generation = aiRoutesGenerationRef.current + 1;
+    aiRoutesGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiRoutesControllerRef.current = controller;
     setAiRoutesSaving(true);
     setAiStatusError(null);
     try {
@@ -891,20 +904,50 @@ export default function UploadScreen() {
         method: "PUT",
         headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ routes: Object.fromEntries(routes.map((route) => [route.feature, route.fallbacks])) }),
+        signal: controller.signal,
       });
       const data = (await res.json()) as AiStatusPayload & { error?: string };
+      if (
+        !isMountedRef.current ||
+        adminTokenRef.current !== requestToken ||
+        generation !== aiRoutesGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setAiStatus(data.catalogue ? data : null);
       setAiStatusBots(data.bots ?? {});
     } catch (err) {
-      setAiStatusError(err instanceof Error ? err.message : "Fallback choices could not be saved");
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiRoutesGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusError(err instanceof Error ? err.message : "Fallback choices could not be saved");
+      }
     } finally {
-      setAiRoutesSaving(false);
+      if (aiRoutesControllerRef.current === controller) {
+        aiRoutesControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiRoutesGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiRoutesSaving(false);
+      }
     }
-  }, [adminToken, aiRoutesSaving]);
+  }, [adminToken, aiRoutesSaving, cancelAiRoutes]);
 
   const resetAiRoutes = useCallback(async () => {
     if (!adminToken || !API_BASE || aiRoutesSaving) return;
+    cancelAiRoutes();
+    const requestToken = adminToken;
+    const generation = aiRoutesGenerationRef.current + 1;
+    aiRoutesGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiRoutesControllerRef.current = controller;
     setAiRoutesSaving(true);
     setAiStatusError(null);
     try {
@@ -912,23 +955,49 @@ export default function UploadScreen() {
         method: "POST",
         headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({}),
+        signal: controller.signal,
       });
       const data = (await res.json()) as AiStatusPayload & { error?: string };
+      if (
+        !isMountedRef.current ||
+        adminTokenRef.current !== requestToken ||
+        generation !== aiRoutesGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setAiStatus(data);
       setAiStatusBots(data.bots ?? {});
     } catch (err) {
-      setAiStatusError(err instanceof Error ? err.message : "Fallback choices could not be reset");
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiRoutesGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusError(err instanceof Error ? err.message : "Fallback choices could not be reset");
+      }
     } finally {
-      setAiRoutesSaving(false);
+      if (aiRoutesControllerRef.current === controller) {
+        aiRoutesControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiRoutesGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiRoutesSaving(false);
+      }
     }
-  }, [adminToken, aiRoutesSaving]);
+  }, [adminToken, aiRoutesSaving, cancelAiRoutes]);
 
   useEffect(() => {
     cancelAiStatusRequests();
     cancelAiCatalogueRefresh();
+    cancelAiRoutes();
     if (isMountedRef.current) {
       setAiCatalogueRefreshing(false);
+      setAiRoutesSaving(false);
     }
     if (adminToken) {
       void fetchAiStatus();
@@ -939,8 +1008,9 @@ export default function UploadScreen() {
     return () => {
       cancelAiStatusRequests();
       cancelAiCatalogueRefresh();
+      cancelAiRoutes();
     };
-  }, [adminToken, cancelAiCatalogueRefresh, cancelAiStatusRequests, fetchAiStatus]);
+  }, [adminToken, cancelAiCatalogueRefresh, cancelAiRoutes, cancelAiStatusRequests, fetchAiStatus]);
 
   const handleRestartPress = useCallback(() => {
     Alert.alert(
@@ -1128,12 +1198,13 @@ export default function UploadScreen() {
       expandDescReaderRef.current?.cancel().catch(() => {});
       cancelAiStatusRequests();
       cancelAiCatalogueRefresh();
+      cancelAiRoutes();
       if (pasteDebounceRef.current) {
         clearTimeout(pasteDebounceRef.current);
         pasteDebounceRef.current = null;
       }
     };
-  }, [cancelAiCatalogueRefresh, cancelAiStatusRequests]);
+  }, [cancelAiCatalogueRefresh, cancelAiRoutes, cancelAiStatusRequests]);
   // Auto-fetch bin-diff preview whenever the raw CSV changes so admins
   // see a replace-warning before they can press Upload.
   // Uses POST /api/admin/upload/preview (raw CSV text) — the same endpoint
