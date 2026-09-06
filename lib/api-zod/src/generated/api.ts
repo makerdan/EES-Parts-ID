@@ -47,6 +47,7 @@ export const listInventoryResponseItemsItemOrderPurchaseMin = 0;
 export const listInventoryResponseItemsItemOrderQuantityMin = 0;
 
 
+
 export const ListInventoryResponse = zod.object({
   "items": zod.array(zod.object({
   "id": zod.number(),
@@ -164,6 +165,7 @@ export const searchInventoryResponseSizeUnknownResultsItemItemOrderQuantityMin =
 export const searchInventoryResponseSizeUnknownResultsItemVariantsItemOrderPurchaseMin = 0;
 
 export const searchInventoryResponseSizeUnknownResultsItemVariantsItemOrderQuantityMin = 0;
+
 
 
 export const SearchInventoryResponse = zod.object({
@@ -298,6 +300,7 @@ export const upsertInventoryBatchBodyItemsItemOrderPurchaseMin = 0;
 export const upsertInventoryBatchBodyItemsItemOrderQuantityMin = 0;
 
 
+
 export const UpsertInventoryBatchBody = zod.object({
   "items": zod.array(zod.object({
   "vendor": zod.string(),
@@ -380,6 +383,7 @@ export const updateItemBinsResponseOrderPurchaseMin = 0;
 export const updateItemBinsResponseOrderQuantityMin = 0;
 
 
+
 export const UpdateItemBinsResponse = zod.object({
   "id": zod.number(),
   "vendor": zod.string(),
@@ -420,6 +424,7 @@ export const updateItemOrderBodyOrderPurchaseMin = 0;
 export const updateItemOrderBodyOrderQuantityMin = 0;
 
 
+
 export const UpdateItemOrderBody = zod.object({
   "orderPurchase": zod.number().min(updateItemOrderBodyOrderPurchaseMin),
   "orderQuantity": zod.number().min(updateItemOrderBodyOrderQuantityMin)
@@ -428,6 +433,7 @@ export const UpdateItemOrderBody = zod.object({
 export const updateItemOrderResponseOrderPurchaseMin = 0;
 
 export const updateItemOrderResponseOrderQuantityMin = 0;
+
 
 
 export const UpdateItemOrderResponse = zod.object({
@@ -513,6 +519,7 @@ export const updateItemDimensionsResponseOrderPurchaseMin = 0;
 export const updateItemDimensionsResponseOrderQuantityMin = 0;
 
 
+
 export const UpdateItemDimensionsResponse = zod.object({
   "id": zod.number(),
   "vendor": zod.string(),
@@ -551,6 +558,7 @@ export const LookupByBarcodeParams = zod.object({
 export const lookupByBarcodeResponseOrderPurchaseMin = 0;
 
 export const lookupByBarcodeResponseOrderQuantityMin = 0;
+
 
 
 export const LookupByBarcodeResponse = zod.object({
@@ -597,6 +605,7 @@ export const updateItemBarcodesResponseOrderPurchaseMin = 0;
 export const updateItemBarcodesResponseOrderQuantityMin = 0;
 
 
+
 export const UpdateItemBarcodesResponse = zod.object({
   "id": zod.number(),
   "vendor": zod.string(),
@@ -639,6 +648,7 @@ export const UpdateItemSizeBody = zod.object({
 export const updateItemSizeResponseOrderPurchaseMin = 0;
 
 export const updateItemSizeResponseOrderQuantityMin = 0;
+
 
 
 export const UpdateItemSizeResponse = zod.object({
@@ -685,6 +695,7 @@ export const updateItemDescriptionResponseOrderPurchaseMin = 0;
 export const updateItemDescriptionResponseOrderQuantityMin = 0;
 
 
+
 export const UpdateItemDescriptionResponse = zod.object({
   "id": zod.number(),
   "vendor": zod.string(),
@@ -723,6 +734,7 @@ export const ReenrichItemParams = zod.object({
 export const reenrichItemResponseOrderPurchaseMin = 0;
 
 export const reenrichItemResponseOrderQuantityMin = 0;
+
 
 
 export const ReenrichItemResponse = zod.object({
@@ -767,6 +779,7 @@ export const UpdateItemKeywordsBody = zod.object({
 export const updateItemKeywordsResponseOrderPurchaseMin = 0;
 
 export const updateItemKeywordsResponseOrderQuantityMin = 0;
+
 
 
 export const UpdateItemKeywordsResponse = zod.object({
@@ -819,6 +832,7 @@ export const LookupDictionaryResponse = zod.object({
 export const aiIdentifyPartBodyImagesMax = 2;
 
 
+
 export const AiIdentifyPartBody = zod.object({
   "images": zod.array(zod.string().describe('Base64-encoded image data (data URI)')).max(aiIdentifyPartBodyImagesMax),
   "keywords": zod.string().optional(),
@@ -836,6 +850,7 @@ export const aiIdentifyPartResponseResultsItemItemOrderQuantityMin = 0;
 export const aiIdentifyPartResponseResultsItemVariantsItemOrderPurchaseMin = 0;
 
 export const aiIdentifyPartResponseResultsItemVariantsItemOrderQuantityMin = 0;
+
 
 
 export const AiIdentifyPartResponse = zod.object({
@@ -943,6 +958,7 @@ export const ListWarehouseZonesResponse = zod.object({
  */
 
 
+
 export const CreateWarehouseZoneBody = zod.object({
   "aisleId": zod.string().min(1),
   "sectionNum": zod.number().nullish(),
@@ -992,6 +1008,8 @@ export const ListPublicMapAnchorsResponse = zod.object({
 export const UpdateWarehouseZoneParams = zod.object({
   "id": zod.coerce.number()
 })
+
+
 
 
 export const UpdateWarehouseZoneBody = zod.object({
@@ -1048,6 +1066,7 @@ export const getZoneAlignmentResponseScaleMin = 0.1;
 export const getZoneAlignmentResponseScaleMax = 5;
 
 
+
 export const GetZoneAlignmentResponse = zod.object({
   "translateX": zod.number().min(getZoneAlignmentResponseTranslateXMin).max(getZoneAlignmentResponseTranslateXMax),
   "translateY": zod.number().min(getZoneAlignmentResponseTranslateYMin).max(getZoneAlignmentResponseTranslateYMax),
@@ -1068,6 +1087,7 @@ export const updateZoneAlignmentBodyScaleMin = 0.1;
 export const updateZoneAlignmentBodyScaleMax = 5;
 
 
+
 export const UpdateZoneAlignmentBody = zod.object({
   "translateX": zod.number().min(updateZoneAlignmentBodyTranslateXMin).max(updateZoneAlignmentBodyTranslateXMax),
   "translateY": zod.number().min(updateZoneAlignmentBodyTranslateYMin).max(updateZoneAlignmentBodyTranslateYMax),
@@ -1084,6 +1104,7 @@ export const updateZoneAlignmentResponseScaleMin = 0.1;
 export const updateZoneAlignmentResponseScaleMax = 5;
 
 
+
 export const UpdateZoneAlignmentResponse = zod.object({
   "translateX": zod.number().min(updateZoneAlignmentResponseTranslateXMin).max(updateZoneAlignmentResponseTranslateXMax),
   "translateY": zod.number().min(updateZoneAlignmentResponseTranslateYMin).max(updateZoneAlignmentResponseTranslateYMax),
@@ -1097,6 +1118,7 @@ export const UpdateZoneAlignmentResponse = zod.object({
  */
 export const getAdminAuditLogQueryLimitDefault = 50;
 export const getAdminAuditLogQueryLimitMax = 200;
+
 
 
 export const GetAdminAuditLogQueryParams = zod.object({
@@ -1208,6 +1230,7 @@ export const updateAdminAiRoutesBodyFallbacksMax = 5;
 export const updateAdminAiRoutesBodyRoutesMaxOne = 5;
 
 
+
 export const UpdateAdminAiRoutesBody = zod.object({
   "feature": zod.enum(['enrich', 'identify', 'dimensions', 'catalog']).optional(),
   "fallbacks": zod.array(zod.string().min(1)).max(updateAdminAiRoutesBodyFallbacksMax).optional(),
@@ -1309,4 +1332,5 @@ export const AiReferenceResponse = zod.void()
  * @summary Delete the authenticated user's own account
  */
 export const DeleteUserMeResponse = zod.void()
+
 

@@ -729,3 +729,4 @@ export type DeleteUserMe400 = {
 export type DeleteUserMe502 = {
   error: string;
 };
+
