@@ -74,9 +74,15 @@ function matrixKeys(): Set<string> {
   return new Set(ROUTE_ACCESS_MATRIX.map((entry) => matrixKey(entry.method, entry.path)));
 }
 
-function literalRouteDeclarations(): Array<{ method: string; path: string }> {
+type LiteralRouteDeclaration = {
+  method: string;
+  path: string;
+  source: string;
+};
+
+function literalRouteDeclarations(): Array<LiteralRouteDeclaration> {
   const routesDir = path.resolve(__dirname, "../src/routes");
-  const declarations: Array<{ method: string; path: string }> = [];
+  const declarations: Array<LiteralRouteDeclaration> = [];
   const declarationPattern =
     /router\.(get|post|put|patch|delete)\(\s*["']([^"']+)["']/g;
 
@@ -90,13 +96,23 @@ function literalRouteDeclarations(): Array<{ method: string; path: string }> {
     for (const match of source.matchAll(declarationPattern)) {
       const localPath = match[2]!;
       const fullPath = `${mount}/${localPath}`.replace(/\/+/g, "/").replace(/\/+$/, "") || "/";
-      declarations.push({ method: match[1]!, path: fullPath });
+      const declarationStart = match.index ?? 0;
+      const declarationLineEnd = source.indexOf("\n", declarationStart);
+      const declarationLine = source.slice(
+        declarationStart,
+        declarationLineEnd === -1 ? source.length : declarationLineEnd,
+      );
+      declarations.push({ method: match[1]!, path: fullPath, source: declarationLine });
     }
   }
 
   // This route intentionally uses a regular expression because barcode values
   // may contain characters that are not safe to express as a named segment.
-  declarations.push({ method: "get", path: "/api/inventory/barcode/:barcode" });
+  declarations.push({
+    method: "get",
+    path: "/api/inventory/barcode/:barcode",
+    source: "router.get(/^\\/barcode\\/(.+)$/, requireAppAuth, ...)",
+  });
   return declarations;
 }
 
@@ -124,6 +140,21 @@ describe("route access matrix completeness", () => {
       .filter((key) => !keys.has(key));
 
     expect(missing).toEqual([]);
+  });
+
+  it("requires the admin guard on every admin-only declaration", () => {
+    const declarations = new Map(
+      literalRouteDeclarations().map((declaration) => [
+        matrixKey(declaration.method, declaration.path),
+        declaration,
+      ]),
+    );
+    const missingGuards = ROUTE_ACCESS_MATRIX
+      .filter((entry) => entry.access === "admin-only")
+      .filter((entry) => !declarations.get(matrixKey(entry.method, entry.path))?.source.includes("requireAdminAuth"))
+      .map((entry) => `${entry.method} ${entry.path} — intended audience: ${entry.access}`);
+
+    expect(missingGuards).toEqual([]);
   });
 
   it("keeps public access limited to health and warehouse layout reads", () => {
