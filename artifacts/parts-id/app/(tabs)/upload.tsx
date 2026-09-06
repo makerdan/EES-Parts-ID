@@ -2031,6 +2031,7 @@ export default function UploadScreen() {
   };
 
   const handlePasteChange = useCallback((text: string) => {
+    fileSelectionGenerationRef.current += 1;
     setPasteText(text);
     setFileName(null);
     setFileType(null);

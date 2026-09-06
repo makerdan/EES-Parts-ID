@@ -505,4 +505,80 @@ describe("UploadScreen — administrator spreadsheet import workflow", () => {
     expect(uploadBody.csv).toContain('"NEWCO","NEW-001","new row","NEW-BIN"');
     expect(uploadBody.csv).not.toContain('"OLDCO","OLD-001","old row","OLD-BIN"');
   });
+
+  it("keeps pasted rows when a file parser resolves after the paste debounce", async () => {
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+
+    const importCard = findPressable(screenRoot(), "Data Import");
+    expect(importCard).not.toBeNull();
+    await act(async () => { fireEvent.press(importCard!); });
+
+    const chooseFile = () => findPressable(screenRoot(), "Choose CSV, Excel, or ODS File");
+    expect(chooseFile()).not.toBeNull();
+
+    const oldRows = [
+      ["Vendor", "Catalog", "Description", "BinLocation"],
+      ["OLDCO", "OLD-001", "old row", "OLD-BIN"],
+    ];
+    let resolveOldPicker!: (result: typeof oldWorkbook) => void;
+    const oldPicker = new Promise<typeof oldWorkbook>(resolve => { resolveOldPicker = resolve; });
+    let resolveOldSheetRead!: (rows: unknown[][]) => void;
+    const pendingOldSheetRead = new Promise<unknown[][]>(resolve => { resolveOldSheetRead = resolve; });
+    mockGetDocumentAsync.mockImplementationOnce(() => oldPicker);
+    mockReadSheet.mockImplementationOnce(() => pendingOldSheetRead);
+
+    await act(async () => { fireEvent.press(chooseFile()!); });
+    await act(async () => { resolveOldPicker(oldWorkbook); });
+    await waitFor(() => expect(mockReadSheet).toHaveBeenCalledTimes(1));
+
+    const pasteInput = screenRoot().queryAll(
+      (node: TestInstance) =>
+        (node.type as string) === "rn-text-input" &&
+        node.props.placeholder === "Vendor,Catalog,Description,BinLocation\nEATON,BR120,1 Pole Breaker,A1",
+      { includeSelf: true },
+    )[0];
+    expect(pasteInput).not.toBeUndefined();
+
+    const pastedRows = [
+      ["Vendor", "Catalog", "Description", "BinLocation"],
+      ["PASTECO", "PASTE-001", "pasted row", "PASTE-BIN"],
+    ];
+    const pastedText = pastedRows.map(row => row.join(",")).join("\n");
+    await act(async () => {
+      fireEvent.changeText(pasteInput!, pastedText);
+      await new Promise(resolve => setTimeout(resolve, 450));
+    });
+    await waitFor(() => {
+      expect(hasText(screenRoot(), "Preview (1 rows)")).toBe(true);
+    });
+
+    // The delayed file parser must not replace the newer pasted input or
+    // trigger another preview request.
+    await act(async () => {
+      resolveOldSheetRead(oldRows);
+    });
+    await flushPromises();
+    expect(hasText(screenRoot(), "old-workbook.xlsx")).toBe(false);
+    expect(apiRequests).toHaveLength(1);
+    const previewBody = JSON.parse(String(apiRequests[0]!.init?.body)) as { csv: string };
+    expect(previewBody.csv).toContain('"PASTECO","PASTE-001","pasted row","PASTE-BIN"');
+    expect(previewBody.csv).not.toContain('"OLDCO","OLD-001","old row","OLD-BIN"');
+
+    const confirmReplacement = findPressable(screenRoot(), "I understand 1 existing bin assignment");
+    expect(confirmReplacement).not.toBeNull();
+    await act(async () => { fireEvent.press(confirmReplacement!); });
+    const upload = findPressable(screenRoot(), "Upload 1 Items");
+    expect(upload).not.toBeNull();
+    expect(upload!.props.disabled).toBe(false);
+    await act(async () => { fireEvent.press(upload!); });
+    await waitFor(() => {
+      expect(hasText(screenRoot(), "Upload complete — inserted 1, updated 0 (1 total)")).toBe(true);
+    });
+
+    expect(apiRequests).toHaveLength(2);
+    const uploadBody = JSON.parse(String(apiRequests[1]!.init?.body)) as { csv: string };
+    expect(uploadBody.csv).toContain('"PASTECO","PASTE-001","pasted row","PASTE-BIN"');
+    expect(uploadBody.csv).not.toContain('"OLDCO","OLD-001","old row","OLD-BIN"');
+  });
 });
