@@ -325,6 +325,43 @@ try {
     "owned staging and backup artifacts must be cleaned without touching lookalikes",
   );
 
+  let restoreFailure;
+  await assert.rejects(
+    () =>
+      syncAccountSkillProjection({
+        accountSource: interruptedSource,
+        workspaceRoot: interruptedWorkspace,
+        afterInstall: async ({ destination }) => {
+          await rm(join(destination, "catalog/SKILL.md"));
+        },
+        restoreBackup: async () => {
+          throw new Error("simulated restore failure");
+        },
+      }),
+    (error) => {
+      restoreFailure = error;
+      return error instanceof AccountSkillProjectionError && error.code === "atomic-restore-failed";
+    },
+  );
+  assert.match(restoreFailure.message, /backup preserved at/);
+  const retainedArtifacts = (await readdir(interruptedSkillsParent)).filter((entry) =>
+    entry.startsWith(".account-projections.backup-"),
+  );
+  assert.equal(retainedArtifacts.length, 1, "a failed restore must retain the owned backup artifact");
+  const retainedBackupRoot = join(interruptedSkillsParent, retainedArtifacts[0]);
+  assert.equal(
+    await readFile(join(retainedBackupRoot, "catalog/SKILL.md"), "utf8"),
+    "# Catalog v2\n",
+    "the retained backup must contain the last known-good projection",
+  );
+  assert.equal(
+    JSON.parse(await readFile(join(retainedBackupRoot, ACCOUNT_SKILLS_MANIFEST_FILE), "utf8")).sourceRevision,
+    "account-rev-5",
+    "the retained backup must preserve the last known-good manifest",
+  );
+  assert.equal(await exists(interruptedProjectionRoot), false, "a failed restore must not masquerade as an installed projection");
+  assert.equal(await exists(interruptedLookalike), true, "restore failure handling must not touch lookalike directories");
+
   const concurrentWorkspace = join(root, "concurrent-workspace");
   const concurrentProjectionRoot = join(concurrentWorkspace, ACCOUNT_SKILLS_PROJECTION_RELATIVE_PATH);
   const staleStaging = `${concurrentProjectionRoot}.staging-11111111-1111-4111-8111-111111111111`;

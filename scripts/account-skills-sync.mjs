@@ -6,6 +6,7 @@ import {
 
 const FAILURE_REASONS = new Set([
   "atomic-install-failed",
+  "atomic-restore-failed",
   "incomplete-projection",
   "invalid-account-source",
   "invalid-skill-name",

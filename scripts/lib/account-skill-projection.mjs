@@ -416,6 +416,7 @@ export async function syncAccountSkillProjection({
   workspaceRoot = process.cwd(),
   lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS,
   afterInstall,
+  restoreBackup = async ({ backupRoot, destination }) => rename(backupRoot, destination),
 } = {}) {
   if (!accountSource) {
     throw new AccountSkillProjectionError("source-unavailable", "ACCOUNT_SKILLS_SOURCE is required; refusing to use a fallback source");
@@ -470,11 +471,36 @@ export async function syncAccountSkillProjection({
       if (afterInstall) await afterInstall({ destination, source: sourceAfter });
       await validateProjection(destination, sourceAfter);
     } catch (error) {
+      let rollbackError;
       if (installedDestination) {
-        await rm(destination, { recursive: true, force: true });
+        try {
+          await rm(destination, { recursive: true, force: true });
+        } catch (error) {
+          rollbackError = error;
+        }
       }
-      if (hadDestination) await rename(backupRoot, destination);
-      backupRoot = undefined;
+      if (hadDestination && !rollbackError) {
+        try {
+          await restoreBackup({ backupRoot, destination });
+          backupRoot = undefined;
+        } catch (error) {
+          rollbackError = error;
+        }
+      }
+      if (rollbackError) {
+        const preservedBackupRoot = backupRoot;
+        if (preservedBackupRoot) backupRoot = undefined;
+        throw new AccountSkillProjectionError(
+          preservedBackupRoot ? "atomic-restore-failed" : "atomic-install-failed",
+          preservedBackupRoot
+            ? `Unable to restore account skill projection; backup preserved at ${preservedBackupRoot}: ${
+                rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+              }`
+            : `Unable to install account skill projection: ${
+                rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+              }`,
+        );
+      }
       throw new AccountSkillProjectionError(
         "atomic-install-failed",
         `Unable to install account skill projection: ${error instanceof Error ? error.message : String(error)}`,
