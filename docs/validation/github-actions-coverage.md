@@ -8,6 +8,7 @@ not inferred from this file.
 | Canonical local check | Remote owner / exact command | Coverage and decision | Event scope | Evidence |
 |---|---|---|---|---|
 | gate-guard | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tracked workflow |
+| api-suite-floor-contract | `CI / required` → `pnpm run test-standard-plus` | direct portable floor-plan fixture-isolation contract | PR, merge queue, main push, manual | inferred from tier manifest |
 | skill-mirror-sync-contract | `CI / required` → `pnpm run test-standard-plus` | direct portable account-skill projection contract | PR, merge queue, main push, manual | inferred from tier manifest |
 | public-repository-boundary | `CI / required` → `pnpm run test-standard-plus` | direct portable boundary scan; historical findings require owner-led remediation | PR, merge queue, main push, manual | inferred from tier manifest |
 | plan-gate-fix | none | local-only: task-plan archive and task provenance are not available in an untrusted PR checkout | local task validation | intentional local-only |

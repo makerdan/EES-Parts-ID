@@ -9,6 +9,7 @@ export const FAST = [
   ["plan-gate-stubs", "node scripts/check-failure-gate.mjs --stubs-only"],
   ["regression-guard-fix", "node scripts/check-regression-guard.mjs --fix-stub"],
   ["regression-guard", "node scripts/check-regression-guard.mjs"],
+  ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
   ["skill-mirror-sync-contract", "node scripts/test/skill-mirror-sync-contract.test.mjs"],
   ["public-repository-boundary", "node scripts/test/public-repository-boundary.test.mjs"],
   ["patched-dependencies-contract", "node scripts/test/patched-dependencies.test.mjs"],
