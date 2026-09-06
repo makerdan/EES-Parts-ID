@@ -119,6 +119,10 @@ export default function AdminAuditLogScreen() {
   const [error, setError] = useState<string | null>(null);
   const nextCursorRef = useRef<number | null>(null);
   const hasMoreRef = useRef(true);
+  const requestVersionRef = useRef(0);
+  const fullPageRequestRef = useRef<number | null>(null);
+  const activeLoadMoreRequestRef = useRef<number | null>(null);
+  const nextLoadMoreRequestIdRef = useRef(0);
 
   const fetchPage = useCallback(async (beforeId: number | null, token: string): Promise<AuditLogPage> => {
     const url = beforeId !== null
@@ -133,36 +137,70 @@ export default function AdminAuditLogScreen() {
 
   const fetchLog = useCallback(async (isRefresh = false) => {
     if (!adminToken) return;
+
+    const requestVersion = requestVersionRef.current + 1;
+    requestVersionRef.current = requestVersion;
+    fullPageRequestRef.current = requestVersion;
+    activeLoadMoreRequestRef.current = null;
+    setLoadingMore(false);
+
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
     try {
       const page = await fetchPage(null, adminToken);
+      if (requestVersion !== requestVersionRef.current) return;
       setRows(mergeAuditRows([], page.rows));
       nextCursorRef.current = page.nextCursor;
       hasMoreRef.current = page.nextCursor !== null;
     } catch (err) {
+      if (requestVersion !== requestVersionRef.current) return;
       if (err instanceof TypeError) reportNetworkFailure();
       setError(err instanceof Error ? err.message : "Failed to load audit log");
     } finally {
+      if (requestVersion !== requestVersionRef.current) return;
+      fullPageRequestRef.current = null;
       if (isRefresh) setRefreshing(false);
       else setLoading(false);
     }
   }, [adminToken, fetchPage, reportNetworkFailure]);
 
   const loadMore = useCallback(async () => {
-    if (!adminToken || loadingMore || !hasMoreRef.current || nextCursorRef.current === null) return;
+    if (
+      !adminToken ||
+      loadingMore ||
+      fullPageRequestRef.current !== null ||
+      !hasMoreRef.current ||
+      nextCursorRef.current === null
+    ) return;
+
+    const beforeId = nextCursorRef.current;
+    const requestVersion = requestVersionRef.current;
+    const requestId = nextLoadMoreRequestIdRef.current + 1;
+    nextLoadMoreRequestIdRef.current = requestId;
+    activeLoadMoreRequestRef.current = requestId;
     setLoadingMore(true);
     try {
-      const page = await fetchPage(nextCursorRef.current, adminToken);
+      const page = await fetchPage(beforeId, adminToken);
+      if (
+        requestVersion !== requestVersionRef.current ||
+        activeLoadMoreRequestRef.current !== requestId
+      ) return;
       setRows((prev) => mergeAuditRows(prev, page.rows));
       nextCursorRef.current = page.nextCursor;
       hasMoreRef.current = page.nextCursor !== null;
     } catch (err) {
+      if (
+        requestVersion !== requestVersionRef.current ||
+        activeLoadMoreRequestRef.current !== requestId
+      ) return;
       if (err instanceof TypeError) reportNetworkFailure();
       setError(err instanceof Error ? err.message : "Failed to load more");
     } finally {
-      setLoadingMore(false);
+      if (activeLoadMoreRequestRef.current === requestId) {
+        activeLoadMoreRequestRef.current = null;
+        setLoadingMore(false);
+      }
     }
   }, [adminToken, loadingMore, fetchPage, reportNetworkFailure]);
 

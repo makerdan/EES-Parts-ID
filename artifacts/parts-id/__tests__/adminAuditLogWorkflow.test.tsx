@@ -177,6 +177,16 @@ async function flushPromises() {
   });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 async function renderScreen() {
   useApp.mockReturnValue({
     isAdmin: true,
@@ -202,6 +212,7 @@ afterEach(async () => {
   mockRouter.back.mockClear();
   mockRouter.replace.mockClear();
 });
+
 
 describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
   it("loads the first page, sends the cursor, and appends the next page once", async () => {
@@ -349,6 +360,189 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     const targets = renderedTargets(screen.root!);
     expect(targets).toEqual(["target-newest", "target-next"]);
     expect(new Set(targets).size).toBe(targets.length);
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
+  it("keeps the refresh result and cursor when refresh finishes before stale load-more", async () => {
+    const staleLoadMore = deferred<Response>();
+    const refresh = deferred<Response>();
+    const refreshedPage: AuditPage = {
+      rows: [
+        auditRow(201, "refresh-newest", "promote"),
+        auditRow(200, "refresh-next"),
+      ],
+      nextCursor: 200,
+    };
+
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(firstPage))
+      .mockImplementationOnce(() => staleLoadMore.promise)
+      .mockImplementationOnce(() => refresh.promise)
+      .mockResolvedValueOnce(jsonResponse(secondPage));
+
+    const screen = await renderScreen();
+    await act(async () => {
+      fireEvent.press(
+        findPressableByAccessibilityLabel(screen.root!, "Load more audit log entries")!,
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.press(findPressableByAccessibilityLabel(screen.root!, "Refresh")!);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      refresh.resolve(jsonResponse(refreshedPage));
+      await refresh.promise;
+    });
+    expect(renderedTargets(screen.root!)).toEqual([
+      "refresh-newest",
+      "refresh-next",
+    ]);
+    expect(instText(screen.root!)).toContain("2 events+");
+
+    await act(async () => {
+      staleLoadMore.resolve(jsonResponse(secondPage));
+      await staleLoadMore.promise;
+    });
+    expect(renderedTargets(screen.root!)).toEqual([
+      "refresh-newest",
+      "refresh-next",
+    ]);
+    expect(instText(screen.root!)).toContain("2 events+");
+
+    await act(async () => {
+      fireEvent.press(
+        findPressableByAccessibilityLabel(screen.root!, "Load more audit log entries")!,
+      );
+      await Promise.resolve();
+    });
+    await flushPromises();
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      4,
+      "http://localhost:3001/api/admin/audit-log?limit=50&before_id=200",
+      { headers: { Authorization: "Bearer admin-token-abc" } },
+    );
+    expect(renderedTargets(screen.root!)).toEqual([
+      "refresh-newest",
+      "refresh-next",
+      "target-older",
+      "target-oldest",
+    ]);
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
+  it("keeps the newest refresh result when load-more finishes before refresh", async () => {
+    const refresh = deferred<Response>();
+    const refreshedPage: AuditPage = {
+      rows: [
+        auditRow(301, "latest-newest", "promote"),
+        auditRow(300, "latest-next"),
+      ],
+      nextCursor: 300,
+    };
+
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(firstPage))
+      .mockResolvedValueOnce(jsonResponse(secondPage))
+      .mockImplementationOnce(() => refresh.promise);
+
+    const screen = await renderScreen();
+    await act(async () => {
+      fireEvent.press(
+        findPressableByAccessibilityLabel(screen.root!, "Load more audit log entries")!,
+      );
+      await Promise.resolve();
+    });
+    await flushPromises();
+    expect(renderedTargets(screen.root!)).toEqual([
+      "target-newest",
+      "target-next",
+      "target-older",
+      "target-oldest",
+    ]);
+
+    await act(async () => {
+      fireEvent.press(findPressableByAccessibilityLabel(screen.root!, "Refresh")!);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      refresh.resolve(jsonResponse(refreshedPage));
+      await refresh.promise;
+    });
+
+    expect(renderedTargets(screen.root!)).toEqual([
+      "latest-newest",
+      "latest-next",
+    ]);
+    expect(instText(screen.root!)).toContain("2 events+");
+    expect(instText(screen.root!)).not.toContain("4 events");
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
+  it("recovers from a failed refresh without allowing stale load-more success to replace it", async () => {
+    const staleLoadMore = deferred<Response>();
+    const refresh = deferred<Response>();
+    const retryPage: AuditPage = {
+      rows: [
+        auditRow(401, "retry-newest", "promote"),
+        auditRow(400, "retry-next"),
+      ],
+      nextCursor: 400,
+    };
+
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(firstPage))
+      .mockImplementationOnce(() => staleLoadMore.promise)
+      .mockImplementationOnce(() => refresh.promise)
+      .mockResolvedValueOnce(jsonResponse(retryPage));
+
+    const screen = await renderScreen();
+    await act(async () => {
+      fireEvent.press(
+        findPressableByAccessibilityLabel(screen.root!, "Load more audit log entries")!,
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.press(findPressableByAccessibilityLabel(screen.root!, "Refresh")!);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      refresh.reject(new Error("Refresh failed"));
+      await expect(refresh.promise).rejects.toThrow("Refresh failed");
+    });
+    await act(async () => {
+      staleLoadMore.resolve(jsonResponse(secondPage));
+      await staleLoadMore.promise;
+    });
+
+    expect(instText(screen.root!)).toContain("Refresh failed");
+    expect(renderedTargets(screen.root!)).toEqual([]);
+
+    await act(async () => {
+      fireEvent.press(findPressable(screen.root!, "Retry")!);
+      await Promise.resolve();
+    });
+    await flushPromises();
+
+    expect(renderedTargets(screen.root!)).toEqual([
+      "retry-newest",
+      "retry-next",
+    ]);
+    expect(instText(screen.root!)).toContain("2 events+");
+    expect(instText(screen.root!)).not.toContain("Refresh failed");
 
     await act(async () => {
       screen.unmount();
