@@ -134,6 +134,7 @@ export default function EditItemScreen() {
   const [op, setOp] = useState(String(item?.orderPurchase ?? 0));
   const [oq, setOq] = useState(String(item?.orderQuantity ?? 0));
   const [size, setSize] = useState(item?.size ?? "");
+  const savedSizeRef = useRef((item?.size ?? "").trim());
   const [sizeSaving, setSizeSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [sizeError, setSizeError] = useState<string | null>(null);
   const [expandedDescription, setExpandedDescription] = useState(item?.expandedDescription ?? "");
@@ -306,6 +307,7 @@ export default function EditItemScreen() {
       );
       await invalidateListCache({ queryClient });
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      savedSizeRef.current = newSizeVal ?? "";
       setSizeSaving("saved");
     } catch (err) {
       setSizeError(err instanceof Error ? err.message : "Save failed");
@@ -925,6 +927,7 @@ export default function EditItemScreen() {
     JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []) ||
     Number(op.trim() || "0") !== (item.orderPurchase ?? 0) ||
     Number(oq.trim() || "0") !== (item.orderQuantity ?? 0) ||
+    size.trim() !== savedSizeRef.current ||
     parseDimField(dimLength) !== (existingDims?.length ?? null) ||
     parseDimField(dimWidth) !== (existingDims?.width ?? null) ||
     parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
@@ -1081,19 +1084,19 @@ export default function EditItemScreen() {
             />
             <Pressable
               onPress={handleSaveSize}
-              disabled={sizeSaving === "saving" || size.trim() === (item?.size ?? "") || size.length > 100}
+              disabled={sizeSaving === "saving" || size.trim() === savedSizeRef.current || size.length > 100}
               style={[
                 s.saveBtn,
                 {
                   marginTop: 0,
                   backgroundColor:
-                    (sizeSaving === "saving" || size.trim() === (item?.size ?? "") || size.length > 100)
+                    (sizeSaving === "saving" || size.trim() === savedSizeRef.current || size.length > 100)
                       ? colors.muted
                       : colors.primary,
                 },
               ]}
             >
-              <Text style={[s.saveBtnText, { color: (sizeSaving === "saving" || size.trim() === (item?.size ?? "") || size.length > 100) ? colors.mutedForeground : colors.primaryForeground }]}>
+              <Text style={[s.saveBtnText, { color: (sizeSaving === "saving" || size.trim() === savedSizeRef.current || size.length > 100) ? colors.mutedForeground : colors.primaryForeground }]}>
                 Save
               </Text>
             </Pressable>

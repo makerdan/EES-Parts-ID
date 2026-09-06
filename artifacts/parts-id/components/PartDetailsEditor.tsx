@@ -21,6 +21,7 @@ import {
   View,
 } from "react-native";
 
+import { ConfirmDialog, InfoDialog } from "@/components/ConfirmDialog";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
@@ -94,6 +95,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const [newKeyword, setNewKeyword] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [discardDialogVisible, setDiscardDialogVisible] = useState(false);
+  const [saveInFlightDialogVisible, setSaveInFlightDialogVisible] = useState(false);
   const [fieldSaveErrors, setFieldSaveErrors] = useState<{
     description?: string;
     bins?: string;
@@ -118,6 +121,62 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const [dimDiameter, setDimDiameter] = useState(fmtDim(existingDims?.diameter));
   const [measureOpen, setMeasureOpen] = useState(false);
   const [lidarAvailable, setLidarAvailable] = useState(false);
+
+  const savedDescriptionRef = useRef(item?.description ?? "");
+  const savedOpRef = useRef(item?.orderPurchase ?? 0);
+  const savedOqRef = useRef(item?.orderQuantity ?? 0);
+  const savedBinsRef = useRef<Array<string>>(item?.binLocations ?? []);
+  const savedKeywordsRef = useRef<Array<string>>(item?.aiKeywords ?? []);
+  const savedDimsRef = useRef<PartDimensions>({
+    length: existingDims?.length ?? null,
+    width: existingDims?.width ?? null,
+    height: existingDims?.height ?? null,
+    diameter: existingDims?.diameter ?? null,
+  });
+  const savedExpandedDescRef = useRef(item?.expandedDescription ?? "");
+  const savedPhotoUriRef = useRef<string | null>(item?.imageUrl ?? null);
+  const savedPhotoUri2Ref = useRef<string | null>(item?.imageUrl2 ?? null);
+  const saveInFlightRef = useRef(false);
+  const dimensionSaveInFlightRef = useRef(false);
+  const expandedDescSaveInFlightRef = useRef(false);
+  const allowCloseRef = useRef(false);
+  const hasChangesRef = useRef(false);
+  const pendingCloseRef = useRef<(() => void) | null>(null);
+
+  const requestClose = useCallback((exit: () => void = onClose) => {
+    if (allowCloseRef.current) {
+      allowCloseRef.current = false;
+      exit();
+      return;
+    }
+    if (
+      saveInFlightRef.current ||
+      dimensionSaveInFlightRef.current ||
+      expandedDescSaveInFlightRef.current
+    ) {
+      setSaveInFlightDialogVisible(true);
+      return;
+    }
+    if (!hasChangesRef.current) {
+      exit();
+      return;
+    }
+    pendingCloseRef.current = exit;
+    setDiscardDialogVisible(true);
+  }, [onClose]);
+
+  const keepEditing = useCallback(() => {
+    pendingCloseRef.current = null;
+    setDiscardDialogVisible(false);
+    setSaveInFlightDialogVisible(false);
+  }, []);
+
+  const discardChanges = useCallback(() => {
+    const exit = pendingCloseRef.current;
+    pendingCloseRef.current = null;
+    setDiscardDialogVisible(false);
+    if (exit) exit();
+  }, []);
 
   useEffect(() => {
     setLidarAvailable(isLiDARSupported());
@@ -184,6 +243,20 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     const current = itemRef.current;
     if (!current) return;
     const dims = current?.dimensions;
+    savedDescriptionRef.current = current.description ?? "";
+    savedOpRef.current = current.orderPurchase ?? 0;
+    savedOqRef.current = current.orderQuantity ?? 0;
+    savedBinsRef.current = [...(current.binLocations ?? [])];
+    savedKeywordsRef.current = [...(current.aiKeywords ?? [])];
+    savedDimsRef.current = {
+      length: dims?.length ?? null,
+      width: dims?.width ?? null,
+      height: dims?.height ?? null,
+      diameter: dims?.diameter ?? null,
+    };
+    savedExpandedDescRef.current = current.expandedDescription ?? "";
+    savedPhotoUriRef.current = current.imageUrl ?? null;
+    savedPhotoUri2Ref.current = current.imageUrl2 ?? null;
     setDescription(current.description ?? "");
     setOp(String(current.orderPurchase ?? 0));
     setOq(String(current.orderQuantity ?? 0));
@@ -274,6 +347,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       return rest;
     });
     if (!current || !adminToken) return;
+    dimensionSaveInFlightRef.current = true;
     try {
       const res = await fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
         method: "PATCH",
@@ -289,6 +363,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       }
       await invalidateListCache({ queryClient });
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      savedDimsRef.current = {
+        length: dims.length ?? null,
+        width: dims.width ?? null,
+        height: dims.height ?? null,
+        diameter: dims.diameter ?? null,
+      };
     } catch {
       // Restore pre-confirm values so the display matches what is actually
       // persisted on the server — matching the rollback pattern of the main
@@ -298,12 +378,15 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       setDimHeight(prevHeight);
       setDimDiameter(prevDiameter);
       setFieldSaveErrors(prev => ({ ...prev, dimensions: "Could not save dimensions" }));
+    } finally {
+      dimensionSaveInFlightRef.current = false;
     }
   }, [adminToken, queryClient, dimLength, dimWidth, dimHeight, dimDiameter]);
 
   const handleSaveExpandedDesc = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) return;
+    expandedDescSaveInFlightRef.current = true;
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
     try {
@@ -343,10 +426,13 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       );
       await invalidateListCache({ queryClient });
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      savedExpandedDescRef.current = expandedDescText.trim();
       setExpandedDescSaving("saved");
     } catch (err) {
       setExpandedDescError(err instanceof Error ? err.message : "Save failed");
       setExpandedDescSaving("error");
+    } finally {
+      expandedDescSaveInFlightRef.current = false;
     }
   };
 
@@ -354,6 +440,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     const current = itemRef.current;
     if (!current || !adminToken) return;
     const previousText = expandedDescText;
+    expandedDescSaveInFlightRef.current = true;
     setExpandedDescText("");
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
@@ -393,11 +480,14 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       );
       await invalidateListCache({ queryClient });
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      savedExpandedDescRef.current = "";
       setExpandedDescSaving("saved");
     } catch (err) {
       setExpandedDescText(previousText);
       setExpandedDescError(err instanceof Error ? err.message : "Clear failed");
       setExpandedDescSaving("error");
+    } finally {
+      expandedDescSaveInFlightRef.current = false;
     }
   };
 
@@ -434,7 +524,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               // Let the host screen prune the item from its offline Fuse.js
               // barcode index, which evictDeletedItemFromAllCaches does not touch.
               onItemDeleted?.(current.id);
-              onClose();
+              allowCloseRef.current = true;
+              requestClose();
             } catch {
               Alert.alert("Delete Failed", "Could not delete the part. Check your connection and try again.");
             }
@@ -442,13 +533,16 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         },
       ],
     );
-  }, [adminToken, queryClient, onClose, onItemDeleted]);
+  }, [adminToken, queryClient, onItemDeleted, requestClose]);
 
   const handleSave = async () => {
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
     const current = itemRef.current;
     if (!current || !adminToken) {
       setErrorMsg("Admin session expired. Re-unlock and try again.");
       setSaveStatus("error");
+      saveInFlightRef.current = false;
       return;
     }
     setSaveStatus("saving");
@@ -502,6 +596,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     if (![parsedOp, parsedOq].every((value) => Number.isSafeInteger(value) && value >= 0)) {
       setFieldSaveErrors({ opoq: "OP and OQ must be non-negative whole numbers." });
       setSaveStatus("error");
+      saveInFlightRef.current = false;
       return;
     }
     if (parsedOp !== (current.orderPurchase ?? 0) || parsedOq !== (current.orderQuantity ?? 0)) {
@@ -690,6 +785,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
 
     if (ops.length === 0) {
       setSaveStatus("idle");
+      saveInFlightRef.current = false;
       return;
     }
 
@@ -770,6 +866,16 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         succeededFields.forEach(f => next.add(f));
         return next;
       });
+      if (succeededFields.has("description")) savedDescriptionRef.current = description.trim();
+      if (succeededFields.has("opoq")) {
+        savedOpRef.current = parsedOp;
+        savedOqRef.current = parsedOq;
+      }
+      if (succeededFields.has("bins")) savedBinsRef.current = [...finalBins];
+      if (succeededFields.has("keywords")) savedKeywordsRef.current = [...finalKeywords];
+      if (succeededFields.has("dimensions")) savedDimsRef.current = { ...newDims };
+      if (succeededFields.has("photo")) savedPhotoUriRef.current = capturedImageUrl ?? null;
+      if (succeededFields.has("photo2")) savedPhotoUri2Ref.current = capturedImageUrl2 ?? null;
 
       const fieldLabel: Record<string, string> = {
         description: "Description",
@@ -847,9 +953,21 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       setNewPhotoData2(null);
       setRemoveCurrentPhoto(false);
       setRemoveCurrentPhoto2(false);
+      savedDescriptionRef.current = description.trim();
+      savedOpRef.current = parsedOp;
+      savedOqRef.current = parsedOq;
+      savedBinsRef.current = [...finalBins];
+      savedKeywordsRef.current = [...finalKeywords];
+      savedDimsRef.current = { ...newDims };
+      savedPhotoUriRef.current = capturedImageUrl ?? null;
+      savedPhotoUri2Ref.current = capturedImageUrl2 ?? null;
       setSaveStatus("saved");
+      allowCloseRef.current = true;
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = setTimeout(() => { closeTimerRef.current = null; onClose(); }, 500);
+      closeTimerRef.current = setTimeout(() => {
+        closeTimerRef.current = null;
+        requestClose();
+      }, 500);
     }
 
     // onSettled: always invalidate both affected query keys as a safety net,
@@ -857,25 +975,35 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     // restored after any cache patches applied during this mutation.
     await invalidateListCache({ queryClient });
     await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+    saveInFlightRef.current = false;
   };
 
   if (!item) return null;
 
   const isSaving = saveStatus === "saving";
   const isSaved = saveStatus === "saved";
+  const isCloseBlocked =
+    isSaving ||
+    expandedDescSaving === "saving" ||
+    saveInFlightRef.current ||
+    dimensionSaveInFlightRef.current ||
+    expandedDescSaveInFlightRef.current;
 
   const hasChanges =
-    description.trim() !== (item.description ?? "").trim() ||
-    JSON.stringify(bins) !== JSON.stringify(item.binLocations ?? []) ||
-    JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []) ||
-    parseDimField(dimLength) !== (existingDims?.length ?? null) ||
-    parseDimField(dimWidth) !== (existingDims?.width ?? null) ||
-    parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
-    parseDimField(dimDiameter) !== (existingDims?.diameter ?? null) ||
-    newPhotoData !== null ||
-    (removeCurrentPhoto && !!item.imageUrl) ||
-    newPhotoData2 !== null ||
-    (removeCurrentPhoto2 && !!item.imageUrl2);
+    description.trim() !== savedDescriptionRef.current.trim() ||
+    Number(op.trim() || "0") !== savedOpRef.current ||
+    Number(oq.trim() || "0") !== savedOqRef.current ||
+    JSON.stringify(bins) !== JSON.stringify(savedBinsRef.current) ||
+    JSON.stringify(keywords) !== JSON.stringify(savedKeywordsRef.current) ||
+    parseDimField(dimLength) !== savedDimsRef.current.length ||
+    parseDimField(dimWidth) !== savedDimsRef.current.width ||
+    parseDimField(dimHeight) !== savedDimsRef.current.height ||
+    parseDimField(dimDiameter) !== savedDimsRef.current.diameter ||
+    expandedDescText.trim() !== savedExpandedDescRef.current.trim() ||
+    (newPhotoData?.uri ?? (removeCurrentPhoto ? null : item.imageUrl ?? null)) !== savedPhotoUriRef.current ||
+    (newPhotoData2?.uri ?? (removeCurrentPhoto2 ? null : item.imageUrl2 ?? null)) !== savedPhotoUri2Ref.current;
+
+  hasChangesRef.current = hasChanges;
 
   const currentPhotoUri = removeCurrentPhoto
     ? null
@@ -905,7 +1033,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         visible
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={onClose}
+        onRequestClose={() => requestClose()}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -930,8 +1058,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               </Text>
             </View>
             <Pressable
-              onPress={onClose}
-              style={[styles.closeBtn, { backgroundColor: colors.muted }]}
+              onPress={() => requestClose()}
+              disabled={isCloseBlocked}
+              style={[styles.closeBtn, { backgroundColor: colors.muted, opacity: isCloseBlocked ? 0.45 : 1 }]}
               accessibilityLabel="Close editor"
               accessibilityRole="button"
             >
@@ -1382,7 +1511,10 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           <View style={[styles.footer, { borderTopColor: colors.border }]}>
             {onShowOnMap && item ? (
               <Pressable
-                onPress={() => { onClose(); onShowOnMap(item); }}
+                onPress={() => requestClose(() => {
+                  onClose();
+                  onShowOnMap(item);
+                })}
                 style={[styles.mapBtn, { backgroundColor: colors.accentForeground + "18", borderColor: colors.accentForeground + "44" }]}
                 accessibilityLabel="Show this part on the map"
               >
@@ -1401,8 +1533,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               </Pressable>
             ) : null}
             <Pressable
-              onPress={onClose}
-              style={[styles.cancelBtn, { borderColor: colors.border }]}
+              onPress={() => requestClose()}
+              disabled={isCloseBlocked}
+              style={[styles.cancelBtn, { borderColor: colors.border, opacity: isCloseBlocked ? 0.45 : 1 }]}
             >
               <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
             </Pressable>
@@ -1431,6 +1564,25 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           </DismissKeyboard>
         </KeyboardAvoidingView>
       </Modal>
+
+      <ConfirmDialog
+        visible={discardDialogVisible}
+        title="Discard changes?"
+        message="Your edits will be lost."
+        confirmLabel="Discard"
+        cancelLabel="Keep Editing"
+        destructive
+        onConfirm={discardChanges}
+        onCancel={keepEditing}
+      />
+
+      <InfoDialog
+        visible={saveInFlightDialogVisible}
+        title="Save in progress"
+        message="Please wait for the current save to finish before closing this editor."
+        dismissLabel="Keep Editing"
+        onDismiss={keepEditing}
+      />
 
       {/* MeasurePartScreen is rendered outside the main Modal so it can present
           its own full-screen Modal without nesting conflicts on iOS. */}

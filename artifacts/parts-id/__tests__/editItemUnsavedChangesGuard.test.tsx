@@ -54,6 +54,7 @@ const ITEM_FIXTURE = {
   binLocations: [] as string[],
   barcodes:     [] as string[],
   aiKeywords:   [] as string[],
+  size:         null as string | null,
   imageUrl:     null as string | null,
   imageUrl2:    null as string | null,
   dimensions:   null,
@@ -336,6 +337,26 @@ describe("EditItemScreen — beforeRemove listener (F-040)", () => {
       });
     });
     expect(mockPreventDefault).not.toHaveBeenCalled();
+  });
+
+  it("guards an unsaved size edit from Back", async () => {
+    const result = await renderScreen();
+    activeTree = result;
+
+    const sizeInput = findNode(
+      result,
+      n => n.type === "rn-textinput" && n.props.placeholder === 'e.g. 1/2"',
+    );
+    expect(sizeInput).toBeDefined();
+    await act(async () => { fireEvent.changeText(sizeInput!, '3/4"'); });
+
+    const backButton = findButton(result, "Back");
+    await act(async () => { fireEvent.press(backButton!); });
+
+    expectDiscardDialogVisible(result);
+    expect(mockRouterBack).not.toHaveBeenCalled();
+    await pressDialogButton(result, "Keep Editing");
+    expect(sizeInput!.props.value).toBe('3/4"');
   });
 
   it("shows the same dialog from footer Cancel and completes that exit once", async () => {
