@@ -29,6 +29,8 @@ not inferred from this file.
 | codegen-check | `CI / required` → `pnpm run test-standard-plus` | generated output and drift check; no separate codegen job | PR, merge queue, main push, manual | inferred from tier manifest |
 | spec-check | `CI / required` → `pnpm run test-standard-plus` | covered by the canonical tier; not split into a duplicate job | PR, merge queue, main push, manual | inferred from tier manifest |
 | env-check | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
+| privacy-check | `CI / required` → `pnpm run test-standard-plus` | direct portable deployment-configuration status check; secret values are never printed | PR, merge queue, main push, manual | inferred from tier manifest |
+| privacy-check-contract | `CI / required` → `pnpm run test-standard-plus` | regression coverage for fail-closed CORS and disabled unique visitors without privacy key material | PR, merge queue, main push, manual | tracked contract test |
 | spec-check-tests | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | failure-gate-contract | `CI / required` → `pnpm run test-standard-plus` | contract coverage; task archive remains local-only | PR, merge queue, main push, manual | inferred from tier manifest |
 | github-actions-contract | `CI / required` → `pnpm run test-standard-plus` | deterministic workflow and mapping contract | PR, merge queue, main push, manual | tracked contract test |

@@ -437,7 +437,7 @@ export default function AdminDashboardScreen() {
             <DailyBarChart data={stats.screenViews.dailyInWindow ?? []} colors={colors} />
           </View>
           <Text style={[styles.privacyDisclosure, { color: colors.mutedForeground }]}>
-            Reporting window: {formatReportingWindow(stats.window)}.{"\n"}
+            Aggregate counts only for the bounded reporting window: {formatReportingWindow(stats.window)}.{"\n"}
             Counts below {stats.privacy?.minimumCellCount ?? 5} events are suppressed.
             {stats.privacy?.uniqueVisitorsAvailable === false
               ? " Unique-visitor reporting is unavailable because server privacy key material is not configured."

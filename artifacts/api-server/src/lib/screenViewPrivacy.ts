@@ -1,16 +1,46 @@
 import crypto from "node:crypto";
 
+import type { EnvironmentSource } from "@workspace/db/runtime-data-boundary";
+
 const ROTATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DOMAIN_SEPARATOR = "parts-id:support-analytics:screen-view:v1";
+
+export interface ScreenViewPrivacyReadiness {
+  privacyKeyMaterialConfigured: boolean;
+  productionCorsConfigured: boolean;
+  uniqueVisitorReportingAvailable: boolean;
+}
 
 /**
  * Express is configured with one trusted reverse-proxy hop. req.ip is
  * therefore the proxy-normalized client address, and is used only transiently
  * as HMAC input. It is never logged or persisted.
  */
-export function getScreenViewKeyMaterial(): string | null {
-  const candidate = process.env["SESSION_SECRET"] ?? process.env["CLERK_SECRET_KEY"];
+export function getScreenViewKeyMaterial(
+  env: EnvironmentSource = process.env,
+): string | null {
+  const candidate = [env["SESSION_SECRET"], env["CLERK_SECRET_KEY"]].find(
+    (value) => value?.trim(),
+  );
   return candidate?.trim() ? candidate : null;
+}
+
+/**
+ * Returns deployment-safe readiness information without returning any secret
+ * material. Unique-visitor reporting is intentionally unavailable when no
+ * server-held key is configured; callers must not invent an unkeyed fallback.
+ */
+export function getScreenViewPrivacyReadiness(
+  env: EnvironmentSource = process.env,
+): ScreenViewPrivacyReadiness {
+  const privacyKeyMaterialConfigured = getScreenViewKeyMaterial(env) !== null;
+  const productionCorsConfigured = Boolean(env["CORS_ALLOWED_ORIGINS"]?.trim());
+
+  return {
+    privacyKeyMaterialConfigured,
+    productionCorsConfigured,
+    uniqueVisitorReportingAvailable: privacyKeyMaterialConfigured,
+  };
 }
 
 function getRotationBucket(now = Date.now()): number {

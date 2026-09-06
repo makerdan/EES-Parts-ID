@@ -233,6 +233,8 @@ it in sync with this table when checks change. Note: `tsc` subsumes
 | `canvas-typecheck` | `canvas-typecheck` | fast (via `tsc`) |
 | `codegen:check` | `codegen-check` | standard |
 | `env:check` | `env-check` | standard |
+| `privacy:check` | `privacy-check` | standard |
+| _(new)_ | `privacy-check-contract` | standard |
 | `lint` | `lint` | fast |
 | `lint:mocks` | `lint-mocks` | fast |
 | `parts-id-typecheck` | `parts-id-typecheck` | fast (via `tsc`) |

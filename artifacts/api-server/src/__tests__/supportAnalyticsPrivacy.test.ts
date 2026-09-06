@@ -1,6 +1,7 @@
 import {
   deriveRotatingVisitorHash,
   getScreenViewKeyMaterial,
+  getScreenViewPrivacyReadiness,
   getScreenViewRateLimitKey,
 } from "../lib/screenViewPrivacy";
 import {
@@ -48,6 +49,31 @@ describe("support analytics privacy primitives", () => {
     expect(getScreenViewKeyMaterial()).toBeNull();
     expect(deriveRotatingVisitorHash("203.0.113.10")).toBeNull();
     expect(getScreenViewRateLimitKey("203.0.113.10")).toBe("privacy-disabled");
+  });
+
+  it("reports deployment readiness without exposing key material", () => {
+    expect(
+      getScreenViewPrivacyReadiness({
+        SESSION_SECRET: "server-held-secret",
+        CORS_ALLOWED_ORIGINS: " https://parts.example ",
+      }),
+    ).toEqual({
+      privacyKeyMaterialConfigured: true,
+      productionCorsConfigured: true,
+      uniqueVisitorReportingAvailable: true,
+    });
+
+    expect(
+      getScreenViewPrivacyReadiness({
+        SESSION_SECRET: " ",
+        CLERK_SECRET_KEY: "",
+        CORS_ALLOWED_ORIGINS: "",
+      }),
+    ).toEqual({
+      privacyKeyMaterialConfigured: false,
+      productionCorsConfigured: false,
+      uniqueVisitorReportingAvailable: false,
+    });
   });
 
   it("uses one UTC calendar window and suppresses small cells", () => {

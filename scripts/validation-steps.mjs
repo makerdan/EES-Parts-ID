@@ -29,6 +29,8 @@ export const STANDARD_EXTRA = [
   ["codegen-check", "node scripts/serial-lock.mjs --resource codegen --priority 80 -- pnpm --filter @workspace/api-spec run codegen:check"],
   ["spec-check", "pnpm --filter @workspace/api-spec run spec:check"],
   ["env-check", "pnpm --filter @workspace/scripts env:check"],
+  ["privacy-check", "pnpm --filter @workspace/scripts privacy:check"],
+  ["privacy-check-contract", "node scripts/test/production-privacy-check.test.mjs"],
   ["spec-check-tests", "pnpm --filter @workspace/api-spec test"],
   ["failure-gate-contract", "node scripts/test/failure-gate-contract.test.mjs"],
   ["test", "node scripts/serial-lock.mjs --resource shared-test-results --priority 60 -- pnpm test"],

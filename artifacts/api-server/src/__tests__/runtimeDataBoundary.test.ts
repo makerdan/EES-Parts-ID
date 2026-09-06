@@ -8,6 +8,7 @@ import {
   getEnvironmentContract,
   getMissingProductionEnvVars,
 } from "../lib/validateEnv";
+import { getScreenViewPrivacyReadiness } from "../lib/screenViewPrivacy";
 
 describe("runtime data boundary", () => {
   it("reports missing production names without including secret values", () => {
@@ -123,6 +124,19 @@ describe("runtime data boundary", () => {
     expect(contract.clientPublic).toContain("EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY");
     expect(contract.clientPublic).not.toContain("DATABASE_URL");
     expect(contract.clientPublic).not.toContain("CLERK_SECRET_KEY");
+  });
+
+  it("reports production privacy and CORS readiness using booleans only", () => {
+    expect(
+      getScreenViewPrivacyReadiness({
+        SESSION_SECRET: "do-not-return-this",
+        CORS_ALLOWED_ORIGINS: "https://parts.example",
+      }),
+    ).toEqual({
+      privacyKeyMaterialConfigured: true,
+      productionCorsConfigured: true,
+      uniqueVisitorReportingAvailable: true,
+    });
   });
 
   it.each(["test", "seed", "schema-sync"] as const)(

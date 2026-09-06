@@ -19,6 +19,7 @@ import {
 } from "@workspace/db/runtime-data-boundary";
 
 import { logger } from "./logger";
+import { getScreenViewPrivacyReadiness } from "./screenViewPrivacy";
 
 export interface EnvCheck {
   name: string;
@@ -125,6 +126,22 @@ export function formatMissingProductionEnvError(
 export function validateEnv(): void {
   if (process.env.NODE_ENV !== "production") {
     return;
+  }
+
+  const privacyReadiness = getScreenViewPrivacyReadiness();
+  logger.info(
+    {
+      privacyKeyMaterialConfigured: privacyReadiness.privacyKeyMaterialConfigured,
+      productionCorsConfigured: privacyReadiness.productionCorsConfigured,
+      uniqueVisitorReportingAvailable:
+        privacyReadiness.uniqueVisitorReportingAvailable,
+    },
+    "Production visitor-privacy reporting readiness",
+  );
+  if (!privacyReadiness.privacyKeyMaterialConfigured) {
+    logger.warn(
+      "Server-held privacy key material is not configured — unique-visitor reporting is disabled; no unkeyed fallback will be used.",
+    );
   }
 
   const missing = getMissingProductionEnvVars();
