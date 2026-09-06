@@ -35,7 +35,10 @@ is_healthy_api_body() {
     let body = "";
     process.stdin.on("data", (chunk) => { body += chunk; });
     process.stdin.on("end", () => {
-      try { process.exit(JSON.parse(body).status === "ok" ? 0 : 1); }
+      try {
+        const status = JSON.parse(body).status;
+        process.exit(status === "ok" || status === "degraded" ? 0 : 1);
+      }
       catch { process.exit(1); }
     });
   '

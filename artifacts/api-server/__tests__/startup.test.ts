@@ -136,6 +136,9 @@ beforeEach(() => {
   // Default: both helpers resolve immediately (overridden per-test as needed)
   mockInitProvider.mockResolvedValue(undefined);
   mockProbePoeBotsOnStartup.mockResolvedValue(undefined);
+  mockStartServer.mockResolvedValue({
+    close: (callback: () => void) => callback(),
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -162,7 +165,10 @@ describe("server startup sequence (src/index.ts)", () => {
     // Gate on startServer itself so the assertion does not depend on
     // microtask-queue depth — we simply wait until the callback fires.
     const { promise: startGate, resolve: resolveStart } = makeGate();
-    mockStartServer.mockImplementationOnce(() => resolveStart());
+    mockStartServer.mockImplementationOnce(() => {
+      resolveStart();
+      return Promise.resolve({ close: (callback: () => void) => callback() });
+    });
 
     loadIndex();
     await startGate;
@@ -170,7 +176,7 @@ describe("server startup sequence (src/index.ts)", () => {
     expect(mockStartServer).toHaveBeenCalledTimes(1);
   });
 
-  it("does not call startServer() until initProvider() has resolved", async () => {
+  it("opens the listener without waiting for optional provider initialization", async () => {
     // Hold initProvider() in a pending state that we control.
     const { promise: initGate, resolve: resolveInit } = makeGate();
     // A separate gate that fires the instant initProvider() is invoked.
@@ -186,16 +192,16 @@ describe("server startup sequence (src/index.ts)", () => {
     // Gate on startServer so the "has fired" assertion is not microtask-depth
     // sensitive even if index.ts gains extra awaits between the two calls.
     const { promise: startGate, resolve: resolveStart } = makeGate();
-    mockStartServer.mockImplementationOnce(() => resolveStart());
+    mockStartServer.mockImplementationOnce(() => {
+      resolveStart();
+      return Promise.resolve({ close: (callback: () => void) => callback() });
+    });
 
     loadIndex();
 
-    // Wait until initProvider() has actually been invoked, then verify
-    // startServer() has not yet been called — the chain is still suspended on
-    // initGate, so this assertion cannot be a false-pass regardless of how
-    // many intermediate awaits index.ts has before or after initProvider().
+    // The listener is intentionally independent from optional provider setup.
     await initCalledGate;
-    expect(mockStartServer).not.toHaveBeenCalled();
+    expect(mockStartServer).toHaveBeenCalledTimes(1);
 
     // Release the gate — wait until startServer actually fires rather than
     // relying on a fixed flush count.

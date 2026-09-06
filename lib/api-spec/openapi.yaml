@@ -19,19 +19,39 @@ tags:
   - name: admin
     description: Admin operations
 paths:
+  /livez:
+    get:
+      operationId: livenessCheck
+      tags: [health]
+      summary: Process liveness check
+      description: Reports whether the API process and HTTP listener are running without querying dependencies
+      responses:
+        "200":
+          description: Process is live
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivenessStatus"
+
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
-      summary: Health check
-      description: Returns server health status
+      summary: Application readiness check
+      description: Returns success only when required startup work, database connectivity, and required schema are ready. Optional AI degradation is diagnostic only.
       responses:
         "200":
-          description: Healthy
+          description: Application is ready
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+        "503":
+          description: Application is not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessFailure"
 
   /inventory:
     get:
@@ -866,6 +886,28 @@ paths:
 
 components:
   schemas:
+    LivenessStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok]
+      required: [status]
+
+    ReadinessFailure:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [error]
+        detail:
+          type: string
+          enum: [startup_not_ready, database_unreachable, schema_unavailable]
+        startup_status:
+          type: string
+          enum: [pending, timed_out, failed]
+      required: [status, detail]
+
     AdminAuditLogEntry:
       type: object
       properties:

@@ -132,6 +132,7 @@ describe("route access matrix completeness", () => {
       .map((entry) => `${entry.method} ${entry.path}`);
 
     expect(publicRoutes).toEqual([
+      "GET /api/livez",
       "GET /api/healthz",
       "GET /api/floor-plan/meta",
       "GET /api/floor-plan/svg",
@@ -145,6 +146,7 @@ describe("route access matrix completeness", () => {
 
 describe("matrix authorization behavior", () => {
   it("allows public health and layout reads without a Clerk session", async () => {
+    await supertest(app).get("/api/livez").expect(200, { status: "ok" });
     await supertest(app).get("/api/healthz").expect((res) => {
       expect(res.status).not.toBe(401);
       expect(res.status).not.toBe(403);

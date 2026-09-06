@@ -25,6 +25,7 @@ export type RouteAccessEntry = {
 
 export const ROUTE_ACCESS_MATRIX: ReadonlyArray<RouteAccessEntry> = [
   // Health and intentional public warehouse layout reads.
+  { method: "GET", path: "/api/livez", access: "public" },
   { method: "GET", path: "/api/healthz", access: "public" },
   { method: "GET", path: "/api/floor-plan/meta", access: "public" },
   { method: "GET", path: "/api/floor-plan/svg", access: "public" },

@@ -292,6 +292,11 @@ reset_mock '{"status":"ok","uptime":123}'
 OUTPUT=$(check_api_health "test-extra-fields" 2>&1)
 assert_exit "extra JSON fields accepted — exit 0" 0 $?
 
+# Readiness may be degraded by database latency while still being safe to serve.
+reset_mock '{"status":"degraded","db_latency_ms":750}'
+OUTPUT=$(check_api_health "test-degraded-ready" 2>&1)
+assert_exit "degraded readiness accepted — exit 0" 0 $?
+
 # ---------------------------------------------------------------------------
 # Test 6: post-merge.sh contains the codegen step
 # Ensures the codegen command is present in the script and appears before

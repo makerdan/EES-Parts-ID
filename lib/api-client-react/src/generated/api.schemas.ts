@@ -5,6 +5,48 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export type LivenessStatusStatus = typeof LivenessStatusStatus[keyof typeof LivenessStatusStatus];
+
+
+export const LivenessStatusStatus = {
+  ok: 'ok',
+} as const;
+
+export interface LivenessStatus {
+  status: LivenessStatusStatus;
+}
+
+export type ReadinessFailureStatus = typeof ReadinessFailureStatus[keyof typeof ReadinessFailureStatus];
+
+
+export const ReadinessFailureStatus = {
+  error: 'error',
+} as const;
+
+export type ReadinessFailureDetail = typeof ReadinessFailureDetail[keyof typeof ReadinessFailureDetail];
+
+
+export const ReadinessFailureDetail = {
+  startup_not_ready: 'startup_not_ready',
+  database_unreachable: 'database_unreachable',
+  schema_unavailable: 'schema_unavailable',
+} as const;
+
+export type ReadinessFailureStartupStatus = typeof ReadinessFailureStartupStatus[keyof typeof ReadinessFailureStartupStatus];
+
+
+export const ReadinessFailureStartupStatus = {
+  pending: 'pending',
+  timed_out: 'timed_out',
+  failed: 'failed',
+} as const;
+
+export interface ReadinessFailure {
+  status: ReadinessFailureStatus;
+  detail: ReadinessFailureDetail;
+  startup_status?: ReadinessFailureStartupStatus;
+}
+
 export type AdminAuditLogEntryAction = typeof AdminAuditLogEntryAction[keyof typeof AdminAuditLogEntryAction];
 
 

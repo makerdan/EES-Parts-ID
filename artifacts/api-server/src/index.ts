@@ -1,6 +1,7 @@
 import { eq, lt, sql } from "drizzle-orm";
 
 import { logger } from "./lib/logger";
+import { appReadiness } from "./lib/readiness";
 import { validateEnv } from "./lib/validateEnv";
 
 process.on("uncaughtException", (err) => {
@@ -213,15 +214,18 @@ async function migrateUsersTable(): Promise<void> {
   const STARTUP_MIGRATIONS_TIMEOUT_MS = 25_000;
 // unref(): these are fallback timers only — they must never be the thing
 // keeping the process (or a Jest worker) alive after everything else is done.
-  const migrationsTimeout = new Promise<void>((resolve) =>
-  setTimeout(() => {
+  let migrationsTimer: NodeJS.Timeout | undefined;
+  const migrationsTimeout = new Promise<void>((resolve) => {
+  migrationsTimer = setTimeout(() => {
     logger.warn(
       { timeoutMs: STARTUP_MIGRATIONS_TIMEOUT_MS },
-      "Startup migrations exceeded time limit — proceeding to startServer anyway",
+      "Required startup initialization exceeded the readiness time limit",
     );
+    appReadiness.markTimedOut();
     resolve();
-  }, STARTUP_MIGRATIONS_TIMEOUT_MS).unref(),
-);
+  }, STARTUP_MIGRATIONS_TIMEOUT_MS);
+  migrationsTimer.unref();
+});
 
   const INIT_PROVIDER_TIMEOUT_MS = 8_000;
 
@@ -268,8 +272,8 @@ async function pruneAuditLog(): Promise<void> {
   }
 }
 
-  Promise.race([
-    Promise.all([
+  appReadiness.reset();
+  const requiredStartup = Promise.all([
       recoverOrphanedJobs(),
       recoverCatalogPdfUploadSessions(),
       initQuickLookupCache(),
@@ -277,14 +281,24 @@ async function pruneAuditLog(): Promise<void> {
       migrateWarehouseZoneNullSectionNum(),
       applyZoneSectionNumFix(),
       migrateUsersTable(),
-    ]),
-    migrationsTimeout,
-  ])
-    .then(() => withStartupTimeout(initProvider(), INIT_PROVIDER_TIMEOUT_MS, "initProvider"))
+    ]);
+
+  void Promise.race([requiredStartup, migrationsTimeout]);
+  void requiredStartup
+    .then(() => {
+      if (migrationsTimer !== undefined) clearTimeout(migrationsTimer);
+      appReadiness.markReady();
+    })
+    .catch((err) => {
+      if (migrationsTimer !== undefined) clearTimeout(migrationsTimer);
+      appReadiness.markFailed();
+      logger.error({ err }, "Required startup initialization failed");
+    });
+
+  startServer(app, port, 0)
     // The dev workflow has already performed the canonical stale-holder sweep.
     // Do not retry or silently move the listener after a conflict: the startup
     // error must identify the owner and the recovery command.
-    .then(() => startServer(app, port, 0))
     .then((server) => {
     // Hard cap on total shutdown time: if draining hangs (slow AI call, DB
     // stall), force-exit so the platform doesn't have to SIGKILL us.
@@ -321,10 +335,13 @@ async function pruneAuditLog(): Promise<void> {
     process.on("SIGTERM", () => shutdown("SIGTERM"));
     process.on("SIGINT", () => shutdown("SIGINT"));
 
-    // Probe Poe bots in the background — must not block port open.
-    probePoeBotsOnStartup().catch((err) => {
-      logger.error({ err }, "Poe bot startup probe failed");
-    });
+    // Optional AI initialization and probes are diagnostic only. They do not
+    // hold the listener open or affect core application readiness.
+    void withStartupTimeout(initProvider(), INIT_PROVIDER_TIMEOUT_MS, "initProvider")
+      .then(() => probePoeBotsOnStartup())
+      .catch((err) => {
+        logger.error({ err }, "Poe bot startup probe failed");
+      });
 
     // Schedule retention independently of incoming telemetry traffic.
     pruneAuditLog();

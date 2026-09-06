@@ -9,8 +9,17 @@ import * as zod from 'zod';
 
 
 /**
- * Returns server health status
- * @summary Health check
+ * Reports whether the API process and HTTP listener are running without querying dependencies
+ * @summary Process liveness check
+ */
+export const LivenessCheckResponse = zod.object({
+  "status": zod.enum(['ok'])
+})
+
+
+/**
+ * Returns success only when required startup work, database connectivity, and required schema are ready. Optional AI degradation is diagnostic only.
+ * @summary Application readiness check
  */
 export const HealthCheckResponse = zod.object({
   "status": zod.enum(['ok', 'degraded', 'error']),
