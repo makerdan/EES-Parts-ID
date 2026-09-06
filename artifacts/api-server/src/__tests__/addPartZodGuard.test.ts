@@ -304,6 +304,17 @@ describe("AddPartResponse schema — parse throws on malformed rows", () => {
     expect(() => AddPartResponse.parse({ item: row })).toThrow();
   });
 
+  it.each(["orderPurchase", "orderQuantity"])(
+    "throws when required order field %s is absent",
+    (field) => {
+      const row = makeWellFormedRow();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (row as any)[field];
+
+      expect(() => AddPartResponse.parse({ item: row })).toThrow();
+    },
+  );
+
   it("throws when the top-level item key is absent", () => {
     expect(() => AddPartResponse.parse({})).toThrow();
   });

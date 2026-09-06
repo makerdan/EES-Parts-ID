@@ -1011,6 +1011,10 @@ components:
 
     InventoryItem:
       type: object
+      description: >
+        Inventory response rows always include orderPurchase and orderQuantity.
+        Both fields are non-negative integers; zero represents an item without
+        an order value.
       properties:
         id:
           type: integer
@@ -1095,6 +1099,8 @@ components:
         - id
         - vendor
         - catalog
+        - orderPurchase
+        - orderQuantity
         - description
         - binLocations
         - aiKeywords

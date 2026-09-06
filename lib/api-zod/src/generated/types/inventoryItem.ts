@@ -7,14 +7,17 @@
  */
 import type { InventoryItemDimensions } from './inventoryItemDimensions';
 
+/**
+ * Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.
+ */
 export interface InventoryItem {
   id: number;
   vendor: string;
   catalog: string;
   /** @minimum 0 */
-  orderPurchase?: number;
+  orderPurchase: number;
   /** @minimum 0 */
-  orderQuantity?: number;
+  orderQuantity: number;
   description: string;
   /** Bin locations where this part is stored (a part may live in multiple bins) */
   binLocations: string[];
