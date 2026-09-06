@@ -10,6 +10,7 @@ export const FAST = [
   ["regression-guard-fix", "node scripts/check-regression-guard.mjs --fix-stub"],
   ["regression-guard", "node scripts/check-regression-guard.mjs"],
   ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
+  ["github-actions-contract", "node scripts/test/github-actions-contract.test.mjs"],
   ["skill-mirror-sync-contract", "node scripts/test/skill-mirror-sync-contract.test.mjs"],
   ["public-repository-boundary", "node scripts/test/public-repository-boundary.test.mjs"],
   ["patched-dependencies-contract", "node scripts/test/patched-dependencies.test.mjs"],
@@ -29,7 +30,6 @@ export const STANDARD_EXTRA = [
   ["env-check", "pnpm --filter @workspace/scripts env:check"],
   ["spec-check-tests", "pnpm --filter @workspace/api-spec test"],
   ["failure-gate-contract", "node scripts/test/failure-gate-contract.test.mjs"],
-  ["github-actions-contract", "node scripts/test/github-actions-contract.test.mjs"],
   ["test", "node scripts/serial-lock.mjs --resource shared-test-results --priority 60 -- pnpm test"],
   ["serve-proxy-smoke", "pnpm --filter @workspace/parts-id run test:serve-proxy"],
 ];

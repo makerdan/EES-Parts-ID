@@ -6,12 +6,18 @@
  * GitHub. Remote activation, required-check settings, and live run evidence
  * belong to the dependent activation task.
  */
-import { readFileSync } from "node:fs";
+import nodeAssert from "node:assert/strict";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getTierSteps } from "../validation-steps.mjs";
 
 const root = join(fileURLToPath(new URL("../..", import.meta.url)));
+const canonicalSkillDir = join(root, ".agents", "skills", "install-github-actions");
+const canonicalSkillPath = join(canonicalSkillDir, "SKILL.md");
+const runtimeSkillDir = join(root, ".local", "custom_skills", "install-github-actions");
+const runtimeSkillPath = join(runtimeSkillDir, "SKILL.md");
+const runtimeFingerprintPath = join(runtimeSkillDir, ".fingerprint");
 const workflowDir = join(root, ".github", "workflows");
 const actionPath = join(root, ".github", "actions", "setup-node-pnpm", "action.yml");
 const coveragePath = join(root, "docs", "validation", "github-actions-coverage.md");
@@ -25,6 +31,10 @@ const workflowNames = [
 
 function read(path) {
   return readFileSync(path, "utf8");
+}
+
+function assertRegularFile(path, description) {
+  assert(statSync(path).isFile(), `${description} must be a regular file`);
 }
 
 function workflow(name) {
@@ -168,6 +178,91 @@ function validateWorkflowContract(files, coverage) {
 
   return errors;
 }
+
+function validateSkillContract() {
+  nodeAssert.deepEqual(
+    readdirSync(canonicalSkillDir).sort(),
+    ["SKILL.md"],
+    "canonical GitHub Actions package must contain only SKILL.md",
+  );
+  assertRegularFile(canonicalSkillPath, "canonical skill");
+
+  const skill = read(canonicalSkillPath);
+  const metadataEnd = skill.indexOf("\n---\n", 4);
+  assert(metadataEnd > 0, "canonical skill is missing YAML frontmatter");
+  const metadata = skill.slice(0, metadataEnd);
+  nodeAssert.match(metadata, /^name:\s+Install GitHub Actions\s*$/m, "canonical skill metadata has the wrong name");
+  nodeAssert.match(metadata, /^description:\s+>-\s*$/m, "canonical skill metadata is missing a folded description");
+  nodeAssert.match(metadata, /^  \S.+$/m, "canonical skill metadata is missing its description text");
+  nodeAssert.match(skill, /^# Install GitHub Actions\s*$/m, "canonical skill is missing its top-level heading");
+
+  const visibilityGate = "## 0. Repository visibility gate — read-only and mandatory";
+  const packageInventory = "### Selected package inventory";
+  const inventoryHeading = "## 0. Inventory before proposing edits";
+  const visibilityIndex = skill.indexOf(visibilityGate);
+  const packageIndex = skill.indexOf(packageInventory);
+  const inventoryIndex = skill.indexOf(inventoryHeading);
+  assert(visibilityIndex >= 0, "canonical skill is missing the mandatory visibility gate");
+  assert(packageIndex > visibilityIndex, "package inventory must follow the visibility gate");
+  assert(inventoryIndex > packageIndex, "read-only inventory must follow the package inventory");
+  const gate = skill.slice(visibilityIndex, packageIndex);
+  nodeAssert.match(gate, /read-only and mandatory/i, "visibility gate must be explicitly read-only and mandatory");
+  nodeAssert.match(gate, /cannot be inspected[\s\S]*unknown[\s\S]*stop/i, "visibility gate must stop when evidence is unavailable");
+  nodeAssert.match(gate, /never[\s\S]*change repository visibility/i, "visibility gate must forbid visibility mutation");
+
+  const requiredSections = [
+    "## 0. Repository visibility gate — read-only and mandatory",
+    "## 0. Inventory before proposing edits",
+    "## 1. Establish the portable workflow contract",
+    "## 2. Choose the setup path",
+    "## 3. Security contract for pull requests",
+    "## 4. Make jobs fail closed (fail-closed required checks)",
+    "## 5. Runner reproducibility",
+    "## 6. Human-facing setup and approval boundary",
+    "## 7. Troubleshoot without weakening the contract",
+    "## Three-pass quality gate",
+    "## Completion report",
+  ];
+  for (const heading of requiredSections) {
+    nodeAssert.match(skill, new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "m"), `canonical skill is missing ${heading}`);
+  }
+  nodeAssert.match(skill, /contains only this `SKILL\.md`/i, "canonical skill must document the selected package inventory");
+  nodeAssert.match(
+    skill,
+    /runtime mirror, when present, is platform-managed and is not a source file/i,
+    "canonical skill must define the runtime mirror boundary",
+  );
+
+  const completionHeadings = [
+    "# GitHub Actions installation",
+    "## Scope and evidence",
+    "## Changed files",
+    "## Local-to-remote coverage",
+    "## Event scopes and security",
+    "## Exclusions, gaps, and duplicate decisions",
+    "## Validation results",
+    "## Remaining manual GitHub settings",
+    "## Rollback and follow-up actions",
+  ];
+  const completionIndex = skill.indexOf("## Completion report");
+  for (const heading of completionHeadings) {
+    const headingIndex = skill.indexOf(`\n${heading}\n`, completionIndex);
+    assert(headingIndex > completionIndex, `completion report is missing ${heading}`);
+  }
+
+  if (statSync(runtimeSkillDir, { throwIfNoEntry: false })) {
+    assertRegularFile(runtimeSkillPath, "runtime mirror skill");
+    assertRegularFile(runtimeFingerprintPath, "runtime mirror fingerprint");
+    nodeAssert.deepEqual(
+      readdirSync(runtimeSkillDir).sort(),
+      [".fingerprint", "SKILL.md"],
+      "runtime mirror must contain only the supported skill and fingerprint files",
+    );
+    nodeAssert.match(read(runtimeFingerprintPath).trim(), /^[0-9a-f]{32}$/i, "runtime mirror fingerprint must be a non-empty opaque hex value");
+  }
+}
+
+validateSkillContract();
 
 const files = Object.fromEntries(workflowNames.map((name) => [name, workflow(name)]));
 const errors = validateWorkflowContract(files, read(coveragePath));
