@@ -138,25 +138,25 @@ describe("invalidateSearchAndEvictItem", () => {
     expect(storage.setItem).not.toHaveBeenCalled();
   });
 
-  it("swallows AsyncStorage parse failures (non-fatal)", async () => {
+  it("reports parse failures without propagating", async () => {
     const qc = makeQueryClient();
     const storage = makeStorage({ [QUERY_CACHE_KEY]: "NOT_VALID_JSON{{{{" });
 
     await expect(
       invalidateSearchAndEvictItem({ queryClient: qc, asyncStorage: storage, itemId: 1 }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ failures: [], ok: true });
 
     expect(storage.setItem).not.toHaveBeenCalled();
   });
 
-  it("swallows AsyncStorage.getItem rejections (non-fatal)", async () => {
+  it("reports AsyncStorage.getItem rejections without propagating", async () => {
     const qc = makeQueryClient();
     const storage = makeStorage();
     (storage.getItem as jest.Mock).mockRejectedValue(new Error("disk full"));
 
     await expect(
       invalidateSearchAndEvictItem({ queryClient: qc, asyncStorage: storage, itemId: 1 }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ ok: false, failures: [expect.any(Error)] });
   });
 });
 

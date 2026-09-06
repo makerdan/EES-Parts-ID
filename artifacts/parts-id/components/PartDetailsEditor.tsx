@@ -21,7 +21,6 @@ import {
   View,
 } from "react-native";
 
-import { ConfirmDialog, InfoDialog } from "@/components/ConfirmDialog";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
@@ -31,8 +30,7 @@ import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { useColors } from "@/hooks/useColors";
 import { API_BASE } from "@/utils/apiBase";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
-import { evictDeletedItemFromAllCaches, invalidateListCache, parseStoredQueryCache } from "@/utils/editItemCache";
-import { evictItemFromQueryCache,QUERY_CACHE_KEY } from "@/utils/searchHelpers";
+import { evictDeletedItemFromAllCaches, invalidateAllCachesAfterSave, invalidateListCache } from "@/utils/editItemCache";
 
 interface CapturedPhoto {
   uri: string;
@@ -68,6 +66,11 @@ interface PartDetailsEditorProps {
    * evictDeletedItemFromAllCaches.
    */
   onItemDeleted?: (itemId: number) => void;
+  /**
+   * Called after one or more fields are committed so the host can update
+   * screen-local indexes that are not owned by React Query.
+   */
+  onItemSaved?: (item: InventoryItem) => void;
 }
 
 /**
@@ -80,7 +83,7 @@ interface PartDetailsEditorProps {
  * On non-LiDAR iOS devices the "Estimate" (photo AI) path is shown instead.
  * Android and Web see neither — manual entry only.
  */
-export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onItemDeleted }: PartDetailsEditorProps) {
+export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onItemDeleted, onItemSaved }: PartDetailsEditorProps) {
   "use no memo";
   const colors = useColors();
   const queryClient = useQueryClient();
@@ -95,8 +98,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const [newKeyword, setNewKeyword] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [discardDialogVisible, setDiscardDialogVisible] = useState(false);
-  const [saveInFlightDialogVisible, setSaveInFlightDialogVisible] = useState(false);
   const [fieldSaveErrors, setFieldSaveErrors] = useState<{
     description?: string;
     bins?: string;
@@ -121,62 +122,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const [dimDiameter, setDimDiameter] = useState(fmtDim(existingDims?.diameter));
   const [measureOpen, setMeasureOpen] = useState(false);
   const [lidarAvailable, setLidarAvailable] = useState(false);
-
-  const savedDescriptionRef = useRef(item?.description ?? "");
-  const savedOpRef = useRef(item?.orderPurchase ?? 0);
-  const savedOqRef = useRef(item?.orderQuantity ?? 0);
-  const savedBinsRef = useRef<Array<string>>(item?.binLocations ?? []);
-  const savedKeywordsRef = useRef<Array<string>>(item?.aiKeywords ?? []);
-  const savedDimsRef = useRef<PartDimensions>({
-    length: existingDims?.length ?? null,
-    width: existingDims?.width ?? null,
-    height: existingDims?.height ?? null,
-    diameter: existingDims?.diameter ?? null,
-  });
-  const savedExpandedDescRef = useRef(item?.expandedDescription ?? "");
-  const savedPhotoUriRef = useRef<string | null>(item?.imageUrl ?? null);
-  const savedPhotoUri2Ref = useRef<string | null>(item?.imageUrl2 ?? null);
-  const saveInFlightRef = useRef(false);
-  const dimensionSaveInFlightRef = useRef(false);
-  const expandedDescSaveInFlightRef = useRef(false);
-  const allowCloseRef = useRef(false);
-  const hasChangesRef = useRef(false);
-  const pendingCloseRef = useRef<(() => void) | null>(null);
-
-  const requestClose = useCallback((exit: () => void = onClose) => {
-    if (allowCloseRef.current) {
-      allowCloseRef.current = false;
-      exit();
-      return;
-    }
-    if (
-      saveInFlightRef.current ||
-      dimensionSaveInFlightRef.current ||
-      expandedDescSaveInFlightRef.current
-    ) {
-      setSaveInFlightDialogVisible(true);
-      return;
-    }
-    if (!hasChangesRef.current) {
-      exit();
-      return;
-    }
-    pendingCloseRef.current = exit;
-    setDiscardDialogVisible(true);
-  }, [onClose]);
-
-  const keepEditing = useCallback(() => {
-    pendingCloseRef.current = null;
-    setDiscardDialogVisible(false);
-    setSaveInFlightDialogVisible(false);
-  }, []);
-
-  const discardChanges = useCallback(() => {
-    const exit = pendingCloseRef.current;
-    pendingCloseRef.current = null;
-    setDiscardDialogVisible(false);
-    if (exit) exit();
-  }, []);
 
   useEffect(() => {
     setLidarAvailable(isLiDARSupported());
@@ -243,20 +188,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     const current = itemRef.current;
     if (!current) return;
     const dims = current?.dimensions;
-    savedDescriptionRef.current = current.description ?? "";
-    savedOpRef.current = current.orderPurchase ?? 0;
-    savedOqRef.current = current.orderQuantity ?? 0;
-    savedBinsRef.current = [...(current.binLocations ?? [])];
-    savedKeywordsRef.current = [...(current.aiKeywords ?? [])];
-    savedDimsRef.current = {
-      length: dims?.length ?? null,
-      width: dims?.width ?? null,
-      height: dims?.height ?? null,
-      diameter: dims?.diameter ?? null,
-    };
-    savedExpandedDescRef.current = current.expandedDescription ?? "";
-    savedPhotoUriRef.current = current.imageUrl ?? null;
-    savedPhotoUri2Ref.current = current.imageUrl2 ?? null;
     setDescription(current.description ?? "");
     setOp(String(current.orderPurchase ?? 0));
     setOq(String(current.orderQuantity ?? 0));
@@ -347,7 +278,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       return rest;
     });
     if (!current || !adminToken) return;
-    dimensionSaveInFlightRef.current = true;
     try {
       const res = await fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
         method: "PATCH",
@@ -361,14 +291,18 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-      savedDimsRef.current = {
-        length: dims.length ?? null,
-        width: dims.width ?? null,
-        height: dims.height ?? null,
-        diameter: dims.diameter ?? null,
-      };
+      const updatedItem = { ...current, dimensions: dims };
+      itemRef.current = updatedItem;
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: updatedItem.id,
+        updatedItem,
+      });
+      if (cacheResult && !cacheResult.ok) {
+        setFieldSaveErrors(prev => ({ ...prev, dimensions: "Saved, but refresh failed" }));
+      }
+      onItemSaved?.(updatedItem);
     } catch {
       // Restore pre-confirm values so the display matches what is actually
       // persisted on the server — matching the rollback pattern of the main
@@ -378,15 +312,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       setDimHeight(prevHeight);
       setDimDiameter(prevDiameter);
       setFieldSaveErrors(prev => ({ ...prev, dimensions: "Could not save dimensions" }));
-    } finally {
-      dimensionSaveInFlightRef.current = false;
     }
-  }, [adminToken, queryClient, dimLength, dimWidth, dimHeight, dimDiameter]);
+  }, [adminToken, onItemSaved, queryClient, dimLength, dimWidth, dimHeight, dimDiameter]);
 
   const handleSaveExpandedDesc = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) return;
-    expandedDescSaveInFlightRef.current = true;
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
     try {
@@ -403,36 +334,20 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
       const savedText = expandedDescText.trim() || null;
-      const listKeyPrefix = getListInventoryQueryKey()[0];
-      const patchExpandedSave = (i: InventoryItem): InventoryItem =>
-        i.id === current.id ? { ...i, expandedDescription: savedText } : i;
-      queryClient.setQueriesData<InventoryListResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-        (old) => old ? { ...old, items: old.items.map(patchExpandedSave) } : old,
-      );
-      queryClient.setQueriesData<SearchInventoryResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-        (old) => {
-          if (!old) return old;
-          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-            r.item.id === current.id ? { ...r, item: patchExpandedSave(r.item) } : r;
-          return {
-            ...old,
-            results: old.results.map(patchResult),
-            // exactOptionalPropertyTypes: only include the optional key when present
-            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-          };
-        },
-      );
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-      savedExpandedDescRef.current = expandedDescText.trim();
+      const updatedItem = { ...current, expandedDescription: savedText };
+      itemRef.current = updatedItem;
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: updatedItem.id,
+        updatedItem,
+      });
       setExpandedDescSaving("saved");
+      if (cacheResult && !cacheResult.ok) setExpandedDescError("Saved, but refresh failed. Search may be stale.");
+      onItemSaved?.(updatedItem);
     } catch (err) {
       setExpandedDescError(err instanceof Error ? err.message : "Save failed");
       setExpandedDescSaving("error");
-    } finally {
-      expandedDescSaveInFlightRef.current = false;
     }
   };
 
@@ -440,7 +355,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     const current = itemRef.current;
     if (!current || !adminToken) return;
     const previousText = expandedDescText;
-    expandedDescSaveInFlightRef.current = true;
     setExpandedDescText("");
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
@@ -457,37 +371,21 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      const listKeyPrefixClear = getListInventoryQueryKey()[0];
-      const patchExpandedClear = (i: InventoryItem): InventoryItem =>
-        i.id === current.id ? { ...i, expandedDescription: null } : i;
-      queryClient.setQueriesData<InventoryListResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefixClear },
-        (old) => old ? { ...old, items: old.items.map(patchExpandedClear) } : old,
-      );
-      queryClient.setQueriesData<SearchInventoryResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-        (old) => {
-          if (!old) return old;
-          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-            r.item.id === current.id ? { ...r, item: patchExpandedClear(r.item) } : r;
-          return {
-            ...old,
-            results: old.results.map(patchResult),
-            // exactOptionalPropertyTypes: only include the optional key when present
-            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-          };
-        },
-      );
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-      savedExpandedDescRef.current = "";
+      const updatedItem = { ...current, expandedDescription: null };
+      itemRef.current = updatedItem;
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: updatedItem.id,
+        updatedItem,
+      });
       setExpandedDescSaving("saved");
+      if (cacheResult && !cacheResult.ok) setExpandedDescError("Saved, but refresh failed. Search may be stale.");
+      onItemSaved?.(updatedItem);
     } catch (err) {
       setExpandedDescText(previousText);
       setExpandedDescError(err instanceof Error ? err.message : "Clear failed");
       setExpandedDescSaving("error");
-    } finally {
-      expandedDescSaveInFlightRef.current = false;
     }
   };
 
@@ -524,8 +422,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               // Let the host screen prune the item from its offline Fuse.js
               // barcode index, which evictDeletedItemFromAllCaches does not touch.
               onItemDeleted?.(current.id);
-              allowCloseRef.current = true;
-              requestClose();
+              onClose();
             } catch {
               Alert.alert("Delete Failed", "Could not delete the part. Check your connection and try again.");
             }
@@ -533,16 +430,13 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         },
       ],
     );
-  }, [adminToken, queryClient, onItemDeleted, requestClose]);
+  }, [adminToken, queryClient, onClose, onItemDeleted]);
 
   const handleSave = async () => {
-    if (saveInFlightRef.current) return;
-    saveInFlightRef.current = true;
     const current = itemRef.current;
     if (!current || !adminToken) {
       setErrorMsg("Admin session expired. Re-unlock and try again.");
       setSaveStatus("error");
-      saveInFlightRef.current = false;
       return;
     }
     setSaveStatus("saving");
@@ -596,7 +490,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     if (![parsedOp, parsedOq].every((value) => Number.isSafeInteger(value) && value >= 0)) {
       setFieldSaveErrors({ opoq: "OP and OQ must be non-negative whole numbers." });
       setSaveStatus("error");
-      saveInFlightRef.current = false;
       return;
     }
     if (parsedOp !== (current.orderPurchase ?? 0) || parsedOq !== (current.orderQuantity ?? 0)) {
@@ -785,7 +678,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
 
     if (ops.length === 0) {
       setSaveStatus("idle");
-      saveInFlightRef.current = false;
       return;
     }
 
@@ -824,41 +716,27 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       // Re-apply patches for fields that SUCCEEDED so the list / search view
       // reflects what is now on the server, even though the overall save failed.
       // Only the failed fields need retry — succeeded fields are already committed.
+      let cacheRefreshFailed = false;
       if (succeededFields.size > 0) {
-        const patchItemPartial = (i: InventoryItem): InventoryItem => {
-          if (i.id !== current.id) return i;
-          return {
-            ...i,
-            ...(succeededFields.has("description") ? { description: description.trim() } : {}),
-            ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
-            ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
-            ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
-            ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq } : {}),
-            ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
-            ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
-          };
+        const updatedItem: InventoryItem = {
+          ...current,
+          ...(succeededFields.has("description") ? { description: description.trim() } : {}),
+          ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
+          ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
+          ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
+          ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq } : {}),
+          ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+          ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
         };
-        queryClient.setQueriesData<InventoryListResponse>(
-          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-          (old) => {
-            if (!old) return old;
-            return { ...old, items: old.items.map(patchItemPartial) };
-          },
-        );
-        queryClient.setQueriesData<SearchInventoryResponse>(
-          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-          (old) => {
-            if (!old) return old;
-            const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-              r.item.id === current.id ? { ...r, item: patchItemPartial(r.item) } : r;
-            return {
-              ...old,
-              results: old.results.map(patchResult),
-              // exactOptionalPropertyTypes: only include the optional key when present
-              ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-            };
-          },
-        );
+        itemRef.current = updatedItem;
+        const cacheResult = await invalidateAllCachesAfterSave({
+          queryClient,
+          asyncStorage: AsyncStorage,
+          itemId: updatedItem.id,
+          updatedItem,
+        });
+        cacheRefreshFailed = cacheResult ? !cacheResult.ok : false;
+        onItemSaved?.(updatedItem);
       }
 
       setCommittedFields(prev => {
@@ -866,16 +744,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         succeededFields.forEach(f => next.add(f));
         return next;
       });
-      if (succeededFields.has("description")) savedDescriptionRef.current = description.trim();
-      if (succeededFields.has("opoq")) {
-        savedOpRef.current = parsedOp;
-        savedOqRef.current = parsedOq;
-      }
-      if (succeededFields.has("bins")) savedBinsRef.current = [...finalBins];
-      if (succeededFields.has("keywords")) savedKeywordsRef.current = [...finalKeywords];
-      if (succeededFields.has("dimensions")) savedDimsRef.current = { ...newDims };
-      if (succeededFields.has("photo")) savedPhotoUriRef.current = capturedImageUrl ?? null;
-      if (succeededFields.has("photo2")) savedPhotoUri2Ref.current = capturedImageUrl2 ?? null;
 
       const fieldLabel: Record<string, string> = {
         description: "Description",
@@ -891,119 +759,69 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       const parts: Array<string> = [];
       if (savedLabels.length > 0) parts.push(`${savedLabels.join(", ")} saved`);
       if (failedLabels.length > 0) parts.push(`${failedLabels.join(", ")} failed`);
+      if (cacheRefreshFailed) parts.push("Saved, but refresh failed");
       setErrorMsg(parts.join(" · ") + " — check connection and retry");
 
       setFieldSaveErrors(newFieldErrors);
       setSaveStatus("error");
     } else {
-      // Synchronously patch every changed field into both caches so the list /
-      // search view reflects the new values immediately, without waiting for the
-      // background invalidation refetch to complete.
-      const patchItem = (i: InventoryItem): InventoryItem => {
-        if (i.id !== current.id) return i;
-        return {
-          ...i,
-          description: description.trim(),
-          binLocations: finalBins,
-          aiKeywords: finalKeywords,
-          dimensions: dimsChanged ? newDims : (i.dimensions ?? null),
-          orderPurchase: parsedOp,
-          orderQuantity: parsedOq,
-          ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
-          ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
-        };
+      const updatedItem: InventoryItem = {
+        ...current,
+        description: description.trim(),
+        binLocations: finalBins,
+        aiKeywords: finalKeywords,
+        dimensions: dimsChanged ? newDims : (current.dimensions ?? null),
+        orderPurchase: parsedOp,
+        orderQuantity: parsedOq,
+        ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+        ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
       };
-      queryClient.setQueriesData<InventoryListResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-        (old) => {
-          if (!old) return old;
-          return { ...old, items: old.items.map(patchItem) };
-        },
-      );
-      queryClient.setQueriesData<SearchInventoryResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-        (old) => {
-          if (!old) return old;
-          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-            r.item.id === current.id ? { ...r, item: patchItem(r.item) } : r;
-          return {
-            ...old,
-            results: old.results.map(patchResult),
-            // exactOptionalPropertyTypes: only include the optional key when present
-            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-          };
-        },
-      );
-
-      // Evict stale search result cache entries for this item from AsyncStorage
-      // so the next query returns fresh data rather than serving old field values.
-      try {
-        const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
-        if (raw) {
-          const cache = parseStoredQueryCache(raw);
-          if (cache) {
-            const { pruned, changed } = evictItemFromQueryCache(cache, current.id);
-            if (changed) await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
-          }
-        }
-      } catch {
-        // Non-fatal — worst case the search cache TTL will expire naturally
-      }
+      itemRef.current = updatedItem;
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: updatedItem.id,
+        updatedItem,
+      });
+      onItemSaved?.(updatedItem);
       setNewPhotoData(null);
       setNewPhotoData2(null);
       setRemoveCurrentPhoto(false);
       setRemoveCurrentPhoto2(false);
-      savedDescriptionRef.current = description.trim();
-      savedOpRef.current = parsedOp;
-      savedOqRef.current = parsedOq;
-      savedBinsRef.current = [...finalBins];
-      savedKeywordsRef.current = [...finalKeywords];
-      savedDimsRef.current = { ...newDims };
-      savedPhotoUriRef.current = capturedImageUrl ?? null;
-      savedPhotoUri2Ref.current = capturedImageUrl2 ?? null;
       setSaveStatus("saved");
-      allowCloseRef.current = true;
+      if (cacheResult && !cacheResult.ok) setErrorMsg("Saved, but refresh failed. Search may be stale.");
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = setTimeout(() => {
-        closeTimerRef.current = null;
-        requestClose();
-      }, 500);
+      closeTimerRef.current = setTimeout(() => { closeTimerRef.current = null; onClose(); }, 500);
     }
 
-    // onSettled: always invalidate both affected query keys as a safety net,
-    // regardless of success or failure, so the server's state of truth is
-    // restored after any cache patches applied during this mutation.
-    await invalidateListCache({ queryClient });
-    await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-    saveInFlightRef.current = false;
+    // Keep the existing post-settlement safety net for failed field batches.
+    // Successful writes already perform this work through invalidateAllCachesAfterSave;
+    // these calls are best-effort and must never turn a committed write into an error.
+    try {
+      await invalidateListCache({ queryClient });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+    } catch {
+      // The cache result from the successful path carries refresh failures to the UI.
+    }
   };
 
   if (!item) return null;
 
   const isSaving = saveStatus === "saving";
   const isSaved = saveStatus === "saved";
-  const isCloseBlocked =
-    isSaving ||
-    expandedDescSaving === "saving" ||
-    saveInFlightRef.current ||
-    dimensionSaveInFlightRef.current ||
-    expandedDescSaveInFlightRef.current;
 
   const hasChanges =
-    description.trim() !== savedDescriptionRef.current.trim() ||
-    Number(op.trim() || "0") !== savedOpRef.current ||
-    Number(oq.trim() || "0") !== savedOqRef.current ||
-    JSON.stringify(bins) !== JSON.stringify(savedBinsRef.current) ||
-    JSON.stringify(keywords) !== JSON.stringify(savedKeywordsRef.current) ||
-    parseDimField(dimLength) !== savedDimsRef.current.length ||
-    parseDimField(dimWidth) !== savedDimsRef.current.width ||
-    parseDimField(dimHeight) !== savedDimsRef.current.height ||
-    parseDimField(dimDiameter) !== savedDimsRef.current.diameter ||
-    expandedDescText.trim() !== savedExpandedDescRef.current.trim() ||
-    (newPhotoData?.uri ?? (removeCurrentPhoto ? null : item.imageUrl ?? null)) !== savedPhotoUriRef.current ||
-    (newPhotoData2?.uri ?? (removeCurrentPhoto2 ? null : item.imageUrl2 ?? null)) !== savedPhotoUri2Ref.current;
-
-  hasChangesRef.current = hasChanges;
+    description.trim() !== (item.description ?? "").trim() ||
+    JSON.stringify(bins) !== JSON.stringify(item.binLocations ?? []) ||
+    JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []) ||
+    parseDimField(dimLength) !== (existingDims?.length ?? null) ||
+    parseDimField(dimWidth) !== (existingDims?.width ?? null) ||
+    parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
+    parseDimField(dimDiameter) !== (existingDims?.diameter ?? null) ||
+    newPhotoData !== null ||
+    (removeCurrentPhoto && !!item.imageUrl) ||
+    newPhotoData2 !== null ||
+    (removeCurrentPhoto2 && !!item.imageUrl2);
 
   const currentPhotoUri = removeCurrentPhoto
     ? null
@@ -1033,7 +851,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         visible
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={() => requestClose()}
+        onRequestClose={onClose}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -1058,9 +876,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               </Text>
             </View>
             <Pressable
-              onPress={() => requestClose()}
-              disabled={isCloseBlocked}
-              style={[styles.closeBtn, { backgroundColor: colors.muted, opacity: isCloseBlocked ? 0.45 : 1 }]}
+              onPress={onClose}
+              style={[styles.closeBtn, { backgroundColor: colors.muted }]}
               accessibilityLabel="Close editor"
               accessibilityRole="button"
             >
@@ -1511,10 +1328,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           <View style={[styles.footer, { borderTopColor: colors.border }]}>
             {onShowOnMap && item ? (
               <Pressable
-                onPress={() => requestClose(() => {
-                  onClose();
-                  onShowOnMap(item);
-                })}
+                onPress={() => { onClose(); onShowOnMap(item); }}
                 style={[styles.mapBtn, { backgroundColor: colors.accentForeground + "18", borderColor: colors.accentForeground + "44" }]}
                 accessibilityLabel="Show this part on the map"
               >
@@ -1533,9 +1347,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               </Pressable>
             ) : null}
             <Pressable
-              onPress={() => requestClose()}
-              disabled={isCloseBlocked}
-              style={[styles.cancelBtn, { borderColor: colors.border, opacity: isCloseBlocked ? 0.45 : 1 }]}
+              onPress={onClose}
+              style={[styles.cancelBtn, { borderColor: colors.border }]}
             >
               <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
             </Pressable>
@@ -1564,25 +1377,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           </DismissKeyboard>
         </KeyboardAvoidingView>
       </Modal>
-
-      <ConfirmDialog
-        visible={discardDialogVisible}
-        title="Discard changes?"
-        message="Your edits will be lost."
-        confirmLabel="Discard"
-        cancelLabel="Keep Editing"
-        destructive
-        onConfirm={discardChanges}
-        onCancel={keepEditing}
-      />
-
-      <InfoDialog
-        visible={saveInFlightDialogVisible}
-        title="Save in progress"
-        message="Please wait for the current save to finish before closing this editor."
-        dismissLabel="Keep Editing"
-        onDismiss={keepEditing}
-      />
 
       {/* MeasurePartScreen is rendered outside the main Modal so it can present
           its own full-screen Modal without nesting conflicts on iOS. */}

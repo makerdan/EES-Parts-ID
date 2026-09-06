@@ -117,9 +117,13 @@ jest.mock("@/components/MeasurePartScreen", () => ({
   MeasurePartScreen: () => null,
 }));
 
-jest.mock("@/utils/editItemCache", () => ({
-  invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
-}));
+jest.mock("@/utils/editItemCache", () => {
+  const actual = jest.requireActual("../utils/editItemCache") as typeof import("../utils/editItemCache");
+  return {
+    ...actual,
+    invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
+  };
+});
 
 jest.mock("@expo/vector-icons", () => ({
   Feather: () => null,

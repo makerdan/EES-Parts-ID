@@ -133,7 +133,7 @@ describe("invalidateSearchAndEvictItem — post-save cache invalidation contract
     expect(mockSetItem).not.toHaveBeenCalled();
   });
 
-  it("swallows AsyncStorage errors non-fatally (does not throw)", async () => {
+  it("reports AsyncStorage errors non-fatally (does not throw)", async () => {
     mockGetItem.mockRejectedValue(new Error("AsyncStorage unavailable"));
 
     await expect(
@@ -142,7 +142,7 @@ describe("invalidateSearchAndEvictItem — post-save cache invalidation contract
         asyncStorage: { getItem: mockGetItem, setItem: mockSetItem },
         itemId: 42,
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ ok: false, failures: [expect.any(Error)] });
   });
 
   it("still calls invalidateQueries even when AsyncStorage throws", async () => {

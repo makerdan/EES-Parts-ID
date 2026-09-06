@@ -15,22 +15,16 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
 import { act, fireEvent, render, type RenderResult } from "@testing-library/react-native";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { InventoryItem, SearchInventoryResponse } from "@workspace/api-client-react";
 import type { TestInstance } from "test-renderer";
 
 type SearchData = SearchInventoryResponse;
-type SearchOptions = {
-  onSuccess?: (data: SearchData) => void;
-  onError?: () => void;
-};
-
 const mockPush = jest.fn();
 const mockBack = jest.fn();
 const mockKeywordsMutateAsync = jest.fn().mockResolvedValue(undefined);
 const mockBinsMutateAsync = jest.fn().mockResolvedValue(undefined);
 const mockBarcodesMutateAsync = jest.fn().mockResolvedValue(undefined);
-const mockInvalidateQueries = jest.fn().mockResolvedValue(undefined);
-const mockInvalidateAllCachesAfterSave = jest.fn().mockResolvedValue(undefined);
 const mockFetch = jest.fn().mockResolvedValue({
   ok: true,
   json: jest.fn().mockResolvedValue({}),
@@ -39,54 +33,6 @@ const mockFetch = jest.fn().mockResolvedValue({
 
 let selectedItem: InventoryItem | null = null;
 let searchResponse: SearchData | undefined;
-let searchCacheData: SearchData | undefined;
-let searchOptions: SearchOptions | undefined;
-let updateSearchHookData: React.Dispatch<React.SetStateAction<SearchData | undefined>> | undefined;
-
-const mockMutate = jest.fn((_request: unknown) => {
-  const response = searchResponse;
-  if (!response) return;
-  searchCacheData = response;
-  updateSearchHookData?.(response);
-  searchOptions?.onSuccess?.(response);
-});
-
-const mockUseSearchInventory = jest.fn((options: SearchOptions) => {
-  searchOptions = options;
-  const [data, setData] = React.useState<SearchData | undefined>(undefined);
-  updateSearchHookData = setData;
-  return {
-    mutate: mockMutate,
-    mutateAsync: jest.fn(),
-    isPending: false,
-    isSuccess: data !== undefined,
-    isError: false,
-    data,
-    reset: jest.fn(),
-  };
-});
-
-const mockSetQueryData = jest.fn();
-const mockSetQueriesData = jest.fn(
-  (
-    filters: { predicate?: (query: { queryKey: Array<unknown> }) => boolean },
-    updater: (old: unknown) => unknown,
-  ) => {
-    const searchQuery = { queryKey: ["searchInventory", "keyword-flow"] };
-    if (!filters.predicate?.(searchQuery)) return;
-    const next = updater(searchCacheData);
-    searchCacheData = next as SearchData | undefined;
-    updateSearchHookData?.(searchCacheData);
-  },
-);
-const mockGetQueriesData = jest.fn(
-  (filters: { predicate?: (query: { queryKey: Array<unknown> }) => boolean }) => {
-    const searchQuery = { queryKey: ["searchInventory", "keyword-flow"] };
-    return filters.predicate?.(searchQuery) && searchCacheData
-      ? [[searchQuery.queryKey, searchCacheData]]
-      : [];
-  },
-);
 
 jest.mock("expo-router", () => ({
   router: {
@@ -109,8 +55,10 @@ jest.mock("expo-router", () => ({
   })),
 }));
 
-jest.mock("@workspace/api-client-react", () => ({
-  useSearchInventory: (options: SearchOptions) => mockUseSearchInventory(options),
+jest.mock("@workspace/api-client-react", () => {
+  const actual = jest.requireActual("@workspace/api-client-react") as typeof import("@workspace/api-client-react");
+  return {
+    ...actual,
   useUpdateItemKeywords: jest.fn(() => ({
     mutateAsync: (...args: Array<unknown>) => mockKeywordsMutateAsync(...args),
   })),
@@ -120,7 +68,6 @@ jest.mock("@workspace/api-client-react", () => ({
   useUpdateItemBarcodes: jest.fn(() => ({
     mutateAsync: (...args: Array<unknown>) => mockBarcodesMutateAsync(...args),
   })),
-  getListInventoryQueryKey: jest.fn(() => ["/api/inventory"]),
   useAiIdentifyPart: jest.fn(() => ({
     mutateAsync: jest.fn(),
     isPending: false,
@@ -131,20 +78,8 @@ jest.mock("@workspace/api-client-react", () => ({
   setAuthTokenGetter: jest.fn(),
   setBaseUrl: jest.fn(),
   lookupByBarcode: jest.fn(),
-}));
-
-jest.mock("@tanstack/react-query", () => ({
-  useQueryClient: jest.fn(() => ({
-    getQueriesData: (filters: { predicate?: (query: { queryKey: Array<unknown> }) => boolean }) =>
-      mockGetQueriesData(filters),
-    setQueryData: (...args: Array<unknown>) => mockSetQueryData(...args),
-    setQueriesData: (
-      filters: { predicate?: (query: { queryKey: Array<unknown> }) => boolean },
-      updater: (old: unknown) => unknown,
-    ) => mockSetQueriesData(filters, updater),
-    invalidateQueries: (...args: Array<unknown>) => mockInvalidateQueries(...args),
-  })),
-}));
+  };
+});
 
 jest.mock("@react-native-community/netinfo", () => ({
   __esModule: true,
@@ -250,11 +185,6 @@ jest.mock("@/utils/apiBase", () => ({
 jest.mock("@/utils/appAuth", () => ({
   fetchWithAuth: jest.fn().mockResolvedValue({ ok: true, json: jest.fn().mockResolvedValue({}) }),
 }));
-jest.mock("@/utils/editItemCache", () => ({
-  invalidateAllCachesAfterSave: (...args: Array<unknown>) => mockInvalidateAllCachesAfterSave(...args),
-  evictDeletedItemFromAllCaches: jest.fn().mockResolvedValue(undefined),
-  invalidateListCache: jest.fn().mockResolvedValue(undefined),
-}));
 jest.mock("expo-camera", () => ({
   CameraView: () => null,
   useCameraPermissions: jest.fn(() => [{ granted: false }, jest.fn()]),
@@ -304,6 +234,7 @@ jest.mock("@/utils/searchHelpers", () => ({
   formatRelativeAge: jest.fn().mockReturnValue("1 hour ago"),
   resolveOfflineFallback: jest.fn().mockReturnValue({ results: [], cacheType: null }),
   fetchInventoryPages: jest.fn().mockResolvedValue([]),
+  evictItemFromQueryCache: jest.fn((cache: unknown) => ({ pruned: cache, changed: false })),
 }));
 jest.mock("@/utils/searchHistory", () => ({
   appendQueryHistory: jest.fn().mockResolvedValue(undefined),
@@ -425,6 +356,7 @@ const flushMicrotasks = async () => {
 
 let searchTree: RenderResult | null = null;
 let editTree: RenderResult | null = null;
+let queryClient: QueryClient;
 
 beforeEach(() => {
   jest.useFakeTimers();
@@ -436,26 +368,20 @@ beforeEach(() => {
     aiKeywords: ["untouched"],
   });
   searchResponse = makeSearchData(item, other);
-  searchCacheData = undefined;
   selectedItem = null;
-  searchOptions = undefined;
-  updateSearchHookData = undefined;
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   useApp.mockReturnValue(makeAppContext());
-  mockMutate.mockClear();
   mockPush.mockClear();
   mockBack.mockClear();
   mockKeywordsMutateAsync.mockClear().mockResolvedValue(undefined);
   mockBinsMutateAsync.mockClear().mockResolvedValue(undefined);
   mockBarcodesMutateAsync.mockClear().mockResolvedValue(undefined);
-  mockSetQueriesData.mockClear();
-  mockGetQueriesData.mockClear();
-  mockSetQueryData.mockClear();
-  mockInvalidateQueries.mockClear().mockResolvedValue(undefined);
-  mockInvalidateAllCachesAfterSave.mockClear().mockResolvedValue(undefined);
-  mockFetch.mockClear().mockResolvedValue({
-    ok: true,
-    json: jest.fn().mockResolvedValue({}),
-  });
+  mockFetch.mockClear().mockResolvedValue(
+    new Response(JSON.stringify(searchResponse), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
 });
 
 afterEach(async () => {
@@ -470,15 +396,17 @@ afterEach(async () => {
   jest.runOnlyPendingTimers();
   jest.useRealTimers();
   searchResponse = undefined;
-  searchCacheData = undefined;
   selectedItem = null;
-  searchOptions = undefined;
-  updateSearchHookData = undefined;
+  queryClient.clear();
 });
 
 describe("Search → Edit Part keyword flow", () => {
   it("updates the selected result's part information immediately after saving a keyword", async () => {
-    searchTree = await render(<SearchScreen />);
+    searchTree = await render(
+      <QueryClientProvider client={queryClient}>
+        <SearchScreen />
+      </QueryClientProvider>,
+    );
 
     const searchInput = findHost(searchTree.root!, "keyword-input");
     expect(searchInput).not.toBeNull();
@@ -495,10 +423,13 @@ describe("Search → Edit Part keyword flow", () => {
     });
     await flushMicrotasks();
 
-    expect(mockMutate).toHaveBeenCalledTimes(1);
-    expect(mockMutate.mock.calls[0]![0]).toEqual({
-      data: expect.objectContaining({ keywords: "OLD KEYWORD" }),
-    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/inventory/search"),
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"keywords":"OLD KEYWORD"'),
+      }),
+    );
     expect(cardText(searchTree.root!, "PART-X")).toContain("old keyword");
     expect(cardText(searchTree.root!, "PART-X")).toContain("PART-X");
     expect(cardText(searchTree.root!, "OTHER-PART")).toContain("untouched");
@@ -518,7 +449,11 @@ describe("Search → Edit Part keyword flow", () => {
     expect(JSON.parse(pushedRoute.params.item)).toEqual(searchResponse!.results[0]!.item);
     expect(selectedItem?.id).toBe(42);
 
-    editTree = await render(<EditItemScreen />);
+    editTree = await render(
+      <QueryClientProvider client={queryClient}>
+        <EditItemScreen />
+      </QueryClientProvider>,
+    );
     const oldKeywordChip = findPressable(editTree.root!, "old keyword");
     expect(oldKeywordChip).not.toBeNull();
     await act(async () => {
@@ -547,8 +482,6 @@ describe("Search → Edit Part keyword flow", () => {
     });
     expect(mockBinsMutateAsync).not.toHaveBeenCalled();
     expect(mockBarcodesMutateAsync).not.toHaveBeenCalled();
-    expect(mockMutate).toHaveBeenCalledTimes(1);
-
     // The production cache updater has now fed the patched result back into
     // the mounted search screen. No manual re-search is involved.
     await flushMicrotasks();

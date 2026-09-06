@@ -67,6 +67,7 @@
 - [Runtime data boundary](runtime-data-boundary.md) — require explicit database modes, reject production in tooling, and delay database imports until startup validation runs.
 - [API auth before body parsing](api-auth-before-body-parsing.md) — method-aware public route matching and pre-parser auth prevent write-prefix leaks and unauthenticated upload buffering.
 - [Contract assertion normalization](contract-assertion-normalization.md) — static prose contracts should be checked semantically rather than by physical line wrapping.
-- [Jest hoisted shared mock factories](jest-hoisted-shared-mock-factories.md) — load shared helpers inside hoisted mock callbacks and pass in jest.requireActual modules to avoid TDZ failures.
 - [Schema-validated .replit replacement](dot-replit-schema-replacement.md) — write complete TOML to a temp file and use the validator/replacer instead of patching .replit directly.
+- [Jest hoisted shared mock factories](jest-hoisted-shared-mock-factories.md) — load shared helpers inside hoisted mock callbacks and pass in jest.requireActual modules to avoid TDZ failures.
+- [Disabled query cache observers](disabled-query-cache-observers.md) — when a disabled query-backed screen must react to app-owned cache writes, subscribe to QueryCache and read the stable key directly.
 - [Task-plan heading parser](task-plan-heading-parser.md) — put detailed Validation before Validation tier so the locked runner parses the intended section.

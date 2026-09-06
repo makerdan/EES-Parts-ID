@@ -5,9 +5,10 @@
  * independently without mounting the full screen.
  */
 
-import type { InventoryListResponse, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
+import type { InventoryItem, InventoryListResponse, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 
+import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
 import type { QueryCache } from "@/utils/searchHelpers";
 import { evictItemFromQueryCache,QUERY_CACHE_KEY } from "@/utils/searchHelpers";
 
@@ -55,35 +56,193 @@ export type QueryClientLikeWithSetQueries = QueryClientLike & {
   ): void;
 };
 
+export type CacheCleanupResult = {
+  failures: Array<unknown>;
+  ok: boolean;
+};
+
+const cleanupResult = (failures: Array<unknown>): CacheCleanupResult => ({
+  failures,
+  ok: failures.length === 0,
+});
+
+function updateStoredFuseCache(raw: string, updatedItem: InventoryItem): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (Array.isArray(parsed)) {
+    const index = parsed.findIndex((item) => (
+      typeof item === "object" && item !== null && (item as { id?: unknown }).id === updatedItem.id
+    ));
+    if (index < 0) return null;
+    const next = [...parsed];
+    next[index] = updatedItem;
+    return JSON.stringify(next);
+  }
+
+  if (typeof parsed !== "object" || parsed === null || !Array.isArray((parsed as { items?: unknown }).items)) {
+    return null;
+  }
+  const envelope = parsed as { items: Array<unknown>; syncedAt?: unknown };
+  const index = envelope.items.findIndex((item) => (
+    typeof item === "object" && item !== null && (item as { id?: unknown }).id === updatedItem.id
+  ));
+  if (index < 0) return null;
+  const nextItems = [...envelope.items];
+  nextItems[index] = updatedItem;
+  return JSON.stringify({ ...envelope, items: nextItems });
+}
+
+function patchItemInQueryCaches(
+  queryClient: QueryClientLikeWithSetQueries,
+  updatedItem: InventoryItem,
+): void {
+  const listKeyPrefix = getListInventoryQueryKey()[0];
+  const patchItem = (item: InventoryItem): InventoryItem =>
+    item.id === updatedItem.id ? { ...item, ...updatedItem } : item;
+
+  queryClient.setQueriesData<InventoryListResponse>(
+    { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+    (old) => old ? { ...old, items: old.items.map(patchItem) } : old,
+  );
+
+  queryClient.setQueriesData<SearchInventoryResponse>(
+    { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+    (old) => {
+      if (!old) return old;
+      const patchResult = (result: SearchInventoryResponse["results"][number]) => (
+        result.item.id === updatedItem.id ? { ...result, item: patchItem(result.item) } : result
+      );
+      return {
+        ...old,
+        results: old.results.map(patchResult),
+        ...(old.sizeUnknownResults !== undefined
+          ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) }
+          : {}),
+      };
+    },
+  );
+}
+
+async function updateStoredFuseItem(
+  asyncStorage: AsyncStorageLike,
+  updatedItem: InventoryItem,
+): Promise<void> {
+  const raw = await asyncStorage.getItem(FUSE_CACHE_KEY);
+  if (!raw) return;
+  const next = updateStoredFuseCache(raw, updatedItem);
+  if (next !== null) await asyncStorage.setItem(FUSE_CACHE_KEY, next);
+}
+
 /**
  * Invalidate the React Query searchInventory cache and evict the edited item
  * from the AsyncStorage offline-search cache.
  *
  * Called by handleSave after all PATCH requests have resolved successfully.
- * The AsyncStorage eviction is non-fatal: an error there is swallowed so that
- * a storage failure never blocks the user from navigating away.
+ * Cache work is non-fatal to the server write, but failures are returned so the
+ * caller can distinguish "saved, refresh failed" from a rejected write.
  */
 export async function invalidateSearchAndEvictItem(opts: {
   queryClient: QueryClientLike;
   asyncStorage: AsyncStorageLike;
   itemId: number;
-}): Promise<void> {
-  await opts.queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-
-  try {
-    const raw = await opts.asyncStorage.getItem(QUERY_CACHE_KEY);
-    if (raw) {
-      const cache = parseStoredQueryCache(raw);
-      if (cache) {
-        const { pruned, changed } = evictItemFromQueryCache(cache, opts.itemId);
-        if (changed) {
-          await opts.asyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
+  updatedItem?: InventoryItem;
+}): Promise<CacheCleanupResult> {
+  const failures: Array<unknown> = [];
+  await Promise.all([
+    opts.queryClient.invalidateQueries({ queryKey: ["searchInventory"] }).catch((error) => {
+      failures.push(error);
+    }),
+    (async () => {
+      try {
+        const raw = await opts.asyncStorage.getItem(QUERY_CACHE_KEY);
+        if (raw) {
+          const cache = parseStoredQueryCache(raw);
+          if (cache) {
+            const { pruned, changed } = evictItemFromQueryCache(cache, opts.itemId);
+            if (changed) await opts.asyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
+          }
         }
+      } catch (error) {
+        failures.push(error);
       }
-    }
-  } catch {
-    // Non-fatal — worst case the search cache TTL will expire naturally
+    })(),
+    opts.updatedItem
+      ? updateStoredFuseItem(opts.asyncStorage, opts.updatedItem).catch((error) => {
+          failures.push(error);
+        })
+      : Promise.resolve(),
+  ]);
+  return cleanupResult(failures);
+}
+
+/**
+ * Patch the in-memory list/search caches and reconcile every durable cache after
+ * a successful inventory write. Cache work is deliberately non-fatal: the
+ * server write has already committed, so callers can report a refresh problem
+ * without telling the admin that the write failed.
+ */
+export async function updateItemInAllCaches(opts: {
+  queryClient: QueryClientLikeWithSetQueries;
+  asyncStorage: AsyncStorageLike;
+  updatedItem: InventoryItem;
+}): Promise<CacheCleanupResult> {
+  const failures: Array<unknown> = [];
+  try {
+    patchItemInQueryCaches(opts.queryClient, opts.updatedItem);
+  } catch (error) {
+    failures.push(error);
   }
+
+  const listResult = await invalidateListCache(opts).then(
+    () => null,
+    (error) => error,
+  );
+  if (listResult) failures.push(listResult);
+
+  const searchResult = await invalidateSearchAndEvictItem({
+    ...opts,
+    itemId: opts.updatedItem.id,
+  });
+  failures.push(...searchResult.failures);
+  return cleanupResult(failures);
+}
+
+/**
+ * Invalidate all paginated list and search caches after a successful save.
+ * When an updated item is provided, patch it into the active in-memory caches
+ * before invalidating so the current Search card updates immediately.
+ */
+export async function invalidateAllCachesAfterSave(opts: {
+  queryClient: QueryClientLike;
+  asyncStorage: AsyncStorageLike;
+  itemId: number;
+  updatedItem?: InventoryItem;
+}): Promise<CacheCleanupResult> {
+  if (opts.updatedItem) {
+    if (!("setQueriesData" in opts.queryClient)) {
+      return cleanupResult([new Error("Query client cannot update item caches")]);
+    }
+    return updateItemInAllCaches({
+      queryClient: opts.queryClient as QueryClientLikeWithSetQueries,
+      asyncStorage: opts.asyncStorage,
+      updatedItem: opts.updatedItem,
+    });
+  }
+
+  const failures: Array<unknown> = [];
+  const listResult = await invalidateListCache(opts).then(
+    () => null,
+    (error) => error,
+  );
+  if (listResult) failures.push(listResult);
+  const searchResult = await invalidateSearchAndEvictItem(opts);
+  failures.push(...searchResult.failures);
+  return cleanupResult(failures);
 }
 
 /**
@@ -104,24 +263,7 @@ export async function invalidateListCache(opts: {
 }
 
 /**
- * Invalidate ALL React Query caches that may show stale data after an edit:
- *   1. The paginated list cache (predicate on getListInventoryQueryKey()[0])
- *   2. The full-text search cache + the AsyncStorage offline copy (via
- *      invalidateSearchAndEvictItem)
- *
- * Called by handleSave in edit-item.tsx after all PATCH requests succeed.
- * Keeping both invalidations in one place makes it straightforward to test
- * that neither path is accidentally dropped by a future refactor.
  */
-export async function invalidateAllCachesAfterSave(opts: {
-  queryClient: QueryClientLike;
-  asyncStorage: AsyncStorageLike;
-  itemId: number;
-}): Promise<void> {
-  await invalidateListCache(opts);
-  await invalidateSearchAndEvictItem(opts);
-}
-
 /**
  * Immediately remove a deleted item from all query caches — both the in-memory
  * TanStack Query cache and the AsyncStorage offline search cache.
