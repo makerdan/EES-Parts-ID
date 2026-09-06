@@ -50,6 +50,48 @@ describe("runtime data boundary", () => {
     expect(assertDatabaseExecutionMode("application", env)).toBe("production");
   });
 
+  it.each([undefined, "", "   ", "development", "test", "staging"])(
+    "rejects DATABASE_ENV=%p from the production runtime contract",
+    (databaseEnv) => {
+      const env = {
+        NODE_ENV: "production",
+        DATABASE_ENV: databaseEnv,
+        DATABASE_URL: "test-database",
+        CLERK_PUBLISHABLE_KEY: "test-public-key",
+        CLERK_SECRET_KEY: "test-secret-key",
+        CORS_ALLOWED_ORIGINS: "https://parts.example",
+        AI_PROVIDER: "poe",
+        POE_API_KEY2: "test-ai-key",
+      };
+
+      const invalid = getMissingProductionEnvVars(env);
+      const error = formatMissingProductionEnvError(invalid);
+
+      expect(invalid.map((entry) => entry.name)).toEqual(["DATABASE_ENV"]);
+      expect(error).toContain("DATABASE_ENV");
+      expect(error).toContain("DATABASE_ENV=production");
+      if (databaseEnv) {
+        expect(error).not.toContain(`DATABASE_ENV=${databaseEnv}`);
+      }
+    },
+  );
+
+  it.each([
+    {
+      NODE_ENV: "development",
+      DATABASE_ENV: "development",
+    },
+    {
+      NODE_ENV: "test",
+      DATABASE_ENV: "test",
+      JEST_WORKER_ID: "1",
+    },
+  ])("preserves the explicit non-production application mode for %p", (env) => {
+    expect(assertDatabaseExecutionMode("application", env)).toBe(
+      env.DATABASE_ENV,
+    );
+  });
+
   it("returns only explicitly public client configuration", () => {
     const publicEnv = getClientPublicEnvironment({
       EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: "test-public-key",

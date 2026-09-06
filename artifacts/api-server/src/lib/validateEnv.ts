@@ -24,6 +24,7 @@ export interface EnvCheck {
   name: string;
   description: string;
   condition?: (env: EnvironmentSource) => boolean;
+  isValid?: (value: string, env: EnvironmentSource) => boolean;
 }
 
 const REQUIRED_IN_PRODUCTION: Array<EnvCheck> = [
@@ -31,6 +32,7 @@ const REQUIRED_IN_PRODUCTION: Array<EnvCheck> = [
     name: "DATABASE_ENV",
     description:
       "Explicit Replit database target. Production API processes must use DATABASE_ENV=production.",
+    isValid: (value) => value.trim().toLowerCase() === "production",
   },
   {
     name: "DATABASE_URL",
@@ -85,7 +87,8 @@ export function getMissingProductionEnvVars(
     if (check.condition && !check.condition(env)) {
       return false;
     }
-    return !env[check.name];
+    const value = env[check.name];
+    return !value?.trim() || (check.isValid ? !check.isValid(value, env) : false);
   });
 }
 
@@ -105,17 +108,18 @@ export function formatMissingProductionEnvError(
   );
 
   return [
-    `Server cannot start — ${missing.length} required environment variable${missing.length === 1 ? " is" : "s are"} missing in production:`,
+    `Server cannot start — ${missing.length} required environment variable${missing.length === 1 ? " is" : "s are"} missing or invalid in production:`,
     ...lines,
-    "Set the missing variables in Replit Secrets or the deployment environment and redeploy.",
+    "Set the listed variables correctly in Replit Secrets or the deployment environment and redeploy.",
   ].join("\n");
 }
 
 /**
- * Validates that all required-in-production environment variables are present.
+ * Validates that all required-in-production environment variables are present
+ * and satisfy any value constraints.
  *
  * - In production (NODE_ENV === "production"): exits with code 1 and a clear
- *   error message listing every missing variable if any are absent.
+ *   error message listing every invalid variable if any are absent or invalid.
  * - In development: silently skips all checks so local workflows keep working.
  */
 export function validateEnv(): void {
