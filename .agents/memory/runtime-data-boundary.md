@@ -16,3 +16,14 @@ hide the actionable missing-secret error behind pool initialization.
 before the database package. Put database-affecting package commands behind an
 explicit non-production guard, and keep client build inputs to an allowlist of
 `EXPO_PUBLIC_*` values.
+
+Validation runners do not necessarily supply the database mode to nested
+package test commands; the task's validation environment must preserve the
+explicit `test` mode or the API suite will be refused before Jest starts.
+
+**Why:** The database-command guard correctly rejects an omitted mode, but that
+failure can look like a broken global setup when it is only missing inherited
+test configuration.
+
+**How to apply:** When a task validation reaches database-backed tests, verify
+the runner inherits the explicit test mode before diagnosing suite failures.

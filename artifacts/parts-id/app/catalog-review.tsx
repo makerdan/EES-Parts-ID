@@ -140,6 +140,7 @@ export default function CatalogReviewScreen() {
   const screenLifecycleRef = useRef(0);
   const fetchGenerationRef = useRef(0);
   const fetchControllerRef = useRef<AbortController | null>(null);
+  const resumeUploadControllerRef = useRef<AbortController | null>(null);
   const resumePollControllerRef = useRef<Record<number, AbortController>>({});
   const [infoDialog, setInfoDialog] = useState<{ visible: boolean; title: string; message: string }>({
     visible: false, title: "", message: "",
@@ -226,12 +227,16 @@ export default function CatalogReviewScreen() {
   useEffect(() => {
     const lifecycle = ++screenLifecycleRef.current;
     fetchControllerRef.current?.abort();
+    resumeUploadControllerRef.current?.abort();
+    resumeUploadControllerRef.current = null;
     return () => {
       if (screenLifecycleRef.current === lifecycle) {
         screenLifecycleRef.current += 1;
       }
       fetchControllerRef.current?.abort();
       fetchControllerRef.current = null;
+      resumeUploadControllerRef.current?.abort();
+      resumeUploadControllerRef.current = null;
     };
   }, [adminToken, jobId]);
 
@@ -540,17 +545,19 @@ export default function CatalogReviewScreen() {
 
   const handleResume = async (jobId: number) => {
     if (resumingId) return;
+    const lifecycle = screenLifecycleRef.current;
+    const isCurrentLifecycle = () => screenLifecycleRef.current === lifecycle;
 
     // Pick the PDF file
     let result: DocumentPicker.DocumentPickerResult;
     try {
       result = await DocumentPicker.getDocumentAsync({ type: "application/pdf", copyToCacheDirectory: true });
     } catch {
-      showInfo("Error", "Could not open the file picker.");
+      if (isCurrentLifecycle()) showInfo("Error", "Could not open the file picker.");
       return;
     }
 
-    if (result.canceled || !result.assets?.[0]) return;
+    if (!isCurrentLifecycle() || result.canceled || !result.assets?.[0]) return;
 
     const uri = result.assets[0].uri;
 
@@ -560,12 +567,20 @@ export default function CatalogReviewScreen() {
     try {
       pdfBytes = await readPdfAsBytes(uri);
     } catch (err) {
-      showInfo("Error", toFriendlyReadError(err));
+      if (isCurrentLifecycle()) showInfo("Error", toFriendlyReadError(err));
       return;
     }
 
+    if (!isCurrentLifecycle()) return;
     setResumingId(jobId);
     const job = failedJobs.find((j) => j.id === jobId);
+    const controller = new AbortController();
+    resumeUploadControllerRef.current?.abort();
+    resumeUploadControllerRef.current = controller;
+    const isCurrentResume = () =>
+      isCurrentLifecycle() &&
+      resumeUploadControllerRef.current === controller &&
+      !controller.signal.aborted;
 
     // uploadStarted is set to true only when polling has been successfully
     // kicked off. The finally block clears resumingId on every non-success
@@ -579,14 +594,19 @@ export default function CatalogReviewScreen() {
         try {
           chunks = await splitPdfIntoChunks(pdfBytes, PAGES_PER_CHUNK);
         } catch (err) {
-          showInfo("Error", "Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
+          if (isCurrentResume()) {
+            showInfo("Error", "Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
+          }
           return;
         }
+        if (!isCurrentResume()) return;
 
         // Fetch which specific chunks need re-uploading from the status endpoint.
         const largeStatusR = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, {
           headers: authHeaders,
+          signal: controller.signal,
         });
+        if (!isCurrentResume()) return;
         if (!largeStatusR.ok) {
           showInfo("Resume failed", `Could not load job status (HTTP ${largeStatusR.status}). Please try again.`);
           return;
@@ -594,6 +614,7 @@ export default function CatalogReviewScreen() {
         const largeStatusBody = await largeStatusR.json().catch(() => ({})) as {
           failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
         };
+        if (!isCurrentResume()) return;
         const failedChunks = largeStatusBody.failedChunks ?? [];
         if (failedChunks.length === 0) {
           showInfo("Resume failed", "No resumable chunks found for this job. Please try again.");
@@ -615,6 +636,7 @@ export default function CatalogReviewScreen() {
         }));
 
         for (let ci = 0; ci < failedChunks.length; ci++) {
+          if (!isCurrentResume()) return;
           const { chunkIndex } = failedChunks[ci]!;
 
           // Update which chunk we're sending so the progress card advances
@@ -648,7 +670,9 @@ export default function CatalogReviewScreen() {
               pageOffset: chunk.pageOffset,
               parentJobId: String(jobId),
             }),
+            signal: controller.signal,
           });
+          if (!isCurrentResume()) return;
           if (cr.status === 401) {
             // Clean up the in-progress card before logging out
             setResumeProgress((prev) => { const n = { ...prev }; delete n[jobId]; return n; });
@@ -657,6 +681,7 @@ export default function CatalogReviewScreen() {
           }
           if (!cr.ok) {
             const body = await cr.json().catch(() => ({})) as { error?: string };
+            if (!isCurrentResume()) return;
             const errMsg = body.error ?? "Could not resume a chunk. Please try again.";
             // Transition card to "failed" so admin can retry or dismiss
             setResumeProgress((prev) => ({
@@ -675,6 +700,7 @@ export default function CatalogReviewScreen() {
         }
 
         // All chunks uploaded — begin polling the parent job.
+        if (!isCurrentResume()) return;
         uploadStarted = true;
         setResumeProgress((prev) => ({
           ...prev,
@@ -688,8 +714,10 @@ export default function CatalogReviewScreen() {
           method: "POST",
           headers: buildResumeHeaders(authHeaders, job?.errorMessage),
           body: JSON.stringify({ pdfBase64 }),
+          signal: controller.signal,
         });
 
+        if (!isCurrentResume()) return;
         if (r.status === 401) { logoutAdmin(); return; }
 
         if (r.status === 409) {
@@ -699,7 +727,9 @@ export default function CatalogReviewScreen() {
           // endpoint accepts a page-range PDF and uses its stored pageOffset).
           const statusR = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, {
             headers: authHeaders,
+            signal: controller.signal,
           });
+          if (!isCurrentResume()) return;
           if (!statusR.ok) {
             showInfo("Resume failed", `Could not load job status (HTTP ${statusR.status}). Please try again.`);
             return;
@@ -707,6 +737,7 @@ export default function CatalogReviewScreen() {
           const statusBody = await statusR.json().catch(() => ({})) as {
             failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
           };
+          if (!isCurrentResume()) return;
           const failedChunks = statusBody.failedChunks ?? [];
           if (failedChunks.length === 0) {
             showInfo("Resume failed", "No resumable chunks found for this job. Please try again.");
@@ -717,11 +748,15 @@ export default function CatalogReviewScreen() {
           try {
             chunks = await splitPdfIntoChunks(pdfBytes, PAGES_PER_CHUNK);
           } catch (err) {
-            showInfo("Error", "Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
+            if (isCurrentResume()) {
+              showInfo("Error", "Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
+            }
             return;
           }
+          if (!isCurrentResume()) return;
 
           for (const { chunkJobId, chunkIndex } of failedChunks) {
+            if (!isCurrentResume()) return;
             const chunk = chunks[chunkIndex];
             if (!chunk) continue;
             const chunkBase64 = resumeBytesToBase64(chunk.bytes);
@@ -729,22 +764,27 @@ export default function CatalogReviewScreen() {
               method: "POST",
               headers: buildResumeHeaders(authHeaders, job?.errorMessage),
               body: JSON.stringify({ pdfBase64: chunkBase64, chunkPageOffset: chunk.pageOffset, chunkPageCount: chunk.pageCount }),
+              signal: controller.signal,
             });
+            if (!isCurrentResume()) return;
             if (cr.status === 401) { logoutAdmin(); return; }
             if (!cr.ok) {
               const body = await cr.json().catch(() => ({})) as { error?: string };
+              if (!isCurrentResume()) return;
               showInfo("Resume failed", body.error ?? "Could not resume a chunk. Please try again.");
               return;
             }
           }
         } else if (!r.ok) {
           const body = await r.json().catch(() => ({})) as { error?: string };
+          if (!isCurrentResume()) return;
           showInfo("Resume failed", body.error ?? "Could not resume the job.");
           return;
         }
 
         // Mark job as in-progress (keep it visible with a progress card) and
         // poll until the job finishes, then refresh the review list.
+        if (!isCurrentResume()) return;
         uploadStarted = true;
         setResumeProgress((prev) => ({
           ...prev,
@@ -753,9 +793,12 @@ export default function CatalogReviewScreen() {
         startPollForJob(jobId, authHeaders);
       }
     } catch {
-      showInfo("Error", "Could not read or send the PDF file.");
+      if (isCurrentResume()) showInfo("Error", "Could not read or send the PDF file.");
     } finally {
-      if (!uploadStarted) setResumingId(null);
+      if (isCurrentResume() && !uploadStarted) setResumingId(null);
+      if (resumeUploadControllerRef.current === controller) {
+        resumeUploadControllerRef.current = null;
+      }
     }
   };
 

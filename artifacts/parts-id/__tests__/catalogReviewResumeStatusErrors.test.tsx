@@ -573,6 +573,24 @@ function deferred<T>() {
 }
 
 describe("CatalogReviewScreen — lifecycle cancellation", () => {
+  function setupResumePicker(pdfBytes: Uint8Array): void {
+    mockUseLocalSearchParams.mockReturnValue({});
+    mockGetDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [{ uri: "file:///catalog.pdf", name: "catalog.pdf" }],
+    });
+    mockReadPdfAsBytes.mockResolvedValue(pdfBytes);
+  }
+
+  function fakeLargeResumeBytes(): Uint8Array {
+    return new Proxy(new Uint8Array(8), {
+      get(target, prop, receiver) {
+        if (prop === "length") return 21 * 1024 * 1024;
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as Uint8Array;
+  }
+
   it("aborts review and failed-job bootstrap requests on unmount", async () => {
     mockUseLocalSearchParams.mockReturnValue({});
     const reviewResponse = deferred<Response>();
@@ -710,5 +728,231 @@ describe("CatalogReviewScreen — lifecycle cancellation", () => {
 
     expect(capturedSetResumeProgress).not.toHaveBeenCalled();
     expect(global.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("aborts a small resume upload and ignores a late 401 after unmount", async () => {
+    setupResumePicker(new Uint8Array([0x25, 0x50, 0x44, 0x46]));
+    const resumeResponse = deferred<Response>();
+    const logoutAdmin = jest.fn();
+    let resumeSignal: AbortSignal | undefined;
+
+    useApp.mockReturnValue(
+      makeAppMock({
+        adminToken: "test-admin-tok",
+        isAdmin: true,
+        logoutAdmin,
+        resumeProgress: {},
+        setResumeProgress: capturedSetResumeProgress,
+      }),
+    );
+    global.fetch = jest.fn().mockImplementation((url: string, options?: RequestInit) => {
+      if (url.includes("/resume")) {
+        resumeSignal = options?.signal as AbortSignal;
+        return resumeResponse.promise;
+      }
+      return Promise.resolve(
+        url.includes("/reviews")
+          ? makeResponse(200, { items: [] })
+          : makeResponse(200, { jobs: [MOCK_FAILED_JOB] }),
+      );
+    });
+
+    activeTree = await render(<CatalogReviewScreen />);
+    await flush();
+    await act(async () => {
+      capturedOnResume!(MOCK_FAILED_JOB.id);
+      await flushPromises();
+    });
+
+    expect(resumeSignal).toBeDefined();
+    await activeTree.unmount();
+    activeTree = null;
+    expect(resumeSignal!.aborted).toBe(true);
+
+    resumeResponse.resolve(makeResponse(401));
+    await flush();
+
+    expect(capturedSetResumeProgress).not.toHaveBeenCalled();
+    expect(capturedInfoDialogProps.visible).toBe(false);
+    expect(logoutAdmin).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("aborts a small resume upload and ignores a late 401 after the admin token changes", async () => {
+    setupResumePicker(new Uint8Array([0x25, 0x50, 0x44, 0x46]));
+    const resumeResponse = deferred<Response>();
+    const oldLogoutAdmin = jest.fn();
+    const newLogoutAdmin = jest.fn();
+    let resumeSignal: AbortSignal | undefined;
+
+    useApp.mockReturnValue(
+      makeAppMock({
+        adminToken: "old-admin-token",
+        isAdmin: true,
+        logoutAdmin: oldLogoutAdmin,
+        resumeProgress: {},
+        setResumeProgress: capturedSetResumeProgress,
+      }),
+    );
+    global.fetch = jest.fn().mockImplementation((url: string, options?: RequestInit) => {
+      if (url.includes("/resume")) {
+        resumeSignal = options?.signal as AbortSignal;
+        return resumeResponse.promise;
+      }
+      return Promise.resolve(
+        url.includes("/reviews")
+          ? makeResponse(200, { items: [] })
+          : makeResponse(200, { jobs: [MOCK_FAILED_JOB] }),
+      );
+    });
+
+    activeTree = await render(<CatalogReviewScreen />);
+    await flush();
+    await act(async () => {
+      capturedOnResume!(MOCK_FAILED_JOB.id);
+      await flushPromises();
+    });
+
+    useApp.mockReturnValue(
+      makeAppMock({
+        adminToken: "new-admin-token",
+        isAdmin: true,
+        logoutAdmin: newLogoutAdmin,
+        resumeProgress: {},
+        setResumeProgress: jest.fn(),
+      }),
+    );
+    await activeTree.rerender(<CatalogReviewScreen />);
+    expect(resumeSignal!.aborted).toBe(true);
+
+    resumeResponse.resolve(makeResponse(401));
+    await flush();
+
+    expect(capturedSetResumeProgress).not.toHaveBeenCalled();
+    expect(capturedInfoDialogProps.visible).toBe(false);
+    expect(oldLogoutAdmin).not.toHaveBeenCalled();
+    expect(newLogoutAdmin).not.toHaveBeenCalled();
+  });
+
+  it("aborts a chunked resume upload and ignores a late 401 after unmount", async () => {
+    setupResumePicker(fakeLargeResumeBytes());
+    mockSplitPdfIntoChunks.mockResolvedValue([
+      { bytes: new Uint8Array(8), pageOffset: 0, pageCount: 20 },
+    ]);
+    const chunkResponse = deferred<Response>();
+    const logoutAdmin = jest.fn();
+    let chunkSignal: AbortSignal | undefined;
+
+    useApp.mockReturnValue(
+      makeAppMock({
+        adminToken: "test-admin-tok",
+        isAdmin: true,
+        logoutAdmin,
+        resumeProgress: {},
+        setResumeProgress: capturedSetResumeProgress,
+      }),
+    );
+    global.fetch = jest.fn().mockImplementation((url: string, options?: RequestInit) => {
+      if (url.includes("/status")) {
+        return Promise.resolve(makeResponse(200, {
+          failedChunks: [{ chunkJobId: "child-42", chunkIndex: 0 }],
+        }));
+      }
+      if (url === "http://test-api/api/admin/catalog-pdf") {
+        chunkSignal = options?.signal as AbortSignal;
+        return chunkResponse.promise;
+      }
+      return Promise.resolve(
+        url.includes("/reviews")
+          ? makeResponse(200, { items: [] })
+          : makeResponse(200, { jobs: [MOCK_FAILED_JOB] }),
+      );
+    });
+
+    activeTree = await render(<CatalogReviewScreen />);
+    await flush();
+    await act(async () => {
+      capturedOnResume!(MOCK_FAILED_JOB.id);
+      await flushPromises();
+    });
+
+    expect(chunkSignal).toBeDefined();
+    const progressCallsBeforeUnmount = capturedSetResumeProgress.mock.calls.length;
+    await activeTree.unmount();
+    activeTree = null;
+    expect(chunkSignal!.aborted).toBe(true);
+
+    chunkResponse.resolve(makeResponse(401));
+    await flush();
+
+    expect(capturedSetResumeProgress).toHaveBeenCalledTimes(progressCallsBeforeUnmount);
+    expect(capturedInfoDialogProps.visible).toBe(false);
+    expect(logoutAdmin).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it("aborts a chunked resume upload and ignores a late 401 after the admin token changes", async () => {
+    setupResumePicker(fakeLargeResumeBytes());
+    mockSplitPdfIntoChunks.mockResolvedValue([
+      { bytes: new Uint8Array(8), pageOffset: 0, pageCount: 20 },
+    ]);
+    const chunkResponse = deferred<Response>();
+    const oldLogoutAdmin = jest.fn();
+    const newLogoutAdmin = jest.fn();
+    let chunkSignal: AbortSignal | undefined;
+
+    useApp.mockReturnValue(
+      makeAppMock({
+        adminToken: "old-admin-token",
+        isAdmin: true,
+        logoutAdmin: oldLogoutAdmin,
+        resumeProgress: {},
+        setResumeProgress: capturedSetResumeProgress,
+      }),
+    );
+    global.fetch = jest.fn().mockImplementation((url: string, options?: RequestInit) => {
+      if (url.includes("/status")) {
+        return Promise.resolve(makeResponse(200, {
+          failedChunks: [{ chunkJobId: "child-42", chunkIndex: 0 }],
+        }));
+      }
+      if (url === "http://test-api/api/admin/catalog-pdf") {
+        chunkSignal = options?.signal as AbortSignal;
+        return chunkResponse.promise;
+      }
+      return Promise.resolve(
+        url.includes("/reviews")
+          ? makeResponse(200, { items: [] })
+          : makeResponse(200, { jobs: [MOCK_FAILED_JOB] }),
+      );
+    });
+
+    activeTree = await render(<CatalogReviewScreen />);
+    await flush();
+    await act(async () => {
+      capturedOnResume!(MOCK_FAILED_JOB.id);
+      await flushPromises();
+    });
+    const progressCallsBeforeTokenChange = capturedSetResumeProgress.mock.calls.length;
+
+    useApp.mockReturnValue(
+      makeAppMock({
+        adminToken: "new-admin-token",
+        isAdmin: true,
+        logoutAdmin: newLogoutAdmin,
+        resumeProgress: {},
+        setResumeProgress: jest.fn(),
+      }),
+    );
+    await activeTree.rerender(<CatalogReviewScreen />);
+    expect(chunkSignal!.aborted).toBe(true);
+
+    chunkResponse.resolve(makeResponse(401));
+    await flush();
+
+    expect(capturedSetResumeProgress).toHaveBeenCalledTimes(progressCallsBeforeTokenChange);
+    expect(capturedInfoDialogProps.visible).toBe(false);
+    expect(oldLogoutAdmin).not.toHaveBeenCalled();
+    expect(newLogoutAdmin).not.toHaveBeenCalled();
   });
 });
