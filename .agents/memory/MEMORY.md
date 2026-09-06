@@ -69,3 +69,4 @@
 - [Contract assertion normalization](contract-assertion-normalization.md) — static prose contracts should be checked semantically rather than by physical line wrapping.
 - [Jest hoisted shared mock factories](jest-hoisted-shared-mock-factories.md) — load shared helpers inside hoisted mock callbacks and pass in jest.requireActual modules to avoid TDZ failures.
 - [Schema-validated .replit replacement](dot-replit-schema-replacement.md) — write complete TOML to a temp file and use the validator/replacer instead of patching .replit directly.
+- [Task-plan heading parser](task-plan-heading-parser.md) — put detailed Validation before Validation tier so the locked runner parses the intended section.

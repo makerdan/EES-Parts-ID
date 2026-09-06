@@ -218,14 +218,13 @@ function assertReleaseDocumentation() {
 
   const statusValues = [...protectionStatus.matchAll(/`(verified|owner-action-required|unverified)`/g)].map((match) => match[1]);
   assert(statusValues.includes("verified"), "protection status does not distinguish verified controls");
-  assert(statusValues.includes("owner-action-required"), "protection status does not distinguish owner action");
   assert(statusValues.includes("unverified"), "protection status does not define unverified evidence");
   for (const control of ["Secret scanning", "Push protection", "Dependency alerts", "Required validation"]) {
     assert(protectionStatus.includes(`| ${control} |`), `protection status is missing "${control}"`);
   }
-  assert(/Secret scanning \| `owner-action-required`/.test(protectionStatus), "disabled secret scanning is reported as enabled");
-  assert(/Push protection \| `owner-action-required`/.test(protectionStatus), "push protection is reported as enabled without evidence");
-  assert(/Dependency alerts \| `owner-action-required`/.test(protectionStatus), "dependency alerts are reported as enabled without evidence");
+  assert(/Secret scanning \| `verified`/.test(protectionStatus), "secret scanning is not recorded as verified");
+  assert(/Push protection \| `verified`/.test(protectionStatus), "push protection is not recorded as verified");
+  assert(/Dependency alerts \| `verified`/.test(protectionStatus), "dependency alerts are not recorded as verified");
 
   const boundaryStep = getTierSteps("fast").find(([name]) => name === "public-repository-boundary");
   assert(boundaryStep?.[1] === "node scripts/test/public-repository-boundary.test.mjs", "boundary guard is not registered in test-fast");

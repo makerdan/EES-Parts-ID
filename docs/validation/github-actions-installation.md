@@ -2,7 +2,7 @@
 
 ## Scope and evidence
 
-Live repository evidence was collected on 2026-09-03 through the authorized
+Live repository evidence was collected on 2026-09-05 through the authorized
 GitHub connection for `makerdan/EES-Parts-ID`. API results are recorded as live
 facts only when GitHub returned them successfully.
 
@@ -59,9 +59,9 @@ branch-protection and ruleset endpoints are available.
 - `scripts/validation-steps.mjs` — registers the contract check in standard.
 - `package.json` — records the exact pnpm package manager.
 - `docs/validation/github-actions-coverage.md` — complete local-to-remote matrix.
-- `docs/validation/github-protection-status.md` — dated read-only evidence for
-  repository security and branch protections; disabled or unavailable controls
-  are marked `owner-action-required` rather than reported as enabled.
+- `docs/validation/github-protection-status.md` — dated live evidence for
+  repository security and branch protections, including the post-activation
+  verification of secret scanning, push protection, and dependency alerts.
 
 ## Live repository state
 
@@ -82,9 +82,9 @@ branch-protection and ruleset endpoints are available.
 | SHA pinning policy | `true` | configured |
 | Default workflow token | `read` | confirmed |
 | Workflow token PR approval | `can_approve_pull_request_reviews: false` | confirmed |
-| Secret scanning | API reported secret scanning disabled | owner action required; see [protection status](github-protection-status.md) |
-| Push protection | no enabled push-protection setting returned | owner action required; see [protection status](github-protection-status.md) |
-| Dependency alerts | API reported vulnerability/Dependabot alerts disabled | owner action required; see [protection status](github-protection-status.md) |
+| Secret scanning | repository security settings returned `secret_scanning.status: enabled`; alerts endpoint returned HTTP 200 | verified; see [protection status](github-protection-status.md) |
+| Push protection | repository security settings returned `secret_scanning_push_protection.status: enabled` | verified; see [protection status](github-protection-status.md) |
+| Dependency alerts | vulnerability-alerts endpoint returned HTTP 204 and Dependabot alerts endpoint returned HTTP 200 | verified; see [protection status](github-protection-status.md) |
 | Temporary negative branch | branch ref returns 404 after cleanup | deleted |
 | Temporary README-fix branch | branch ref returns 404 after cleanup | deleted |
 | README automation branch | `automation/sync-readme` at `8d7d92dcc65f0fdccde6452e35d0bf4f9617b976` | reviewable maintenance output |
@@ -100,6 +100,10 @@ accepted all three policy writes:
 2. Repository Actions policy is `selected`.
 3. SHA pinning is required; GitHub-owned actions and
    `pnpm/action-setup@*` are the only external allowlist surfaces.
+4. Repository security alerts were enabled and re-read successfully: secret
+   scanning and push protection are enabled in repository settings, while the
+   vulnerability-alerts and Dependabot-alerts endpoints both confirm dependency
+   alert coverage.
 
 No merge queue was enabled. The workflows retain `merge_group` coverage so a
 future supported queue can use the same stable required context, but there is no
@@ -306,6 +310,8 @@ Completed activation sequence:
 7. Ran, restored, closed, and deleted the negative control.
 8. Recorded PR, default-branch, manual, and maintenance behavior.
 9. Adapted README maintenance to the protected-branch and secure-token policy.
+10. Enabled and re-checked secret scanning, push protection, dependency graph,
+    and Dependabot alerts through GitHub.
 
 ## Rollback
 

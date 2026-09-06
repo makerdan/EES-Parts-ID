@@ -36,9 +36,9 @@ check.
 
 ## GitHub protections
 
-- [ ] Review [the dated protection-status evidence](validation/github-protection-status.md).
+- [x] Review [the dated protection-status evidence](validation/github-protection-status.md).
       Do not treat `owner-action-required` or `unverified` as enabled.
-- [ ] Secret scanning, push protection, and dependency alerts are enabled by
+- [x] Secret scanning, push protection, and dependency alerts are enabled by
       the repository owner and re-verified through GitHub after the repository
       is public.
 - [ ] Pull requests, the stable required validation context, conversation
