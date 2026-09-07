@@ -166,6 +166,9 @@ export default function EditItemScreen() {
   }, [isLoading, isAdmin, saveStatus]);
 
   const [description, setDescription] = useState(item?.description ?? "");
+  // The screen renders once before the serialized route item is available.
+  // This loading-only zero is not a compatibility fallback for an incomplete
+  // InventoryItem response; loaded responses always provide both fields.
   const [op, setOp] = useState(String(item?.orderPurchase ?? 0));
   const [oq, setOq] = useState(String(item?.orderQuantity ?? 0));
   const [size, setSize] = useState(item?.size ?? "");
@@ -615,12 +618,12 @@ export default function EditItemScreen() {
         });
       }
 
-      if (parsedOp !== (current.orderPurchase ?? 0) || parsedOq !== (current.orderQuantity ?? 0)) {
+      if (parsedOp !== current.orderPurchase || parsedOq !== current.orderQuantity) {
         ops.push({
           field: "opoq",
           restoreFn: () => {
-            setOp(String(current.orderPurchase ?? 0));
-            setOq(String(current.orderQuantity ?? 0));
+            setOp(String(current.orderPurchase));
+            setOq(String(current.orderQuantity));
           },
           promise: fetchWrite(`${API_BASE}/inventory/${current.id}/order`, {
             method: "PATCH",
@@ -964,8 +967,8 @@ export default function EditItemScreen() {
     JSON.stringify(bins) !== JSON.stringify(item.binLocations ?? []) ||
     JSON.stringify(barcodes) !== JSON.stringify(item.barcodes ?? []) ||
     JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []) ||
-    Number(op.trim() || "0") !== (item.orderPurchase ?? 0) ||
-    Number(oq.trim() || "0") !== (item.orderQuantity ?? 0) ||
+    Number(op.trim() || "0") !== item.orderPurchase ||
+    Number(oq.trim() || "0") !== item.orderQuantity ||
     size.trim() !== savedSizeRef.current ||
     parseDimField(dimLength) !== (existingDims?.length ?? null) ||
     parseDimField(dimWidth) !== (existingDims?.width ?? null) ||

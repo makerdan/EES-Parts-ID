@@ -113,6 +113,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     },
   });
   const [description, setDescription] = useState(item?.description ?? "");
+  // The editor mounts once while its route item is still resolving. This
+  // zero is only the pre-item loading value; InventoryItem responses require
+  // both order fields once `item` is available.
   const [op, setOp] = useState(String(item?.orderPurchase ?? 0));
   const [oq, setOq] = useState(String(item?.orderQuantity ?? 0));
   const [bins, setBins] = useState<Array<string>>(item?.binLocations ?? []);
@@ -149,6 +152,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const [discardDialogVisible, setDiscardDialogVisible] = useState(false);
   const [saveInFlightDialogVisible, setSaveInFlightDialogVisible] = useState(false);
   const savedDescriptionRef = useRef(item?.description ?? "");
+  // These refs share the same nullable-item loading boundary as the state
+  // above; all later reads use the required InventoryItem fields directly.
   const savedOpRef = useRef(item?.orderPurchase ?? 0);
   const savedOqRef = useRef(item?.orderQuantity ?? 0);
   const savedBinsRef = useRef<Array<string>>(item?.binLocations ?? []);
@@ -280,8 +285,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     if (!current) return;
     const dims = current?.dimensions;
     savedDescriptionRef.current = current.description ?? "";
-    savedOpRef.current = current.orderPurchase ?? 0;
-    savedOqRef.current = current.orderQuantity ?? 0;
+    savedOpRef.current = current.orderPurchase;
+    savedOqRef.current = current.orderQuantity;
     savedBinsRef.current = [...(current.binLocations ?? [])];
     savedKeywordsRef.current = [...(current.aiKeywords ?? [])];
     savedDimsRef.current = {
@@ -294,8 +299,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     savedPhotoUriRef.current = current.imageUrl ?? null;
     savedPhotoUri2Ref.current = current.imageUrl2 ?? null;
     setDescription(current.description ?? "");
-    setOp(String(current.orderPurchase ?? 0));
-    setOq(String(current.orderQuantity ?? 0));
+    setOp(String(current.orderPurchase));
+    setOq(String(current.orderQuantity));
     setBins(current.binLocations ?? []);
     setKeywords(current.aiKeywords ?? []);
     setNewBin("");
@@ -656,12 +661,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       setSaveStatus("error");
       return;
     }
-    if (parsedOp !== (current.orderPurchase ?? 0) || parsedOq !== (current.orderQuantity ?? 0)) {
+    if (parsedOp !== current.orderPurchase || parsedOq !== current.orderQuantity) {
       ops.push({
         field: "opoq",
         restoreFn: () => {
-          setOp(String(current.orderPurchase ?? 0));
-          setOq(String(current.orderQuantity ?? 0));
+          setOp(String(current.orderPurchase));
+          setOq(String(current.orderQuantity));
         },
         promise: fetchWrite(`${API_BASE}/inventory/${current.id}/order`, {
           method: "PATCH",

@@ -113,32 +113,23 @@ import supertest from "supertest";
 import app from "../app";
 import { AddPartResponse, AddPartConflictResponse } from "@workspace/api-zod";
 import { estimateImageBytes } from "../utils/aiHelpers";
+import { makeInventoryItemFixture } from "./fixtures/inventoryResponseFixtures";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** A complete, well-formed inventory row that satisfies InventoryItemSchema. */
 function makeWellFormedRow(overrides: Record<string, unknown> = {}) {
-  return {
+  return makeInventoryItemFixture({
     id: 1,
-    vendor: "ACME",
     catalog: "X-001",
-    orderPurchase: 5,
-    orderQuantity: 10,
     description: "Test part",
     binLocations: [],
     aiKeywords: [],
     barcodes: [],
-    enrichedAt: null,
-    imageUrl: null,
-    thumbnailUrl: null,
-    imageUrl2: null,
-    thumbnailUrl2: null,
-    expandedDescription: null,
-    dimensions: null,
     createdAt: new Date("2025-01-01T00:00:00Z"),
     updatedAt: new Date("2025-01-01T00:00:00Z"),
     ...overrides,
-  };
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -145,6 +145,8 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     catalog: "WIDGET-A",
     description: "Test widget",
     vendor: "ACME",
+    orderPurchase: 0,
+    orderQuantity: 0,
     binLocations: ["05-02-001"],
     aiKeywords: [],
     imageUrl: null,

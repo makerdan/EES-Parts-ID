@@ -5,10 +5,12 @@ import {
   AiDimensionsResponseSchema,
   AiEnrichmentResponseSchema,
   EstimateDimensionsResponse,
+  ListInventoryResponse,
   LookupByBarcodeResponse,
   PatchExpandedDescriptionBody,
   ReenrichItemResponse,
   SearchInventoryBody as SearchInventoryBodySchema,
+  SearchInventoryResponse,
   UpdateItemBarcodesResponse,
   UpdateItemBinsResponse,
   UpdateItemDescriptionResponse,
@@ -373,7 +375,7 @@ router.get("/", async (req, res) => {
       db.select({ count: sql<number>`count(*)` }).from(inventoryTable).where(dimConditions),
     ]);
 
-    res.json({
+    res.json(ListInventoryResponse.parse({
       items: items.map(item => toClientInventoryItem({
         ...item,
         binLocations: item.binLocations,
@@ -382,7 +384,7 @@ router.get("/", async (req, res) => {
       total: Number(countResult[0]?.count ?? 0),
       page,
       limit,
-    });
+    }));
   } catch (err) {
     reqLogger.error({ err }, "[inventory/list] Failed to list inventory");
     res.status(500).json({ error: "Failed to list inventory" });
@@ -578,7 +580,11 @@ router.post("/search", async (req, res) => {
     const hasSizeFilter = lenMin !== null || lenMax !== null || widMin !== null || widMax !== null || hgtMin !== null || hgtMax !== null || diaMin !== null || diaMax !== null;
 
     if (!allSearchText.trim() && !categorySlug && !hasSizeFilter) {
-      return void res.json({ results: [], totalMatches: 0, belowThreshold: 0 });
+      return void res.json(SearchInventoryResponse.parse({
+        results: [],
+        totalMatches: 0,
+        belowThreshold: 0,
+      }));
     }
 
     // Dedicated path: non-uncategorized category browse with no text query.
@@ -623,13 +629,13 @@ router.post("/search", async (req, res) => {
         seriesLabel: getSeriesBase(item.vendor, item.catalog, item.description)?.label ?? null,
         variants: [],
       });
-      return void res.json({
+      return void res.json(SearchInventoryResponse.parse({
         results: catItems.map(item => toResult(item, "category browse")),
         totalMatches: catItems.length + catSizeUnknownItems.length,
         belowThreshold: 0,
         sizeUnknownResults: catSizeUnknownItems.map(item => toResult(item, "category browse")),
         sizeUnknownCount: catSizeUnknownItems.length,
-      });
+      }));
     }
 
     // Special path: uncategorized browse with no search text — return all items that
@@ -727,13 +733,13 @@ router.post("/search", async (req, res) => {
         seriesLabel: getSeriesBase(item.vendor, item.catalog, item.description)?.label ?? null,
         variants: [],
       });
-      return void res.json({
+      return void res.json(SearchInventoryResponse.parse({
         results: uncatItems.map(toUncatResult),
         totalMatches: uncatItems.length + uncatSizeUnknownItems.length,
         belowThreshold: 0,
         sizeUnknownResults: uncatSizeUnknownItems.map(toUncatResult),
         sizeUnknownCount: uncatSizeUnknownItems.length,
-      });
+      }));
     }
 
     // Dedicated path: size-range filter with no text query and no category.
@@ -803,7 +809,7 @@ router.post("/search", async (req, res) => {
         seriesLabel: getSeriesBase((item as { vendor: string }).vendor, (item as { catalog: string }).catalog, (item as { description: string }).description)?.label ?? null,
         variants: [],
       });
-      return void res.json({
+      return void res.json(SearchInventoryResponse.parse({
         results: sizeRows.map(item => toSizeResult(item, "size-range scan")),
         totalMatches: sizeRows.length + nullDimItems.length,
         belowThreshold: 0,
@@ -813,7 +819,7 @@ router.post("/search", async (req, res) => {
         dimensionCounts: {},
         sizeUnknownResults: nullDimItems.map(item => toSizeResult(item, "size-range scan")),
         sizeUnknownCount: nullDimItems.length,
-      });
+      }));
     }
 
     // Normalize, correct misspellings, expand terms
@@ -1281,14 +1287,14 @@ router.post("/search", async (req, res) => {
       variants: [],
     }));
 
-    res.json({
+    res.json(SearchInventoryResponse.parse({
       results: finalResults,
       totalMatches: dimFiltered.length + sizeUnknownItems.length,
       belowThreshold: belowCount,
       dimensionCounts,
       sizeUnknownResults,
       sizeUnknownCount: sizeUnknownItems.length,
-    });
+    }));
   } catch (err) {
     reqLogger.error({ err }, "[inventory/search] Search failed");
     res.status(500).json({ error: "Search failed" });

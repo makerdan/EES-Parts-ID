@@ -36,9 +36,9 @@ interface PartCardProps {
   vendor?: string;
   description?: string;
   /** Authoritative inventory order-purchase quantity for the displayed item. */
-  orderPurchase?: number | undefined;
+  orderPurchase: number;
   /** Authoritative inventory order-quantity value for the displayed item. */
-  orderQuantity?: number | undefined;
+  orderQuantity: number;
   /** When true the section auto-expands immediately on mount (e.g. top Photo ID result). */
   autoExpand?: boolean;
 }
@@ -226,15 +226,15 @@ export function PartCard({
           <View
             style={[pcStyles.inventoryGrid, { borderColor: colors.border }]}
             accessible
-            accessibilityLabel={`Inventory data: OP ${orderPurchase ?? 0}, OQ ${orderQuantity ?? 0}`}
+            accessibilityLabel={`Inventory data: OP ${orderPurchase}, OQ ${orderQuantity}`}
           >
             <View style={[pcStyles.specRow, { borderBottomColor: colors.border }]}>
               <Text style={[pcStyles.specLabel, { color: colors.mutedForeground }]}>OP</Text>
-              <Text style={[pcStyles.specValue, { color: colors.foreground }]}>{orderPurchase ?? 0}</Text>
+              <Text style={[pcStyles.specValue, { color: colors.foreground }]}>{orderPurchase}</Text>
             </View>
             <View style={[pcStyles.specRow, pcStyles.specRowLast]}>
               <Text style={[pcStyles.specLabel, { color: colors.mutedForeground }]}>OQ</Text>
-              <Text style={[pcStyles.specValue, { color: colors.foreground }]}>{orderQuantity ?? 0}</Text>
+              <Text style={[pcStyles.specValue, { color: colors.foreground }]}>{orderQuantity}</Text>
             </View>
           </View>
 

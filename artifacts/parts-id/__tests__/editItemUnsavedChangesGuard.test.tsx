@@ -51,6 +51,8 @@ const ITEM_FIXTURE = {
   catalog:      "GUARD-X",
   description:  "Original description",
   vendor:       "ACME",
+  orderPurchase: 0,
+  orderQuantity: 0,
   binLocations: [] as string[],
   barcodes:     [] as string[],
   aiKeywords:   [] as string[],

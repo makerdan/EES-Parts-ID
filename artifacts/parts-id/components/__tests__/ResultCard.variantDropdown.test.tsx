@@ -89,6 +89,8 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     catalog: "BOLT-001",
     vendor: "Acme",
     description: "Standard bolt",
+    orderPurchase: 0,
+    orderQuantity: 0,
     expandedDescription: null,
     binLocations: ["A1"],
     barcodes: [],

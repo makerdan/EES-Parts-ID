@@ -121,31 +121,16 @@ import {
   UpdateItemKeywordsResponse,
   UpsertBatchPreviewResponse,
 } from "@workspace/api-zod";
+import { makeInventoryItemFixture } from "./fixtures/inventoryResponseFixtures";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** A complete, well-formed inventory row that satisfies every *Response schema. */
 function makeWellFormedRow(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 42,
-    vendor: "ACME",
-    catalog: "W-999",
-    description: "Test widget",
-    binLocations: ["A1"],
-    aiKeywords: ["widget"],
-    barcodes: ["012345678901"],
-    enrichedAt: null,
-    imageUrl: null,
-    thumbnailUrl: null,
-    imageUrl2: null,
-    thumbnailUrl2: null,
-    expandedDescription: null,
-    dimensions: null,
+  return makeInventoryItemFixture({
     pinnedKeywords: [],
-    createdAt: new Date("2025-06-01T00:00:00Z"),
-    updatedAt: new Date("2025-06-01T00:00:00Z"),
     ...overrides,
-  };
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

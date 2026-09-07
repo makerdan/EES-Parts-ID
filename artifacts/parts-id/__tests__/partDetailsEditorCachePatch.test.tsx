@@ -174,6 +174,8 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     catalog:      "PART-X",
     description:  "Old description",
     vendor:       "ACME",
+    orderPurchase: 0,
+    orderQuantity: 0,
     binLocations: ["AISLE-01"],
     aiKeywords:   ["relay"],
     imageUrl:     null,
