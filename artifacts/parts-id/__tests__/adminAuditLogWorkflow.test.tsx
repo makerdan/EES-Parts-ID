@@ -225,7 +225,7 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     expect(mockFetch).toHaveBeenNthCalledWith(
       1,
       "http://localhost:3001/api/admin/audit-log?limit=50",
-      { headers: { Authorization: "Bearer admin-token-abc" } },
+      expect.objectContaining({ headers: { Authorization: "Bearer admin-token-abc" } }),
     );
     expect(instText(screen.root!)).toContain("2 events+");
 
@@ -244,7 +244,7 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     expect(mockFetch).toHaveBeenNthCalledWith(
       2,
       "http://localhost:3001/api/admin/audit-log?limit=50&before_id=100",
-      { headers: { Authorization: "Bearer admin-token-abc" } },
+      expect.objectContaining({ headers: { Authorization: "Bearer admin-token-abc" } }),
     );
     expect(instText(screen.root!)).toContain("4 events");
     expect(instText(screen.root!)).not.toContain("4 events+");
@@ -296,7 +296,7 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     expect(mockFetch).toHaveBeenNthCalledWith(
       2,
       "http://localhost:3001/api/admin/audit-log?limit=50&before_id=100",
-      { headers: { Authorization: "Bearer admin-token-abc" } },
+      expect.objectContaining({ headers: { Authorization: "Bearer admin-token-abc" } }),
     );
     expect(instText(screen.root!)).toContain("4 events");
     expect(instText(screen.root!)).not.toContain("5 events");
@@ -323,7 +323,7 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     mockFetch
       .mockResolvedValueOnce(jsonResponse(firstPage))
       .mockResolvedValueOnce(jsonResponse(firstPage, false, 503))
-      .mockResolvedValueOnce(jsonResponse(firstPage));
+      .mockResolvedValueOnce(jsonResponse(secondPage));
 
     const screen = await renderScreen();
     const loadMore = findPressableByAccessibilityLabel(
@@ -341,6 +341,7 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     expect(instText(screen.root!)).toContain("Server error 503");
     expect(findPressable(screen.root!, "Retry")).not.toBeNull();
     expect(instText(screen.root!)).toContain("2 events+");
+    expect(renderedTargets(screen.root!)).toEqual(["target-newest", "target-next"]);
 
     await act(async () => {
       fireEvent.press(findPressable(screen.root!, "Retry")!);
@@ -351,14 +352,19 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(mockFetch).toHaveBeenNthCalledWith(
       3,
-      "http://localhost:3001/api/admin/audit-log?limit=50",
-      { headers: { Authorization: "Bearer admin-token-abc" } },
+      "http://localhost:3001/api/admin/audit-log?limit=50&before_id=100",
+      expect.objectContaining({ headers: { Authorization: "Bearer admin-token-abc" } }),
     );
-    expect(instText(screen.root!)).toContain("2 events+");
+    expect(instText(screen.root!)).toContain("4 events");
     expect(instText(screen.root!)).not.toContain("Server error 503");
 
     const targets = renderedTargets(screen.root!);
-    expect(targets).toEqual(["target-newest", "target-next"]);
+    expect(targets).toEqual([
+      "target-newest",
+      "target-next",
+      "target-older",
+      "target-oldest",
+    ]);
     expect(new Set(targets).size).toBe(targets.length);
 
     await act(async () => {
@@ -425,7 +431,7 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     expect(mockFetch).toHaveBeenNthCalledWith(
       4,
       "http://localhost:3001/api/admin/audit-log?limit=50&before_id=200",
-      { headers: { Authorization: "Bearer admin-token-abc" } },
+      expect.objectContaining({ headers: { Authorization: "Bearer admin-token-abc" } }),
     );
     expect(renderedTargets(screen.root!)).toEqual([
       "refresh-newest",
@@ -484,6 +490,159 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     ]);
     expect(instText(screen.root!)).toContain("2 events+");
     expect(instText(screen.root!)).not.toContain("4 events");
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
+  it("aborts an in-flight refresh when the screen unmounts", async () => {
+    const refresh = deferred<Response>();
+    let refreshSignal: AbortSignal | undefined;
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(firstPage))
+      .mockImplementationOnce((_url, init) => {
+        refreshSignal = (init as RequestInit).signal ?? undefined;
+        return refresh.promise;
+      });
+
+    const screen = await renderScreen();
+    await act(async () => {
+      fireEvent.press(findPressableByAccessibilityLabel(screen.root!, "Refresh")!);
+      await Promise.resolve();
+    });
+    expect(refreshSignal?.aborted).toBe(false);
+
+    await act(async () => {
+      screen.unmount();
+    });
+    expect(refreshSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      refresh.resolve(jsonResponse({
+        rows: [auditRow(201, "should-not-render")],
+        nextCursor: null,
+      }));
+      await refresh.promise;
+    });
+  });
+
+  it("aborts an in-flight load-more request when the screen unmounts", async () => {
+    const loadMore = deferred<Response>();
+    let loadMoreSignal: AbortSignal | undefined;
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(firstPage))
+      .mockImplementationOnce((_url, init) => {
+        loadMoreSignal = (init as RequestInit).signal ?? undefined;
+        return loadMore.promise;
+      });
+
+    const screen = await renderScreen();
+    await act(async () => {
+      fireEvent.press(
+        findPressableByAccessibilityLabel(screen.root!, "Load more audit log entries")!,
+      );
+      await Promise.resolve();
+    });
+    expect(loadMoreSignal?.aborted).toBe(false);
+
+    await act(async () => {
+      screen.unmount();
+    });
+    expect(loadMoreSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      loadMore.resolve(jsonResponse(secondPage));
+      await loadMore.promise;
+    });
+  });
+
+  it("aborts an in-flight refresh when admin access ends", async () => {
+    const refresh = deferred<Response>();
+    let refreshSignal: AbortSignal | undefined;
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(firstPage))
+      .mockImplementationOnce((_url, init) => {
+        refreshSignal = (init as RequestInit).signal ?? undefined;
+        return refresh.promise;
+      });
+
+    const screen = await renderScreen();
+    await act(async () => {
+      fireEvent.press(findPressableByAccessibilityLabel(screen.root!, "Refresh")!);
+      await Promise.resolve();
+    });
+
+    useApp.mockReturnValue({
+      isAdmin: false,
+      adminToken: null,
+      isLoading: false,
+    });
+    await act(async () => {
+      await screen.rerender(
+        React.createElement(require("../app/admin-audit-log").default),
+      );
+      await Promise.resolve();
+    });
+
+    expect(refreshSignal?.aborted).toBe(true);
+    expect(mockRouter.replace).toHaveBeenCalledWith("/(tabs)");
+
+    await act(async () => {
+      refresh.resolve(jsonResponse({
+        rows: [auditRow(301, "should-not-render")],
+        nextCursor: null,
+      }));
+      await refresh.promise;
+    });
+    expect(instText(screen.root!)).not.toContain("should-not-render");
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
+  it("aborts an in-flight load-more request when admin access ends", async () => {
+    const loadMore = deferred<Response>();
+    let loadMoreSignal: AbortSignal | undefined;
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(firstPage))
+      .mockImplementationOnce((_url, init) => {
+        loadMoreSignal = (init as RequestInit).signal ?? undefined;
+        return loadMore.promise;
+      });
+
+    const screen = await renderScreen();
+    await act(async () => {
+      fireEvent.press(
+        findPressableByAccessibilityLabel(screen.root!, "Load more audit log entries")!,
+      );
+      await Promise.resolve();
+    });
+
+    useApp.mockReturnValue({
+      isAdmin: false,
+      adminToken: null,
+      isLoading: false,
+    });
+    await act(async () => {
+      await screen.rerender(
+        React.createElement(require("../app/admin-audit-log").default),
+      );
+      await Promise.resolve();
+    });
+
+    expect(loadMoreSignal?.aborted).toBe(true);
+    expect(mockRouter.replace).toHaveBeenCalledWith("/(tabs)");
+
+    await act(async () => {
+      loadMore.resolve(jsonResponse({
+        rows: [auditRow(302, "should-not-render")],
+        nextCursor: null,
+      }));
+      await loadMore.promise;
+    });
+    expect(instText(screen.root!)).not.toContain("should-not-render");
 
     await act(async () => {
       screen.unmount();

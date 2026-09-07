@@ -56,6 +56,15 @@ function mergeAuditRows(existingRows: Array<AuditRow>, incomingRows: Array<Audit
   return mergedRows;
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "AbortError"
+  );
+}
+
 const ACTION_CONFIG: Record<AuditRow["action"], { label: string; bg: string; fg: string }> = {
   approve: { label: "Approved", bg: "#10b98120", fg: "#10b981" },
   ban:     { label: "Banned",   bg: "#ef444420", fg: "#ef4444" },
@@ -106,6 +115,8 @@ function AuditItem({ row, colors }: { row: AuditRow; colors: ReturnType<typeof u
 }
 
 export default function AdminAuditLogScreen() {
+  "use no memo";
+
   useTrackScreen("Admin Audit Log");
   const colors = useColors();
   const router = useRouter();
@@ -117,48 +128,93 @@ export default function AdminAuditLogScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const nextCursorRef = useRef<number | null>(null);
   const hasMoreRef = useRef(true);
   const requestVersionRef = useRef(0);
   const fullPageRequestRef = useRef<number | null>(null);
   const activeLoadMoreRequestRef = useRef<number | null>(null);
   const nextLoadMoreRequestIdRef = useRef(0);
+  const mountedRef = useRef(false);
+  const adminAccessRef = useRef(false);
+  const fullPageAbortControllerRef = useRef<AbortController | null>(null);
+  const loadMoreAbortControllerRef = useRef<AbortController | null>(null);
 
-  const fetchPage = useCallback(async (beforeId: number | null, token: string): Promise<AuditLogPage> => {
+  adminAccessRef.current = !isLoading && isAdmin && Boolean(adminToken);
+
+  const cancelRequests = useCallback(() => {
+    requestVersionRef.current += 1;
+    fullPageAbortControllerRef.current?.abort();
+    fullPageAbortControllerRef.current = null;
+    loadMoreAbortControllerRef.current?.abort();
+    loadMoreAbortControllerRef.current = null;
+    fullPageRequestRef.current = null;
+    activeLoadMoreRequestRef.current = null;
+  }, []);
+
+  const fetchPage = useCallback(async (
+    beforeId: number | null,
+    token: string,
+    signal: AbortSignal,
+  ): Promise<AuditLogPage> => {
     const url = beforeId !== null
       ? `${API_BASE}/admin/audit-log?limit=${PAGE_SIZE}&before_id=${beforeId}`
       : `${API_BASE}/admin/audit-log?limit=${PAGE_SIZE}`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
+      signal,
     });
     if (!res.ok) throw new Error(`Server error ${res.status}`);
     return res.json() as Promise<AuditLogPage>;
   }, []);
 
   const fetchLog = useCallback(async (isRefresh = false) => {
-    if (!adminToken) return;
+    if (!adminToken || !mountedRef.current || !adminAccessRef.current) return;
 
     const requestVersion = requestVersionRef.current + 1;
     requestVersionRef.current = requestVersion;
+    fullPageAbortControllerRef.current?.abort();
+    loadMoreAbortControllerRef.current?.abort();
+    loadMoreAbortControllerRef.current = null;
     fullPageRequestRef.current = requestVersion;
     activeLoadMoreRequestRef.current = null;
     setLoadingMore(false);
+    setLoadMoreError(null);
+    const controller = new AbortController();
+    fullPageAbortControllerRef.current = controller;
 
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
     try {
-      const page = await fetchPage(null, adminToken);
-      if (requestVersion !== requestVersionRef.current) return;
+      const page = await fetchPage(null, adminToken, controller.signal);
+      if (
+        requestVersion !== requestVersionRef.current ||
+        controller.signal.aborted ||
+        !mountedRef.current ||
+        !adminAccessRef.current
+      ) return;
       setRows(mergeAuditRows([], page.rows));
       nextCursorRef.current = page.nextCursor;
       hasMoreRef.current = page.nextCursor !== null;
     } catch (err) {
-      if (requestVersion !== requestVersionRef.current) return;
+      if (
+        requestVersion !== requestVersionRef.current ||
+        controller.signal.aborted ||
+        !mountedRef.current ||
+        !adminAccessRef.current ||
+        isAbortError(err)
+      ) return;
       if (err instanceof TypeError) reportNetworkFailure();
       setError(err instanceof Error ? err.message : "Failed to load audit log");
     } finally {
-      if (requestVersion !== requestVersionRef.current) return;
+      if (
+        requestVersion !== requestVersionRef.current ||
+        fullPageAbortControllerRef.current !== controller ||
+        !mountedRef.current ||
+        !adminAccessRef.current
+      ) return;
+      fullPageAbortControllerRef.current = null;
       fullPageRequestRef.current = null;
       if (isRefresh) setRefreshing(false);
       else setLoading(false);
@@ -179,12 +235,18 @@ export default function AdminAuditLogScreen() {
     const requestId = nextLoadMoreRequestIdRef.current + 1;
     nextLoadMoreRequestIdRef.current = requestId;
     activeLoadMoreRequestRef.current = requestId;
+    const controller = new AbortController();
+    loadMoreAbortControllerRef.current = controller;
     setLoadingMore(true);
+    setLoadMoreError(null);
     try {
-      const page = await fetchPage(beforeId, adminToken);
+      const page = await fetchPage(beforeId, adminToken, controller.signal);
       if (
         requestVersion !== requestVersionRef.current ||
-        activeLoadMoreRequestRef.current !== requestId
+        activeLoadMoreRequestRef.current !== requestId ||
+        controller.signal.aborted ||
+        !mountedRef.current ||
+        !adminAccessRef.current
       ) return;
       setRows((prev) => mergeAuditRows(prev, page.rows));
       nextCursorRef.current = page.nextCursor;
@@ -192,17 +254,40 @@ export default function AdminAuditLogScreen() {
     } catch (err) {
       if (
         requestVersion !== requestVersionRef.current ||
-        activeLoadMoreRequestRef.current !== requestId
+        activeLoadMoreRequestRef.current !== requestId ||
+        controller.signal.aborted ||
+        !mountedRef.current ||
+        !adminAccessRef.current ||
+        isAbortError(err)
       ) return;
       if (err instanceof TypeError) reportNetworkFailure();
-      setError(err instanceof Error ? err.message : "Failed to load more");
+      setLoadMoreError(err instanceof Error ? err.message : "Failed to load more");
     } finally {
-      if (activeLoadMoreRequestRef.current === requestId) {
+      if (
+        activeLoadMoreRequestRef.current === requestId &&
+        loadMoreAbortControllerRef.current === controller &&
+        mountedRef.current &&
+        adminAccessRef.current
+      ) {
         activeLoadMoreRequestRef.current = null;
+        loadMoreAbortControllerRef.current = null;
         setLoadingMore(false);
       }
     }
   }, [adminToken, loadingMore, fetchPage, reportNetworkFailure]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      cancelRequests();
+    };
+  }, [cancelRequests]);
+
+  useEffect(() => {
+    if (!isLoading && isAdmin && adminToken) return;
+    cancelRequests();
+  }, [adminToken, cancelRequests, isAdmin, isLoading]);
 
   useEffect(() => {
     if (shouldRedirectNonAdmin(isLoading, isAdmin)) {
@@ -218,6 +303,19 @@ export default function AdminAuditLogScreen() {
   const ListFooter = loadingMore ? (
     <View style={styles.footerLoader}>
       <ActivityIndicator size="small" color={colors.primary} />
+    </View>
+  ) : loadMoreError ? (
+    <View style={styles.footerError}>
+      <Text style={[styles.footerErrorText, { color: colors.destructive }]}>
+        ⚠ {loadMoreError}
+      </Text>
+      <Pressable
+        onPress={loadMore}
+        style={[styles.retryBtn, { borderColor: colors.border }]}
+        accessibilityLabel="Retry loading more audit log entries"
+      >
+        <Text style={[styles.retryText, { color: colors.primary }]}>Retry</Text>
+      </Pressable>
     </View>
   ) : hasMoreRef.current && rows.length > 0 ? (
     <Pressable
@@ -333,6 +431,8 @@ const styles = StyleSheet.create({
   idText: { fontSize: 12, fontFamily: "Inter_400Regular", flex: 1 },
   time: { fontSize: 11, fontFamily: "Inter_400Regular", flexShrink: 0 },
   footerLoader: { paddingVertical: 16, alignItems: "center" },
+  footerError: { alignItems: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 12 },
+  footerErrorText: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
   loadMoreBtn: {
     marginHorizontal: 12,
     marginVertical: 8,
