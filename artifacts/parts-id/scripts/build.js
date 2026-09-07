@@ -209,13 +209,32 @@ function clearMetroCache() {
 
 async function checkMetroHealth() {
   try {
-    const response = await fetch(`http://localhost:${metroPort}/status`, {
+    const response = await fetch(`http://127.0.0.1:${metroPort}/status`, {
       signal: AbortSignal.timeout(5000),
     });
     return response.ok;
   } catch {
     return false;
   }
+}
+
+function isMetroReadyOutput(output) {
+  return /\bWaiting on https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+\b/.test(
+    output,
+  );
+}
+
+function getMetroStartArgs(port) {
+  return [
+    "exec",
+    "expo",
+    "start",
+    "--no-dev",
+    "--minify",
+    "--localhost",
+    "--port",
+    String(port),
+  ];
 }
 
 function getExpoPublicReplId() {
@@ -292,14 +311,7 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
 
   metroProcess = spawn(
     "pnpm",
-    [
-      "exec",
-      "expo",
-      "start",
-      "--no-dev",
-      "--minify",
-      "--localhost",
-    ],
+    getMetroStartArgs(metroPort),
     {
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,
@@ -308,10 +320,17 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
     },
   );
 
+  let metroReadyFromOutput = false;
+
   if (metroProcess.stdout) {
     metroProcess.stdout.on("data", (data) => {
       const output = data.toString().trim();
-      if (output) console.log(`[Metro] ${output}`);
+      if (output) {
+        console.log(`[Metro] ${output}`);
+        if (isMetroReadyOutput(output)) {
+          metroReadyFromOutput = true;
+        }
+      }
     });
   }
   if (metroProcess.stderr) {
@@ -324,15 +343,26 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
   for (let i = 0; i < 60; i++) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
+    if (metroProcess.exitCode !== null) {
+      exitWithError(
+        `Metro exited before becoming ready (exit code ${metroProcess.exitCode})`,
+      );
+    }
+
     const healthy = await checkMetroHealth();
-    if (healthy) {
-      console.log("Metro ready");
+    if (healthy || metroReadyFromOutput) {
+      console.log(
+        healthy
+          ? "Metro ready (status endpoint)"
+          : "Metro ready (Expo startup signal)",
+      );
       return;
     }
   }
 
-  console.error("Metro timeout");
-  process.exit(1);
+  exitWithError(
+    `Metro timeout: no successful status response or Expo startup signal on port ${metroPort}`,
+  );
 }
 
 async function downloadFile(url, outputPath) {
@@ -969,6 +999,8 @@ module.exports = {
   stripProtocol,
   resolveClerkProxyUrl,
   getClerkAuthConfigError,
+  isMetroReadyOutput,
+  getMetroStartArgs,
   verifyBundleDomain,
   verifyNativeBundleDomain,
 };
