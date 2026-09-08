@@ -169,6 +169,16 @@ function renderedTargets(root: Inst): string[] {
     });
 }
 
+function accessibilityLabels(root: Inst): string[] {
+  return root
+    .queryAll(
+      (node: TestInstance) =>
+        (node.type as string) === "Text" && typeof node.props.accessibilityLabel === "string",
+      { includeSelf: true },
+    )
+    .map((node) => node.props.accessibilityLabel as string);
+}
+
 async function flushPromises() {
   await act(async () => {
     await Promise.resolve();
@@ -228,6 +238,13 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
       expect.objectContaining({ headers: { Authorization: "Bearer admin-token-abc" } }),
     );
     expect(instText(screen.root!)).toContain("2 events+");
+    expect(accessibilityLabels(screen.root!)).toEqual(
+      expect.arrayContaining([
+        "Admin ID: admin-clerk-user",
+        "Target ID: target-newest",
+        "Target ID: target-next",
+      ]),
+    );
 
     const loadMore = findPressableByAccessibilityLabel(
       screen.root!,
@@ -688,7 +705,19 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     });
 
     expect(instText(screen.root!)).toContain("Refresh failed");
-    expect(renderedTargets(screen.root!)).toEqual([]);
+    expect(renderedTargets(screen.root!)).toEqual(["target-newest", "target-next"]);
+    expect(instText(screen.root!)).toContain("2 events+");
+    expect(
+      screen.root!.queryAll(
+        (node: TestInstance) =>
+          (node.type as string) === "rn-view" &&
+          node.props.accessibilityRole === "alert",
+        { includeSelf: true },
+      ),
+    ).not.toHaveLength(0);
+    expect(
+      findPressableByAccessibilityLabel(screen.root!, "Retry refreshing audit log"),
+    ).not.toBeNull();
 
     await act(async () => {
       fireEvent.press(findPressable(screen.root!, "Retry")!);

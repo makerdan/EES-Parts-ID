@@ -98,13 +98,23 @@ function AuditItem({ row, colors }: { row: AuditRow; colors: ReturnType<typeof u
       <View style={{ flex: 1, gap: 3 }}>
         <View style={styles.idRow}>
           <Text style={[styles.label, { color: colors.mutedForeground }]}>Admin</Text>
-          <Text style={[styles.idText, { color: colors.foreground }]} numberOfLines={1}>
+          <Text
+            style={[styles.idText, { color: colors.foreground }]}
+            numberOfLines={1}
+            accessibilityLabel={`Admin ID: ${row.adminClerkUserId}`}
+            accessibilityHint="The full administrator ID is available to screen readers"
+          >
             {truncate(row.adminClerkUserId)}
           </Text>
         </View>
         <View style={styles.idRow}>
           <Text style={[styles.label, { color: colors.mutedForeground }]}>Target</Text>
-          <Text style={[styles.idText, { color: colors.foreground }]} numberOfLines={1}>
+          <Text
+            style={[styles.idText, { color: colors.foreground }]}
+            numberOfLines={1}
+            accessibilityLabel={`Target ID: ${row.targetClerkUserId}`}
+            accessibilityHint="The full target ID is available to screen readers"
+          >
             {truncate(row.targetClerkUserId)}
           </Text>
         </View>
@@ -326,6 +336,26 @@ export default function AdminAuditLogScreen() {
       <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load more</Text>
     </Pressable>
   ) : null;
+  const hasLoadedRows = rows.length > 0;
+  const ListHeader = error && hasLoadedRows ? (
+    <View
+      style={[styles.listError, { backgroundColor: colors.card, borderColor: colors.border }]}
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+    >
+      <Text style={[styles.footerErrorText, { color: colors.destructive }]}>
+        ⚠ {error}
+      </Text>
+      <Pressable
+        onPress={() => fetchLog(true)}
+        style={[styles.retryBtn, { borderColor: colors.border }]}
+        accessibilityRole="button"
+        accessibilityLabel="Retry refreshing audit log"
+      >
+        <Text style={[styles.retryText, { color: colors.primary }]}>Retry</Text>
+      </Pressable>
+    </View>
+  ) : null;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
@@ -339,19 +369,35 @@ export default function AdminAuditLogScreen() {
             {rows.length} event{rows.length !== 1 ? "s" : ""}{hasMoreRef.current ? "+" : ""}
           </Text>
         </View>
-        <Pressable onPress={() => fetchLog()} style={styles.refreshBtn} accessibilityLabel="Refresh">
+        <Pressable
+          onPress={() => fetchLog(hasLoadedRows)}
+          style={styles.refreshBtn}
+          accessibilityLabel="Refresh"
+          accessibilityRole="button"
+        >
           <Feather name="refresh-cw" size={17} color={colors.mutedForeground} />
         </Pressable>
       </View>
 
-      {loading ? (
+      {loading && !hasLoadedRows ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
-      ) : error ? (
+      ) : error && !hasLoadedRows ? (
         <View style={styles.centered}>
-          <Text style={[styles.errorText, { color: colors.destructive }]}>⚠ {error}</Text>
-          <Pressable onPress={() => fetchLog()} style={[styles.retryBtn, { borderColor: colors.border }]}>
+          <Text
+            style={[styles.errorText, { color: colors.destructive }]}
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+          >
+            ⚠ {error}
+          </Text>
+          <Pressable
+            onPress={() => fetchLog(false)}
+            style={[styles.retryBtn, { borderColor: colors.border }]}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading audit log"
+          >
             <Text style={[styles.retryText, { color: colors.primary }]}>Retry</Text>
           </Pressable>
         </View>
@@ -374,6 +420,7 @@ export default function AdminAuditLogScreen() {
             />
           }
           renderItem={({ item }) => <AuditItem row={item} colors={colors} />}
+          ListHeaderComponent={ListHeader}
           ListFooterComponent={ListFooter}
           ListEmptyComponent={
             <View style={styles.centered}>
@@ -405,6 +452,14 @@ const styles = StyleSheet.create({
   headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 1 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 12 },
   errorText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center" },
+  listError: {
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+    padding: 12,
+    borderWidth: 1,
+    borderRadius: 10,
+  },
   emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 22 },
   retryBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 20, paddingVertical: 8 },
   retryText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
