@@ -274,6 +274,7 @@ jest.mock("@/utils/scanHistory", () => ({}));
 
 import React from "react";
 import { render, act, RenderResult } from "@testing-library/react-native";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // Use require() (not import *) to get the raw CJS module.exports object.
 // The ESM namespace created by `import *` has getter-only properties; the
 // CJS object returned by require() has plain writable properties so we can
@@ -326,6 +327,7 @@ function makeAppContext(overrides: Record<string, unknown> = {}) {
 
 let lastFlatListData: unknown;
 let origFlatList: (props: Record<string, unknown>) => React.ReactElement | null;
+let queryClient: QueryClient;
 
 beforeAll(() => {
   origFlatList = ReactNativeModule.FlatList as (props: Record<string, unknown>) => React.ReactElement | null;
@@ -387,6 +389,9 @@ const flushPromises = () =>
 
 beforeEach(() => {
   lastFlatListData = undefined;
+  queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   useApp.mockReturnValue(makeAppContext());
 });
 
@@ -406,6 +411,7 @@ afterEach(async () => {
     const t = mountedTrees.pop()!;
     await t.unmount();
   }
+  queryClient.clear();
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -416,7 +422,11 @@ describe("flatListData memo in SearchScreen — reference stability", () => {
     mockUseSearchInventory.mockReturnValue(makeSearchMutation(searchData));
 
     let result!: RenderResult;
-    result = trackTree(await render(<SearchScreen />));
+    result = trackTree(await render(
+      <QueryClientProvider client={queryClient}>
+        <SearchScreen />
+      </QueryClientProvider>,
+    ));
 
     // Let on-mount effects run (queryCache load, keyboard listeners, etc.).
     // These cause internal state updates — "unrelated" re-renders — without
@@ -429,7 +439,11 @@ describe("flatListData memo in SearchScreen — reference stability", () => {
     // Force another re-render with the same search mutation (simulates any
     // subsequent unrelated state change: keyboard open/close, layout event,
     // etc.).  The FlatList data reference must remain identical.
-    await result.rerender(<SearchScreen />);
+    await result.rerender(
+      <QueryClientProvider client={queryClient}>
+        <SearchScreen />
+      </QueryClientProvider>,
+    );
 
     const after = lastFlatListData;
 
@@ -441,9 +455,14 @@ describe("flatListData memo in SearchScreen — reference stability", () => {
     const searchDataB = makeSearchData(2); // different result count → different array
 
     mockUseSearchInventory.mockReturnValue(makeSearchMutation(searchDataA));
+    queryClient.setQueryData(["searchInventory", "active"], searchDataA);
 
     let result!: RenderResult;
-    result = trackTree(await render(<SearchScreen />));
+    result = trackTree(await render(
+      <QueryClientProvider client={queryClient}>
+        <SearchScreen />
+      </QueryClientProvider>,
+    ));
 
     await flushPromises();
 
@@ -452,8 +471,15 @@ describe("flatListData memo in SearchScreen — reference stability", () => {
 
     // Switch the mutation to return different results
     mockUseSearchInventory.mockReturnValue(makeSearchMutation(searchDataB));
+    await act(async () => {
+      queryClient.setQueryData(["searchInventory", "active"], searchDataB);
+    });
 
-    await result.rerender(<SearchScreen />);
+    await result.rerender(
+      <QueryClientProvider client={queryClient}>
+        <SearchScreen />
+      </QueryClientProvider>,
+    );
 
     const after = lastFlatListData;
 

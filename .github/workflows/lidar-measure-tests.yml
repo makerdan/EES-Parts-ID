@@ -46,15 +46,18 @@ jobs:
           key: cocoapods-${{ runner.os }}-${{ runner.arch }}-node-${{ hashFiles('.node-version') }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}-pods-${{ hashFiles('artifacts/parts-id/ios/Podfile.lock') }}
 
       - name: Pod install
+        id: pods
         working-directory: artifacts/parts-id/ios
         shell: bash
         run: pod install
 
       - name: Run LidarMeasureTests
+        if: always()
         working-directory: artifacts/parts-id
         shell: bash
         run: |
           set -o pipefail
+          echo "Running native test command after CocoaPods outcome: ${{ steps.pods.outcome }}"
           xcodebuild test \
             -resultBundlePath /tmp/LidarMeasureTests.xcresult \
             -workspace ios/PartsID.xcworkspace \

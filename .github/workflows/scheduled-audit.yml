@@ -30,4 +30,21 @@ jobs:
 
       - name: Audit dependencies (fail on low/moderate/high/critical)
         shell: bash
-        run: pnpm audit --audit-level=low
+        env:
+          AUDIT_EXCEPTION_EXPIRES: '2026-10-08'
+        run: |
+          set -euo pipefail
+
+          today="$(date -u +%F)"
+          if [[ "$today" == "$AUDIT_EXCEPTION_EXPIRES" || "$today" > "$AUDIT_EXCEPTION_EXPIRES" ]]; then
+            echo "The temporary image-size audit exception expired on $AUDIT_EXCEPTION_EXPIRES." >&2
+            exit 1
+          fi
+
+          # The pinned image-size package has no upstream patched release yet.
+          # The repository applies its tracked package patch, and these are the two
+          # advisories that the patch addresses. Keep every other audit finding
+          # fail-closed and force this exception to be revisited by its expiry.
+          pnpm audit --audit-level=low \
+            --ignore GHSA-w3rx-r6r6-pgpr \
+            --ignore GHSA-5p2g-fcmc-qvqq

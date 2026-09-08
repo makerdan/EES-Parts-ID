@@ -29,6 +29,7 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
 import { render, act, fireEvent } from "@testing-library/react-native";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { RenderResult } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 import { makeAppMock, flushPromises as rawFlush } from "./helpers/appMocks";
@@ -291,7 +292,34 @@ function makeTestAppMock(overrides: Record<string, unknown> = {}) {
 // ─── Render helpers ───────────────────────────────────────────────────────────
 
 async function renderUI(ui: React.ReactElement) {
-  const tree = await render(ui);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  queryClient.setQueryData(["searchInventory", "active"], {
+    results: [
+      {
+        item: {
+          id: 1,
+          catalog: "WIDGET-A",
+          binLocations: ["05-02-001"],
+          description: "Test widget",
+          dimensions: null,
+        },
+        confidence: 0.9,
+        matchReason: "keyword",
+        seriesLabel: null,
+        variants: [],
+      },
+    ],
+    belowThreshold: 0,
+    dimensionCounts: undefined,
+    sizeUnknownResults: [],
+  });
+  const tree = await render(
+    <QueryClientProvider client={queryClient}>
+      {ui}
+    </QueryClientProvider>,
+  );
   return tree;
 }
 
@@ -339,6 +367,19 @@ import PhotoScreen  from "../app/(tabs)/photo";
 import { WarehouseMapView } from "../components/WarehouseMapView";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// Keep the map's background SVG load synchronous in this callback-focused
+// suite. The real cache/load path is covered by the dedicated WarehouseMap
+// suites; leaving it cold here schedules a lazy bundle import beyond teardown.
+const floorPlanCache = require("@/utils/floorPlanCache") as {
+  getCachedData: jest.Mock;
+};
+floorPlanCache.getCachedData.mockReturnValue({
+  xml: "<svg />",
+  innerXml: "",
+  uri: "",
+  contentViewBox: null,
+});
 
 async function renderSearch(appOverrides: Record<string, unknown> = {}) {
   useApp.mockReturnValue(makeTestAppMock(appOverrides));

@@ -73,3 +73,4 @@
 - [Disabled query cache observers](disabled-query-cache-observers.md) — when a disabled query-backed screen must react to app-owned cache writes, subscribe to QueryCache and read the stable key directly.
 - [Task-plan heading parser](task-plan-heading-parser.md) — put detailed Validation before Validation tier so the locked runner parses the intended section.
 - [Replit active configuration read boundary](replit-active-config-read-boundary.md) — no documented runtime reader exists; `/run/replit/env` is environment-only and may contain secrets.
+- [SearchScreen QueryClient test harness](searchscreen-queryclient-test-harness.md) — direct mounts need a provider; result assertions also need seeded active-cache data.

@@ -83,7 +83,13 @@
       "msw",
       "sharp",
       "unrs-resolver"
-    ]
+    ],
+    "auditConfig": {
+      "ignoreCves": [
+        "GHSA-w3rx-r6r6-pgpr",
+        "GHSA-5p2g-fcmc-qvqq"
+      ]
+    }
   },
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.1"

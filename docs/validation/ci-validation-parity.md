@@ -2,8 +2,8 @@
 
 ## Scope and evidence
 
-This is a read-only parity analysis of the repository at **2026-09-07**. It
-does not change application code, tests, validation commands, workflow files,
+This is a parity analysis of the repository at **2026-09-08**. It records the
+targeted repairs for the observed default-branch failures and does not change
 credentials, branch policy, or remote workflow state.
 
 Evidence was collected from:
@@ -19,9 +19,10 @@ Evidence was collected from:
 - read-only GitHub API responses for `makerdan/EES-Parts-ID` on 2026-09-07:
   repository, workflow, run, job, branch-protection, and ruleset endpoints.
 
-The local checkout is clean at revision
-`e1446eedc829776fd3c2ee39010ac7d6e0b1d217`. GitHub returned HTTP 422 when that
-revision was requested, and no run in the returned run inventory used that
+The local checkout is at revision
+`e84b56e7163a5a397aa09c44c5a47032bca473c2`; the task changes are uncommitted
+and therefore are not yet available to GitHub. GitHub returned HTTP 422 when
+that revision was requested, and no run in the returned run inventory used that
 SHA. The latest observed remote `main` run used
 `a91289795b048e1fb6375fda78f5ff7cca65f83e`. Therefore remote results below are
 observations about the cited remote revisions, not claims about the local
@@ -140,6 +141,52 @@ Additional relevant commands and their remote decisions:
 
 ## Failures and confidence
 
+### Targeted repairs
+
+- **Portable standard-plus:** the local failure was reproduced three times in
+  `searchSlowLinkTimeout.test.tsx`. `SearchScreen` now subscribes to the
+  TanStack Query cache, but that regression test mounted it without a
+  `QueryClientProvider`, producing `No QueryClient set`. The test now mounts a
+  fresh provider-backed client and preserves the same client during rerenders.
+  The remote CI job for `a912897...` failed at the same canonical
+  `pnpm run test-standard-plus` step; GitHub's connected API exposed the failed
+  step but denied the job-log download (`403`), so the provider-side log line
+  cannot be independently quoted here. The source-level cause and local
+  reproduction are exact and targeted.
+
+- **Scheduled low-threshold audit:** the current audit reports exactly two high
+  findings, both for the pinned image-size package
+  (`GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq`). There is no upstream
+  patched release, while the tracked image-size package patch rejects malformed
+  parser inputs described by both advisories. The scheduled workflow ignores
+  only those two advisory IDs until **2026-10-08 UTC**, then fails closed if the
+  exception is not removed or renewed. All other low/moderate/high/critical
+  findings remain fatal.
+
+- **LiDAR native command reporting:** the native test step now runs with
+  `if: always()` after CocoaPods, prints the exact `xcodebuild test` command
+  phase, and still exits non-zero when either CocoaPods or `xcodebuild` fails.
+  This prevents a pod-install failure from silently skipping the native test
+  signal without weakening fail-closed behavior.
+
+### Post-fix local validation
+
+- The six affected SearchScreen suites now pass in isolation, including
+  `searchSlowLinkTimeout.test.tsx` and the five additional fixtures that also
+  needed the provider-backed harness.
+- The final local `test-standard-plus` run passed all contract, boundary,
+  dependency-patch, typecheck, lint, codegen, and 173 of 175 package tests.
+  The two remaining Parts ID suites
+  (`photoUploadErrorPartDetailsEditor.test.tsx` and
+  `adminInventoryEditWorkflow.test.tsx`) are unrelated to these changes and
+  were left for their existing photo/edit work.
+- The API-server leg remains an environment/database baseline failure in this
+  checkout: the tier reports no tests after its database setup exits early.
+  Running the API suite explicitly with `DATABASE_ENV=test` reaches 107 suites
+  but has 20 database-backed `500/503` assertion failures. The GitHub workflow
+  supplies an isolated PostgreSQL service and `DATABASE_ENV=test`, so this
+  local-only limitation was not used to weaken the CI contract.
+
 ### Current remote run evidence
 
 The following entries are observed read-only GitHub API results. Each records
@@ -156,12 +203,15 @@ condition, result, and local counterpart.
 | `c4f6284beaa690b03e4849cbd98c35966e4eb90c` | pull request; `LiDAR Measure Tests` run `#14`, run ID `33840964952` | `Run LidarMeasureTests`, job `100922996290`, attempt 1; `Pod install` failed and native test was skipped | failed | Expo/CocoaPods/xcodebuild sequence |
 
 The GitHub job API exposed the failed step and result but not the underlying
-log line that caused the portable tier or CocoaPods failure in this analysis.
-The root cause of those failures is therefore **unknown**, even though the
-failed step is observed. The audit failure is likewise recorded as a command
-failure only; no vulnerability count is inferred from the workflow name.
+log line that caused the portable tier or CocoaPods failure in the historical
+runs above. The historical provider-side log detail is therefore **unknown**,
+but the portable cause is now exact from the local reproduction and source
+inspection. The audit failure is now also exact locally: it is the two named
+`image-size` advisories covered by the repository patch.
 
-The local revision `e1446ee...` has no matching remote run evidence. Current
+The local revision `e84b56e...` and these uncommitted fixes have no matching
+remote run evidence. A fresh exact-SHA GitHub run must be captured after the
+task merge/push; no remote pass is claimed here. Current
 branch-policy evidence is available for `main`: the API returned required
 status context `CI / required`, `strict: true`, enabled administrator
 enforcement, blocked force-pushes and deletions, and required conversation
@@ -224,9 +274,10 @@ workflow names, badges, or dated documents.
 
 ### Bounded next actions
 
-1. On a future revision that is actually pushed to GitHub, capture one
-   pull-request or default-branch run for that exact SHA, including the full
-   portable job logs and all required/aggregator results.
+1. After this task's revision is pushed to GitHub, capture one pull-request or
+   default-branch run for that exact SHA, including the full portable job logs,
+   the scheduled audit result, the LiDAR native-command step, and all
+   required/aggregator results.
 2. Query and record the provider's merge-queue/ruleset policy source
    independently; leave it unknown until the API exposes a definitive result.
 3. When the portable or native failures recur, record the exact log line,
