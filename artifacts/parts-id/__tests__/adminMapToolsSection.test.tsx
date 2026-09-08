@@ -34,6 +34,14 @@ jest.mock("expo-sharing", () => ({
   shareAsync:       jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock("expo-clipboard", () => {
+  const mockSetStringAsync = jest.fn().mockResolvedValue(undefined);
+  return {
+    setStringAsync: mockSetStringAsync,
+    __mockSetStringAsync: mockSetStringAsync,
+  };
+});
+
 // ─── react-native-svg ────────────────────────────────────────────────────────
 
 jest.mock("react-native-svg", () => {
@@ -128,6 +136,13 @@ beforeEach(() => {
       json: () => Promise.resolve(MOCK_STATS),
     } as Response),
   ) as jest.Mock;
+  const { Linking } = require("react-native") as typeof import("react-native");
+  (Linking.openURL as jest.Mock).mockResolvedValue(undefined);
+  const clipboardMock = jest.requireMock("expo-clipboard") as {
+    __mockSetStringAsync: jest.Mock;
+  };
+  clipboardMock.__mockSetStringAsync.mockReset();
+  clipboardMock.__mockSetStringAsync.mockResolvedValue(undefined);
 });
 
 // ─── Subject under test ───────────────────────────────────────────────────────
@@ -254,6 +269,43 @@ describe("AdminDashboardScreen — Map Tools section with domain configured", ()
     expect(Linking.openURL).toHaveBeenCalledWith(
       "https://prod.example.com/__mockup/warehouse-map",
     );
+  });
+
+  it("shows retry and copy actions when a map tool cannot be opened", async () => {
+    const tree = await renderAdmin();
+    const { Linking } = require("react-native") as typeof import("react-native");
+    (Linking.openURL as jest.Mock)
+      .mockRejectedValueOnce(new Error("Popup blocked"))
+      .mockResolvedValueOnce(undefined);
+
+    const [btn] = findPressablesByAccessibilityLabel(tree.root, "Open Zone Editor");
+    await act(async () => {
+      btn!.props.onPress();
+      await flushPromises();
+    });
+
+    expect(hasText(tree.root, "Could not open Zone Editor. Retry or copy the URL to open it elsewhere.")).toBe(true);
+    expect(findPressablesByAccessibilityLabel(tree.root, "Retry opening Zone Editor")).toHaveLength(1);
+    expect(findPressablesByAccessibilityLabel(tree.root, "Copy Zone Editor URL")).toHaveLength(1);
+
+    const [copyButton] = findPressablesByAccessibilityLabel(tree.root, "Copy Zone Editor URL");
+    await act(async () => {
+      copyButton!.props.onPress();
+      await flushPromises();
+    });
+    const clipboardMock = jest.requireMock("expo-clipboard") as {
+      __mockSetStringAsync: jest.Mock;
+    };
+    expect(clipboardMock.__mockSetStringAsync).toHaveBeenCalledWith(
+      "https://prod.example.com/__mockup/zone-editor",
+    );
+
+    const [retryButton] = findPressablesByAccessibilityLabel(tree.root, "Retry opening Zone Editor");
+    await act(async () => {
+      retryButton!.props.onPress();
+      await flushPromises();
+    });
+    expect(Linking.openURL).toHaveBeenCalledTimes(2);
   });
 });
 
