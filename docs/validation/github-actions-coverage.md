@@ -19,6 +19,7 @@ not inferred from this file.
 | regression-guard | none | local-only: task-scoped regression declaration ownership stays with Replit | local task validation | intentional local-only |
 | patched-dependencies-contract | `CI / required` → `pnpm run test-standard-plus` | direct portable regression coverage for patch context and final-newline failures | PR, merge queue, main push, manual | inferred from tier manifest |
 | patched-dependencies | `CI / required` → `pnpm run test-standard-plus` | exact published package extraction, lock hash verification, and patch applicability check | PR, merge queue, main push, manual | inferred from tier manifest |
+| replit-config-contract | `CI / required` → `pnpm run test-standard-plus` | real-parser coverage for the complete Replit configuration and malformed TOML rejection | PR, merge queue, main push, manual | tracked contract test |
 | tsc | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage via the fast tier | PR, merge queue, main push, manual | inferred from tier manifest |
 | lint | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | lint-mocks | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
