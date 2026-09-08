@@ -229,6 +229,7 @@ function getMetroStartArgs(port) {
     "exec",
     "expo",
     "start",
+    "--clear",
     "--no-dev",
     "--minify",
     "--localhost",

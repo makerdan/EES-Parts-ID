@@ -96,6 +96,8 @@ function escapeCsv(value: string | number): string {
 }
 
 export default function AiLogScreen() {
+  "use no memo";
+
   useTrackScreen("AI Log");
   const colors = useColors();
   const router = useRouter();
