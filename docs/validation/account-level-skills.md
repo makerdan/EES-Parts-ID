@@ -34,6 +34,12 @@ The projection helper, its public all-skills command, and the invocation loader
 are repository tooling; they do not edit `.local/custom_skills` and do not
 publish account content into tracked files.
 
+If an atomic install fails and restoring the owned last-known-good projection
+also fails, the helper reports the distinct `atomic-restore-failed` result and
+preserves the owned backup for recovery. It does not delete or replace the
+last-known-good bytes, and it does not touch similarly named directories outside
+its ownership pattern.
+
 ## Supported all-skills projection command
 
 The only repository-owned projection mutation command is:

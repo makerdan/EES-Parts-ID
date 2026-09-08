@@ -42,6 +42,31 @@ async function exists(path) {
   }
 }
 
+async function snapshotTree(root) {
+  if (!(await exists(root))) return undefined;
+  const entries = [];
+  async function visit(current, relative = "") {
+    for (const entry of (await readdir(current, { withFileTypes: true })).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      const entryPath = join(current, entry.name);
+      const entryRelative = relative ? `${relative}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        entries.push([entryRelative, "directory"]);
+        await visit(entryPath, entryRelative);
+      } else if (entry.isFile()) {
+        entries.push([entryRelative, "file", (await readFile(entryPath)).toString("base64")]);
+      } else if (entry.isSymbolicLink()) {
+        entries.push([entryRelative, "symbolic-link"]);
+      } else {
+        entries.push([entryRelative, "other"]);
+      }
+    }
+  }
+  await visit(root);
+  return entries;
+}
+
 function runStatus(source = accountSource, mirrorRoot) {
   return spawnSync(process.execPath, [statusCommand, "--skill", "catalog"], {
     cwd: workspaceRoot,
@@ -107,9 +132,11 @@ try {
       fingerprint: canonicalMetadata.fingerprint,
     },
   );
+  const missingMirrorBefore = await snapshotTree(mirrorRoot);
   const missingMirrorCommand = runStatus();
   assert.equal(missingMirrorCommand.status, 3);
   assert.equal(JSON.parse(missingMirrorCommand.stdout).outcome, "missing-mirror");
+  assert.deepEqual(await snapshotTree(mirrorRoot), missingMirrorBefore, "missing-mirror status must be read-only");
   await put(
     join(mirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
     `${JSON.stringify({
@@ -123,6 +150,7 @@ try {
     (await inspectAccountSkillMirror({ accountSource, workspaceRoot, skillName: "catalog", mirrorRoot })).outcome,
     "pass",
   );
+  const passingBefore = await snapshotTree(mirrorRoot);
   const passingCommand = runStatus();
   assert.equal(passingCommand.status, 0);
   assert.deepEqual(Object.keys(JSON.parse(passingCommand.stdout)).sort(), [
@@ -131,6 +159,7 @@ try {
     "skillId",
     "sourceRevision",
   ]);
+  assert.deepEqual(await snapshotTree(mirrorRoot), passingBefore, "pass status must be read-only");
   const platformMirrorRoot = join(root, "platform-runtime-mirror");
   await put(
     join(platformMirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
@@ -145,6 +174,8 @@ try {
     join(mirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
     '{"format":1,"skillId":"catalog","sourceRevision":"wrong","fingerprint":"wrong"}\n',
   );
+  const platformPassBefore = await snapshotTree(platformMirrorRoot);
+  const disposableDuringPlatformPass = await snapshotTree(mirrorRoot);
   const platformRootCommand = runStatus(accountSource, platformMirrorRoot);
   assert.equal(platformRootCommand.status, 0);
   assert.deepEqual(JSON.parse(platformRootCommand.stdout), {
@@ -153,11 +184,18 @@ try {
     sourceRevision: "account-rev-1",
     fingerprint: canonicalMetadata.fingerprint,
   });
+  assert.deepEqual(await snapshotTree(platformMirrorRoot), platformPassBefore, "platform pass status must be read-only");
+  assert.deepEqual(
+    await snapshotTree(mirrorRoot),
+    disposableDuringPlatformPass,
+    "platform pass status must not write the disposable mirror",
+  );
   assert.doesNotMatch(platformRootCommand.stdout, /platform-runtime-mirror|Catalog v1|Catalog same revision/);
   await put(
     join(platformMirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
     '{"format":1,"skillId":"catalog","sourceRevision":"wrong","fingerprint":"wrong"}\n',
   );
+  const platformMismatchBefore = await snapshotTree(platformMirrorRoot);
   const platformMismatchCommand = runStatus(accountSource, platformMirrorRoot);
   assert.equal(platformMismatchCommand.status, 1);
   assert.deepEqual(JSON.parse(platformMismatchCommand.stdout), {
@@ -167,6 +205,11 @@ try {
     fingerprint: canonicalMetadata.fingerprint,
     reason: "revision-mismatch",
   });
+  assert.deepEqual(
+    await snapshotTree(platformMirrorRoot),
+    platformMismatchBefore,
+    "platform mismatch status must be read-only",
+  );
   await put(
     join(mirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
     '{"format":1,"skillId":"catalog","sourceRevision":"wrong","fingerprint":"wrong"}\n',
@@ -175,6 +218,7 @@ try {
     (await inspectAccountSkillMirror({ accountSource, workspaceRoot, skillName: "catalog", mirrorRoot })).outcome,
     "mismatch",
   );
+  const mismatchBefore = await snapshotTree(mirrorRoot);
   const mismatchCommand = runStatus();
   assert.equal(mismatchCommand.status, 1);
   assert.deepEqual(JSON.parse(mismatchCommand.stdout), {
@@ -184,6 +228,7 @@ try {
     fingerprint: canonicalMetadata.fingerprint,
     reason: "revision-mismatch",
   });
+  assert.deepEqual(await snapshotTree(mirrorRoot), mismatchBefore, "mismatch status must be read-only");
   assert.deepEqual(
     await inspectAccountSkillMirror({
       accountSource: join(root, "missing-account-source"),
@@ -193,10 +238,14 @@ try {
     }),
     { outcome: "unavailable-source", skillId: "catalog" },
   );
+  const unavailableBefore = await snapshotTree(mirrorRoot);
   const unavailableCommand = runStatus(join(root, "missing-account-source"));
   assert.equal(unavailableCommand.status, 2);
   assert.equal(JSON.parse(unavailableCommand.stdout).outcome, "unavailable-source");
-  const missingPlatformRootCommand = runStatus(accountSource, join(root, "missing-platform-root"));
+  assert.deepEqual(await snapshotTree(mirrorRoot), unavailableBefore, "unavailable-source status must be read-only");
+  const missingPlatformRoot = join(root, "missing-platform-root");
+  const missingPlatformBefore = await snapshotTree(missingPlatformRoot);
+  const missingPlatformRootCommand = runStatus(accountSource, missingPlatformRoot);
   assert.equal(missingPlatformRootCommand.status, 3);
   assert.deepEqual(JSON.parse(missingPlatformRootCommand.stdout), {
     outcome: "missing-mirror",
@@ -204,6 +253,90 @@ try {
     sourceRevision: "account-rev-1",
     fingerprint: canonicalMetadata.fingerprint,
   });
+  assert.deepEqual(
+    await snapshotTree(missingPlatformRoot),
+    missingPlatformBefore,
+    "missing-mirror status with a missing root must be read-only",
+  );
+
+  await put(
+    join(mirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
+    `${JSON.stringify({
+      format: 1,
+      skillId: "catalog",
+      sourceRevision: "account-rev-1",
+      fingerprint: canonicalMetadata.fingerprint,
+    })}\n`,
+  );
+  await writeFile(join(accountSource, ".account-revision"), "account-rev-2\n");
+  const revisionMismatchBefore = await snapshotTree(mirrorRoot);
+  const revisionMismatchCommand = runStatus();
+  assert.equal(revisionMismatchCommand.status, 1);
+  assert.deepEqual(JSON.parse(revisionMismatchCommand.stdout), {
+    outcome: "mismatch",
+    skillId: "catalog",
+    sourceRevision: "account-rev-2",
+    fingerprint: canonicalMetadata.fingerprint,
+    reason: "revision-mismatch",
+  });
+  assert.deepEqual(
+    await snapshotTree(mirrorRoot),
+    revisionMismatchBefore,
+    "revision mismatch status must be read-only",
+  );
+
+  await put(
+    join(mirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
+    `${JSON.stringify({
+      format: 1,
+      skillId: "catalog",
+      sourceRevision: "account-rev-2",
+      fingerprint: canonicalMetadata.fingerprint,
+    })}\n`,
+  );
+  assert.equal(
+    (await inspectAccountSkillMirror({ accountSource, workspaceRoot, skillName: "catalog", mirrorRoot })).outcome,
+    "pass",
+    "refreshing mirror revision metadata should clear the stale result",
+  );
+
+  await writeFile(join(accountSource, "catalog/SKILL.md"), "# Catalog fingerprint v2\n");
+  const fingerprintCanonical = await inspectAccountSkillMirror({
+    accountSource,
+    workspaceRoot,
+    skillName: "catalog",
+    mirrorRoot,
+  });
+  assert.equal(fingerprintCanonical.outcome, "mismatch");
+  const fingerprintMismatchBefore = await snapshotTree(mirrorRoot);
+  const fingerprintMismatchCommand = runStatus();
+  assert.equal(fingerprintMismatchCommand.status, 1);
+  assert.deepEqual(JSON.parse(fingerprintMismatchCommand.stdout), {
+    outcome: "mismatch",
+    skillId: "catalog",
+    sourceRevision: "account-rev-2",
+    fingerprint: fingerprintCanonical.fingerprint,
+    reason: "fingerprint-mismatch",
+  });
+  assert.deepEqual(
+    await snapshotTree(mirrorRoot),
+    fingerprintMismatchBefore,
+    "fingerprint mismatch status must be read-only",
+  );
+  await put(
+    join(mirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
+    `${JSON.stringify({
+      format: 1,
+      skillId: "catalog",
+      sourceRevision: fingerprintCanonical.sourceRevision,
+      fingerprint: fingerprintCanonical.fingerprint,
+    })}\n`,
+  );
+  assert.equal(
+    (await inspectAccountSkillMirror({ accountSource, workspaceRoot, skillName: "catalog", mirrorRoot })).outcome,
+    "pass",
+    "refreshing mirror fingerprint metadata should clear the stale result",
+  );
 
   const missingRevisionSource = join(root, "missing-revision-source");
   await put(join(missingRevisionSource, "catalog/SKILL.md"), "# Catalog\n");
@@ -419,6 +552,11 @@ try {
   );
   assert.equal(await exists(interruptedProjectionRoot), false, "a failed restore must not masquerade as an installed projection");
   assert.equal(await exists(interruptedLookalike), true, "restore failure handling must not touch lookalike directories");
+  assert.equal(
+    await readFile(join(interruptedLookalike, "keep.txt"), "utf8"),
+    "unrelated interrupted fixture\n",
+    "a failed restore must preserve similarly named directories byte-for-byte",
+  );
 
   const concurrentWorkspace = join(root, "concurrent-workspace");
   const concurrentProjectionRoot = join(concurrentWorkspace, ACCOUNT_SKILLS_PROJECTION_RELATIVE_PATH);
