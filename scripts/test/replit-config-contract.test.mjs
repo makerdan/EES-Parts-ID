@@ -42,6 +42,7 @@ const source = readFileSync(REPLIT_PATH, "utf8");
 const config = parseToml(source, ".replit must be valid TOML");
 
 assert.deepEqual(config.modules, ["nodejs-24", "python-3.11", "postgresql-16"]);
+assert.match(source, /Node 24 toolchain/, "Replit must document the Node runtime contract");
 assert.deepEqual(config.postMerge, {
   path: "scripts/post-merge.sh",
   timeoutMs: 420000,

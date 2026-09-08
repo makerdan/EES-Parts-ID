@@ -90,6 +90,9 @@ function validateWorkflowContract(files, coverage) {
   }
 
   const setupReferences = actionReferences(read(actionPath));
+  const setupAction = read(actionPath);
+  assert(/node-version-file:\s*\.node-version/.test(setupAction), "setup-node-pnpm: Node must come from .node-version");
+  assert(/same exact runtime contract/.test(setupAction), "setup-node-pnpm: exact runtime contract must be documented");
   for (const reference of setupReferences) {
     if (!/@[0-9a-f]{40}$/.test(reference)) {
       errors.push(`setup-node-pnpm: mutable or malformed action reference ${reference}`);

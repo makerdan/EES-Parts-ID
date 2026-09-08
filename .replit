@@ -1,3 +1,5 @@
+# Replit supplies the Node 24 toolchain; validation enforces the exact patch
+# declared by package.json and .node-version.
 modules = ["nodejs-24", "python-3.11", "postgresql-16"]
 
 [deployment]

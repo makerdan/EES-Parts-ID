@@ -3,6 +3,7 @@
  * Single source of truth for validation-tier membership.
  */
 export const FAST = [
+  ["node-runtime", "node scripts/check-node-runtime.mjs"],
   ["gate-guard", "bash scripts/check-gate-integrity.sh"],
   ["plan-gate-fix", "node scripts/check-failure-gate.mjs --fix-stub"],
   ["plan-gate-check", "node scripts/check-failure-gate.mjs"],
