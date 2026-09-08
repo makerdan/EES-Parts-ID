@@ -5,6 +5,11 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+  STRUCTURAL_TABLES,
+  compareStructuralConfig,
+  redactStructuralConfig,
+} from "../lib/replit-config-parity.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const REPLIT_PATH = resolve(ROOT, ".replit");
@@ -71,4 +76,110 @@ assert.throws(
   /stray-angle-bracket fixture: TOML parse error:/,
 );
 
-console.log("Replit configuration contract OK.");
+const { snapshot: activeFixture } = redactStructuralConfig(config);
+const matching = compareStructuralConfig({
+  checkedIn: config,
+  active: activeFixture,
+});
+assert.equal(matching.ok, true);
+assert.deepEqual(matching.diagnostics, []);
+assert.equal(matching.checkedInDigest, matching.activeDigest);
+
+const drifted = structuredClone(activeFixture);
+drifted.workflows.runButton = "Not Project";
+const driftResult = compareStructuralConfig({
+  checkedIn: config,
+  active: drifted,
+});
+assert.equal(driftResult.ok, false);
+assert.deepEqual(driftResult.diagnostics, [
+  { source: "active", table: "workflows", issue: "digest-mismatch" },
+]);
+assert(!JSON.stringify(driftResult).includes("Not Project"));
+
+const partial = structuredClone(activeFixture);
+delete partial.ports;
+const partialResult = compareStructuralConfig({
+  checkedIn: config,
+  active: partial,
+});
+assert.equal(partialResult.ok, false);
+assert.deepEqual(partialResult.diagnostics, [
+  { source: "active", table: "ports", issue: "missing-table" },
+]);
+
+const malformedSnapshotResult = compareStructuralConfig({
+  checkedIn: config,
+  active: { ...activeFixture, workflows: "not-a-table" },
+});
+assert.equal(malformedSnapshotResult.ok, false);
+assert.deepEqual(malformedSnapshotResult.diagnostics, [
+  {
+    source: "active",
+    table: "workflows",
+    issue: "expected-object",
+    actualType: "string",
+  },
+]);
+
+const malformedNestedResult = compareStructuralConfig({
+  checkedIn: config,
+  active: { ...activeFixture, ports: [undefined] },
+});
+assert.equal(malformedNestedResult.ok, false);
+assert.deepEqual(malformedNestedResult.diagnostics, [
+  {
+    source: "active",
+    table: "ports",
+    issue: "malformed-table",
+  },
+]);
+
+const unexpectedTableResult = compareStructuralConfig({
+  checkedIn: config,
+  active: { ...activeFixture, notAReplitTable: true },
+});
+assert.equal(unexpectedTableResult.ok, false);
+assert.deepEqual(unexpectedTableResult.diagnostics, [
+  {
+    source: "active",
+    table: "notAReplitTable",
+    issue: "unexpected-table",
+  },
+]);
+
+const secretBearingSnapshot = {
+  ...activeFixture,
+  userenv: { ADMIN_PASSWORD: "must-not-appear" },
+};
+const secretResult = compareStructuralConfig({
+  checkedIn: config,
+  active: secretBearingSnapshot,
+});
+assert.equal(secretResult.ok, false);
+assert.deepEqual(secretResult.diagnostics, [
+  {
+    source: "active",
+    table: "userenv",
+    issue: "environment-bearing-table",
+  },
+]);
+assert(!JSON.stringify(secretResult).includes("must-not-appear"));
+
+assert.deepEqual(STRUCTURAL_TABLES, [
+  "modules",
+  "deployment",
+  "workflows",
+  "agent",
+  "postMerge",
+  "ports",
+  "nix",
+]);
+assert(
+  !readFileSync(resolve(ROOT, "scripts/lib/replit-config-parity.mjs"), "utf8").includes(
+    "/run/replit/env",
+  ),
+  "parity source must not read environment metadata",
+);
+
+console.log("Replit configuration and parity contracts OK.");
