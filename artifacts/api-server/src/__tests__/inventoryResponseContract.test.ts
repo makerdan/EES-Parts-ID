@@ -5,6 +5,111 @@
  * item shape.
  */
 
+const mockSelect = jest.fn();
+const mockExecute = jest.fn();
+const mockLimiterCheck = jest.fn();
+let routeTestMode: "list" | "search" = "list";
+let mockedInventoryRows: Array<Record<string, unknown>> = [];
+let searchDictionariesServed = false;
+let searchDictionarySelectCount = 0;
+
+function makeQuery(result: unknown[]) {
+  const query = {
+    from: jest.fn(),
+    where: jest.fn(),
+    limit: jest.fn(),
+    offset: jest.fn(),
+    orderBy: jest.fn(),
+    then: undefined as unknown,
+  };
+
+  query.from.mockReturnValue(query);
+  query.where.mockReturnValue(query);
+  query.limit.mockReturnValue(query);
+  query.offset.mockReturnValue(query);
+  query.orderBy.mockReturnValue(query);
+  query.then = (
+    resolve: (value: unknown[]) => unknown,
+    reject?: (reason: unknown) => unknown,
+  ) => Promise.resolve(result).then(resolve, reject);
+
+  return query;
+}
+
+jest.mock("@workspace/db", () => ({
+  db: {
+    select: mockSelect,
+    execute: mockExecute,
+  },
+  inventoryTable: {},
+  misspellingMapTable: {},
+  abbreviationMapTable: {},
+  vendorMapTable: {},
+  synonymMapTable: {},
+  electricalSlangMapTable: {},
+  inventoryFtsVector: {},
+  measureEnrichJobTable: {},
+  collectKeywords: jest.fn(() => ["widget"]),
+  findNodeBySlug: jest.fn(() => ({ slug: "receptacles" })),
+  getAllTaxonomyKeywords: jest.fn(() => []),
+  TAXONOMY: [],
+}));
+
+jest.mock("../lib/rateLimiter", () => ({
+  inventorySearchLimiter: { check: mockLimiterCheck },
+  identifyLimiter: { check: mockLimiterCheck },
+  translateLimiter: { check: mockLimiterCheck },
+  partCardLimiter: { check: mockLimiterCheck },
+  referenceAskLimiter: { check: mockLimiterCheck },
+  helpAskLimiter: { check: mockLimiterCheck },
+  catalogPdfUploadLimiter: { check: mockLimiterCheck },
+  adminQueryLimiter: { check: mockLimiterCheck },
+  contactLimiter: { check: mockLimiterCheck },
+  screenViewLimiter: { check: mockLimiterCheck },
+}));
+
+jest.mock("../middlewares/requireAppAuth", () => ({
+  requireAppAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
+jest.mock("../middlewares/requireAdminAuth", () => ({
+  requireAdminAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
+jest.mock("@workspace/integrations-openai-ai-server", () => ({
+  openai: {
+    chat: { completions: { create: jest.fn() } },
+    audio: { transcriptions: { create: jest.fn() } },
+  },
+  generateImageBuffer: jest.fn(),
+  editImages: jest.fn(),
+  batchProcess: jest.fn(),
+  batchProcessWithSSE: jest.fn(),
+  isRateLimitError: jest.fn(() => false),
+}));
+
+jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
+  batchProcess: jest.fn(),
+  batchProcessWithSSE: jest.fn(),
+  isRateLimitError: jest.fn(() => false),
+}));
+
+jest.mock("../lib/answerCache", () => ({
+  invalidateReferenceAnswerCache: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("../lib/objectStorage", () => ({
+  deletePrivateObjects: jest.fn().mockResolvedValue(undefined),
+  isPrivateObjectPath: jest.fn(() => false),
+  readPrivateObject: jest.fn(),
+  uploadCatalogImage: jest.fn(),
+}));
+
+jest.mock("../utils/generateKeywords", () => ({
+  generateKeywords: jest.fn().mockResolvedValue([]),
+  mergeWithPinned: jest.fn(() => []),
+}));
+
 import {
   AddPartConflictResponse,
   AddPartResponse,
@@ -30,6 +135,9 @@ import {
   type InventoryOrderField,
 } from "./fixtures/inventoryResponseFixtures";
 
+import supertest from "supertest";
+import app from "../app";
+
 const updateResponseSchemas = {
   UpdateItemBarcodesResponse,
   UpdateItemBinsResponse,
@@ -40,6 +148,35 @@ const updateResponseSchemas = {
   UpdateItemSizeResponse,
   ReenrichItemResponse,
 };
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  routeTestMode = "list";
+  mockedInventoryRows = [];
+  searchDictionarySelectCount = 0;
+  mockSelect.mockImplementation((selection?: unknown) => {
+    if (routeTestMode === "list") {
+      return makeQuery(selection !== undefined ? [{ count: "1" }] : mockedInventoryRows);
+    }
+
+    if (!searchDictionariesServed && searchDictionarySelectCount < 5) {
+      const dictionaryRows = [
+        [{ misspelling: "widgit", correction: "widget" }],
+        [{ abbreviation: "w", expansions: ["widget"] }],
+        [{ code: "ACME", names: ["ACME"] }],
+        [{ term: "widget", synonyms: ["widget"] }],
+        [{ slangTerm: "widget", standardTerms: ["widget"] }],
+      ];
+      return makeQuery(dictionaryRows[searchDictionarySelectCount++] ?? []);
+    }
+
+    searchDictionariesServed = true;
+    return makeQuery(mockedInventoryRows);
+  });
+  mockExecute.mockResolvedValue({ rows: [] });
+  mockLimiterCheck.mockResolvedValue({ allowed: true });
+});
+
 
 function makeResponseFixture(
   responseName: string,
@@ -103,6 +240,42 @@ describe("InventoryItem response contract", () => {
       for (const field of ["orderPurchase", "orderQuantity"] as const) {
         expect(() => schema.parse(makeResponseFixture(responseName, field))).toThrow();
       }
+    },
+  );
+});
+
+describe("Inventory list and search route response contracts", () => {
+  it.each(["orderPurchase", "orderQuantity"] as const)(
+    "GET /api/inventory returns its documented error when a row is missing %s",
+    async (field) => {
+      routeTestMode = "list";
+      mockedInventoryRows = [
+        makeInventoryItemMissingOrderField(field) as Record<string, unknown>,
+      ];
+
+      const response = await supertest(app).get("/api/inventory");
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({ error: "Failed to list inventory" });
+      expect(response.body).not.toHaveProperty(field);
+    },
+  );
+
+  it.each(["orderPurchase", "orderQuantity"] as const)(
+    "POST /api/inventory/search returns its documented error when a row is missing %s",
+    async (field) => {
+      routeTestMode = "search";
+      mockedInventoryRows = [
+        makeInventoryItemMissingOrderField(field) as Record<string, unknown>,
+      ];
+
+      const response = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ categorySlug: "receptacles" });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({ error: "Search failed" });
+      expect(response.body).not.toHaveProperty(field);
     },
   );
 });
