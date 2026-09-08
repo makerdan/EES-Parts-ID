@@ -18,7 +18,7 @@ import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
-import { askHelpQuestion, fetchHelpRecords,HelpApiError } from "@/utils/helpApi";
+import { askHelpQuestion, fetchHelpRecords, HelpApiError } from "@/utils/helpApi";
 import {
   type HelpRecord,
   readCachedGeneralHelp,
@@ -133,22 +133,28 @@ export default function HelpScreen() {
   const [question, setQuestion] = useState("");
   const [conversation, setConversation] = useState<Array<{ q: string; a: string }>>([]);
   const [assistantState, setAssistantState] = useState<AssistantState>("idle");
-  const [assistantError, setAssistantError] = useState<HelpApiError | null>(null);
   const [contactVisible, setContactVisible] = useState(false);
+  const [supportQuestion, setSupportQuestion] = useState("");
   const [referenceVisible, setReferenceVisible] = useState(false);
   const lastQuestionRef = useRef("");
-  const requestControllerRef = useRef<AbortController | null>(null);
+  const contentControllerRef = useRef<AbortController | null>(null);
+  const assistantControllerRef = useRef<AbortController | null>(null);
   const generationRef = useRef(0);
+  const assistantGenerationRef = useRef(0);
   const mountedRef = useRef(true);
 
   const clearPrivilegedState = useCallback(() => {
     generationRef.current += 1;
-    requestControllerRef.current?.abort();
+    assistantGenerationRef.current += 1;
+    contentControllerRef.current?.abort();
+    assistantControllerRef.current?.abort();
     setAdminRecords([]);
     setConversation([]);
     setQuestion("");
     setAssistantState("idle");
-    setAssistantError(null);
+    setSupportQuestion("");
+    setContactVisible(false);
+    lastQuestionRef.current = "";
   }, []);
 
   useEffect(() => {
@@ -156,7 +162,9 @@ export default function HelpScreen() {
     return () => {
       mountedRef.current = false;
       generationRef.current += 1;
-      requestControllerRef.current?.abort();
+      assistantGenerationRef.current += 1;
+      contentControllerRef.current?.abort();
+      assistantControllerRef.current?.abort();
     };
   }, []);
 
@@ -164,9 +172,9 @@ export default function HelpScreen() {
 
   const loadContent = useCallback(async () => {
     const generation = ++generationRef.current;
-    requestControllerRef.current?.abort();
+    contentControllerRef.current?.abort();
     const controller = new AbortController();
-    requestControllerRef.current = controller;
+    contentControllerRef.current = controller;
     setLoading(true);
     setLoadError(null);
     setOffline(false);
@@ -235,26 +243,51 @@ export default function HelpScreen() {
     const value = (override ?? question).trim();
     if (!value || assistantState === "loading") return;
     lastQuestionRef.current = value;
-    const generation = generationRef.current;
+    const generation = ++assistantGenerationRef.current;
     const controller = new AbortController();
-    requestControllerRef.current?.abort();
-    requestControllerRef.current = controller;
+    assistantControllerRef.current?.abort();
+    assistantControllerRef.current = controller;
     setAssistantState("loading");
-    setAssistantError(null);
     try {
       const answer = await askHelpQuestion(value, conversation, controller.signal);
-      if (!mountedRef.current || generation !== generationRef.current || controller.signal.aborted) return;
+      if (
+        !mountedRef.current ||
+        generation !== assistantGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
       setConversation((previous) => [...previous, { q: value, a: answer }].slice(-8));
       setQuestion("");
       setAssistantState("success");
     } catch (error) {
-      if (!mountedRef.current || generation !== generationRef.current || controller.signal.aborted) return;
+      if (!mountedRef.current || generation !== assistantGenerationRef.current) return;
+      if (controller.signal.aborted) {
+        setAssistantState("idle");
+        return;
+      }
       const apiError = error instanceof HelpApiError
         ? error
         : new HelpApiError(HELP_ERROR_CODE.PROVIDER_UNAVAILABLE, "The Help assistant is unavailable right now.");
-      setAssistantError(apiError);
       setAssistantState(errorState(apiError));
+    } finally {
+      if (assistantControllerRef.current === controller) {
+        assistantControllerRef.current = null;
+      }
     }
+  };
+
+  const cancelAssistantRequest = () => {
+    if (assistantState !== "loading") return;
+    assistantGenerationRef.current += 1;
+    assistantControllerRef.current?.abort();
+    assistantControllerRef.current = null;
+    setAssistantState("idle");
+  };
+
+  const openContactSupport = () => {
+    const intent = lastQuestionRef.current.trim();
+    if (!intent) return;
+    setSupportQuestion(intent.slice(0, 1_200));
+    setContactVisible(true);
   };
 
   const assistantFailure = assistantState !== "idle" && assistantState !== "loading" && assistantState !== "success";
@@ -393,23 +426,39 @@ export default function HelpScreen() {
                 </View>
               ))}
               {assistantState === "loading" ? (
-                <View style={styles.loadingRow}>
+                <View
+                  style={styles.loadingRow}
+                  accessible
+                  accessibilityRole="progressbar"
+                  accessibilityLabel="Checking the Help guide"
+                  accessibilityLiveRegion="polite"
+                >
                   <ActivityIndicator size="small" color={colors.primary} />
                   <Text style={[styles.centerText, { color: colors.mutedForeground }]}>Checking the Help guide…</Text>
+                  <Pressable
+                    onPress={cancelAssistantRequest}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel Help question"
+                    style={[styles.cancelButton, { borderColor: colors.border }]}
+                  >
+                    <Text style={[styles.cancelButtonText, { color: colors.mutedForeground }]}>Cancel</Text>
+                  </Pressable>
                 </View>
               ) : null}
               {assistantFailure ? (
-                <View style={[styles.assistantError, { backgroundColor: colors.destructive + "10", borderColor: colors.destructive + "44" }]}>
+                <View
+                  style={[styles.assistantError, { backgroundColor: colors.destructive + "10", borderColor: colors.destructive + "44" }]}
+                  accessible
+                  accessibilityRole="alert"
+                  accessibilityLiveRegion="polite"
+                >
                   <Text style={[styles.errorTitle, { color: colors.destructive }]}>{errorTitle(assistantState)}</Text>
                   <Text style={[styles.errorText, { color: colors.foreground }]}>{errorBody(assistantState)}</Text>
-                  {assistantError?.message ? (
-                    <Text style={[styles.errorText, { color: colors.mutedForeground }]}>{assistantError.message}</Text>
-                  ) : null}
                   <View style={styles.errorActions}>
                     <Pressable onPress={() => askQuestion(lastQuestionRef.current)} accessibilityRole="button" style={[styles.primaryButton, { backgroundColor: colors.primary }]}>
                       <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>Retry</Text>
                     </Pressable>
-                    <Pressable onPress={() => setContactVisible(true)} accessibilityRole="button" style={[styles.secondaryButton, { borderColor: colors.primary }]}>
+                    <Pressable onPress={openContactSupport} accessibilityRole="button" style={[styles.secondaryButton, { borderColor: colors.primary }]}>
                       <Text style={[styles.secondaryButtonText, { color: colors.primary }]}>Contact support</Text>
                     </Pressable>
                   </View>
@@ -442,7 +491,14 @@ export default function HelpScreen() {
         )}
       </ScrollView>
 
-      <ContactSheet visible={contactVisible} onClose={() => setContactVisible(false)} />
+      <ContactSheet
+        visible={contactVisible}
+        onClose={() => setContactVisible(false)}
+        initialSubject="Help assistant question"
+        {...(supportQuestion
+          ? { initialBody: `Question for Help assistant:\n${supportQuestion}` }
+          : {})}
+      />
       <ReferenceModal open={referenceVisible} onClose={() => setReferenceVisible(false)} />
     </SafeAreaView>
   );
@@ -489,6 +545,8 @@ const styles = StyleSheet.create({
   questionText: { fontFamily: "Inter_600SemiBold", fontSize: 13, lineHeight: 19 },
   answerText: { fontFamily: "Inter_400Regular", fontSize: 14, lineHeight: 21 },
   loadingRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12 },
+  cancelButton: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, marginLeft: "auto" },
+  cancelButtonText: { fontFamily: "Inter_600SemiBold", fontSize: 12 },
   assistantError: { borderWidth: 1, borderRadius: 8, padding: 10, marginTop: 12 },
   errorTitle: { fontFamily: "Inter_700Bold", fontSize: 13 },
   errorText: { fontFamily: "Inter_400Regular", fontSize: 13, lineHeight: 19, marginTop: 4 },

@@ -202,4 +202,32 @@ describe("POST /api/help/ask — privileged context boundary", () => {
     expect(JSON.stringify(res.body)).not.toContain("provider secret");
     expect(JSON.stringify(res.body)).not.toContain("hidden prompt");
   });
+
+  it("allows a failed question to be retried with prior conversation context", async () => {
+    mockCreate.mockRejectedValueOnce(new Error("temporary provider outage"));
+
+    await auth(supertest(app).post("/api/help/ask"), WORKER)
+      .send({ question: "How do I find a part with Search?" })
+      .expect(503);
+
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: "Open Search and enter the part description." } }],
+    });
+    const res = await auth(supertest(app).post("/api/help/ask"), WORKER)
+      .send({
+        question: "How do I find a part with Search?",
+        history: [{ q: "How do I open Search?", a: "Open the Search tab." }],
+      })
+      .expect(200);
+
+    expect(res.body.answer).toBe("Open Search and enter the part description.");
+    const retryRequest = mockCreate.mock.calls[mockCreate.mock.calls.length - 1]![0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(retryRequest.messages).toEqual(expect.arrayContaining([
+      { role: "user", content: "How do I open Search?" },
+      { role: "assistant", content: "Open the Search tab." },
+      { role: "user", content: "How do I find a part with Search?" },
+    ]));
+  });
 });

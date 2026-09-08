@@ -9,6 +9,7 @@ const mockApp = {
   textFontScale: 1,
   registerLogoutHandler: jest.fn(() => () => {}),
 };
+const mockContactSheet = jest.fn();
 
 jest.mock("@/contexts/AppContext", () => ({
   useApp: () => mockApp,
@@ -16,7 +17,12 @@ jest.mock("@/contexts/AppContext", () => ({
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 jest.mock("@expo/vector-icons", () => ({ Feather: () => null }));
 jest.mock("@/components/ReferenceModal", () => ({ ReferenceModal: () => null }));
-jest.mock("@/components/ContactSheet", () => ({ ContactSheet: () => null }));
+jest.mock("@/components/ContactSheet", () => ({
+  ContactSheet: (props: Record<string, unknown>) => {
+    mockContactSheet(props);
+    return null;
+  },
+}));
 jest.mock("@/components/KeyboardDoneInput", () => ({
   KeyboardDoneInput: (props: Record<string, unknown>) => {
     const R = require("react");
@@ -137,5 +143,73 @@ describe("Help screen", () => {
     expect(result.getByText(expectedErrorTitles[code])).toBeTruthy();
     expect(result.getByText("Retry")).toBeTruthy();
     expect(result.getByText("Contact support")).toBeTruthy();
+  });
+
+  it("keeps completed context and hides provider details when a later question fails", async () => {
+    (askHelpQuestion as jest.Mock)
+      .mockResolvedValueOnce("Open the Search tab.")
+      .mockRejectedValueOnce(new HelpApiError(
+        "HELP_PROVIDER_UNAVAILABLE",
+        "provider secret and hidden prompt",
+      ));
+    const result = await render(<HelpScreen />);
+    await settle();
+
+    await act(async () => fireEvent.changeText(result.getByLabelText("Ask a Help question"), "How do I search?"));
+    await act(async () => fireEvent.press(result.getByLabelText("Send Help question")));
+    await settle();
+    expect(result.getByText("Open the Search tab.")).toBeTruthy();
+
+    await act(async () => fireEvent.changeText(result.getByLabelText("Ask a Help question"), "Why is this unavailable?"));
+    await act(async () => fireEvent.press(result.getByLabelText("Send Help question")));
+    await settle();
+
+    expect(result.getByText("Open the Search tab.")).toBeTruthy();
+    expect(result.getByText("Check your connection and try again. Contact support if the provider is unavailable.")).toBeTruthy();
+    expect(result.queryByText("provider secret and hidden prompt")).toBeNull();
+    expect(result.getByRole("alert")).toBeTruthy();
+  });
+
+  it("cancels an in-flight question without leaving a spinner or discarding context", async () => {
+    let resolveRequest!: (answer: string) => void;
+    (askHelpQuestion as jest.Mock).mockImplementationOnce(
+      () => new Promise<string>((resolve) => { resolveRequest = resolve; }),
+    );
+    const result = await render(<HelpScreen />);
+    await settle();
+
+    await act(async () => fireEvent.changeText(result.getByLabelText("Ask a Help question"), "How do I search?"));
+    await act(async () => fireEvent.press(result.getByLabelText("Send Help question")));
+    expect(result.getByLabelText("Cancel Help question")).toBeTruthy();
+
+    await act(async () => fireEvent.press(result.getByLabelText("Cancel Help question")));
+    expect(result.queryByText("Checking the Help guide…")).toBeNull();
+    expect(result.queryByLabelText("Cancel Help question")).toBeNull();
+
+    await act(async () => resolveRequest("late answer"));
+    await settle();
+    expect(result.queryByText("late answer")).toBeNull();
+  });
+
+  it("passes only the failed question into the contact handoff", async () => {
+    (askHelpQuestion as jest.Mock).mockRejectedValueOnce(new HelpApiError(
+      "HELP_PROVIDER_UNAVAILABLE",
+      "provider secret and hidden prompt",
+    ));
+    const result = await render(<HelpScreen />);
+    await settle();
+
+    await act(async () => fireEvent.changeText(result.getByLabelText("Ask a Help question"), "How do I search?"));
+    await act(async () => fireEvent.press(result.getByLabelText("Send Help question")));
+    await settle();
+    await act(async () => fireEvent.press(result.getByText("Contact support")));
+
+    expect(mockContactSheet).toHaveBeenLastCalledWith(expect.objectContaining({
+      visible: true,
+      initialSubject: "Help assistant question",
+      initialBody: "Question for Help assistant:\nHow do I search?",
+    }));
+    expect(JSON.stringify(mockContactSheet.mock.calls.at(-1))).not.toContain("provider secret");
+    expect(JSON.stringify(mockContactSheet.mock.calls.at(-1))).not.toContain("hidden prompt");
   });
 });

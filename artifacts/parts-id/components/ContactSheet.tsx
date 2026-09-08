@@ -29,9 +29,18 @@ type Props = {
   onClose: () => void;
   onSuccess?: () => void;
   senderToken?: string;
+  initialSubject?: string;
+  initialBody?: string;
 };
 
-export function ContactSheet({ visible, onClose, onSuccess, senderToken }: Props) {
+export function ContactSheet({
+  visible,
+  onClose,
+  onSuccess,
+  senderToken,
+  initialSubject,
+  initialBody,
+}: Props) {
   const colors = useColors();
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -59,6 +68,13 @@ export function ContactSheet({ visible, onClose, onSuccess, senderToken }: Props
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    setSubject(initialSubject?.trim() ?? "");
+    setBody(initialBody?.trim() ?? "");
+    setError(null);
+  }, [initialBody, initialSubject, visible]);
 
   const subjectEmpty = !subject.trim();
   const bodyEmpty = !body.trim();

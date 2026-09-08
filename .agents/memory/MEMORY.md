@@ -75,3 +75,4 @@
 - [Task-plan heading parser](task-plan-heading-parser.md) — put detailed Validation before Validation tier so the locked runner parses the intended section.
 - [Replit active configuration read boundary](replit-active-config-read-boundary.md) — no documented runtime reader exists; `/run/replit/env` is environment-only and may contain secrets.
 - [SearchScreen QueryClient test harness](searchscreen-queryclient-test-harness.md) — direct mounts need a provider; result assertions also need seeded active-cache data.
+- [Help assistant async lifecycles](help-assistant-async-lifecycles.md) — content refresh and assistant requests need independent cancellation and stale-result ownership.
