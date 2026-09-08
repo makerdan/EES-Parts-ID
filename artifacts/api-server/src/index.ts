@@ -338,7 +338,11 @@ async function pruneAuditLog(): Promise<void> {
     // Optional AI initialization and probes are diagnostic only. They do not
     // hold the listener open or affect core application readiness.
     void withStartupTimeout(initProvider(), INIT_PROVIDER_TIMEOUT_MS, "initProvider")
-      .then(() => probePoeBotsOnStartup())
+      .then(async () => {
+        const { refreshPoeCatalogue } = await import("./lib/aiProvider");
+        await refreshPoeCatalogue();
+        await probePoeBotsOnStartup();
+      })
       .catch((err) => {
         logger.error({ err }, "Poe bot startup probe failed");
       });

@@ -12,7 +12,13 @@
  */
 
 import { adminPreferencesTable,db } from "@workspace/db";
-import { getPoeClient, listPoeModels, type PoeCatalogueModel,resetPoeClient } from "@workspace/integrations-poe-server";
+import {
+  createPoeChatCompletion,
+  getPoeClient,
+  listPoeModels,
+  type PoeCatalogueModel,
+  resetPoeClient,
+} from "@workspace/integrations-poe-server";
 import { eq } from "drizzle-orm";
 import OpenAI from "openai";
 
@@ -69,6 +75,41 @@ export interface PoeFeatureRoute {
   primary: string;
   fallbacks: Array<string>;
   effective: Array<string>;
+}
+
+export interface PoeRouteContract {
+  feature: PoeFeature;
+  goal: string;
+  requiredCapabilities: {
+    text: boolean;
+    vision: boolean;
+    structuredOutput: boolean;
+  };
+  input: string;
+  output: string;
+  contextClass: "catalogue" | "warehouse" | "operational";
+  privacy: "prompt_not_persisted";
+  latencyTargetMs: number;
+  costTarget: "low" | "medium" | "high";
+  authorization: "authenticated" | "admin" | "internal";
+  fallback: "replit_ai" | "next_verified_model" | "none";
+}
+
+export interface PoeVerifiedRouteSnapshot extends PoeFeatureRoute {
+  endpoint: string;
+  capturedAt: string;
+  catalogueFetchedAt: string;
+  models: Array<PoeCatalogueModel>;
+  contract: PoeRouteContract;
+}
+
+class PoeRouteUnavailableError extends Error {
+  readonly feature: PoeFeature;
+  constructor(feature: PoeFeature, message = `No verified Poe route is available for ${feature}`) {
+    super(message);
+    this.name = "PoeRouteUnavailableError";
+    this.feature = feature;
+  }
 }
 
 export interface PoeCatalogueSnapshot {
@@ -157,6 +198,61 @@ function requiredCapabilities(feature: PoeFeature): { text: boolean; vision: boo
   };
 }
 
+const ROUTE_CONTRACTS: Record<PoeFeature, PoeRouteContract> = {
+  identify: {
+    feature: "identify",
+    goal: "Identify electrical parts from bounded user-supplied images and context.",
+    requiredCapabilities: { text: true, vision: true, structuredOutput: true },
+    input: "1–10 validated image data URIs plus bounded optional context.",
+    output: "AiIdentifyResponseSchema JSON.",
+    contextClass: "warehouse",
+    privacy: "prompt_not_persisted",
+    latencyTargetMs: 30_000,
+    costTarget: "medium",
+    authorization: "authenticated",
+    fallback: "next_verified_model",
+  },
+  enrich: {
+    feature: "enrich",
+    goal: "Expand inventory descriptions and extract searchable keywords.",
+    requiredCapabilities: { text: true, vision: false, structuredOutput: true },
+    input: "One bounded inventory description or help context.",
+    output: "AiEnrichmentResponseSchema or bounded keyword array.",
+    contextClass: "warehouse",
+    privacy: "prompt_not_persisted",
+    latencyTargetMs: 30_000,
+    costTarget: "low",
+    authorization: "admin",
+    fallback: "replit_ai",
+  },
+  dimensions: {
+    feature: "dimensions",
+    goal: "Estimate physical dimensions from one validated image.",
+    requiredCapabilities: { text: true, vision: true, structuredOutput: true },
+    input: "One validated image data URI under the model-specific size limit.",
+    output: "AiDimensionsResponseSchema JSON.",
+    contextClass: "warehouse",
+    privacy: "prompt_not_persisted",
+    latencyTargetMs: 30_000,
+    costTarget: "medium",
+    authorization: "authenticated",
+    fallback: "next_verified_model",
+  },
+  catalog: {
+    feature: "catalog",
+    goal: "Extract bounded parts and image regions from one catalog page.",
+    requiredCapabilities: { text: true, vision: true, structuredOutput: true },
+    input: "Page text and up to four validated page images.",
+    output: "Validated catalog entry array.",
+    contextClass: "catalogue",
+    privacy: "prompt_not_persisted",
+    latencyTargetMs: 30_000,
+    costTarget: "high",
+    authorization: "admin",
+    fallback: "replit_ai",
+  },
+};
+
 function modelIsCompatible(feature: PoeFeature, modelName: string): boolean {
   const model = _catalogue.models.find((candidate) => candidate.id === modelName || candidate.name === modelName);
   if (!model) return false;
@@ -164,10 +260,16 @@ function modelIsCompatible(feature: PoeFeature, modelName: string): boolean {
   return Object.entries(required).every(([key, needed]) => {
     if (!needed) return true;
     const capability = model.capabilities[key as keyof typeof model.capabilities];
-    if (capability === false) return false;
-    if (capability === true) return true;
-    return _botProbeResults.get(modelName) === "ok";
+    // Unknown live evidence fails closed. A successful probe cannot turn
+    // undocumented capability into an approved route.
+    return capability === true && model.capabilityConfidence !== "unknown";
   });
+}
+
+function canonicalModelId(modelName: string): string {
+  return _catalogue.models.find(
+    (candidate) => candidate.id === modelName || candidate.name === modelName,
+  )?.id ?? modelName;
 }
 
 function effectiveFallbacks(feature: PoeFeature): Array<string> {
@@ -179,9 +281,72 @@ function effectiveFallbacks(feature: PoeFeature): Array<string> {
 export function getPoeFeatureRoutes(): Array<PoeFeatureRoute> {
   return (["enrich", "identify", "dimensions", "catalog"] as Array<PoeFeature>).map((feature) => {
     const primary = primaryForFeature(feature);
-    const fallbacks = effectiveFallbacks(feature).filter((model) => model !== primary);
-    return { feature, primary, fallbacks, effective: [primary, ...fallbacks] };
+    const fallbacks = effectiveFallbacks(feature)
+      .map(canonicalModelId)
+      .filter((model) => model !== canonicalModelId(primary));
+    return {
+      feature,
+      primary: canonicalModelId(primary),
+      fallbacks,
+      effective: [canonicalModelId(primary), ...fallbacks],
+    };
   });
+}
+
+/**
+ * Capture an immutable, exact-ID route immediately before a Poe request.
+ * Stale catalogue data remains available for diagnostics but cannot dispatch.
+ */
+export function getVerifiedPoeRouteSnapshot(feature: PoeFeature): PoeVerifiedRouteSnapshot {
+  if (_catalogue.freshness !== "fresh" || !_catalogue.fetchedAt) {
+    throw new PoeRouteUnavailableError(feature, "Poe catalogue is not freshly verified");
+  }
+  const route = getPoeFeatureRoutes().find((candidate) => candidate.feature === feature);
+  if (!route || route.effective.some((model) => !modelIsCompatible(feature, model))) {
+    throw new PoeRouteUnavailableError(feature, "Poe route has no live model with the required capabilities");
+  }
+  const models = route.effective.map((modelName) => {
+    const model = _catalogue.models.find((candidate) => candidate.id === modelName);
+    if (!model) throw new PoeRouteUnavailableError(feature, `Poe model ${modelName} is not live`);
+    return {
+      ...model,
+      modalities: [...model.modalities],
+      capabilities: { ...model.capabilities },
+      parameters: {
+        maxCompletionTokens: model.parameters?.maxCompletionTokens ?? null,
+        temperature: model.parameters?.temperature ?? null,
+        responseFormat: model.parameters?.responseFormat ?? null,
+      },
+      limits: {
+        maxInputTokens: model.limits?.maxInputTokens ?? null,
+        maxOutputTokens: model.limits?.maxOutputTokens ?? null,
+        maxImages: model.limits?.maxImages ?? null,
+        maxImageBytes: model.limits?.maxImageBytes ?? null,
+      },
+      approvedUse: [...(model.approvedUse ?? [])],
+      verification: {
+        source: model.verification?.source ?? "unknown",
+        owner: model.verification?.owner ?? "unknown",
+        verifiedAt: model.verification?.verifiedAt ?? null,
+      },
+    };
+  });
+  return {
+    ...route,
+    effective: [...route.effective],
+    fallbacks: [...route.fallbacks],
+    endpoint: models[0]!.endpoint,
+    capturedAt: new Date().toISOString(),
+    catalogueFetchedAt: _catalogue.fetchedAt.toISOString(),
+    models,
+    contract: { ...ROUTE_CONTRACTS[feature], requiredCapabilities: { ...ROUTE_CONTRACTS[feature].requiredCapabilities } },
+  };
+}
+
+export function getPoeRouteContracts(): Array<PoeRouteContract> {
+  return (["enrich", "identify", "dimensions", "catalog"] as Array<PoeFeature>).map(
+    (feature) => ({ ...ROUTE_CONTRACTS[feature], requiredCapabilities: { ...ROUTE_CONTRACTS[feature].requiredCapabilities } }),
+  );
 }
 
 export function getPoeFallbackOverrides(): Partial<Record<PoeFeature, Array<string>>> {
@@ -515,32 +680,30 @@ const PROBE_TIMEOUT_MS = 15_000;
  * catalog-bot fallback.  Callers must check _provider === "poe" first.
  */
 async function _probeBotAndRecord(botName: string): Promise<void> {
-  // Cleared in the finally below — if the race resolves before the timeout,
-  // an uncancelled 15s timer would keep the process (and Jest workers) alive.
-  let probeTimer: NodeJS.Timeout | undefined;
   try {
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      probeTimer = setTimeout(
-        () => reject(new Error(`__PROBE_TIMEOUT__`)),
-        PROBE_TIMEOUT_MS,
-      );
-    });
-
     try {
-      await Promise.race([
-        getAiClient().chat.completions.create({
+      if (typeof createPoeChatCompletion === "function") {
+        await createPoeChatCompletion(
+          {
+            model: botName,
+            messages: [{ role: "user", content: "hi" }],
+            max_completion_tokens: 16,
+          },
+          { timeoutMs: PROBE_TIMEOUT_MS, maxAttempts: 1 },
+        );
+      } else {
+        await getAiClient().chat.completions.create({
           model: botName,
           messages: [{ role: "user", content: "hi" }],
           max_tokens: 16,
-        }),
-        timeoutPromise,
-      ]);
+        });
+      }
       _botProbeResults.set(botName, "ok");
       logger.info({ botName }, `Poe bot '${botName}' — OK`);
     } catch (err: unknown) {
       if (
         err instanceof Error &&
-        err.message === "__PROBE_TIMEOUT__"
+        (err.name === "PoeProviderError" && "kind" in err && (err as { kind?: unknown }).kind === "timeout")
       ) {
         _botProbeResults.set(botName, "timeout");
         logger.warn(
@@ -565,11 +728,22 @@ async function _probeBotAndRecord(botName: string): Promise<void> {
           `Poe catalog bot '${botName}' not found — probing fallback '${POE_CATALOG_BOT_FALLBACK}'`,
         );
         try {
-          await getAiClient().chat.completions.create({
-            model: POE_CATALOG_BOT_FALLBACK,
-            messages: [{ role: "user", content: "hi" }],
-            max_tokens: 16,
-          });
+          if (typeof createPoeChatCompletion === "function") {
+            await createPoeChatCompletion(
+              {
+                model: POE_CATALOG_BOT_FALLBACK,
+                messages: [{ role: "user", content: "hi" }],
+                max_completion_tokens: 16,
+              },
+              { timeoutMs: PROBE_TIMEOUT_MS, maxAttempts: 1 },
+            );
+          } else {
+            await getAiClient().chat.completions.create({
+              model: POE_CATALOG_BOT_FALLBACK,
+              messages: [{ role: "user", content: "hi" }],
+              max_tokens: 16,
+            });
+          }
           _effectiveCatalogBotName = POE_CATALOG_BOT_FALLBACK;
           _botProbeResults.set(POE_CATALOG_BOT_FALLBACK, "ok");
           logger.info(
@@ -613,8 +787,6 @@ async function _probeBotAndRecord(botName: string): Promise<void> {
       { botName, err },
       `Poe bot '${botName}' probe encountered an unexpected error — server will continue`,
     );
-  } finally {
-    if (probeTimer !== undefined) clearTimeout(probeTimer);
   }
 }
 

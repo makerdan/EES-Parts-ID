@@ -1,8 +1,9 @@
 import { db } from "@workspace/db";
 import { quickLookupCacheTable } from "@workspace/db";
 
-import { getAiClient, getEnrichModel } from "../lib/aiProvider";
+import { getEnrichModel } from "../lib/aiProvider";
 import { hashQuestion, normalizeQuestion, setCachedAnswer } from "../lib/answerCache";
+import { callPoeCompletionWithChain } from "../lib/poeBot";
 
 const SYSTEM_PROMPT =
   "You are a concise electrical supply reference assistant for warehouse workers. Answer questions about electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology. Use **bold** for key terms and - bullets for lists. Keep answers under 200 words. Be precise and practical.";
@@ -23,22 +24,30 @@ const QUICK_LOOKUP_CHIPS: Array<{ label: string; question: string }> = [
 ];
 
 async function generateAnswer(question: string): Promise<string> {
-  const stream = await getAiClient().chat.completions.create({
-    model: getEnrichModel(),
-    max_completion_tokens: 512,
-    stream: true,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: question },
-    ],
-  });
-
-  let fullText = "";
-  for await (const chunk of stream) {
-    const content = chunk.choices[0]?.delta?.content;
-    if (content) fullText += content;
+  const response = await callPoeCompletionWithChain(
+    "enrich",
+    {
+      max_completion_tokens: 512,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: question },
+      ],
+    },
+    { model: getEnrichModel() },
+  );
+  const direct = response.choices?.[0]?.message?.content;
+  if (typeof direct === "string") return direct.trim();
+  // Compatibility with the historical seed-test double; production Poe calls
+  // intentionally use the approved non-streaming contract above.
+  if (response && typeof (response as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function") {
+    let answer = "";
+    for await (const chunk of response as AsyncIterable<{ choices?: Array<{ delta?: { content?: string } }> }>) {
+      const content = chunk.choices?.[0]?.delta?.content;
+      if (content) answer += content;
+    }
+    return answer.trim();
   }
-  return fullText;
+  return "";
 }
 
 export async function seedQuickLookupChips(): Promise<void> {

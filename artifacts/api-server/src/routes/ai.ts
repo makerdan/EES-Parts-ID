@@ -15,9 +15,9 @@ import { lt, sql } from "drizzle-orm";
 import { Router } from "express";
 import OpenAI from "openai";
 
-import { getAiClient, getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
+import { getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { getLogger } from "../lib/logger";
-import { PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
+import { callPoeCompletionWithChain, PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET } from "../lib/poeModelLimits";
 import { identifyLimiter, partCardLimiter,translateLimiter } from "../lib/rateLimiter";
 import {
@@ -248,16 +248,16 @@ router.post("/translate-query", async (req, res) => {
       ? `The user searched for "${query.trim()}" and found ZERO results in inventory. Identify the part and translate the query. Return JSON only.`
       : `Translate this warehouse parts query into catalog vocabulary: "${query.trim()}". Return JSON only.`;
 
-    const response = await getAiClient().chat.completions.create({
-      model: getEnrichModel(),
+    const response = await callPoeCompletionWithChain("enrich", {
       max_completion_tokens: 512,
+      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemContent },
         { role: "user", content: userContent },
       ],
     });
 
-    const text = response.choices[0]?.message?.content ?? "";
+    const text = response.choices?.[0]?.message?.content ?? "";
     const parsed = parseAiResponseOr(
       text,
       AiTranslateResponseSchema,
@@ -464,16 +464,16 @@ router.post("/part-card", async (req, res) => {
       "Return JSON only.",
     ].join("\n");
 
-    const response = await getAiClient().chat.completions.create({
-      model: getEnrichModel(),
+    const response = await callPoeCompletionWithChain("enrich", {
       max_completion_tokens: 512,
+      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemContent },
         { role: "user", content: userContent },
       ],
     });
 
-    const text = response.choices[0]?.message?.content ?? "";
+    const text = response.choices?.[0]?.message?.content ?? "";
     const parsed = parseAiResponseOr(
       text,
       AiPartCardResponseSchema,

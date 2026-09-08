@@ -15,6 +15,7 @@ import {
   AiCatalogEntrySchema,
   AiCatalogResponseSchema,
 } from "@workspace/api-zod";
+import { classifyPoeError, poeErrorMessage } from "@workspace/integrations-poe-server";
 
 import { getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
@@ -198,14 +199,18 @@ export async function extractCatalogPage(
       throw err;
     }
     // Detect payload-too-large responses (HTTP 413 / provider-specific messages)
-    const errMsg = err instanceof Error ? err.message : String(err);
+    const errMsg =
+      poeErrorMessage(err) ??
+      (classifyPoeError(err) === "upstream"
+        ? "Poe provider is temporarily unavailable."
+        : "AI provider request failed.");
     const isPayloadTooLarge =
       errMsg.includes("413") ||
       errMsg.toLowerCase().includes("too large") ||
       errMsg.toLowerCase().includes("payload") ||
       (err as { status?: number }).status === 413;
     const code = isPayloadTooLarge ? "ai_payload_too_large" : "ai_error";
-    console.error(`[catalog-extract] AI error (${code}):`, err);
+    console.error(`[catalog-extract] AI error (${code}, kind=${classifyPoeError(err)})`);
     throw new CatalogAiError(code, errMsg);
   }
 }

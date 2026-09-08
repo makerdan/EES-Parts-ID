@@ -1961,11 +1961,15 @@ router.get("/enrich-summary", requireAdminAuth, async (_req, res) => {
 // PATCH /:id/expanded-description once the admin approves the expansion.
 router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);
+  const requestController = new AbortController();
+  const cancelOnDisconnect = () => requestController.abort();
+  req.once("close", cancelOnDisconnect);
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
   const send = (obj: Record<string, unknown>) => {
+    if (requestController.signal.aborted || res.writableEnded || res.destroyed) return;
     res.write(`data: ${JSON.stringify(obj)}\n\n`);
   };
 
@@ -1997,6 +2001,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
     const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
 
     for (const item of itemsToExpand) {
+      if (requestController.signal.aborted) return;
       try {
         const rawText = (
           useOpenAiFallback
@@ -2015,6 +2020,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
                 "enrich",
                 enrichSystemPrompt,
                 `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`,
+                { signal: requestController.signal },
               )
         );
 
@@ -2064,6 +2070,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
           res.end();
           return;
         }
+        if (requestController.signal.aborted) return;
         processed++;
         send({
           id: item.id,
@@ -2086,9 +2093,12 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
     send({ done: true, processed, total, remaining });
     res.end();
   } catch (err) {
+    if (requestController.signal.aborted) return;
     reqLogger.error({ err }, "[expand-descriptions] failed");
-    send({ error: String(err) });
+    send({ error: "Description expansion failed" });
     res.end();
+  } finally {
+    req.removeListener("close", cancelOnDisconnect);
   }
 });
 

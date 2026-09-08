@@ -69,6 +69,31 @@ files, mobile code, or client build configuration.
 | `POE_API_KEY2` | Poe AI fallback |
 | `DEFAULT_OBJECT_STORAGE_BUCKET_ID` | Replit Object Storage bucket used by server uploads |
 
+### Poe provider route contract
+
+Poe-backed requests use `POE_API_KEY2` only through the server provider
+boundary. The live catalogue is the source of truth for exact model IDs,
+endpoint, supported parameters, limits, capability confidence, verification
+owner/date, privacy, cost, and latency evidence. A request captures an
+immutable verified route immediately before dispatch; stale, unavailable, or
+unknown-capability models fail closed.
+
+| Route | Purpose and bounded input | Validated output | Authorization | Degradation |
+|---|---|---|---|---|
+| `identify` | Part photos (validated MIME/size) and bounded context | `AiIdentifyResponseSchema` | Authenticated | Next verified vision model |
+| `enrich` | One bounded inventory description | `AiEnrichmentResponseSchema` or keywords | Admin | Replit AI |
+| `dimensions` | One validated part image | `AiDimensionsResponseSchema` | Authenticated | Next verified vision model |
+| `catalog` | Page text and bounded catalog images | Validated catalog entries | Admin | Replit AI |
+
+Prompts, images, credentials, and raw provider responses are not persisted or
+included in telemetry. Telemetry is limited to route/model/endpoint, outcome,
+bounded latency/retry data, fallback/cache state, usage counts, and a safe
+provider request ID. Authentication, permission, quota, unsupported-capability,
+invalid-request, timeout, cancellation, unavailable-model, rate-limit, and
+upstream failures use the shared normalized vocabulary. Only eligible transient
+failures retry with bounded, cancellable backoff. The Reference assistant
+remains explicitly Gemini-backed.
+
 Only explicitly public `EXPO_PUBLIC_*` values belong in the client build:
 `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`, API origins, the Clerk proxy URL, and
 public tool domains. Never expose `DATABASE_URL`, `CLERK_SECRET_KEY`, AI keys,
