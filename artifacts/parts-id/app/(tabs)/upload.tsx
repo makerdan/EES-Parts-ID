@@ -109,6 +109,24 @@ type AiStatusPayload = {
   reference: { provider: string; readOnly: boolean; note: string };
 };
 
+function isAiStatusPayload(value: unknown): value is AiStatusPayload {
+  if (!value || typeof value !== "object") return false;
+  const data = value as Partial<AiStatusPayload>;
+  return (
+    (data.provider === "poe" || data.provider === "openai") &&
+    !!data.catalogue &&
+    typeof data.catalogue === "object" &&
+    Array.isArray(data.catalogue.models) &&
+    typeof data.catalogue.freshness === "string" &&
+    (typeof data.catalogue.error === "string" || data.catalogue.error === null) &&
+    !!data.bots &&
+    typeof data.bots === "object" &&
+    Array.isArray(data.routes) &&
+    !!data.reference &&
+    typeof data.reference === "object"
+  );
+}
+
 const SQL_EXAMPLES: Array<{ label: string; group: string; sql: string }> = [
   {
     group: "Browse",
@@ -696,6 +714,8 @@ export default function UploadScreen() {
   const aiCatalogueControllerRef = useRef<AbortController | null>(null);
   const aiRoutesGenerationRef = useRef(0);
   const aiRoutesControllerRef = useRef<AbortController | null>(null);
+  const aiProviderGenerationRef = useRef(0);
+  const aiProviderControllerRef = useRef<AbortController | null>(null);
   const cancelAiStatusRequests = useCallback(() => {
     aiStatusGenerationRef.current += 1;
     aiStatusFetchControllerRef.current?.abort();
@@ -712,6 +732,11 @@ export default function UploadScreen() {
     aiRoutesGenerationRef.current += 1;
     aiRoutesControllerRef.current?.abort();
     aiRoutesControllerRef.current = null;
+  }, []);
+  const cancelAiProviderSave = useCallback(() => {
+    aiProviderGenerationRef.current += 1;
+    aiProviderControllerRef.current?.abort();
+    aiProviderControllerRef.current = null;
   }, []);
 
   const fetchAiStatus = useCallback(async () => {
@@ -763,6 +788,12 @@ export default function UploadScreen() {
 
   const saveAiProvider = useCallback(async (provider: AiStatusPayload["provider"]) => {
     if (!adminToken || !API_BASE || aiProviderSaving) return;
+    cancelAiProviderSave();
+    const requestToken = adminToken;
+    const generation = aiProviderGenerationRef.current + 1;
+    aiProviderGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiProviderControllerRef.current = controller;
     setAiProviderSaving(true);
     setAiProviderError(null);
     setAiProviderSaveState(null);
@@ -771,8 +802,9 @@ export default function UploadScreen() {
         method: "POST",
         headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ provider }),
+        signal: controller.signal,
       });
-      const data = (await res.json()) as {
+      const data = (await res.json().catch(() => ({}))) as {
         provider?: AiStatusPayload["provider"];
         persisted?: boolean;
         error?: string;
@@ -781,15 +813,61 @@ export default function UploadScreen() {
       if (data.provider !== "poe" && data.provider !== "openai") {
         throw new Error("The API returned an invalid provider");
       }
-      setAiProvider(data.provider);
-      setAiStatus((current) => current ? { ...current, provider: data.provider! } : current);
+
+      // The mutation response confirms the write, but the status endpoint is
+      // the source of truth for what this admin session should display.
+      const statusRes = await fetch(`${API_BASE}/admin/ai-status`, {
+        headers: { Authorization: `Bearer ${requestToken}` },
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      const statusData = await statusRes.json().catch(() => ({}));
+      if (!statusRes.ok) {
+        const statusError = statusData && typeof statusData === "object" && "error" in statusData
+          ? String((statusData as { error?: unknown }).error)
+          : `HTTP ${statusRes.status}`;
+        throw new Error(`Provider changed, but active status could not be confirmed (${statusError})`);
+      }
+      if (!isAiStatusPayload(statusData)) {
+        throw new Error("Provider changed, but the API returned an incomplete status snapshot");
+      }
+      if (statusData.provider !== data.provider) {
+        throw new Error("Provider changed, but the active provider could not be confirmed");
+      }
+      if (
+        !isMountedRef.current ||
+        adminTokenRef.current !== requestToken ||
+        generation !== aiProviderGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
+
+      setAiStatusBots(statusData.bots);
+      setAiStatus(statusData);
+      setAiProvider(statusData.provider);
       setAiProviderSaveState(data.persisted === true ? "saved" : "runtime-only");
     } catch (err) {
-      setAiProviderError(err instanceof Error ? err.message : "AI provider choice could not be saved");
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiProviderGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiProviderError(err instanceof Error ? err.message : "AI provider choice could not be saved");
+      }
     } finally {
-      setAiProviderSaving(false);
+      if (aiProviderControllerRef.current === controller) {
+        aiProviderControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiProviderGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiProviderSaving(false);
+      }
     }
-  }, [adminToken, aiProviderSaving]);
+  }, [adminToken, aiProviderSaving, cancelAiProviderSave]);
 
   const triggerAiProbe = useCallback(async () => {
     if (!adminToken || !API_BASE || aiStatusProbing) return;
@@ -817,6 +895,7 @@ export default function UploadScreen() {
       ) return;
       setAiStatusBots(data.bots ?? {});
       setAiStatus(data.catalogue ? data : null);
+      if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
     } catch (err) {
       if (
         isMountedRef.current &&
@@ -855,16 +934,24 @@ export default function UploadScreen() {
         headers: { Authorization: `Bearer ${adminToken}` },
         signal: controller.signal,
       });
-      const data = (await res.json()) as AiStatusPayload;
+      const data = (await res.json().catch(() => ({}))) as unknown;
       if (
         !isMountedRef.current ||
         adminTokenRef.current !== requestToken ||
         generation !== aiCatalogueGenerationRef.current ||
         controller.signal.aborted
       ) return;
-      setAiStatus(data.catalogue ? data : null);
-      setAiStatusBots(data.bots ?? {});
-      if (!res.ok && data.catalogue?.error) throw new Error(data.catalogue.error);
+      if (!res.ok) {
+        const error = data && typeof data === "object" && "catalogue" in data &&
+          (data as { catalogue?: { error?: unknown } }).catalogue?.error;
+        throw new Error(error ? String(error) : `HTTP ${res.status}`);
+      }
+      if (!isAiStatusPayload(data)) {
+        throw new Error("The API returned an incomplete catalogue status snapshot");
+      }
+      setAiStatus(data);
+      setAiStatusBots(data.bots);
+      setAiProvider(data.provider);
     } catch (err) {
       if (
         isMountedRef.current &&
@@ -916,6 +1003,7 @@ export default function UploadScreen() {
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setAiStatus(data.catalogue ? data : null);
       setAiStatusBots(data.bots ?? {});
+      if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
     } catch (err) {
       if (
         isMountedRef.current &&
@@ -995,9 +1083,17 @@ export default function UploadScreen() {
     cancelAiStatusRequests();
     cancelAiCatalogueRefresh();
     cancelAiRoutes();
+    cancelAiProviderSave();
     if (isMountedRef.current) {
       setAiCatalogueRefreshing(false);
       setAiRoutesSaving(false);
+      setAiProviderSaving(false);
+      setAiProviderSaveState(null);
+      setAiProviderError(null);
+      if (adminToken) {
+        setAiStatus(null);
+        setAiStatusBots({});
+      }
     }
     if (adminToken) {
       void fetchAiStatus();
@@ -1009,8 +1105,16 @@ export default function UploadScreen() {
       cancelAiStatusRequests();
       cancelAiCatalogueRefresh();
       cancelAiRoutes();
+      cancelAiProviderSave();
     };
-  }, [adminToken, cancelAiCatalogueRefresh, cancelAiRoutes, cancelAiStatusRequests, fetchAiStatus]);
+  }, [
+    adminToken,
+    cancelAiCatalogueRefresh,
+    cancelAiProviderSave,
+    cancelAiRoutes,
+    cancelAiStatusRequests,
+    fetchAiStatus,
+  ]);
 
   const handleRestartPress = useCallback(() => {
     Alert.alert(
@@ -3652,6 +3756,7 @@ export default function UploadScreen() {
                     </View>
 
               {/* AI Status card — moved from Data Import */}
+              {isAdmin && adminToken ? (
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <View style={styles.aiStatusHeader}>
                   <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 AI Status</Text>
@@ -3847,6 +3952,7 @@ export default function UploadScreen() {
                   </>
                 ) : null}
               </View>
+              ) : null}
 
             </ScrollView>
           ) : activeSection === "warehouse" ? (

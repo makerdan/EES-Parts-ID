@@ -161,7 +161,7 @@ let fullProbeResponses: Array<Response | Promise<Response>>;
 let singleProbeResponses: Response[];
 let catalogueRefreshResponses: Array<Response | Promise<Response>>;
 let routeMutationResponses: Array<Response | Promise<Response>>;
-let providerResponses: Response[];
+let providerResponses: Array<Response | Promise<Response>>;
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -171,9 +171,12 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
   } as Response;
 }
 
-function aiRoutesStatusResponse(fallbacks: string[] = []): Response {
+function aiRoutesStatusResponse(
+  fallbacks: string[] = [],
+  provider: "poe" | "openai" = "poe",
+): Response {
   return jsonResponse({
-    provider: "poe",
+    provider,
     catalogue: {
       freshness: "fresh",
       models: [{
@@ -910,19 +913,9 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
 
   it("shows recovery guidance for a runtime-only provider switch and retries persistence", async () => {
     statusResponses = [
-      jsonResponse({
-        provider: "poe",
-        catalogue: {
-          freshness: "fresh",
-          models: [],
-          fetchedAt: null,
-          lastSuccessAt: null,
-          error: null,
-        },
-        bots: {},
-        routes: [],
-        reference: { provider: "gemini", readOnly: true, note: "Read-only" },
-      }),
+      aiRoutesStatusResponse(),
+      aiRoutesStatusResponse([], "openai"),
+      aiRoutesStatusResponse([], "openai"),
     ];
     providerResponses.push(
       jsonResponse({ provider: "openai", persisted: false }),
@@ -967,5 +960,140 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     expect(instText(rendered.tree.root!)).toContain("will survive an API restart");
     expect(callsFor("/admin/ai-provider")).toHaveLength(2);
     expect(callsFor("/admin/ai-status/probe")).toHaveLength(0);
+  });
+
+  it("reconciles the displayed provider from a fresh status snapshot after saving", async () => {
+    statusResponses = [
+      aiRoutesStatusResponse(),
+      aiRoutesStatusResponse([], "openai"),
+    ];
+    providerResponses = [
+      jsonResponse({ provider: "openai", persisted: true }),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const openAiButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Use OpenAI AI provider",
+    );
+    await act(async () => { fireEvent.press(openAiButton!); });
+    await flushPromises();
+
+    expect(callsFor("/admin/ai-provider")).toHaveLength(1);
+    expect(callsFor("/admin/ai-status")).toHaveLength(2);
+    expect(instText(rendered.tree.root!)).toContain("Active provider: openai");
+    expect(instText(rendered.tree.root!)).toContain("will survive an API restart");
+  });
+
+  it("keeps the previous provider visible when the provider save is rejected", async () => {
+    statusResponses = [aiRoutesStatusResponse()];
+    providerResponses = [
+      jsonResponse({ error: "OpenAI integration unavailable" }, false, 503),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const openAiButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Use OpenAI AI provider",
+    );
+    await act(async () => { fireEvent.press(openAiButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("Active provider: poe");
+    expect(instText(rendered.tree.root!)).toContain("OpenAI integration unavailable");
+    expect(callsFor("/admin/ai-status")).toHaveLength(1);
+  });
+
+  it("aborts and ignores a provider save when the screen unmounts", async () => {
+    let resolvePendingSave!: (response: Response) => void;
+    providerResponses = [
+      new Promise<Response>((resolve) => {
+        resolvePendingSave = resolve;
+      }),
+    ];
+    statusResponses = [aiRoutesStatusResponse()];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const openAiButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Use OpenAI AI provider",
+    );
+    await act(async () => { fireEvent.press(openAiButton!); });
+    await flushPromises();
+
+    const saveCall = callsFor("/admin/ai-provider")[0];
+    expect(saveCall?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(saveCall?.init?.signal?.aborted).toBe(false);
+
+    await rendered.tree.unmount();
+    activeTree = null;
+    activeBlur = undefined;
+
+    expect(saveCall?.init?.signal?.aborted).toBe(true);
+    resolvePendingSave(jsonResponse({ provider: "openai", persisted: true }));
+    await flushPromises();
+  });
+
+  it("retains the last good catalogue when a refresh returns a partial error payload", async () => {
+    statusResponses = [aiRoutesStatusResponse()];
+    catalogueRefreshResponses = [
+      jsonResponse({
+        provider: "poe",
+        catalogue: {
+          freshness: "unavailable",
+          models: [{ id: "partial-model", name: "Partial Model" }],
+          fetchedAt: null,
+          lastSuccessAt: null,
+          error: "catalogue service unavailable",
+        },
+        bots: {},
+        routes: [],
+        reference: { provider: "gemini", readOnly: true, note: "Read-only" },
+      }, false, 503),
+      aiRoutesStatusResponse(),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const refreshButton = findPressable(rendered.tree.root!, "Refresh models");
+    await act(async () => { fireEvent.press(refreshButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("catalogue service unavailable");
+    expect(instText(rendered.tree.root!)).not.toContain("Partial Model");
+
+    await act(async () => { fireEvent.press(refreshButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("Fallback Bot");
+    expect(instText(rendered.tree.root!)).not.toContain("Partial Model");
+    expect(callsFor("/admin/ai-status/catalogue/refresh")).toHaveLength(2);
   });
 });
