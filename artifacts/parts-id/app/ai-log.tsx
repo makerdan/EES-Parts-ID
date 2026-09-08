@@ -9,15 +9,18 @@
  */
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
   SafeAreaView,
+  Share,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 
@@ -49,11 +52,17 @@ function timeAgo(iso: string): string {
 
 function LogItem({ row, colors }: { row: LogRow; colors: ReturnType<typeof useColors> }) {
   const [expanded, setExpanded] = useState(false);
+  const matchSummary = `${row.matchedItemCount} matched item${row.matchedItemCount === 1 ? "" : "s"}`;
 
   return (
     <Pressable
       onPress={() => setExpanded((v) => !v)}
       style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
+      accessibilityRole="button"
+      accessibilityLabel={`${row.question}. ${matchSummary}. ${timeAgo(row.createdAt)}. ${
+        expanded ? "Collapse answer" : "Expand answer"
+      }`}
+      accessibilityState={{ expanded }}
     >
       <View style={styles.rowHeader}>
         <Text style={[styles.question, { color: colors.foreground }]} numberOfLines={expanded ? undefined : 2}>
@@ -82,6 +91,10 @@ function LogItem({ row, colors }: { row: LogRow; colors: ReturnType<typeof useCo
   );
 }
 
+function escapeCsv(value: string | number): string {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
 export default function AiLogScreen() {
   useTrackScreen("AI Log");
   const colors = useColors();
@@ -93,38 +106,170 @@ export default function AiLogScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = useState("");
+  const [viewCleared, setViewCleared] = useState(false);
+  const [exportFeedback, setExportFeedback] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const requestGenerationRef = useRef(0);
+  const requestControllerRef = useRef<AbortController | null>(null);
+
+  const visibleRows = useMemo(() => {
+    if (viewCleared) return [];
+    const query = filterQuery.trim().toLocaleLowerCase();
+    if (!query) return rows;
+    return rows.filter((row) =>
+      `${row.question}\n${row.answer}`.toLocaleLowerCase().includes(query),
+    );
+  }, [filterQuery, rows, viewCleared]);
 
   const fetchLog = useCallback(async (isRefresh = false) => {
-    if (!adminToken) return;
+    if (!adminToken || !isAdmin) return;
+
+    const generation = ++requestGenerationRef.current;
+    requestControllerRef.current?.abort();
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
+
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
+    setExportFeedback(null);
+
     try {
       const res = await fetch(`${API_BASE}/reference/ask-log`, {
         headers: { Authorization: `Bearer ${adminToken}` },
+        signal: controller.signal,
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const data = (await res.json()) as Array<LogRow>;
-      setRows(data);
+      const data: unknown = await res.json();
+      if (!Array.isArray(data)) throw new Error("Invalid AI log response");
+
+      if (
+        !mountedRef.current ||
+        generation !== requestGenerationRef.current ||
+        controller.signal.aborted
+      ) {
+        return;
+      }
+      setRows(data as Array<LogRow>);
+      setViewCleared(false);
     } catch (err) {
+      if (
+        !mountedRef.current ||
+        generation !== requestGenerationRef.current ||
+        controller.signal.aborted
+      ) {
+        return;
+      }
       if (err instanceof TypeError) reportNetworkFailure();
       setError(err instanceof Error ? err.message : "Failed to load log");
     } finally {
-      if (isRefresh) setRefreshing(false);
-      else setLoading(false);
+      if (
+        mountedRef.current &&
+        generation === requestGenerationRef.current
+      ) {
+        if (isRefresh) setRefreshing(false);
+        else setLoading(false);
+      }
     }
-  }, [adminToken, reportNetworkFailure]);
+  }, [adminToken, isAdmin, reportNetworkFailure]);
 
   useEffect(() => {
+    mountedRef.current = true;
     if (shouldRedirectNonAdmin(isLoading, isAdmin)) {
+      requestGenerationRef.current += 1;
+      requestControllerRef.current?.abort();
+      setRows([]);
       router.replace("/(tabs)");
       return;
     }
-    if (!isLoading && isAdmin) {
-      fetchLog();
+
+    if (!isLoading && isAdmin && adminToken) {
+      requestGenerationRef.current += 1;
+      requestControllerRef.current?.abort();
+      setRows([]);
+      setViewCleared(false);
+      setFilterQuery("");
+      setError(null);
+      void fetchLog();
+    } else if (!isLoading && (!isAdmin || !adminToken)) {
+      requestGenerationRef.current += 1;
+      requestControllerRef.current?.abort();
+      setRows([]);
+      setViewCleared(false);
+      setFilterQuery("");
+      setError(null);
+      setLoading(false);
+      setRefreshing(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading, isAdmin, fetchLog, router]);
+
+    return () => {
+      requestGenerationRef.current += 1;
+      requestControllerRef.current?.abort();
+    };
+  }, [adminToken, fetchLog, isAdmin, isLoading, router]);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      requestGenerationRef.current += 1;
+      requestControllerRef.current?.abort();
+    };
+  }, []);
+
+  const clearVisibleLog = useCallback(() => {
+    Alert.alert(
+      "Clear this view?",
+      "This only hides the rows currently loaded on this screen. The server log is unchanged, and Refresh can load it again.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear view",
+          style: "destructive",
+          onPress: () => {
+            setViewCleared(true);
+            setFilterQuery("");
+            setExportFeedback("The loaded log is hidden from this screen.");
+          },
+        },
+      ],
+    );
+  }, []);
+
+  const exportVisibleLog = useCallback(async () => {
+    if (!isAdmin || !adminToken) {
+      setExportFeedback("Your admin session ended. Refresh after signing in again.");
+      return;
+    }
+    if (visibleRows.length === 0) {
+      setExportFeedback("There are no visible rows to export.");
+      return;
+    }
+
+    const csv = [
+      ["Question", "Answer", "Matched items", "Created at"].map(escapeCsv).join(","),
+      ...visibleRows.map((row) =>
+        [
+          escapeCsv(row.question),
+          escapeCsv(row.answer),
+          row.matchedItemCount,
+          escapeCsv(row.createdAt),
+        ].join(","),
+      ),
+    ].join("\n");
+
+    try {
+      await Share.share({
+        title: "AI Answer Log",
+        message: csv,
+      });
+      setExportFeedback(`Export prepared for ${visibleRows.length} visible row${
+        visibleRows.length === 1 ? "" : "s"
+      }.`);
+    } catch {
+      setExportFeedback("Export could not be opened. No log data was changed.");
+    }
+  }, [adminToken, isAdmin, visibleRows]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
@@ -135,49 +280,167 @@ export default function AiLogScreen() {
         </Pressable>
         <View style={styles.headerCenter}>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>AI Answer Log</Text>
-          <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Last 100 questions</Text>
+          <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
+            Latest 100 questions · admin only
+          </Text>
         </View>
-        <Pressable onPress={() => fetchLog()} style={styles.refreshBtn} accessibilityLabel="Refresh">
+        <Pressable
+          onPress={() => void fetchLog(true)}
+          disabled={loading || refreshing}
+          style={styles.refreshBtn}
+          accessibilityLabel="Refresh"
+          accessibilityState={{ disabled: loading || refreshing }}
+        >
           <Feather name="refresh-cw" size={17} color={colors.mutedForeground} />
         </Pressable>
       </View>
 
-      {loading ? (
+      {loading && rows.length === 0 ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
-      ) : error ? (
+      ) : !isLoading && isAdmin && !adminToken ? (
         <View style={styles.centered}>
-          <Text style={[styles.errorText, { color: colors.destructive }]}>⚠ {error}</Text>
-          <Pressable onPress={() => fetchLog()} style={[styles.retryBtn, { borderColor: colors.border }]}>
+          <Text style={[styles.errorText, { color: colors.destructive }]}>
+            Your admin session is unavailable.
+          </Text>
+          <Text style={[styles.helperText, { color: colors.mutedForeground }]}>
+            Return to People & System and sign in again before opening the AI log.
+          </Text>
+          <Pressable
+            onPress={() => router.back()}
+            style={[styles.retryBtn, { borderColor: colors.border }]}
+            accessibilityRole="button"
+            accessibilityLabel="Return from AI log"
+          >
+            <Text style={[styles.retryText, { color: colors.primary }]}>Return</Text>
+          </Pressable>
+        </View>
+      ) : error && rows.length === 0 && !refreshing ? (
+        <View style={styles.centered}>
+          <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>
+          <Text style={[styles.helperText, { color: colors.mutedForeground }]}>
+            The previous log was not available. Try again without leaving this screen.
+          </Text>
+          <Pressable
+            onPress={() => void fetchLog()}
+            style={[styles.retryBtn, { borderColor: colors.border }]}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading AI log"
+          >
             <Text style={[styles.retryText, { color: colors.primary }]}>Retry</Text>
           </Pressable>
         </View>
       ) : (
-        <FlatList
-          data={rows}
-          keyExtractor={(item) => String(item.id)}
-          contentContainerStyle={styles.list}
-          removeClippedSubviews={true}
-          maxToRenderPerBatch={10}
-          windowSize={10}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => fetchLog(true)}
-              tintColor={colors.primary}
-              colors={[colors.primary]}
+        <>
+          <View style={styles.toolbar}>
+            <TextInput
+              value={filterQuery}
+              onChangeText={(value) => {
+                setFilterQuery(value);
+                setViewCleared(false);
+                setExportFeedback(null);
+              }}
+              placeholder="Filter questions or answers"
+              placeholderTextColor={colors.mutedForeground}
+              style={[
+                styles.filterInput,
+                { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card },
+              ]}
+              accessibilityLabel="Filter AI log"
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
             />
-          }
-          renderItem={({ item }) => <LogItem row={item} colors={colors} />}
-          ListEmptyComponent={
-            <View style={styles.centered}>
-              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                No questions logged yet.{"\n"}Ask the AI something to see it here.
-              </Text>
+            <View style={styles.actionRow}>
+              {filterQuery.length > 0 && (
+                <Pressable
+                  onPress={() => setFilterQuery("")}
+                  style={[styles.actionBtn, { borderColor: colors.border }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear AI log filter"
+                >
+                  <Text style={[styles.actionText, { color: colors.mutedForeground }]}>Clear filter</Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={clearVisibleLog}
+                style={[styles.actionBtn, { borderColor: colors.border }]}
+                accessibilityRole="button"
+                accessibilityLabel="Clear loaded AI log view"
+              >
+                <Text style={[styles.actionText, { color: colors.mutedForeground }]}>Clear view</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void exportVisibleLog()}
+                style={[styles.actionBtn, { borderColor: colors.border }]}
+                accessibilityRole="button"
+                accessibilityLabel="Export visible AI log rows"
+              >
+                <Text style={[styles.actionText, { color: colors.primary }]}>Export</Text>
+              </Pressable>
             </View>
-          }
-        />
+            <Text style={[styles.scopeText, { color: colors.mutedForeground }]}>
+              {viewCleared
+                ? "This view is clear. Refresh to load the latest 100 questions."
+                : filterQuery.trim()
+                  ? `${visibleRows.length} of ${rows.length} retained questions match`
+                  : `${rows.length} retained question${rows.length === 1 ? "" : "s"} loaded`}
+            </Text>
+            {error && rows.length > 0 && (
+              <View style={[styles.inlineError, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
+                <Text style={[styles.inlineErrorText, { color: colors.destructive }]}>
+                  Refresh failed: {error}. Showing the last loaded log.
+                </Text>
+                <Pressable
+                  onPress={() => void fetchLog(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry refreshing AI log"
+                >
+                  <Text style={[styles.retryText, { color: colors.primary }]}>Retry</Text>
+                </Pressable>
+              </View>
+            )}
+            {exportFeedback && (
+              <Text
+                style={[styles.feedbackText, { color: colors.mutedForeground }]}
+                accessibilityLiveRegion="polite"
+              >
+                {exportFeedback}
+              </Text>
+            )}
+          </View>
+          <FlatList
+            data={visibleRows}
+            keyExtractor={(item) => String(item.id)}
+            contentContainerStyle={styles.list}
+            removeClippedSubviews={true}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={10}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => void fetchLog(true)}
+                tintColor={colors.primary}
+                colors={[colors.primary]}
+              />
+            }
+            renderItem={({ item }) => <LogItem row={item} colors={colors} />}
+            ListEmptyComponent={
+              <View style={styles.centered}>
+                <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                  {viewCleared
+                    ? "This view is clear.\nRefresh to load the latest 100 questions."
+                    : filterQuery.trim()
+                      ? "No retained questions match this filter.\nTry a shorter search."
+                      : "No questions logged yet.\nAsk the AI something to see it here."}
+                </Text>
+              </View>
+            }
+          />
+        </>
       )}
     </SafeAreaView>
   );
@@ -200,9 +463,31 @@ const styles = StyleSheet.create({
   headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 1 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 12 },
   errorText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center" },
+  helperText: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 19 },
   emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 22 },
   retryBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 20, paddingVertical: 8 },
   retryText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  toolbar: { paddingHorizontal: 12, paddingTop: 12, gap: 8 },
+  filterInput: {
+    minHeight: 42,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+  },
+  actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  actionBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 },
+  actionText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  scopeText: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  inlineError: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    gap: 8,
+  },
+  inlineErrorText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  feedbackText: { fontSize: 12, fontFamily: "Inter_400Regular" },
   list: { padding: 12, gap: 8 },
   row: {
     borderWidth: 1,

@@ -13,7 +13,15 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
 import { act, fireEvent, render } from "@testing-library/react-native";
+import { Alert, Share } from "react-native";
 import type { TestInstance } from "test-renderer";
+
+jest.mock("react-native", () => ({
+  ...jest.requireActual("react-native"),
+  Share: {
+    share: jest.fn().mockResolvedValue({ action: "sharedAction" }),
+  },
+}));
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 
@@ -192,7 +200,10 @@ describe("AiLogScreen — administrator read workflow", () => {
     expect(mockFetch).toHaveBeenNthCalledWith(
       1,
       "http://localhost:3001/api/reference/ask-log",
-      { headers: { Authorization: "Bearer admin-token-123" } },
+      expect.objectContaining({
+        headers: { Authorization: "Bearer admin-token-123" },
+        signal: expect.any(AbortSignal),
+      }),
     );
     expect(hasText(activeTree.root, INITIAL_ROWS[0]!.question)).toBe(true);
     expect(hasText(activeTree.root, INITIAL_ROWS[0]!.answer)).toBe(false);
@@ -217,7 +228,10 @@ describe("AiLogScreen — administrator read workflow", () => {
     expect(mockFetch).toHaveBeenNthCalledWith(
       2,
       "http://localhost:3001/api/reference/ask-log",
-      { headers: { Authorization: "Bearer admin-token-123" } },
+      expect.objectContaining({
+        headers: { Authorization: "Bearer admin-token-123" },
+        signal: expect.any(AbortSignal),
+      }),
     );
     expect(hasText(activeTree.root, INITIAL_ROWS[0]!.question)).toBe(false);
     expect(hasText(activeTree.root, INITIAL_ROWS[0]!.answer)).toBe(false);
@@ -248,6 +262,114 @@ describe("AiLogScreen — administrator read workflow", () => {
     expect(hasText(activeTree.root, "Server error 503")).toBe(false);
     expect(hasText(activeTree.root, REFRESHED_ROWS[0]!.question)).toBe(true);
     expect(hasText(activeTree.root, REFRESHED_ROWS[0]!.answer)).toBe(false);
+  });
+
+  it("keeps loaded rows visible when refresh fails and offers an inline retry", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(INITIAL_ROWS))
+      .mockResolvedValueOnce(errorResponse(503));
+
+    activeTree = await render(React.createElement(AiLogScreen));
+    await flushPromises();
+
+    const refreshButton = findPressableByLabel(activeTree.root!, "Refresh");
+    expect(refreshButton).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.press(refreshButton!);
+    });
+    await flushPromises();
+
+    expect(hasText(activeTree.root, INITIAL_ROWS[0]!.question)).toBe(true);
+    expect(hasText(activeTree.root, "Refresh failed: Server error 503")).toBe(true);
+    expect(findPressableByLabel(activeTree.root!, "Retry refreshing AI log")).not.toBeNull();
+  });
+
+  it("filters locally, confirms local clearing, and reports export feedback", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse([...INITIAL_ROWS, ...REFRESHED_ROWS]));
+    const alertSpy = jest.spyOn(Alert, "alert").mockImplementation((_title, _message, buttons) => {
+      buttons?.find((button) => button.text === "Clear view")?.onPress?.();
+    });
+    const shareSpy = jest.mocked(Share.share);
+
+    activeTree = await render(React.createElement(AiLogScreen));
+    await flushPromises();
+
+    const filterInput = activeTree.root!
+      .queryAll(
+        (node: TestInstance) => node.props.accessibilityLabel === "Filter AI log",
+        { includeSelf: true },
+      )[0];
+    expect(filterInput).toBeDefined();
+
+    await act(async () => {
+      fireEvent.changeText(filterInput!, "battery");
+    });
+    expect(hasText(activeTree.root, REFRESHED_ROWS[0]!.question)).toBe(true);
+    expect(hasText(activeTree.root, INITIAL_ROWS[0]!.question)).toBe(false);
+
+    const exportButton = findPressableByLabel(activeTree.root!, "Export visible AI log rows");
+    expect(exportButton).not.toBeNull();
+    await act(async () => {
+      fireEvent.press(exportButton!);
+    });
+    await flushPromises();
+    expect(shareSpy).toHaveBeenCalledTimes(1);
+    expect(hasText(activeTree.root, "Export prepared for 1 visible row.")).toBe(true);
+
+    const clearButton = findPressableByLabel(activeTree.root!, "Clear loaded AI log view");
+    expect(clearButton).not.toBeNull();
+    await act(async () => {
+      fireEvent.press(clearButton!);
+    });
+    expect(alertSpy).toHaveBeenCalledWith(
+      "Clear this view?",
+      expect.stringContaining("server log is unchanged"),
+      expect.any(Array),
+    );
+    expect(hasText(activeTree.root, "This view is clear.")).toBe(true);
+    expect(hasText(activeTree.root, INITIAL_ROWS[0]!.question)).toBe(false);
+
+    alertSpy.mockRestore();
+    shareSpy.mockRestore();
+  });
+
+  it("clears prior-admin data across logout and login while ignoring the old response", async () => {
+    let resolveOld!: (response: Response) => void;
+    const oldResponse = new Promise<Response>((resolve) => {
+      resolveOld = resolve;
+    });
+    mockFetch
+      .mockReturnValueOnce(oldResponse)
+      .mockResolvedValueOnce(jsonResponse(REFRESHED_ROWS));
+
+    activeTree = await render(React.createElement(AiLogScreen));
+    await flushPromises();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    setAppContext({ isAdmin: false, adminToken: null });
+    await activeTree.rerender(React.createElement(AiLogScreen));
+    await flushPromises();
+    expect(mockRouterReplace).toHaveBeenCalledWith("/(tabs)");
+
+    setAppContext({ isAdmin: true, adminToken: "new-admin-token" });
+    await activeTree.rerender(React.createElement(AiLogScreen));
+    await flushPromises();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    resolveOld(jsonResponse(INITIAL_ROWS));
+    await flushPromises();
+
+    expect(hasText(activeTree.root, INITIAL_ROWS[0]!.question)).toBe(false);
+    expect(hasText(activeTree.root, REFRESHED_ROWS[0]!.question)).toBe(true);
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:3001/api/reference/ask-log",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer new-admin-token" },
+        signal: expect.any(AbortSignal),
+      }),
+    );
   });
 });
 
