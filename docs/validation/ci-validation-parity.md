@@ -20,13 +20,13 @@ Evidence was collected from:
   repository, workflow, run, job, branch-protection, and ruleset endpoints.
 
 The local checkout is at revision
-`e84b56e7163a5a397aa09c44c5a47032bca473c2`; the task changes are uncommitted
-and therefore are not yet available to GitHub. GitHub returned HTTP 422 when
-that revision was requested, and no run in the returned run inventory used that
-SHA. The latest observed remote `main` run used
-`a91289795b048e1fb6375fda78f5ff7cca65f83e`. Therefore remote results below are
-observations about the cited remote revisions, not claims about the local
-checkout.
+`b701d45e6587f65a285929c05e9339f7f73919fb`. A provider-side recheck on
+2026-09-08 requested that exact SHA and GitHub returned HTTP 422 for the commit
+lookup and zero workflow runs for `head_sha=b701d45...`. The provider's `main`
+ref still points to `a91289795b048e1fb6375fda78f5ff7cca65f83e`. Therefore the
+remote results below are observations about the cited remote revision, not
+claims about the current local checkout; the exact-SHA post-merge confirmation
+remains pending until `b701d45...` is present on GitHub.
 
 The GitHub API returned HTTP 200 for the workflow inventory (four workflows),
 the run inventory, and `main` branch protection. It returned HTTP 200 with zero
@@ -189,29 +189,35 @@ Additional relevant commands and their remote decisions:
 
 ### Current remote run evidence
 
-The following entries are observed read-only GitHub API results. Each records
-the revision, event, workflow/run, job and attempt, exact tracked command or
-condition, result, and local counterpart.
+The following entries are observed read-only GitHub API results collected on
+2026-09-08. Each records the revision, event, workflow/run, job and attempt,
+exact tracked command or condition, result, and local counterpart. The first
+row is the required exact-SHA check; its absence is itself the result that
+blocks completion of the post-merge confirmation.
 
 | Revision | Event and run | Job/attempt and condition | Result | Local counterpart |
 |---|---|---|---|---|
+| `b701d45e6587f65a285929c05e9339f7f73919fb` | provider commit lookup HTTP 422; workflow run query by exact `head_sha` returned zero runs | no run ID, job ID, or attempt exists to inspect | **not observed**; the merged revision is not present on GitHub | this checkout's `main` revision |
 | `a91289795b048e1fb6375fda78f5ff7cca65f83e` | push to `main`; `CI` run `#13`, run ID `33715076900` | `Portable validation`, job `100522441535`, attempt 1; step `Run the canonical standard-plus validation tier` (`pnpm run test-standard-plus`) | failed; `CI / required`, job `100522672766`, then failed closed at `Fail closed unless portable validation passed` | `pnpm run test-standard-plus`; aggregator has no local test command |
 | `a91289795b048e1fb6375fda78f5ff7cca65f83e` | push to `main`; `LiDAR Measure Tests` run `#11`, run ID `33715076909` | `Run LidarMeasureTests`, job `100522553259`, attempt 1; `Pod install` failed and `Run LidarMeasureTests` was skipped | failed before the native test command | Expo prebuild + `pod install` + `xcodebuild test` sequence in `artifacts/parts-id` |
+| `a91289795b048e1fb6375fda78f5ff7cca65f83e` | schedule `2026-09-08`; `Scheduled security audit` run `#45`, run ID `34227271068` | `Daily dependency audit (low+)`, job `102064354547`, attempt 1; `Audit dependencies (fail on low/moderate/high/critical)` | failed; fresh scheduled result, but not for the task SHA, so it cannot confirm the bounded two-advisory exception on `b701d45...` | `security-audit`: `pnpm audit --audit-level=low` |
 | `a91289795b048e1fb6375fda78f5ff7cca65f83e` | schedule `2026-09-07`; `Scheduled security audit` run `#44`, run ID `34130561665` | `Daily dependency audit (low+)`, job `101769396869`, attempt 1; `pnpm audit --audit-level=low` | failed | `security-audit`: `pnpm audit --audit-level=low` |
 | `a91289795b048e1fb6375fda78f5ff7cca65f83e` | schedule `2026-09-07`; `Sync README from replit.md` run `#10`, run ID `34127383358` | `Copy replit.md → README.md`, job `101759139278`, attempt 1; copy/branch maintenance steps completed | passed | no local validation counterpart; maintenance-only |
 | `c4f6284beaa690b03e4849cbd98c35966e4eb90c` | pull request; `CI` run `#16`, run ID `33840964946` | `Portable validation`, job `100922996328`, attempt 1; standard-plus step failed; aggregator job `100923816520` failed closed | failed | `pnpm run test-standard-plus` |
 | `c4f6284beaa690b03e4849cbd98c35966e4eb90c` | pull request; `LiDAR Measure Tests` run `#14`, run ID `33840964952` | `Run LidarMeasureTests`, job `100922996290`, attempt 1; `Pod install` failed and native test was skipped | failed | Expo/CocoaPods/xcodebuild sequence |
 
-The GitHub job API exposed the failed step and result but not the underlying
-log line that caused the portable tier or CocoaPods failure in the historical
-runs above. The historical provider-side log detail is therefore **unknown**,
-but the portable cause is now exact from the local reproduction and source
-inspection. The audit failure is now also exact locally: it is the two named
-`image-size` advisories covered by the repository patch.
+The GitHub job API exposed the failed steps and results but not the underlying
+log lines: provider job-log requests returned HTTP 403 for the portable,
+required, LiDAR, and scheduled-audit jobs. The provider-side log detail is
+therefore **unknown**. The portable cause is exact from the local reproduction
+and source inspection, and the bounded audit exception is exact from the
+tracked workflow and local audit evidence: it covers only the two named
+`image-size` advisories. Neither conclusion is a fresh exact-SHA provider
+result.
 
-The local revision `e84b56e...` and these uncommitted fixes have no matching
-remote run evidence. A fresh exact-SHA GitHub run must be captured after the
-task merge/push; no remote pass is claimed here. Current
+The local revision `b701d45e...` has no matching remote run evidence. A fresh
+exact-SHA GitHub run must be captured after the revision is merged/pushed; no
+remote pass is claimed here. Current
 branch-policy evidence is available for `main`: the API returned required
 status context `CI / required`, `strict: true`, enabled administrator
 enforcement, blocked force-pushes and deletions, and required conversation
@@ -253,9 +259,8 @@ workflow names, badges, or dated documents.
 
 ### Gaps and risks
 
-- There is no current GitHub run for local revision `e1446ee...`; remote
-  evidence is revision-specific and currently describes `a912897...` or the
-  cited historical PR revision.
+- There is no current GitHub run for local revision `b701d45...`; remote
+  evidence is revision-specific and currently describes only `a912897...`.
 - The underlying log detail for the observed portable-tier, CocoaPods, and
   audit failures was not available through the inspected job response. Root
   causes remain unknown.
@@ -274,10 +279,11 @@ workflow names, badges, or dated documents.
 
 ### Bounded next actions
 
-1. After this task's revision is pushed to GitHub, capture one pull-request or
+1. After `b701d45...` is pushed to GitHub, capture one pull-request or
    default-branch run for that exact SHA, including the full portable job logs,
    the scheduled audit result, the LiDAR native-command step, and all
-   required/aggregator results.
+   required/aggregator results. Do not substitute the current remote `main`
+   SHA or a historical run.
 2. Query and record the provider's merge-queue/ruleset policy source
    independently; leave it unknown until the API exposes a definitive result.
 3. When the portable or native failures recur, record the exact log line,
