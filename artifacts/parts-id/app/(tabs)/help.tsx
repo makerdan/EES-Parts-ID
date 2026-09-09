@@ -30,6 +30,10 @@ import {
 type AssistantState = "idle" | "loading" | "success" | "unsupported" | "rate-limited" | "timeout" | "provider-outage";
 type AssistantFailureState = Exclude<AssistantState, "idle" | "loading" | "success">;
 
+type AdminLoadError = {
+  title: string;
+  message: string;
+};
 const HELP_ERROR_STATE_BY_CODE: Record<HelpErrorCode, AssistantFailureState> = {
   [HELP_ERROR_CODE.UNSUPPORTED]: "unsupported",
   [HELP_ERROR_CODE.RATE_LIMITED]: "rate-limited",
@@ -65,6 +69,23 @@ function errorBody(state: AssistantState): string {
   }
 }
 
+function getAdminLoadError(error: unknown): AdminLoadError {
+  const authorizationUnavailable = error instanceof HelpApiError && (
+    error.code === HELP_ERROR_CODE.AUTHORIZATION_UNAVAILABLE ||
+    error.status === 401 ||
+    error.status === 403
+  );
+  if (authorizationUnavailable) {
+    return {
+      title: "Administrator guidance needs authorization",
+      message: "Your admin session could not be verified. Retry after your connection or session recovers.",
+    };
+  }
+  return {
+    title: "Administrator guidance unavailable",
+    message: "General Help is still available. Retry administrator guidance when your connection recovers.",
+  };
+}
 function HelpRecordCard({
   record,
   expanded,
@@ -126,10 +147,13 @@ export default function HelpScreen() {
   const [adminRecords, setAdminRecords] = useState<Array<HelpRecord>>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [orientationDismissed, setOrientationDismissed] = useState(false);
+  const [orientationSaveError, setOrientationSaveError] = useState<string | null>(null);
+  const [orientationSaving, setOrientationSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [offline, setOffline] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [adminLoadError, setAdminLoadError] = useState<AdminLoadError | null>(null);
   const [question, setQuestion] = useState("");
   const [conversation, setConversation] = useState<Array<{ q: string; a: string }>>([]);
   const [assistantState, setAssistantState] = useState<AssistantState>("idle");
@@ -149,6 +173,7 @@ export default function HelpScreen() {
     contentControllerRef.current?.abort();
     assistantControllerRef.current?.abort();
     setAdminRecords([]);
+    setAdminLoadError(null);
     setConversation([]);
     setQuestion("");
     setAssistantState("idle");
@@ -179,6 +204,7 @@ export default function HelpScreen() {
     setLoadError(null);
     setOffline(false);
     setAdminRecords([]);
+    setAdminLoadError(null);
 
     const cached = await readCachedGeneralHelp();
     if (controller.signal.aborted || generation !== generationRef.current || !mountedRef.current) return;
@@ -205,11 +231,12 @@ export default function HelpScreen() {
         const admin = await fetchHelpRecords("admin", controller.signal);
         if (controller.signal.aborted || generation !== generationRef.current || !mountedRef.current) return;
         setAdminRecords(admin.records);
-      } catch {
+      } catch (error) {
         // Admin content is never read from local storage. A failed authorization
         // or network check must leave the privileged section empty.
         if (!controller.signal.aborted && generation === generationRef.current && mountedRef.current) {
           setAdminRecords([]);
+          setAdminLoadError(getAdminLoadError(error));
         }
       }
     }
@@ -220,10 +247,16 @@ export default function HelpScreen() {
     setAdminRecords([]);
     setGeneralRecords([]);
     setExpanded(null);
+    setOrientationDismissed(false);
+    setOrientationSaveError(null);
+    setOrientationSaving(false);
     clearPrivilegedState();
     void loadContent();
-    readHelpOrientationDismissed().then((dismissed) => {
-      if (mountedRef.current) setOrientationDismissed(dismissed);
+    const orientationGeneration = generationRef.current;
+    readHelpOrientationDismissed(userId).then((dismissed) => {
+      if (mountedRef.current && orientationGeneration === generationRef.current) {
+        setOrientationDismissed(dismissed);
+      }
     });
   }, [clearPrivilegedState, loadContent, userId]);
 
@@ -234,9 +267,23 @@ export default function HelpScreen() {
     });
   };
 
-  const dismissOrientation = () => {
-    setOrientationDismissed(true);
-    void saveHelpOrientationDismissed();
+  const dismissOrientation = async () => {
+    if (orientationSaving) return;
+    setOrientationSaveError(null);
+    setOrientationSaving(true);
+    let saved = false;
+    try {
+      saved = await saveHelpOrientationDismissed(userId);
+    } catch {
+      saved = false;
+    }
+    if (!mountedRef.current) return;
+    setOrientationSaving(false);
+    if (saved) {
+      setOrientationDismissed(true);
+    } else {
+      setOrientationSaveError("Your intro preference could not be saved. Keep it open and try again.");
+    }
   };
 
   const askQuestion = async (override?: string) => {
@@ -318,22 +365,40 @@ export default function HelpScreen() {
         keyboardShouldPersistTaps="handled"
       >
         {!orientationDismissed ? (
-          <View style={[styles.orientation, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "55" }]}>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.orientationTitle, { color: colors.foreground, fontSize: 17 * textFontScale }]}>Start here</Text>
-              <Text style={[styles.orientationText, { color: colors.foreground, fontSize: 13 * textFontScale }]}>
-                Open a topic below for step-by-step guidance. Help works from the keyboard, touch, and screen readers, and you can return here any time.
-              </Text>
+          <>
+            <View style={[styles.orientation, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "55" }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.orientationTitle, { color: colors.foreground, fontSize: 17 * textFontScale }]}>Start here</Text>
+                <Text style={[styles.orientationText, { color: colors.foreground, fontSize: 13 * textFontScale }]}>
+                  Open a topic below for step-by-step guidance. Help works from the keyboard, touch, and screen readers, and you can return here any time.
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => { void dismissOrientation(); }}
+                disabled={orientationSaving}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss Help introduction"
+                style={[styles.dismissButton, { backgroundColor: colors.primary }]}
+              >
+                <Text style={[styles.dismissText, { color: colors.primaryForeground }]}>
+                  {orientationSaving ? "Saving…" : "Got it"}
+                </Text>
+              </Pressable>
             </View>
-            <Pressable
-              onPress={dismissOrientation}
-              accessibilityRole="button"
-              accessibilityLabel="Dismiss Help introduction"
-              style={[styles.dismissButton, { backgroundColor: colors.primary }]}
-            >
-              <Text style={[styles.dismissText, { color: colors.primaryForeground }]}>Got it</Text>
-            </Pressable>
-          </View>
+            {orientationSaveError ? (
+              <View style={[styles.orientationError, { backgroundColor: colors.destructive + "12", borderColor: colors.destructive + "44" }]}>
+                <Text style={[styles.orientationErrorText, { color: colors.destructive }]}>{orientationSaveError}</Text>
+                <Pressable
+                  onPress={() => { void dismissOrientation(); }}
+                  disabled={orientationSaving}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry saving Help introduction"
+                >
+                  <Text style={[styles.retryText, { color: colors.primary }]}>Retry save</Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </>
         ) : null}
 
         {offline ? (
@@ -374,7 +439,7 @@ export default function HelpScreen() {
               />
             ))}
 
-            {isAdmin && adminRecords.length > 0 ? (
+            {isAdmin && (adminRecords.length > 0 || adminLoadError) ? (
               <>
                 <View style={[styles.adminHeading, { borderTopColor: colors.border }]}>
                   <Feather name="shield" size={16} color={colors.primary} />
@@ -385,6 +450,20 @@ export default function HelpScreen() {
                     </Text>
                   </View>
                 </View>
+                {adminLoadError ? (
+                  <View style={[styles.errorCard, { backgroundColor: colors.destructive + "12", borderColor: colors.destructive + "44" }]}>
+                    <Text style={[styles.errorTitle, { color: colors.destructive }]}>{adminLoadError.title}</Text>
+                    <Text style={[styles.errorText, { color: colors.foreground }]}>{adminLoadError.message}</Text>
+                    <Pressable
+                      onPress={retryContent}
+                      accessibilityRole="button"
+                      accessibilityLabel="Retry administrator guidance"
+                      style={[styles.primaryButton, { backgroundColor: colors.primary }]}
+                    >
+                      <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>Retry admin Help</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
                 {adminRecords.map((record) => (
                   <HelpRecordCard
                     key={record.id}
@@ -517,6 +596,8 @@ const styles = StyleSheet.create({
   orientationText: { fontFamily: "Inter_400Regular", lineHeight: 19 },
   dismissButton: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9 },
   dismissText: { fontFamily: "Inter_600SemiBold", fontSize: 12 },
+  orientationError: { gap: 4, borderWidth: 1, borderRadius: 8, padding: 10 },
+  orientationErrorText: { fontFamily: "Inter_400Regular", fontSize: 12, lineHeight: 17 },
   statusBanner: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: 8, padding: 10 },
   statusText: { fontFamily: "Inter_500Medium", fontSize: 12 },
   retryText: { fontFamily: "Inter_700Bold", fontSize: 12 },

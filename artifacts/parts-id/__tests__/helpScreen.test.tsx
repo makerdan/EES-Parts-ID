@@ -2,13 +2,14 @@
 
 import React from "react";
 import { act, fireEvent, render } from "@testing-library/react-native";
-import { HELP_ERROR_CODES, type HelpErrorCode } from "@workspace/api-zod";
+import { HELP_ERROR_CODE, HELP_ERROR_CODES, type HelpErrorCode } from "@workspace/api-zod";
 
 const mockApp = {
   isAdmin: false,
   textFontScale: 1,
   registerLogoutHandler: jest.fn(() => () => {}),
 };
+const mockAuth = { userId: "worker-1" };
 const mockContactSheet = jest.fn();
 
 jest.mock("@/contexts/AppContext", () => ({
@@ -33,7 +34,7 @@ jest.mock("@/utils/helpStorage", () => ({
   readCachedGeneralHelp: jest.fn(async () => null),
   writeCachedGeneralHelp: jest.fn(async () => {}),
   readHelpOrientationDismissed: jest.fn(async () => false),
-  saveHelpOrientationDismissed: jest.fn(async () => {}),
+  saveHelpOrientationDismissed: jest.fn(async () => true),
 }));
 jest.mock("@/utils/helpApi", () => ({
   fetchHelpRecords: jest.fn(async (audience: "general" | "admin") => ({
@@ -66,11 +67,11 @@ jest.mock("@/utils/helpApi", () => ({
 }));
 
 jest.mock("@clerk/expo", () => ({
-  useAuth: () => ({ userId: "worker-1" }),
+  useAuth: () => mockAuth,
 }));
 
 import HelpScreen from "@/app/(tabs)/help";
-import { saveHelpOrientationDismissed } from "@/utils/helpStorage";
+import { readCachedGeneralHelp, readHelpOrientationDismissed, saveHelpOrientationDismissed } from "@/utils/helpStorage";
 import { askHelpQuestion, fetchHelpRecords, HelpApiError } from "@/utils/helpApi";
 
 async function settle() {
@@ -94,7 +95,11 @@ describe("Help screen", () => {
 
   beforeEach(() => {
     mockApp.isAdmin = false;
+    mockAuth.userId = "worker-1";
     jest.clearAllMocks();
+    (readCachedGeneralHelp as jest.Mock).mockImplementation(async () => null);
+    (readHelpOrientationDismissed as jest.Mock).mockImplementation(async () => false);
+    (saveHelpOrientationDismissed as jest.Mock).mockImplementation(async () => true);
     (askHelpQuestion as jest.Mock).mockResolvedValue("Open the Search tab and follow the guide.");
   });
 
@@ -117,6 +122,110 @@ describe("Help screen", () => {
     await settle();
     expect(fetchHelpRecords).toHaveBeenCalledWith("general", expect.any(AbortSignal));
     expect(fetchHelpRecords).not.toHaveBeenCalledWith("admin", expect.anything());
+  });
+
+  it("labels cached general Help as offline and keeps a retry path", async () => {
+    (fetchHelpRecords as jest.Mock).mockRejectedValueOnce(new Error("network unavailable"));
+    (readCachedGeneralHelp as jest.Mock).mockResolvedValueOnce({
+      schemaVersion: "1.0",
+      contentVersion: "1.0.0",
+      audience: "general",
+      records: [{
+        id: "help.cached",
+        audience: "general",
+        workflow: "cached-workflow",
+        title: "Cached workflow",
+        summary: "Recently cached Help.",
+        body: "Follow the cached guide.",
+        prerequisites: ["An approved account"],
+        steps: ["Open the workflow"],
+        outcomes: ["The workflow completes"],
+        recovery: ["Retry when online"],
+        limitations: ["This content may be old"],
+        revision: { contentVersion: "1.0.0", revisedAt: "2026-09-01", source: "verified-product-workflow" },
+      }],
+    });
+    const result = await render(<HelpScreen />);
+    await settle();
+
+    expect(result.getByText("You’re offline — showing recently cached Help.")).toBeTruthy();
+    expect(result.getByText("Cached workflow")).toBeTruthy();
+    expect(result.getByLabelText("Retry Help content")).toBeTruthy();
+  });
+
+  it("shows a retryable failure instead of an empty success state on a clean first run", async () => {
+    (fetchHelpRecords as jest.Mock).mockRejectedValueOnce(new Error("network unavailable"));
+    const result = await render(<HelpScreen />);
+    await settle();
+
+    expect(result.getByText("Help is unavailable")).toBeTruthy();
+    expect(result.getByText("Help content could not be loaded. Check your connection and retry.")).toBeTruthy();
+    expect(result.getByText("Retry Help")).toBeTruthy();
+    expect(result.queryByText("Using Parts ID")).toBeNull();
+  });
+
+  it("keeps general Help usable and exposes a retry when admin content fails", async () => {
+    mockApp.isAdmin = true;
+    (fetchHelpRecords as jest.Mock).mockImplementation(async (audience: "general" | "admin") => {
+      if (audience === "admin") {
+        throw new HelpApiError(HELP_ERROR_CODE.AUTHORIZATION_UNAVAILABLE, "Admin authorization expired.", 403);
+      }
+      return {
+        schemaVersion: "1.0",
+        contentVersion: "1.0.0",
+        audience,
+        records: [{
+          id: "help.general",
+          audience,
+          workflow: "general-workflow",
+          title: "Search workflow",
+          summary: "A tested Help record.",
+          body: "Follow the guide.",
+          prerequisites: ["An approved account"],
+          steps: ["Open the workflow"],
+          outcomes: ["The workflow completes"],
+          recovery: ["Retry"],
+          limitations: ["Offline data may be old"],
+          revision: { contentVersion: "1.0.0", revisedAt: "2026-09-01", source: "verified-product-workflow" },
+        }],
+      };
+    });
+    const result = await render(<HelpScreen />);
+    await settle();
+
+    expect(result.getByText("Search workflow")).toBeTruthy();
+    expect(result.getByText("Administrator guidance needs authorization")).toBeTruthy();
+    expect(result.getByText("Your admin session could not be verified. Retry after your connection or session recovers.")).toBeTruthy();
+    await act(async () => fireEvent.press(result.getByLabelText("Retry administrator guidance")));
+    await settle();
+    expect(fetchHelpRecords).toHaveBeenCalledWith("admin", expect.any(AbortSignal));
+  });
+
+  it("keeps the intro visible and offers a retry when its preference cannot be saved", async () => {
+    (saveHelpOrientationDismissed as jest.Mock).mockResolvedValueOnce(false);
+    const result = await render(<HelpScreen />);
+    await settle();
+
+    await act(async () => fireEvent.press(result.getByLabelText("Dismiss Help introduction")));
+    await settle();
+
+    expect(result.getByText("Start here")).toBeTruthy();
+    expect(result.getByText("Your intro preference could not be saved. Keep it open and try again.")).toBeTruthy();
+    expect(result.getByLabelText("Retry saving Help introduction")).toBeTruthy();
+    expect(result.getByText("Retry save")).toBeTruthy();
+  });
+
+  it("resets account-scoped intro state when the signed-in user changes", async () => {
+    (readHelpOrientationDismissed as jest.Mock).mockImplementation(async (userId: string) => userId === "worker-1");
+    const result = await render(<HelpScreen />);
+    await settle();
+    expect(result.queryByText("Start here")).toBeNull();
+
+    mockAuth.userId = "worker-2";
+    await result.rerender(<HelpScreen />);
+    await settle();
+
+    expect(result.getByText("Start here")).toBeTruthy();
   });
 
   it("clears the privileged section when the live role is lost", async () => {
