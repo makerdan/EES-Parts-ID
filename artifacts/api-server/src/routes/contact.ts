@@ -8,6 +8,8 @@ import { contactLimiter } from "../lib/rateLimiter";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
+const MAX_SUBJECT_LENGTH = 200;
+const MAX_BODY_LENGTH = 5_000;
 
 // POST /contact — submit a message (no auth required)
 router.post("/", async (req, res) => {
@@ -26,13 +28,23 @@ router.post("/", async (req, res) => {
       senderToken?: string;
     };
 
-    if (!subject?.trim()) {
+    if (typeof subject !== "string" || !subject.trim()) {
       return void res.status(400).json({ error: "subject is required" });
     }
-    if (!body?.trim()) {
+    if (typeof body !== "string" || !body.trim()) {
       return void res.status(400).json({ error: "body is required" });
     }
-    const token = (senderToken ?? "").trim() || "anonymous";
+    if (subject.trim().length > MAX_SUBJECT_LENGTH) {
+      return void res.status(400).json({
+        error: `subject must be ${MAX_SUBJECT_LENGTH} characters or fewer`,
+      });
+    }
+    if (body.trim().length > MAX_BODY_LENGTH) {
+      return void res.status(400).json({
+        error: `body must be ${MAX_BODY_LENGTH} characters or fewer`,
+      });
+    }
+    const token = (typeof senderToken === "string" ? senderToken.trim() : "") || "anonymous";
 
     const [row] = await db
       .insert(contactMessagesTable)

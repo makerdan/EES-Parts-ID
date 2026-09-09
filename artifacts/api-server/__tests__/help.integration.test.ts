@@ -22,8 +22,8 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 }));
 
 import supertest from "supertest";
-import { db, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { contactMessagesTable, db, usersTable } from "@workspace/db";
+import { eq, inArray } from "drizzle-orm";
 
 import app from "../src/app";
 import {
@@ -35,6 +35,7 @@ import {
   validateHelpRecords,
 } from "../src/lib/helpContent";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
+import { contactLimiter } from "../src/lib/rateLimiter";
 import {
   cleanupTestUser,
   seedTestUser,
@@ -45,6 +46,7 @@ const APPROVED_USER = workerQualifiedUserId("jest-help-approved-user");
 const PENDING_USER = workerQualifiedUserId("jest-help-pending-user");
 const BANNED_USER = workerQualifiedUserId("jest-help-banned-user");
 const STALE_ADMIN_USER = workerQualifiedUserId("jest-help-stale-admin-user");
+const contactMessageIds = new Set<number>();
 
 beforeAll(async () => {
   await seedTestUser({ clerkUserId: APPROVED_USER, status: "approved", role: "user" });
@@ -59,6 +61,9 @@ afterAll(async () => {
     cleanupTestUser(PENDING_USER),
     cleanupTestUser(BANNED_USER),
     cleanupTestUser(STALE_ADMIN_USER),
+    contactMessageIds.size > 0
+      ? db.delete(contactMessagesTable).where(inArray(contactMessagesTable.id, [...contactMessageIds]))
+      : Promise.resolve(),
   ]);
 });
 
@@ -182,5 +187,64 @@ describe("Reference namespace compatibility", () => {
     const res = await auth(supertest(app).get("/api/reference/help"), APPROVED_USER).expect(200);
     expect(res.body.audience).toBe("general");
     expect(res.body.records.every((record: { audience: string }) => record.audience === "general")).toBe(true);
+  });
+});
+
+describe("Contact submission handoff", () => {
+  beforeEach(async () => {
+    await contactLimiter.reset();
+  });
+
+  it("rejects invalid or rate-limited submissions and persists one successful handoff", async () => {
+    const invalidRequest = supertest(app)
+      .post("/api/contact");
+    const invalidResponse = await auth(invalidRequest, APPROVED_USER)
+      .send({ subject: "   ", body: "A message" })
+      .expect(400);
+    expect(invalidResponse.body.error).toMatch(/subject/i);
+
+    const rateLimitSpy = jest
+      .spyOn(contactLimiter, "check")
+      .mockResolvedValueOnce({ allowed: false, retryAfterMs: 7_000 });
+    try {
+      const limited = await auth(supertest(app).post("/api/contact"), APPROVED_USER)
+        .send({ subject: "Retry me", body: "Please keep this draft." })
+        .expect(429);
+      expect(limited.body).toMatchObject({
+        error: expect.stringMatching(/too many/i),
+        retryAfterMs: 7_000,
+      });
+    } finally {
+      rateLimitSpy.mockRestore();
+    }
+
+    const subject = `JEST-HELP-CONTACT-${Date.now()}`;
+    const created = await auth(supertest(app).post("/api/contact"), APPROVED_USER)
+      .send({ subject, body: "One durable support handoff.", senderToken: "jest-help-contact" })
+      .expect(201);
+    contactMessageIds.add(created.body.id);
+
+    const [row] = await db
+      .select()
+      .from(contactMessagesTable)
+      .where(eq(contactMessagesTable.id, created.body.id));
+    expect(row).toMatchObject({
+      id: created.body.id,
+      subject,
+      body: "One durable support handoff.",
+      senderToken: "jest-help-contact",
+    });
+  });
+
+  it("rejects overlong messages before they reach persistence", async () => {
+    const subject = await auth(supertest(app).post("/api/contact"), APPROVED_USER)
+      .send({ subject: "x".repeat(201), body: "A message" })
+      .expect(400);
+    expect(subject.body.error).toMatch(/200/);
+
+    const body = await auth(supertest(app).post("/api/contact"), APPROVED_USER)
+      .send({ subject: "A subject", body: "x".repeat(5_001) })
+      .expect(400);
+    expect(body.body.error).toMatch(/5000/);
   });
 });
