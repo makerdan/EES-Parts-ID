@@ -25,10 +25,41 @@ export function makeInventoryItemFixture(overrides: Record<string, unknown> = {}
   };
 }
 
-export function makeInventoryItemMissingOrderField(field: InventoryOrderField) {
-  const item = makeInventoryItemFixture();
+export function makeInventoryItemMissingOrderField(
+  field: InventoryOrderField,
+  overrides: Record<string, unknown> = {},
+) {
+  const item = makeInventoryItemFixture(overrides);
   delete item[field];
   return item;
+}
+
+export function makeRawSearchRowFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 42,
+    vendor: "ACME",
+    catalog: "BR15",
+    description: "Test widget",
+    order_purchase: 5,
+    order_quantity: 10,
+    bin_locations: ["A1"],
+    ai_keywords: ["widget"],
+    pinned_keywords: [],
+    barcodes: ["012345678901"],
+    enriched_at: null,
+    image_url: null,
+    thumbnail_url: null,
+    image_url_2: null,
+    thumbnail_url_2: null,
+    expanded_description: null,
+    size: null,
+    dimensions: null,
+    created_at: new Date("2025-06-01T00:00:00Z"),
+    updated_at: new Date("2025-06-01T00:00:00Z"),
+    fts_rank: 1,
+    trgm_sim: 1,
+    ...overrides,
+  };
 }
 
 export function makeSearchResultFixture(

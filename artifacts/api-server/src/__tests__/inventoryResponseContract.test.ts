@@ -130,6 +130,7 @@ import {
   makeInventoryItemFixture,
   makeInventoryItemMissingOrderField,
   makeListInventoryResponseFixture,
+  makeRawSearchRowFixture,
   makeSearchInventoryResponseFixture,
   makeSearchResultFixture,
   type InventoryOrderField,
@@ -265,13 +266,36 @@ describe("Inventory list and search route response contracts", () => {
     "POST /api/inventory/search returns its documented error when a row is missing %s",
     async (field) => {
       routeTestMode = "search";
+      const primary = makeInventoryItemFixture({
+        id: 42,
+        vendor: "ACME",
+        catalog: "BR15",
+        description: "Test widget",
+      });
+      const malformedVariant = makeInventoryItemMissingOrderField(field, {
+        id: 43,
+        vendor: "ACME",
+        catalog: "BR20",
+        description: "Other size",
+      });
       mockedInventoryRows = [
-        makeInventoryItemMissingOrderField(field) as Record<string, unknown>,
+        primary,
+        malformedVariant as Record<string, unknown>,
       ];
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeRawSearchRowFixture({
+            id: primary.id,
+            vendor: primary.vendor,
+            catalog: primary.catalog,
+            description: primary.description,
+          }),
+        ],
+      });
 
       const response = await supertest(app)
         .post("/api/inventory/search")
-        .send({ categorySlug: "receptacles" });
+        .send({ keywords: "widget" });
 
       expect(response.status).toBe(500);
       expect(response.body).toEqual({ error: "Search failed" });
