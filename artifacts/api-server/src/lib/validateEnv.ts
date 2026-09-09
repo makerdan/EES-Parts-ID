@@ -15,6 +15,7 @@
 import {
   CLIENT_PUBLIC_ENV_VARS,
   type EnvironmentSource,
+  isProductionDatabaseTarget,
   SERVER_ONLY_ENV_VARS,
 } from "@workspace/db/runtime-data-boundary";
 
@@ -33,7 +34,7 @@ const REQUIRED_IN_PRODUCTION: Array<EnvCheck> = [
     name: "DATABASE_ENV",
     description:
       "Explicit Replit database target. Production API processes must use DATABASE_ENV=production.",
-    isValid: (value) => value.trim().toLowerCase() === "production",
+    isValid: (_value, env) => isProductionDatabaseTarget(env),
   },
   {
     name: "DATABASE_URL",

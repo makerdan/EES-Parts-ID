@@ -1,7 +1,12 @@
 import {
   assertDatabaseExecutionMode,
+  assertProductionDatabaseTarget,
   getClientPublicEnvironment,
+  isProductionDatabaseTarget,
 } from "@workspace/db/runtime-data-boundary";
+
+import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 
 import {
   formatMissingProductionEnvError,
@@ -11,6 +16,53 @@ import {
 import { getScreenViewPrivacyReadiness } from "../lib/screenViewPrivacy";
 
 describe("runtime data boundary", () => {
+  const apiRoot = resolve(__dirname, "../..");
+  const tsx = resolve(apiRoot, "node_modules/.bin/tsx");
+  const entrypoint = resolve(apiRoot, "src/index.ts");
+  const preflight = resolve(apiRoot, "scripts/check-production-database.ts");
+
+  const productionEnv = {
+    NODE_ENV: "production",
+    DATABASE_URL: "test-database",
+    CLERK_PUBLISHABLE_KEY: "pk_test_configured",
+    CLERK_SECRET_KEY: "sk_test_configured",
+    CORS_ALLOWED_ORIGINS: "https://parts.example",
+    AI_PROVIDER: "poe",
+    POE_API_KEY2: "poe-configured-secret",
+    SESSION_SECRET: "session-configured-secret",
+    PORT: "31258",
+  };
+
+  function runEntrypoint(databaseEnv: string | undefined) {
+    const env = { ...process.env, ...productionEnv };
+    if (databaseEnv === undefined) {
+      delete env.DATABASE_ENV;
+    } else {
+      env.DATABASE_ENV = databaseEnv;
+    }
+    return spawnSync(tsx, [entrypoint], {
+      cwd: apiRoot,
+      encoding: "utf8",
+      timeout: 15_000,
+      env,
+    });
+  }
+
+  function runPreflight(databaseEnv: string | undefined) {
+    const env = { ...process.env, NODE_ENV: "production" };
+    if (databaseEnv === undefined) {
+      delete env.DATABASE_ENV;
+    } else {
+      env.DATABASE_ENV = databaseEnv;
+    }
+    return spawnSync(tsx, [preflight], {
+      cwd: apiRoot,
+      encoding: "utf8",
+      timeout: 5_000,
+      env,
+    });
+  }
+
   it("reports missing production names without including secret values", () => {
     const missing = getMissingProductionEnvVars({
       NODE_ENV: "production",
@@ -76,6 +128,59 @@ describe("runtime data boundary", () => {
       }
     },
   );
+
+  it.each([undefined, "", "   ", "development", "test", "staging"])(
+    "exits before database import or listener startup for DATABASE_ENV=%p",
+    (databaseEnv) => {
+      const result = runEntrypoint(databaseEnv);
+      const output = `${result.stdout}\n${result.stderr}`;
+
+      expect(result.status).toBe(1);
+      expect(result.error).toBeUndefined();
+      expect(output).toContain("DATABASE_ENV");
+      expect(output).toContain("DATABASE_ENV=production");
+      expect(output).not.toContain("postgresql://configured-secret");
+      expect(output).not.toContain("sk_test_configured");
+      expect(output).not.toContain("poe-configured-secret");
+      expect(output).not.toContain("session-configured-secret");
+      expect(output).not.toContain("listening");
+    },
+    20_000,
+  );
+
+  it.each([undefined, "", "development", "test", "staging"])(
+    "rejects non-production deployment preflight target %p without echoing it",
+    (databaseEnv) => {
+      const result = runPreflight(databaseEnv);
+      const output = `${result.stdout}\n${result.stderr}`;
+
+      expect(result.status).toBe(1);
+      expect(result.error).toBeUndefined();
+      expect(output).toContain("production build requires DATABASE_ENV=production");
+      if (databaseEnv) {
+        expect(output).not.toContain(`DATABASE_ENV=${databaseEnv}`);
+      }
+      expect(output).not.toContain("postgresql://");
+    },
+  );
+
+  it("accepts the production target through the shared preflight contract", () => {
+    const result = runPreflight("production");
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("DATABASE_ENV=production confirmed");
+  });
+
+  it("shares the production target predicate with startup and preflight callers", () => {
+    expect(isProductionDatabaseTarget({ DATABASE_ENV: "production" })).toBe(true);
+    expect(isProductionDatabaseTarget({ DATABASE_ENV: "development" })).toBe(false);
+    expect(assertProductionDatabaseTarget({ DATABASE_ENV: "production" })).toBe(
+      "production",
+    );
+    expect(() =>
+      assertProductionDatabaseTarget({ DATABASE_ENV: "test" }),
+    ).toThrow("Production runtime requires DATABASE_ENV=production.");
+  });
 
   it.each([
     {

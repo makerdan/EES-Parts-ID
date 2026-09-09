@@ -73,6 +73,34 @@ export function getDatabaseEnvironment(
   return value as DatabaseEnvironment;
 }
 
+/**
+ * Require the production database target without importing the database
+ * package. Build and startup preflight callers use this before any database
+ * side effects are possible.
+ */
+export function assertProductionDatabaseTarget(
+  env: EnvironmentSource = process.env,
+): "production" {
+  const databaseEnvironment = getDatabaseEnvironment(env);
+  if (databaseEnvironment !== "production") {
+    throw new Error(
+      "Production runtime requires DATABASE_ENV=production.",
+    );
+  }
+  return databaseEnvironment;
+}
+
+export function isProductionDatabaseTarget(
+  env: EnvironmentSource = process.env,
+): boolean {
+  try {
+    assertProductionDatabaseTarget(env);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function expectedApplicationEnvironment(
   env: EnvironmentSource,
 ): DatabaseEnvironment {
