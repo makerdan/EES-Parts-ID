@@ -5,6 +5,14 @@ import { AppState, AppStateStatus } from "react-native";
 
 export type ApiStatus = "ok" | "degraded" | "error" | "unknown";
 export type BotProbeStatus = "ok" | "timeout" | "404" | "error";
+export type ReadinessIssue =
+  | {
+      detail: "startup_not_ready";
+      startupStatus: "pending" | "timed_out" | "failed";
+    }
+  | {
+      detail: "database_unreachable" | "schema_unavailable";
+    };
 export type RestartState =
   | "idle"
   | "requesting"
@@ -19,6 +27,7 @@ export type RestartState =
 
 export interface ApiStatusResult {
   status: ApiStatus;
+  readinessIssue: ReadinessIssue | null;
   checking: boolean;
   lastCheckedAt: number | null;
   restarting: boolean;
@@ -39,6 +48,29 @@ interface UseApiStatusOptions {
   resumePollTimeoutMs?: number;
 }
 
+function parseReadinessIssue(raw: unknown): ReadinessIssue | null {
+  if (!raw || typeof raw !== "object") return null;
+  const payload = raw as Record<string, unknown>;
+  if (payload.status !== "error") return null;
+
+  if (payload.detail === "database_unreachable" || payload.detail === "schema_unavailable") {
+    return { detail: payload.detail };
+  }
+
+  if (payload.detail !== "startup_not_ready") return null;
+  if (
+    payload.startup_status !== "pending" &&
+    payload.startup_status !== "timed_out" &&
+    payload.startup_status !== "failed"
+  ) {
+    return null;
+  }
+  return {
+    detail: "startup_not_ready",
+    startupStatus: payload.startup_status,
+  };
+}
+
 export function useApiStatus({
   apiBase,
   adminToken,
@@ -47,6 +79,7 @@ export function useApiStatus({
   resumePollTimeoutMs = 5_000,
 }: UseApiStatusOptions): ApiStatusResult {
   const [status, setStatus] = useState<ApiStatus>("unknown");
+  const [readinessIssue, setReadinessIssue] = useState<ReadinessIssue | null>(null);
   const [checking, setChecking] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [restarting, setRestarting] = useState(false);
@@ -77,7 +110,14 @@ export function useApiStatus({
       const res = await fetch(`${apiBase}/healthz`, { cache: "no-store", signal: controller.signal });
       if (!isMountedRef.current || generation !== generationRef.current) return;
       if (!res.ok) {
+        let issue: ReadinessIssue | null = null;
+        try {
+          issue = parseReadinessIssue(await res.json());
+        } catch {
+          // Keep non-readiness failures generic.
+        }
         setStatus("error");
+        setReadinessIssue(issue);
         setBots({});
         return;
       }
@@ -86,15 +126,18 @@ export function useApiStatus({
       if (!parsed.success) {
         console.warn("[useApiStatus] Unexpected healthz shape:", parsed.error.message);
         setStatus("error");
+        setReadinessIssue(null);
         setBots({});
         return;
       }
       setStatus(parsed.data.status);
+      setReadinessIssue(null);
       setBots(parsed.data.bots ?? {});
       setRestartState("idle");
     } catch {
       if (isMountedRef.current && generation === generationRef.current) {
         setStatus("error");
+        setReadinessIssue(null);
         setBots({});
       }
     } finally {
@@ -349,6 +392,7 @@ export function useApiStatus({
               restartTimerIdsRef.current = [];
               if (isMountedRef.current && generation === generationRef.current) {
                 setStatus(parsed.data.status);
+                setReadinessIssue(null);
                 setBots(parsed.data.bots ?? {});
                 setRestartState("recovered");
                 setRestarting(false);
@@ -379,6 +423,7 @@ export function useApiStatus({
           restartTimerIdsRef.current = [];
           if (isMountedRef.current && generation === generationRef.current) {
             setStatus("error");
+            setReadinessIssue(null);
             setRestartState("recovery_failed");
             setRestarting(false);
             finishRecovery("recovery_failed");
@@ -394,6 +439,7 @@ export function useApiStatus({
   const reportNetworkFailure = useCallback(() => {
     if (!isMountedRef.current) return;
     setStatus("error");
+    setReadinessIssue(null);
     setBots({});
   }, []);
 
@@ -404,6 +450,7 @@ export function useApiStatus({
 
   return {
     status,
+    readinessIssue,
     checking,
     lastCheckedAt,
     restarting,

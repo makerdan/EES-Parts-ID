@@ -204,7 +204,7 @@ export default function AdminDashboardScreen() {
   const warehouseMapUrl: string | null = process.env.EXPO_PUBLIC_DOMAIN
     ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/__mockup/warehouse-map`
     : null;
-  const { reportNetworkFailure } = useApiHealth();
+  const { checkStatus, readinessIssue, reportNetworkFailure } = useApiHealth();
   const router = useRouter();
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -383,6 +383,19 @@ export default function AdminDashboardScreen() {
     }
   }, [adminToken, reportNetworkFailure]);
 
+  let readinessMessage: string | null = null;
+  if (readinessIssue?.detail === "database_unreachable") {
+    readinessMessage = "The application database is temporarily unavailable.";
+  } else if (readinessIssue?.detail === "schema_unavailable") {
+    readinessMessage = "The application schema is temporarily unavailable.";
+  } else if (readinessIssue?.detail === "startup_not_ready") {
+    readinessMessage = readinessIssue.startupStatus === "pending"
+      ? "Application startup is still in progress."
+      : readinessIssue.startupStatus === "timed_out"
+        ? "Application startup timed out. Try again shortly."
+        : "Application startup did not complete. Try again shortly.";
+  }
+
   useEffect(() => {
     if (!isLoading && adminToken) {
       fetchStats();
@@ -449,6 +462,24 @@ export default function AdminDashboardScreen() {
           />
         </Pressable>
       </View>
+
+      {readinessMessage ? (
+        <View
+          style={[styles.statusBanner, { backgroundColor: colors.muted, borderColor: colors.warning }]}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          <Text style={[styles.statusText, { color: colors.foreground }]}>{readinessMessage}</Text>
+          <Pressable
+            onPress={() => void checkStatus()}
+            style={[styles.statusAction, { backgroundColor: colors.primary }]}
+            accessibilityRole="button"
+            accessibilityLabel="Retry application readiness check"
+          >
+            <Text style={[styles.statusActionText, { color: colors.primaryForeground }]}>Retry status</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {loading && !stats ? (
         <View style={styles.centered}>

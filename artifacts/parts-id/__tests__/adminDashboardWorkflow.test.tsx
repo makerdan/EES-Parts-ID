@@ -121,10 +121,11 @@ jest.mock("@/utils/apiBase", () => ({
 // ─── @/contexts/ApiHealthContext ─────────────────────────────────────────────
 
 jest.mock("@/contexts/ApiHealthContext", () => {
-  const stable = { reportNetworkFailure: jest.fn() };
+  const stable = { checkStatus: jest.fn(), readinessIssue: null, reportNetworkFailure: jest.fn() };
   return {
     useApiHealth: () => stable,
     ApiHealthProvider: ({ children }: { children: unknown }) => children,
+    __mockApiHealth: stable,
   };
 });
 
@@ -264,6 +265,14 @@ beforeEach(() => {
   mockUseApp.mockReturnValue(makeAdminApp());
   mockFetch.mockReset();
   global.fetch = mockFetch as unknown as typeof fetch;
+  const apiHealthMock = jest.requireMock("@/contexts/ApiHealthContext").__mockApiHealth as {
+    checkStatus: jest.Mock;
+    readinessIssue: unknown;
+    reportNetworkFailure: jest.Mock;
+  };
+  apiHealthMock.checkStatus.mockReset();
+  apiHealthMock.readinessIssue = null;
+  apiHealthMock.reportNetworkFailure.mockReset();
 
   const fileSystemMock = jest.requireMock("expo-file-system") as {
     __mockFileWrite: jest.Mock;
@@ -296,6 +305,38 @@ afterEach(async () => {
 });
 
 describe("AdminDashboardScreen — authenticated workflow", () => {
+  it.each([
+    [
+      { detail: "startup_not_ready", startupStatus: "pending" },
+      "Application startup is still in progress.",
+    ],
+    [
+      { detail: "startup_not_ready", startupStatus: "timed_out" },
+      "Application startup timed out. Try again shortly.",
+    ],
+    [
+      { detail: "database_unreachable" },
+      "The application database is temporarily unavailable.",
+    ],
+    [
+      { detail: "schema_unavailable" },
+      "The application schema is temporarily unavailable.",
+    ],
+  ])("shows the bounded readiness message for %j", async (readinessIssue, message) => {
+    const apiHealthMock = jest.requireMock("@/contexts/ApiHealthContext").__mockApiHealth as {
+      readinessIssue: unknown;
+    };
+    apiHealthMock.readinessIssue = readinessIssue;
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => FIRST_STATS } as Response);
+
+    const tree = await render(<AdminScreen />);
+    activeTree = tree;
+    await flushPromises();
+
+    expect(hasText(tree.root, message)).toBe(true);
+    expect(hasText(tree.root, "secret database detail")).toBe(false);
+  });
+
   it("shows a recoverable initial-load error when the dashboard request fails", async () => {
     mockFetch.mockRejectedValueOnce(new Error("Dashboard unavailable"));
 
