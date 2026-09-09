@@ -50,7 +50,7 @@ assert.deepEqual(config.postMerge, {
 assert.equal(config.nix?.channel, "stable-25_05");
 assert.equal(config.workflows?.runButton, "Project");
 assert.equal(config.workflows?.workflow?.length, 8);
-assert.equal(config.ports?.length, 7);
+assert.equal(config.ports?.length, 8);
 
 const workflows = new Map(
   config.workflows.workflow.map((workflow) => [workflow.name, workflow]),
@@ -145,6 +145,19 @@ assert.deepEqual(unexpectedTableResult.diagnostics, [
   {
     source: "active",
     table: "notAReplitTable",
+    issue: "unexpected-table",
+  },
+]);
+
+const checkedInUnexpectedTableResult = compareStructuralConfig({
+  checkedIn: { ...config, newlyAddedTable: { enabled: true } },
+  active: activeFixture,
+});
+assert.equal(checkedInUnexpectedTableResult.ok, false);
+assert.deepEqual(checkedInUnexpectedTableResult.diagnostics, [
+  {
+    source: "checked-in",
+    table: "newlyAddedTable",
     issue: "unexpected-table",
   },
 ]);

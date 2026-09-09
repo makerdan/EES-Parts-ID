@@ -79,7 +79,11 @@ function redactValue(value, path, diagnostics) {
   return redacted;
 }
 
-function validateShape(snapshot, label, { rejectSensitive }) {
+function validateShape(
+  snapshot,
+  label,
+  { rejectUnexpectedTables, rejectSensitive },
+) {
   const diagnostics = [];
   if (!isRecord(snapshot)) {
     return {
@@ -87,7 +91,7 @@ function validateShape(snapshot, label, { rejectSensitive }) {
     };
   }
 
-  if (rejectSensitive) {
+  if (rejectUnexpectedTables) {
     for (const key of Object.keys(snapshot)) {
       if (!STRUCTURAL_TABLES.includes(key) && !SENSITIVE_KEYS.has(key.toLowerCase())) {
         diagnostics.push({
@@ -172,9 +176,11 @@ function tableDigests(snapshot) {
  */
 export function compareStructuralConfig({ checkedIn, active }) {
   const checkedInShape = validateShape(checkedIn, "checked-in", {
+    rejectUnexpectedTables: true,
     rejectSensitive: false,
   });
   const activeShape = validateShape(active, "active", {
+    rejectUnexpectedTables: true,
     rejectSensitive: true,
   });
   const diagnostics = [
