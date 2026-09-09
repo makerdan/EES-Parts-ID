@@ -121,6 +121,11 @@ the canonical account metadata. Interpret outcomes as:
 - `unavailable-source` (exit 2): canonical source or revision cannot be read;
 - `missing-mirror` (exit 3): the platform mirror sidecar is absent.
 
+An unreadable sidecar, including permission denial or a directory at the
+sidecar path, is a `mismatch` with the bounded
+`invalid-mirror-metadata` reason. Status never creates, removes, rewrites, or
+repairs the mirror root, sidecar, source, or workspace projection.
+
 Status is distinct from all-skills projection and invocation-time loading. It is
 read-only and must not write the mirror, sidecar, projection, or source just to
 make a check pass. Do not print skill contents, source paths, secrets,

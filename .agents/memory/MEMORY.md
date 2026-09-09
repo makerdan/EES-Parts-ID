@@ -78,3 +78,4 @@
 - [API health restart recovery](api-health-restart-recovery.md) — preserve terminal restart outcomes through cleanup and refresh dependent health snapshots on recovery.
 - [Help user-scoped preferences](help-user-scoped-preferences.md) — isolate first-run dismissal per account and ignore stale async reads after account changes.
 - [Help assistant async lifecycles](help-assistant-async-lifecycles.md) — content refresh and assistant requests need independent cancellation and stale-result ownership.
+- [Permission-denied fixtures](permission-denied-fixtures.md) — use same-user mode restrictions and unreadable-aware snapshots; sandbox UID changes may be blocked.

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -55,7 +55,13 @@ async function snapshotTree(root) {
         entries.push([entryRelative, "directory"]);
         await visit(entryPath, entryRelative);
       } else if (entry.isFile()) {
-        entries.push([entryRelative, "file", (await readFile(entryPath)).toString("base64")]);
+        const fileStat = await lstat(entryPath);
+        try {
+          entries.push([entryRelative, "file", (await readFile(entryPath)).toString("base64"), fileStat.mode & 0o777]);
+        } catch (error) {
+          if (error.code !== "EACCES") throw error;
+          entries.push([entryRelative, "unreadable-file", fileStat.mode & 0o777]);
+        }
       } else if (entry.isSymbolicLink()) {
         entries.push([entryRelative, "symbolic-link"]);
       } else {
@@ -337,6 +343,56 @@ try {
     "pass",
     "refreshing mirror fingerprint metadata should clear the stale result",
   );
+
+  const permissionMirrorRoot = join(root, "permission-metadata-mirror");
+  await put(
+    join(permissionMirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE),
+    `${JSON.stringify({
+      format: 1,
+      skillId: "catalog",
+      sourceRevision: fingerprintCanonical.sourceRevision,
+      fingerprint: fingerprintCanonical.fingerprint,
+    })}\n`,
+  );
+  const permissionSidecar = join(permissionMirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE);
+  await chmod(permissionSidecar, 0o000);
+  const permissionBefore = await snapshotTree(permissionMirrorRoot);
+  const permissionCommand = runStatus(accountSource, permissionMirrorRoot);
+  assert.equal(permissionCommand.status, 1);
+  assert.deepEqual(JSON.parse(permissionCommand.stdout), {
+    outcome: "mismatch",
+    skillId: "catalog",
+    sourceRevision: fingerprintCanonical.sourceRevision,
+    fingerprint: fingerprintCanonical.fingerprint,
+    reason: "invalid-mirror-metadata",
+  });
+  assert.deepEqual(
+    await snapshotTree(permissionMirrorRoot),
+    permissionBefore,
+    "permission-denied metadata status must be read-only",
+  );
+  assert.doesNotMatch(permissionCommand.stdout, /permission-metadata-mirror|Catalog fingerprint v2/);
+
+  const directoryMirrorRoot = join(root, "directory-shaped-metadata-mirror");
+  const directorySidecar = join(directoryMirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE);
+  await mkdir(directorySidecar, { recursive: true });
+  await put(join(directorySidecar, "private.txt"), "private metadata fixture\n");
+  const directoryBefore = await snapshotTree(directoryMirrorRoot);
+  const directoryCommand = runStatus(accountSource, directoryMirrorRoot);
+  assert.equal(directoryCommand.status, 1);
+  assert.deepEqual(JSON.parse(directoryCommand.stdout), {
+    outcome: "mismatch",
+    skillId: "catalog",
+    sourceRevision: fingerprintCanonical.sourceRevision,
+    fingerprint: fingerprintCanonical.fingerprint,
+    reason: "invalid-mirror-metadata",
+  });
+  assert.deepEqual(
+    await snapshotTree(directoryMirrorRoot),
+    directoryBefore,
+    "directory-shaped metadata status must be read-only",
+  );
+  assert.doesNotMatch(directoryCommand.stdout, /directory-shaped-metadata-mirror|private metadata fixture/);
 
   const missingRevisionSource = join(root, "missing-revision-source");
   await put(join(missingRevisionSource, "catalog/SKILL.md"), "# Catalog\n");
@@ -628,6 +684,10 @@ try {
   assert.match(contract, /account-skills:sync/);
   assert.match(contract, /unavailable-source/);
   assert.match(contract, /missing-mirror/);
+  assert.match(contract, /invalid-mirror-metadata/);
+  assert.match(contract, /permission-denied/);
+  assert.match(contract, /directory at the/);
+  assert.match(contract, /Status checks do/);
   assert.match(contract, /must not add a skill registry/i);
 
   const canonicalSkill = await readFile(".agents/skills/skill-mirror-sync/SKILL.md", "utf8");
@@ -644,6 +704,9 @@ try {
   assert.match(canonicalSkillText, /interrupted refresh/i);
   assert.match(canonicalSkillText, /never edit it directly/i);
   assert.match(canonicalSkillText, /never flows back/i);
+  assert.match(canonicalSkillText, /invalid-mirror-metadata/);
+  assert.match(canonicalSkillText, /permission denial/);
+  assert.match(canonicalSkillText, /directory at the/);
   assert.match(canonicalSkillText, /MD5 is not an authoritative fingerprint/i);
   assert.doesNotMatch(
     canonicalSkillText,

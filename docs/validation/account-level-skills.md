@@ -119,6 +119,12 @@ fingerprint when the canonical source is available, and one bounded reason code
 for mismatches. It never echoes mirror values or prints a skill file, secret,
 credential, or source path.
 
+An unreadable sidecar, including a permission-denied file, a directory at the
+sidecar path, malformed JSON, or invalid sidecar fields, is reported as
+`mismatch` with the bounded `invalid-mirror-metadata` reason. Status checks do
+not repair, remove, create, or rewrite the mirror root, sidecar, source, or
+workspace projection in any outcome.
+
 | Outcome | Exit | Meaning |
 |---|---:|---|
 | `pass` | 0 | Mirror identity, revision, and fingerprint exactly match the canonical account source |
