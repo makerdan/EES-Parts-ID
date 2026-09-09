@@ -313,13 +313,20 @@ const OpoqPreviewSchema = z.object({
   })),
 });
 const QueryResultSchema = z.object({
-  columns: z.array(z.string()).optional(),
-  rows: z.array(z.record(z.string(), z.unknown())).optional(),
-  rowCount: z.number().optional(),
-  error: z.string().optional(),
-});
+  columns: z.array(z.string().min(1)),
+  rows: z.array(z.record(z.string(), z.unknown())),
+  rowCount: z.number().int().nonnegative(),
+  truncated: z.boolean().optional(),
+  strippedColumns: z.array(z.string()).optional(),
+}).refine(
+  data =>
+    new Set(data.columns).size === data.columns.length &&
+    data.rowCount === data.rows.length &&
+    (data.rows.length === 0 || data.columns.length > 0),
+  { message: "Query result columns and rows are inconsistent" },
+);
 
-// ── Parse CSV text ─────────────────────────────────────────────────────────
+const QueryErrorResponseSchema = z.object({ error: z.string().min(1) });
 function parseCSV(rawText: string): Array<ParsedRow> {
   // Strip UTF-8 BOM (\uFEFF) if present so Excel-exported files parse correctly.
   const text = rawText.startsWith("\uFEFF") ? rawText.slice(1) : rawText;
@@ -1175,6 +1182,7 @@ export default function UploadScreen() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadPending, setUploadPending] = useState(false);
   const [inventoryPage, setInventoryPage] = useState(1);
+  const [inventoryItems, setInventoryItems] = useState<Array<InventoryItem>>([]);
   const [binEditorItem, setBinEditorItem] = useState<InventoryItem | null>(null);
   const [shelfEntryOpen, setShelfEntryOpen] = useState(false);
   const [bulkShelfOpen, setBulkShelfOpen] = useState(false);
@@ -1208,6 +1216,7 @@ export default function UploadScreen() {
   const [queryError, setQueryError] = useState<string | null>(null);
   const [queryExportPending, setQueryExportPending] = useState<"csv" | "xlsx" | null>(null);
   const [queryHelpOpen, setQueryHelpOpen] = useState(false);
+  const queryContainsWriteKeyword = /\b(DELETE|DROP|TRUNCATE|UPDATE|INSERT|ALTER|CREATE|GRANT|REVOKE)\b/i.test(queryText);
 
   // User management tab state
   const [usersData, setUsersData] = useState<Array<import("@/utils/adminUserActions").UserRow>>([]);
@@ -1227,7 +1236,12 @@ export default function UploadScreen() {
   const [exportError, setExportError] = useState<string | null>(null);
 
   // Floor plan upload state (admin-only)
-  const [floorPlanFile, setFloorPlanFile] = useState<{ name: string; uri: string } | null>(null);
+  const [floorPlanFile, setFloorPlanFile] = useState<{
+    name: string;
+    uri: string;
+    size?: number;
+    mimeType?: string;
+  } | null>(null);
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
   const [floorPlanResult, setFloorPlanResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -1281,6 +1295,16 @@ export default function UploadScreen() {
   // Keep a ref so interval callbacks always see the current token
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+
+  useEffect(() => {
+    const pageItems = inventoryQuery.data?.items;
+    if (!pageItems) return;
+    setInventoryItems(previous => {
+      if (inventoryPage === 1) return pageItems;
+      const existingIds = new Set(previous.map(item => item.id));
+      return [...previous, ...pageItems.filter(item => !existingIds.has(item.id))];
+    });
+  }, [inventoryPage, inventoryQuery.data?.items]);
 
   // SSE reader refs — cancelled on unmount to prevent setState on unmounted component
   const enrichReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
@@ -2408,13 +2432,37 @@ export default function UploadScreen() {
 
   // ── Floor plan upload handlers ─────────────────────────────────────────────
   const handlePickFloorPlan = async () => {
-    const result = await DocumentPicker.getDocumentAsync({
-      type: ["image/svg+xml", "text/plain", "*/*"],
-      copyToCacheDirectory: true,
-    });
+    let result: DocumentPicker.DocumentPickerResult;
+    try {
+      result = await DocumentPicker.getDocumentAsync({
+        type: ["image/svg+xml", "text/plain", "*/*"],
+        copyToCacheDirectory: true,
+      });
+    } catch {
+      setFloorPlanResult({ success: false, message: "Could not open the file picker. Please try again." });
+      return;
+    }
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
-    setFloorPlanFile({ name: asset.name, uri: asset.uri });
+    const fileName = asset.name ?? "selected file";
+    const allowedMimeTypes = new Set(["image/svg+xml", "text/plain"]);
+    if (!/\.svg$/i.test(fileName) || Boolean(asset.mimeType && !allowedMimeTypes.has(asset.mimeType))) {
+      setFloorPlanResult({
+        success: false,
+        message: "Choose an SVG file with an .svg extension (maximum 10 MB).",
+      });
+      return;
+    }
+    if (asset.size !== undefined && asset.size > FLOOR_PLAN_MAX_BYTES) {
+      setFloorPlanResult({ success: false, message: "That SVG is too large. Choose a file smaller than 10 MB." });
+      return;
+    }
+    setFloorPlanFile({
+      name: fileName,
+      uri: asset.uri,
+      ...(asset.size !== undefined ? { size: asset.size } : {}),
+      ...(asset.mimeType !== undefined ? { mimeType: asset.mimeType } : {}),
+    });
     setFloorPlanResult(null);
   };
 
@@ -2423,7 +2471,18 @@ export default function UploadScreen() {
     setFloorPlanUploading(true);
     setFloorPlanResult(null);
     try {
-      const content = await fetch(floorPlanFile.uri).then(r => r.text());
+      const fileResponse = await fetch(floorPlanFile.uri);
+      if (!fileResponse.ok) throw new Error("file read failed");
+      const content = await fileResponse.text();
+      const contentBytes = new TextEncoder().encode(content).byteLength;
+      if (contentBytes > FLOOR_PLAN_MAX_BYTES) {
+        setFloorPlanResult({ success: false, message: "That SVG is too large. Choose a file smaller than 10 MB." });
+        return;
+      }
+      if (!/<svg(?:\s|>)/i.test(content) || !/<\/svg\s*>/i.test(content)) {
+        setFloorPlanResult({ success: false, message: "The selected file does not contain a complete SVG document." });
+        return;
+      }
       const token = adminTokenRef.current;
       if (!token) {
         setFloorPlanResult({ success: false, message: "Admin session expired — please lock and unlock again" });
@@ -2448,7 +2507,7 @@ export default function UploadScreen() {
     }
   };
 
-  const inventory = inventoryQuery.data?.items ?? [];
+  const inventory = inventoryItems;
   const inventoryTotal = inventoryQuery.data?.total ?? 0;
 
   const fetchUsers = async (): Promise<FetchAdminUsersResult> => {
@@ -3312,13 +3371,21 @@ export default function UploadScreen() {
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   Upload an updated warehouse floor plan (SVG). The app fetches the new plan on next launch — no app update required.
                 </Text>
-                <Pressable onPress={handlePickFloorPlan} style={[styles.pickBtn, { borderColor: colors.primary }]}>
+                <Pressable
+                  accessibilityLabel="Choose SVG floor plan file"
+                  accessibilityRole="button"
+                  onPress={handlePickFloorPlan}
+                  style={[styles.pickBtn, { borderColor: colors.primary }]}
+                >
                   <Text style={[styles.pickBtnText, { color: colors.primary }]}>
                     {floorPlanFile ? `📄 ${floorPlanFile.name}` : "Choose SVG File"}
                   </Text>
                 </Pressable>
                 {floorPlanFile ? (
                   <Pressable
+                    accessibilityLabel="Upload selected floor plan"
+                    accessibilityRole="button"
+                    accessibilityState={{ busy: floorPlanUploading }}
                     onPress={handleUploadFloorPlan}
                     disabled={floorPlanUploading}
                     style={[
@@ -4048,7 +4115,27 @@ export default function UploadScreen() {
                       {inventoryQuery.isLoading ? (
                         <View style={styles.loadingContainer}>
                           <ActivityIndicator size="large" color={colors.primary} />
-                          <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading inventory…</Text>
+                          <Text accessibilityLiveRegion="polite" style={[styles.loadingText, { color: colors.mutedForeground }]}>
+                            Loading inventory…
+                          </Text>
+                        </View>
+                      ) : inventoryQuery.isError ? (
+                        <View
+                          accessibilityLiveRegion="assertive"
+                          style={[styles.inventoryErrorBox, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}
+                        >
+                          <Text style={[styles.inventoryErrorTitle, { color: colors.destructive }]}>Inventory unavailable</Text>
+                          <Text style={[styles.inventoryErrorText, { color: colors.mutedForeground }]}>
+                            We could not load inventory items. Your read-only tools are still safe to use.
+                          </Text>
+                          <Pressable
+                            accessibilityLabel="Retry inventory"
+                            accessibilityRole="button"
+                            onPress={() => void inventoryQuery.refetch()}
+                            style={[styles.retryInventoryBtn, { borderColor: colors.destructive }]}
+                          >
+                            <Text style={[styles.retryInventoryText, { color: colors.destructive }]}>Retry</Text>
+                          </Pressable>
                         </View>
                       ) : (
                         <View style={styles.inventoryHeader}>
@@ -4093,6 +4180,8 @@ export default function UploadScreen() {
                           Run a read-only SELECT against the live database. INSERT, UPDATE, DELETE, and DDL are blocked. Results capped at 500 rows.
                         </Text>
                         <Pressable
+                           accessibilityLabel={queryHelpOpen ? "Hide query examples" : "Show query examples and table reference"}
+                           accessibilityRole="button"
                           onPress={() => setQueryHelpOpen(v => !v)}
                           style={[styles.queryHelpToggle, { borderColor: colors.border }]}
                         >
@@ -4159,16 +4248,16 @@ export default function UploadScreen() {
                           style={[styles.queryInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                           textAlignVertical="top"
                         />
-                        {/\b(DELETE|DROP|TRUNCATE|UPDATE|INSERT)\b/i.test(queryText) ? (
+                         {queryContainsWriteKeyword ? (
                           <View style={[styles.queryWriteWarning, { backgroundColor: "#f59e0b18", borderColor: "#f59e0b44" }]}>
                             <Text style={[styles.queryWriteWarningText, { color: "#b45309" }]}>
-                              ⚠ This query contains a write operation. Make sure you intend to modify data.
+                               ⚠ Write operations are blocked. Use a read-only SELECT query to run this tool.
                             </Text>
                           </View>
                         ) : null}
                         <Pressable
                           onPress={async () => {
-                            if (!adminToken || queryRunning) return;
+                             if (!adminToken || queryRunning || queryContainsWriteKeyword) return;
                             setQueryRunning(true);
                             setQueryError(null);
                             setQueryResult(null);
@@ -4183,22 +4272,35 @@ export default function UploadScreen() {
                                 setQueryError("Admin session expired. Please unlock again.");
                                 return;
                               }
-                              const qParsed = QueryResultSchema.safeParse(await res.json());
-                              if (!qParsed.success) { console.warn("[upload] query result unexpected shape:", qParsed.error.message); setQueryError("Unexpected response from server — query failed."); return; }
-                              const data = qParsed.data;
-                              if (!res.ok || data.error) {
-                                setQueryError(data.error ?? "Query failed");
+                               const body: unknown = await res.json();
+                               if (!res.ok) {
+                                 const errorParsed = QueryErrorResponseSchema.safeParse(body);
+                                 setQueryError(errorParsed.success ? errorParsed.data.error : `Query failed: HTTP ${res.status}`);
                                 return;
                               }
-                              setQueryResult({ columns: data.columns ?? [], rows: data.rows ?? [], rowCount: data.rowCount ?? 0 });
+                               const qParsed = QueryResultSchema.safeParse(body);
+                               if (!qParsed.success) {
+                                 console.warn("[upload] query result unexpected shape:", qParsed.error.message);
+                                 setQueryError("Results could not be displayed. Retry the query.");
+                                 return;
+                               }
+                               const data = qParsed.data;
+                               setQueryResult({
+                                 columns: data.columns,
+                                 rows: data.rows,
+                                 rowCount: data.rowCount,
+                               });
                             } catch {
                               setQueryError("Network error — could not reach the server.");
                             } finally {
                               setQueryRunning(false);
                             }
                           }}
-                          disabled={queryRunning || !queryText.trim()}
-                          style={[styles.queryRunBtn, { backgroundColor: (queryRunning || !queryText.trim()) ? colors.muted : colors.primary }]}
+                           accessibilityLabel="Run read-only query"
+                           accessibilityRole="button"
+                           accessibilityState={{ busy: queryRunning, disabled: queryRunning || !queryText.trim() || queryContainsWriteKeyword }}
+                           disabled={queryRunning || !queryText.trim() || queryContainsWriteKeyword}
+                           style={[styles.queryRunBtn, { backgroundColor: (queryRunning || !queryText.trim() || queryContainsWriteKeyword) ? colors.muted : colors.primary }]}
                         >
                           {queryRunning ? (
                             <ActivityIndicator color={colors.primaryForeground} />
@@ -4219,8 +4321,13 @@ export default function UploadScreen() {
                           ) : (
                             <View style={styles.queryResultsWrapper}>
                               <Text style={[styles.queryRowCount, { color: colors.mutedForeground }]}>
-                                {queryResult.rowCount} row{queryResult.rowCount !== 1 ? "s" : ""}
+                                 {queryResult.rowCount} row{queryResult.rowCount !== 1 ? "s" : ""} returned
                               </Text>
+                               {queryResult.rows.length > QUERY_DISPLAY_ROW_LIMIT ? (
+                                 <Text style={[styles.queryLimitNote, { color: colors.mutedForeground }]}>
+                                   Showing the first {QUERY_DISPLAY_ROW_LIMIT} rows for responsiveness. Exports include all {queryResult.rows.length} rows returned by the server.
+                                 </Text>
+                               ) : null}
                               <ScrollView horizontal showsHorizontalScrollIndicator>
                                 <View>
                                   <View style={[styles.queryHeaderRow, { backgroundColor: colors.muted }]}>
@@ -4230,7 +4337,7 @@ export default function UploadScreen() {
                                       </Text>
                                     ))}
                                   </View>
-                                  {queryResult.rows.map((row, ri) => (
+                                   {queryResult.rows.slice(0, QUERY_DISPLAY_ROW_LIMIT).map((row, ri) => (
                                     <View
                                       key={ri}
                                       style={[
@@ -4240,9 +4347,16 @@ export default function UploadScreen() {
                                     >
                                       {queryResult.columns.map(col => {
                                         const val = row[col];
-                                        const display = val === null || val === undefined ? "" : Array.isArray(val) ? val.join(", ") : String(val);
+                                         const { display, full } = formatQueryValue(val);
                                         return (
-                                          <Text key={col} style={[styles.queryDataCell, { color: colors.foreground, minWidth: 110 }]} numberOfLines={2}>
+                                           <Text
+                                             key={col}
+                                             accessibilityLabel={`${col}: ${full}`}
+                                             selectable
+                                             style={[styles.queryDataCell, { color: colors.foreground, minWidth: 110 }]}
+                                             numberOfLines={3}
+                                             ellipsizeMode="tail"
+                                           >
                                             {display}
                                           </Text>
                                         );
@@ -4253,6 +4367,9 @@ export default function UploadScreen() {
                               </ScrollView>
                               <View style={styles.queryExportRow}>
                                 <Pressable
+                                   accessibilityLabel="Download query results as CSV"
+                                   accessibilityRole="button"
+                                   accessibilityState={{ busy: queryExportPending === "csv", disabled: queryExportPending !== null }}
                                   onPress={() => handleQueryExport("csv")}
                                   disabled={queryExportPending !== null}
                                   style={[styles.queryExportBtn, { borderColor: colors.border, backgroundColor: queryExportPending === "csv" ? colors.muted : colors.card }]}
@@ -4264,6 +4381,9 @@ export default function UploadScreen() {
                                   )}
                                 </Pressable>
                                 <Pressable
+                                   accessibilityLabel="Download query results as Excel"
+                                   accessibilityRole="button"
+                                   accessibilityState={{ busy: queryExportPending === "xlsx", disabled: queryExportPending !== null }}
                                   onPress={() => handleQueryExport("xlsx")}
                                   disabled={queryExportPending !== null}
                                   style={[styles.queryExportBtn, { borderColor: colors.border, backgroundColor: queryExportPending === "xlsx" ? colors.muted : colors.card }]}
@@ -4282,14 +4402,16 @@ export default function UploadScreen() {
                     </View>
                   </View>
                 }
-                ListEmptyComponent={!inventoryQuery.isLoading ? (
+                ListEmptyComponent={!inventoryQuery.isLoading && !inventoryQuery.isError ? (
                   <View style={styles.emptyContainer}>
                     <Text style={styles.emptyEmoji}>📦</Text>
-                    <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
+                    <Text accessibilityRole="header" style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
                     <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
                       Upload a CSV or Excel file to add inventory items.
                     </Text>
                     <Pressable
+                      accessibilityLabel="Go to Import"
+                      accessibilityRole="button"
                       onPress={() => setActiveSection("import")}
                       style={[styles.goUploadBtn, { backgroundColor: colors.primary }]}
                     >
@@ -4300,10 +4422,16 @@ export default function UploadScreen() {
                 ListFooterComponent={() =>
                   inventoryQuery.data && inventoryPage * 50 < inventoryTotal ? (
                     <Pressable
+                      accessibilityLabel={`Load next inventory page, page ${inventoryPage + 1}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ busy: inventoryQuery.isFetching }}
+                      disabled={inventoryQuery.isFetching}
                       onPress={() => setInventoryPage(p => p + 1)}
                       style={[styles.loadMoreBtn, { borderColor: colors.border }]}
                     >
-                      <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load More</Text>
+                      <Text style={[styles.loadMoreText, { color: colors.primary }]}>
+                        {inventoryQuery.isFetching ? "Loading…" : "Load More"}
+                      </Text>
                     </Pressable>
                   ) : null
                 }
@@ -4787,6 +4915,11 @@ const styles = StyleSheet.create({
   inventoryHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
   inventoryCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   inventoryHeaderActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  inventoryErrorBox: { borderWidth: 1, borderRadius: 8, padding: 12, gap: 6, marginBottom: 10 },
+  inventoryErrorTitle: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  inventoryErrorText: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  retryInventoryBtn: { alignSelf: "flex-start", borderWidth: 1, borderRadius: 7, paddingHorizontal: 12, paddingVertical: 7, marginTop: 2 },
+  retryInventoryText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   exportCsvBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, borderWidth: 1, minWidth: 36, alignItems: "center", justifyContent: "center" },
   exportCsvText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   exportErrorBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, marginBottom: 10 },
@@ -4831,6 +4964,7 @@ const styles = StyleSheet.create({
   queryEmptyText: { fontSize: 13, fontFamily: "Inter_400Regular" },
   queryResultsWrapper: { gap: 8 },
   queryRowCount: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  queryLimitNote: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
   queryHeaderRow: { flexDirection: "row", paddingHorizontal: 8, paddingVertical: 8, borderRadius: 4 },
   queryHeaderCell: { fontSize: 11, fontFamily: "Inter_700Bold", letterSpacing: 0.3, paddingRight: 12 },
   queryDataRow: { flexDirection: "row", paddingHorizontal: 8, paddingVertical: 8, borderBottomWidth: 1 },
@@ -4882,3 +5016,32 @@ const styles = StyleSheet.create({
   shelfEntryTitle: { fontSize: 15, fontFamily: "Inter_700Bold", marginBottom: 2 },
   shelfEntryHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
 });
+
+function formatQueryValue(value: unknown): { display: string; full: string } {
+  if (value === null || value === undefined) return { display: "—", full: "No value" };
+  if (typeof value === "string") {
+    return {
+      display: value.length > 500 ? `${value.slice(0, 499)}…` : value,
+      full: value,
+    };
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    const full = String(value);
+    return { display: full, full };
+  }
+
+  let full: string;
+  try {
+    full = JSON.stringify(value) ?? String(value);
+  } catch {
+    full = String(value);
+  }
+  return {
+    display: full.length > 500 ? `${full.slice(0, 499)}…` : full,
+    full,
+  };
+}
+
+const FLOOR_PLAN_MAX_BYTES = 10 * 1024 * 1024;
+
+const QUERY_DISPLAY_ROW_LIMIT = 100;
