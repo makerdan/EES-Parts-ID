@@ -19,14 +19,18 @@ Evidence was collected from:
 - read-only GitHub API responses for `makerdan/EES-Parts-ID` on 2026-09-07:
   repository, workflow, run, job, branch-protection, and ruleset endpoints.
 
-The local checkout is at revision
-`b701d45e6587f65a285929c05e9339f7f73919fb`. A provider-side recheck on
-2026-09-08 requested that exact SHA and GitHub returned HTTP 422 for the commit
-lookup and zero workflow runs for `head_sha=b701d45...`. The provider's `main`
-ref still points to `a91289795b048e1fb6375fda78f5ff7cca65f83e`. Therefore the
+The follow-up target is the exact revision
+`b701d45e6587f65a285929c05e9339f7f73919fb`. The current workspace has since
+advanced to `fe84e34a5573077e4f3178af2ac2f0d3d9d85d9f`, so the target SHA must
+remain explicit rather than being inferred from the current checkout. A fresh
+provider-side recheck requested the target SHA and GitHub returned HTTP 422 for
+the commit lookup and zero workflow runs for
+`head_sha=b701d45e6587f65a285929c05e9339f7f73919fb`. The provider's `main` ref
+still points to `a91289795b048e1fb6375fda78f5ff7cca65f83e`. Therefore the
 remote results below are observations about the cited remote revision, not
-claims about the current local checkout; the exact-SHA post-merge confirmation
-remains pending until `b701d45...` is present on GitHub.
+claims about either the target or the current local checkout; the exact-SHA
+post-merge confirmation remains pending until `b701d45...` is present on
+GitHub.
 
 The GitHub API returned HTTP 200 for the workflow inventory (four workflows),
 the run inventory, and `main` branch protection. It returned HTTP 200 with zero
@@ -197,14 +201,14 @@ blocks completion of the post-merge confirmation.
 
 | Revision | Event and run | Job/attempt and condition | Result | Local counterpart |
 |---|---|---|---|---|
-| `b701d45e6587f65a285929c05e9339f7f73919fb` | provider commit lookup HTTP 422; workflow run query by exact `head_sha` returned zero runs | no run ID, job ID, or attempt exists to inspect | **not observed**; the merged revision is not present on GitHub | this checkout's `main` revision |
-| `a91289795b048e1fb6375fda78f5ff7cca65f83e` | push to `main`; `CI` run `#13`, run ID `33715076900` | `Portable validation`, job `100522441535`, attempt 1; step `Run the canonical standard-plus validation tier` (`pnpm run test-standard-plus`) | failed; `CI / required`, job `100522672766`, then failed closed at `Fail closed unless portable validation passed` | `pnpm run test-standard-plus`; aggregator has no local test command |
-| `a91289795b048e1fb6375fda78f5ff7cca65f83e` | push to `main`; `LiDAR Measure Tests` run `#11`, run ID `33715076909` | `Run LidarMeasureTests`, job `100522553259`, attempt 1; `Pod install` failed and `Run LidarMeasureTests` was skipped | failed before the native test command | Expo prebuild + `pod install` + `xcodebuild test` sequence in `artifacts/parts-id` |
-| `a91289795b048e1fb6375fda78f5ff7cca65f83e` | schedule `2026-09-08`; `Scheduled security audit` run `#45`, run ID `34227271068` | `Daily dependency audit (low+)`, job `102064354547`, attempt 1; `Audit dependencies (fail on low/moderate/high/critical)` | failed; fresh scheduled result, but not for the task SHA, so it cannot confirm the bounded two-advisory exception on `b701d45...` | `security-audit`: `pnpm audit --audit-level=low` |
-| `a91289795b048e1fb6375fda78f5ff7cca65f83e` | schedule `2026-09-07`; `Scheduled security audit` run `#44`, run ID `34130561665` | `Daily dependency audit (low+)`, job `101769396869`, attempt 1; `pnpm audit --audit-level=low` | failed | `security-audit`: `pnpm audit --audit-level=low` |
-| `a91289795b048e1fb6375fda78f5ff7cca65f83e` | schedule `2026-09-07`; `Sync README from replit.md` run `#10`, run ID `34127383358` | `Copy replit.md → README.md`, job `101759139278`, attempt 1; copy/branch maintenance steps completed | passed | no local validation counterpart; maintenance-only |
-| `c4f6284beaa690b03e4849cbd98c35966e4eb90c` | pull request; `CI` run `#16`, run ID `33840964946` | `Portable validation`, job `100922996328`, attempt 1; standard-plus step failed; aggregator job `100923816520` failed closed | failed | `pnpm run test-standard-plus` |
-| `c4f6284beaa690b03e4849cbd98c35966e4eb90c` | pull request; `LiDAR Measure Tests` run `#14`, run ID `33840964952` | `Run LidarMeasureTests`, job `100922996290`, attempt 1; `Pod install` failed and native test was skipped | failed | Expo/CocoaPods/xcodebuild sequence |
+| `b701d45e6587f65a285929c05e9339f7f73919fb` | [commit lookup](https://api.github.com/repos/makerdan/EES-Parts-ID/commits/b701d45e6587f65a285929c05e9339f7f73919fb) returned HTTP 422; [workflow run query](https://api.github.com/repos/makerdan/EES-Parts-ID/actions/runs?head_sha=b701d45e6587f65a285929c05e9339f7f73919fb&per_page=100) by exact `head_sha` returned zero runs | no run ID, job ID, or attempt exists to inspect | **not observed**; the merged revision is not present on GitHub | target revision; current local checkout is `fe84e34...` |
+| `a91289795b048e1fb6375fda78f5ff7cca65f83e` | push to `main`; [CI run #13](https://github.com/makerdan/EES-Parts-ID/actions/runs/33715076900), run ID `33715076900` | `Portable validation`, job `100522441535`, attempt 1; step `Run the canonical standard-plus validation tier` (`pnpm run test-standard-plus`) | failed; `CI / required`, job `100522672766`, then failed closed at `Fail closed unless portable validation passed` | `pnpm run test-standard-plus`; aggregator has no local test command |
+| `a91289795b048e1fb6375fda78f5ff7cca65f83e` | push to `main`; [LiDAR run #11](https://github.com/makerdan/EES-Parts-ID/actions/runs/33715076909), run ID `33715076909` | `Run LidarMeasureTests`, job `100522553259`, attempt 1; `Pod install` failed and `Run LidarMeasureTests` was skipped | failed before the native test command | Expo prebuild + `pod install` + `xcodebuild test` sequence in `artifacts/parts-id` |
+| `a91289795b048e1fb6375fda78f5ff7cca65f83e` | schedule `2026-09-08`; [Scheduled security audit run #45](https://github.com/makerdan/EES-Parts-ID/actions/runs/34227271068), run ID `34227271068` | `Daily dependency audit (low+)`, job `102064354547`, attempt 1; `Audit dependencies (fail on low/moderate/high/critical)` | failed; fresh scheduled result, but not for the task SHA, so it cannot confirm the bounded two-advisory exception on `b701d45...` | `security-audit`: `pnpm audit --audit-level=low` |
+| `a91289795b048e1fb6375fda78f5ff7cca65f83e` | schedule `2026-09-07`; [Scheduled security audit run #44](https://github.com/makerdan/EES-Parts-ID/actions/runs/34130561665), run ID `34130561665` | `Daily security audit (low+)`, job `101769396869`, attempt 1; `pnpm audit --audit-level=low` | failed | `security-audit`: `pnpm audit --audit-level=low` |
+| `a91289795b048e1fb6375fda78f5ff7cca65f83e` | schedule `2026-09-07`; [Sync README run #10](https://github.com/makerdan/EES-Parts-ID/actions/runs/34127383358), run ID `34127383358` | `Copy replit.md → README.md`, job `101759139278`, attempt 1; copy/branch maintenance steps completed | passed | no local validation counterpart; maintenance-only |
+| `c4f6284beaa690b03e4849cbd98c35966e4eb90c` | pull request; [CI run #16](https://github.com/makerdan/EES-Parts-ID/actions/runs/33840964946), run ID `33840964946` | `Portable validation`, job `100922996328`, attempt 1; standard-plus step failed; aggregator job `100923816520` failed closed | failed | `pnpm run test-standard-plus` |
+| `c4f6284beaa690b03e4849cbd98c35966e4eb90c` | pull request; [LiDAR run #14](https://github.com/makerdan/EES-Parts-ID/actions/runs/33840964952), run ID `33840964952` | `Run LidarMeasureTests`, job `100922996290`, attempt 1; `Pod install` failed and native test was skipped | failed | Expo/CocoaPods/xcodebuild sequence |
 
 The GitHub job API exposed the failed steps and results but not the underlying
 log lines: provider job-log requests returned HTTP 403 for the portable,
@@ -215,7 +219,7 @@ tracked workflow and local audit evidence: it covers only the two named
 `image-size` advisories. Neither conclusion is a fresh exact-SHA provider
 result.
 
-The local revision `b701d45e...` has no matching remote run evidence. A fresh
+The target revision `b701d45e...` has no matching remote run evidence. A fresh
 exact-SHA GitHub run must be captured after the revision is merged/pushed; no
 remote pass is claimed here. Current
 branch-policy evidence is available for `main`: the API returned required
@@ -259,8 +263,9 @@ workflow names, badges, or dated documents.
 
 ### Gaps and risks
 
-- There is no current GitHub run for local revision `b701d45...`; remote
-  evidence is revision-specific and currently describes only `a912897...`.
+- The fresh exact-SHA recheck still found no GitHub run for target revision
+  `b701d45...`; remote evidence is revision-specific and currently describes
+  only `a912897...` and the older pull-request revision.
 - The underlying log detail for the observed portable-tier, CocoaPods, and
   audit failures was not available through the inspected job response. Root
   causes remain unknown.
