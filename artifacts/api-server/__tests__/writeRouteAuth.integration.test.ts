@@ -52,16 +52,26 @@ import {
 // ── Setup ─────────────────────────────────────────────────────────────────────
 const ADMIN_TOKEN = ADMIN_TEST_USER_ID;
 const NON_ADMIN_USER = workerQualifiedUserId("jest-writeauth-user");
+const PENDING_USER = workerQualifiedUserId("jest-writeauth-pending");
+const BANNED_USER = workerQualifiedUserId("jest-writeauth-banned");
 
 beforeAll(async () => {
   // seedTestUser derives the email from the clerkUserId, so parallel suites
   // can never collide on users_email_unique, and re-seeding is an idempotent
   // upsert on clerk_user_id (safe when two workers race).
-  await seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" });
+  await Promise.all([
+    seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" }),
+    seedTestUser({ clerkUserId: PENDING_USER, status: "pending", role: "admin" }),
+    seedTestUser({ clerkUserId: BANNED_USER, status: "banned", role: "admin" }),
+  ]);
 });
 
 afterAll(async () => {
-  await cleanupTestUser(NON_ADMIN_USER);
+  await Promise.all([
+    cleanupTestUser(NON_ADMIN_USER),
+    cleanupTestUser(PENDING_USER),
+    cleanupTestUser(BANNED_USER),
+  ]);
 }, 15_000);
 
 describe("user fixture ownership", () => {
@@ -144,3 +154,37 @@ describeWriteGuard("PATCH /api/inventory/:id/keywords", (token) =>
     keywords: ["motor", "bearing"],
   }),
 );
+
+describe("PATCH /api/inventory/:id/description — auth guard", () => {
+  function send(token?: string): supertest.Test {
+    return withAuth(
+      supertest(app).patch("/api/inventory/1/description"),
+      token,
+    ).send({ description: "auth boundary coverage" });
+  }
+
+  it("unauthenticated → 401", async () => {
+    await send().expect(401);
+  });
+
+  it("approved non-admin → 403", async () => {
+    await send(NON_ADMIN_USER).expect(403);
+  });
+
+  it("pending → 403", async () => {
+    const res = await send(PENDING_USER).expect(403);
+    expect(res.body).toMatchObject({ code: "pending" });
+  });
+
+  it("banned → 403", async () => {
+    const res = await send(BANNED_USER).expect(403);
+    expect(res.body).toMatchObject({ code: "banned" });
+  });
+
+  it("approved admin passes authentication without an MFA_REQUIRED response", async () => {
+    const res = await send(ADMIN_TOKEN);
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(403);
+    expect(res.body.code).not.toBe("MFA_REQUIRED");
+  });
+});

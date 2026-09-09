@@ -104,26 +104,41 @@ export function getAdminClerkUserId(req: Request, res: Response): string {
   return appUser?.clerkUserId ?? getAuth(req)?.userId ?? "unknown";
 }
 
-export function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
+type AppUser = {
+  clerkUserId: string;
+  status?: string;
+  role?: string;
+};
+
+function logBootstrapAdminRequest(req: Request, res: Response, clerkUserId: string): void {
+  // Emit an audit-level warning for every request made under the bootstrap
+  // admin identity so these privileged actions are visible in deployment logs.
+  if (res.locals.isBootstrapAdmin) {
+    logger.warn({
+      bootstrapAdmin: true,
+      path: req.path,
+      method: req.method,
+      clerkUserId,
+      requestId: res.locals.requestId as string | undefined,
+    }, "Bootstrap admin request");
+  }
+}
+
+function requireApprovedAdmin(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  enforceMfa: boolean,
+): void {
   const appUser = res.locals.appUser as
-    | { clerkUserId: string; status?: string; role?: string }
+    | AppUser
     | undefined;
 
   if (appUser) {
     if (appUser.status === "approved" && appUser.role === "admin") {
-      // Emit an audit-level warning for every request made under the bootstrap
-      // admin identity so these privileged actions are visible in deployment logs.
-      if (res.locals.isBootstrapAdmin) {
-        logger.warn({
-          bootstrapAdmin: true,
-          path: req.path,
-          method: req.method,
-          clerkUserId: appUser.clerkUserId,
-          requestId: res.locals.requestId as string | undefined,
-        }, "Bootstrap admin request");
-      }
+      logBootstrapAdminRequest(req, res, appUser.clerkUserId);
 
-      if (rejectIfMfaMissing(req, res)) return;
+      if (enforceMfa && rejectIfMfaMissing(req, res)) return;
       next();
     } else {
       res.status(403).json({ error: "Admin access required" });
@@ -143,7 +158,8 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
 
   const adminClerkUserId = process.env.ADMIN_CLERK_USER_ID;
   if (adminClerkUserId && userId === adminClerkUserId) {
-    if (rejectIfMfaMissing(req, res)) return;
+    logBootstrapAdminRequest(req, res, userId);
+    if (enforceMfa && rejectIfMfaMissing(req, res)) return;
     next();
     return;
   }
@@ -157,7 +173,7 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
         .limit(1);
 
       if (rows[0]?.role === "admin" && rows[0]?.status === "approved") {
-        if (rejectIfMfaMissing(req, res)) return;
+        if (enforceMfa && rejectIfMfaMissing(req, res)) return;
         next();
       } else {
         res.status(403).json({ error: "Admin access required" });
@@ -166,4 +182,21 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
       res.status(500).json({ error: "Admin authorization check failed. Please try again." });
     }
   })();
+}
+
+/**
+ * Role/status-only admin guard for the narrowly scoped operations that must
+ * remain admin-only but are intentionally usable without an MFA claim.
+ *
+ * This shares the same approved-admin, bootstrap, fallback database, and audit
+ * checks as requireAdminAuth. Callers must opt into this exception explicitly;
+ * all other admin routes should continue using requireAdminAuth.
+ */
+export function requireApprovedAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  requireApprovedAdmin(req, res, next, false);
+}
+
+/** Admin guard for sensitive operations; MFA remains enabled by default. */
+export function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  requireApprovedAdmin(req, res, next, true);
 }

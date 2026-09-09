@@ -90,6 +90,7 @@ jest.mock("../middlewares/requireAppAuth", () => ({
 
 jest.mock("../middlewares/requireAdminAuth", () => ({
   requireAdminAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
+  requireApprovedAdminAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 // ── Answer cache mock ─────────────────────────────────────────────────────────

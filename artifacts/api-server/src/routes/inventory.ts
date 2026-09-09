@@ -52,7 +52,7 @@ import { callPoeBotWithChain, PoeBotChainExhaustedError,tryPoeBotChain } from ".
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/poeModelLimits";
 import { inventorySearchLimiter } from "../lib/rateLimiter";
 import { buildReverseVendorMap } from "../lib/vendorMap";
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import { requireAdminAuth, requireApprovedAdminAuth } from "../middlewares/requireAdminAuth";
 import { requireAppAuth } from "../middlewares/requireAppAuth";
 import {
   estimateImageBytes,
@@ -2636,7 +2636,7 @@ router.patch("/:id/size", requireAdminAuth, async (req, res) => {
 // ── PATCH /inventory/:id/description ─────────────────────────────────────────
 // Admin-only: update the free-text description on a single part. Lets admins
 // enrich a part's description after quick-add without re-uploading the sheet.
-router.patch("/:id/description", requireAdminAuth, async (req, res) => {
+router.patch("/:id/description", requireApprovedAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);
   try {
     const id = parseInt(String(req.params["id"] ?? "0"));

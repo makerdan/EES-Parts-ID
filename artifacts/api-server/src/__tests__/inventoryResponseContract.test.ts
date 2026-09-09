@@ -74,6 +74,7 @@ jest.mock("../middlewares/requireAppAuth", () => ({
 
 jest.mock("../middlewares/requireAdminAuth", () => ({
   requireAdminAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
+  requireApprovedAdminAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
@@ -254,7 +255,9 @@ describe("Inventory list and search route response contracts", () => {
         makeInventoryItemMissingOrderField(field) as Record<string, unknown>,
       ];
 
-      const response = await supertest(app).get("/api/inventory");
+      const response = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ keywords: "widget" });
 
       expect(response.status).toBe(500);
       expect(response.body).toEqual({ error: "Failed to list inventory" });

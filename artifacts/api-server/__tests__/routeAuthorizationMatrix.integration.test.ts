@@ -149,9 +149,13 @@ describe("route access matrix completeness", () => {
         declaration,
       ]),
     );
+    const adminGuardNames = ["requireAdminAuth", "requireApprovedAdminAuth"];
     const missingGuards = ROUTE_ACCESS_MATRIX
       .filter((entry) => entry.access === "admin-only")
-      .filter((entry) => !declarations.get(matrixKey(entry.method, entry.path))?.source.includes("requireAdminAuth"))
+      .filter((entry) => {
+        const source = declarations.get(matrixKey(entry.method, entry.path))?.source ?? "";
+        return !adminGuardNames.some((guardName) => source.includes(guardName));
+      })
       .map((entry) => `${entry.method} ${entry.path} — intended audience: ${entry.access}`);
 
     expect(missingGuards).toEqual([]);

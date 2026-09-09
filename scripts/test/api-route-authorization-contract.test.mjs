@@ -63,7 +63,7 @@ function routeDeclarationsForModule(source, mount) {
     );
     const path = normalizePath(`${mount}/${match[2]}`);
     declarations.set(matrixKey(match[1], path), {
-      guarded: /\brequireAdminAuth\b/.test(declarationLine),
+      guarded: /\brequire(?:Approved)?AdminAuth\b/.test(declarationLine),
     });
   }
 
@@ -96,5 +96,5 @@ if (missingGuards.length > 0) {
 }
 
 console.log(
-  `API route authorization contract: ${adminOnlyEntries.length} admin-only declarations require requireAdminAuth.`,
+  `API route authorization contract: ${adminOnlyEntries.length} admin-only declarations require an approved-admin guard.`,
 );

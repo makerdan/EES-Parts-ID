@@ -17,10 +17,11 @@ import { type NextFunction, type Request, type Response } from "express";
 // ── Mock @clerk/express before importing the middleware ────────────────────────
 // Override the global moduleNameMapper stub so we can inject sessionClaims.
 let mockSessionClaims: Record<string, unknown> | null = null;
+let mockUserId: string | null = "jest-mfa-admin-user";
 
 jest.mock("@clerk/express", () => ({
   getAuth: (_req: Request) => ({
-    userId: "jest-mfa-admin-user",
+    userId: mockUserId,
     sessionClaims: mockSessionClaims,
   }),
   clerkClient: { users: { getUser: jest.fn() } },
@@ -39,11 +40,15 @@ jest.mock("drizzle-orm", () => ({
   eq: jest.fn(),
 }));
 
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import { requireAdminAuth, requireApprovedAdminAuth } from "../middlewares/requireAdminAuth";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function buildMocks(role: "admin" | "user" | undefined = "admin") {
+function buildMocks(
+  role: "admin" | "user" | undefined = "admin",
+  accountStatus = "approved",
+  includeAppUser = true,
+) {
   const req = {
     path: "/test",
     method: "GET",
@@ -54,7 +59,9 @@ function buildMocks(role: "admin" | "user" | undefined = "admin") {
   const status = jest.fn().mockReturnValue({ json });
   const res = {
     locals: {
-      appUser: { clerkUserId: "jest-mfa-admin-user", status: "approved", role },
+      ...(includeAppUser
+        ? { appUser: { clerkUserId: "jest-mfa-admin-user", status: accountStatus, role } }
+        : {}),
       isBootstrapAdmin: false,
     },
     status,
@@ -85,6 +92,7 @@ describe("requireAdminAuth — MFA enforcement", () => {
       process.env.NODE_ENV = ORIGINAL_NODE_ENV;
     }
     mockSessionClaims = null;
+    mockUserId = "jest-mfa-admin-user";
   });
 
   it("(a) passes when admin session includes totp amr claim (MFA enforced by default)", () => {
@@ -190,5 +198,49 @@ describe("requireAdminAuth — MFA enforcement", () => {
     expect(responseBody.json).toHaveBeenCalledWith(
       expect.objectContaining({ error: "Admin access required" }),
     );
+  });
+
+  describe("requireApprovedAdminAuth — description-save exception", () => {
+    it("allows an approved admin without an MFA claim", () => {
+      mockSessionClaims = { amr: ["pwd"] };
+
+      const { req, res, next } = buildMocks("admin");
+      requireApprovedAdminAuth(req, res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["approved non-admin", "user", "approved"],
+      ["pending admin", "admin", "pending"],
+      ["banned admin", "admin", "banned"],
+    ] as const)("%s is rejected without MFA", (_label, role, status) => {
+      mockSessionClaims = { amr: ["pwd"] };
+
+      const { req, res, next } = buildMocks(role, status);
+      requireApprovedAdminAuth(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(403);
+      const responseBody = (res.status as jest.Mock).mock.results[0].value;
+      expect(responseBody.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: "Admin access required" }),
+      );
+    });
+
+    it("rejects an unauthenticated request before checking the database", () => {
+      mockUserId = null;
+
+      const { req, res, next } = buildMocks("admin", "approved", false);
+      requireApprovedAdminAuth(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(401);
+      const responseBody = (res.status as jest.Mock).mock.results[0].value;
+      expect(responseBody.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: "Authentication required" }),
+      );
+    });
   });
 });
