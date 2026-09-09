@@ -23,6 +23,7 @@
  * closed shared resource.
  */
 const testConnectionBudget = require("./test-connection-budget.cjs");
+const liveProviderOptIn = process.env.POE_LIVE_PROVIDER === "1";
 
 const sharedConfig = {
   preset: "ts-jest",
@@ -204,6 +205,7 @@ module.exports = {
       testMatch: ["**/__tests__/**/*.test.ts"],
       testPathIgnorePatterns: [
         "/node_modules/",
+        ...(!liveProviderOptIn ? ["/poeModelName\\.live\\.test\\.ts$"] : []),
         "/vendorPriority\\.integration\\.test\\.ts$",
         "/vendorNameResolutionMap\\.integration\\.test\\.ts$",
         "/floorPlanMapWorkflow\\.integration\\.test\\.ts$",

@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck.tsbuildinfo && tsc -p tsconfig.test.json --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck-test.tsbuildinfo",
     "test": "DATABASE_ENV=\"${DATABASE_ENV:-test}\" node ../../scripts/run-database-command.mjs test -- node ../../scripts/serial-lock.mjs -- node scripts/run-tests.mjs",
     "test:coverage": "DATABASE_ENV=\"${DATABASE_ENV:-test}\" node ../../scripts/run-database-command.mjs test -- node ../../scripts/serial-lock.mjs -- node scripts/run-tests.mjs --coverage",
+    "test:provider": "DATABASE_ENV=\"${DATABASE_ENV:-test}\" POE_LIVE_PROVIDER=1 node ../../scripts/run-database-command.mjs test -- node ../../scripts/serial-lock.mjs -- node scripts/run-tests.mjs --runTestsByPath __tests__/poeModelName.live.test.ts",
     "seed": "tsx src/seed/run.ts",
     "seed:reference": "tsx src/seed/runQuickLookupChips.ts",
     "seed:barcodes": "tsx src/seed/import-barcodes.ts",
