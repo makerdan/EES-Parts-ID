@@ -370,7 +370,7 @@ export function validatePoeFallbacks(
   if (normalized.includes(primary)) {
     return { ok: false, error: "The code-configured primary model cannot be a fallback" };
   }
-  if (_catalogue.models.length === 0) {
+  if (_catalogue.freshness !== "fresh" || _catalogue.models.length === 0) {
     return { ok: false, error: "Refresh the Poe catalogue before saving fallback models" };
   }
   const incompatible = normalized.find((model) => !modelIsCompatible(feature, model));

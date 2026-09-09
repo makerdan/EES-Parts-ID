@@ -174,20 +174,27 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
 function aiRoutesStatusResponse(
   fallbacks: string[] = [],
   provider: "poe" | "openai" = "poe",
+  freshness: "fresh" | "stale" | "unavailable" = "fresh",
+  models: Array<{
+    id: string;
+    name: string;
+    modalities: Array<string>;
+    capabilities: { text: boolean | null; vision: boolean | null; structuredOutput: boolean | null };
+  }> = [{
+    id: "fallback-bot",
+    name: "Fallback Bot",
+    modalities: ["text"],
+    capabilities: { text: true, vision: true, structuredOutput: true },
+  }],
 ): Response {
   return jsonResponse({
     provider,
     catalogue: {
-      freshness: "fresh",
-      models: [{
-        id: "fallback-bot",
-        name: "Fallback Bot",
-        modalities: ["text"],
-        capabilities: { text: true, vision: true, structuredOutput: true },
-      }],
+      freshness,
+      models,
       fetchedAt: "2026-09-05T00:00:00.000Z",
       lastSuccessAt: "2026-09-05T00:00:00.000Z",
-      error: null,
+      error: freshness === "fresh" ? null : "Poe catalogue is not freshly verified",
     },
     bots: { [FIRST_BOT]: "ok" },
     routes: [{ feature: "enrich", primary: "Primary Bot", fallbacks }],
@@ -1018,6 +1025,55 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     expect(callsFor("/admin/ai-status")).toHaveLength(1);
   });
 
+  it("ignores a late provider save after the administrator token is replaced", async () => {
+    let resolvePendingSave!: (response: Response) => void;
+    providerResponses = [
+      new Promise<Response>((resolve) => {
+        resolvePendingSave = resolve;
+      }),
+    ];
+    statusResponses = [
+      aiRoutesStatusResponse(),
+      aiRoutesStatusResponse([], "openai"),
+    ];
+    const app = makeAppMock();
+
+    const rendered = await renderAdminUpload(app);
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const openAiButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Use OpenAI AI provider",
+    );
+    await act(async () => { fireEvent.press(openAiButton!); });
+    await flushPromises();
+
+    const saveCall = callsFor("/admin/ai-provider")[0];
+    expect(saveCall?.init?.signal?.aborted).toBe(false);
+
+    app.adminToken = "new-admin-token";
+    await rendered.tree.rerender(
+      <ApiHealthProvider>
+        <UploadScreen />
+      </ApiHealthProvider>,
+    );
+    await flushPromises();
+
+    expect(saveCall?.init?.signal?.aborted).toBe(true);
+    expect(instText(rendered.tree.root!)).toContain("Active provider: openai");
+
+    resolvePendingSave(jsonResponse({ provider: "openai", persisted: true }));
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).not.toContain("will survive an API restart");
+    expect(instText(rendered.tree.root!)).not.toContain("Provider choice saved");
+  });
+
   it("aborts and ignores a provider save when the screen unmounts", async () => {
     let resolvePendingSave!: (response: Response) => void;
     providerResponses = [
@@ -1095,5 +1151,116 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     expect(instText(rendered.tree.root!)).toContain("Fallback Bot");
     expect(instText(rendered.tree.root!)).not.toContain("Partial Model");
     expect(callsFor("/admin/ai-status/catalogue/refresh")).toHaveLength(2);
+  });
+
+  it("preserves the safe route order and explains a rejected fallback save", async () => {
+    statusResponses = [aiRoutesStatusResponse(["Fallback Bot"])];
+    routeMutationResponses = [
+      jsonResponse({ error: "Text Only is unavailable or lacks the capabilities required by identify" }, false, 400),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const removeButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Remove Fallback Bot fallback",
+    );
+    expect(removeButton).not.toBeNull();
+    await act(async () => { fireEvent.press(removeButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("1. Fallback Bot");
+    expect(instText(rendered.tree.root!)).toContain("Text Only is unavailable");
+  });
+
+  it("preserves the safe route order and explains a rejected fallback reset", async () => {
+    statusResponses = [aiRoutesStatusResponse(["Fallback Bot"])];
+    routeMutationResponses = [
+      jsonResponse({ error: "Fallback choices could not be reset; the previous routes remain active" }, false, 503),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const resetButton = findPressableByAccessibilityLabel(rendered.tree.root!, "Reset fallbacks");
+    expect(resetButton).not.toBeNull();
+    await act(async () => { fireEvent.press(resetButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("1. Fallback Bot");
+    expect(instText(rendered.tree.root!)).toContain("Fallback choices could not be reset");
+  });
+
+  it("keeps stale catalogue routes visible but read-only until refresh succeeds", async () => {
+    statusResponses = [aiRoutesStatusResponse(["Fallback Bot"], "poe", "stale")];
+    catalogueRefreshResponses = [
+      jsonResponse({
+        ...aiRoutesStatusResponse(["Late Fallback Bot"], "poe", "unavailable"),
+        catalogue: {
+          freshness: "unavailable",
+          models: [{ id: "partial-model", name: "Partial Model", modalities: ["text"], capabilities: { text: true, vision: true, structuredOutput: true } }],
+          fetchedAt: null,
+          lastSuccessAt: null,
+          error: "catalogue service unavailable",
+        },
+      }, false, 503),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("Fallbacks are read-only");
+    expect(instText(rendered.tree.root!)).toContain("1. Fallback Bot");
+
+    const resetButton = findPressableByAccessibilityLabel(rendered.tree.root!, "Reset fallbacks");
+    expect(resetButton?.props.disabled).toBe(true);
+
+    const refreshButton = findPressable(rendered.tree.root!, "Refresh models");
+    await act(async () => { fireEvent.press(refreshButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("catalogue service unavailable");
+    expect(instText(rendered.tree.root!)).toContain("1. Fallback Bot");
+    expect(instText(rendered.tree.root!)).not.toContain("Partial Model");
+  });
+
+  it("does not offer a fallback model whose required capability is unknown or false", async () => {
+    statusResponses = [aiRoutesStatusResponse(
+      [],
+      "poe",
+      "fresh",
+      [{
+        id: "text-only",
+        name: "Text Only",
+        modalities: ["text"],
+        capabilities: { text: true, vision: true, structuredOutput: false },
+      }],
+    )];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).not.toContain("+ Add Text Only");
   });
 });

@@ -40,6 +40,7 @@ jest.mock("openai", () => {
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
+import { db } from "@workspace/db";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { getAllPoeModelNames } from "../src/lib/aiProvider";
@@ -170,5 +171,47 @@ describe("POST /api/admin/ai-status/probe/:botName", () => {
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({ model: firstBot }),
     );
+  });
+});
+
+describe("Admin AI fallback mutation contracts", () => {
+  it("rejects malformed fallback updates without changing route state", async () => {
+    const res = await supertest(app)
+      .put("/api/admin/ai-status/routes")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ feature: "identify", fallbacks: [""] })
+      .expect(400);
+
+    expect(res.body).toEqual({ error: "fallbacks must be an array of model names" });
+  });
+
+  it("rejects unknown reset features with a bounded error", async () => {
+    const res = await supertest(app)
+      .post("/api/admin/ai-status/routes/reset")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ feature: "unknown" })
+      .expect(400);
+
+    expect(res.body).toEqual({ error: "Unknown Poe feature" });
+  });
+
+  it("keeps fallback state unchanged when reset persistence is rejected", async () => {
+    const insertSpy = jest.spyOn(db, "insert").mockImplementationOnce(() => {
+      throw new Error("database unavailable");
+    });
+
+    try {
+      const res = await supertest(app)
+        .post("/api/admin/ai-status/routes/reset")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({})
+        .expect(503);
+
+      expect(res.body).toEqual({
+        error: "Fallback choices could not be reset; the previous routes remain active",
+      });
+    } finally {
+      insertSpy.mockRestore();
+    }
   });
 });

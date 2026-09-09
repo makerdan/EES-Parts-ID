@@ -172,6 +172,16 @@ function isAiStatusPayload(value: unknown): value is AiStatusPayload {
   );
 }
 
+function getAiMutationError(data: unknown, status: number, fallback: string): string {
+  if (data && typeof data === "object") {
+    const error = (data as { error?: unknown }).error;
+    if (typeof error === "string" && error.trim()) return error;
+    const catalogueError = (data as { catalogue?: { error?: unknown } }).catalogue?.error;
+    if (typeof catalogueError === "string" && catalogueError.trim()) return catalogueError;
+  }
+  return status ? `${fallback} (HTTP ${status})` : fallback;
+}
+
 const SQL_EXAMPLES: Array<{ label: string; group: string; sql: string }> = [
   {
     group: "Browse",
@@ -997,9 +1007,7 @@ export default function UploadScreen() {
         controller.signal.aborted
       ) return;
       if (!res.ok) {
-        const error = data && typeof data === "object" && "catalogue" in data &&
-          (data as { catalogue?: { error?: unknown } }).catalogue?.error;
-        throw new Error(error ? String(error) : `HTTP ${res.status}`);
+        throw new Error(getAiMutationError(data, res.status, "Catalogue refresh failed"));
       }
       if (!isAiStatusPayload(data)) {
         throw new Error("The API returned an incomplete catalogue status snapshot");
@@ -1055,7 +1063,10 @@ export default function UploadScreen() {
         generation !== aiRoutesGenerationRef.current ||
         controller.signal.aborted
       ) return;
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(getAiMutationError(data, res.status, "Fallback choices could not be saved"));
+      if (!isAiStatusPayload(data)) {
+        throw new Error("The API returned an incomplete fallback status snapshot");
+      }
       setAiStatus(data.catalogue ? data : null);
       setAiStatusBots(data.bots ?? {});
       if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
@@ -1107,7 +1118,10 @@ export default function UploadScreen() {
         generation !== aiRoutesGenerationRef.current ||
         controller.signal.aborted
       ) return;
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(getAiMutationError(data, res.status, "Fallback choices could not be reset"));
+      if (!isAiStatusPayload(data)) {
+        throw new Error("The API returned an incomplete fallback status snapshot");
+      }
       setAiStatus(data);
       setAiStatusBots(data.bots ?? {});
     } catch (err) {
@@ -4116,8 +4130,6 @@ export default function UploadScreen() {
                 </View>
                 {aiStatusLoading && Object.keys(aiStatusBots).length === 0 ? (
                   <ActivityIndicator size="small" color={colors.primary} style={{ alignSelf: "flex-start" }} />
-                ) : aiStatusError ? (
-                  <Text style={[styles.aiStatusError, { color: colors.destructive }]}>⚠ {aiStatusError}</Text>
                 ) : Object.keys(aiStatusBots).length === 0 ? (
                   <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                     No probe results yet. Tap "Re-run probe" to check bot health.
@@ -4143,6 +4155,14 @@ export default function UploadScreen() {
                     })}
                   </View>
                 )}
+                {aiStatusError ? (
+                  <Text
+                    accessibilityRole="alert"
+                    style={[styles.aiStatusError, { color: colors.destructive }]}
+                  >
+                    ⚠ {aiStatusError}
+                  </Text>
+                ) : null}
                 {aiStatus ? (
                   <>
                     <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>
@@ -4217,10 +4237,19 @@ export default function UploadScreen() {
                     <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                       Primaries are code-owned. Only catalogue models with the required capabilities can be selected as fallbacks.
                     </Text>
+                    {aiStatus.catalogue.freshness !== "fresh" ? (
+                      <Text
+                        accessibilityRole="alert"
+                        style={[styles.aiStatusMeta, { color: colors.warning }]}
+                      >
+                        Fallbacks are read-only until a fresh Poe catalogue is available. Refresh models before changing the safe route order.
+                      </Text>
+                    ) : null}
                     {aiStatus.routes.map((route) => {
                       const eligible = aiStatus.catalogue.models.filter((model) => {
-                        if (route.feature !== "enrich" && model.capabilities.vision === false) return false;
-                        if (model.capabilities.text === false || model.capabilities.structuredOutput === false) return false;
+                        if (aiStatus.catalogue.freshness !== "fresh") return false;
+                        if (route.feature !== "enrich" && model.capabilities.vision !== true) return false;
+                        if (model.capabilities.text !== true || model.capabilities.structuredOutput !== true) return false;
                         return !route.fallbacks.includes(model.name) && model.name !== route.primary;
                       });
                       const update = (fallbacks: Array<string>) => {
@@ -4240,7 +4269,10 @@ export default function UploadScreen() {
                             <View key={model} style={styles.aiFallbackRow}>
                               <Text style={[styles.aiFallbackText, { color: colors.foreground }]}>{index + 1}. {model}</Text>
                               <View style={styles.aiFallbackActions}>
-                                <Pressable disabled={index === 0 || aiRoutesSaving} onPress={() => {
+                                <Pressable
+                                  disabled={index === 0 || aiRoutesSaving || aiStatus.catalogue.freshness !== "fresh"}
+                                  accessibilityLabel={`Move ${model} fallback up`}
+                                  onPress={() => {
                                   const next = [...route.fallbacks];
                                   const current = next[index];
                                   const previous = next[index - 1];
@@ -4248,8 +4280,12 @@ export default function UploadScreen() {
                                   next[index - 1] = current;
                                   next[index] = previous;
                                   update(next);
-                                }}><Text style={[styles.aiRouteAction, { color: index === 0 ? colors.muted : colors.primary }]}>↑</Text></Pressable>
-                                <Pressable disabled={index === route.fallbacks.length - 1 || aiRoutesSaving} onPress={() => {
+                                }}
+                                ><Text style={[styles.aiRouteAction, { color: index === 0 ? colors.muted : colors.primary }]}>↑</Text></Pressable>
+                                <Pressable
+                                  disabled={index === route.fallbacks.length - 1 || aiRoutesSaving || aiStatus.catalogue.freshness !== "fresh"}
+                                  accessibilityLabel={`Move ${model} fallback down`}
+                                  onPress={() => {
                                   const next = [...route.fallbacks];
                                   const current = next[index];
                                   const following = next[index + 1];
@@ -4257,15 +4293,24 @@ export default function UploadScreen() {
                                   next[index] = following;
                                   next[index + 1] = current;
                                   update(next);
-                                }}><Text style={[styles.aiRouteAction, { color: index === route.fallbacks.length - 1 ? colors.muted : colors.primary }]}>↓</Text></Pressable>
-                                <Pressable disabled={aiRoutesSaving} onPress={() => update(route.fallbacks.filter((item) => item !== model))}>
+                                }}
+                                ><Text style={[styles.aiRouteAction, { color: index === route.fallbacks.length - 1 ? colors.muted : colors.primary }]}>↓</Text></Pressable>
+                                <Pressable
+                                  disabled={aiRoutesSaving || aiStatus.catalogue.freshness !== "fresh"}
+                                  accessibilityLabel={`Remove ${model} fallback`}
+                                  onPress={() => update(route.fallbacks.filter((item) => item !== model))}
+                                >
                                   <Text style={[styles.aiRouteAction, { color: colors.destructive }]}>×</Text>
                                 </Pressable>
                               </View>
                             </View>
                           ))}
                           {eligible[0] ? (
-                            <Pressable disabled={aiRoutesSaving} onPress={() => update([...route.fallbacks, eligible[0]!.name])}>
+                            <Pressable
+                              disabled={aiRoutesSaving || aiStatus.catalogue.freshness !== "fresh"}
+                              accessibilityLabel={`Add ${eligible[0]!.name} fallback`}
+                              onPress={() => update([...route.fallbacks, eligible[0]!.name])}
+                            >
                               <Text style={[styles.aiAddFallback, { color: colors.primary }]}>+ Add {eligible[0]!.name}</Text>
                             </Pressable>
                           ) : null}
@@ -4276,7 +4321,11 @@ export default function UploadScreen() {
                       <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>
                         Reference assistant: Gemini (read-only)
                       </Text>
-                      <Pressable disabled={aiRoutesSaving} onPress={resetAiRoutes}>
+                      <Pressable
+                        disabled={aiRoutesSaving || aiStatus.catalogue.freshness !== "fresh"}
+                        accessibilityLabel="Reset fallbacks"
+                        onPress={resetAiRoutes}
+                      >
                         <Text style={[styles.aiAddFallback, { color: colors.primary }]}>
                           {aiRoutesSaving ? "Saving…" : "Reset fallbacks"}
                         </Text>
