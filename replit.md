@@ -277,6 +277,12 @@ command. `scripts/free-dev-ports.mjs` sweeps only those explicitly registered
 ports, sequentially, and refuses to report success while a protected holder is
 still bound. It never scans or kills unregistered ports.
 
+The native Parts ID fallback on port `8080` is an intentional compatibility
+exception: `artifacts/parts-id/utils/devPorts.ts` still targets it when native
+development bypasses the Expo workflow. The retired mappings `8082`, `8083`,
+`22660`, and `22661` have no current workflow or artifact consumer and are not
+registered for cleanup.
+
 The port cleaner protects the caller's process tree, terminates only socket
 owners discovered through `/proc`, escalates from SIGTERM to SIGKILL with
 diagnostics, and confirms each port is free. Production/deployment paths do not

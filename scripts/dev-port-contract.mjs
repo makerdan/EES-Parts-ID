@@ -13,9 +13,29 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const REGISTRY_PATH = resolve(ROOT, "scripts", "dev-ports.json");
 export const REPLIT_PATH = resolve(ROOT, ".replit");
+const ARTIFACT_MANIFESTS = {
+  expo: ["parts-id", "Expo"],
+  api: ["api-server", "API Server"],
+  canvas: ["mockup-sandbox", "Component Preview Server"],
+};
+
+function artifactRoot() {
+  return process.env.PORT_CONTRACT_ARTIFACT_ROOT
+    ? resolve(process.env.PORT_CONTRACT_ARTIFACT_ROOT)
+    : resolve(ROOT, "artifacts");
+}
 
 export function readPortRegistry() {
   return JSON.parse(readFileSync(REGISTRY_PATH, "utf8"));
+}
+
+export function readArtifactManifests(root = artifactRoot()) {
+  return Object.fromEntries(
+    Object.entries(ARTIFACT_MANIFESTS).map(([key, [directory]]) => [
+      key,
+      readFileSync(resolve(root, directory, ".replit-artifact", "artifact.toml"), "utf8"),
+    ]),
+  );
 }
 
 export function isValidPort(value) {
@@ -29,6 +49,7 @@ export function getCleanupPorts(registry = readPortRegistry()) {
 export function assertPortContract({
   registry = readPortRegistry(),
   replit = readFileSync(REPLIT_PATH, "utf8"),
+  artifactManifests = readArtifactManifests(),
 } = {}) {
   const errors = [];
   const workflowPorts = registry.workflowPorts;
@@ -95,6 +116,46 @@ export function assertPortContract({
   }
   for (const port of actualCleanup) {
     if (!expectedCleanup.has(port)) errors.push(`cleanupPorts contains unregistered port ${port}`);
+  }
+
+  for (const [key, [, label]] of Object.entries(ARTIFACT_MANIFESTS)) {
+    const manifest = artifactManifests?.[key];
+    const expected = workflowPorts?.[key];
+    if (typeof manifest !== "string") {
+      errors.push(`artifact manifest missing for ${key}`);
+      continue;
+    }
+    if (!isValidPort(expected)) {
+      errors.push(`artifact manifest ${key} cannot be checked without workflowPorts.${key}`);
+      continue;
+    }
+
+    const localPorts = [...manifest.matchAll(/^\s*localPort\s*=\s*(\d+)\s*$/gm)].map((match) =>
+      Number(match[1]),
+    );
+    if (localPorts.length !== 1) {
+      errors.push(
+        `${label} artifact manifest must declare exactly one localPort (found ${localPorts.length})`,
+      );
+    } else if (localPorts[0] !== expected) {
+      errors.push(
+        `${label} artifact manifest localPort drift: expected ${expected}, found ${localPorts[0]}`,
+      );
+    }
+
+    const envPorts = [...manifest.matchAll(/^\s*PORT\s*=\s*"(\d+)"\s*$/gm)].map((match) =>
+      Number(match[1]),
+    );
+    if (envPorts.length === 0) {
+      errors.push(`${label} artifact manifest must declare a PORT environment value`);
+    }
+    for (const port of envPorts) {
+      if (port !== expected) {
+        errors.push(
+          `${label} artifact manifest PORT drift: expected ${expected}, found ${port}`,
+        );
+      }
+    }
   }
 
   const workflowBlocks = replit.split("[[workflows.workflow]]").slice(1);

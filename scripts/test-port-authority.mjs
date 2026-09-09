@@ -6,6 +6,7 @@
  */
 import {
   existsSync,
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -20,6 +21,7 @@ import { spawn } from "node:child_process";
 const ROOT = resolve(import.meta.dirname, "..");
 const SERIAL_LOCK = join(ROOT, "scripts", "serial-lock.mjs");
 const FREE_PORTS = join(ROOT, "scripts", "free-ports.mjs");
+const PORT_CHECK = join(ROOT, "scripts", "check-hardcoded-ports.sh");
 const SLEEP_CODE = "setTimeout(() => process.exit(0), Number(process.argv[1]))";
 const MARK_CODE =
   "require('node:fs').appendFileSync(process.argv[1], process.argv[2] + '\\n')";
@@ -361,6 +363,30 @@ await test("port cleanup refuses to claim a protected active caller is cleared",
     if (server.exitCode === null) server.kill("SIGTERM");
     await new Promise((resolveServer) => server.once("close", resolveServer));
   }
+});
+
+await test("fast port check rejects artifact manifest drift", async () => {
+  const fixtureRoot = join(testRoot, "manifest-drift-fixture");
+  for (const artifact of ["parts-id", "api-server", "mockup-sandbox"]) {
+    const source = join(ROOT, "artifacts", artifact, ".replit-artifact", "artifact.toml");
+    const target = join(fixtureRoot, artifact, ".replit-artifact", "artifact.toml");
+    mkdirSync(resolve(target, ".."), { recursive: true });
+    copyFileSync(source, target);
+  }
+
+  const apiManifest = join(fixtureRoot, "api-server", ".replit-artifact", "artifact.toml");
+  writeFileSync(apiManifest, readFileSync(apiManifest, "utf8").replace("localPort = 3001", "localPort = 3999"));
+
+  const result = await runProcess(
+    "bash",
+    [PORT_CHECK],
+    { ...process.env, PORT_CONTRACT_ARTIFACT_ROOT: fixtureRoot },
+  );
+  assert(result.code === 1, `drift fixture exited ${result.code}: ${result.output}`);
+  assert(
+    result.output.includes("API Server artifact manifest localPort drift: expected 3001, found 3999"),
+    `missing actionable manifest drift diagnostic: ${result.output}`,
+  );
 });
 
 rmSync(testRoot, { recursive: true, force: true });
