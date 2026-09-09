@@ -47,6 +47,7 @@ import { secondaryBtnBase } from "@/styles/shared";
 import {
   deleteAdminUser,
   fetchAdminUsers,
+  type FetchAdminUsersResult,
   handleUserAction as runUserAction,
 } from "@/utils/adminUserActions";
 import { API_BASE } from "@/utils/apiBase";
@@ -1212,6 +1213,8 @@ export default function UploadScreen() {
   const [usersData, setUsersData] = useState<Array<import("@/utils/adminUserActions").UserRow>>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
+  const [usersLastUpdatedAt, setUsersLastUpdatedAt] = useState<number | null>(null);
+  const [usersFilter, setUsersFilter] = useState("");
   const [userActionPending, setUserActionPending] = useState<string | null>(null);
   const [userSectionsExpanded, setUserSectionsExpanded] = useState<Record<string, boolean>>({
     admins: true,
@@ -2448,9 +2451,18 @@ export default function UploadScreen() {
   const inventory = inventoryQuery.data?.items ?? [];
   const inventoryTotal = inventoryQuery.data?.total ?? 0;
 
-  const fetchUsers = async () => {
-    if (!adminToken) return;
-    await fetchAdminUsers({ apiBase: API_BASE, adminToken, setUsersLoading, setUsersError, setUsersData });
+  const fetchUsers = async (): Promise<FetchAdminUsersResult> => {
+    if (!adminToken) return { ok: false, error: "Admin session unavailable" };
+    const result = await fetchAdminUsers({
+      apiBase: API_BASE,
+      adminToken,
+      setUsersLoading,
+      setUsersError,
+      setUsersData,
+    });
+    if (!result) return { ok: true };
+    if (result.ok) setUsersLastUpdatedAt(Date.now());
+    return result;
   };
 
   const handleUserAction = async (
@@ -4339,31 +4351,111 @@ export default function UploadScreen() {
                   <Pressable
                     onPress={fetchUsers}
                     disabled={usersLoading}
+                    accessibilityRole="button"
+                    accessibilityLabel={usersError && usersData.length > 0 ? "Retry loading users" : "Refresh users"}
                     style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}
                   >
                     <Text style={{ fontSize: 12, color: colors.primary, fontFamily: "Inter_600SemiBold" }}>
-                      {usersLoading ? "Loading…" : "Refresh"}
+                      {usersLoading ? "Loading…" : usersError && usersData.length > 0 ? "Retry" : "Refresh"}
                     </Text>
                   </Pressable>
                 </View>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   Approve, ban, and manage admin access for users who have signed up via the app.
                 </Text>
-                {usersError ? (
-                  <View style={{ backgroundColor: colors.destructive + "15", borderRadius: 8, padding: 12, marginTop: 8 }}>
-                    <Text style={{ color: colors.destructive, fontFamily: "Inter_400Regular", fontSize: 13 }}>⚠ {usersError}</Text>
+                <TextInput
+                  value={usersFilter}
+                  onChangeText={setUsersFilter}
+                  placeholder="Filter by email or user ID"
+                  placeholderTextColor={colors.mutedForeground}
+                  accessibilityLabel="Filter people by email or user ID"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    borderRadius: 8,
+                    color: colors.foreground,
+                    paddingHorizontal: 10,
+                    paddingVertical: 8,
+                    marginTop: 10,
+                    fontSize: 13,
+                  }}
+                />
+                {usersError && usersData.length > 0 ? (
+                  <View
+                    accessibilityRole="alert"
+                    style={{ backgroundColor: colors.destructive + "15", borderRadius: 8, padding: 12, marginTop: 8 }}
+                  >
+                    <Text style={{ color: colors.destructive, fontFamily: "Inter_400Regular", fontSize: 13 }}>
+                      ⚠ Refresh failed — showing the last known list from{" "}
+                      {usersLastUpdatedAt ? new Date(usersLastUpdatedAt).toLocaleTimeString() : "an earlier refresh"}.{" "}
+                      {usersError}
+                    </Text>
+                    <Pressable
+                      onPress={fetchUsers}
+                      disabled={usersLoading}
+                      accessibilityRole="button"
+                      accessibilityLabel="Retry loading the last known user list"
+                      style={{ alignSelf: "flex-start", marginTop: 8, paddingVertical: 4 }}
+                    >
+                      <Text style={{ color: colors.primary, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>
+                        Retry
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+                {usersError && usersData.length === 0 ? (
+                  <View
+                    accessibilityRole="alert"
+                    style={{ backgroundColor: colors.destructive + "15", borderRadius: 8, padding: 12, marginTop: 8 }}
+                  >
+                    <Text style={{ color: colors.destructive, fontFamily: "Inter_400Regular", fontSize: 13 }}>
+                      ⚠ Unable to load users. {usersError}
+                    </Text>
+                    <Pressable
+                      onPress={fetchUsers}
+                      disabled={usersLoading}
+                      accessibilityRole="button"
+                      accessibilityLabel="Retry loading users"
+                      style={{ alignSelf: "flex-start", marginTop: 8, paddingVertical: 4 }}
+                    >
+                      <Text style={{ color: colors.primary, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>
+                        Retry
+                      </Text>
+                    </Pressable>
                   </View>
                 ) : null}
                 {usersLoading && usersData.length === 0 ? (
                   <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 24 }} />
-                ) : usersData.length === 0 ? (
-                  <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 16, textAlign: "center" }}>
-                    No users yet. Tap Refresh to load.
-                  </Text>
                 ) : (() => {
-                  const adminUsers = usersData.filter((u) => u.role === "admin");
-                  const regularUsers = usersData.filter((u) => u.role !== "admin" && u.status !== "pending");
-                  const requestUsers = usersData.filter((u) => u.status === "pending");
+                  if (usersData.length === 0) {
+                    return (
+                      <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 16, textAlign: "center" }}>
+                        {usersLastUpdatedAt ? "No users found." : "No users yet. Tap Refresh to load."}
+                      </Text>
+                    );
+                  }
+                  const normalizedFilter = usersFilter.trim().toLowerCase();
+                  const visibleUsers = usersData.filter((user) => {
+                    if (!normalizedFilter) return true;
+                    return [
+                      user.email,
+                      user.clerkUserId,
+                      user.status,
+                      user.role ?? "user",
+                    ].some((value) => value.toLowerCase().includes(normalizedFilter));
+                  });
+                  const adminUsers = visibleUsers.filter((u) => u.role === "admin");
+                  const regularUsers = visibleUsers.filter((u) => u.role !== "admin" && u.status !== "pending");
+                  const requestUsers = visibleUsers.filter((u) => u.status === "pending");
+                  if (visibleUsers.length === 0) {
+                    return (
+                      <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 16, textAlign: "center" }}>
+                        No users match “{usersFilter.trim()}”.
+                      </Text>
+                    );
+                  }
 
                   const renderUserCard = (user: import("@/utils/adminUserActions").UserRow) => {
                     const isSelf = user.clerkUserId === currentClerkUserId;
@@ -4388,7 +4480,12 @@ export default function UploadScreen() {
                         }}
                       >
                         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                          <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: colors.foreground, flex: 1 }}>
+                        <Text
+                          accessibilityLabel={`User email ${user.email || "not provided"}`}
+                          numberOfLines={1}
+                          ellipsizeMode="middle"
+                          style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: colors.foreground, flex: 1 }}
+                        >
                             {user.email || "(no email)"}
                           </Text>
                           {isSelf ? (
@@ -4397,7 +4494,12 @@ export default function UploadScreen() {
                             </View>
                           ) : null}
                         </View>
-                        <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: colors.mutedForeground }}>
+                        <Text
+                          accessibilityLabel={`User ID ${user.clerkUserId}`}
+                          numberOfLines={1}
+                          ellipsizeMode="middle"
+                          style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: colors.mutedForeground }}
+                        >
                           ID: {user.clerkUserId}
                         </Text>
                         <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
@@ -4423,6 +4525,8 @@ export default function UploadScreen() {
                                 <Pressable
                                   onPress={() => handleUserAction(user.clerkUserId, "approve")}
                                   disabled={!!userActionPending}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Approve ${user.email || user.clerkUserId}`}
                                   style={{
                                     flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
                                     backgroundColor: "#10b98115", borderWidth: 1, borderColor: "#10b98144",
@@ -4440,6 +4544,8 @@ export default function UploadScreen() {
                                 <Pressable
                                   onPress={() => handleUserAction(user.clerkUserId, "ban")}
                                   disabled={!!userActionPending}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Ban ${user.email || user.clerkUserId}`}
                                   style={{
                                     flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
                                     backgroundColor: colors.destructive + "15", borderWidth: 1, borderColor: colors.destructive + "44",
@@ -4456,6 +4562,8 @@ export default function UploadScreen() {
                               <Pressable
                                 onPress={() => handleDeleteUser(user.clerkUserId, user.email)}
                                 disabled={!!userActionPending}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Delete ${user.email || user.clerkUserId}`}
                                 style={{
                                   flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
                                   backgroundColor: colors.destructive + "15", borderWidth: 1, borderColor: colors.destructive + "44",
@@ -4490,6 +4598,9 @@ export default function UploadScreen() {
                           onPress={() =>
                             setUserSectionsExpanded((prev) => ({ ...prev, [key]: !expanded }))
                           }
+                          accessibilityRole="button"
+                          accessibilityState={{ expanded }}
+                          accessibilityLabel={`${title} users, ${expanded ? "expanded" : "collapsed"}`}
                           style={{
                             flexDirection: "row",
                             alignItems: "center",

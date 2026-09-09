@@ -22,7 +22,7 @@
  *
  *   deleteAdminUser:
  *   (m) Success — DELETEs /admin/users/:id and calls removeUser with the user's ID
- *   (n) Success — does NOT call showToast on success
+ *   (n) Success — confirms the completed removal with a success toast
  *   (o) Non-ok HTTP — calls showToast and does NOT call removeUser
  *   (p) API error message from response body is forwarded to the toast
  *   (q) Fallback when body has no error field — toast includes the HTTP status
@@ -169,7 +169,7 @@ describe("fetchAdminUsers — success path", () => {
     mockFetch.mockResolvedValueOnce(makeOkUsersResponse());
     const { deps, mocks } = makeFetchUsersDeps();
 
-    await fetchAdminUsers(deps);
+    await expect(fetchAdminUsers(deps)).resolves.toEqual({ ok: true });
 
     expect(mocks.setUsersData).toHaveBeenCalledWith(FIXTURE_USERS);
     expect(mocks.setUsersError).toHaveBeenCalledWith(null);
@@ -203,7 +203,10 @@ describe("fetchAdminUsers — error paths", () => {
     mockFetch.mockResolvedValueOnce(makeErrorResponse(500));
     const { deps, mocks } = makeFetchUsersDeps();
 
-    await fetchAdminUsers(deps);
+    await expect(fetchAdminUsers(deps)).resolves.toEqual({
+      ok: false,
+      error: "HTTP 500",
+    });
 
     expect(mocks.setUsersError).toHaveBeenCalledWith(expect.stringContaining("500"));
     expect(mocks.setUsersData).not.toHaveBeenCalled();
@@ -255,6 +258,7 @@ describe("handleUserAction — approve path", () => {
     expect(url).toContain("/admin/users/user_a/approve");
     expect(options?.method).toBe("POST");
     expect(mocks.fetchUsers).toHaveBeenCalledTimes(1);
+    expect(mocks.showToast).toHaveBeenCalledWith("Approve completed.", "success");
   });
 
   it("(h) passes the admin token in the Authorization header for approve", async () => {
@@ -451,6 +455,20 @@ describe("handleUserAction — concurrency and pending state", () => {
     expect(mocks.setUserActionPending).toHaveBeenNthCalledWith(1, "user_a");
     expect(mocks.setUserActionPending).toHaveBeenNthCalledWith(2, null);
   });
+
+  it("confirms the mutation separately when the follow-up refresh fails", async () => {
+    mockFetch.mockResolvedValueOnce(makeOkActionResponse());
+    const { deps, mocks } = makeHandleUserActionDeps({
+      fetchUsers: jest.fn().mockResolvedValue({ ok: false, error: "HTTP 503" }),
+    });
+
+    await handleUserAction("user_a", "approve", deps);
+
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      "Approve completed, but the People list could not be refreshed. Tap Retry to sync.",
+      "error",
+    );
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -499,13 +517,13 @@ describe("deleteAdminUser — success path", () => {
     expect(mocks.removeUser).toHaveBeenCalledTimes(1);
   });
 
-  it("(n) does NOT call showToast on success", async () => {
+  it("(n) confirms the server removal with a success toast", async () => {
     mockFetch.mockResolvedValueOnce(makeOkDeleteResponse());
     const { deps, mocks } = makeDeleteAdminUserDeps();
 
     await deleteAdminUser("user_a", deps);
 
-    expect(mocks.showToast).not.toHaveBeenCalled();
+    expect(mocks.showToast).toHaveBeenCalledWith("User removed.", "success");
   });
 
   it("(n2) does NOT call showWarning when clerkDeleted is true", async () => {
