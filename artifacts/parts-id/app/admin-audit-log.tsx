@@ -373,6 +373,7 @@ export default function AdminAuditLogScreen() {
           onPress={() => fetchLog(hasLoadedRows)}
           style={styles.refreshBtn}
           accessibilityLabel="Refresh"
+          accessibilityHint="Reload audit events to include actions from other admin sessions"
           accessibilityRole="button"
         >
           <Feather name="refresh-cw" size={17} color={colors.mutedForeground} />

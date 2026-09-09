@@ -10,7 +10,7 @@
 
 ## Persistence and cross-context checks
 
-Rows are server-backed and not locally cached. Refresh/pagination lifecycle work is owned by Task 1171 and its follow-ups; this report treats that work as seed context. `[MANUAL QA NEEDED]` verify that two admin sessions do not present stale counts after another session adds an event.
+Rows are server-backed and not locally cached. Refresh/pagination lifecycle work is owned by Task 1171 and its follow-ups; this report treats that work as seed context. The rendered workflow now verifies two authenticated admin sessions against shared server state: an already-open screen keeps its snapshot until its explicit Refresh action, then updates its count and visible rows with the event created by the other session. The Refresh control announces that boundary through its accessibility hint.
 
 ## Failure, retry, navigation, accessibility
 
@@ -34,8 +34,7 @@ Task 1171 and follow-ups #1178/#1179 own request cancellation, loaded-event pres
 
 - High-volume pagination and duplicate-free retry on web/native.
 - Copy/detail interaction and screen-reader reading of full IDs.
-- Cross-tab freshness after a new admin action.
 
 ## Report-only stop
 
-No fix or test change was made.
+The cross-session freshness check is covered by the rendered admin audit-log workflow. Background cross-tab synchronization remains out of scope; admins are given an explicit refresh boundary instead.

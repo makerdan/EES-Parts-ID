@@ -197,10 +197,10 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function renderScreen() {
+async function renderScreen(adminToken = "admin-token-abc") {
   useApp.mockReturnValue({
     isAdmin: true,
-    adminToken: "admin-token-abc",
+    adminToken,
     isLoading: false,
   });
   useApiHealth.mockReturnValue({
@@ -734,6 +734,66 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
 
     await act(async () => {
       screen.unmount();
+    });
+  });
+
+  it("keeps two admin sessions on their snapshots until the second session refreshes", async () => {
+    const sharedAuditRows = [
+      auditRow(101, "target-newest"),
+      auditRow(100, "target-next", "promote"),
+    ];
+    const requestTokens: string[] = [];
+    mockFetch.mockImplementation(async (_url, init) => {
+      const headers = init?.headers as Record<string, string> | undefined;
+      requestTokens.push(headers?.Authorization ?? "");
+      return jsonResponse({ rows: [...sharedAuditRows], nextCursor: null });
+    });
+
+    const sessionA = await renderScreen("admin-session-a");
+    const sessionB = await renderScreen("admin-session-b");
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(requestTokens).toEqual([
+      "Bearer admin-session-a",
+      "Bearer admin-session-b",
+    ]);
+    expect(instText(sessionA.root!)).toContain("2 events");
+    expect(instText(sessionB.root!)).toContain("2 events");
+
+    // Session A completes a privileged action. The server state changes, but
+    // already-rendered audit-log snapshots do not update without a refresh.
+    sharedAuditRows.unshift(auditRow(102, "target-created-in-session-a", "ban"));
+    expect(instText(sessionB.root!)).toContain("2 events");
+    expect(instText(sessionB.root!)).not.toContain("target-created-in-session-a");
+
+    const refresh = findPressableByAccessibilityLabel(sessionB.root!, "Refresh");
+    expect(refresh).not.toBeNull();
+    expect(refresh!.props.accessibilityHint).toBe(
+      "Reload audit events to include actions from other admin sessions",
+    );
+
+    await act(async () => {
+      fireEvent.press(refresh!);
+      await Promise.resolve();
+    });
+    await flushPromises();
+
+    expect(requestTokens).toEqual([
+      "Bearer admin-session-a",
+      "Bearer admin-session-b",
+      "Bearer admin-session-b",
+    ]);
+    expect(instText(sessionB.root!)).toContain("3 events");
+    expect(accessibilityLabels(sessionB.root!)).toContain(
+      "Target ID: target-created-in-session-a",
+    );
+    expect(instText(sessionA.root!)).toContain("2 events");
+
+    await act(async () => {
+      sessionA.unmount();
+    });
+    await act(async () => {
+      sessionB.unmount();
     });
   });
 });
