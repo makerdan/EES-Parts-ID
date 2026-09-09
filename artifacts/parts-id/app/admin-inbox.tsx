@@ -88,6 +88,14 @@ function MessageItem({
   return (
     <Pressable
       onPress={handlePress}
+      accessibilityRole="button"
+      accessibilityLabel={`${row.subject}, ${isUnread ? "unread" : "read"} message, ${expanded ? "collapse" : "expand"} message`}
+      accessibilityHint={
+        isUnread
+          ? "Expanding this message will mark it as read."
+          : "Activates to expand or collapse this message."
+      }
+      accessibilityState={{ expanded }}
       style={[
         styles.row,
         {
@@ -164,6 +172,8 @@ function MessageItem({
 }
 
 export default function AdminInboxScreen() {
+  "use no memo";
+
   useTrackScreen("Admin Inbox");
   const colors = useColors();
   const router = useRouter();
@@ -174,6 +184,7 @@ export default function AdminInboxScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const unreadCount = rows.filter((r) => !r.readAt).length;
 
@@ -181,7 +192,8 @@ export default function AdminInboxScreen() {
     if (!adminToken) return;
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
-    setError(null);
+    if (isRefresh) setRefreshError(null);
+    else setError(null);
     try {
       const res = await fetch(`${API_BASE}/contact`, {
         headers: { Authorization: `Bearer ${adminToken}` },
@@ -191,7 +203,9 @@ export default function AdminInboxScreen() {
       setRows(data);
     } catch (err) {
       if (err instanceof TypeError) reportNetworkFailure();
-      setError(err instanceof Error ? err.message : "Failed to load inbox");
+      const message = err instanceof Error ? err.message : "Failed to load inbox";
+      if (isRefresh) setRefreshError(message);
+      else setError(message);
     } finally {
       if (isRefresh) setRefreshing(false);
       else setLoading(false);
@@ -237,7 +251,13 @@ export default function AdminInboxScreen() {
             {rows.length} message{rows.length !== 1 ? "s" : ""}
           </Text>
         </View>
-        <Pressable onPress={() => fetchMessages()} style={styles.refreshBtn} accessibilityLabel="Refresh">
+        <Pressable
+          onPress={() => fetchMessages(true)}
+          style={styles.refreshBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh inbox"
+          accessibilityState={{ busy: refreshing }}
+        >
           <Feather name="refresh-cw" size={17} color={colors.mutedForeground} />
         </Pressable>
       </View>
@@ -268,6 +288,29 @@ export default function AdminInboxScreen() {
               tintColor={colors.primary}
               colors={[colors.primary]}
             />
+          }
+          ListHeaderComponent={
+            refreshError ? (
+              <View
+                style={[styles.refreshError, { backgroundColor: colors.destructive + "12" }]}
+                accessibilityRole="alert"
+                accessibilityLiveRegion="polite"
+              >
+                <Text style={[styles.refreshErrorText, { color: colors.destructive }]}>
+                  Could not refresh the inbox. Your loaded messages are still shown.
+                </Text>
+                <Pressable
+                  onPress={() => fetchMessages(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry inbox refresh"
+                  style={[styles.refreshRetryBtn, { borderColor: colors.destructive }]}
+                >
+                  <Text style={[styles.refreshRetryText, { color: colors.destructive }]}>
+                    Retry
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null
           }
           renderItem={({ item }) =>
             adminToken ? (
@@ -321,6 +364,15 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 22 },
   retryBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 20, paddingVertical: 8 },
   retryText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  refreshError: {
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 4,
+    gap: 8,
+  },
+  refreshErrorText: { fontSize: 12, fontFamily: "Inter_600SemiBold", lineHeight: 18 },
+  refreshRetryBtn: { alignSelf: "flex-start", borderWidth: 1, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 6 },
+  refreshRetryText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   list: { padding: 12, gap: 8 },
   row: {
     borderWidth: 1,
