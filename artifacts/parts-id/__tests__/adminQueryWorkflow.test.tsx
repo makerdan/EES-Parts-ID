@@ -94,6 +94,68 @@ jest.mock("@workspace/api-client-react", () => ({
   setBaseUrl: jest.fn(),
 }));
 
+type MockInventoryResponse = {
+  data: {
+    items: Array<{
+      id: number;
+      vendor: string;
+      catalog: string;
+      description: string;
+      binLocations: string[];
+    }> | undefined;
+    total: number;
+    page: number;
+    limit: number;
+  } | undefined;
+  isLoading: boolean;
+  isFetching: boolean;
+  isError: boolean;
+};
+
+const mockUseListInventory = jest.requireMock("@workspace/api-client-react")
+  .useListInventory as jest.Mock;
+let mockInventoryResponses: Record<number, MockInventoryResponse>;
+let mockInventoryRefetchPages: number[];
+
+function makeInventoryItem(id: number, catalog: string) {
+  return {
+    id,
+    vendor: "ACME",
+    catalog,
+    description: `${catalog} description`,
+    binLocations: [],
+  };
+}
+
+mockUseListInventory.mockImplementation(({ page = 1 }: { page?: number } = {}) => {
+  const [, forceUpdate] = React.useState(0);
+  const response = mockInventoryResponses[page] ?? {
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  };
+  const refetch = jest.fn(async () => {
+    mockInventoryRefetchPages.push(page);
+    if (page === 2) {
+      mockInventoryResponses[page] = {
+        data: {
+          items: [makeInventoryItem(2, "SECOND-PART")],
+          total: 51,
+          page: 2,
+          limit: 1,
+        },
+        isLoading: false,
+        isFetching: false,
+        isError: false,
+      };
+    }
+    forceUpdate((value) => value + 1);
+    return { data: mockInventoryResponses[page]?.data };
+  });
+  return { ...response, refetch };
+});
+
 jest.mock("@/hooks/useColors", () =>
   require("./helpers/mapMocks").createUseColorsMock(),
 );
@@ -397,6 +459,26 @@ async function renderAdminImport() {
 beforeEach(() => {
   jest.clearAllMocks();
   mockWrittenFiles.length = 0;
+  mockInventoryRefetchPages = [];
+  mockInventoryResponses = {
+    1: {
+      data: {
+        items: [makeInventoryItem(1, "FIRST-PART")],
+        total: 51,
+        page: 1,
+        limit: 1,
+      },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    },
+    2: {
+      data: undefined,
+      isLoading: false,
+      isFetching: false,
+      isError: true,
+    },
+  };
   nextQueryResponse = undefined;
   mockFloorPlanContent = "<svg viewBox=\"0 0 10 10\"></svg>";
   installFetchMock();
@@ -572,6 +654,42 @@ describe("UploadScreen — rendered admin query workflow", () => {
 
     expect(instText(tree.root!)).toContain("Results could not be displayed. Retry the query.");
     expect(findPressable(tree.root!, "Download CSV")).toBeNull();
+  });
+
+  it("keeps loaded inventory visible and retries only the failed page", async () => {
+    const tree = await renderAdminWarehouse();
+    expect(instText(tree.root!)).toContain("FIRST-PART");
+
+    const loadMore = findPressable(tree.root!, "Load More");
+    expect(loadMore).not.toBeNull();
+    await act(async () => { fireEvent.press(loadMore!); });
+    await flushPromises();
+
+    expect(instText(tree.root!)).toContain("FIRST-PART");
+    expect(instText(tree.root!)).toContain("Inventory page 2 unavailable");
+    expect(instText(tree.root!)).toContain("Retry page 2");
+    expect(instText(tree.root!)).not.toContain("No Inventory");
+
+    const retry = findPressable(tree.root!, "Retry page 2");
+    expect(retry).not.toBeNull();
+    expect(retry?.props.accessibilityLabel).toBe("Retry inventory page 2");
+    await act(async () => { fireEvent.press(retry!); });
+    await flushPromises();
+
+    expect(mockInventoryRefetchPages).toEqual([2]);
+    expect(instText(tree.root!)).toContain("FIRST-PART");
+    expect(instText(tree.root!)).toContain("SECOND-PART");
+    expect(instText(tree.root!)).not.toContain("Inventory page 2 unavailable");
+    expect(instText(tree.root!)).toContain("All inventory items loaded.");
+    expect(
+      tree.root!.queryAll(
+        (node: Inst) =>
+          (node.type as string) === "rn-pressable" &&
+          instText(node).includes("SECOND-PART"),
+        { includeSelf: true },
+      ),
+    ).toHaveLength(1);
+    expect(mockFetch.mock.calls.some(([url]) => String(url).includes("/inventory/upsert"))).toBe(false);
   });
 
   it("bounds high-volume result rendering while keeping export available", async () => {

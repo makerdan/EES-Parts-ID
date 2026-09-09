@@ -2596,7 +2596,16 @@ export default function UploadScreen() {
   };
 
   const inventory = inventoryItems;
-  const inventoryTotal = inventoryQuery.data?.total ?? 0;
+  const inventoryTotal = inventoryQuery.data?.total ?? inventoryItems.length;
+  const hasLoadedInventory = inventoryItems.length > 0;
+  const isInitialInventoryLoading = inventoryQuery.isLoading && !hasLoadedInventory;
+  const isInitialInventoryError = inventoryQuery.isError && !hasLoadedInventory;
+  const isLaterInventoryPage = inventoryPage > 1;
+  const isLaterInventoryPageLoading =
+    isLaterInventoryPage && hasLoadedInventory && inventoryQuery.isFetching;
+  const isLaterInventoryPageError =
+    isLaterInventoryPage && hasLoadedInventory && inventoryQuery.isError;
+  const hasMoreInventory = inventoryPage * 50 < inventoryTotal;
 
   const fetchUsers = async (): Promise<FetchAdminUsersResult> => {
     if (!adminToken) return { ok: false, error: "Admin session unavailable" };
@@ -4357,14 +4366,14 @@ export default function UploadScreen() {
                     />
                     <View style={{ padding: 16 }}>
                       {/* Inventory header */}
-                      {inventoryQuery.isLoading ? (
+                      {isInitialInventoryLoading ? (
                         <View style={styles.loadingContainer}>
                           <ActivityIndicator size="large" color={colors.primary} />
                           <Text accessibilityLiveRegion="polite" style={[styles.loadingText, { color: colors.mutedForeground }]}>
                             Loading inventory…
                           </Text>
                         </View>
-                      ) : inventoryQuery.isError ? (
+                      ) : isInitialInventoryError ? (
                         <View
                           accessibilityLiveRegion="assertive"
                           style={[styles.inventoryErrorBox, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}
@@ -4383,30 +4392,63 @@ export default function UploadScreen() {
                           </Pressable>
                         </View>
                       ) : (
-                        <View style={styles.inventoryHeader}>
-                          <Text style={[styles.inventoryCount, { color: colors.foreground }]}>
-                            {inventoryTotal} items total
-                          </Text>
-                          <View style={styles.inventoryHeaderActions}>
-                            <Pressable
-                              onPress={handleExportCsv}
-                              disabled={exportPending}
-                              style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card, opacity: exportPending ? 0.6 : 1 }]}
-                            >
-                              {exportPending ? (
-                                <ActivityIndicator size="small" color={colors.primary} />
-                              ) : (
-                                <Text style={[styles.exportCsvText, { color: colors.primary }]}>⬇ Export CSV</Text>
-                              )}
-                            </Pressable>
-                            <Pressable
-                              onPress={() => handleEnrich()}
-                              style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
-                            >
-                              <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
-                            </Pressable>
+                        <>
+                          <View style={styles.inventoryHeader}>
+                            <Text style={[styles.inventoryCount, { color: colors.foreground }]}>
+                              {inventoryTotal} items total
+                            </Text>
+                            <View style={styles.inventoryHeaderActions}>
+                              <Pressable
+                                onPress={handleExportCsv}
+                                disabled={exportPending}
+                                style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card, opacity: exportPending ? 0.6 : 1 }]}
+                              >
+                                {exportPending ? (
+                                  <ActivityIndicator size="small" color={colors.primary} />
+                                ) : (
+                                  <Text style={[styles.exportCsvText, { color: colors.primary }]}>⬇ Export CSV</Text>
+                                )}
+                              </Pressable>
+                              <Pressable
+                                onPress={() => handleEnrich()}
+                                style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
+                              >
+                                <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
+                              </Pressable>
+                            </View>
                           </View>
-                        </View>
+                          {isLaterInventoryPageLoading ? (
+                            <Text
+                              accessibilityLiveRegion="polite"
+                              style={[styles.inventoryPageStatus, { color: colors.mutedForeground }]}
+                            >
+                              Loading inventory page {inventoryPage}…
+                            </Text>
+                          ) : null}
+                          {isLaterInventoryPageError ? (
+                            <View
+                              accessibilityLiveRegion="assertive"
+                              style={[styles.inventoryErrorBox, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}
+                            >
+                              <Text style={[styles.inventoryErrorTitle, { color: colors.destructive }]}>
+                                Inventory page {inventoryPage} unavailable
+                              </Text>
+                              <Text style={[styles.inventoryErrorText, { color: colors.mutedForeground }]}>
+                                The {inventoryItems.length} items already loaded are still visible. Retry page {inventoryPage} to continue.
+                              </Text>
+                              <Pressable
+                                accessibilityLabel={`Retry inventory page ${inventoryPage}`}
+                                accessibilityRole="button"
+                                onPress={() => void inventoryQuery.refetch()}
+                                style={[styles.retryInventoryBtn, { borderColor: colors.destructive }]}
+                              >
+                                <Text style={[styles.retryInventoryText, { color: colors.destructive }]}>
+                                  Retry page {inventoryPage}
+                                </Text>
+                              </Pressable>
+                            </View>
+                          ) : null}
+                        </>
                       )}
                       {exportError ? (
                         <View style={[styles.exportErrorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
@@ -4650,7 +4692,7 @@ export default function UploadScreen() {
                 ListEmptyComponent={!inventoryQuery.isLoading && !inventoryQuery.isError ? (
                   <View style={styles.emptyContainer}>
                     <Text style={styles.emptyEmoji}>📦</Text>
-                    <Text accessibilityRole="header" style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
+                    <Text accessibilityRole="header" accessibilityLiveRegion="polite" style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
                     <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
                       Upload a CSV or Excel file to add inventory items.
                     </Text>
@@ -4665,7 +4707,7 @@ export default function UploadScreen() {
                   </View>
                 ) : null}
                 ListFooterComponent={() =>
-                  inventoryQuery.data && inventoryPage * 50 < inventoryTotal ? (
+                  hasMoreInventory ? (
                     <Pressable
                       accessibilityLabel={`Load next inventory page, page ${inventoryPage + 1}`}
                       accessibilityRole="button"
@@ -4678,6 +4720,13 @@ export default function UploadScreen() {
                         {inventoryQuery.isFetching ? "Loading…" : "Load More"}
                       </Text>
                     </Pressable>
+                  ) : inventory.length > 0 && !isLaterInventoryPageError && !isLaterInventoryPageLoading ? (
+                    <Text
+                      accessibilityLiveRegion="polite"
+                      style={[styles.inventoryPageStatus, { color: colors.mutedForeground }]}
+                    >
+                      All inventory items loaded.
+                    </Text>
                   ) : null
                 }
               />
@@ -5177,6 +5226,7 @@ const styles = StyleSheet.create({
   inventoryErrorText: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
   retryInventoryBtn: { alignSelf: "flex-start", borderWidth: 1, borderRadius: 7, paddingHorizontal: 12, paddingVertical: 7, marginTop: 2 },
   retryInventoryText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  inventoryPageStatus: { fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 8, textAlign: "center" },
   exportCsvBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, borderWidth: 1, minWidth: 36, alignItems: "center", justifyContent: "center" },
   exportCsvText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   exportErrorBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, marginBottom: 10 },
