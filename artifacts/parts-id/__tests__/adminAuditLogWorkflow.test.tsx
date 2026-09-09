@@ -359,6 +359,18 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     expect(findPressable(screen.root!, "Retry")).not.toBeNull();
     expect(instText(screen.root!)).toContain("2 events+");
     expect(renderedTargets(screen.root!)).toEqual(["target-newest", "target-next"]);
+    expect(
+      screen.root!.queryAll(
+        (node: TestInstance) =>
+          (node.type as string) === "rn-view" &&
+          node.props.accessibilityRole === "alert" &&
+          node.props.accessibilityLiveRegion === "polite",
+        { includeSelf: true },
+      ),
+    ).not.toHaveLength(0);
+    expect(
+      findPressableByAccessibilityLabel(screen.root!, "Retry loading more audit log entries"),
+    ).not.toBeNull();
 
     await act(async () => {
       fireEvent.press(findPressable(screen.root!, "Retry")!);
@@ -392,6 +404,7 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
   it("keeps the refresh result and cursor when refresh finishes before stale load-more", async () => {
     const staleLoadMore = deferred<Response>();
     const refresh = deferred<Response>();
+    let staleLoadMoreSignal: AbortSignal | undefined;
     const refreshedPage: AuditPage = {
       rows: [
         auditRow(201, "refresh-newest", "promote"),
@@ -402,7 +415,10 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
 
     mockFetch
       .mockResolvedValueOnce(jsonResponse(firstPage))
-      .mockImplementationOnce(() => staleLoadMore.promise)
+      .mockImplementationOnce((_url, init) => {
+        staleLoadMoreSignal = (init as RequestInit).signal ?? undefined;
+        return staleLoadMore.promise;
+      })
       .mockImplementationOnce(() => refresh.promise)
       .mockResolvedValueOnce(jsonResponse(secondPage));
 
@@ -417,6 +433,7 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
       fireEvent.press(findPressableByAccessibilityLabel(screen.root!, "Refresh")!);
       await Promise.resolve();
     });
+    expect(staleLoadMoreSignal?.aborted).toBe(true);
 
     await act(async () => {
       refresh.resolve(jsonResponse(refreshedPage));
@@ -457,6 +474,62 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
       "target-oldest",
     ]);
 
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
+  it("announces active loading and refresh states to screen readers", async () => {
+    const loadMore = deferred<Response>();
+    const refresh = deferred<Response>();
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(firstPage))
+      .mockImplementationOnce(() => loadMore.promise)
+      .mockImplementationOnce(() => refresh.promise);
+
+    const screen = await renderScreen();
+    await act(async () => {
+      fireEvent.press(
+        findPressableByAccessibilityLabel(screen.root!, "Load more audit log entries")!,
+      );
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.root!.queryAll(
+        (node: TestInstance) =>
+          node.props.accessibilityLabel === "Loading more audit log entries" &&
+          node.props.accessibilityLiveRegion === "polite",
+        { includeSelf: true },
+      ),
+    ).not.toHaveLength(0);
+
+    await act(async () => {
+      fireEvent.press(findPressableByAccessibilityLabel(screen.root!, "Refresh")!);
+      await Promise.resolve();
+    });
+    const refreshButton = findPressableByAccessibilityLabel(
+      screen.root!,
+      "Refreshing audit log",
+    );
+    expect(refreshButton).not.toBeNull();
+    expect(refreshButton!.props.accessibilityState).toEqual({ busy: true });
+    expect(
+      screen.root!.queryAll(
+        (node: TestInstance) =>
+          node.props.accessibilityLabel === "Refreshing audit log" &&
+          node.props.accessibilityLiveRegion === "polite",
+        { includeSelf: true },
+      ),
+    ).not.toHaveLength(0);
+
+    await act(async () => {
+      refresh.resolve(jsonResponse(firstPage));
+      await refresh.promise;
+      loadMore.resolve(jsonResponse(secondPage));
+      await loadMore.promise;
+    });
+    await flushPromises();
     await act(async () => {
       screen.unmount();
     });

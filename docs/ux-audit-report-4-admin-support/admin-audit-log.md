@@ -6,11 +6,11 @@
 
 ## App map and happy path
 
-`app/admin-audit-log.tsx` fetches `/admin/audit-log`, uses `before_id` pagination, merges by row ID, and renders refresh/load-more controls. The current source includes request-version, AbortController, admin-access, and inline load-more error guards.
+`app/admin-audit-log.tsx` fetches `/admin/audit-log`, uses `before_id` pagination, merges by row ID, and renders refresh/load-more controls. The current source includes request-version, AbortController, admin-access, and inline load-more error guards. The focused workflow also covers obsolete-request cancellation, refresh supersession, cursor-preserving retry, and screen-reader lifecycle status.
 
 ## Persistence and cross-context checks
 
-Rows are server-backed and not locally cached. Refresh/pagination lifecycle work is owned by Task 1171 and its follow-ups; this report treats that work as seed context. The rendered workflow now verifies two authenticated admin sessions against shared server state: an already-open screen keeps its snapshot until its explicit Refresh action, then updates its count and visible rows with the event created by the other session. The Refresh control announces that boundary through its accessibility hint.
+Rows are server-backed and not locally cached. The rendered workflow verifies two authenticated admin sessions against shared server state: an already-open screen keeps its snapshot until its explicit Refresh action, then updates its count and visible rows with the event created by the other session. The Refresh control announces that boundary through its accessibility hint.
 
 ## Failure, retry, navigation, accessibility
 
@@ -28,7 +28,7 @@ Initial failure has Retry. Later-page failure keeps the current list and shows a
 
 ## Seed/context
 
-Task 1171 and follow-ups #1178/#1179 own request cancellation, loaded-event preservation, and pagination retry correctness. No duplicate findings are recorded for those behaviors.
+Request cancellation, loaded-event preservation, pagination retry correctness, refresh supersession, and lifecycle accessibility are covered by the consolidated rendered workflow. No duplicate findings are recorded for those behaviors.
 
 ## [MANUAL QA NEEDED]
 

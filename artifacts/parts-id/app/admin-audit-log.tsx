@@ -152,7 +152,7 @@ export default function AdminAuditLogScreen() {
 
   adminAccessRef.current = !isLoading && isAdmin && Boolean(adminToken);
 
-  const cancelRequests = useCallback(() => {
+  const cancelRequests = useCallback((resetUi = false) => {
     requestVersionRef.current += 1;
     fullPageAbortControllerRef.current?.abort();
     fullPageAbortControllerRef.current = null;
@@ -160,6 +160,13 @@ export default function AdminAuditLogScreen() {
     loadMoreAbortControllerRef.current = null;
     fullPageRequestRef.current = null;
     activeLoadMoreRequestRef.current = null;
+    if (resetUi && mountedRef.current) {
+      setLoading(false);
+      setRefreshing(false);
+      setLoadingMore(false);
+      setError(null);
+      setLoadMoreError(null);
+    }
   }, []);
 
   const fetchPage = useCallback(async (
@@ -296,7 +303,7 @@ export default function AdminAuditLogScreen() {
 
   useEffect(() => {
     if (!isLoading && isAdmin && adminToken) return;
-    cancelRequests();
+    cancelRequests(!isLoading);
   }, [adminToken, cancelRequests, isAdmin, isLoading]);
 
   useEffect(() => {
@@ -311,17 +318,27 @@ export default function AdminAuditLogScreen() {
   }, [isLoading, adminToken, isAdmin, fetchLog, router]);
 
   const ListFooter = loadingMore ? (
-    <View style={styles.footerLoader}>
+    <View
+      style={styles.footerLoader}
+      accessibilityRole="progressbar"
+      accessibilityLabel="Loading more audit log entries"
+      accessibilityLiveRegion="polite"
+    >
       <ActivityIndicator size="small" color={colors.primary} />
     </View>
   ) : loadMoreError ? (
-    <View style={styles.footerError}>
+    <View
+      style={styles.footerError}
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+    >
       <Text style={[styles.footerErrorText, { color: colors.destructive }]}>
         ⚠ {loadMoreError}
       </Text>
       <Pressable
         onPress={loadMore}
         style={[styles.retryBtn, { borderColor: colors.border }]}
+        accessibilityRole="button"
         accessibilityLabel="Retry loading more audit log entries"
       >
         <Text style={[styles.retryText, { color: colors.primary }]}>Retry</Text>
@@ -331,6 +348,7 @@ export default function AdminAuditLogScreen() {
     <Pressable
       onPress={loadMore}
       style={[styles.loadMoreBtn, { borderColor: colors.border }]}
+      accessibilityRole="button"
       accessibilityLabel="Load more audit log entries"
     >
       <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load more</Text>
@@ -356,6 +374,17 @@ export default function AdminAuditLogScreen() {
       </Pressable>
     </View>
   ) : null;
+  const lifecycleStatus = loading && !hasLoadedRows
+    ? "Loading audit log"
+    : refreshing
+      ? "Refreshing audit log"
+      : loadingMore
+        ? "Loading more audit log entries"
+        : loadMoreError
+          ? `Could not load more audit log entries. ${loadMoreError}`
+          : error
+            ? `Could not refresh audit log. ${error}`
+            : null;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
@@ -372,16 +401,32 @@ export default function AdminAuditLogScreen() {
         <Pressable
           onPress={() => fetchLog(hasLoadedRows)}
           style={styles.refreshBtn}
-          accessibilityLabel="Refresh"
+          accessibilityLabel={refreshing ? "Refreshing audit log" : "Refresh"}
           accessibilityHint="Reload audit events to include actions from other admin sessions"
           accessibilityRole="button"
+          accessibilityState={{ busy: loading || refreshing }}
         >
           <Feather name="refresh-cw" size={17} color={colors.mutedForeground} />
         </Pressable>
       </View>
 
+      {lifecycleStatus ? (
+        <Text
+          accessibilityLabel={lifecycleStatus}
+          accessibilityLiveRegion="polite"
+          style={styles.accessibilityStatus}
+        >
+          {lifecycleStatus}
+        </Text>
+      ) : null}
+
       {loading && !hasLoadedRows ? (
-        <View style={styles.centered}>
+        <View
+          style={styles.centered}
+          accessibilityRole="progressbar"
+          accessibilityLabel="Loading audit log"
+          accessibilityLiveRegion="polite"
+        >
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : error && !hasLoadedRows ? (
@@ -452,6 +497,13 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 18, fontFamily: "Inter_700Bold" },
   headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 1 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 12 },
+  accessibilityStatus: {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    opacity: 0,
+    overflow: "hidden",
+  },
   errorText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center" },
   listError: {
     alignItems: "center",
