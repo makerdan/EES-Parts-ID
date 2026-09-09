@@ -36,9 +36,8 @@ import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { useColors } from "@/hooks/useColors";
 import { API_BASE } from "@/utils/apiBase";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
-import { evictDeletedItemFromAllCaches, invalidateListCache, parseStoredQueryCache } from "@/utils/editItemCache";
+import { evictDeletedItemFromAllCaches, invalidateAllCachesAfterSave, invalidateListCache,INVENTORY_REFRESH_WARNING } from "@/utils/editItemCache";
 import { inventorySaveErrorMessage, isAbortError, runInventoryWrite } from "@/utils/inventoryWrite";
-import { evictItemFromQueryCache,QUERY_CACHE_KEY } from "@/utils/searchHelpers";
 
 interface CapturedPhoto {
   uri: string;
@@ -124,6 +123,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const [newKeyword, setNewKeyword] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [refreshWarning, setRefreshWarning] = useState<string | null>(null);
   const [fieldSaveErrors, setFieldSaveErrors] = useState<{
     description?: string;
     bins?: string;
@@ -255,6 +255,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       controllers.clear();
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
       if (copyBinTimeoutRef.current) clearTimeout(copyBinTimeoutRef.current);
+      saveInFlightRef.current = false;
+      dimensionSaveInFlightRef.current = false;
+      expandedDescSaveInFlightRef.current = false;
     };
   }, []);
 
@@ -281,48 +284,93 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   }, []);
 
   useEffect(() => {
-    const current = itemRef.current;
+    const current = item;
     if (!current) return;
-    const dims = current?.dimensions;
-    savedDescriptionRef.current = current.description ?? "";
-    savedOpRef.current = current.orderPurchase;
-    savedOqRef.current = current.orderQuantity;
-    savedBinsRef.current = [...(current.binLocations ?? [])];
-    savedKeywordsRef.current = [...(current.aiKeywords ?? [])];
-    savedDimsRef.current = {
+    itemRef.current = current;
+    const dims = current.dimensions;
+    const incomingDescription = current.description ?? "";
+    const incomingBins = current.binLocations ?? [];
+    const incomingKeywords = current.aiKeywords ?? [];
+    const incomingExpandedDescription = current.expandedDescription ?? "";
+    const incomingDims = {
       length: dims?.length ?? null,
       width: dims?.width ?? null,
       height: dims?.height ?? null,
       diameter: dims?.diameter ?? null,
     };
-    savedExpandedDescRef.current = current.expandedDescription ?? "";
-    savedPhotoUriRef.current = current.imageUrl ?? null;
-    savedPhotoUri2Ref.current = current.imageUrl2 ?? null;
-    setDescription(current.description ?? "");
-    setOp(String(current.orderPurchase));
-    setOq(String(current.orderQuantity));
-    setBins(current.binLocations ?? []);
-    setKeywords(current.aiKeywords ?? []);
-    setNewBin("");
-    setNewKeyword("");
-    setNewPhotoData(null);
-    setRemoveCurrentPhoto(false);
-    setNewPhotoData2(null);
-    setRemoveCurrentPhoto2(false);
-    setSaveStatus("idle");
-    setErrorMsg(null);
-    setFieldSaveErrors({});
-    setCopiedBin(null);
-    if (copyBinTimeoutRef.current) { clearTimeout(copyBinTimeoutRef.current); copyBinTimeoutRef.current = null; }
-    setDimLength(fmtDim(dims?.length));
-    setDimWidth(fmtDim(dims?.width));
-    setDimHeight(fmtDim(dims?.height));
-    setDimDiameter(fmtDim(dims?.diameter));
-    setExpandedDescText(current.expandedDescription ?? "");
-    setExpandedDescSaving("idle");
-    setExpandedDescError(null);
-    setCommittedFields(new Set());
-  }, [item?.id]);
+    const descriptionDirty = description.trim() !== savedDescriptionRef.current.trim();
+    const opDirty = Number(op.trim() || "0") !== savedOpRef.current;
+    const oqDirty = Number(oq.trim() || "0") !== savedOqRef.current;
+    const binsDirty = JSON.stringify(bins) !== JSON.stringify(savedBinsRef.current);
+    const keywordsDirty = JSON.stringify(keywords) !== JSON.stringify(savedKeywordsRef.current);
+    const dimensionsDirty = JSON.stringify({
+      length: parseDimField(dimLength),
+      width: parseDimField(dimWidth),
+      height: parseDimField(dimHeight),
+      diameter: parseDimField(dimDiameter),
+    }) !== JSON.stringify(savedDimsRef.current);
+    const expandedDescriptionDirty = expandedDescText.trim() !== savedExpandedDescRef.current.trim();
+    const photoDirty = newPhotoData !== null || removeCurrentPhoto;
+    const photo2Dirty = newPhotoData2 !== null || removeCurrentPhoto2;
+    const hadDirtyFields = descriptionDirty || opDirty || oqDirty || binsDirty || keywordsDirty ||
+      dimensionsDirty || expandedDescriptionDirty || photoDirty || photo2Dirty;
+
+    if (!descriptionDirty) {
+      savedDescriptionRef.current = incomingDescription;
+      setDescription(incomingDescription);
+    }
+    if (!opDirty) {
+      savedOpRef.current = current.orderPurchase;
+      setOp(String(current.orderPurchase));
+    }
+    if (!oqDirty) {
+      savedOqRef.current = current.orderQuantity;
+      setOq(String(current.orderQuantity));
+    }
+    if (!binsDirty) {
+      savedBinsRef.current = [...incomingBins];
+      setBins(incomingBins);
+    }
+    if (!keywordsDirty) {
+      savedKeywordsRef.current = [...incomingKeywords];
+      setKeywords(incomingKeywords);
+    }
+    if (!dimensionsDirty) {
+      savedDimsRef.current = incomingDims;
+      setDimLength(fmtDim(dims?.length));
+      setDimWidth(fmtDim(dims?.width));
+      setDimHeight(fmtDim(dims?.height));
+      setDimDiameter(fmtDim(dims?.diameter));
+    }
+    if (!expandedDescriptionDirty) {
+      savedExpandedDescRef.current = incomingExpandedDescription;
+      setExpandedDescText(incomingExpandedDescription);
+    }
+    if (!photoDirty) savedPhotoUriRef.current = current.imageUrl ?? null;
+    if (!photo2Dirty) savedPhotoUri2Ref.current = current.imageUrl2 ?? null;
+
+    if (!hadDirtyFields) {
+      setNewBin("");
+      setNewKeyword("");
+      setNewPhotoData(null);
+      setRemoveCurrentPhoto(false);
+      setNewPhotoData2(null);
+      setRemoveCurrentPhoto2(false);
+      setSaveStatus("idle");
+      setErrorMsg(null);
+      setRefreshWarning(null);
+      setFieldSaveErrors({});
+      setCommittedFields(new Set());
+      setCopiedBin(null);
+      if (copyBinTimeoutRef.current) { clearTimeout(copyBinTimeoutRef.current); copyBinTimeoutRef.current = null; }
+      setExpandedDescSaving("idle");
+      setExpandedDescError(null);
+    }
+  // This reconciliation intentionally runs only when the host supplies a new
+  // item snapshot; including local editor state would make every keystroke look
+  // like an external refresh.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item]);
 
   const addBin = () => {
     const trimmed = newBin.trim();
@@ -365,6 +413,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
 
   const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
     const current = itemRef.current;
+    if (!current || !adminToken || dimensionSaveInFlightRef.current) return;
     pendingMeasureDimsRef.current = dims;
     dimensionSaveInFlightRef.current = true;
     setMeasureOpen(false);
@@ -389,7 +438,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       const { dimensions: _dimensions, ...rest } = prev;
       return rest;
     });
-    if (!current || !adminToken) return;
+    setRefreshWarning(null);
     try {
       const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/dimensions`, {
         method: "PATCH",
@@ -403,8 +452,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       pendingMeasureDimsRef.current = null;
       savedDimsRef.current = {
         length: dims.length ?? null,
@@ -413,6 +460,13 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         diameter: dims.diameter ?? null,
       };
       reportItemSaved({ dimensions: dims });
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: current.id,
+        updatedItem: { ...current, dimensions: dims },
+      });
+      if (cacheResult && !cacheResult.ok && mountedRef.current) setRefreshWarning(INVENTORY_REFRESH_WARNING);
     } catch (err) {
       if (isAbortError(err) && !mountedRef.current) return;
       // Restore pre-confirm values so the display matches what is actually
@@ -446,6 +500,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     expandedDescSaveInFlightRef.current = true;
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
+    setRefreshWarning(null);
     try {
       const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/expanded-description`, {
         method: "PATCH",
@@ -460,31 +515,15 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
       const savedText = expandedDescText.trim() || null;
-      const listKeyPrefix = getListInventoryQueryKey()[0];
-      const patchExpandedSave = (i: InventoryItem): InventoryItem =>
-        i.id === current.id ? { ...i, expandedDescription: savedText } : i;
-      queryClient.setQueriesData<InventoryListResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-        (old) => old ? { ...old, items: old.items.map(patchExpandedSave) } : old,
-      );
-      queryClient.setQueriesData<SearchInventoryResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-        (old) => {
-          if (!old) return old;
-          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-            r.item.id === current.id ? { ...r, item: patchExpandedSave(r.item) } : r;
-          return {
-            ...old,
-            results: old.results.map(patchResult),
-            // exactOptionalPropertyTypes: only include the optional key when present
-            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-          };
-        },
-      );
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       savedExpandedDescRef.current = savedText ?? "";
       reportItemSaved({ expandedDescription: savedText });
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: current.id,
+        updatedItem: { ...current, expandedDescription: savedText },
+      });
+      if (cacheResult && !cacheResult.ok && mountedRef.current) setRefreshWarning(INVENTORY_REFRESH_WARNING);
       setExpandedDescSaving("saved");
     } catch (err) {
       if (isAbortError(err) && !mountedRef.current) return;
@@ -506,6 +545,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     setExpandedDescText("");
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
+    setRefreshWarning(null);
     try {
       const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/expanded-description`, {
         method: "PATCH",
@@ -519,31 +559,15 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      const listKeyPrefixClear = getListInventoryQueryKey()[0];
-      const patchExpandedClear = (i: InventoryItem): InventoryItem =>
-        i.id === current.id ? { ...i, expandedDescription: null } : i;
-      queryClient.setQueriesData<InventoryListResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefixClear },
-        (old) => old ? { ...old, items: old.items.map(patchExpandedClear) } : old,
-      );
-      queryClient.setQueriesData<SearchInventoryResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-        (old) => {
-          if (!old) return old;
-          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-            r.item.id === current.id ? { ...r, item: patchExpandedClear(r.item) } : r;
-          return {
-            ...old,
-            results: old.results.map(patchResult),
-            // exactOptionalPropertyTypes: only include the optional key when present
-            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-          };
-        },
-      );
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       savedExpandedDescRef.current = "";
       reportItemSaved({ expandedDescription: null });
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: current.id,
+        updatedItem: { ...current, expandedDescription: null },
+      });
+      if (cacheResult && !cacheResult.ok && mountedRef.current) setRefreshWarning(INVENTORY_REFRESH_WARNING);
       setExpandedDescSaving("saved");
     } catch (err) {
       if (isAbortError(err) && !mountedRef.current) return;
@@ -881,7 +905,18 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       // Re-apply patches for fields that SUCCEEDED so the list / search view
       // reflects what is now on the server, even though the overall save failed.
       // Only the failed fields need retry — succeeded fields are already committed.
+      let partialUpdatedItem: InventoryItem | null = null;
       if (succeededFields.size > 0) {
+        partialUpdatedItem = {
+          ...current,
+          ...(succeededFields.has("description") ? { description: description.trim() } : {}),
+          ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
+          ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
+          ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
+          ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq } : {}),
+          ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+          ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
+        };
         const patchItemPartial = (i: InventoryItem): InventoryItem => {
           if (i.id !== current.id) return i;
           return {
@@ -944,6 +979,15 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       if (succeededFields.has("photo2") && capturedImageUrl2 !== undefined) {
         reportItemSaved({ imageUrl2: capturedImageUrl2, thumbnailUrl2: null });
       }
+      if (partialUpdatedItem) {
+        const cacheResult = await invalidateAllCachesAfterSave({
+          queryClient,
+          asyncStorage: AsyncStorage,
+          itemId: current.id,
+          updatedItem: partialUpdatedItem,
+        });
+        if (cacheResult && !cacheResult.ok) setRefreshWarning(INVENTORY_REFRESH_WARNING);
+      }
 
       const fieldLabel: Record<string, string> = {
         description: "Description",
@@ -964,59 +1008,17 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       setFieldSaveErrors(newFieldErrors);
       setSaveStatus("error");
     } else {
-      // Synchronously patch every changed field into both caches so the list /
-      // search view reflects the new values immediately, without waiting for the
-      // background invalidation refetch to complete.
-      const patchItem = (i: InventoryItem): InventoryItem => {
-        if (i.id !== current.id) return i;
-        return {
-          ...i,
-          description: description.trim(),
-          binLocations: finalBins,
-          aiKeywords: finalKeywords,
-          dimensions: dimsChanged ? newDims : (i.dimensions ?? null),
-          orderPurchase: parsedOp,
-          orderQuantity: parsedOq,
-          ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
-          ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
-        };
+      const updatedItem: InventoryItem = {
+        ...current,
+        description: description.trim(),
+        binLocations: finalBins,
+        aiKeywords: finalKeywords,
+        dimensions: dimsChanged ? newDims : (current.dimensions ?? null),
+        orderPurchase: parsedOp,
+        orderQuantity: parsedOq,
+        ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+        ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
       };
-      queryClient.setQueriesData<InventoryListResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-        (old) => {
-          if (!old) return old;
-          return { ...old, items: old.items.map(patchItem) };
-        },
-      );
-      queryClient.setQueriesData<SearchInventoryResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-        (old) => {
-          if (!old) return old;
-          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-            r.item.id === current.id ? { ...r, item: patchItem(r.item) } : r;
-          return {
-            ...old,
-            results: old.results.map(patchResult),
-            // exactOptionalPropertyTypes: only include the optional key when present
-            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-          };
-        },
-      );
-
-      // Evict stale search result cache entries for this item from AsyncStorage
-      // so the next query returns fresh data rather than serving old field values.
-      try {
-        const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
-        if (raw) {
-          const cache = parseStoredQueryCache(raw);
-          if (cache) {
-            const { pruned, changed } = evictItemFromQueryCache(cache, current.id);
-            if (changed) await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
-          }
-        }
-      } catch {
-        // Non-fatal — worst case the search cache TTL will expire naturally
-      }
       setNewPhotoData(null);
       setNewPhotoData2(null);
       setRemoveCurrentPhoto(false);
@@ -1039,20 +1041,33 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
         ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
       });
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: current.id,
+        updatedItem,
+      });
+      if (cacheResult && !cacheResult.ok) setRefreshWarning(INVENTORY_REFRESH_WARNING);
+      await invalidateListCache({ queryClient }).catch(() => undefined);
       setSaveStatus("saved");
-      allowCloseRef.current = true;
-      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = setTimeout(() => {
-        closeTimerRef.current = null;
-        requestClose();
-      }, 500);
+      if (!cacheResult || cacheResult.ok) {
+        allowCloseRef.current = true;
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = setTimeout(() => {
+          closeTimerRef.current = null;
+          requestClose();
+        }, 500);
+      }
     }
 
-    // onSettled: always invalidate both affected query keys as a safety net,
-    // regardless of success or failure, so the server's state of truth is
-    // restored after any cache patches applied during this mutation.
-    await invalidateListCache({ queryClient });
-    await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+    // Failed server writes still refresh the query caches, but a refresh failure
+    // must not turn a committed field write into a false server-save failure.
+    if (anyFailed) {
+      await Promise.all([
+        invalidateListCache({ queryClient }).catch(() => undefined),
+        queryClient.invalidateQueries({ queryKey: ["searchInventory"] }).catch(() => undefined),
+      ]);
+    }
   };
 
   const handleSave = async () => {
@@ -1639,6 +1654,11 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
             {errorMsg ? (
               <View style={[styles.errorBanner, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "55" }]}>
                 <Text style={[styles.errorText, { color: colors.destructive }]}>{errorMsg}</Text>
+              </View>
+            ) : null}
+            {refreshWarning ? (
+              <View style={[styles.errorBanner, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "66" }]}>
+                <Text style={[styles.errorText, { color: colors.warning }]}>{refreshWarning}</Text>
               </View>
             ) : null}
           </ScrollView>

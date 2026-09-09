@@ -61,6 +61,9 @@ export type CacheCleanupResult = {
   ok: boolean;
 };
 
+/** User-facing state for a committed write whose follow-up refresh was partial. */
+export const INVENTORY_REFRESH_WARNING = "Saved, but refresh failed. Search may be stale.";
+
 const cleanupResult = (failures: Array<unknown>): CacheCleanupResult => ({
   failures,
   ok: failures.length === 0,

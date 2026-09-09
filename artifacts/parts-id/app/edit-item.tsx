@@ -39,7 +39,7 @@ import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 import { API_BASE } from "@/utils/apiBase";
-import { evictDeletedItemFromAllCaches, invalidateAllCachesAfterSave, invalidateListCache } from "@/utils/editItemCache";
+import { evictDeletedItemFromAllCaches, invalidateAllCachesAfterSave, invalidateListCache,INVENTORY_REFRESH_WARNING } from "@/utils/editItemCache";
 import { inventorySaveErrorMessage, isAbortError, runInventoryWrite } from "@/utils/inventoryWrite";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
@@ -64,6 +64,8 @@ export default function EditItemScreen() {
   const writeControllersRef = useRef(new Set<AbortController>());
   const mountedRef = useRef(true);
   const saveInFlightRef = useRef(false);
+  const sizeSaveInFlightRef = useRef(false);
+  const expandedDescSaveInFlightRef = useRef(false);
   const fetchWrite = useCallback(
     (url: string, init: RequestInit) =>
       runInventoryWrite(writeControllersRef.current, signal => fetch(url, { ...init, signal })),
@@ -96,6 +98,9 @@ export default function EditItemScreen() {
       mountedRef.current = false;
       for (const controller of controllers) controller.abort();
       controllers.clear();
+      saveInFlightRef.current = false;
+      sizeSaveInFlightRef.current = false;
+      expandedDescSaveInFlightRef.current = false;
       if (navTimerRef.current !== null) clearTimeout(navTimerRef.current);
     };
   }, []);
@@ -179,6 +184,7 @@ export default function EditItemScreen() {
   const savedExpandedDescRef = useRef<string>(item?.expandedDescription ?? "");
   const [expandedDescSaving, setExpandedDescSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [expandedDescError, setExpandedDescError] = useState<string | null>(null);
+  const [refreshWarning, setRefreshWarning] = useState<string | null>(null);
   const [bins, setBins] = useState<Array<string>>(item?.binLocations ?? []);
   const [newBin, setNewBin] = useState("");
   const [barcodes, setBarcodes] = useState<Array<string>>(item?.barcodes ?? []);
@@ -304,12 +310,15 @@ export default function EditItemScreen() {
   const handleSaveSize = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) return;
+    if (sizeSaveInFlightRef.current) return;
     if (size.length > 100) {
       setSizeError("Size must be 100 characters or fewer.");
       return;
     }
+    sizeSaveInFlightRef.current = true;
     setSizeSaving("saving");
     setSizeError(null);
+    setRefreshWarning(null);
     try {
       const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/size`, {
         method: "PATCH",
@@ -342,22 +351,34 @@ export default function EditItemScreen() {
           };
         },
       );
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      const updatedItem = { ...current, size: newSizeVal };
+      itemRef.current = updatedItem;
       savedSizeRef.current = newSizeVal ?? "";
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: current.id,
+        updatedItem,
+      });
+      if (cacheResult && !cacheResult.ok) setRefreshWarning(INVENTORY_REFRESH_WARNING);
       setSizeSaving("saved");
     } catch (err) {
       if (!mountedRef.current || isAbortError(err)) return;
       setSizeError(inventorySaveErrorMessage(err, "Could not save size. Check connection and retry."));
       setSizeSaving("error");
+    } finally {
+      sizeSaveInFlightRef.current = false;
     }
   };
 
   const handleSaveExpandedDesc = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) return;
+    if (expandedDescSaveInFlightRef.current) return;
+    expandedDescSaveInFlightRef.current = true;
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
+    setRefreshWarning(null);
     try {
       const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/expanded-description`, {
         method: "PATCH",
@@ -368,45 +389,37 @@ export default function EditItemScreen() {
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      savedExpandedDescRef.current = expandedDescription.trim();
       const savedText = expandedDescription.trim() || null;
-      const listKeyPrefixSave = getListInventoryQueryKey()[0];
-      const patchExpandedSave = (i: InventoryItem): InventoryItem =>
-        i.id === current.id ? { ...i, expandedDescription: savedText } : i;
-      queryClient.setQueriesData<InventoryListResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefixSave },
-        (old) => old ? { ...old, items: old.items.map(patchExpandedSave) } : old,
-      );
-      queryClient.setQueriesData<SearchInventoryResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-        (old) => {
-          if (!old) return old;
-          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-            r.item.id === current.id ? { ...r, item: patchExpandedSave(r.item) } : r;
-          return {
-            ...old,
-            results: old.results.map(patchResult),
-            // exactOptionalPropertyTypes: only include the optional key when present
-            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-          };
-        },
-      );
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      const updatedItem = { ...current, expandedDescription: savedText };
+      itemRef.current = updatedItem;
+      savedExpandedDescRef.current = savedText ?? "";
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: current.id,
+        updatedItem,
+      });
+      if (cacheResult && !cacheResult.ok) setRefreshWarning(INVENTORY_REFRESH_WARNING);
       setExpandedDescSaving("saved");
     } catch (err) {
       if (!mountedRef.current || isAbortError(err)) return;
       setExpandedDescError(inventorySaveErrorMessage(err, "Could not save expanded description. Check connection and retry."));
       setExpandedDescSaving("error");
+    } finally {
+      expandedDescSaveInFlightRef.current = false;
     }
   };
 
   const handleClearExpandedDesc = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) return;
+    if (expandedDescSaveInFlightRef.current) return;
+    expandedDescSaveInFlightRef.current = true;
+    const previousText = expandedDescription;
     setExpandedDescription("");
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
+    setRefreshWarning(null);
     try {
       const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/expanded-description`, {
         method: "PATCH",
@@ -417,35 +430,24 @@ export default function EditItemScreen() {
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
+      const updatedItem = { ...current, expandedDescription: null };
+      itemRef.current = updatedItem;
       savedExpandedDescRef.current = "";
-      const listKeyPrefixClear = getListInventoryQueryKey()[0];
-      const patchExpandedClear = (i: InventoryItem): InventoryItem =>
-        i.id === current.id ? { ...i, expandedDescription: null } : i;
-      queryClient.setQueriesData<InventoryListResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefixClear },
-        (old) => old ? { ...old, items: old.items.map(patchExpandedClear) } : old,
-      );
-      queryClient.setQueriesData<SearchInventoryResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-        (old) => {
-          if (!old) return old;
-          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-            r.item.id === current.id ? { ...r, item: patchExpandedClear(r.item) } : r;
-          return {
-            ...old,
-            results: old.results.map(patchResult),
-            // exactOptionalPropertyTypes: only include the optional key when present
-            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-          };
-        },
-      );
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: current.id,
+        updatedItem,
+      });
+      if (cacheResult && !cacheResult.ok) setRefreshWarning(INVENTORY_REFRESH_WARNING);
       setExpandedDescSaving("saved");
     } catch (err) {
       if (!mountedRef.current || isAbortError(err)) return;
+      setExpandedDescription(previousText);
       setExpandedDescError(inventorySaveErrorMessage(err, "Could not clear expanded description. Check connection and retry."));
       setExpandedDescSaving("error");
+    } finally {
+      expandedDescSaveInFlightRef.current = false;
     }
   };
 
@@ -507,6 +509,7 @@ export default function EditItemScreen() {
     setSaveStatus("saving");
     setErrorMsg(null);
     setFieldSaveErrors({});
+    setRefreshWarning(null);
 
     const listKeyPrefix = getListInventoryQueryKey()[0];
     const inventorySnapshot = queryClient.getQueriesData<InventoryListResponse>(
@@ -760,8 +763,12 @@ export default function EditItemScreen() {
           .filter(i => i >= 0);
 
         if (failedIndices.length > 0) {
-          // Keep failed field values in the form so the field-level Retry
-          // action can resubmit the exact pending edit.
+          // Restore rejected fields so the form reflects the server truth.
+          // Succeeded fields remain committed and are kept in the form/cache
+          // for the field-level retry path.
+          for (const index of failedIndices) {
+            ops[index]!.restoreFn();
+          }
 
           // Which fields succeeded?
           const succeededFields = new Set(
@@ -779,6 +786,17 @@ export default function EditItemScreen() {
           }
 
           if (succeededFields.size > 0) {
+            const partialUpdatedItem: InventoryItem = {
+              ...current,
+              ...(succeededFields.has("description") ? { description: description.trim() } : {}),
+              ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
+              ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
+              ...(succeededFields.has("barcodes") ? { barcodes: finalBarcodes } : {}),
+              ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
+              ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq } : {}),
+              ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+              ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
+            };
             const patchItemPartial = (i: InventoryItem): InventoryItem => {
               if (i.id !== current.id) return i;
               return {
@@ -813,12 +831,15 @@ export default function EditItemScreen() {
             );
             if (succeededFields.has("photo") && capturedImageUrl !== undefined) setPhotoUri1(capturedImageUrl);
             if (succeededFields.has("photo2") && capturedImageUrl2 !== undefined) setPhotoUri2(capturedImageUrl2);
+            itemRef.current = partialUpdatedItem;
+            const cacheResult = await invalidateAllCachesAfterSave({
+              queryClient,
+              asyncStorage: AsyncStorage,
+              itemId: current.id,
+              updatedItem: partialUpdatedItem,
+            });
+            if (cacheResult && !cacheResult.ok) setRefreshWarning(INVENTORY_REFRESH_WARNING);
           }
-
-          await queryClient.invalidateQueries(
-            { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-          );
-          await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
 
           const newFieldErrors: typeof fieldSaveErrors = {};
           settled.forEach((result, i) => {
@@ -899,11 +920,26 @@ export default function EditItemScreen() {
         if (capturedImageUrl !== undefined) setPhotoUri1(capturedImageUrl);
         if (capturedImageUrl2 !== undefined) setPhotoUri2(capturedImageUrl2);
 
-        await invalidateAllCachesAfterSave({
+        const updatedItem: InventoryItem = {
+          ...current,
+          description: description.trim(),
+          aiKeywords: finalKeywords,
+          binLocations: finalBins,
+          barcodes: finalBarcodes,
+          ...(dimsChanged ? { dimensions: newDims } : {}),
+          orderPurchase: parsedOp,
+          orderQuantity: parsedOq,
+          ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+          ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
+        };
+        itemRef.current = updatedItem;
+        const cacheResult = await invalidateAllCachesAfterSave({
           queryClient,
           asyncStorage: AsyncStorage,
           itemId: current.id,
+          updatedItem,
         });
+        if (cacheResult && !cacheResult.ok) setRefreshWarning(INVENTORY_REFRESH_WARNING);
       }
 
       setSaveStatus("saved");
@@ -920,10 +956,10 @@ export default function EditItemScreen() {
       for (const [key, data] of searchSnapshot) {
         queryClient.setQueryData(key, data);
       }
-      await queryClient.invalidateQueries(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-      );
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      await Promise.all([
+        invalidateListCache({ queryClient }).catch(() => undefined),
+        queryClient.invalidateQueries({ queryKey: ["searchInventory"] }).catch(() => undefined),
+      ]);
     }
   };
 
@@ -960,22 +996,23 @@ export default function EditItemScreen() {
 
   const isSaving = saveStatus === "saving";
   const isSaved = saveStatus === "saved";
+  const baselineItem = itemRef.current ?? item;
 
   const hasChanges =
-    description.trim() !== (item.description ?? "").trim() ||
+    description.trim() !== (baselineItem.description ?? "").trim() ||
     expandedDescription.trim() !== savedExpandedDescRef.current ||
-    JSON.stringify(bins) !== JSON.stringify(item.binLocations ?? []) ||
-    JSON.stringify(barcodes) !== JSON.stringify(item.barcodes ?? []) ||
-    JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []) ||
-    Number(op.trim() || "0") !== item.orderPurchase ||
-    Number(oq.trim() || "0") !== item.orderQuantity ||
+    JSON.stringify(bins) !== JSON.stringify(baselineItem.binLocations ?? []) ||
+    JSON.stringify(barcodes) !== JSON.stringify(baselineItem.barcodes ?? []) ||
+    JSON.stringify(keywords) !== JSON.stringify(baselineItem.aiKeywords ?? []) ||
+    Number(op.trim() || "0") !== baselineItem.orderPurchase ||
+    Number(oq.trim() || "0") !== baselineItem.orderQuantity ||
     size.trim() !== savedSizeRef.current ||
-    parseDimField(dimLength) !== (existingDims?.length ?? null) ||
-    parseDimField(dimWidth) !== (existingDims?.width ?? null) ||
-    parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
-    parseDimField(dimDiameter) !== (existingDims?.diameter ?? null) ||
-    photoUri1 !== (item.imageUrl ?? null) ||
-    photoUri2 !== (item?.imageUrl2 ?? null);
+    parseDimField(dimLength) !== (baselineItem.dimensions?.length ?? null) ||
+    parseDimField(dimWidth) !== (baselineItem.dimensions?.width ?? null) ||
+    parseDimField(dimHeight) !== (baselineItem.dimensions?.height ?? null) ||
+    parseDimField(dimDiameter) !== (baselineItem.dimensions?.diameter ?? null) ||
+    photoUri1 !== (baselineItem.imageUrl ?? null) ||
+    photoUri2 !== (baselineItem.imageUrl2 ?? null);
 
   // Keep ref in sync so the beforeRemove guard always reads the latest value
   // without needing to re-register on every edit.
@@ -1553,6 +1590,11 @@ export default function EditItemScreen() {
           {errorMsg ? (
             <View style={[s.errorBanner, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "55" }]}>
               <Text style={[s.errorText, { color: colors.destructive }]}>{errorMsg}</Text>
+            </View>
+          ) : null}
+          {refreshWarning ? (
+            <View style={[s.errorBanner, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "66" }]}>
+              <Text style={[s.errorText, { color: colors.warning }]}>{refreshWarning}</Text>
             </View>
           ) : null}
         </ScrollView>

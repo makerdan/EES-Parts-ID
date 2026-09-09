@@ -16,9 +16,11 @@ import {
 } from "../utils/editItemCache";
 import type {
   AsyncStorageLike,
+  CacheCleanupResult,
   QueryClientLike,
   QueryClientLikeWithSetQueries,
 } from "../utils/editItemCache";
+import type { InventoryItem } from "@workspace/api-client-react";
 
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 
@@ -189,6 +191,28 @@ describe("invalidateAllCachesAfterSave", () => {
     );
     expect(hasSearch).toBe(true);
     expect(hasPredicate).toBe(true);
+  });
+
+  it("patches active caches and reports refresh failures after the item is committed", async () => {
+    const qc = makeQueryClientFull();
+    qc.invalidateQueries.mockImplementation(async (arg) => {
+      if (typeof arg === "object" && arg !== null && "predicate" in arg) {
+        throw new Error("list refresh unavailable");
+      }
+    });
+    const storage = makeStorage();
+    const updatedItem = { id: 7, description: "saved" } as InventoryItem;
+
+    const result: CacheCleanupResult = await invalidateAllCachesAfterSave({
+      queryClient: qc,
+      asyncStorage: storage,
+      itemId: updatedItem.id,
+      updatedItem,
+    });
+
+    expect(qc.setQueriesData).toHaveBeenCalledTimes(2);
+    expect(result.ok).toBe(false);
+    expect(result.failures).toHaveLength(1);
   });
 });
 

@@ -193,7 +193,7 @@ export default function SearchScreen() {
   const colors = useColors();
   const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus, showToast, setPinnedParts, pendingMeasureSearch, setPendingMeasureSearch, pendingInventorySearch, setPendingInventorySearch } = useApp();
   const queryClient = useQueryClient();
-  const [, setSearchCacheVersion] = useState(0);
+  const [searchCacheVersion, setSearchCacheVersion] = useState(0);
   useEffect(() => queryClient.getQueryCache().subscribe((event) => {
     if ("query" in event && event.query.queryKey[0] === SEARCH_RESULTS_QUERY_KEY[0]) {
       setSearchCacheVersion(version => version + 1);
@@ -438,10 +438,22 @@ export default function SearchScreen() {
   const handleItemSaved = useCallback((updatedItem: InventoryItem) => {
     const items = [...fuseItemsRef.current];
     const index = items.findIndex(item => item.id === updatedItem.id);
-    if (index < 0) return;
-    items[index] = updatedItem;
-    buildFuseIndex(items);
+    if (index >= 0) {
+      items[index] = updatedItem;
+      buildFuseIndex(items);
+    }
+    setDetailsItem(current => current?.id === updatedItem.id ? updatedItem : current);
   }, [buildFuseIndex]);
+
+  // Keep an open editor pointed at the newest host-side item without replacing
+  // values that the editor has already marked as locally dirty.
+  useEffect(() => {
+    if (!detailsItem) return;
+    const cachedSearch = queryClient.getQueryData<SearchInventoryResponse>(SEARCH_RESULTS_QUERY_KEY);
+    const refreshed = cachedSearch?.results?.find(result => result.item.id === detailsItem.id)?.item
+      ?? fuseItemsRef.current.find(candidate => candidate.id === detailsItem.id);
+    if (refreshed && refreshed !== detailsItem) setDetailsItem(refreshed);
+  }, [detailsItem, queryClient, searchCacheVersion, cachedCount]);
 
   // A routed edit screen can update the durable Fuse cache while this screen
   // stays mounted. Reload it whenever Search regains focus, but skip the first
