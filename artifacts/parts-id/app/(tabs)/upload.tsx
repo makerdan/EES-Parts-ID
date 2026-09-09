@@ -92,6 +92,8 @@ type ExpandDescDraft = {
   savedAt: number;
 };
 
+type AdminSection = "import" | "enrichment" | "warehouse" | "people";
+
 function getRestartNotice(state: RestartState): { title: string; message: string } | null {
   switch (state) {
     case "recovered":
@@ -1204,7 +1206,9 @@ export default function UploadScreen() {
   const [fileType, setFileType] = useState<"csv" | "xlsx" | "ods" | null>(null);
   const [importMode, setImportMode] = useState<ImportMode>("full");
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
-  const [activeSection, setActiveSection] = useState<"import" | "enrichment" | "warehouse" | "people" | null>(null);
+  const [activeSection, setActiveSectionState] = useState<AdminSection | null>(null);
+  const [activeSectionStorageReady, setActiveSectionStorageReady] = useState(false);
+  const [activeSectionStorageError, setActiveSectionStorageError] = useState<"read" | "write" | null>(null);
   const [addpartScrollY, setAddpartScrollY] = useState(0);
   const [measureVisible, setMeasureVisible] = useState(false);
   const [measuredDims, setMeasuredDims] = useState<PartDimensions | null>(null);
@@ -1294,6 +1298,8 @@ export default function UploadScreen() {
   const screenGenerationRef = useRef(0);
   const fileSelectionGenerationRef = useRef(0);
   const pasteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeSectionSelectionRef = useRef(false);
+  const activeSectionPersistenceGenerationRef = useRef(0);
 
   // Build admin auth headers for protected API calls
   const adminHeaders = useMemo<Record<string, string>>(
@@ -1301,27 +1307,78 @@ export default function UploadScreen() {
     [adminToken],
   );
 
-  // Persist activeSection across tab switches so the user doesn't lose their
-  // place when they navigate away and come back.
-  const ACTIVE_SECTION_KEY = "admin_activeSection";
-  useEffect(() => {
-    AsyncStorage.getItem(ACTIVE_SECTION_KEY).then((val) => {
-      if (!isMountedRef.current) return;
-      if (val === "import" || val === "enrichment" || val === "warehouse" || val === "people") {
-        setActiveSection(val);
-      }
-    }).catch(err => {
-      if (isMountedRef.current) reportStorageError('AsyncStorage read failed (ACTIVE_SECTION_KEY)', err);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const selectActiveSection = useCallback((section: AdminSection | null) => {
+    activeSectionSelectionRef.current = true;
+    setActiveSectionState(section);
   }, []);
-  useEffect(() => {
-    if (activeSection === null) {
-      AsyncStorage.removeItem(ACTIVE_SECTION_KEY).catch(() => {});
-    } else {
-      AsyncStorage.setItem(ACTIVE_SECTION_KEY, activeSection).catch(() => {});
+
+  // Keep the section setter name stable for existing admin navigation contracts,
+  // while routing every user selection through the persistence guard.
+  const setActiveSection = useCallback((section: AdminSection | null) => {
+    selectActiveSection(section);
+  }, [selectActiveSection]);
+
+  const ACTIVE_SECTION_KEY = "admin_activeSection";
+  const restoreActiveSection = useCallback(async () => {
+    try {
+      const val = await AsyncStorage.getItem(ACTIVE_SECTION_KEY);
+      if (!isMountedRef.current) return;
+      if (
+        !activeSectionSelectionRef.current &&
+        (val === "import" || val === "enrichment" || val === "warehouse" || val === "people")
+      ) {
+        setActiveSectionState(val);
+      }
+    } catch (err) {
+      if (isMountedRef.current) {
+        reportStorageError("AsyncStorage read failed (ACTIVE_SECTION_KEY)", err);
+        setActiveSectionStorageError("read");
+      }
+    } finally {
+      if (isMountedRef.current) setActiveSectionStorageReady(true);
     }
-  }, [activeSection]);
+  }, []);
+
+  const persistActiveSection = useCallback(async (section: AdminSection | null) => {
+    const generation = ++activeSectionPersistenceGenerationRef.current;
+    try {
+      if (section === null) {
+        await AsyncStorage.removeItem(ACTIVE_SECTION_KEY);
+      } else {
+        await AsyncStorage.setItem(ACTIVE_SECTION_KEY, section);
+      }
+      if (isMountedRef.current && generation === activeSectionPersistenceGenerationRef.current) {
+        setActiveSectionStorageError(null);
+      }
+    } catch (err) {
+      if (isMountedRef.current && generation === activeSectionPersistenceGenerationRef.current) {
+        reportStorageError(
+          `AsyncStorage ${section === null ? "remove" : "write"} failed (ACTIVE_SECTION_KEY)`,
+          err,
+        );
+        setActiveSectionStorageError("write");
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void restoreActiveSection();
+  }, [restoreActiveSection]);
+
+  useEffect(() => {
+    if (!activeSectionStorageReady) return;
+    void persistActiveSection(activeSection);
+  }, [activeSection, activeSectionStorageReady, persistActiveSection]);
+
+  const retryActiveSectionStorage = useCallback(() => {
+    setActiveSectionStorageError(null);
+    if (activeSectionStorageError === "read") {
+      setActiveSectionStorageReady(false);
+      void restoreActiveSection();
+    } else {
+      void persistActiveSection(activeSection);
+    }
+  }, [activeSection, activeSectionStorageError, persistActiveSection, restoreActiveSection]);
 
   // Keep a ref so interval callbacks always see the current token
   const adminTokenRef = useRef(adminToken);
@@ -2632,7 +2689,12 @@ export default function UploadScreen() {
         <View style={styles.headerRow}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {activeSection !== null ? (
-              <Pressable onPress={() => setActiveSection(null)} style={{ padding: 4 }}>
+              <Pressable
+                onPress={() => selectActiveSection(null)}
+                style={{ padding: 4 }}
+                accessibilityRole="button"
+                accessibilityLabel="Back to Admin Hub"
+              >
                 <Feather name="chevron-left" size={22} color={colors.foreground} />
               </Pressable>
             ) : null}
@@ -2877,13 +2939,36 @@ export default function UploadScreen() {
               </Pressable>
             </View>
           ) : null}
+          {activeSectionStorageError ? (
+            <View
+              style={[
+                styles.inlineBanner,
+                styles.errorBanner,
+                { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" },
+              ]}
+            >
+              <Text style={[styles.inlineBannerText, { color: colors.destructive }]}>
+                {activeSectionStorageError === "read"
+                  ? "Could not restore your place — retry"
+                  : "Could not save your place — retry"}
+              </Text>
+              <Pressable
+                onPress={retryActiveSectionStorage}
+                style={styles.bannerClose}
+                accessibilityRole="button"
+                accessibilityLabel="Retry saving your place"
+              >
+                <Text style={{ color: colors.destructive, fontSize: 14 }}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : null}
           {uploadSuccess ? (
             <View style={[styles.inlineBanner, styles.successBanner, { backgroundColor: "#10b98115", borderColor: "#10b98155" }]}>
               <Text style={[styles.inlineBannerText, { color: "#059669" }]}>
                 Upload complete — inserted {uploadSuccess.inserted}, updated {uploadSuccess.updated} ({uploadSuccess.total} total)
               </Text>
               <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                <Pressable onPress={() => { setUploadSuccess(null); setActiveSection("enrichment"); }}>
+                <Pressable onPress={() => { setUploadSuccess(null); selectActiveSection("enrichment"); }}>
                   <Text style={{ color: "#059669", fontSize: 12, fontFamily: "Inter_600SemiBold" }}>View →</Text>
                 </Pressable>
                 <Pressable onPress={() => setUploadSuccess(null)} style={styles.bannerClose}>
@@ -2938,8 +3023,11 @@ export default function UploadScreen() {
               {/* 2×2 section card grid */}
               <View style={hubStyles.cardGrid}>
                 <Pressable
-                  onPress={() => setActiveSection("import")}
+                  onPress={() => selectActiveSection("import")}
                   style={({ pressed }) => [hubStyles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Data Import section"
+                  accessibilityState={{ selected: activeSection === "import" }}
                 >
                   <Text style={hubStyles.sectionCardIcon}>📥</Text>
                   <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>Data Import</Text>
@@ -2947,8 +3035,11 @@ export default function UploadScreen() {
                 </Pressable>
 
                 <Pressable
-                  onPress={() => setActiveSection("enrichment")}
+                  onPress={() => selectActiveSection("enrichment")}
                   style={({ pressed }) => [hubStyles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open AI and Enrichment section"
+                  accessibilityState={{ selected: activeSection === "enrichment" }}
                 >
                   <Text style={hubStyles.sectionCardIcon}>🤖</Text>
                   <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>AI & Enrichment</Text>
@@ -2963,8 +3054,11 @@ export default function UploadScreen() {
                 </Pressable>
 
                 <Pressable
-                  onPress={() => setActiveSection("warehouse")}
+                  onPress={() => selectActiveSection("warehouse")}
                   style={({ pressed }) => [hubStyles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Warehouse section"
+                  accessibilityState={{ selected: activeSection === "warehouse" }}
                 >
                   <Text style={hubStyles.sectionCardIcon}>📦</Text>
                   <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>Warehouse</Text>
@@ -2981,6 +3075,9 @@ export default function UploadScreen() {
                 <Pressable
                   onPress={() => { setActiveSection("people"); fetchUsers(); }}
                   style={({ pressed }) => [hubStyles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open People and System section"
+                  accessibilityState={{ selected: activeSection === "people" }}
                 >
                   <Text style={hubStyles.sectionCardIcon}>👥</Text>
                   <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>People & System</Text>
@@ -4560,7 +4657,7 @@ export default function UploadScreen() {
                     <Pressable
                       accessibilityLabel="Go to Import"
                       accessibilityRole="button"
-                      onPress={() => setActiveSection("import")}
+                      onPress={() => selectActiveSection("import")}
                       style={[styles.goUploadBtn, { backgroundColor: colors.primary }]}
                     >
                       <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>Go to Import</Text>
