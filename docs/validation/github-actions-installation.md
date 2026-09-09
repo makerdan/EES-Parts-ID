@@ -44,6 +44,25 @@ credential value; the targeted history scan found only binary/pattern-test false
 positives. GitHub now returns `visibility: public`, and the previously blocked
 branch-protection and ruleset endpoints are available.
 
+## Read-only capability preflight
+
+Capability evidence is a gate before any activation attempt. The report may
+classify each capability as `available`, `unavailable`, `blocked`, or `unknown`;
+it never treats an unreadable endpoint as proof that a policy is supported and it
+never activates or changes a GitHub setting.
+
+| Capability | Required read-only evidence | If evidence is unavailable |
+|---|---|---|
+| Actions availability | Actions enabled state | report `unknown` or `blocked`; do not activate |
+| Branch protection | branch-protection endpoint support | report `unknown` or `blocked`; do not add protection |
+| Rulesets | ruleset endpoint support | report `unknown` or `blocked`; do not add a ruleset |
+| Selected actions | selected-action policy support and value | report `unknown` or `blocked`; do not narrow Actions |
+| SHA pinning | SHA-pinning policy support and value | report `unknown` or `blocked`; do not enable pinning |
+
+The focused contract test exercises blocked, unavailable, and unknown fixtures
+and verifies that the evidence object is not mutated or printed with secret-like
+values.
+
 ## Tracked contract
 
 - `.github/actions/setup-node-pnpm/action.yml` — reusable checkout, Node 24.13.0,
@@ -55,8 +74,10 @@ branch-protection and ruleset endpoints are available.
 - `.github/workflows/scheduled-audit.yml` — read-only scheduled/manual audit.
 - `.github/workflows/sync-readme.yml` — schedule/manual-only maintenance writer.
 - `scripts/test/github-actions-contract.test.mjs` — deterministic workflow and
-  coverage contract with a mutable-action negative control.
-- `scripts/validation-steps.mjs` — registers the contract check in standard.
+  coverage contract with a mutable-action negative control, capability preflight,
+  security-control evidence, and isolated runtime-mirror fixtures.
+- `scripts/validation-steps.mjs` — registers the contract check in fast exactly
+  once.
 - `package.json` — records the exact pnpm package manager.
 - `docs/validation/github-actions-coverage.md` — complete local-to-remote matrix.
 - `docs/validation/github-protection-status.md` — dated live evidence for

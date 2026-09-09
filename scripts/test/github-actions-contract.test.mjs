@@ -7,20 +7,32 @@
  * belong to the dependent activation task.
  */
 import nodeAssert from "node:assert/strict";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getTierSteps } from "../validation-steps.mjs";
+import {
+  buildGitHubCapabilityReport,
+  buildGitHubSecurityControlReport,
+  inspectOptionalRuntimeSkillMirror,
+} from "../lib/github-validation-evidence.mjs";
 
 const root = join(fileURLToPath(new URL("../..", import.meta.url)));
 const canonicalSkillDir = join(root, ".agents", "skills", "install-github-actions");
 const canonicalSkillPath = join(canonicalSkillDir, "SKILL.md");
 const runtimeSkillDir = join(root, ".local", "custom_skills", "install-github-actions");
-const runtimeSkillPath = join(runtimeSkillDir, "SKILL.md");
-const runtimeFingerprintPath = join(runtimeSkillDir, ".fingerprint");
 const workflowDir = join(root, ".github", "workflows");
 const actionPath = join(root, ".github", "actions", "setup-node-pnpm", "action.yml");
 const coveragePath = join(root, "docs", "validation", "github-actions-coverage.md");
+const fastContractChecks = new Map([
+  ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
+  ["github-actions-contract", "node scripts/test/github-actions-contract.test.mjs"],
+  ["api-route-authorization-contract", "node scripts/test/api-route-authorization-contract.test.mjs"],
+  ["skill-mirror-sync-contract", "node scripts/test/skill-mirror-sync-contract.test.mjs"],
+  ["patched-dependencies-contract", "node scripts/test/patched-dependencies.test.mjs"],
+  ["replit-config-contract", "node scripts/test/replit-config-contract.test.mjs"],
+]);
 
 const workflowNames = [
   "ci.yml",
@@ -253,19 +265,124 @@ function validateSkillContract() {
     assert(headingIndex > completionIndex, `completion report is missing ${heading}`);
   }
 
-  if (statSync(runtimeSkillDir, { throwIfNoEntry: false })) {
-    assertRegularFile(runtimeSkillPath, "runtime mirror skill");
-    assertRegularFile(runtimeFingerprintPath, "runtime mirror fingerprint");
-    nodeAssert.deepEqual(
-      readdirSync(runtimeSkillDir).sort(),
-      [".fingerprint", "SKILL.md"],
-      "runtime mirror must contain only the supported skill and fingerprint files",
-    );
-    nodeAssert.match(read(runtimeFingerprintPath).trim(), /^[0-9a-f]{32}$/i, "runtime mirror fingerprint must be a non-empty opaque hex value");
+  const runtimeMirror = inspectOptionalRuntimeSkillMirror(runtimeSkillDir);
+  assert(
+    runtimeMirror.outcome === "absent" || runtimeMirror.outcome === "valid",
+    `runtime mirror is invalid: ${runtimeMirror.reason}`,
+  );
+}
+
+function validateFastContractRegistration() {
+  const steps = getTierSteps("fast");
+  const registeredContractNames = steps
+    .filter(([name]) => name.endsWith("-contract"))
+    .map(([name]) => name)
+    .sort();
+  nodeAssert.deepEqual(
+    registeredContractNames,
+    [...fastContractChecks.keys()].sort(),
+    "fast validation contract inventory drifted",
+  );
+  for (const [name, command] of fastContractChecks) {
+    const matches = steps.filter(([stepName]) => stepName === name);
+    assert(matches.length === 1, `fast validation must register ${name} exactly once (found ${matches.length})`);
+    assert(matches[0][1] === command, `fast validation command drifted for ${name}`);
+  }
+}
+
+function validateCapabilityAndSecurityEvidence() {
+  const unavailableEvidence = {
+    actions: { statusCode: 403, secret: "secret-value", token: "token-value", password: "password-value" },
+    branchProtection: { supported: false },
+    rulesets: {},
+    selectedActions: { policy: "all" },
+    shaPinning: { required: false },
+  };
+  const capabilityInput = structuredClone(unavailableEvidence);
+  const capabilityReport = buildGitHubCapabilityReport(unavailableEvidence);
+  nodeAssert.equal(capabilityReport.mode, "read-only");
+  nodeAssert.equal(capabilityReport.activationAttempted, false);
+  nodeAssert.equal(capabilityReport.status, "blocked");
+  nodeAssert.equal(capabilityReport.capabilities.actions.status, "blocked");
+  nodeAssert.equal(capabilityReport.capabilities.branchProtection.status, "unavailable");
+  nodeAssert.equal(capabilityReport.capabilities.rulesets.status, "unknown");
+  nodeAssert.equal(capabilityReport.capabilities.selectedActions.status, "unknown");
+  nodeAssert.equal(capabilityReport.capabilities.shaPinning.status, "unavailable");
+  nodeAssert.deepEqual(unavailableEvidence, capabilityInput, "capability reporting must not mutate evidence");
+  nodeAssert.doesNotMatch(JSON.stringify(capabilityReport), /secret-value|token-value|password-value/i);
+
+  const securityEvidence = {
+    secretScanning: { enabled: true },
+    pushProtection: { status: "available" },
+    dependencyGraph: { vulnerabilityAlertsStatusCode: 204 },
+    dependabot: { alertsStatusCode: 200 },
+  };
+  const securityReport = buildGitHubSecurityControlReport(securityEvidence);
+  nodeAssert.equal(securityReport.mode, "read-only");
+  nodeAssert.equal(securityReport.mutationAttempted, false);
+  nodeAssert.equal(securityReport.status, "verified");
+  for (const control of Object.values(securityReport.controls)) nodeAssert.equal(control.status, "verified");
+
+  const blockedSecurityReport = buildGitHubSecurityControlReport({
+    secretScanning: { statusCode: 403 },
+    pushProtection: {},
+    dependencyGraph: { vulnerabilityAlertsStatusCode: 404 },
+    dependabot: { alertsStatusCode: 403 },
+  });
+  nodeAssert.equal(blockedSecurityReport.status, "blocked");
+  nodeAssert.equal(blockedSecurityReport.controls.secretScanning.status, "blocked");
+  nodeAssert.equal(blockedSecurityReport.controls.pushProtection.status, "unknown");
+  nodeAssert.equal(blockedSecurityReport.controls.dependencyGraph.status, "unavailable");
+  nodeAssert.equal(blockedSecurityReport.controls.dependabot.status, "blocked");
+  nodeAssert.match(blockedSecurityReport.controls.secretScanning.nextAction, /read-only/i);
+  const coverage = read(coveragePath);
+  nodeAssert.match(coverage, /^\| github-provider-capability-preflight \|/m);
+  nodeAssert.match(coverage, /^\| github-security-controls \|/m);
+
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "github-actions-mirror-"));
+  try {
+    nodeAssert.deepEqual(inspectOptionalRuntimeSkillMirror(join(fixtureRoot, "absent")), { outcome: "absent" });
+
+    const missing = join(fixtureRoot, "missing");
+    mkdirSync(missing);
+    writeFileSync(join(missing, "SKILL.md"), "# fixture\n");
+    nodeAssert.deepEqual(inspectOptionalRuntimeSkillMirror(missing), {
+      outcome: "invalid",
+      reason: "missing-or-extra-entry",
+    });
+
+    const extra = join(fixtureRoot, "extra");
+    mkdirSync(extra);
+    writeFileSync(join(extra, "SKILL.md"), "# fixture\n");
+    writeFileSync(join(extra, ".fingerprint"), "0123456789abcdef0123456789abcdef\n");
+    writeFileSync(join(extra, "unexpected.txt"), "must be rejected\n");
+    nodeAssert.deepEqual(inspectOptionalRuntimeSkillMirror(extra), {
+      outcome: "invalid",
+      reason: "missing-or-extra-entry",
+    });
+
+    const malformed = join(fixtureRoot, "malformed");
+    mkdirSync(malformed);
+    writeFileSync(join(malformed, "SKILL.md"), "# fixture\n");
+    writeFileSync(join(malformed, ".fingerprint"), "not-a-fingerprint\n");
+    nodeAssert.deepEqual(inspectOptionalRuntimeSkillMirror(malformed), {
+      outcome: "invalid",
+      reason: "malformed-fingerprint",
+    });
+
+    const valid = join(fixtureRoot, "valid");
+    mkdirSync(valid);
+    writeFileSync(join(valid, "SKILL.md"), "# fixture\n");
+    writeFileSync(join(valid, ".fingerprint"), "0123456789abcdef0123456789abcdef\n");
+    nodeAssert.deepEqual(inspectOptionalRuntimeSkillMirror(valid), { outcome: "valid" });
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
   }
 }
 
 validateSkillContract();
+validateFastContractRegistration();
+validateCapabilityAndSecurityEvidence();
 
 const files = Object.fromEntries(workflowNames.map((name) => [name, workflow(name)]));
 const errors = validateWorkflowContract(files, read(coveragePath));

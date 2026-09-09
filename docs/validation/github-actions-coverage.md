@@ -43,8 +43,14 @@ not inferred from this file.
 | api-server-coverage | `CI / required` → `pnpm run test-standard-plus` | coverage is produced by the same owning tier; upload is diagnostic-only | PR, merge queue, main push, manual | inferred from tier manifest |
 | security-audit | `CI / required` → `pnpm run test-standard-plus` | low-and-above audit; no production credentials | PR, merge queue, main push, manual | inferred from tier manifest |
 | post-merge-health-test | `CI / required` → `pnpm run test-standard-plus` | portable post-merge health contract | PR, merge queue, main push, manual | inferred from tier manifest |
+| github-provider-capability-preflight | none | provider-side read-only evidence for Actions, branch protection, rulesets, selected actions, and SHA pinning; unavailable evidence is blocked or unknown and never activatable | owner-approved read-only inspection only | provider evidence contract |
+| github-security-controls | none | provider-side read-only evidence for secret scanning, push protection, dependency graph, and Dependabot; disabled or unavailable controls remain actionable failures | owner-approved read-only inspection only | provider evidence contract |
 
 The macOS `LidarMeasureTests` job is a supplemental platform-specific owner for
 the native suite and is not hidden behind the Linux aggregator. The scheduled
 audit is maintenance-only; README synchronization is the only write-capable
 workflow and accepts no pull-request event.
+
+The two provider evidence rows are not local validation commands and do not
+authorize remote changes. They document the evidence boundary that must be
+resolved separately from the portable `standard-plus` tier.

@@ -10,6 +10,10 @@ This report distinguishes settings that GitHub positively returned as enabled
 from settings that require owner action. `unverified` means the API did not
 provide enough evidence to make a claim; it must never be read as enabled.
 
+The security-control check is read-only. A missing, disabled, or permission-
+blocked response produces an actionable `unavailable`, `blocked`, or `unknown`
+result; it does not enable a control, rewrite evidence, or print secret values.
+
 | Control | Status | Evidence and next action |
 | --- | --- | --- |
 | Repository visibility | `verified` | Repository API returned `visibility: public`. |
@@ -25,6 +29,20 @@ provide enough evidence to make a claim; it must never be read as enabled.
 | Default workflow token | `verified` | Actions workflow permissions returned `default_workflow_permissions: read`. |
 | Workflow-token PR approval | `verified` | Actions workflow permissions returned `can_approve_pull_request_reviews: false`. |
 | Actions SHA pinning | `verified` | Actions permissions returned `sha_pinning_required: true`. |
+
+## Security-control evidence contract
+
+The four controls below are the required provider-side security evidence. The
+dependency graph is verified by the vulnerability-alerts endpoint, while
+Dependabot is verified by its alerts endpoint. HTTP responses that cannot be
+read are explicitly unavailable or unknown rather than a pass.
+
+| Control | Read-only evidence | Bounded failure action |
+| --- | --- | --- |
+| Secret scanning | security settings enabled state plus alerts endpoint | ask an administrator to enable it, then re-check |
+| Push protection | security settings enabled state | ask an administrator to enable it, then re-check |
+| Dependency graph | vulnerability-alerts endpoint returns success | ask an administrator to enable it, then re-check |
+| Dependabot alerts | Dependabot alerts endpoint returns success | ask an administrator to enable it, then re-check |
 
 ## Provider-side security status before public launch
 
