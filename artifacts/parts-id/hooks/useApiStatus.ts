@@ -19,9 +19,12 @@ export type RestartState =
 
 export interface ApiStatusResult {
   status: ApiStatus;
+  checking: boolean;
+  lastCheckedAt: number | null;
   restarting: boolean;
   restartState: RestartState;
   triggerRestart: () => Promise<RestartState>;
+  dismissRestartNotice: () => void;
   checkStatus: () => Promise<void>;
   bots: Record<string, BotProbeStatus>;
   probeSingleBot: (botName: string) => Promise<void>;
@@ -44,6 +47,8 @@ export function useApiStatus({
   resumePollTimeoutMs = 5_000,
 }: UseApiStatusOptions): ApiStatusResult {
   const [status, setStatus] = useState<ApiStatus>("unknown");
+  const [checking, setChecking] = useState(false);
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [restarting, setRestarting] = useState(false);
   const [restartState, setRestartState] = useState<RestartState>("idle");
   const [bots, setBots] = useState<Record<string, BotProbeStatus>>({});
@@ -66,6 +71,7 @@ export function useApiStatus({
     const generation = generationRef.current;
     const controller = new AbortController();
     pollControllerRef.current = controller;
+    setChecking(true);
     const timeoutId = setTimeout(() => controller.abort(), 8_000);
     try {
       const res = await fetch(`${apiBase}/healthz`, { cache: "no-store", signal: controller.signal });
@@ -85,6 +91,7 @@ export function useApiStatus({
       }
       setStatus(parsed.data.status);
       setBots(parsed.data.bots ?? {});
+      setRestartState("idle");
     } catch {
       if (isMountedRef.current && generation === generationRef.current) {
         setStatus("error");
@@ -94,6 +101,10 @@ export function useApiStatus({
       clearTimeout(timeoutId);
       if (pollControllerRef.current === controller) pollControllerRef.current = null;
       pollInFlightRef.current = false;
+      if (isMountedRef.current && generation === generationRef.current) {
+        setChecking(false);
+        setLastCheckedAt(Date.now());
+      }
     }
   }, [apiBase]);
 
@@ -120,6 +131,7 @@ export function useApiStatus({
   }, []);
 
   const cancelAllWork = useCallback(() => {
+    const wasRestarting = restartingRef.current;
     generationRef.current++;
     stopPolling();
     pollControllerRef.current?.abort();
@@ -139,7 +151,7 @@ export function useApiStatus({
     restartingRef.current = false;
     if (isMountedRef.current) {
       setRestarting(false);
-      setRestartState("idle");
+      if (wasRestarting) setRestartState("cancelled");
     }
   }, [stopPolling]);
 
@@ -149,7 +161,6 @@ export function useApiStatus({
       if (!adminToken) return;
       isFocusedRef.current = true;
       setStatus("unknown");
-      setRestartState("idle");
       startPolling();
       return () => {
         isFocusedRef.current = false;
@@ -165,8 +176,10 @@ export function useApiStatus({
       "change",
       (nextState: AppStateStatus) => {
         if (nextState === "active" && isFocusedRef.current && adminToken) {
-          setStatus("unknown");
-          startPolling();
+          if (!restartingRef.current) {
+            setStatus("unknown");
+            startPolling();
+          }
         }
         if (nextState !== "active") {
           // A backgrounded screen must not keep requests or recovery timers alive.
@@ -214,7 +227,10 @@ export function useApiStatus({
         },
       );
       if (!isMountedRef.current || generation !== generationRef.current) return;
-      if (!res.ok) return;
+      if (!res.ok) {
+        setBots((current) => ({ ...current, [botName]: "error" }));
+        return;
+      }
       const raw = await res.json();
       // The admin single-bot endpoint returns the refreshed bot summary
       // (`{ bots }`), not the full `/healthz` payload (`{ status, bots }`).
@@ -225,6 +241,9 @@ export function useApiStatus({
       }
     } catch {
       // Aborts caused by blur/unmount/token changes are intentionally ignored.
+      if (isMountedRef.current && generation === generationRef.current && !controller.signal.aborted) {
+        setBots((current) => ({ ...current, [botName]: "error" }));
+      }
     } finally {
       clearTimeout(timeoutId);
       probeControllersRef.current.delete(controller);
@@ -330,6 +349,7 @@ export function useApiStatus({
               restartTimerIdsRef.current = [];
               if (isMountedRef.current && generation === generationRef.current) {
                 setStatus(parsed.data.status);
+                setBots(parsed.data.bots ?? {});
                 setRestartState("recovered");
                 setRestarting(false);
                 finishRecovery("recovered");
@@ -343,6 +363,9 @@ export function useApiStatus({
         } finally {
           clearTimeout(timeoutId);
           if (recoveryControllerRef.current === controller) recoveryControllerRef.current = null;
+          if (isMountedRef.current && generation === generationRef.current) {
+            setLastCheckedAt(Date.now());
+          }
         }
         if (!isMountedRef.current || generation !== generationRef.current) {
           finishRecovery("cancelled");
@@ -374,11 +397,19 @@ export function useApiStatus({
     setBots({});
   }, []);
 
+  const dismissRestartNotice = useCallback(() => {
+    if (!isMountedRef.current) return;
+    setRestartState("idle");
+  }, []);
+
   return {
     status,
+    checking,
+    lastCheckedAt,
     restarting,
     restartState,
     triggerRestart,
+    dismissRestartNotice,
     checkStatus: poll,
     bots,
     probeSingleBot,

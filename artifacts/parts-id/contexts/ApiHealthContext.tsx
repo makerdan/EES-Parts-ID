@@ -29,9 +29,12 @@ export function ApiHealthProvider({ children }: { children: React.ReactNode }) {
   });
   const {
     status,
+    checking,
+    lastCheckedAt,
     restarting,
     restartState,
     triggerRestart,
+    dismissRestartNotice,
     checkStatus,
     bots,
     probeSingleBot,
@@ -39,18 +42,24 @@ export function ApiHealthProvider({ children }: { children: React.ReactNode }) {
   } = result;
   const contextValue = useMemo(() => ({
     status,
+    checking,
+    lastCheckedAt,
     restarting,
     restartState,
     triggerRestart,
+    dismissRestartNotice,
     checkStatus,
     bots,
     probeSingleBot,
     reportNetworkFailure,
   }), [
     status,
+    checking,
+    lastCheckedAt,
     restarting,
     restartState,
     triggerRestart,
+    dismissRestartNotice,
     checkStatus,
     bots,
     probeSingleBot,

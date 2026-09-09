@@ -42,6 +42,7 @@ import { ShelfCatalogEntry } from "@/components/ShelfCatalogEntry";
 import { UserAdminButtonRow } from "@/components/UserAdminButtonRow";
 import { useApiHealth } from "@/contexts/ApiHealthContext";
 import { useApp } from "@/contexts/AppContext";
+import type { RestartState } from "@/hooks/useApiStatus";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
 import {
@@ -91,6 +92,47 @@ type ExpandDescDraft = {
   savedAt: number;
 };
 
+function getRestartNotice(state: RestartState): { title: string; message: string } | null {
+  switch (state) {
+    case "recovered":
+      return {
+        title: "API server recovered",
+        message: "The API server is back online and the latest health check confirmed it.",
+      };
+    case "authorization":
+      return {
+        title: "Restart was not allowed",
+        message: "Admin access with MFA is required. Check your session before trying again.",
+      };
+    case "rejected":
+      return {
+        title: "Restart was not accepted",
+        message: "The API server did not accept the request, so no restart was confirmed.",
+      };
+    case "timeout":
+      return {
+        title: "Restart request timed out",
+        message: "The server did not respond in time. It was not treated as restarted.",
+      };
+    case "server_failure":
+      return {
+        title: "Restart request failed",
+        message: "The API server could not process the request. Check its status before trying again.",
+      };
+    case "recovery_failed":
+      return {
+        title: "API server did not recover",
+        message: "The restart was accepted, but the server did not come back online before the recovery window ended.",
+      };
+    case "cancelled":
+      return {
+        title: "Restart monitoring stopped",
+        message: "Recovery was not confirmed after the screen or app was interrupted. Check the API status before trying again.",
+      };
+    default:
+      return null;
+  }
+}
 type AiStatusPayload = {
   provider: "poe" | "openai";
   catalogue: {
@@ -677,14 +719,17 @@ export default function UploadScreen() {
   const { isAdmin, logoutAdmin, adminToken, showToast } = useApp();
   const {
     status: apiStatus,
+    checking: apiChecking,
+    lastCheckedAt: apiLastCheckedAt,
     restarting: apiRestarting,
+    restartState: apiRestartState,
     triggerRestart,
+    dismissRestartNotice,
     checkStatus,
     bots: apiBots,
     probeSingleBot,
   } = useApiHealth();
   const apiCheckAnim = useRef(new Animated.Value(1)).current;
-  const [apiChecking, setApiChecking] = useState(false);
   const [activeBadge, setActiveBadge] = useState<string | null>(null);
   const probingBotsRef = useRef<Set<string>>(new Set());
   const [probingBots, setProbingBots] = useState<Set<string>>(new Set());
@@ -1125,6 +1170,7 @@ export default function UploadScreen() {
   ]);
 
   const handleRestartPress = useCallback(() => {
+    if (apiRestarting || apiChecking) return;
     Alert.alert(
       "Restart API server?",
       "The server will briefly go offline while it restarts.",
@@ -1134,37 +1180,22 @@ export default function UploadScreen() {
           text: "Restart",
           style: "destructive",
           onPress: () => {
-            void triggerRestart().then((outcome) => {
-              if (outcome === "recovered") {
-                Alert.alert("API server recovered", "The API server is back online.");
-              } else if (outcome === "authorization") {
-                Alert.alert("Restart denied", "Admin access with MFA is required.");
-              } else if (outcome === "rejected") {
-                Alert.alert("Restart not accepted", "The API server did not accept the restart request.");
-              } else if (outcome === "timeout") {
-                Alert.alert("Restart timed out", "The API server did not respond in time. It was not treated as restarted.");
-              } else if (outcome === "server_failure") {
-                Alert.alert("Restart failed", "The API server could not process the restart request.");
-              } else if (outcome === "recovery_failed") {
-                Alert.alert("API server did not recover", "The restart was accepted, but the server did not become healthy.");
-              }
-            });
+            void triggerRestart();
           },
         },
       ],
     );
-  }, [triggerRestart]);
+  }, [apiChecking, apiRestarting, triggerRestart]);
 
   const handleCheckPress = useCallback(async () => {
+    if (apiChecking || apiRestarting) return;
     const native = Platform.OS !== "web";
     Animated.sequence([
       Animated.timing(apiCheckAnim, { toValue: 0.82, duration: 100, useNativeDriver: native }),
       Animated.spring(apiCheckAnim, { toValue: 1, useNativeDriver: native, tension: 240, friction: 7 }),
     ]).start();
-    setApiChecking(true);
     await checkStatus();
-    setApiChecking(false);
-  }, [apiCheckAnim, checkStatus]);
+  }, [apiCheckAnim, apiChecking, apiRestarting, checkStatus]);
 
   const lidarSupported = isLiDARSupported();
   const [parsedRows, setParsedRows] = useState<Array<ParsedRow>>([]);
@@ -2566,6 +2597,34 @@ export default function UploadScreen() {
     );
   };
 
+  const apiStateLabel = apiRestarting
+    ? "restarting"
+    : apiChecking
+    ? "checking"
+    : apiStatus === "ok"
+    ? "healthy"
+    : apiStatus === "degraded"
+    ? "degraded"
+    : apiStatus === "error"
+    ? "offline"
+    : "unavailable";
+  const apiStateDescription = apiChecking
+    ? "Checking the API now."
+    : apiRestarting
+    ? "The server is restarting. Do not send another restart request."
+    : apiStatus === "ok"
+    ? "The API is responding normally."
+    : apiStatus === "degraded"
+    ? "The API is responding, but one or more services are degraded."
+    : apiStatus === "error"
+    ? "The API did not respond successfully. It may be offline."
+    : "No successful health check yet. Check again to confirm availability.";
+  const restartNotice = getRestartNotice(apiRestartState);
+  const canRetryRestart = restartNotice !== null && apiRestartState !== "recovered";
+  const lastCheckedLabel = apiLastCheckedAt === null
+    ? "No completed health check yet"
+    : `Last checked ${new Date(apiLastCheckedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -2595,6 +2654,9 @@ export default function UploadScreen() {
                   <Pressable
                     onPress={handleCheckPress}
                     onLongPress={handleRestartPress}
+                    disabled={apiChecking || apiRestarting}
+                    accessibilityRole="button"
+                    accessibilityLabel={`API status: ${apiStateLabel}. Tap to check now. Long press to restart the API.`}
                     style={[
                       styles.apiStatusPill,
                       {
@@ -2614,16 +2676,31 @@ export default function UploadScreen() {
                     <Text style={styles.apiStatusPillText}>
                       {apiRestarting
                         ? "⟳ Restarting…"
+                        : apiChecking
+                        ? "◌ API: checking"
                         : apiStatus === "ok"
-                        ? "● API: ok"
+                        ? "● API: healthy"
                         : apiStatus === "degraded"
                         ? "● API: degraded"
                         : apiStatus === "error"
-                        ? "● API: error"
-                        : "● API: …"}
+                        ? "● API: offline"
+                        : "● API: unavailable"}
                     </Text>
                   </Pressable>
                 </Animated.View>
+                <Pressable
+                  onPress={handleRestartPress}
+                  disabled={apiChecking || apiRestarting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Restart API"
+                  style={[styles.restartApiButton, {
+                    borderColor: colors.border,
+                    backgroundColor: colors.card,
+                    opacity: apiChecking || apiRestarting ? 0.5 : 1,
+                  }]}
+                >
+                  <Text style={[styles.restartApiButtonText, { color: colors.foreground }]}>Restart API</Text>
+                </Pressable>
                 {Object.keys(apiBots).length > 0 ? (
                   <View>
                     <View style={styles.botStatusRow}>
@@ -2714,6 +2791,77 @@ export default function UploadScreen() {
           ) : null}
         </View>
       </View>
+
+      {isAdmin ? (
+        <View
+          style={[
+            styles.apiHealthCard,
+            {
+              backgroundColor: apiStatus === "error" || apiRestartState === "recovery_failed"
+                ? colors.destructive + "12"
+                : apiStatus === "ok" && apiRestartState === "idle"
+                ? colors.success + "12"
+                : colors.card,
+              borderColor: apiStatus === "error" || apiRestartState === "recovery_failed"
+                ? colors.destructive + "55"
+                : colors.border,
+            },
+          ]}
+          accessibilityLiveRegion="polite"
+        >
+          <View style={styles.apiHealthCopy}>
+            <Text style={[styles.apiHealthTitle, { color: colors.foreground }]}>
+              {restartNotice?.title ?? `API status: ${apiStateLabel}`}
+            </Text>
+            <Text style={[styles.apiHealthDescription, { color: colors.mutedForeground }]}>
+              {restartNotice?.message ?? apiStateDescription}
+            </Text>
+            <Text style={[styles.apiHealthMeta, { color: colors.mutedForeground }]}>
+              {lastCheckedLabel}
+            </Text>
+          </View>
+          <View style={styles.apiHealthActions}>
+            <Pressable
+              onPress={handleCheckPress}
+              disabled={apiChecking || apiRestarting}
+              accessibilityRole="button"
+              accessibilityLabel="Check API status"
+              style={[
+                styles.apiHealthAction,
+                { borderColor: colors.border, opacity: apiChecking || apiRestarting ? 0.5 : 1 },
+              ]}
+            >
+              <Text style={[styles.apiHealthActionText, { color: colors.primary }]}>
+                {apiChecking ? "Checking…" : "Check now"}
+              </Text>
+            </Pressable>
+            {canRetryRestart ? (
+              <Pressable
+                onPress={handleRestartPress}
+                disabled={apiChecking || apiRestarting}
+                accessibilityRole="button"
+                accessibilityLabel="Try restarting the API again"
+                style={[
+                  styles.apiHealthAction,
+                  { borderColor: colors.primary, opacity: apiChecking || apiRestarting ? 0.5 : 1 },
+                ]}
+              >
+                <Text style={[styles.apiHealthActionText, { color: colors.primary }]}>Try again</Text>
+              </Pressable>
+            ) : null}
+            {restartNotice ? (
+              <Pressable
+                onPress={dismissRestartNotice}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss API restart message"
+                style={styles.apiHealthDismiss}
+              >
+                <Text style={[styles.apiHealthDismissText, { color: colors.mutedForeground }]}>Dismiss</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
 
       {/* Admin gate — inventory tools are restricted to admin-role users */}
       {!isAdmin ? (
@@ -4831,6 +4979,18 @@ const styles = StyleSheet.create({
   headerActions: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1, maxWidth: "58%" },
   apiStatusPill: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
   apiStatusPillText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#ffffff" },
+  restartApiButton: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  restartApiButtonText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  apiHealthCard: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderRadius: 10, padding: 12, marginHorizontal: 16, marginTop: 12 },
+  apiHealthCopy: { flex: 1, gap: 2, minWidth: 0 },
+  apiHealthTitle: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  apiHealthDescription: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  apiHealthMeta: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+  apiHealthActions: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" },
+  apiHealthAction: { borderWidth: 1, borderRadius: 7, paddingHorizontal: 9, paddingVertical: 6 },
+  apiHealthActionText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  apiHealthDismiss: { paddingHorizontal: 4, paddingVertical: 6 },
+  apiHealthDismissText: { fontSize: 11, fontFamily: "Inter_500Medium" },
   botStatusRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, justifyContent: "flex-end" },
   botStatusChip: { flexDirection: "row", alignItems: "center", borderRadius: 10, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 2, gap: 3 },
   botStatusDot: { fontSize: 8 },
