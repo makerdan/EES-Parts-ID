@@ -86,15 +86,20 @@ export interface FixtureItem {
  */
 export async function seedFixtures(items: FixtureItem[]) {
   for (const i of items) _seededCatalogs.add(i.catalog);
+  const fixtureTimestamp = new Date("2025-01-01T00:00:00.000Z");
   const rows = await db
     .insert(inventoryTable)
     .values(
       items.map(i => ({
         vendor: i.vendor.toUpperCase(),
         catalog: i.catalog,
+        orderPurchase: 0,
+        orderQuantity: 0,
         description: i.description,
         binLocations: i.binLocations ?? [],
         aiKeywords: [] as string[],
+        createdAt: fixtureTimestamp,
+        updatedAt: fixtureTimestamp,
         ...(i.dimensions !== undefined ? { dimensions: i.dimensions } : {}),
       })),
     )

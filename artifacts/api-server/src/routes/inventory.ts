@@ -782,7 +782,28 @@ router.post("/search", async (req, res) => {
 
       const [sizeItems, nullDimItems] = await Promise.all([
         db.execute(sql`
-          SELECT * FROM inventory
+          SELECT
+            id,
+            vendor,
+            catalog,
+            order_purchase AS "orderPurchase",
+            order_quantity AS "orderQuantity",
+            description,
+            bin_locations AS "binLocations",
+            ai_keywords AS "aiKeywords",
+            pinned_keywords AS "pinnedKeywords",
+            barcodes,
+            enriched_at AS "enrichedAt",
+            image_url AS "imageUrl",
+            thumbnail_url AS "thumbnailUrl",
+            image_url_2 AS "imageUrl2",
+            thumbnail_url_2 AS "thumbnailUrl2",
+            expanded_description AS "expandedDescription",
+            size,
+            dimensions,
+            created_at AS "createdAt",
+            updated_at AS "updatedAt"
+          FROM inventory
           WHERE ${dimPresenceClause}
           ${sizeOnlyLengthClause}
           ${sizeOnlyWidthClause}
