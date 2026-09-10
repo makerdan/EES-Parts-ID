@@ -374,10 +374,33 @@ export function validatePoeFallbacks(
     return { ok: false, error: "Refresh the Poe catalogue before saving fallback models" };
   }
   const incompatible = normalized.find((model) => !modelIsCompatible(feature, model));
-  if (incompatible) {
-    return { ok: false, error: `${incompatible} is unavailable or lacks the capabilities required by ${feature}` };
-  }
+  if (incompatible) return { ok: false, error: describeFallbackIncompatibility(feature, incompatible) };
   return { ok: true, models: normalized };
+}
+
+const CAPABILITY_LABELS: Record<keyof ReturnType<typeof requiredCapabilities>, string> = {
+  text: "text",
+  vision: "vision",
+  structuredOutput: "structured output",
+};
+
+function describeFallbackIncompatibility(feature: PoeFeature, modelName: string): string {
+  const boundedName = modelName.trim().slice(0, 128) || "Selected model";
+  const model = _catalogue.models.find(
+    (candidate) => candidate.id === modelName || candidate.name === modelName,
+  );
+  if (!model) {
+    return `${boundedName} is unavailable for ${feature}: it is not in the current verified catalogue`;
+  }
+
+  const required = requiredCapabilities(feature);
+  const missing = Object.entries(required)
+    .filter(([key, needed]) => needed && model.capabilities[key as keyof typeof model.capabilities] !== true)
+    .map(([key]) => CAPABILITY_LABELS[key as keyof typeof CAPABILITY_LABELS]);
+  if (model.capabilityConfidence === "unknown" || missing.length === 0) {
+    return `${boundedName} is unavailable for ${feature}: capability evidence is incomplete`;
+  }
+  return `${boundedName} is unavailable for ${feature}: missing required capabilities (${missing.join(", ")})`;
 }
 
 export function setPoeFallbacks(feature: PoeFeature, models: unknown): { ok: true; models: Array<string> } | { ok: false; error: string } {

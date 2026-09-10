@@ -74,6 +74,7 @@
 - [Disabled query cache observers](disabled-query-cache-observers.md) — when a disabled query-backed screen must react to app-owned cache writes, subscribe to QueryCache and read the stable key directly.
 - [Task-plan heading parser](task-plan-heading-parser.md) — put detailed Validation before Validation tier so the locked runner parses the intended section.
 - [Replit active configuration read boundary](replit-active-config-read-boundary.md) — no documented runtime reader exists; `/run/replit/env` is environment-only and may contain secrets.
+- [Replit config validation drift](replit-config-validation-drift.md) — standard validation can stop before project checks when an unrelated working-tree `.replit` port table differs from its contract.
 - [SearchScreen QueryClient test harness](searchscreen-queryclient-test-harness.md) — direct mounts need a provider; result assertions also need seeded active-cache data.
 - [API health restart recovery](api-health-restart-recovery.md) — preserve terminal restart outcomes through cleanup and refresh dependent health snapshots on recovery.
 - [Help user-scoped preferences](help-user-scoped-preferences.md) — isolate first-run dismissal per account and ignore stale async reads after account changes.

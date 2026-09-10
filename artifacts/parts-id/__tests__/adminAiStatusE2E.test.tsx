@@ -337,6 +337,19 @@ function findPressableByAccessibilityLabel(root: Inst, label: string): Inst | nu
   );
 }
 
+function findLiveStatus(root: Inst): Inst | null {
+  return (
+    root
+      .queryAll(
+        (node: Inst) =>
+          node.props.testID === "admin-ai-control-announcement" &&
+          node.props.accessibilityLiveRegion === "polite",
+        { includeSelf: true },
+      )
+      .find(Boolean) ?? null
+  );
+}
+
 const flushPromises = () =>
   act(async () => {
     for (let index = 0; index < 8; index++) await Promise.resolve();
@@ -454,6 +467,9 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
 
     expect(instText(rendered.tree.root!)).toContain("error");
     expect(instText(rendered.tree.root!)).toContain("ok");
+    expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain(
+      "AI provider health probe completed",
+    );
     expect(callsFor("/admin/ai-status/probe")).toHaveLength(1);
     const probeCall = callsFor("/admin/ai-status/probe")[0]!;
     expect(probeCall.init?.method).toBe("POST");
@@ -965,6 +981,7 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     await flushPromises();
 
     expect(instText(rendered.tree.root!)).toContain("will survive an API restart");
+    expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain("AI provider openai saved");
     expect(callsFor("/admin/ai-provider")).toHaveLength(2);
     expect(callsFor("/admin/ai-status/probe")).toHaveLength(0);
   });
@@ -1144,12 +1161,18 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
 
     expect(instText(rendered.tree.root!)).toContain("catalogue service unavailable");
     expect(instText(rendered.tree.root!)).not.toContain("Partial Model");
+    expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain(
+      "Provider catalogue refresh rejected",
+    );
 
     await act(async () => { fireEvent.press(refreshButton!); });
     await flushPromises();
 
     expect(instText(rendered.tree.root!)).toContain("Fallback Bot");
     expect(instText(rendered.tree.root!)).not.toContain("Partial Model");
+    expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain(
+      "Provider catalogue refreshed",
+    );
     expect(callsFor("/admin/ai-status/catalogue/refresh")).toHaveLength(2);
   });
 
@@ -1177,6 +1200,9 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
 
     expect(instText(rendered.tree.root!)).toContain("1. Fallback Bot");
     expect(instText(rendered.tree.root!)).toContain("Text Only is unavailable");
+    expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain(
+      "Fallback route save rejected",
+    );
   });
 
   it("preserves the safe route order and explains a rejected fallback reset", async () => {
@@ -1200,6 +1226,9 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
 
     expect(instText(rendered.tree.root!)).toContain("1. Fallback Bot");
     expect(instText(rendered.tree.root!)).toContain("Fallback choices could not be reset");
+    expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain(
+      "Fallback route reset rejected",
+    );
   });
 
   it("keeps stale catalogue routes visible but read-only until refresh succeeds", async () => {
@@ -1226,6 +1255,7 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     await flushPromises();
 
     expect(instText(rendered.tree.root!)).toContain("Fallbacks are read-only");
+    expect(instText(rendered.tree.root!)).toContain("Provider evidence: stale");
     expect(instText(rendered.tree.root!)).toContain("1. Fallback Bot");
 
     const resetButton = findPressableByAccessibilityLabel(rendered.tree.root!, "Reset fallbacks");
@@ -1262,5 +1292,31 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     await flushPromises();
 
     expect(instText(rendered.tree.root!)).not.toContain("+ Add Text Only");
+  });
+
+  it("marks incomplete capability evidence as unknown and keeps fallback controls disabled", async () => {
+    statusResponses = [aiRoutesStatusResponse(
+      [],
+      "poe",
+      "fresh",
+      [{
+        id: "incomplete-model",
+        name: "Incomplete Model",
+        modalities: ["text"],
+        capabilities: { text: true, vision: null, structuredOutput: true },
+      }],
+    )];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("Provider evidence: unknown");
+    expect(instText(rendered.tree.root!)).toContain("unknown or incomplete");
+    expect(findPressableByAccessibilityLabel(rendered.tree.root!, "Reset fallbacks")?.props.disabled).toBe(true);
   });
 });

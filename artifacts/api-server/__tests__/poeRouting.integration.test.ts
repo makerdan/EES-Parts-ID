@@ -105,7 +105,7 @@ describe("Poe routing safety boundary", () => {
     });
     expect(setPoeFallbacks("identify", ["Text-Only"])).toEqual({
       ok: false,
-      error: expect.stringContaining("lacks the capabilities"),
+      error: "Text-Only is unavailable for identify: missing required capabilities (vision)",
     });
     expect(getPoeFallbackOverrides()).toEqual(before);
   });

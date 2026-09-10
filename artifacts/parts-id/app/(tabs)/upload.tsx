@@ -157,13 +157,29 @@ type AiStatusPayload = {
 function isAiStatusPayload(value: unknown): value is AiStatusPayload {
   if (!value || typeof value !== "object") return false;
   const data = value as Partial<AiStatusPayload>;
+  const catalogue = data.catalogue;
+  const modelsValid =
+    !!catalogue &&
+    typeof catalogue === "object" &&
+    Array.isArray(catalogue.models) &&
+    catalogue.models.every((model) =>
+      !!model &&
+      typeof model === "object" &&
+      typeof model.id === "string" &&
+      typeof model.name === "string" &&
+      Array.isArray(model.modalities) &&
+      !!model.capabilities &&
+      typeof model.capabilities === "object" &&
+      ["text", "vision", "structuredOutput"].every((key) => {
+        const capability = model.capabilities[key as keyof typeof model.capabilities];
+        return typeof capability === "boolean" || capability === null;
+      }),
+    );
   return (
     (data.provider === "poe" || data.provider === "openai") &&
-    !!data.catalogue &&
-    typeof data.catalogue === "object" &&
-    Array.isArray(data.catalogue.models) &&
-    typeof data.catalogue.freshness === "string" &&
-    (typeof data.catalogue.error === "string" || data.catalogue.error === null) &&
+    modelsValid &&
+    typeof catalogue?.freshness === "string" &&
+    (typeof catalogue.error === "string" || catalogue.error === null) &&
     !!data.bots &&
     typeof data.bots === "object" &&
     Array.isArray(data.routes) &&
@@ -180,6 +196,20 @@ function getAiMutationError(data: unknown, status: number, fallback: string): st
     if (typeof catalogueError === "string" && catalogueError.trim()) return catalogueError;
   }
   return status ? `${fallback} (HTTP ${status})` : fallback;
+}
+
+function getAiEvidenceState(catalogue: AiStatusPayload["catalogue"]): "verified" | "stale" | "unknown" {
+  if (catalogue.freshness === "stale") return "stale";
+  if (
+    catalogue.freshness !== "fresh" ||
+    catalogue.models.length === 0 ||
+    catalogue.models.some((model) =>
+      Object.values(model.capabilities).some((capability) => capability === null),
+    )
+  ) {
+    return "unknown";
+  }
+  return "verified";
 }
 
 const SQL_EXAMPLES: Array<{ label: string; group: string; sql: string }> = [
@@ -772,6 +802,7 @@ export default function UploadScreen() {
   const [aiProviderSaving, setAiProviderSaving] = useState(false);
   const [aiProviderSaveState, setAiProviderSaveState] = useState<"saved" | "runtime-only" | null>(null);
   const [aiProviderError, setAiProviderError] = useState<string | null>(null);
+  const [aiControlAnnouncement, setAiControlAnnouncement] = useState<string | null>(null);
   const aiStatusGenerationRef = useRef(0);
   const aiStatusFetchControllerRef = useRef<AbortController | null>(null);
   const aiStatusProbeControllerRef = useRef<AbortController | null>(null);
@@ -813,6 +844,7 @@ export default function UploadScreen() {
     aiStatusFetchControllerRef.current = controller;
     setAiStatusLoading(true);
     setAiStatusError(null);
+    setAiControlAnnouncement("Loading AI status.");
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status`, {
         headers: { Authorization: `Bearer ${adminToken}` },
@@ -826,16 +858,31 @@ export default function UploadScreen() {
         generation !== aiStatusGenerationRef.current ||
         controller.signal.aborted
       ) return;
+      if (!isAiStatusPayload(data)) {
+        const partial = data as Partial<AiStatusPayload>;
+        if (!partial.bots || typeof partial.bots !== "object" || Array.isArray(partial.bots)) {
+          throw new Error("The API returned an incomplete AI status snapshot");
+        }
+        setAiStatusBots(partial.bots);
+        setAiStatus(null);
+        setAiControlAnnouncement("AI status loaded. Provider evidence is unknown.");
+        return;
+      }
       setAiStatusBots(data.bots ?? {});
       setAiStatus(data.catalogue ? data : null);
       if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
+      setAiControlAnnouncement(
+        `AI status loaded. Provider evidence is ${getAiEvidenceState(data.catalogue)}.`,
+      );
     } catch (err) {
       if (
         isMountedRef.current &&
         generation === aiStatusGenerationRef.current &&
         !controller.signal.aborted
       ) {
-        setAiStatusError(err instanceof Error ? err.message : "Failed to load AI status");
+        const message = err instanceof Error ? err.message : "Failed to load AI status";
+        setAiStatusError(message);
+        setAiControlAnnouncement(`AI status request rejected: ${message}`);
       }
     } finally {
       if (aiStatusFetchControllerRef.current === controller) {
@@ -862,6 +909,7 @@ export default function UploadScreen() {
     setAiProviderSaving(true);
     setAiProviderError(null);
     setAiProviderSaveState(null);
+    setAiControlAnnouncement("Saving AI provider selection.");
     try {
       const res = await fetch(`${API_BASE}/admin/ai-provider`, {
         method: "POST",
@@ -910,6 +958,11 @@ export default function UploadScreen() {
       setAiStatus(statusData);
       setAiProvider(statusData.provider);
       setAiProviderSaveState(data.persisted === true ? "saved" : "runtime-only");
+      setAiControlAnnouncement(
+        data.persisted === true
+          ? `AI provider ${statusData.provider} saved.`
+          : `AI provider ${statusData.provider} switched for this session; saving will need a retry.`,
+      );
     } catch (err) {
       if (
         isMountedRef.current &&
@@ -917,7 +970,9 @@ export default function UploadScreen() {
         generation === aiProviderGenerationRef.current &&
         !controller.signal.aborted
       ) {
-        setAiProviderError(err instanceof Error ? err.message : "AI provider choice could not be saved");
+        const message = err instanceof Error ? err.message : "AI provider choice could not be saved";
+        setAiProviderError(message);
+        setAiControlAnnouncement(`AI provider selection rejected: ${message}`);
       }
     } finally {
       if (aiProviderControllerRef.current === controller) {
@@ -944,6 +999,7 @@ export default function UploadScreen() {
     setAiStatusLoading(false);
     setAiStatusProbing(true);
     setAiStatusError(null);
+    setAiControlAnnouncement("Checking AI provider health.");
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status/probe`, {
         method: "POST",
@@ -958,16 +1014,29 @@ export default function UploadScreen() {
         generation !== aiStatusGenerationRef.current ||
         controller.signal.aborted
       ) return;
+      if (!isAiStatusPayload(data)) {
+        const partial = data as Partial<AiStatusPayload>;
+        if (!partial.bots || typeof partial.bots !== "object" || Array.isArray(partial.bots)) {
+          throw new Error("The API returned an incomplete probe status snapshot");
+        }
+        setAiStatusBots(partial.bots);
+        setAiStatus(null);
+        setAiControlAnnouncement("AI provider health probe completed with unknown catalogue evidence.");
+        return;
+      }
       setAiStatusBots(data.bots ?? {});
       setAiStatus(data.catalogue ? data : null);
       if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
+      setAiControlAnnouncement("AI provider health probe completed.");
     } catch (err) {
       if (
         isMountedRef.current &&
         generation === aiStatusGenerationRef.current &&
         !controller.signal.aborted
       ) {
-        setAiStatusError(err instanceof Error ? err.message : "Probe failed");
+        const message = err instanceof Error ? err.message : "Probe failed";
+        setAiStatusError(message);
+        setAiControlAnnouncement(`AI provider probe rejected: ${message}`);
       }
     } finally {
       if (aiStatusProbeControllerRef.current === controller) {
@@ -993,6 +1062,7 @@ export default function UploadScreen() {
     aiCatalogueControllerRef.current = controller;
     setAiCatalogueRefreshing(true);
     setAiStatusError(null);
+    setAiControlAnnouncement("Refreshing provider model catalogue.");
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status/catalogue/refresh`, {
         method: "POST",
@@ -1015,6 +1085,9 @@ export default function UploadScreen() {
       setAiStatus(data);
       setAiStatusBots(data.bots);
       setAiProvider(data.provider);
+      setAiControlAnnouncement(
+        `Provider catalogue refreshed. Evidence is ${getAiEvidenceState(data.catalogue)}.`,
+      );
     } catch (err) {
       if (
         isMountedRef.current &&
@@ -1022,7 +1095,9 @@ export default function UploadScreen() {
         generation === aiCatalogueGenerationRef.current &&
         !controller.signal.aborted
       ) {
-        setAiStatusError(err instanceof Error ? err.message : "Catalogue refresh failed");
+        const message = err instanceof Error ? err.message : "Catalogue refresh failed";
+        setAiStatusError(message);
+        setAiControlAnnouncement(`Provider catalogue refresh rejected: ${message}`);
       }
     } finally {
       if (aiCatalogueControllerRef.current === controller) {
@@ -1049,6 +1124,7 @@ export default function UploadScreen() {
     aiRoutesControllerRef.current = controller;
     setAiRoutesSaving(true);
     setAiStatusError(null);
+    setAiControlAnnouncement("Saving fallback route order.");
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status/routes`, {
         method: "PUT",
@@ -1070,6 +1146,7 @@ export default function UploadScreen() {
       setAiStatus(data.catalogue ? data : null);
       setAiStatusBots(data.bots ?? {});
       if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
+      setAiControlAnnouncement("Fallback route order saved.");
     } catch (err) {
       if (
         isMountedRef.current &&
@@ -1077,7 +1154,11 @@ export default function UploadScreen() {
         generation === aiRoutesGenerationRef.current &&
         !controller.signal.aborted
       ) {
-        setAiStatusError(err instanceof Error ? err.message : "Fallback choices could not be saved");
+        const message = err instanceof Error ? err.message : "Fallback choices could not be saved";
+        setAiStatusError(message);
+        setAiControlAnnouncement(
+          `Fallback route save rejected: ${message}. The existing safe route order remains active.`,
+        );
       }
     } finally {
       if (aiRoutesControllerRef.current === controller) {
@@ -1104,6 +1185,7 @@ export default function UploadScreen() {
     aiRoutesControllerRef.current = controller;
     setAiRoutesSaving(true);
     setAiStatusError(null);
+    setAiControlAnnouncement("Resetting fallback route order.");
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status/routes/reset`, {
         method: "POST",
@@ -1124,6 +1206,7 @@ export default function UploadScreen() {
       }
       setAiStatus(data);
       setAiStatusBots(data.bots ?? {});
+      setAiControlAnnouncement("Fallback route order reset.");
     } catch (err) {
       if (
         isMountedRef.current &&
@@ -1131,7 +1214,11 @@ export default function UploadScreen() {
         generation === aiRoutesGenerationRef.current &&
         !controller.signal.aborted
       ) {
-        setAiStatusError(err instanceof Error ? err.message : "Fallback choices could not be reset");
+        const message = err instanceof Error ? err.message : "Fallback choices could not be reset";
+        setAiStatusError(message);
+        setAiControlAnnouncement(
+          `Fallback route reset rejected: ${message}. The existing safe route order remains active.`,
+        );
       }
     } finally {
       if (aiRoutesControllerRef.current === controller) {
@@ -4105,6 +4192,15 @@ export default function UploadScreen() {
               {/* AI Status card — moved from Data Import */}
               {isAdmin && adminToken ? (
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                {aiControlAnnouncement ? (
+                  <Text
+                    testID="admin-ai-control-announcement"
+                    accessibilityLiveRegion="polite"
+                    style={styles.srOnly}
+                  >
+                    {aiControlAnnouncement}
+                  </Text>
+                ) : null}
                 <View style={styles.aiStatusHeader}>
                   <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 AI Status</Text>
                   <View style={styles.aiStatusActions}>
@@ -4167,8 +4263,8 @@ export default function UploadScreen() {
                   <>
                     <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>
                       Active provider: <Text style={{ color: colors.foreground }}>{aiProvider}</Text>
-                      {"  "}Catalogue: <Text style={{ color: aiStatus.catalogue.freshness === "fresh" ? "#10b981" : "#f59e0b" }}>
-                        {aiStatus.catalogue.freshness}
+                      {"  "}Provider evidence: <Text style={{ color: getAiEvidenceState(aiStatus.catalogue) === "verified" ? "#10b981" : "#f59e0b" }}>
+                        {getAiEvidenceState(aiStatus.catalogue)}
                       </Text>
                     </Text>
                     <View style={[styles.aiProviderControl, { borderColor: colors.border }]}>
@@ -4245,9 +4341,17 @@ export default function UploadScreen() {
                         Fallbacks are read-only until a fresh Poe catalogue is available. Refresh models before changing the safe route order.
                       </Text>
                     ) : null}
+                    {getAiEvidenceState(aiStatus.catalogue) === "unknown" ? (
+                      <Text
+                        accessibilityRole="alert"
+                        style={[styles.aiStatusMeta, { color: colors.warning }]}
+                      >
+                        Provider capability evidence is unknown or incomplete. Fallbacks remain read-only until a complete, fresh catalogue is available.
+                      </Text>
+                    ) : null}
                     {aiStatus.routes.map((route) => {
                       const eligible = aiStatus.catalogue.models.filter((model) => {
-                        if (aiStatus.catalogue.freshness !== "fresh") return false;
+                        if (getAiEvidenceState(aiStatus.catalogue) !== "verified") return false;
                         if (route.feature !== "enrich" && model.capabilities.vision !== true) return false;
                         if (model.capabilities.text !== true || model.capabilities.structuredOutput !== true) return false;
                         return !route.fallbacks.includes(model.name) && model.name !== route.primary;
@@ -4270,7 +4374,7 @@ export default function UploadScreen() {
                               <Text style={[styles.aiFallbackText, { color: colors.foreground }]}>{index + 1}. {model}</Text>
                               <View style={styles.aiFallbackActions}>
                                 <Pressable
-                                  disabled={index === 0 || aiRoutesSaving || aiStatus.catalogue.freshness !== "fresh"}
+                                  disabled={index === 0 || aiRoutesSaving || getAiEvidenceState(aiStatus.catalogue) !== "verified"}
                                   accessibilityLabel={`Move ${model} fallback up`}
                                   onPress={() => {
                                   const next = [...route.fallbacks];
@@ -4283,7 +4387,7 @@ export default function UploadScreen() {
                                 }}
                                 ><Text style={[styles.aiRouteAction, { color: index === 0 ? colors.muted : colors.primary }]}>↑</Text></Pressable>
                                 <Pressable
-                                  disabled={index === route.fallbacks.length - 1 || aiRoutesSaving || aiStatus.catalogue.freshness !== "fresh"}
+                                  disabled={index === route.fallbacks.length - 1 || aiRoutesSaving || getAiEvidenceState(aiStatus.catalogue) !== "verified"}
                                   accessibilityLabel={`Move ${model} fallback down`}
                                   onPress={() => {
                                   const next = [...route.fallbacks];
@@ -4296,7 +4400,7 @@ export default function UploadScreen() {
                                 }}
                                 ><Text style={[styles.aiRouteAction, { color: index === route.fallbacks.length - 1 ? colors.muted : colors.primary }]}>↓</Text></Pressable>
                                 <Pressable
-                                  disabled={aiRoutesSaving || aiStatus.catalogue.freshness !== "fresh"}
+                                  disabled={aiRoutesSaving || getAiEvidenceState(aiStatus.catalogue) !== "verified"}
                                   accessibilityLabel={`Remove ${model} fallback`}
                                   onPress={() => update(route.fallbacks.filter((item) => item !== model))}
                                 >
@@ -4307,7 +4411,7 @@ export default function UploadScreen() {
                           ))}
                           {eligible[0] ? (
                             <Pressable
-                              disabled={aiRoutesSaving || aiStatus.catalogue.freshness !== "fresh"}
+                              disabled={aiRoutesSaving || getAiEvidenceState(aiStatus.catalogue) !== "verified"}
                               accessibilityLabel={`Add ${eligible[0]!.name} fallback`}
                               onPress={() => update([...route.fallbacks, eligible[0]!.name])}
                             >
@@ -4322,7 +4426,7 @@ export default function UploadScreen() {
                         Reference assistant: Gemini (read-only)
                       </Text>
                       <Pressable
-                        disabled={aiRoutesSaving || aiStatus.catalogue.freshness !== "fresh"}
+                        disabled={aiRoutesSaving || getAiEvidenceState(aiStatus.catalogue) !== "verified"}
                         accessibilityLabel="Reset fallbacks"
                         onPress={resetAiRoutes}
                       >
@@ -5330,6 +5434,7 @@ const styles = StyleSheet.create({
   queryExportBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   aiStatusHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   aiStatusActions: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1 },
+  srOnly: { position: "absolute", width: 1, height: 1, opacity: 0 },
   aiProbeBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, minWidth: 44, alignItems: "center" },
   aiProbeBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   aiStatusError: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
