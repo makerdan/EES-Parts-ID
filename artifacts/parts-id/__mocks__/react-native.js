@@ -127,11 +127,15 @@ module.exports = {
   Alert: {
     alert: jest.fn(),
   },
+  Share: {
+    share: jest.fn(() => Promise.resolve({ action: "sharedAction" })),
+  },
   StyleSheet: {
     create: (styles) => styles,
     hairlineWidth: 0.5,
     flatten: (s) => s,
     absoluteFill: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
+    absoluteFillObject: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
   },
   Platform: {
     OS: "ios",
@@ -161,6 +165,7 @@ module.exports = {
   Appearance: {
     getColorScheme: () => "light",
     addChangeListener: () => ({ remove: noop }),
+    setColorScheme: noop,
   },
   Linking: {
     openURL: jest.fn(() => Promise.resolve()),

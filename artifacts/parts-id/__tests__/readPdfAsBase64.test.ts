@@ -26,9 +26,14 @@ import {
 // jest.mock is hoisted before variable initialisation, so we cannot close over
 // a `const` defined in the same file. Instead we expose a mutable object via
 // the mock factory and retrieve it with jest.requireMock() after the fact.
-jest.mock("react-native", () => ({
-  Platform: { OS: "web" },
-}));
+jest.mock("react-native", () =>
+  require("./helpers/mapMocks").createReactNativeMock({
+    Platform: {
+      OS: "web",
+      select: (options: Record<string, unknown>) => options.web ?? options.default,
+    },
+  }),
+);
 
 // ── expo-file-system/legacy mock ──────────────────────────────────────────────
 const mockGetInfoAsync = jest.fn<Promise<{ exists: boolean; size?: number }>, [string, object?]>();

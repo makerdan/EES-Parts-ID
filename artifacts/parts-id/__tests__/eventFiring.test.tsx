@@ -31,20 +31,11 @@ import { render, fireEvent } from "@testing-library/react-native";
 
 // ─── react-native mock (minimal — only Pressable + Text needed) ───────────────
 
-jest.mock("react-native", () => ({
-  Platform:          { OS: "ios", select: (o: Record<string, unknown>) => o.ios ?? o.default },
-  StyleSheet:        { create: (s: unknown) => s, flatten: (s: unknown) => s },
-  View:              ({ children }: { children?: React.ReactNode }) =>
-                       React.createElement("rn-view", {}, children),
-  Text:              ({ children }: { children?: React.ReactNode }) =>
-                       React.createElement("Text", {}, children),
-  Pressable:         ({ children, onPress }: { children?: React.ReactNode; onPress?: () => void }) =>
-                       React.createElement("rn-pressable", { onPress }, children),
-  ActivityIndicator: () => null,
-  PixelRatio:        { get: () => 3 },
-  useColorScheme:    () => "light",
-  LayoutChangeEvent: {},
-}));
+jest.mock("react-native", () =>
+  require("./helpers/mapMocks").createReactNativeMock({
+    PixelRatio: { get: () => 3 },
+  }),
+);
 
 // =============================================================================
 // Smoke test

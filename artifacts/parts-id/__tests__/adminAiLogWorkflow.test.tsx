@@ -16,12 +16,13 @@ import { act, fireEvent, render } from "@testing-library/react-native";
 import { Alert, Share } from "react-native";
 import type { TestInstance } from "test-renderer";
 
-jest.mock("react-native", () => ({
-  ...jest.requireActual("react-native"),
-  Share: {
-    share: jest.fn().mockResolvedValue({ action: "sharedAction" }),
-  },
-}));
+jest.mock("react-native", () =>
+  require("./helpers/mapMocks").createReactNativeMock({
+    Share: {
+      share: jest.fn().mockResolvedValue({ action: "sharedAction" }),
+    },
+  }),
+);
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 

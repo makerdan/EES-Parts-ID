@@ -15,8 +15,6 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 // ─── react-native ─────────────────────────────────────────────────────────────
 
 jest.mock("react-native", () => {
-  const React = require("react");
-
   function makeAnimValue() {
     return {
       setValue: jest.fn(),
@@ -24,42 +22,31 @@ jest.mock("react-native", () => {
     };
   }
 
-  return {
-    View: function View({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) {
-      return React.createElement("rn-view", props, children);
-    },
-    Text: function Text({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) {
-      return React.createElement("Text", props, children);
-    },
-    Pressable: function Pressable({ children, onPress, ...props }: { children?: React.ReactNode; onPress?: () => void; [k: string]: unknown }) {
-      return React.createElement("rn-pressable", { onPress, ...props }, children);
-    },
-    ScrollView: function ScrollView({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) {
-      return React.createElement("rn-scroll-view", props, children);
-    },
-    StyleSheet: {
-      create: (s: unknown) => s,
-      flatten: (s: unknown) => s,
-    },
+  const helpers = require("./helpers/mapMocks");
+  const rn = helpers.createReactNativeMock();
+  const animated = rn.Animated as Record<string, unknown>;
+  const layoutAnimation = rn.LayoutAnimation as Record<string, unknown>;
+  const uiManager = rn.UIManager as Record<string, unknown>;
+
+  return helpers.createReactNativeMock({
     Animated: {
+      ...animated,
       Value: makeAnimValue,
       timing: () => ({ start: jest.fn() }),
-      View: function AnimView({ children, style }: { children?: React.ReactNode; style?: unknown }) {
-        return React.createElement("rn-animated-view", { style }, children);
-      },
     },
     LayoutAnimation: {
+      ...layoutAnimation,
       configureNext: jest.fn(),
-      Presets: { easeInEaseOut: {} },
     },
     UIManager: {
+      ...uiManager,
       setLayoutAnimationEnabledExperimental: jest.fn(),
     },
-    Platform: { OS: "ios" },
     PanResponder: {
+      ...(rn.PanResponder as Record<string, unknown>),
       create: () => ({ panHandlers: {} }),
     },
-  };
+  });
 });
 
 // ─── @expo/vector-icons ────────────────────────────────────────────────────────

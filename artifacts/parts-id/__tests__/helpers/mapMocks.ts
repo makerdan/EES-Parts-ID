@@ -22,8 +22,13 @@ import * as path from "path";
  * call use the same maintained API surface as suites that rely on
  * moduleNameMapper.  Do not recreate partial React Native objects inline.
  */
-export function createReactNativeMock(): Record<string, unknown> {
-  return jest.requireActual(path.resolve(__dirname, "../../__mocks__/react-native.js")) as Record<string, unknown>;
+export function createReactNativeMock(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const actual = jest.requireActual(
+    path.resolve(__dirname, "../../__mocks__/react-native.js"),
+  ) as Record<string, unknown>;
+  return { ...actual, ...overrides };
 }
 
 /** react-native-reanimated — full version with Easing and both default and named exports. */

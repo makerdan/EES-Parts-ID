@@ -42,13 +42,11 @@ jest.mock("@/components/PartPhotoPicker", () => ({
 }));
 
 jest.mock("react-native", () => {
-  const actual = jest.requireActual("react-native");
   const R = require("react") as typeof React;
-  return {
-    ...actual,
+  return require("./helpers/mapMocks").createReactNativeMock({
     Modal: (props: Record<string, unknown>) =>
       R.createElement("rn-modal", props, props.children as React.ReactNode),
-  };
+  });
 });
 
 let capturedConfirmDialogProps: {

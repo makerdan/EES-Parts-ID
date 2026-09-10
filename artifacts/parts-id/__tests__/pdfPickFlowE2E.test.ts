@@ -27,9 +27,14 @@
 
 // Override the react-native moduleNameMapper so readPdfAsBase64 sees
 // Platform.OS = "web" and takes the FileReader path instead of native.
-jest.mock("react-native", () => ({
-  Platform: { OS: "web" },
-}));
+jest.mock("react-native", () =>
+  require("./helpers/mapMocks").createReactNativeMock({
+    Platform: {
+      OS: "web",
+      select: (options: Record<string, unknown>) => options.web ?? options.default,
+    },
+  }),
+);
 
 // expo-file-system/legacy is imported at module level but only used on native.
 // Stub it so the import resolves without an error.

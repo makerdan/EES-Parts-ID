@@ -50,14 +50,19 @@ jest.mock("expo-router", () => ({
 let capturedAppStateListener: ((state: string) => void) | null = null;
 const mockSubscriptionRemove = jest.fn();
 
-jest.mock("react-native", () => ({
-  AppState: {
-    addEventListener: jest.fn((_event: string, cb: (state: string) => void) => {
-      capturedAppStateListener = cb;
-      return { remove: mockSubscriptionRemove };
-    }),
-  },
-}));
+jest.mock("react-native", () => {
+  const helpers = require("./helpers/mapMocks");
+  const rn = helpers.createReactNativeMock();
+  return helpers.createReactNativeMock({
+    AppState: {
+      ...(rn.AppState as Record<string, unknown>),
+      addEventListener: jest.fn((_event: string, cb: (state: string) => void) => {
+        capturedAppStateListener = cb;
+        return { remove: mockSubscriptionRemove };
+      }),
+    },
+  });
+});
 
 // ---------------------------------------------------------------------------
 // fetch mock — installed on global so the hook can call it unmodified.

@@ -1,10 +1,11 @@
 /**
  * Smoke test for the canonical react-native mock.
  *
- * Every shipped Parts ID source file is scanned for runtime named imports from
- * react-native.  If a component starts using a native export that is missing
- * from __mocks__/react-native.js, this test fails at the mock boundary instead
- * of allowing a mounted component to crash before its assertions run.
+ * Every Parts ID source file and native test import is scanned for runtime
+ * named imports from react-native. If a component or test starts using a
+ * native export that is missing from __mocks__/react-native.js, this test
+ * fails at the mock boundary instead of allowing a mounted component to crash
+ * before its assertions run.
  */
 
 import * as fs from "fs";
@@ -14,7 +15,6 @@ const ARTIFACT_ROOT = path.resolve(__dirname, "../..");
 const NATIVE_MOCK_PATH = path.resolve(ARTIFACT_ROOT, "__mocks__/react-native.js");
 const IGNORED_DIRS = new Set([
   "node_modules",
-  "__tests__",
   "__mocks__",
   ".expo",
   "dist",
@@ -97,6 +97,11 @@ describe("canonical react-native mock smoke", () => {
     const missing = [...expected].filter((name) => !(name in nativeMock)).sort();
 
     expect(expected.size).toBeGreaterThan(0);
+    if (missing.length > 0) {
+      throw new Error(
+        `Canonical react-native mock is missing runtime export(s): ${missing.join(", ")}`,
+      );
+    }
     expect(missing).toEqual([]);
   });
 
@@ -106,5 +111,25 @@ describe("canonical react-native mock smoke", () => {
     };
 
     expect(typeof nativeMock.PanResponder?.create).toBe("function");
+  });
+
+  it("requires every inline react-native factory to start from the canonical mock", () => {
+    const driftingFactories: string[] = [];
+    for (const file of collectSourceFiles(path.resolve(ARTIFACT_ROOT, "__tests__"))) {
+      const source = fs.readFileSync(file, "utf8");
+      if (
+        /jest\.mock\(\s*["']react-native["']/.test(source) &&
+        !source.includes("createReactNativeMock")
+      ) {
+        driftingFactories.push(path.relative(ARTIFACT_ROOT, file));
+      }
+    }
+
+    if (driftingFactories.length > 0) {
+      throw new Error(
+        `Inline react-native mock factories must delegate to createReactNativeMock(): ${driftingFactories.join(", ")}`,
+      );
+    }
+    expect(driftingFactories).toEqual([]);
   });
 });
