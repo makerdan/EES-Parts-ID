@@ -76,8 +76,7 @@ import { db } from "@workspace/db";
 import { quickLookupCacheTable } from "@workspace/db";
 import { referenceLogTable } from "@workspace/db";
 import { usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
-import { sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { workerQualifiedUserId } from "./helpers/testDb";
 import { setTestEnv } from "./helpers/testEnv";
 
@@ -85,6 +84,11 @@ const TEST_LABEL = workerQualifiedUserId("JEST-REF-TEST-LABEL");
 const ASK_LOG_QUESTION = workerQualifiedUserId("JEST-REF-ASK-LOG-QUESTION");
 const ASK_LOG_SECOND_QUESTION = workerQualifiedUserId("JEST-REF-ASK-LOG-SECOND-QUESTION");
 const MALFORMED_ASK_LOG_QUESTION = workerQualifiedUserId("JEST-REF-MALFORMED-QUESTION");
+const SEARCH_BENCHMARK_PREFIX = workerQualifiedUserId("JEST-REF-SEARCH-BENCHMARK");
+const SEARCH_BENCHMARK_QUESTION_TERM = "JEST-QUESTION-TARGET";
+const SEARCH_BENCHMARK_ANSWER_TERM = "JEST-ANSWER-TARGET";
+const SEARCH_BENCHMARK_ROW_COUNT = 10_000;
+const SEARCH_LATENCY_TARGET_MS = 1_000;
 const UNKNOWN_USER = workerQualifiedUserId("jest-reference-ask-log-unknown-user");
 const NON_ADMIN_ASK_LOG_USER = workerQualifiedUserId(
   "jest-reference-ask-log-nonadmin",
@@ -435,6 +439,53 @@ describe("GET /api/reference/ask-log", () => {
     expect(pageRes.body.limit).toBe(1);
     expect(pageRes.body.rows).toHaveLength(1);
     expect(pageRes.body.total).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps question and answer searches responsive across representative retained history", async () => {
+    const benchmarkRows = Array.from({ length: SEARCH_BENCHMARK_ROW_COUNT }, (_, index) => ({
+      question:
+        index === 4_321
+          ? `${SEARCH_BENCHMARK_PREFIX}-${index} ${SEARCH_BENCHMARK_QUESTION_TERM}`
+          : `${SEARCH_BENCHMARK_PREFIX}-${index} question`,
+      answer:
+        index === 7_654
+          ? `${SEARCH_BENCHMARK_PREFIX}-${index} ${SEARCH_BENCHMARK_ANSWER_TERM}`
+          : `${SEARCH_BENCHMARK_PREFIX}-${index} answer`,
+      matchedItemCount: index % 4,
+    }));
+    const insertedRows = await db.insert(referenceLogTable).values(benchmarkRows).returning({ id: referenceLogTable.id });
+
+    try {
+      const questionStart = performance.now();
+      const questionResponse = await supertest(app)
+        .get(`/api/reference/ask-log?search=${SEARCH_BENCHMARK_QUESTION_TERM}&limit=1`)
+        .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+        .expect(200);
+      const questionElapsed = performance.now() - questionStart;
+
+      const answerStart = performance.now();
+      const answerResponse = await supertest(app)
+        .get(`/api/reference/ask-log?search=${SEARCH_BENCHMARK_ANSWER_TERM}&limit=1`)
+        .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+        .expect(200);
+      const answerElapsed = performance.now() - answerStart;
+
+      expect(questionResponse.body.total).toBe(1);
+      expect(questionResponse.body.rows).toHaveLength(1);
+      expect(questionResponse.body.rows[0].question).toContain(SEARCH_BENCHMARK_QUESTION_TERM);
+      expect(answerResponse.body.total).toBe(1);
+      expect(answerResponse.body.rows).toHaveLength(1);
+      expect(answerResponse.body.rows[0].answer).toContain(SEARCH_BENCHMARK_ANSWER_TERM);
+      expect(questionElapsed).toBeLessThan(SEARCH_LATENCY_TARGET_MS);
+      expect(answerElapsed).toBeLessThan(SEARCH_LATENCY_TARGET_MS);
+    } finally {
+      await db.delete(referenceLogTable).where(
+        inArray(
+          referenceLogTable.id,
+          insertedRows.map((row) => row.id),
+        ),
+      );
+    }
   });
 
   it.each([

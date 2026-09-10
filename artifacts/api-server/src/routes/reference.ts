@@ -403,6 +403,9 @@ router.get("/ask-log", requireAdminAuth, async (req, res) => {
 
     const { search, page, limit } = parsedQuery.data;
     const searchTerm = search || undefined;
+    // reference_log.question and reference_log.answer each have a pg_trgm GIN
+    // index. PostgreSQL can combine those indexes for this OR predicate while
+    // retaining the existing substring-search semantics.
     const searchCondition = searchTerm
       ? or(
           ilike(referenceLogTable.question, `%${searchTerm}%`),
