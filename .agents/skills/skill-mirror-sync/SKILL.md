@@ -100,8 +100,22 @@ skill, so it validates and refreshes the complete account projection rather than
 copying one skill independently.
 
 An interrupted refresh is handled by the same ownership-safe cleanup on the
-next supported refresh. Do not manually rescue partial files, merge staging
-contents, or load a prior projection while the source is unavailable.
+next supported refresh. If rollback restoration fails, operators may use the
+explicit recovery mode:
+
+```sh
+ACCOUNT_SKILLS_SOURCE=/platform/account-skills pnpm account-skills:sync -- --recover
+```
+
+Recovery accepts only one exact `.account-projections.backup-<UUID>` directory
+whose manifest and complete contents validate against its recorded metadata. It
+does not reject a preserved last-known-good backup merely because the canonical
+source now has a newer revision. It restores that owned backup by atomic rename,
+refuses lookalikes, linked directories, invalid or ambiguous candidates, and an
+existing destination, and leaves the backup intact when restore fails. A later
+successful refresh removes only owned staging and backup artifacts. Do not
+manually rescue partial files, merge staging contents, or load a prior
+projection while the source is unavailable.
 
 ## Read-only runtime-mirror status
 
@@ -121,7 +135,7 @@ the canonical account metadata. Interpret outcomes as:
 - `unavailable-source` (exit 2): canonical source or revision cannot be read;
 - `missing-mirror` (exit 3): the platform mirror sidecar is absent.
 
-An unreadable sidecar, including permission denial or a directory at the
+An unreadable or linked sidecar, including permission denial or a directory at the
 sidecar path, is a `mismatch` with the bounded
 `invalid-mirror-metadata` reason. Status never creates, removes, rewrites, or
 repairs the mirror root, sidecar, source, or workspace projection.

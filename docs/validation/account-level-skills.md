@@ -40,6 +40,22 @@ preserves the owned backup for recovery. It does not delete or replace the
 last-known-good bytes, and it does not touch similarly named directories outside
 its ownership pattern.
 
+The supported recovery path is an explicit operator action:
+
+```sh
+ACCOUNT_SKILLS_SOURCE=/platform/account-skills pnpm account-skills:sync -- --recover
+```
+
+Recovery acquires the projection lock, discovers only exact
+`.account-projections.backup-<UUID>` directories, validates each candidate
+against its recorded manifest and complete contents, and restores one validated
+candidate by atomic rename. It does not treat a newer canonical source revision
+as proof that the preserved last-known-good backup is invalid. It refuses
+lookalike names, linked directories, invalid or ambiguous candidates, and an
+existing destination. A failed restore leaves the owned backup untouched. A
+later successful refresh removes only owned staging and backup artifacts;
+unrelated directories remain unchanged.
+
 ## Supported all-skills projection command
 
 The only repository-owned projection mutation command is:
@@ -119,7 +135,7 @@ fingerprint when the canonical source is available, and one bounded reason code
 for mismatches. It never echoes mirror values or prints a skill file, secret,
 credential, or source path.
 
-An unreadable sidecar, including a permission-denied file, a directory at the
+An unreadable or linked sidecar, including a permission-denied file, a directory at the
 sidecar path, malformed JSON, or invalid sidecar fields, is reported as
 `mismatch` with the bounded `invalid-mirror-metadata` reason. Status checks do
 not repair, remove, create, or rewrite the mirror root, sidecar, source, or

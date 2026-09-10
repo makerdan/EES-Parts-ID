@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { access, chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -11,6 +11,7 @@ import {
   AccountSkillProjectionError,
   inspectAccountSkillMirror,
   loadAccountSkill,
+  recoverAccountSkillProjection,
   syncAccountSkillProjection,
 } from "../lib/account-skill-projection.mjs";
 import { scanPaths } from "./public-repository-boundary.test.mjs";
@@ -394,6 +395,29 @@ try {
   );
   assert.doesNotMatch(directoryCommand.stdout, /directory-shaped-metadata-mirror|private metadata fixture/);
 
+  const linkedMirrorRoot = join(root, "linked-metadata-mirror");
+  const linkedTarget = join(root, "linked-metadata-target.json");
+  await put(
+    linkedTarget,
+    `${JSON.stringify({
+      format: 1,
+      skillId: "catalog",
+      sourceRevision: fingerprintCanonical.sourceRevision,
+      fingerprint: fingerprintCanonical.fingerprint,
+    })}\n`,
+  );
+  await mkdir(join(linkedMirrorRoot, "catalog"), { recursive: true });
+  await symlink(linkedTarget, join(linkedMirrorRoot, "catalog", ACCOUNT_SKILL_MIRROR_METADATA_FILE));
+  const linkedCommand = runStatus(accountSource, linkedMirrorRoot);
+  assert.equal(linkedCommand.status, 1);
+  assert.deepEqual(JSON.parse(linkedCommand.stdout), {
+    outcome: "mismatch",
+    skillId: "catalog",
+    sourceRevision: fingerprintCanonical.sourceRevision,
+    fingerprint: fingerprintCanonical.fingerprint,
+    reason: "invalid-mirror-metadata",
+  });
+
   const missingRevisionSource = join(root, "missing-revision-source");
   await put(join(missingRevisionSource, "catalog/SKILL.md"), "# Catalog\n");
   const missingRevisionCommand = runStatus(missingRevisionSource);
@@ -613,6 +637,45 @@ try {
     "unrelated interrupted fixture\n",
     "a failed restore must preserve similarly named directories byte-for-byte",
   );
+
+  await writeFile(join(interruptedSource, ".account-revision"), "account-rev-7\n");
+  const recovered = await recoverAccountSkillProjection({
+    accountSource: interruptedSource,
+    workspaceRoot: interruptedWorkspace,
+  });
+  assert.equal(recovered.recovered, true, "operators must be able to restore a validated preserved projection");
+  assert.equal(await readFile(join(interruptedProjectionRoot, "catalog/SKILL.md"), "utf8"), "# Catalog v2\n");
+  assert.equal(
+    (await readdir(interruptedSkillsParent)).filter((entry) =>
+      entry.startsWith(".account-projections.backup-"),
+    ).length,
+    0,
+    "a successful recovery must consume only the restored owned backup",
+  );
+  assert.equal(await exists(interruptedLookalike), true, "recovery must not touch lookalike directories");
+
+  const recoveryFailureBackup = `${interruptedProjectionRoot}.backup-44444444-4444-4444-8444-444444444444`;
+  await rename(interruptedProjectionRoot, recoveryFailureBackup);
+  await assert.rejects(
+    () =>
+      recoverAccountSkillProjection({
+        accountSource: interruptedSource,
+        workspaceRoot: interruptedWorkspace,
+        restoreBackup: async ({ backupRoot, destination }) => {
+          await rename(backupRoot, destination);
+          throw new Error("simulated filesystem restore failure");
+        },
+      }),
+    (error) => error instanceof AccountSkillProjectionError && error.code === "atomic-recovery-failed",
+  );
+  assert.equal(await exists(interruptedProjectionRoot), false, "a failed recovery must not leave a partial destination");
+  assert.equal(await exists(recoveryFailureBackup), true, "a failed recovery must retain the owned backup");
+  assert.equal(
+    await readFile(join(recoveryFailureBackup, "catalog/SKILL.md"), "utf8"),
+    "# Catalog v2\n",
+    "a failed recovery must retain the last-known-good bytes",
+  );
+  await recoverAccountSkillProjection({ accountSource: interruptedSource, workspaceRoot: interruptedWorkspace });
 
   const concurrentWorkspace = join(root, "concurrent-workspace");
   const concurrentProjectionRoot = join(concurrentWorkspace, ACCOUNT_SKILLS_PROJECTION_RELATIVE_PATH);

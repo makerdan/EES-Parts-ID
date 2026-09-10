@@ -166,16 +166,22 @@ export async function inspectAccountSkillMirror({
   let canonical;
   try {
     canonical = await readCanonicalSkillMetadata(accountSource, skillName);
-  } catch (error) {
-    if (error instanceof AccountSkillProjectionError) {
-      return { outcome: "unavailable-source", skillId: skillName };
-    }
-    throw error;
+  } catch {
+    return { outcome: "unavailable-source", skillId: skillName };
   }
 
   const metadataPath = join(resolve(mirrorRoot), skillName, ACCOUNT_SKILL_MIRROR_METADATA_FILE);
+  const mirrorSkillRoot = dirname(metadataPath);
   let mirror;
   try {
+    const mirrorSkillStat = await lstat(mirrorSkillRoot);
+    if (!mirrorSkillStat.isDirectory()) {
+      return { outcome: "mismatch", ...canonical, reason: "invalid-mirror-metadata" };
+    }
+    const metadataStat = await lstat(metadataPath);
+    if (!metadataStat.isFile()) {
+      return { outcome: "mismatch", ...canonical, reason: "invalid-mirror-metadata" };
+    }
     mirror = JSON.parse(await readFile(metadataPath, "utf8"));
   } catch (error) {
     if (error.code === "ENOENT") {
@@ -247,15 +253,8 @@ async function readManifest(root) {
   return manifest;
 }
 
-async function validateProjection(root, expectedSource) {
+async function validateProjectionContents(root) {
   const manifest = await readManifest(root);
-  if (manifest.sourceRevision !== expectedSource.revision) {
-    throw new AccountSkillProjectionError(
-      "stale-projection",
-      `Account skill projection revision ${manifest.sourceRevision} does not match ${expectedSource.revision}`,
-    );
-  }
-
   const entries = (await readdir(root, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
   const expectedSkillNames = Object.keys(manifest.skills).sort();
   const actualSkillNames = entries.filter((entry) => entry.name !== ACCOUNT_SKILLS_MANIFEST_FILE).map((entry) => entry.name);
@@ -279,6 +278,19 @@ async function validateProjection(root, expectedSource) {
       throw new AccountSkillProjectionError("stale-projection", `Account skill fingerprint does not match metadata: ${skillName}`);
     }
   }
+  return manifest;
+}
+
+async function validateProjection(root, expectedSource) {
+  const manifest = await validateProjectionContents(root);
+  const expectedSkillNames = Object.keys(manifest.skills).sort();
+  if (manifest.sourceRevision !== expectedSource.revision) {
+    throw new AccountSkillProjectionError(
+      "stale-projection",
+      `Account skill projection revision ${manifest.sourceRevision} does not match ${expectedSource.revision}`,
+    );
+  }
+
   const sourceSkillNames = Object.keys(expectedSource.skills).sort();
   if (JSON.stringify(expectedSkillNames) !== JSON.stringify(sourceSkillNames)) {
     throw new AccountSkillProjectionError("stale-projection", "Account skill projection does not match the published source");
@@ -395,6 +407,20 @@ async function removeStaleProjectionDirectories(parent, destinationName) {
   }
 }
 
+async function findOwnedProjectionBackups(parent, destinationName) {
+  const backupPrefix = `${destinationName}.backup-`;
+  const entries = await readdir(parent, { withFileTypes: true });
+  return entries
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        entry.name.startsWith(backupPrefix) &&
+        UUID.test(entry.name.slice(backupPrefix.length)),
+    )
+    .map((entry) => join(parent, entry.name))
+    .sort();
+}
+
 async function buildProjection({ sourceSnapshot, stagingRoot, afterSkillCopy }) {
   const manifest = { format: 1, sourceRevision: sourceSnapshot.revision, skills: {} };
   for (const [skillName, record] of Object.entries(sourceSnapshot.skills)) {
@@ -411,6 +437,86 @@ async function buildProjection({ sourceSnapshot, stagingRoot, afterSkillCopy }) 
   await writeFile(join(stagingRoot, ACCOUNT_SKILLS_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
 }
+
+export async function recoverAccountSkillProjection({
+  accountSource,
+  workspaceRoot = process.cwd(),
+  lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS,
+  restoreBackup = async ({ backupRoot, destination }) => rename(backupRoot, destination),
+} = {}) {
+  if (!accountSource) {
+    throw new AccountSkillProjectionError("source-unavailable", "ACCOUNT_SKILLS_SOURCE is required; refusing to use a fallback source");
+  }
+  const destination = projectionPath(workspaceRoot);
+  const parent = dirname(destination);
+  const destinationName = destination.slice(parent.length + 1);
+  const lockPath = `${destination}.lock`;
+  await mkdir(parent, { recursive: true });
+  const release = await acquireLock(lockPath, lockTimeoutMs);
+  try {
+    await readRevision(accountSource);
+    const backups = await findOwnedProjectionBackups(parent, destinationName);
+    const validBackups = [];
+    for (const backupRoot of backups) {
+      try {
+        const backupStat = await lstat(backupRoot);
+        if (!backupStat.isDirectory()) continue;
+        const manifest = await validateProjectionContents(backupRoot);
+        validBackups.push({ backupRoot, manifest });
+      } catch (error) {
+        if (!(error instanceof AccountSkillProjectionError)) throw error;
+      }
+    }
+    if (validBackups.length === 0) {
+      throw new AccountSkillProjectionError(
+        "recovery-not-found",
+        "No validated account skill projection backup is available for recovery",
+      );
+    }
+    if (validBackups.length > 1) {
+      throw new AccountSkillProjectionError(
+        "recovery-ambiguous",
+        "More than one validated account skill projection backup is available for recovery",
+      );
+    }
+
+    try {
+      await lstat(destination);
+      throw new AccountSkillProjectionError(
+        "recovery-destination-exists",
+        "Account skill projection recovery requires a missing destination",
+      );
+    } catch (error) {
+      if (error instanceof AccountSkillProjectionError) throw error;
+      if (error.code !== "ENOENT") throw error;
+    }
+
+    const { backupRoot, manifest } = validBackups[0];
+    let restoreAttempted = false;
+    try {
+      restoreAttempted = true;
+      await restoreBackup({ backupRoot, destination });
+      await validateProjectionContents(destination);
+    } catch (error) {
+      if (restoreAttempted) {
+        try {
+          await rename(destination, backupRoot);
+        } catch {
+          // Preserve the bounded recovery error if the filesystem cannot roll back.
+        }
+      }
+      throw new AccountSkillProjectionError(
+        "atomic-recovery-failed",
+        "Unable to restore the validated account skill projection backup",
+      );
+    }
+    return { destination, manifest, changed: true, recovered: true };
+  } finally {
+    await release();
+  }
+}
+
+export const restorePreservedAccountSkillProjection = recoverAccountSkillProjection;
 
 export async function syncAccountSkillProjection({
   accountSource,
@@ -443,7 +549,10 @@ export async function syncAccountSkillProjection({
         throw error;
       }
     }
-    if (currentManifest) return { destination, manifest: currentManifest, changed: false };
+    if (currentManifest) {
+      await removeStaleProjectionDirectories(parent, destination.slice(parent.length + 1));
+      return { destination, manifest: currentManifest, changed: false };
+    }
 
     stagingRoot = `${destination}.staging-${randomUUID()}`;
     await mkdir(stagingRoot, { recursive: true });
@@ -508,8 +617,8 @@ export async function syncAccountSkillProjection({
         `Unable to install account skill projection: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    if (hadDestination) await rm(backupRoot, { recursive: true, force: true });
     backupRoot = undefined;
+    await removeStaleProjectionDirectories(parent, destination.slice(parent.length + 1));
     return { destination, manifest, changed: true };
   } finally {
     if (stagingRoot) await rm(stagingRoot, { recursive: true, force: true });
