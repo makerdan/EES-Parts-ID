@@ -58,6 +58,8 @@ export function ContactSheet({
   initialSubject,
   initialBody,
 }: Props) {
+  "use no memo";
+
   const colors = useColors();
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");

@@ -22,6 +22,7 @@ args = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
 
 [services.production.build.env]
 NODE_ENV = "production"
+DATABASE_ENV = "production"
 
 [services.production.run]
 # we don't run through pnpm to make startup faster in production
