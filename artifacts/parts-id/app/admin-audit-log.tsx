@@ -7,6 +7,7 @@
  * Route: /admin-audit-log
  */
 import { Feather } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -88,36 +89,80 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
+type IdentifierField = "admin" | "target";
+type CopyStatus = { field: IdentifierField; kind: "copied" | "failed" } | null;
+
 function AuditItem({ row, colors }: { row: AuditRow; colors: ReturnType<typeof useColors> }) {
   const cfg = ACTION_CONFIG[row.action] ?? { label: row.action, bg: "#88888820", fg: "#888888" };
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+  }, []);
+
+  const copyIdentifier = useCallback(async (field: IdentifierField, value: string) => {
+    setCopyStatus(null);
+    try {
+      await Clipboard.setStringAsync(value);
+      if (mountedRef.current) setCopyStatus({ field, kind: "copied" });
+    } catch {
+      if (mountedRef.current) setCopyStatus({ field, kind: "failed" });
+    }
+  }, []);
+
+  const renderIdentifier = (field: IdentifierField, label: string, value: string) => {
+    const fieldLabel = field === "admin" ? "administrator" : "target";
+    const status = copyStatus?.field === field ? copyStatus.kind : null;
+    return (
+      <View style={styles.idRow}>
+        <Text style={[styles.label, { color: colors.mutedForeground }]}>{label}</Text>
+        <Text
+          style={[styles.idText, { color: colors.foreground }]}
+          numberOfLines={1}
+          accessibilityLabel={`${label} ID: ${value}`}
+          accessibilityHint={`The full ${fieldLabel} ID is available to screen readers`}
+        >
+          {truncate(value)}
+        </Text>
+        <Pressable
+          onPress={() => void copyIdentifier(field, value)}
+          style={[styles.copyBtn, { borderColor: colors.border }]}
+          accessibilityRole="button"
+          accessibilityLabel={`Copy ${fieldLabel} ID`}
+          accessibilityHint={`Copies the full ${fieldLabel} ID`}
+        >
+          <Feather name="copy" size={13} color={colors.mutedForeground} />
+        </Pressable>
+        {status === "copied" ? (
+          <Text
+            style={[styles.copyStatus, { color: colors.primary }]}
+            accessibilityLabel={`${label} ID copied`}
+            accessibilityLiveRegion="polite"
+          >
+            Copied
+          </Text>
+        ) : status === "failed" ? (
+          <Text
+            style={[styles.copyStatus, { color: colors.destructive }]}
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+          >
+            Copy failed
+          </Text>
+        ) : null}
+      </View>
+    );
+  };
+
   return (
     <View style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}>
       <View style={[styles.badge, { backgroundColor: cfg.bg }]}>
         <Text style={[styles.badgeText, { color: cfg.fg }]}>{cfg.label}</Text>
       </View>
       <View style={{ flex: 1, gap: 3 }}>
-        <View style={styles.idRow}>
-          <Text style={[styles.label, { color: colors.mutedForeground }]}>Admin</Text>
-          <Text
-            style={[styles.idText, { color: colors.foreground }]}
-            numberOfLines={1}
-            accessibilityLabel={`Admin ID: ${row.adminClerkUserId}`}
-            accessibilityHint="The full administrator ID is available to screen readers"
-          >
-            {truncate(row.adminClerkUserId)}
-          </Text>
-        </View>
-        <View style={styles.idRow}>
-          <Text style={[styles.label, { color: colors.mutedForeground }]}>Target</Text>
-          <Text
-            style={[styles.idText, { color: colors.foreground }]}
-            numberOfLines={1}
-            accessibilityLabel={`Target ID: ${row.targetClerkUserId}`}
-            accessibilityHint="The full target ID is available to screen readers"
-          >
-            {truncate(row.targetClerkUserId)}
-          </Text>
-        </View>
+        {renderIdentifier("admin", "Admin", row.adminClerkUserId)}
+        {renderIdentifier("target", "Target", row.targetClerkUserId)}
       </View>
       <Text style={[styles.time, { color: colors.mutedForeground }]}>{timeAgo(row.createdAt)}</Text>
     </View>
@@ -537,6 +582,12 @@ const styles = StyleSheet.create({
   idRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   label: { fontSize: 10, fontFamily: "Inter_600SemiBold", width: 38 },
   idText: { fontSize: 12, fontFamily: "Inter_400Regular", flex: 1 },
+  copyBtn: {
+    borderWidth: 1,
+    borderRadius: 5,
+    padding: 4,
+  },
+  copyStatus: { fontSize: 10, fontFamily: "Inter_600SemiBold" },
   time: { fontSize: 11, fontFamily: "Inter_400Regular", flexShrink: 0 },
   footerLoader: { paddingVertical: 16, alignItems: "center" },
   footerError: { alignItems: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 12 },

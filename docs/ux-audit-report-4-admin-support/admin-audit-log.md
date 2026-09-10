@@ -10,21 +10,19 @@
 
 ## Persistence and cross-context checks
 
-Rows are server-backed and not locally cached. The rendered workflow verifies two authenticated admin sessions against shared server state: an already-open screen keeps its snapshot until its explicit Refresh action, then updates its count and visible rows with the event created by the other session. The Refresh control announces that boundary through its accessibility hint.
+Rows are server-backed and not locally cached. The rendered workflow verifies two authenticated admin sessions against shared server state: an already-open screen keeps its snapshot until its explicit Refresh action, then updates its count and visible rows with the event created by the other session. The Refresh control announces that boundary through its accessibility hint; there is no background polling or implied live update.
 
 ## Failure, retry, navigation, accessibility
 
-Initial failure has Retry. Later-page failure keeps the current list and shows an inline retry in the current source. Row IDs are deliberately shortened for display.
+Initial failure has Retry. Later-page failure keeps the current list and shows an inline retry in the current source. Row IDs are deliberately shortened for display, with full values available to screen readers and compact copy buttons for both administrator and target IDs.
 
 ## Findings
 
-### LOW
+### Resolved
 
 #### F-085 · Admin audit log long identifiers · Phase 12 (Cross-context)
 
-**Failure:** `adminClerkUserId` and `targetClerkUserId` are truncated to 14 characters with no detail view, copy action, or accessible full value. For two similar IDs, an admin cannot reliably identify the actor or target from the audit evidence.
-
-**Fix:** `app/admin-audit-log.tsx` `AuditItem` — expose the full IDs through a copyable detail action or accessible label/value, while retaining truncation only for the visual row.
+The compact row preserves truncated visual IDs while exposing the full administrator and target values through screen-reader labels and copy controls. Copy success and failure are announced in the row.
 
 ## Seed/context
 

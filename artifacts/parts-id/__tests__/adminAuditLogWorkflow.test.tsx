@@ -36,6 +36,11 @@ jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColo
 jest.mock("@/utils/apiBase", () => ({ API_BASE: "http://localhost:3001/api" }));
 jest.mock("@/utils/useTrackScreen", () => ({ useTrackScreen: jest.fn() }));
 
+jest.mock("expo-clipboard", () => {
+  const setStringAsync = jest.fn().mockResolvedValue(undefined);
+  return { setStringAsync };
+});
+
 // ── Contexts ─────────────────────────────────────────────────────────────────
 
 // These modules resolve to the shared Jest mocks via jest.config.js.
@@ -277,6 +282,50 @@ describe("AdminAuditLogScreen — authenticated pagination workflow", () => {
     expect(
       findPressableByAccessibilityLabel(screen.root!, "Load more audit log entries"),
     ).toBeNull();
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
+  it("copies the full administrator and target IDs from compact row controls", async () => {
+    const fullAdminId = "user_01JADMINIDENTIFIERFULL";
+    const fullTargetId = "user_01JTARGETIDENTIFIERFULL";
+    const clipboardMock = jest.requireMock("expo-clipboard") as {
+      setStringAsync: jest.Mock;
+    };
+    clipboardMock.setStringAsync.mockClear();
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      rows: [{
+        ...auditRow(101, fullTargetId),
+        adminClerkUserId: fullAdminId,
+      }],
+      nextCursor: null,
+    }));
+
+    const screen = await renderScreen();
+    expect(accessibilityLabels(screen.root!)).toEqual(
+      expect.arrayContaining([
+        `Admin ID: ${fullAdminId}`,
+        `Target ID: ${fullTargetId}`,
+      ]),
+    );
+
+    await act(async () => {
+      fireEvent.press(findPressableByAccessibilityLabel(screen.root!, "Copy administrator ID")!);
+      await Promise.resolve();
+    });
+    await flushPromises();
+    expect(clipboardMock.setStringAsync).toHaveBeenNthCalledWith(1, fullAdminId);
+    expect(accessibilityLabels(screen.root!)).toContain("Admin ID copied");
+
+    await act(async () => {
+      fireEvent.press(findPressableByAccessibilityLabel(screen.root!, "Copy target ID")!);
+      await Promise.resolve();
+    });
+    await flushPromises();
+    expect(clipboardMock.setStringAsync).toHaveBeenNthCalledWith(2, fullTargetId);
+    expect(accessibilityLabels(screen.root!)).toContain("Target ID copied");
 
     await act(async () => {
       screen.unmount();
