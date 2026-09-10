@@ -29,3 +29,29 @@ export const logger = pino({
 export function getLogger(res: Response): typeof logger {
   return (res.locals.logger as typeof logger | undefined) ?? logger;
 }
+
+export type InventoryResponseDiagnostic = {
+  responseFamily: "list" | "search" | "barcode";
+  rowRole: "primary" | "variant" | "size-unknown";
+  fields: string[];
+};
+
+/**
+ * Record an inventory response-boundary failure without attaching the row,
+ * identifiers, or validation values to the log payload.
+ */
+export function logInventoryResponseSchemaFailure(
+  log: Pick<typeof logger, "warn">,
+  diagnostic: InventoryResponseDiagnostic,
+): void {
+  log.warn(
+    {
+      event: "inventory_response_schema_failure",
+      errorCategory: "malformed_response_data",
+      responseFamily: diagnostic.responseFamily,
+      rowRole: diagnostic.rowRole,
+      fields: diagnostic.fields,
+    },
+    "[inventory] response schema rejected inventory data",
+  );
+}

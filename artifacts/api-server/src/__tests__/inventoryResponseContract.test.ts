@@ -139,6 +139,7 @@ import {
 
 import supertest from "supertest";
 import app from "../app";
+import { logInventoryResponseSchemaFailure } from "../lib/logger";
 
 const updateResponseSchemas = {
   UpdateItemBarcodesResponse,
@@ -155,6 +156,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   routeTestMode = "list";
   mockedInventoryRows = [];
+  searchDictionariesServed = false;
   searchDictionarySelectCount = 0;
   mockSelect.mockImplementation((selection?: unknown) => {
     if (routeTestMode === "list") {
@@ -244,9 +246,23 @@ describe("InventoryItem response contract", () => {
       }
     },
   );
+
 });
 
 describe("Inventory list and search route response contracts", () => {
+  it("preserves valid non-zero order fields through the list response", async () => {
+    routeTestMode = "list";
+    mockedInventoryRows = [makeInventoryItemFixture()];
+
+    const response = await supertest(app).get("/api/inventory");
+
+    expect(response.status).toBe(200);
+    expect(response.body.items[0]).toMatchObject({
+      orderPurchase: 5,
+      orderQuantity: 10,
+    });
+  });
+
   it.each(["orderPurchase", "orderQuantity"] as const)(
     "GET /api/inventory returns its documented error when a row is missing %s",
     async (field) => {
@@ -255,9 +271,7 @@ describe("Inventory list and search route response contracts", () => {
         makeInventoryItemMissingOrderField(field) as Record<string, unknown>,
       ];
 
-      const response = await supertest(app)
-        .post("/api/inventory/search")
-        .send({ keywords: "widget" });
+      const response = await supertest(app).get("/api/inventory");
 
       expect(response.status).toBe(500);
       expect(response.body).toEqual({ error: "Failed to list inventory" });
@@ -305,4 +319,50 @@ describe("Inventory list and search route response contracts", () => {
       expect(response.body).not.toHaveProperty(field);
     },
   );
+
+  it.each(["order_purchase", "order_quantity"] as const)(
+    "POST /api/inventory/search rejects a malformed primary raw row missing %s",
+    async (field) => {
+      routeTestMode = "search";
+      mockExecute.mockResolvedValueOnce({
+        rows: [makeRawSearchRowFixture({ [field]: undefined })],
+      });
+
+      const response = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ keywords: "widget" });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({ error: "Search failed" });
+      expect(response.body).not.toHaveProperty(field);
+    },
+  );
+});
+
+describe("Inventory response diagnostics", () => {
+  it("logs only bounded schema metadata and never inventory values", () => {
+    const warn = jest.fn();
+
+    logInventoryResponseSchemaFailure(
+      { warn } as never,
+      {
+        responseFamily: "search",
+        rowRole: "variant",
+        fields: ["orderQuantity"],
+      },
+    );
+
+    expect(warn).toHaveBeenCalledWith(
+      {
+        event: "inventory_response_schema_failure",
+        errorCategory: "malformed_response_data",
+        responseFamily: "search",
+        rowRole: "variant",
+        fields: ["orderQuantity"],
+      },
+      "[inventory] response schema rejected inventory data",
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("ACME");
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("W-999");
+  });
 });

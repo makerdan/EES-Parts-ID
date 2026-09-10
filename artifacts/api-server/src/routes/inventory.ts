@@ -41,7 +41,12 @@ import Fuse from "fuse.js";
 
 import { getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
-import { getLogger, logger } from "../lib/logger";
+import {
+  getLogger,
+  logger,
+  logInventoryResponseSchemaFailure,
+  type InventoryResponseDiagnostic,
+} from "../lib/logger";
 import {
   deletePrivateObjects,
   isPrivateObjectPath,
@@ -186,6 +191,57 @@ function toClientInventoryItem<T extends InventoryImageFields>(item: T): T {
     imageUrl2: privateImageDeliveryUrl(item.id, item.imageUrl2, 2, "full"),
     thumbnailUrl2: privateImageDeliveryUrl(item.id, item.thumbnailUrl2, 2, "thumbnail"),
   };
+}
+
+class InventoryResponseSchemaError extends Error {
+  readonly diagnostic: InventoryResponseDiagnostic;
+
+  constructor(diagnostic: InventoryResponseDiagnostic) {
+    super("Inventory response schema validation failed");
+    this.name = "InventoryResponseSchemaError";
+    this.diagnostic = diagnostic;
+  }
+}
+
+function safeInventoryFields(issues: Array<{ path: Array<PropertyKey> }>): string[] {
+  const fields = new Set<string>();
+  for (const issue of issues) {
+    const field = [...issue.path]
+      .reverse()
+      .find((part): part is string => typeof part === "string");
+    fields.add(field ?? "row");
+  }
+  return [...fields].slice(0, 8);
+}
+
+function assertInventoryResponseItem(
+  item: unknown,
+  diagnostic: Omit<InventoryResponseDiagnostic, "fields">,
+): void {
+  const parsed = LookupByBarcodeResponse.safeParse(item);
+  if (!parsed.success) {
+    throw new InventoryResponseSchemaError({
+      ...diagnostic,
+      fields: safeInventoryFields(parsed.error.issues),
+    });
+  }
+}
+
+function toValidatedClientInventoryItem(
+  item: unknown,
+  diagnostic: Omit<InventoryResponseDiagnostic, "fields">,
+): ReturnType<typeof LookupByBarcodeResponse.parse> {
+  assertInventoryResponseItem(item, diagnostic);
+
+  const clientItem = toClientInventoryItem(item as InventoryImageFields);
+  const parsed = LookupByBarcodeResponse.safeParse(clientItem);
+  if (!parsed.success) {
+    throw new InventoryResponseSchemaError({
+      ...diagnostic,
+      fields: safeInventoryFields(parsed.error.issues),
+    });
+  }
+  return parsed.data;
 }
 
 function imageObjectPaths(item: InventoryImageFields): Array<string | null | undefined> {
@@ -376,17 +432,25 @@ router.get("/", async (req, res) => {
     ]);
 
     res.json(ListInventoryResponse.parse({
-      items: items.map(item => toClientInventoryItem({
-        ...item,
-        binLocations: item.binLocations,
-        aiKeywords: item.aiKeywords,
-      })),
+      items: items.map(item =>
+        toValidatedClientInventoryItem(item, {
+          responseFamily: "list",
+          rowRole: "primary",
+        }),
+      ),
       total: Number(countResult[0]?.count ?? 0),
       page,
       limit,
     }));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/list] Failed to list inventory");
+    if (err instanceof InventoryResponseSchemaError) {
+      logInventoryResponseSchemaFailure(reqLogger, err.diagnostic);
+    } else {
+      reqLogger.error(
+        { event: "inventory_list_failed", errorCategory: "list_failed" },
+        "[inventory/list] Failed to list inventory",
+      );
+    }
     res.status(500).json({ error: "Failed to list inventory" });
   }
 });
@@ -622,7 +686,10 @@ router.post("/search", async (req, res) => {
       }
 
       const toResult = (item: typeof inventoryTable.$inferSelect, matchReason: string) => ({
-        item: toClientInventoryItem(item),
+        item: toValidatedClientInventoryItem(item, {
+          responseFamily: "search",
+          rowRole: "primary",
+        }),
         confidence: 1.0,
         matchReason,
         seriesBase: getSeriesBase(item.vendor, item.catalog, item.description)?.key ?? null,
@@ -726,7 +793,10 @@ router.post("/search", async (req, res) => {
       }
 
       const toUncatResult = (item: typeof inventoryTable.$inferSelect) => ({
-        item: toClientInventoryItem(item),
+        item: toValidatedClientInventoryItem(item, {
+          responseFamily: "search",
+          rowRole: "primary",
+        }),
         confidence: 1.0,
         matchReason: "uncategorized browse",
         seriesBase: getSeriesBase(item.vendor, item.catalog, item.description)?.key ?? null,
@@ -823,7 +893,10 @@ router.post("/search", async (req, res) => {
 
       const sizeRows = (sizeItems as { rows: Array<unknown> }).rows as Array<typeof inventoryTable.$inferSelect>;
       const toSizeResult = (item: typeof inventoryTable.$inferSelect, matchReason: string) => ({
-        item: toClientInventoryItem(item),
+        item: toValidatedClientInventoryItem(item, {
+          responseFamily: "search",
+          rowRole: "primary",
+        }),
         confidence: 1.0,
         matchReason,
         seriesBase: getSeriesBase((item as { vendor: string }).vendor, (item as { catalog: string }).catalog, (item as { description: string }).description)?.key ?? null,
@@ -891,16 +964,43 @@ router.post("/search", async (req, res) => {
     const tsQuery = ftsTokens.join(" OR ");
 
     // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
-    type RawRow = {
-      id: number; vendor: string; catalog: string; description: string;
-      order_purchase: number; order_quantity: number;
-      bin_locations: Array<string>; ai_keywords: Array<string>; pinned_keywords: Array<string>; barcodes: Array<string>;
-      enriched_at: Date | null; image_url: string | null; thumbnail_url: string | null; image_url_2: string | null; thumbnail_url_2: string | null;
-      expanded_description: string | null;
-      size: string | null;
-      dimensions: { length?: number | null; width?: number | null; height?: number | null; diameter?: number | null } | null;
-      created_at: Date; updated_at: Date;
-      fts_rank: number; trgm_sim: number;
+    type RawRow = Record<string, unknown>;
+
+    const rawSearchRowToInventoryItem = (
+      row: RawRow,
+    ): typeof inventoryTable.$inferSelect => {
+      const item = {
+        id: row.id,
+        vendor: row.vendor,
+        catalog: row.catalog,
+        orderPurchase: row.order_purchase,
+        orderQuantity: row.order_quantity,
+        description: row.description,
+        binLocations: row.bin_locations,
+        aiKeywords: row.ai_keywords,
+        pinnedKeywords: row.pinned_keywords,
+        barcodes: row.barcodes,
+        enrichedAt: row.enriched_at ?? null,
+        imageUrl: row.image_url ?? null,
+        thumbnailUrl: row.thumbnail_url ?? null,
+        imageUrl2: row.image_url_2 ?? null,
+        thumbnailUrl2: row.thumbnail_url_2 ?? null,
+        expandedDescription: row.expanded_description ?? null,
+        size: row.size ?? null,
+        imageSource: null,
+        imageConfidence: null,
+        previousDescription: null,
+        catalogPdfJobId: null,
+        dimensions: row.dimensions ?? null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+
+      assertInventoryResponseItem(item, {
+        responseFamily: "search",
+        rowRole: "primary",
+      });
+      return item as typeof inventoryTable.$inferSelect;
     };
 
     const rawKeywords = keywords.trim();
@@ -912,7 +1012,7 @@ router.post("/search", async (req, res) => {
     // items that ranked outside the top 200 candidates.
     const chipRegexes = buildChipFilterRegexes(activeChipFilters);
 
-    let pgResults: Array<RawRow> = [];
+    let pgResults: Array<{ row: RawRow; item: typeof inventoryTable.$inferSelect }> = [];
     try {
       if (tsQuery.trim() || kwLike) {
         // Pass raw keyword string alongside expanded terms for catalog trigram scoring
@@ -1031,30 +1131,31 @@ router.post("/search", async (req, res) => {
           ORDER BY (fts_rank * 0.6 + trgm_sim * 0.4) DESC
           LIMIT 200
         `);
-        // Drizzle returns { rows: unknown[] } for raw SQL — validate shape at runtime
+        // Drizzle returns { rows: unknown[] } for raw SQL. Validate every
+        // response row before ranking or serialization; malformed primary rows
+        // must not be filtered out or repaired with fabricated defaults.
         const rawRows = (pgQueryResult as { rows: Array<unknown> }).rows;
-        pgResults = rawRows.filter((r): r is RawRow => {
-          if (!r || typeof r !== "object") {
-            reqLogger.warn({ row: r }, "[inventory/search] Unexpected non-object row from raw SQL");
-            return false;
+        pgResults = rawRows.map((value) => {
+          if (!value || typeof value !== "object") {
+            throw new InventoryResponseSchemaError({
+              responseFamily: "search",
+              rowRole: "primary",
+              fields: ["row"],
+            });
           }
-          const row = r as Record<string, unknown>;
-          const valid = (
-            typeof row.id === "number" &&
-            typeof row.vendor === "string" &&
-            typeof row.catalog === "string" &&
-            typeof row.description === "string" &&
-            typeof row.fts_rank === "number" &&
-            typeof row.trgm_sim === "number"
-          );
-          if (!valid) {
-            reqLogger.warn({ row }, "[inventory/search] Row has unexpected shape (possible schema drift)");
+          const row = value as RawRow;
+          if (typeof row.fts_rank !== "number" || typeof row.trgm_sim !== "number") {
+            throw new Error("Search ranking data has an unexpected shape");
           }
-          return valid;
+          return { row, item: rawSearchRowToInventoryItem(row) };
         });
       }
     } catch (pgErr) {
-      reqLogger.warn({ err: pgErr }, "PG search error, falling back to Fuse");
+      if (pgErr instanceof InventoryResponseSchemaError) throw pgErr;
+      reqLogger.warn(
+        { event: "inventory_search_backend_failed", errorCategory: "search_backend_failed" },
+        "PG search error, falling back to Fuse",
+      );
     }
 
     // Map PG results into scored items
@@ -1073,40 +1174,12 @@ router.post("/search", async (req, res) => {
     };
 
     // Process PG results
-    for (const row of pgResults) {
-      const ftsRank = Number(row.fts_rank) || 0;
-      const trgmSim = Number(row.trgm_sim) || 0;
+    for (const { row, item } of pgResults) {
+      const ftsRank = row.fts_rank as number;
+      const trgmSim = row.trgm_sim as number;
       const pgScore = blendPgScore(ftsRank, trgmSim);
-      const item: typeof inventoryTable.$inferSelect = {
-        id: row.id,
-        vendor: row.vendor,
-        catalog: row.catalog,
-        description: row.description,
-        orderPurchase: Number(row.order_purchase) || 0,
-        orderQuantity: Number(row.order_quantity) || 0,
-        // Safe fallbacks for fields not included in the runtime shape-validation filter
-        binLocations: Array.isArray(row.bin_locations) ? row.bin_locations as Array<string> : [],
-        aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as Array<string> : [],
-        barcodes: Array.isArray(row.barcodes) ? row.barcodes as Array<string> : [],
-        enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
-        // PDF catalog enrichment columns — image_url and thumbnail_url are included in the SELECT
-        imageUrl: typeof row.image_url === "string" ? row.image_url : null,
-        thumbnailUrl: typeof row.thumbnail_url === "string" ? row.thumbnail_url : null,
-        imageUrl2: typeof row.image_url_2 === "string" ? row.image_url_2 : null,
-        thumbnailUrl2: typeof row.thumbnail_url_2 === "string" ? row.thumbnail_url_2 : null,
-        expandedDescription: typeof row.expanded_description === "string" ? row.expanded_description : null,
-        size: typeof row.size === "string" ? row.size : null,
-        imageSource: null,
-        imageConfidence: null,
-        previousDescription: null,
-        catalogPdfJobId: null,
-        pinnedKeywords: Array.isArray(row.pinned_keywords) ? row.pinned_keywords as Array<string> : [],
-        dimensions: row.dimensions ?? null,
-        createdAt: row.created_at instanceof Date ? row.created_at : new Date(0),
-        updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(0),
-      };
 
-      const { score, reason } = catalogScore(pgScore, row.catalog, catalogInput, rawKeywords, ftsRank);
+      const { score, reason } = catalogScore(pgScore, item.catalog, catalogInput, rawKeywords, ftsRank);
       updateScore(item, score, reason);
     }
 
@@ -1291,16 +1364,27 @@ router.post("/search", async (req, res) => {
     });
 
     const finalResults = aboveThreshold.map(r => ({
-      item: toClientInventoryItem(r.item),
+      item: toValidatedClientInventoryItem(r.item, {
+        responseFamily: "search",
+        rowRole: "primary",
+      }),
       confidence: r.confidence,
       matchReason: r.reason,
       seriesBase: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.key ?? null,
       seriesLabel: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.label ?? null,
-      variants: (variantMap.get(r.item.id) ?? []).map(toClientInventoryItem),
+      variants: (variantMap.get(r.item.id) ?? []).map(variant =>
+        toValidatedClientInventoryItem(variant, {
+          responseFamily: "search",
+          rowRole: "variant",
+        }),
+      ),
     }));
 
     const sizeUnknownResults = sizeUnknownItems.map(r => ({
-      item: toClientInventoryItem(r.item),
+      item: toValidatedClientInventoryItem(r.item, {
+        responseFamily: "search",
+        rowRole: "size-unknown",
+      }),
       confidence: r.confidence,
       matchReason: r.reason,
       seriesBase: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.key ?? null,
@@ -1317,7 +1401,14 @@ router.post("/search", async (req, res) => {
       sizeUnknownCount: sizeUnknownItems.length,
     }));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/search] Search failed");
+    if (err instanceof InventoryResponseSchemaError) {
+      logInventoryResponseSchemaFailure(reqLogger, err.diagnostic);
+    } else {
+      reqLogger.error(
+        { event: "inventory_search_failed", errorCategory: "search_failed" },
+        "[inventory/search] Search failed",
+      );
+    }
     res.status(500).json({ error: "Search failed" });
   }
 });
@@ -2479,9 +2570,19 @@ router.get(/^\/barcode\/(.+)$/, async (req, res) => {
       .limit(1);
 
     if (!item) return void res.status(404).json({ error: "No item found for that barcode" });
-    res.json(LookupByBarcodeResponse.parse(toClientInventoryItem(item)));
+    res.json(toValidatedClientInventoryItem(item, {
+      responseFamily: "barcode",
+      rowRole: "primary",
+    }));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/barcode-lookup] Barcode lookup failed");
+    if (err instanceof InventoryResponseSchemaError) {
+      logInventoryResponseSchemaFailure(reqLogger, err.diagnostic);
+    } else {
+      reqLogger.error(
+        { event: "inventory_barcode_lookup_failed", errorCategory: "barcode_lookup_failed" },
+        "[inventory/barcode-lookup] Barcode lookup failed",
+      );
+    }
     res.status(500).json({ error: "Barcode lookup failed" });
   }
 });

@@ -111,33 +111,15 @@ import { uploadCatalogImage } from "../lib/objectStorage";
 import { resizeImages } from "../utils/imageResize";
 import { estimateImageBytes } from "../utils/aiHelpers";
 import app from "../app";
+import { makeInventoryItemFixture } from "./fixtures/inventoryResponseFixtures";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function makeWellFormedRow(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 42,
-    vendor: "ACME",
-    catalog: "W-999",
-    orderPurchase: 0,
-    orderQuantity: 0,
-    description: "Test widget",
-    binLocations: ["A1"],
-    aiKeywords: ["widget"],
-    barcodes: ["012345678901"],
-    enrichedAt: null,
-    imageUrl: null,
-    thumbnailUrl: null,
-    imageUrl2: null,
-    thumbnailUrl2: null,
-    expandedDescription: null,
-    dimensions: null,
+const makeWellFormedRow = (overrides: Record<string, unknown> = {}) =>
+  makeInventoryItemFixture({
     pinnedKeywords: [],
-    createdAt: new Date("2025-06-01T00:00:00Z"),
-    updatedAt: new Date("2025-06-01T00:00:00Z"),
     ...overrides,
-  };
-}
+  });
 
 const SMALL_BASE64 = Buffer.alloc(16).toString("base64");
 
