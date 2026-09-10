@@ -83,6 +83,8 @@ import { setTestEnv } from "./helpers/testEnv";
 
 const TEST_LABEL = workerQualifiedUserId("JEST-REF-TEST-LABEL");
 const ASK_LOG_QUESTION = workerQualifiedUserId("JEST-REF-ASK-LOG-QUESTION");
+const ASK_LOG_SECOND_QUESTION = workerQualifiedUserId("JEST-REF-ASK-LOG-SECOND-QUESTION");
+const MALFORMED_ASK_LOG_QUESTION = workerQualifiedUserId("JEST-REF-MALFORMED-QUESTION");
 const UNKNOWN_USER = workerQualifiedUserId("jest-reference-ask-log-unknown-user");
 const NON_ADMIN_ASK_LOG_USER = workerQualifiedUserId(
   "jest-reference-ask-log-nonadmin",
@@ -329,17 +331,24 @@ describe("GET /api/reference/ask-log", () => {
   beforeAll(async () => {
     await db
       .insert(referenceLogTable)
-      .values({
-        question: ASK_LOG_QUESTION,
-        answer: "Jest reference answer",
-        matchedItemCount: 1,
-      });
+      .values([
+        {
+          question: ASK_LOG_QUESTION,
+          answer: "Jest reference answer",
+          matchedItemCount: 1,
+        },
+        {
+          question: ASK_LOG_SECOND_QUESTION,
+          answer: "Second Jest reference answer",
+          matchedItemCount: 2,
+        },
+      ]);
   });
 
   afterAll(async () => {
-    await db
-      .delete(referenceLogTable)
-      .where(eq(referenceLogTable.question, ASK_LOG_QUESTION));
+    for (const question of [ASK_LOG_QUESTION, ASK_LOG_SECOND_QUESTION, MALFORMED_ASK_LOG_QUESTION]) {
+      await db.delete(referenceLogTable).where(eq(referenceLogTable.question, question));
+    }
     await db
       .delete(usersTable)
       .where(eq(usersTable.clerkUserId, UNKNOWN_USER));
@@ -382,14 +391,79 @@ describe("GET /api/reference/ask-log", () => {
       .expect(200);
 
     expect(res.body).toEqual(
-      expect.arrayContaining([
+      expect.objectContaining({
+        page: 1,
+        limit: 100,
+        total: expect.any(Number),
+        hasMore: expect.any(Boolean),
+        rows: expect.arrayContaining([
         expect.objectContaining({
           question: ASK_LOG_QUESTION,
           answer: "Jest reference answer",
           matchedItemCount: 1,
         }),
-      ]),
+        ]),
+      }),
     );
+  });
+
+  it("searches on the server and paginates beyond the default latest window", async () => {
+    const searchRes = await supertest(app)
+      .get(`/api/reference/ask-log?search=${encodeURIComponent("SECOND-QUESTION")}&limit=1&page=1`)
+      .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+      .expect(200);
+
+    expect(searchRes.body).toEqual({
+      rows: [
+        expect.objectContaining({
+          question: ASK_LOG_SECOND_QUESTION,
+          answer: "Second Jest reference answer",
+        }),
+      ],
+      page: 1,
+      limit: 1,
+      total: 1,
+      hasMore: false,
+    });
+
+    const pageRes = await supertest(app)
+      .get("/api/reference/ask-log?limit=1&page=2")
+      .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+      .expect(200);
+
+    expect(pageRes.body.page).toBe(2);
+    expect(pageRes.body.limit).toBe(1);
+    expect(pageRes.body.rows).toHaveLength(1);
+    expect(pageRes.body.total).toBeGreaterThanOrEqual(2);
+  });
+
+  it.each([
+    "limit=101",
+    "page=21",
+    "page=not-a-number",
+    `search=${"x".repeat(201)}`,
+  ])("rejects an unbounded or invalid query: %s", async (query) => {
+    await supertest(app)
+      .get(`/api/reference/ask-log?${query}`)
+      .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+      .expect(400);
+  });
+
+  it("returns a safe error instead of malformed row contents", async () => {
+    await db.insert(referenceLogTable).values({
+      question: MALFORMED_ASK_LOG_QUESTION,
+      answer: "This answer must not reach the client",
+      matchedItemCount: -1,
+    });
+
+    const res = await supertest(app)
+      .get("/api/reference/ask-log")
+      .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+      .expect(500);
+
+    expect(res.body).toEqual({ error: "AI log contains invalid data" });
+    expect(JSON.stringify(res.body)).not.toContain(MALFORMED_ASK_LOG_QUESTION);
+    expect(JSON.stringify(res.body)).not.toContain("This answer must not reach the client");
   });
 });
 

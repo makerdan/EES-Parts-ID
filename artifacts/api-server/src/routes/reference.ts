@@ -1,4 +1,5 @@
 import { getAuth } from "@clerk/express";
+import { ReferenceLogQuerySchema, ReferenceLogResponseSchema } from "@workspace/api-zod";
 import { db } from "@workspace/db";
 import { aiRequestLogTable,inventoryTable, quickLookupCacheTable, referenceLogTable } from "@workspace/db";
 import { desc, eq, ilike, lt, or, sql } from "drizzle-orm";
@@ -385,16 +386,66 @@ router.post("/ask", async (req, res) => {
   }
 });
 
-// GET /reference/ask-log — admin-only list of recent Q&A log rows
-router.get("/ask-log", requireAdminAuth, async (_req, res) => {
+// GET /reference/ask-log — admin-only bounded, searchable Q&A log
+router.get("/ask-log", requireAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);
   try {
-    const rows = await db
-      .select()
-      .from(referenceLogTable)
-      .orderBy(desc(referenceLogTable.createdAt))
-      .limit(100);
-    res.json(rows);
+    const singleQueryValue = (value: unknown): string | null | undefined =>
+      value === undefined || typeof value === "string" ? value : null;
+    const parsedQuery = ReferenceLogQuerySchema.safeParse({
+      search: singleQueryValue(req.query["search"]),
+      page: singleQueryValue(req.query["page"]),
+      limit: singleQueryValue(req.query["limit"]),
+    });
+    if (!parsedQuery.success) {
+      return void res.status(400).json({ error: "Invalid AI log search or pagination parameters" });
+    }
+
+    const { search, page, limit } = parsedQuery.data;
+    const searchTerm = search || undefined;
+    const searchCondition = searchTerm
+      ? or(
+          ilike(referenceLogTable.question, `%${searchTerm}%`),
+          ilike(referenceLogTable.answer, `%${searchTerm}%`),
+        )
+      : undefined;
+    const offset = (page - 1) * limit;
+
+    const [rows, countResult] = await Promise.all([
+      db
+        .select()
+        .from(referenceLogTable)
+        .where(searchCondition)
+        .orderBy(desc(referenceLogTable.createdAt), desc(referenceLogTable.id))
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(referenceLogTable)
+        .where(searchCondition),
+    ]);
+
+    const responseRows = rows.map((row) => ({
+      id: row.id,
+      question: row.question,
+      answer: row.answer,
+      matchedItemCount: row.matchedItemCount,
+      createdAt: row.createdAt.toISOString(),
+    }));
+    const total = Number(countResult[0]?.count ?? 0);
+    const response = ReferenceLogResponseSchema.safeParse({
+      rows: responseRows,
+      total,
+      page,
+      limit,
+      hasMore: offset + responseRows.length < total,
+    });
+    if (!response.success) {
+      reqLogger.error({ issueCount: response.error.issues.length }, "reference.ask-log returned invalid row data");
+      return void res.status(500).json({ error: "AI log contains invalid data" });
+    }
+
+    return void res.json(response.data);
   } catch (err) {
     reqLogger.error({ err }, "reference.ask-log list failed");
     res.status(500).json({ error: "Failed to load AI log" });

@@ -8,6 +8,7 @@
  * Route: /ai-log
  */
 import { Feather } from "@expo/vector-icons";
+import { ReferenceLogResponseSchema, type ReferenceLogRow } from "@workspace/api-zod";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -31,13 +32,7 @@ import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 import { API_BASE } from "@/utils/apiBase";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
-type LogRow = {
-  id: number;
-  question: string;
-  answer: string;
-  matchedItemCount: number;
-  createdAt: string;
-};
+const AI_LOG_PAGE_SIZE = 100;
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -50,7 +45,7 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
-function LogItem({ row, colors }: { row: LogRow; colors: ReturnType<typeof useColors> }) {
+function LogItem({ row, colors }: { row: ReferenceLogRow; colors: ReturnType<typeof useColors> }) {
   const [expanded, setExpanded] = useState(false);
   const matchSummary = `${row.matchedItemCount} matched item${row.matchedItemCount === 1 ? "" : "s"}`;
 
@@ -104,27 +99,32 @@ export default function AiLogScreen() {
   const { isAdmin, adminToken, isLoading } = useApp();
   const { reportNetworkFailure } = useApiHealth();
 
-  const [rows, setRows] = useState<Array<LogRow>>([]);
+  const [rows, setRows] = useState<Array<ReferenceLogRow>>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filterQuery, setFilterQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeSearch, setActiveSearch] = useState("");
+  const [totalRows, setTotalRows] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [viewCleared, setViewCleared] = useState(false);
   const [exportFeedback, setExportFeedback] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const requestGenerationRef = useRef(0);
   const requestControllerRef = useRef<AbortController | null>(null);
+  const activeSearchRef = useRef("");
+  const currentPageRef = useRef(1);
 
   const visibleRows = useMemo(() => {
     if (viewCleared) return [];
-    const query = filterQuery.trim().toLocaleLowerCase();
-    if (!query) return rows;
-    return rows.filter((row) =>
-      `${row.question}\n${row.answer}`.toLocaleLowerCase().includes(query),
-    );
-  }, [filterQuery, rows, viewCleared]);
+    return rows;
+  }, [rows, viewCleared]);
 
-  const fetchLog = useCallback(async (isRefresh = false) => {
+  const fetchLog = useCallback(async (
+    isRefresh = false,
+    requestedPage = 1,
+    requestedSearch = activeSearchRef.current,
+  ) => {
     if (!adminToken || !isAdmin) return;
 
     const generation = ++requestGenerationRef.current;
@@ -138,13 +138,20 @@ export default function AiLogScreen() {
     setExportFeedback(null);
 
     try {
-      const res = await fetch(`${API_BASE}/reference/ask-log`, {
+      const params = new URLSearchParams({
+        page: String(requestedPage),
+        limit: String(AI_LOG_PAGE_SIZE),
+      });
+      if (requestedSearch) params.set("search", requestedSearch);
+
+      const res = await fetch(`${API_BASE}/reference/ask-log?${params.toString()}`, {
         headers: { Authorization: `Bearer ${adminToken}` },
         signal: controller.signal,
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data: unknown = await res.json();
-      if (!Array.isArray(data)) throw new Error("Invalid AI log response");
+      const parsed = ReferenceLogResponseSchema.safeParse(data);
+      if (!parsed.success) throw new Error("Invalid AI log response");
 
       if (
         !mountedRef.current ||
@@ -153,7 +160,12 @@ export default function AiLogScreen() {
       ) {
         return;
       }
-      setRows(data as Array<LogRow>);
+      setRows((previous) =>
+        requestedPage === 1 ? parsed.data.rows : [...previous, ...parsed.data.rows],
+      );
+      setTotalRows(parsed.data.total);
+      setHasMore(parsed.data.hasMore);
+      currentPageRef.current = parsed.data.page;
       setViewCleared(false);
     } catch (err) {
       if (
@@ -191,7 +203,12 @@ export default function AiLogScreen() {
       requestControllerRef.current?.abort();
       setRows([]);
       setViewCleared(false);
-      setFilterQuery("");
+      setSearchQuery("");
+      setActiveSearch("");
+      activeSearchRef.current = "";
+      setTotalRows(0);
+      setHasMore(false);
+      currentPageRef.current = 1;
       setError(null);
       void fetchLog();
     } else if (!isLoading && (!isAdmin || !adminToken)) {
@@ -199,7 +216,12 @@ export default function AiLogScreen() {
       requestControllerRef.current?.abort();
       setRows([]);
       setViewCleared(false);
-      setFilterQuery("");
+      setSearchQuery("");
+      setActiveSearch("");
+      activeSearchRef.current = "";
+      setTotalRows(0);
+      setHasMore(false);
+      currentPageRef.current = 1;
       setError(null);
       setLoading(false);
       setRefreshing(false);
@@ -230,13 +252,37 @@ export default function AiLogScreen() {
           style: "destructive",
           onPress: () => {
             setViewCleared(true);
-            setFilterQuery("");
+            setSearchQuery("");
             setExportFeedback("The loaded log is hidden from this screen.");
           },
         },
       ],
     );
   }, []);
+
+  const submitSearch = useCallback(() => {
+    const nextSearch = searchQuery.trim();
+    activeSearchRef.current = nextSearch;
+    setActiveSearch(nextSearch);
+    setRows([]);
+    setTotalRows(0);
+    setHasMore(false);
+    currentPageRef.current = 1;
+    setViewCleared(false);
+    void fetchLog(false, 1, nextSearch);
+  }, [fetchLog, searchQuery]);
+
+  const clearSearch = useCallback(() => {
+    setSearchQuery("");
+    activeSearchRef.current = "";
+    setActiveSearch("");
+    setRows([]);
+    setTotalRows(0);
+    setHasMore(false);
+    currentPageRef.current = 1;
+    setViewCleared(false);
+    void fetchLog(false, 1, "");
+  }, [fetchLog]);
 
   const exportVisibleLog = useCallback(async () => {
     if (!isAdmin || !adminToken) {
@@ -283,7 +329,7 @@ export default function AiLogScreen() {
         <View style={styles.headerCenter}>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>AI Answer Log</Text>
           <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
-            Latest 100 questions · admin only
+            Search retained questions · admin only
           </Text>
         </View>
         <Pressable
@@ -337,32 +383,33 @@ export default function AiLogScreen() {
         <>
           <View style={styles.toolbar}>
             <TextInput
-              value={filterQuery}
+              value={searchQuery}
               onChangeText={(value) => {
-                setFilterQuery(value);
+                setSearchQuery(value);
                 setViewCleared(false);
                 setExportFeedback(null);
               }}
-              placeholder="Filter questions or answers"
+              onSubmitEditing={submitSearch}
+              placeholder="Search questions or answers"
               placeholderTextColor={colors.mutedForeground}
               style={[
                 styles.filterInput,
                 { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card },
               ]}
-              accessibilityLabel="Filter AI log"
+              accessibilityLabel="Search AI log"
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="search"
             />
             <View style={styles.actionRow}>
-              {filterQuery.length > 0 && (
+              {searchQuery.length > 0 && (
                 <Pressable
-                  onPress={() => setFilterQuery("")}
+                  onPress={clearSearch}
                   style={[styles.actionBtn, { borderColor: colors.border }]}
                   accessibilityRole="button"
-                  accessibilityLabel="Clear AI log filter"
+                  accessibilityLabel="Clear AI log search"
                 >
-                  <Text style={[styles.actionText, { color: colors.mutedForeground }]}>Clear filter</Text>
+                  <Text style={[styles.actionText, { color: colors.mutedForeground }]}>Clear search</Text>
                 </Pressable>
               )}
               <Pressable
@@ -384,11 +431,25 @@ export default function AiLogScreen() {
             </View>
             <Text style={[styles.scopeText, { color: colors.mutedForeground }]}>
               {viewCleared
-                ? "This view is clear. Refresh to load the latest 100 questions."
-                : filterQuery.trim()
-                  ? `${visibleRows.length} of ${rows.length} retained questions match`
-                  : `${rows.length} retained question${rows.length === 1 ? "" : "s"} loaded`}
+                ? "This view is clear. Search or refresh to load questions."
+                : activeSearch
+                  ? `${visibleRows.length} of ${totalRows} matching question${totalRows === 1 ? "" : "s"} loaded`
+                  : `${visibleRows.length} of ${totalRows} retained question${totalRows === 1 ? "" : "s"} loaded`}
             </Text>
+            {hasMore && !viewCleared && (
+              <Pressable
+                onPress={() => void fetchLog(false, currentPageRef.current + 1)}
+                disabled={loading || refreshing}
+                style={[styles.loadMoreBtn, { borderColor: colors.border }]}
+                accessibilityRole="button"
+                accessibilityLabel="Load older AI log rows"
+                accessibilityState={{ disabled: loading || refreshing }}
+              >
+                <Text style={[styles.actionText, { color: colors.primary }]}>
+                  {loading ? "Loading older questions…" : "Load older questions"}
+                </Text>
+              </Pressable>
+            )}
             {error && rows.length > 0 && (
               <View style={[styles.inlineError, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
                 <Text style={[styles.inlineErrorText, { color: colors.destructive }]}>
@@ -412,36 +473,37 @@ export default function AiLogScreen() {
               </Text>
             )}
           </View>
-          <FlatList
-            data={visibleRows}
-            keyExtractor={(item) => String(item.id)}
-            contentContainerStyle={styles.list}
-            removeClippedSubviews={true}
-            initialNumToRender={10}
-            maxToRenderPerBatch={10}
-            windowSize={10}
-            keyboardShouldPersistTaps="handled"
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={() => void fetchLog(true)}
-                tintColor={colors.primary}
-                colors={[colors.primary]}
-              />
-            }
-            renderItem={({ item }) => <LogItem row={item} colors={colors} />}
-            ListEmptyComponent={
-              <View style={styles.centered}>
-                <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                  {viewCleared
-                    ? "This view is clear.\nRefresh to load the latest 100 questions."
-                    : filterQuery.trim()
-                      ? "No retained questions match this filter.\nTry a shorter search."
-                      : "No questions logged yet.\nAsk the AI something to see it here."}
-                </Text>
-              </View>
-            }
-          />
+          {visibleRows.length === 0 ? (
+            <View style={styles.centered}>
+              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                {viewCleared
+                  ? "This view is clear.\nSearch or refresh to load questions."
+                  : activeSearch
+                    ? "No retained questions match this search.\nTry a shorter search."
+                    : "No questions logged yet.\nAsk the AI something to see it here."}
+              </Text>
+            </View>
+          ) : (
+            <FlatList
+              data={visibleRows}
+              keyExtractor={(item) => String(item.id)}
+              contentContainerStyle={styles.list}
+              removeClippedSubviews={true}
+              initialNumToRender={10}
+              maxToRenderPerBatch={10}
+              windowSize={10}
+              keyboardShouldPersistTaps="handled"
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={() => void fetchLog(true)}
+                  tintColor={colors.primary}
+                  colors={[colors.primary]}
+                />
+              }
+              renderItem={({ item }) => <LogItem row={item} colors={colors} />}
+            />
+          )}
         </>
       )}
     </SafeAreaView>
@@ -480,6 +542,7 @@ const styles = StyleSheet.create({
   },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   actionBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 },
+  loadMoreBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, alignSelf: "flex-start" },
   actionText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   scopeText: { fontSize: 12, fontFamily: "Inter_400Regular" },
   inlineError: {

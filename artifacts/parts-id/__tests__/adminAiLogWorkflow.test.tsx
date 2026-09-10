@@ -84,6 +84,14 @@ type LogRow = {
   createdAt: string;
 };
 
+type LogPage = {
+  rows: LogRow[];
+  total: number;
+  page: number;
+  limit: number;
+  hasMore: boolean;
+};
+
 function jsonResponse(value: unknown): Response {
   return {
     ok: true,
@@ -165,6 +173,20 @@ const REFRESHED_ROWS: LogRow[] = [
   },
 ];
 
+function logPage(
+  rows: LogRow[],
+  overrides: Partial<Omit<LogPage, "rows">> = {},
+): LogPage {
+  return {
+    rows,
+    total: rows.length,
+    page: 1,
+    limit: 100,
+    hasMore: false,
+    ...overrides,
+  };
+}
+
 let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 let mockFetch: jest.SpyInstance;
 
@@ -191,8 +213,8 @@ afterEach(async () => {
 describe("AiLogScreen — administrator read workflow", () => {
   it("fetches protected rows, expands an answer, and replaces them on refresh", async () => {
     mockFetch
-      .mockResolvedValueOnce(jsonResponse(INITIAL_ROWS))
-      .mockResolvedValueOnce(jsonResponse(REFRESHED_ROWS));
+      .mockResolvedValueOnce(jsonResponse(logPage(INITIAL_ROWS, { total: 201, hasMore: true })))
+      .mockResolvedValueOnce(jsonResponse(logPage(REFRESHED_ROWS)));
 
     activeTree = await render(React.createElement(AiLogScreen));
     await flushPromises();
@@ -200,7 +222,7 @@ describe("AiLogScreen — administrator read workflow", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenNthCalledWith(
       1,
-      "http://localhost:3001/api/reference/ask-log",
+      "http://localhost:3001/api/reference/ask-log?page=1&limit=100",
       expect.objectContaining({
         headers: { Authorization: "Bearer admin-token-123" },
         signal: expect.any(AbortSignal),
@@ -228,7 +250,7 @@ describe("AiLogScreen — administrator read workflow", () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(mockFetch).toHaveBeenNthCalledWith(
       2,
-      "http://localhost:3001/api/reference/ask-log",
+      "http://localhost:3001/api/reference/ask-log?page=1&limit=100",
       expect.objectContaining({
         headers: { Authorization: "Bearer admin-token-123" },
         signal: expect.any(AbortSignal),
@@ -243,7 +265,7 @@ describe("AiLogScreen — administrator read workflow", () => {
   it("shows a recoverable HTTP error and loads fresh rows after Retry", async () => {
     mockFetch
       .mockResolvedValueOnce(errorResponse(503))
-      .mockResolvedValueOnce(jsonResponse(REFRESHED_ROWS));
+      .mockResolvedValueOnce(jsonResponse(logPage(REFRESHED_ROWS)));
 
     activeTree = await render(React.createElement(AiLogScreen));
     await flushPromises();
@@ -267,7 +289,7 @@ describe("AiLogScreen — administrator read workflow", () => {
 
   it("keeps loaded rows visible when refresh fails and offers an inline retry", async () => {
     mockFetch
-      .mockResolvedValueOnce(jsonResponse(INITIAL_ROWS))
+      .mockResolvedValueOnce(jsonResponse(logPage(INITIAL_ROWS)))
       .mockResolvedValueOnce(errorResponse(503));
 
     activeTree = await render(React.createElement(AiLogScreen));
@@ -286,8 +308,10 @@ describe("AiLogScreen — administrator read workflow", () => {
     expect(findPressableByLabel(activeTree.root!, "Retry refreshing AI log")).not.toBeNull();
   });
 
-  it("filters locally, confirms local clearing, and reports export feedback", async () => {
-    mockFetch.mockResolvedValueOnce(jsonResponse([...INITIAL_ROWS, ...REFRESHED_ROWS]));
+  it("searches on the server, confirms local clearing, and reports export feedback", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(logPage([...INITIAL_ROWS, ...REFRESHED_ROWS])))
+      .mockResolvedValueOnce(jsonResponse(logPage([REFRESHED_ROWS[0]!])));
     const alertSpy = jest.spyOn(Alert, "alert").mockImplementation((_title, _message, buttons) => {
       buttons?.find((button) => button.text === "Clear view")?.onPress?.();
     });
@@ -298,7 +322,7 @@ describe("AiLogScreen — administrator read workflow", () => {
 
     const filterInput = activeTree.root!
       .queryAll(
-        (node: TestInstance) => node.props.accessibilityLabel === "Filter AI log",
+        (node: TestInstance) => node.props.accessibilityLabel === "Search AI log",
         { includeSelf: true },
       )[0];
     expect(filterInput).toBeDefined();
@@ -306,6 +330,19 @@ describe("AiLogScreen — administrator read workflow", () => {
     await act(async () => {
       fireEvent.changeText(filterInput!, "battery");
     });
+    await act(async () => {
+      filterInput!.props.onSubmitEditing?.();
+    });
+    await flushPromises();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:3001/api/reference/ask-log?page=1&limit=100&search=battery",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer admin-token-123" },
+        signal: expect.any(AbortSignal),
+      }),
+    );
     expect(hasText(activeTree.root, REFRESHED_ROWS[0]!.question)).toBe(true);
     expect(hasText(activeTree.root, INITIAL_ROWS[0]!.question)).toBe(false);
 
@@ -342,7 +379,7 @@ describe("AiLogScreen — administrator read workflow", () => {
     });
     mockFetch
       .mockReturnValueOnce(oldResponse)
-      .mockResolvedValueOnce(jsonResponse(REFRESHED_ROWS));
+      .mockResolvedValueOnce(jsonResponse(logPage(REFRESHED_ROWS)));
 
     activeTree = await render(React.createElement(AiLogScreen));
     await flushPromises();
@@ -365,12 +402,115 @@ describe("AiLogScreen — administrator read workflow", () => {
     expect(hasText(activeTree.root, REFRESHED_ROWS[0]!.question)).toBe(true);
     expect(mockFetch).toHaveBeenNthCalledWith(
       2,
-      "http://localhost:3001/api/reference/ask-log",
+      "http://localhost:3001/api/reference/ask-log?page=1&limit=100",
       expect.objectContaining({
         headers: { Authorization: "Bearer new-admin-token" },
         signal: expect.any(AbortSignal),
       }),
     );
+  });
+
+  it("loads older pages without replacing the current rows", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(logPage(INITIAL_ROWS, { total: 101, hasMore: true })))
+      .mockResolvedValueOnce(jsonResponse(logPage(REFRESHED_ROWS, { page: 2 })));
+
+    activeTree = await render(React.createElement(AiLogScreen));
+    await flushPromises();
+
+    const loadMoreButton = findPressableByLabel(activeTree.root!, "Load older AI log rows");
+    expect(loadMoreButton).not.toBeNull();
+    await act(async () => {
+      fireEvent.press(loadMoreButton!);
+    });
+    await flushPromises();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:3001/api/reference/ask-log?page=2&limit=100",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(hasText(activeTree.root, INITIAL_ROWS[0]!.question)).toBe(true);
+    expect(hasText(activeTree.root, REFRESHED_ROWS[0]!.question)).toBe(true);
+    expect(findPressableByLabel(activeTree.root!, "Load older AI log rows")).toBeNull();
+  });
+
+  it("keeps the loaded page visible when loading older rows fails", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(logPage(INITIAL_ROWS, { total: 101, hasMore: true })))
+      .mockResolvedValueOnce(errorResponse(503))
+      .mockResolvedValueOnce(jsonResponse(logPage(REFRESHED_ROWS, { page: 2 })));
+
+    activeTree = await render(React.createElement(AiLogScreen));
+    await flushPromises();
+
+    const loadMoreButton = findPressableByLabel(activeTree.root!, "Load older AI log rows");
+    expect(loadMoreButton).not.toBeNull();
+    await act(async () => {
+      fireEvent.press(loadMoreButton!);
+    });
+    await flushPromises();
+
+    expect(hasText(activeTree.root, INITIAL_ROWS[0]!.question)).toBe(true);
+    expect(hasText(activeTree.root, "Refresh failed: Server error 503")).toBe(true);
+
+    const retryLoadMoreButton = findPressableByLabel(activeTree.root!, "Load older AI log rows");
+    expect(retryLoadMoreButton).not.toBeNull();
+    await act(async () => {
+      fireEvent.press(retryLoadMoreButton!);
+    });
+    await flushPromises();
+
+    expect(hasText(activeTree.root, REFRESHED_ROWS[0]!.question)).toBe(true);
+    expect(hasText(activeTree.root, "Refresh failed: Server error 503")).toBe(false);
+  });
+
+  it("shows a safe empty state for a server-side search with no matches", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(logPage(INITIAL_ROWS)))
+      .mockResolvedValueOnce(jsonResponse(logPage([], { total: 0 })));
+
+    activeTree = await render(React.createElement(AiLogScreen));
+    await flushPromises();
+
+    const searchInput = activeTree.root!
+      .queryAll(
+        (node: TestInstance) => node.props.accessibilityLabel === "Search AI log",
+        { includeSelf: true },
+      )[0];
+    await act(async () => {
+      fireEvent.changeText(searchInput!, "does-not-exist");
+    });
+    await act(async () => {
+      searchInput!.props.onSubmitEditing?.();
+    });
+    await flushPromises();
+
+    expect(hasText(activeTree.root, "No retained questions match this search.")).toBe(true);
+    expect(hasText(activeTree.root, INITIAL_ROWS[0]!.question)).toBe(false);
+  });
+
+  it("rejects malformed response rows without rendering unchecked values", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      rows: [{
+        ...INITIAL_ROWS[0]!,
+        question: 123,
+        answer: null,
+        matchedItemCount: "not-a-count",
+        createdAt: "not-a-timestamp",
+      }],
+      total: 1,
+      page: 1,
+      limit: 100,
+      hasMore: false,
+    }));
+
+    activeTree = await render(React.createElement(AiLogScreen));
+    await flushPromises();
+
+    expect(hasText(activeTree.root, "Invalid AI log response")).toBe(true);
+    expect(hasText(activeTree.root, INITIAL_ROWS[0]!.question)).toBe(false);
+    expect(hasText(activeTree.root, "not-a-count")).toBe(false);
   });
 });
 
