@@ -16,3 +16,15 @@ correct validation.
 compares the active child process with both `package.json` `engines.node` and
 `.node-version`; use the diagnostic to distinguish an actual runtime mismatch
 from a stale package-manager launcher.
+
+The package engine declaration should be a bounded range that includes the
+launcher’s compatible patch, while `.node-version` remains the exact patch
+used by validation and GitHub.
+
+**Why:** An exact package engine can make pnpm emit an unsupported-engine warning
+for its own older interpreter even when the child `node` process is the pinned
+version and all application checks are correct.
+
+**How to apply:** Keep the lower bound within the supported Node major, cap the
+range before the next major, and have the runtime checker verify both the range
+and the exact `.node-version`/active-process match.

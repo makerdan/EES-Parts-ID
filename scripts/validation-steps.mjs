@@ -12,6 +12,7 @@ export const FAST = [
   ["regression-guard", "node scripts/check-regression-guard.mjs"],
   ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
   ["github-actions-contract", "node scripts/test/github-actions-contract.test.mjs"],
+  ["validation-runtime-contract", "node scripts/test/validation-runtime-contract.test.mjs"],
   ["api-route-authorization-contract", "node scripts/test/api-route-authorization-contract.test.mjs"],
   ["skill-mirror-sync-contract", "node scripts/test/skill-mirror-sync-contract.test.mjs"],
   ["public-repository-boundary", "node scripts/test/public-repository-boundary.test.mjs"],

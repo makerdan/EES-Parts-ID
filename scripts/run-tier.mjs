@@ -47,7 +47,8 @@ let failed = null;
 for (const [name, command] of resolvedSteps) {
   console.log(`\n━━━ [run-tier] step: ${name} ━━━`);
   const start = Date.now();
-  const result = spawnSync("bash", ["-c", command], { stdio: "inherit", env: process.env });
+  const env = name === "test" ? { ...process.env, DATABASE_ENV: "test" } : process.env;
+  const result = spawnSync("bash", ["-c", command], { stdio: "inherit", env });
   const seconds = ((Date.now() - start) / 1000).toFixed(1);
   const ok = result.status === 0;
   report.push({ name, seconds, ok });

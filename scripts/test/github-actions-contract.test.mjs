@@ -36,6 +36,7 @@ const fastContractChecks = new Map([
   ["skill-mirror-sync-contract", "node scripts/test/skill-mirror-sync-contract.test.mjs"],
   ["patched-dependencies-contract", "node scripts/test/patched-dependencies.test.mjs"],
   ["replit-config-contract", "node scripts/test/replit-config-contract.test.mjs"],
+  ["validation-runtime-contract", "node scripts/test/validation-runtime-contract.test.mjs"],
 ]);
 
 const workflowNames = [
