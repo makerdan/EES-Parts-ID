@@ -94,12 +94,48 @@ function runSync(source = accountSource, cwd = workspaceRoot) {
   });
 }
 
+async function canCreateReadPermissionBoundary(filePath) {
+  try {
+    await readFile(filePath);
+    return false;
+  } catch (error) {
+    if (error.code !== "EACCES") throw error;
+    return true;
+  }
+}
+
 try {
   await put(join(accountSource, ".account-revision"), "account-rev-1\n");
   await put(join(accountSource, "catalog/SKILL.md"), "# Catalog v1\n");
   await put(join(accountSource, "catalog/references/guide.md"), "supporting file\n");
   await put(join(accountSource, "review/SKILL.md"), "# Review\n");
   await put(join(authoredRoot, "SKILL.md"), "# Workspace-authored skill\n");
+
+  const deniedCanonicalSource = join(root, "denied-canonical-source");
+  const deniedRevisionPath = join(deniedCanonicalSource, ".account-revision");
+  await put(deniedRevisionPath, "denied-revision\n");
+  await put(join(deniedCanonicalSource, "catalog/SKILL.md"), "private canonical bytes\n");
+  const deniedRevisionMode = (await lstat(deniedRevisionPath)).mode & 0o777;
+  await chmod(deniedRevisionPath, 0o000);
+  try {
+    if (await canCreateReadPermissionBoundary(deniedRevisionPath)) {
+      const deniedSourceCommand = runStatus(deniedCanonicalSource);
+      assert.equal(deniedSourceCommand.status, 2, deniedSourceCommand.stderr);
+      assert.deepEqual(JSON.parse(deniedSourceCommand.stdout), {
+        outcome: "unavailable-source",
+        skillId: "catalog",
+      });
+      assert.doesNotMatch(
+        deniedSourceCommand.stdout,
+        /denied-canonical-source|private canonical bytes|EACCES|permission denied|readFile|account-revision/,
+        "permission-denied canonical status must not expose source paths, private bytes, or filesystem errors",
+      );
+    } else {
+      console.log("SKIP: runner could not create a read permission boundary for the canonical revision file");
+    }
+  } finally {
+    await chmod(deniedRevisionPath, deniedRevisionMode);
+  }
 
   const firstCommand = runSync();
   assert.equal(firstCommand.status, 0, firstCommand.stderr);
