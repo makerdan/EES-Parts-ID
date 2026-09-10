@@ -300,3 +300,28 @@ workflow names, badges, or dated documents.
 
 No action above triggers, reruns, cancels, dispatches, approves, or changes a
 remote workflow or policy.
+
+## Read-only evidence collector contract
+
+The optional evidence collector accepts a repository identity and one exact
+40-character revision SHA. It records only runs whose `head_sha` matches that
+revision and emits a compact bundle containing:
+
+- repository and exact revision identity;
+- workflow name/path/id, run id/attempt, event, status, conclusion, and bounded
+  lifecycle timestamps;
+- job name/id, conclusion, and bounded failure evidence; and
+- the policy and permission context used for the capture.
+
+Failure evidence is capped at 2,000 characters by default and redacts common
+credential-like assignments. A failed job with a provider denial is reported
+as `failureEvidence.status: "withheld"` with the HTTP status when available.
+That state is distinct from a failed conclusion with available detail, a failed
+conclusion with no supplied detail (`"unavailable"`), and a run that was not
+observed. The collector does not dispatch, retry, cancel, approve, mutate, or
+download an unbounded log.
+
+Protection snapshots are valid only when their repository, exact revision,
+policy, and permission context all match the current read-only context.
+Missing or changed context returns `stale`; it is never treated as current
+because a historical snapshot happened to report enabled controls.

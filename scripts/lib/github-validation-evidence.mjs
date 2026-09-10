@@ -2,7 +2,9 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const HEX_FINGERPRINT = /^[0-9a-f]{32}$/i;
+const EXACT_SHA = /^[0-9a-f]{40}$/i;
 const MIRROR_ENTRIES = [".fingerprint", "SKILL.md"];
+export const MAX_FAILURE_DETAIL_CHARS = 2000;
 
 const CAPABILITY_DEFINITIONS = [
   ["actions", "Actions availability", "Confirm Actions is enabled before activation."],
@@ -42,6 +44,307 @@ function boundedReason(status, unavailableMessage) {
   if (status === "blocked") return "Read-only evidence was blocked by repository or provider permissions.";
   if (status === "unavailable") return unavailableMessage;
   return "No sufficient read-only evidence was provided; availability is unknown.";
+}
+
+function requireExactSha(value, label = "revision SHA") {
+  if (typeof value !== "string" || !EXACT_SHA.test(value)) {
+    throw new TypeError(`${label} must be one exact 40-character hexadecimal SHA`);
+  }
+  return value.toLowerCase();
+}
+
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableValue(value[key])]));
+}
+
+function stableString(value) {
+  return JSON.stringify(stableValue(value));
+}
+
+function repositoryIdentity(repository) {
+  if (typeof repository === "string" && repository.trim()) return repository.trim();
+  if (!repository || typeof repository !== "object") return undefined;
+  if (typeof repository.fullName === "string") return repository.fullName;
+  if (typeof repository.full_name === "string") return repository.full_name;
+  const owner = typeof repository.owner === "string"
+    ? repository.owner
+    : repository.owner?.login;
+  const name = repository.name;
+  return owner && typeof name === "string" ? `${owner}/${name}` : undefined;
+}
+
+function timestamp(value) {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function providerLogAccess(job) {
+  const access = job?.logAccess ?? job?.log_access ?? job?.logs;
+  const failureDetail = job?.failureDetail ?? job?.failure_detail;
+  const statusCode = job?.logStatusCode ?? job?.log_status_code ?? job?.statusCode;
+  const denied = access === "denied"
+    || access === "withheld"
+    || access?.status === "denied"
+    || access?.status === "withheld"
+    || failureDetail?.status === "denied"
+    || failureDetail?.status === "withheld"
+    || [401, 403].includes(statusCode)
+    || [401, 403].includes(access?.statusCode);
+  if (denied) {
+    const code = statusCode ?? access?.statusCode ?? failureDetail?.statusCode;
+    return {
+      status: "withheld",
+      reason: code ? `GitHub withheld job-log details (HTTP ${code}).` : "GitHub withheld job-log details.",
+    };
+  }
+  if (access === "unavailable" || access?.status === "unavailable" || failureDetail?.status === "unavailable") {
+    return { status: "unavailable", reason: "GitHub did not provide job-log details." };
+  }
+  return undefined;
+}
+
+function sanitizeFailureDetail(value, maxChars) {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const sanitized = value
+    .replace(/\b(password|passwd|secret|token|authorization)\s*[:=]\s*\S+/gi, "$1=[REDACTED]")
+    .trim();
+  if (!sanitized) return undefined;
+  return {
+    status: "available",
+    detail: sanitized.slice(0, maxChars),
+    truncated: sanitized.length > maxChars,
+    maxChars,
+  };
+}
+
+function failureEvidence(job, maxChars) {
+  const withheld = providerLogAccess(job);
+  if (withheld) return { ...withheld, detail: undefined, maxChars };
+  const detail = job?.failureDetail ?? job?.failure_detail ?? job?.failureMessage ?? job?.failure_message;
+  if (detail && typeof detail === "object" && typeof detail.detail === "string") {
+    return sanitizeFailureDetail(detail.detail, maxChars) ?? {
+      status: "unavailable",
+      reason: "No bounded failure detail was provided; the conclusion is still failed.",
+      detail: undefined,
+      maxChars,
+    };
+  }
+  const bounded = sanitizeFailureDetail(detail, maxChars);
+  if (bounded) return bounded;
+  if (job?.conclusion === "failure") {
+    return {
+      status: "unavailable",
+      reason: "No bounded failure detail was provided; the conclusion is still failed.",
+      detail: undefined,
+      maxChars,
+    };
+  }
+  return undefined;
+}
+
+function normalizeJob(job, run, maxChars) {
+  const conclusion = job?.conclusion ?? job?.status;
+  return {
+    id: job?.id ?? undefined,
+    name: job?.name ?? undefined,
+    workflow: {
+      id: run?.workflow_id ?? run?.workflow?.id ?? undefined,
+      name: run?.workflow_name ?? run?.workflow?.name ?? run?.name ?? undefined,
+      path: run?.path ?? run?.workflow?.path ?? undefined,
+    },
+    run: {
+      id: run?.id ?? undefined,
+      attempt: run?.run_attempt ?? run?.attempt ?? 1,
+    },
+    status: job?.status ?? undefined,
+    conclusion: conclusion ?? undefined,
+    startedAt: timestamp(job?.started_at ?? job?.startedAt),
+    completedAt: timestamp(job?.completed_at ?? job?.completedAt),
+    failureEvidence: failureEvidence({ ...job, conclusion }, maxChars),
+  };
+}
+
+function normalizeRun(run, revisionSha, maxChars) {
+  const headSha = run?.head_sha ?? run?.headSha;
+  if (headSha?.toLowerCase() !== revisionSha) return null;
+  const jobs = Array.isArray(run?.jobs) ? run.jobs : [];
+  return {
+    workflow: {
+      id: run?.workflow_id ?? run?.workflow?.id ?? undefined,
+      name: run?.workflow_name ?? run?.workflow?.name ?? run?.name ?? undefined,
+      path: run?.path ?? run?.workflow?.path ?? undefined,
+    },
+    run: {
+      id: run?.id ?? undefined,
+      attempt: run?.run_attempt ?? run?.attempt ?? 1,
+    },
+    revisionSha,
+    event: run?.event ?? undefined,
+    status: run?.status ?? undefined,
+    conclusion: run?.conclusion ?? undefined,
+    createdAt: timestamp(run?.created_at ?? run?.createdAt),
+    startedAt: timestamp(run?.run_started_at ?? run?.started_at ?? run?.startedAt),
+    updatedAt: timestamp(run?.updated_at ?? run?.updatedAt),
+    completedAt: timestamp(run?.completed_at ?? run?.completedAt),
+    jobs: jobs.map((job) => normalizeJob(job, run, maxChars)),
+  };
+}
+
+function evidenceContext({ repository, revisionSha, policy, permissions } = {}) {
+  const repositoryId = repositoryIdentity(repository);
+  const normalizedRevision = revisionSha ? requireExactSha(revisionSha) : undefined;
+  return {
+    repository: repositoryId,
+    revisionSha: normalizedRevision,
+    policy: policy === undefined ? undefined : stableValue(policy),
+    permissions: permissions === undefined ? undefined : stableValue(permissions),
+  };
+}
+
+function contextDifference(snapshotContext, currentContext) {
+  const reasons = [];
+  if (!snapshotContext || !currentContext) {
+    return ["evidence context is missing"];
+  }
+  for (const key of ["repository", "revisionSha", "policy", "permissions"]) {
+    if (snapshotContext[key] === undefined || currentContext[key] === undefined) {
+      reasons.push(`${key} evidence is incomplete`);
+    } else if (stableString(snapshotContext[key]) !== stableString(currentContext[key])) {
+      reasons.push(`${key} evidence changed`);
+    }
+  }
+  return reasons;
+}
+
+/**
+ * Normalize read-only Actions responses into a compact, exact-revision bundle.
+ * Mismatched runs are deliberately excluded so a nearby revision cannot be
+ * mistaken for evidence about the requested SHA.
+ */
+export function buildGitHubValidationEvidenceBundle({
+  repository,
+  revisionSha,
+  runs = [],
+  collectedAt,
+  policy,
+  permissions,
+  maxFailureDetailChars = MAX_FAILURE_DETAIL_CHARS,
+} = {}) {
+  const exactRevision = requireExactSha(revisionSha);
+  if (!Number.isInteger(maxFailureDetailChars) || maxFailureDetailChars < 1) {
+    throw new TypeError("maxFailureDetailChars must be a positive integer");
+  }
+  const repositoryId = repositoryIdentity(repository);
+  if (!repositoryId) throw new TypeError("repository must identify an owner and repository");
+  const normalizedRuns = runs
+    .map((run) => normalizeRun(run, exactRevision, maxFailureDetailChars))
+    .filter(Boolean);
+  return {
+    kind: "github-validation-evidence",
+    mode: "read-only",
+    repository: repositoryId,
+    revisionSha: exactRevision,
+    exactRevision: true,
+    collectedAt: timestamp(collectedAt),
+    evidenceContext: evidenceContext({ repository: repositoryId, revisionSha: exactRevision, policy, permissions }),
+    runCount: normalizedRuns.length,
+    excludedRevisionCount: runs.length - normalizedRuns.length,
+    runs: normalizedRuns,
+  };
+}
+
+/**
+ * Collect through caller-supplied GET-only functions. No dispatch, retry,
+ * mutation, or unbounded log download is performed here.
+ */
+export async function collectGitHubValidationEvidence({
+  repository,
+  revisionSha: requestedRevisionSha,
+  sha,
+  listWorkflowRuns,
+  listJobs,
+  getFailureDetail,
+  collectedAt,
+  policy,
+  permissions,
+  maxFailureDetailChars = MAX_FAILURE_DETAIL_CHARS,
+} = {}) {
+  if (typeof listWorkflowRuns !== "function") throw new TypeError("listWorkflowRuns is required");
+  const revisionSha = requestedRevisionSha ?? sha;
+  const exactRevision = requireExactSha(revisionSha);
+  const rawRunsResponse = await listWorkflowRuns({ repository, headSha: exactRevision, perPage: 100 });
+  const rawRuns = Array.isArray(rawRunsResponse)
+    ? rawRunsResponse
+    : rawRunsResponse?.workflow_runs;
+  const runs = [];
+  for (const run of Array.isArray(rawRuns) ? rawRuns : []) {
+    if ((run?.head_sha ?? run?.headSha)?.toLowerCase() !== exactRevision) continue;
+    const jobsResponse = typeof listJobs === "function"
+      ? await listJobs({ repository, runId: run.id, runAttempt: run.run_attempt ?? run.attempt ?? 1, perPage: 100 })
+      : run.jobs;
+    const jobs = Array.isArray(jobsResponse) ? jobsResponse : jobsResponse?.jobs;
+    const normalizedJobs = Array.isArray(jobs) ? [...jobs] : [];
+    if (typeof getFailureDetail === "function") {
+      for (const job of normalizedJobs) {
+        if ((job.conclusion ?? job.status) !== "failure") continue;
+        const detail = await getFailureDetail({
+          repository,
+          runId: run.id,
+          jobId: job.id,
+          maxChars: maxFailureDetailChars,
+        });
+        if (detail !== undefined) job.failureDetail = detail;
+      }
+    }
+    runs.push({ ...run, jobs: normalizedJobs });
+  }
+  return buildGitHubValidationEvidenceBundle({
+    repository,
+    revisionSha: exactRevision,
+    runs,
+    collectedAt,
+    policy,
+    permissions,
+    maxFailureDetailChars,
+  });
+}
+
+export function buildGitHubProtectionSnapshot({
+  repository,
+  revisionSha,
+  policy,
+  permissions,
+  capabilities,
+  controls,
+  capturedAt,
+} = {}) {
+  const context = evidenceContext({ repository, revisionSha, policy, permissions });
+  if (!context.repository || !context.revisionSha || context.policy === undefined || context.permissions === undefined) {
+    throw new TypeError("protection snapshots require repository, revision, policy, and permission evidence");
+  }
+  return {
+    kind: "github-protection-snapshot",
+    mode: "read-only",
+    status: "captured",
+    capturedAt: timestamp(capturedAt),
+    evidenceContext: context,
+    capabilities,
+    controls,
+  };
+}
+
+export function evaluateGitHubProtectionFreshness(snapshot, currentContext = {}) {
+  const snapshotContext = snapshot?.evidenceContext;
+  const current = evidenceContext(currentContext);
+  const reasons = contextDifference(snapshotContext, current);
+  return {
+    status: reasons.length ? "stale" : "current",
+    current: reasons.length === 0,
+    reasons,
+    repository: current.repository,
+    revisionSha: current.revisionSha,
+  };
 }
 
 export function buildGitHubCapabilityReport(evidence = {}) {

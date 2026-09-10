@@ -30,6 +30,28 @@ the exact installed contract revision covered by the final policy state below.
 No production secret, deployment, release, environment, application data, or
 privileged pull-request execution was introduced.
 
+## Bounded evidence and freshness contract
+
+The optional read-only evidence collector records a compact bundle for one exact
+40-character revision SHA. Each retained run and job includes its workflow/job
+identity, run attempt, conclusion, and bounded timestamps. Failure detail is
+capped at 2,000 characters and common credential-like assignments are redacted.
+Runs whose `head_sha` does not match the requested revision are excluded rather
+than being presented as evidence for that revision.
+
+GitHub can expose a failed job while denying access to its logs. In that case
+the bundle records `failureEvidence.status: "withheld"` and the provider status
+when available. This is not a pass, and it is not evidence for a specific log
+line. Missing supplied detail is represented separately as `"unavailable"`.
+Collection uses read-only callbacks only and never dispatches, retries, cancels,
+approves, or mutates a workflow or policy.
+
+Protection snapshots retain the repository identity, exact revision, policy
+context, and permission context used at capture time. A snapshot is marked
+`stale` if any of those values changes or is missing during re-check. Dated
+provider evidence below must therefore not be described as current after a
+repository, policy, permission, or revision change.
+
 ## Repository visibility and billing note
 
 GitHub Actions does not require a public repository. Public repositories receive

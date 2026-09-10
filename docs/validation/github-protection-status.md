@@ -54,3 +54,17 @@ security-policy, or GitHub-account permission change.
 The branch-protection and Actions evidence is also summarized in
 [GitHub Actions installation](github-actions-installation.md). This report
 does not replace GitHub's live settings or a provider secret scan.
+
+## Snapshot freshness
+
+Any retained protection snapshot must be bound to all four values below:
+
+1. repository owner/name;
+2. exact 40-character revision SHA;
+3. the policy context read from GitHub; and
+4. the permission context used to read that policy.
+
+The read-only evidence contract marks a snapshot `stale` when one of these
+values is missing or differs from the current re-check. A historical
+`verified` control is not a current claim after context changes, and a failed
+or provider-withheld log response is never converted into a passing check.

@@ -13,8 +13,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getTierSteps } from "../validation-steps.mjs";
 import {
+  buildGitHubProtectionSnapshot,
   buildGitHubCapabilityReport,
   buildGitHubSecurityControlReport,
+  buildGitHubValidationEvidenceBundle,
+  collectGitHubValidationEvidence,
+  evaluateGitHubProtectionFreshness,
   inspectOptionalRuntimeSkillMirror,
 } from "../lib/github-validation-evidence.mjs";
 
@@ -380,9 +384,137 @@ function validateCapabilityAndSecurityEvidence() {
   }
 }
 
+async function validateRevisionEvidenceAndFreshness() {
+  const revision = "ABCDEF0123456789ABCDEF0123456789ABCDEF01".toLowerCase();
+  const otherRevision = "0123456789ABCDEF0123456789ABCDEF01234567".toLowerCase();
+  const bundle = buildGitHubValidationEvidenceBundle({
+    repository: "makerdan/EES-Parts-ID",
+    revisionSha: revision,
+    collectedAt: "2026-09-10T10:00:00Z",
+    policy: { requiredChecks: ["CI / required"], strict: true },
+    permissions: { actions: "read", contents: "read" },
+    maxFailureDetailChars: 12,
+    runs: [
+      {
+        id: 101,
+        workflow_id: 10,
+        workflow_name: "CI",
+        head_sha: revision,
+        event: "push",
+        status: "completed",
+        conclusion: "failure",
+        created_at: "2026-09-10T09:00:00Z",
+        run_attempt: 2,
+        jobs: [
+          {
+            id: 1001,
+            name: "Portable validation",
+            status: "completed",
+            conclusion: "failure",
+            started_at: "2026-09-10T09:01:00Z",
+            completed_at: "2026-09-10T09:02:00Z",
+            failureDetail: "long failure detail with secret=do-not-retain",
+          },
+          {
+            id: 1002,
+            name: "CI / required",
+            status: "completed",
+            conclusion: "failure",
+            logStatusCode: 403,
+          },
+        ],
+      },
+      {
+        id: 102,
+        workflow_id: 10,
+        workflow_name: "CI",
+        head_sha: otherRevision,
+        conclusion: "success",
+        jobs: [],
+      },
+    ],
+  });
+  nodeAssert.equal(bundle.exactRevision, true);
+  nodeAssert.equal(bundle.revisionSha, revision);
+  nodeAssert.equal(bundle.runCount, 1);
+  nodeAssert.equal(bundle.excludedRevisionCount, 1);
+  nodeAssert.equal(bundle.runs[0].run.attempt, 2);
+  nodeAssert.equal(bundle.runs[0].jobs[0].failureEvidence.status, "available");
+  nodeAssert.equal(bundle.runs[0].jobs[0].failureEvidence.truncated, true);
+  nodeAssert.equal(bundle.runs[0].jobs[0].failureEvidence.detail, "long failure");
+  nodeAssert.equal(bundle.runs[0].jobs[1].failureEvidence.status, "withheld");
+  nodeAssert.match(bundle.runs[0].jobs[1].failureEvidence.reason, /403/);
+  nodeAssert.doesNotMatch(JSON.stringify(bundle), /do-not-retain/);
+
+  const calls = [];
+  const collected = await collectGitHubValidationEvidence({
+    repository: "makerdan/EES-Parts-ID",
+    revisionSha: revision,
+    listWorkflowRuns: async (request) => {
+      calls.push(["runs", request]);
+      return [{ id: 201, head_sha: revision, workflow_name: "CI", run_attempt: 1 }];
+    },
+    listJobs: async (request) => {
+      calls.push(["jobs", request]);
+      return [{ id: 2001, name: "Portable validation", conclusion: "failure" }];
+    },
+    getFailureDetail: async (request) => {
+      calls.push(["detail", request]);
+      return "line 1\nline 2";
+    },
+  });
+  nodeAssert.equal(collected.runs[0].jobs[0].failureEvidence.detail, "line 1\nline 2");
+  nodeAssert.deepEqual(calls.map(([kind]) => kind), ["runs", "jobs", "detail"]);
+  nodeAssert.equal(calls[0][1].headSha, revision);
+  nodeAssert.equal(calls[0][1].perPage, 100);
+  nodeAssert.equal(calls[2][1].maxChars, 2000);
+  nodeAssert.doesNotMatch(JSON.stringify(collected), /dispatch|cancel|rerun|workflow_mutation/i);
+
+  const context = {
+    repository: "makerdan/EES-Parts-ID",
+    revisionSha: revision,
+    policy: { requiredChecks: ["CI / required"], strict: true },
+    permissions: { actions: "read", contents: "read" },
+  };
+  const snapshot = buildGitHubProtectionSnapshot({
+    ...context,
+    capabilities: { actions: "available" },
+    controls: { secretScanning: "verified" },
+    capturedAt: "2026-09-10T10:00:00Z",
+  });
+  nodeAssert.deepEqual(evaluateGitHubProtectionFreshness(snapshot, context), {
+    status: "current",
+    current: true,
+    reasons: [],
+    repository: context.repository,
+    revisionSha: revision,
+  });
+  const stale = evaluateGitHubProtectionFreshness(snapshot, {
+    ...context,
+    revisionSha: otherRevision,
+    permissions: { actions: "read", contents: "write" },
+  });
+  nodeAssert.equal(stale.status, "stale");
+  nodeAssert.equal(stale.current, false);
+  nodeAssert.deepEqual(stale.reasons, ["revisionSha evidence changed", "permissions evidence changed"]);
+  const incomplete = evaluateGitHubProtectionFreshness(snapshot, {
+    repository: context.repository,
+    revisionSha: revision,
+    policy: context.policy,
+  });
+  nodeAssert.equal(incomplete.status, "stale");
+  nodeAssert.match(incomplete.reasons.join(" "), /permissions evidence is incomplete/);
+
+  nodeAssert.throws(
+    () => buildGitHubValidationEvidenceBundle({ repository: "owner/repo", revisionSha: "not-a-sha" }),
+    /exact 40-character hexadecimal SHA/,
+  );
+}
+
 validateSkillContract();
 validateFastContractRegistration();
 validateCapabilityAndSecurityEvidence();
+await validateRevisionEvidenceAndFreshness();
 
 const files = Object.fromEntries(workflowNames.map((name) => [name, workflow(name)]));
 const errors = validateWorkflowContract(files, read(coveragePath));
