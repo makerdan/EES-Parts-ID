@@ -61,7 +61,7 @@ const INITIAL_ZONE: Zone = {
 
 const FLOOR_PLAN_SVG = `
   <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="800" viewBox="0 0 1000 800">
-    <rect width="1000" height="800" fill="#f8fafc"/>
+    <rect id="zone-route-floor-plan" width="1000" height="800" fill="#f8fafc"/>
     <path d="M 10 10 H 990 V 790 H 10 Z" fill="none" stroke="#111827"/>
   </svg>
 `;
@@ -161,6 +161,7 @@ async function renderRoute() {
   });
   await waitFor(() => {
     expect(screen.getByText("Admin — Zone Editor")).toBeTruthy();
+    expect(result.container.querySelector("#zone-route-floor-plan")).not.toBeNull();
     expect(getZoneRects(result.container)).toHaveLength(1);
   });
   const svg = setSvgBounds(result.container);

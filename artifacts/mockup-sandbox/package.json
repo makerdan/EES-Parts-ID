@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --ext .ts,.tsx && pnpm run dead-exports",
     "dead-exports": "PORT=5000 BASE_PATH=/__mockup knip --no-config-hints",
+    "test:protected-map-smoke": "node ../../scripts/run-protected-map-smoke.mjs",
     "test": "vitest run"
   },
   "dependencies": {

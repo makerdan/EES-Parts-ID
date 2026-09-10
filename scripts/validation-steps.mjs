@@ -49,11 +49,18 @@ export const STANDARD_PLUS_EXTRA = [
   ["post-merge-health-test", "bash scripts/test-post-merge.sh"],
 ];
 
+export const HEAVY_EXTRA = [
+  [
+    "protected-map-concurrency",
+    "pnpm --filter @workspace/mockup-sandbox run test:protected-map-smoke",
+  ],
+];
+
 export const TIERS = {
   fast: FAST,
   standard: [...FAST, ...STANDARD_EXTRA],
   "standard-plus": [...FAST, ...STANDARD_EXTRA, ...STANDARD_PLUS_EXTRA],
-  heavy: [...FAST, ...STANDARD_EXTRA, ...STANDARD_PLUS_EXTRA],
+  heavy: [...FAST, ...STANDARD_EXTRA, ...STANDARD_PLUS_EXTRA, ...HEAVY_EXTRA],
 };
 
 export function getTierSteps(tier) {

@@ -98,7 +98,7 @@ function makeApiFixture(options: FixtureOptions = {}) {
       return Promise.resolve(
         textResponse(
           200,
-          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect width="1000" height="800" /></svg>',
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="anchor-route-floor-plan" width="1000" height="800" /></svg>',
         ),
       );
     }
@@ -197,13 +197,24 @@ function mockMapRect(svg: SVGSVGElement) {
   } as DOMRect);
 }
 
-async function renderRoute() {
+async function renderRoute(fixture?: ReturnType<typeof makeApiFixture>) {
   let result!: ReturnType<typeof render>;
   await act(async () => {
     result = render(<App />);
   });
   await waitFor(() => {
     expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+    expect(
+      result.container.querySelectorAll('rect[fill="rgba(0,112,255,0.06)"]'),
+    ).toHaveLength(2);
+    expect(
+      result.container.querySelector('g[transform="translate(18,-7) scale(1.25)"]'),
+    ).not.toBeNull();
+    if (fixture) {
+      expect(
+        fixture.calls.some(([url]) => new URL(url).pathname === "/api/floor-plan/svg"),
+      ).toBe(true);
+    }
   });
   return result;
 }
@@ -260,7 +271,8 @@ describe("web Anchor Calibration routed workflow", () => {
     vi.stubGlobal("fetch", fixture.fetchMock);
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    const { container } = await renderRoute();
+    const { container } = await renderRoute(fixture);
+    expect(container.querySelector("#anchor-route-floor-plan")).not.toBeNull();
     const svg = container.querySelector("svg")!;
     mockMapRect(svg);
 
@@ -322,7 +334,7 @@ describe("web Anchor Calibration routed workflow", () => {
     });
 
     cleanup();
-    const { container: reloadedContainer } = await renderRoute();
+    const { container: reloadedContainer } = await renderRoute(fixture);
 
     await waitFor(() => {
       const inputs = screen.getAllByRole("textbox");
@@ -359,7 +371,7 @@ describe("web Anchor Calibration routed workflow", () => {
     const rejectedFixture = makeApiFixture({ rejectSaves: true });
     vi.stubGlobal("fetch", rejectedFixture.fetchMock);
 
-    const { container } = await renderRoute();
+    const { container } = await renderRoute(rejectedFixture);
     const svg = container.querySelector("svg")!;
     mockMapRect(svg);
     await placePoint(
@@ -420,8 +432,8 @@ describe("web Anchor Calibration routed workflow", () => {
     vi.stubGlobal("fetch", fixture.fetchMock);
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    const firstSession = await renderRoute();
-    const secondSession = await renderRoute();
+    const firstSession = await renderRoute(fixture);
+    const secondSession = await renderRoute(fixture);
     const first = within(firstSession.container);
     const second = within(secondSession.container);
     const firstSvg = firstSession.container.querySelector("svg")!;
@@ -482,8 +494,8 @@ describe("web Anchor Calibration routed workflow", () => {
     vi.stubGlobal("fetch", fixture.fetchMock);
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    const firstSession = await renderRoute();
-    const secondSession = await renderRoute();
+    const firstSession = await renderRoute(fixture);
+    const secondSession = await renderRoute(fixture);
     const first = within(firstSession.container);
     const second = within(secondSession.container);
     const firstSvg = firstSession.container.querySelector("svg")!;
