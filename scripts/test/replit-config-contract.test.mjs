@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   STRUCTURAL_TABLES,
+  collectStructuralParity,
   compareStructuralConfig,
   redactStructuralConfig,
 } from "../lib/replit-config-parity.mjs";
@@ -78,6 +79,50 @@ assert.throws(
 );
 
 const { snapshot: activeFixture } = redactStructuralConfig(config);
+
+const noReaderResult = collectStructuralParity({ checkedIn: config });
+assert.deepEqual(noReaderResult, {
+  status: "unavailable",
+  readerStatus: "unsupported",
+  reason: "no-supported-reader",
+  ok: false,
+  diagnostics: [],
+});
+
+let unavailableReaderCalled = false;
+const unavailableReaderResult = collectStructuralParity({
+  checkedIn: config,
+  reader: {
+    isAvailable: () => false,
+    read: () => {
+      unavailableReaderCalled = true;
+      throw new Error("must not be called");
+    },
+  },
+});
+assert.deepEqual(unavailableReaderResult, {
+  status: "unavailable",
+  readerStatus: "unavailable",
+  reason: "reader-unavailable",
+  ok: false,
+  diagnostics: [],
+});
+assert.equal(unavailableReaderCalled, false);
+
+const supportedReaderResult = collectStructuralParity({
+  checkedIn: config,
+  reader: {
+    isAvailable: () => true,
+    read: () => activeFixture,
+  },
+});
+assert.equal(supportedReaderResult.status, "available");
+assert.equal(supportedReaderResult.readerStatus, "available");
+assert.equal(supportedReaderResult.reason, "matched");
+assert.equal(supportedReaderResult.ok, true);
+assert.deepEqual(supportedReaderResult.diagnostics, []);
+assert.equal(supportedReaderResult.report.ok, true);
+
 const matching = compareStructuralConfig({
   checkedIn: config,
   active: activeFixture,
@@ -148,6 +193,44 @@ assert.deepEqual(unexpectedTableResult.diagnostics, [
     issue: "unexpected-table",
   },
 ]);
+
+const multipleUnexpectedTableResult = compareStructuralConfig({
+  checkedIn: config,
+  active: {
+    ...activeFixture,
+    zetaTable: true,
+    alphaTable: true,
+    middleTable: true,
+  },
+});
+assert.equal(multipleUnexpectedTableResult.ok, false);
+assert.deepEqual(multipleUnexpectedTableResult.diagnostics, [
+  {
+    source: "active",
+    table: "alphaTable",
+    issue: "unexpected-table",
+  },
+  {
+    source: "active",
+    table: "middleTable",
+    issue: "unexpected-table",
+  },
+  {
+    source: "active",
+    table: "zetaTable",
+    issue: "unexpected-table",
+  },
+]);
+
+const longUnknownTable = "unknown".repeat(40);
+const boundedUnknownTableResult = compareStructuralConfig({
+  checkedIn: config,
+  active: { ...activeFixture, [longUnknownTable]: true },
+});
+assert.equal(boundedUnknownTableResult.ok, false);
+assert.equal(boundedUnknownTableResult.diagnostics.length, 1);
+assert.equal(boundedUnknownTableResult.diagnostics[0].table.length, 128);
+assert.equal(boundedUnknownTableResult.diagnostics[0].issue, "unexpected-table");
 
 const checkedInUnexpectedTableResult = compareStructuralConfig({
   checkedIn: { ...config, newlyAddedTable: { enabled: true } },

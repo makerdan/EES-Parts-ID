@@ -32,8 +32,15 @@ const SENSITIVE_KEYS = new Set([
   "userenv",
 ]);
 
+const MAX_DIAGNOSTIC_TABLE_LENGTH = 128;
+
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function boundedTableName(table) {
+  if (table.length <= MAX_DIAGNOSTIC_TABLE_LENGTH) return table;
+  return `${table.slice(0, MAX_DIAGNOSTIC_TABLE_LENGTH - 3)}...`;
 }
 
 function sortKeys(value) {
@@ -92,11 +99,11 @@ function validateShape(
   }
 
   if (rejectUnexpectedTables) {
-    for (const key of Object.keys(snapshot)) {
+    for (const key of Object.keys(snapshot).sort()) {
       if (!STRUCTURAL_TABLES.includes(key) && !SENSITIVE_KEYS.has(key.toLowerCase())) {
         diagnostics.push({
           source: label,
-          table: key,
+          table: boundedTableName(key),
           issue: "unexpected-table",
         });
       }
@@ -211,6 +218,76 @@ export function compareStructuralConfig({ checkedIn, active }) {
       table,
       issue: "digest-mismatch",
     })),
+  };
+}
+
+/**
+ * A documented reader must expose both methods. The availability check is
+ * deliberately separate from read() so an unavailable platform capability
+ * cannot be mistaken for an empty or matching snapshot.
+ *
+ * The reader is synchronous because parity checks run in validation scripts.
+ * A future platform adapter can implement this contract without changing the
+ * source-agnostic compareStructuralConfig() fallback.
+ */
+export function collectStructuralParity({ checkedIn, reader } = {}) {
+  if (
+    !isRecord(reader) ||
+    typeof reader.isAvailable !== "function" ||
+    typeof reader.read !== "function"
+  ) {
+    return {
+      status: "unavailable",
+      readerStatus: "unsupported",
+      reason: "no-supported-reader",
+      ok: false,
+      diagnostics: [],
+    };
+  }
+
+  let available;
+  try {
+    available = reader.isAvailable() === true;
+  } catch {
+    return {
+      status: "unavailable",
+      readerStatus: "unavailable",
+      reason: "reader-availability-check-failed",
+      ok: false,
+      diagnostics: [],
+    };
+  }
+
+  if (!available) {
+    return {
+      status: "unavailable",
+      readerStatus: "unavailable",
+      reason: "reader-unavailable",
+      ok: false,
+      diagnostics: [],
+    };
+  }
+
+  let active;
+  try {
+    active = reader.read();
+  } catch {
+    return {
+      status: "unavailable",
+      readerStatus: "unavailable",
+      reason: "reader-read-failed",
+      ok: false,
+      diagnostics: [],
+    };
+  }
+
+  const report = compareStructuralConfig({ checkedIn, active });
+  return {
+    status: "available",
+    readerStatus: "available",
+    reason: report.ok ? "matched" : "parity-drift",
+    ...report,
+    report,
   };
 }
 
