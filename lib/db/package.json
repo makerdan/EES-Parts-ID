@@ -14,6 +14,7 @@
     "push": "drizzle-kit push --config ./drizzle.config.ts",
     "push-force": "drizzle-kit push --force --config ./drizzle.config.ts",
     "schema:check": "tsx scripts/schema-check.ts",
+    "verify-reference-log-indexes": "tsx scripts/verify-reference-log-indexes.ts",
     "verify-fts": "tsx scripts/verify-fts-index.ts"
   },
   "dependencies": {
