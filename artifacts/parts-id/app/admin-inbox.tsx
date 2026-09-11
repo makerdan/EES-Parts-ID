@@ -373,7 +373,7 @@ const styles = StyleSheet.create({
   refreshErrorText: { fontSize: 12, fontFamily: "Inter_600SemiBold", lineHeight: 18 },
   refreshRetryBtn: { alignSelf: "flex-start", borderWidth: 1, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 6 },
   refreshRetryText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
-  list: { padding: 12, gap: 8 },
+  list: { flexGrow: 1, padding: 12, gap: 8 },
   row: {
     borderWidth: 1,
     borderRadius: 10,

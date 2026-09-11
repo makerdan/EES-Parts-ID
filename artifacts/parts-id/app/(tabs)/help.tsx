@@ -11,10 +11,12 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native";
 
 import { ContactSheet } from "@/components/ContactSheet";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
@@ -141,6 +143,10 @@ function HelpRecordCard({
 export default function HelpScreen() {
   "use no memo";
   const colors = useColors();
+  const { width, height } = useWindowDimensions();
+  // The tab bar overlays the final scroll rows on compact devices. Keep the
+  // larger clearance in portrait too; it does not change the content layout.
+  const bottomClearance = Math.max(84, width > height ? 84 : 36);
   const { userId } = useAuth();
   const { isAdmin, textFontScale, registerLogoutHandler } = useApp();
   const [generalRecords, setGeneralRecords] = useState<Array<HelpRecord>>([]);
@@ -359,8 +365,9 @@ export default function HelpScreen() {
         </Pressable>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.content}
+      <KeyboardAwareScrollViewCompat
+        contentContainerStyle={[styles.content, { paddingBottom: bottomClearance }]}
+        bottomOffset={24}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={retryContent} tintColor={colors.primary} />}
         keyboardShouldPersistTaps="handled"
       >
@@ -568,7 +575,7 @@ export default function HelpScreen() {
             </View>
           </>
         )}
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
 
       <ContactSheet
         visible={contactVisible}

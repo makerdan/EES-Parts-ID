@@ -1510,7 +1510,7 @@ export default function CatalogReviewScreen() {
                 </View>
               ) : null
             }
-            contentContainerStyle={{ paddingBottom: unapprovedActiveCount > 0 ? 100 : 32 }}
+             contentContainerStyle={{ flexGrow: 1, paddingBottom: unapprovedActiveCount > 0 ? 100 : 32 }}
           />
 
           {/* Approve All sticky footer */}

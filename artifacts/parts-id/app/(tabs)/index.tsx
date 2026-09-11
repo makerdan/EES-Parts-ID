@@ -23,6 +23,7 @@ import {
   Switch,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native";
 
 import { AIZeroResultsCard,SearchedAsRow } from "@/components/AISearchFallback";
@@ -191,6 +192,11 @@ export default function SearchScreen() {
   "use no memo";
   useTrackScreen("Search");
   const colors = useColors();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isLandscape = windowWidth > windowHeight;
+  // Keep the final row reachable above the tab bar, while avoiding a large
+  // dead zone on short landscape displays.
+  const bottomClearance = isLandscape ? 84 : 120;
   const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus, showToast, setPinnedParts, pendingMeasureSearch, setPendingMeasureSearch, pendingInventorySearch, setPendingInventorySearch } = useApp();
   const queryClient = useQueryClient();
   const [searchCacheVersion, setSearchCacheVersion] = useState(0);
@@ -1709,7 +1715,7 @@ export default function SearchScreen() {
 
             <ScrollView
               showsVerticalScrollIndicator={false}
-              style={{ maxHeight: 480 }}
+              style={{ maxHeight: Math.min(480, Math.max(220, windowHeight - 72)) }}
               contentContainerStyle={{ paddingBottom: 4 }}
               keyboardShouldPersistTaps="handled"
             >
@@ -2223,10 +2229,10 @@ export default function SearchScreen() {
             </View>
           );
         }}
-        contentContainerStyle={[styles.listContent, { paddingTop: filterHeaderHeight + 8 }]}
+        contentContainerStyle={[styles.listContent, { paddingTop: filterHeaderHeight + 8, paddingBottom: bottomClearance }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="none"
+        keyboardDismissMode="interactive"
       />
 
         {/* Floating filter overlay — stacked above results */}

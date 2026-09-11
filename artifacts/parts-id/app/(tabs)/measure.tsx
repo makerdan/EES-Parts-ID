@@ -34,10 +34,13 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
@@ -75,6 +78,10 @@ function MeasureScreen() {
   useTrackScreen("Measure Part");
 
   const colors = useColors();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const shortLandscape = windowWidth > windowHeight && windowHeight < 500;
+  const compactTabClearance = shortLandscape ? 64 + insets.bottom : 0;
   const {
     settings,
     isAdmin,
@@ -289,7 +296,7 @@ function MeasureScreen() {
         ]}
       />
 
-      <SafeAreaView style={s.safeArea}>
+      <SafeAreaView style={[s.safeArea, shortLandscape && s.safeAreaShortLandscape]}>
         {/* Header */}
         <View style={s.header}>
           <View style={{ width: 40 }} />
@@ -317,8 +324,17 @@ function MeasureScreen() {
 
         {/* ── Ready phase ──────────────────────────────────────────────────── */}
         {phase === "ready" && (
-          <View style={s.phaseContainer}>
-            <View style={s.viewfinderBox}>
+          <ScrollView
+            style={s.phaseScroll}
+            contentContainerStyle={[
+              s.phaseContainer,
+              shortLandscape && s.phaseContainerShortLandscape,
+              { paddingBottom: compactTabClearance },
+            ]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+             <View style={[s.viewfinderBox, shortLandscape && s.viewfinderBoxShortLandscape]}>
               <View style={[s.vfCorner, s.vfTL]} />
               <View style={[s.vfCorner, s.vfTR]} />
               <View style={[s.vfCorner, s.vfBL]} />
@@ -348,13 +364,13 @@ function MeasureScreen() {
                 <Text style={s.scanBtnText}>Scan with LiDAR</Text>
               </Pressable>
             )}
-          </View>
+          </ScrollView>
         )}
 
         {/* ── Scanning phase ───────────────────────────────────────────────── */}
         {phase === "scanning" && (
-          <View style={s.scanningContainer}>
-            <Animated.View style={[s.scanRing, { opacity: pulseOpacity }]}>
+             <View style={[s.scanningContainer, shortLandscape && s.scanningContainerShortLandscape]}>
+             <Animated.View style={[s.scanRing, shortLandscape && s.scanRingShortLandscape, { opacity: pulseOpacity }]}>
               <View style={s.scanRingInner}>
                 <ActivityIndicator size="large" color="#10b981" />
                 <Text style={s.scanLabel}>Scanning…</Text>
@@ -385,7 +401,16 @@ function MeasureScreen() {
 
         {/* ── Confirm phase ────────────────────────────────────────────────── */}
         {phase === "confirm" && (
-          <View style={s.confirmContainer}>
+          <ScrollView
+            style={s.phaseScroll}
+            contentContainerStyle={[
+              s.confirmContainer,
+              shortLandscape && s.confirmContainerShortLandscape,
+              { paddingBottom: compactTabClearance || 24 },
+            ]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
             <View style={s.confirmCard}>
               <Text style={s.confirmTitle}>Dimensions scanned</Text>
               <Text style={s.confirmSub}>
@@ -455,7 +480,7 @@ function MeasureScreen() {
                 <Text style={s.rescanBtnText}>Rescan</Text>
               </Pressable>
             </View>
-          </View>
+          </ScrollView>
         )}
       </SafeAreaView>
     </View>
@@ -475,7 +500,8 @@ const CORNER_W = 3;
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
-  safeArea: { flex: 1 },
+  safeArea: { flex: 1, zIndex: 10, elevation: 10 },
+  safeAreaShortLandscape: { paddingBottom: 4 },
   cameraBg: { backgroundColor: "#1a1a1a" },
   dimOverlay: { backgroundColor: "rgba(0,0,0,0.55)" },
   dimOverlayLight: { backgroundColor: "rgba(0,0,0,0.2)" },
@@ -505,6 +531,8 @@ const s = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 12,
     backgroundColor: "rgba(0,0,0,0.45)",
+    zIndex: 20,
+    elevation: 20,
   },
   headerTitle: {
     color: "#fff",
@@ -526,12 +554,21 @@ const s = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     flex: 1,
   },
+  phaseScroll: { flex: 1 },
   phaseContainer: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 24,
     gap: 18,
+  },
+  phaseContainerShortLandscape: {
+    gap: 8,
+    paddingHorizontal: 16,
+  },
+  scanningContainerShortLandscape: {
+    gap: 12,
+    paddingHorizontal: 16,
   },
   viewfinderBox: {
     width: 240,
@@ -539,6 +576,10 @@ const s = StyleSheet.create({
     position: "relative",
     alignItems: "center",
     justifyContent: "center",
+  },
+  viewfinderBoxShortLandscape: {
+    width: 180,
+    height: 100,
   },
   vfCorner: {
     position: "absolute",
@@ -607,6 +648,11 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  scanRingShortLandscape: {
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+  },
   scanRingInner: {
     alignItems: "center",
     gap: 10,
@@ -655,10 +701,13 @@ const s = StyleSheet.create({
     textDecorationLine: "underline",
   },
   confirmContainer: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: "flex-end",
     padding: 16,
     paddingBottom: 24,
+  },
+  confirmContainerShortLandscape: {
+    padding: 8,
   },
   confirmCard: {
     backgroundColor: "#fff",

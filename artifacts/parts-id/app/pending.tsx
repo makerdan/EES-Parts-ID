@@ -1,6 +1,7 @@
 import React from "react";
 import {
   ActivityIndicator,
+  ScrollView,
   Pressable,
   StyleSheet,
   Text,
@@ -71,9 +72,13 @@ export default function PendingScreen() {
     container: {
       flex: 1,
       backgroundColor: colors.background,
-      justifyContent: "center",
+    },
+    scrollContent: {
+      flexGrow: 1,
       alignItems: "center",
-      padding: 32,
+      justifyContent: "center",
+      paddingHorizontal: 32,
+      paddingVertical: 16,
     },
     card: {
       width: "100%",
@@ -148,7 +153,7 @@ export default function PendingScreen() {
   });
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <View style={styles.card}>
         <Text style={styles.icon}>⏳</Text>
         <Text style={styles.title}>Account Pending Approval</Text>
@@ -183,6 +188,6 @@ export default function PendingScreen() {
           )}
         </Pressable>
       </View>
-    </View>
+    </ScrollView>
   );
 }

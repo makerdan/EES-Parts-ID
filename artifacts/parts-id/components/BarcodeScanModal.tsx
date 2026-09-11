@@ -12,6 +12,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native";
 
 import { CatalogPickerModal } from "@/components/CatalogPickerModal";
@@ -33,6 +34,8 @@ type AdminPickerMode = "link" | "create";
 export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModalProps) {
   "use no memo";
   const colors = useColors();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const shortLandscape = windowWidth > windowHeight && windowHeight < 500;
   const { isAdmin } = useApp();
   const queryClient = useQueryClient();
   const updateBarcodesMutation = useUpdateItemBarcodes();
@@ -341,7 +344,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
           </View>
         ) : (
           <>
-            <View style={scanStyles.cameraWrapper} onLayout={(e) => { cameraViewSizeRef.current = e.nativeEvent.layout; }}>
+            <View style={[scanStyles.cameraWrapper, shortLandscape && scanStyles.cameraWrapperShortLandscape]} onLayout={(e) => { cameraViewSizeRef.current = e.nativeEvent.layout; }}>
               {!cameraBypass ? (
                 <CameraView
                   style={StyleSheet.absoluteFill}
@@ -486,6 +489,12 @@ const scanStyles = StyleSheet.create({
     aspectRatio: 1,
     position: "relative",
     overflow: "hidden",
+    zIndex: 0,
+  },
+  cameraWrapperShortLandscape: {
+    flex: 1,
+    aspectRatio: undefined,
+    minHeight: 180,
   },
   viewfinderOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -515,6 +524,8 @@ const scanStyles = StyleSheet.create({
     marginTop: 16,
     alignItems: "center",
     gap: 6,
+    zIndex: 10,
+    elevation: 10,
   },
   scanBtn: {
     width: "100%",

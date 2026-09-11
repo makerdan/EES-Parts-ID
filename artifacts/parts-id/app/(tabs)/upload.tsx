@@ -570,7 +570,11 @@ const rowStyles = StyleSheet.create({
 // notice — there is no password to enter.
 function AdminRestricted({ colors }: { colors: ReturnType<typeof useColors> }) {
   return (
-    <View style={[gateStyles.container, { backgroundColor: colors.background }]}>
+    <ScrollView
+      style={[gateStyles.scroll, { backgroundColor: colors.background }]}
+      contentContainerStyle={gateStyles.container}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={[gateStyles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[gateStyles.icon]}>🔒</Text>
         <Text style={[gateStyles.title, { color: colors.foreground }]}>Admin Access Required</Text>
@@ -579,12 +583,13 @@ function AdminRestricted({ colors }: { colors: ReturnType<typeof useColors> }) {
           account admin access, then reopen this tab.
         </Text>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const gateStyles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+  scroll: { flex: 1 },
+  container: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 24, paddingBottom: 96 },
   card: { width: "100%", maxWidth: 380, borderRadius: 16, padding: 28, borderWidth: 1, alignItems: "center", gap: 14 },
   icon: { fontSize: 40 },
   title: { fontSize: 20, fontFamily: "Inter_700Bold", textAlign: "center" },
@@ -753,7 +758,11 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
 export default function UploadScreen() {
   "use no memo";
   useTrackScreen("Upload");
-  const { width: screenWidth } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const isLandscape = screenWidth > screenHeight;
+  // Keep controls clear of the tab bar without wasting scarce short-landscape
+  // vertical space.
+  const bottomClearance = isLandscape ? 84 : 100;
   const isNarrow = screenWidth <= 320;
   const colors = useColors();
   const router = useRouter();
@@ -3101,7 +3110,11 @@ export default function UploadScreen() {
           {/* ── Hub home & section views ─────────────────────────────── */}
           {activeSection === null ? (
             /* ── Hub home ──────────────────────────────────────────────── */
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+            <ScrollView
+              contentContainerStyle={{ padding: 16, paddingBottom: bottomClearance }}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+            >
               {/* Health strip */}
               <View style={[hubStyles.healthStrip, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <View style={hubStyles.healthItem}>
@@ -3196,7 +3209,11 @@ export default function UploadScreen() {
               </View>
             </ScrollView>
           ) : activeSection === "import" ? (
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+            <ScrollView
+              contentContainerStyle={{ padding: 16, paddingBottom: bottomClearance }}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+            >
               {/* File upload card */}
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>📁 Import File</Text>
@@ -3771,7 +3788,11 @@ export default function UploadScreen() {
             </ScrollView>
           ) : activeSection === "enrichment" ? (
             /* ── AI & Enrichment section ─────────────────────────────── */
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+            <ScrollView
+              contentContainerStyle={{ padding: 16, paddingBottom: bottomClearance }}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+            >
                     {/* PDF Catalog Import */}
                     <CatalogPdfUpload
                       adminToken={adminToken}
@@ -4886,7 +4907,11 @@ export default function UploadScreen() {
             </View>
           ) : (
             /* ── People & System section ─────────────────────────────── */
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+            <ScrollView
+              contentContainerStyle={{ padding: 16, paddingBottom: bottomClearance }}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+            >
               {/* Navigation rows */}
               <View style={[styles.queryCard, { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 14 }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground, marginBottom: 8 }]}>🔗 Navigation</Text>

@@ -496,7 +496,7 @@ export default function AdminDashboardScreen() {
       ) : stats ? (
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={styles.content}
+           contentContainerStyle={[styles.content, { flexGrow: 1 }]}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}

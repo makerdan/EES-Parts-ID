@@ -553,7 +553,7 @@ const styles = StyleSheet.create({
   },
   inlineErrorText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 18 },
   feedbackText: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  list: { padding: 12, gap: 8 },
+  list: { flexGrow: 1, padding: 12, gap: 8 },
   row: {
     borderWidth: 1,
     borderRadius: 10,

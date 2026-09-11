@@ -1057,7 +1057,7 @@ export default function EditItemScreen() {
         <ScrollView
           ref={scrollViewRef}
           style={{ flex: 1 }}
-          contentContainerStyle={s.scroll}
+           contentContainerStyle={[s.scroll, { flexGrow: 1 }]}
           keyboardShouldPersistTaps="handled"
         >
           {/* Photos */}

@@ -765,7 +765,7 @@ export default function AdminMapCalibrationScreen() {
           )}
         </View>
 
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.content, { flexGrow: 1 }]} keyboardShouldPersistTaps="handled">
           {/* MFA required banner */}
           {anchorsMfaRequired && (
             <Pressable

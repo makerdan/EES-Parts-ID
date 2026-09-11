@@ -42,8 +42,10 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   cancelAnimation,
   runOnJS,
@@ -1024,6 +1026,11 @@ export function WarehouseMapView({
   onZoneEditorLaunchFailed,
 }: WarehouseMapViewProps) {
   "use no memo";
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  // Keep floating controls reachable on landscape phones with a short
+  // viewport; rotation must not move them behind the tab bar.
+  const shortLandscape = windowWidth > windowHeight && windowHeight < 500;
   const colors = useColors();
   const isDark = useIsDark();
 
@@ -2742,7 +2749,12 @@ export function WarehouseMapView({
       )}
 
       {/* Zoom controls — bottom-right cluster: Select on top, + below, − below, fit at bottom */}
-      <View style={styles.zoomControls}>
+      <View
+        style={[
+          styles.zoomControls,
+          shortLandscape && { bottom: 64 + insets.bottom },
+        ]}
+      >
         <Pressable
           onPress={() => onSelectModeChange?.(!selectMode)}
           style={({ pressed }) => [
@@ -2797,6 +2809,7 @@ export function WarehouseMapView({
       <View
         style={[
           styles.hintBadge,
+          shortLandscape && { bottom: 60 + insets.bottom },
           { backgroundColor: colors.card + "cc", borderColor: colors.border, pointerEvents: "none" },
         ]}
       >
@@ -2922,6 +2935,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 12,
     borderWidth: 1,
+    zIndex: 20,
   },
   hintText: { fontSize: 11, fontFamily: "Inter_400Regular" },
   zoomControls: {
@@ -2931,6 +2945,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: "hidden",
     boxShadow: "0 2px 4px rgba(0,0,0,0.12)",
+    zIndex: 30,
+    elevation: 30,
   },
   zoomBtn: {
     width: 36,

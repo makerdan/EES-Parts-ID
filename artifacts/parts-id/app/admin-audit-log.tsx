@@ -561,7 +561,7 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 22 },
   retryBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 20, paddingVertical: 8 },
   retryText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  list: { padding: 12, gap: 8 },
+  list: { flexGrow: 1, padding: 12, gap: 8 },
   row: {
     flexDirection: "row",
     alignItems: "center",
