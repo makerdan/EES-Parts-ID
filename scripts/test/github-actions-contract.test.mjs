@@ -33,6 +33,7 @@ const fastContractChecks = new Map([
   ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
   ["github-actions-contract", "node scripts/test/github-actions-contract.test.mjs"],
   ["api-route-authorization-contract", "node scripts/test/api-route-authorization-contract.test.mjs"],
+  ["ai-provider-startup-export-contract", "node scripts/test/ai-provider-startup-export-contract.test.mjs"],
   ["skill-mirror-sync-contract", "node scripts/test/skill-mirror-sync-contract.test.mjs"],
   ["patched-dependencies-contract", "node scripts/test/patched-dependencies.test.mjs"],
   ["replit-config-contract", "node scripts/test/replit-config-contract.test.mjs"],

@@ -14,6 +14,7 @@ export const FAST = [
   ["github-actions-contract", "node scripts/test/github-actions-contract.test.mjs"],
   ["validation-runtime-contract", "node scripts/test/validation-runtime-contract.test.mjs"],
   ["api-route-authorization-contract", "node scripts/test/api-route-authorization-contract.test.mjs"],
+  ["ai-provider-startup-export-contract", "node scripts/test/ai-provider-startup-export-contract.test.mjs"],
   ["skill-mirror-sync-contract", "node scripts/test/skill-mirror-sync-contract.test.mjs"],
   ["public-repository-boundary", "node scripts/test/public-repository-boundary.test.mjs"],
   ["patched-dependencies-contract", "node scripts/test/patched-dependencies.test.mjs"],
