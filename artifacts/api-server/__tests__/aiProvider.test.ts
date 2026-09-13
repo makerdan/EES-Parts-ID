@@ -312,10 +312,10 @@ describe("initProvider()", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// probePoeBotsOnStartup()
+// probeActivePoeModels()
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("probePoeBotsOnStartup()", () => {
+describe("probeActivePoeModels()", () => {
   type MockClient = { chat: { completions: { create: jest.Mock } } };
 
   // Helper: get logger mocks from the hoisted jest.mock() factory
@@ -344,7 +344,7 @@ describe("probePoeBotsOnStartup()", () => {
       () => new Promise<void>((resolve) => releaseTransports.push(resolve)),
     );
 
-    const probePromise = mod.probePoeBotsOnStartup();
+    const probePromise = mod.probeActivePoeModels();
 
     // Advance past the 15 000 ms probe timeout so all per-bot timers fire
     await jest.advanceTimersByTimeAsync(15100);
@@ -368,7 +368,7 @@ describe("probePoeBotsOnStartup()", () => {
     const client = mod.getAiClient() as unknown as MockClient;
     client.chat.completions.create.mockResolvedValue({ choices: [] });
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const botNames = mod.getAllPoeModelNames();
     const { info, warn } = getLoggerMocks();
@@ -388,7 +388,7 @@ describe("probePoeBotsOnStartup()", () => {
     mod.setProvider("openai");
     jest.clearAllMocks();
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const { info, warn } = getLoggerMocks();
     expect(warn).not.toHaveBeenCalled();
@@ -399,7 +399,7 @@ describe("probePoeBotsOnStartup()", () => {
     const client = mod.getAiClient() as unknown as MockClient;
     client.chat.completions.create.mockResolvedValue({ choices: [] });
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     // All per-bot timeouts should have been naturally cancelled (Promise.race
     // won the race), so running all pending timers produces no extra warn calls
@@ -412,7 +412,7 @@ describe("probePoeBotsOnStartup()", () => {
     const client = mod.getAiClient() as unknown as MockClient;
     client.chat.completions.create.mockRejectedValue({ status: 404 });
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const botNames = mod.getAllPoeModelNames();
     const { warn } = getLoggerMocks();
@@ -434,7 +434,7 @@ describe("probePoeBotsOnStartup()", () => {
     const genericError = new Error("Service Unavailable");
     client.chat.completions.create.mockRejectedValue(genericError);
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const botNames = mod.getAllPoeModelNames();
     const { warn } = getLoggerMocks();
@@ -458,7 +458,7 @@ describe("probePoeBotsOnStartup()", () => {
       // All subsequent bots succeed
       .mockResolvedValue({ choices: [] });
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const { info, warn } = getLoggerMocks();
 
@@ -484,7 +484,7 @@ describe("probePoeBotsOnStartup()", () => {
       throw { weird: true, code: "UNKNOWN_SHAPE" };
     });
 
-    await expect(mod.probePoeBotsOnStartup()).resolves.toEqual(
+    await expect(mod.probeActivePoeModels()).resolves.toEqual(
       expect.objectContaining({ attempted: botNames.length }),
     );
 
@@ -502,7 +502,7 @@ describe("probePoeBotsOnStartup()", () => {
       throw unexpectedErr;
     });
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const { warn } = getLoggerMocks();
     for (const botName of botNames) {
@@ -515,15 +515,15 @@ describe("probePoeBotsOnStartup()", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POE_ENRICH_BOT coverage in probePoeBotsOnStartup()
+// POE_ENRICH_BOT coverage in probeActivePoeModels()
 //
 // Explicit regression guard: these tests pin the fact that POE_ENRICH_BOT
-// (Gemini-3.1-Pro) is included in the startup probe. Generic tests above cover
+// (Gemini-3.1-Pro) is included in explicit verification. Generic tests above cover
 // all bots via getAllPoeModelNames(); these tests fail *specifically* if the
 // enrich bot is dropped from that list or its probe branch silently changes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (Gemini-3.1-Pro) coverage", () => {
+describe("probeActivePoeModels() — POE_ENRICH_BOT (Gemini-3.1-Pro) coverage", () => {
   type MockClient = { chat: { completions: { create: jest.Mock } } };
 
   function getLoggerMocks() {
@@ -542,7 +542,7 @@ describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (Gemini-3.1-Pro) coverage",
     jest.useRealTimers();
   });
 
-  it("getAllPoeModelNames() includes POE_ENRICH_BOT so the startup probe covers enrichment", () => {
+  it("getAllPoeModelNames() includes POE_ENRICH_BOT so explicit verification covers enrichment", () => {
     expect(mod.getAllPoeModelNames()).toContain(mod.POE_ENRICH_BOT);
   });
 
@@ -555,7 +555,7 @@ describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (Gemini-3.1-Pro) coverage",
     const client = mod.getAiClient() as unknown as MockClient;
     client.chat.completions.create.mockResolvedValue({ choices: [] });
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const { info } = getLoggerMocks();
     expect(info).toHaveBeenCalledWith(
@@ -573,7 +573,7 @@ describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (Gemini-3.1-Pro) coverage",
       },
     );
 
-    await expect(mod.probePoeBotsOnStartup()).resolves.toEqual(
+    await expect(mod.probeActivePoeModels()).resolves.toEqual(
       expect.objectContaining({ attempted: mod.getAllPoeModelNames().length }),
     );
 
@@ -594,7 +594,7 @@ describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (Gemini-3.1-Pro) coverage",
       },
     );
 
-    await expect(mod.probePoeBotsOnStartup()).resolves.toEqual(
+    await expect(mod.probeActivePoeModels()).resolves.toEqual(
       expect.objectContaining({ attempted: mod.getAllPoeModelNames().length }),
     );
 
@@ -609,7 +609,7 @@ describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (Gemini-3.1-Pro) coverage",
     const client = mod.getAiClient() as unknown as MockClient;
     client.chat.completions.create.mockResolvedValue({ choices: [] });
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     expect(mod.getProbeSummary()[mod.POE_ENRICH_BOT]).toBe("ok");
   });
@@ -623,7 +623,7 @@ describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (Gemini-3.1-Pro) coverage",
       },
     );
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     expect(mod.getProbeSummary()[mod.POE_ENRICH_BOT]).toBe("404");
   });
@@ -657,7 +657,7 @@ describe("getProbeSummary()", () => {
     const client = mod.getAiClient() as unknown as MockClient;
     client.chat.completions.create.mockResolvedValue({ choices: [] });
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const summary = mod.getProbeSummary();
     const botNames = mod.getAllPoeModelNames();
@@ -673,7 +673,7 @@ describe("getProbeSummary()", () => {
       () => new Promise<void>((resolve) => releaseTransports.push(resolve)),
     );
 
-    const probePromise = mod.probePoeBotsOnStartup();
+    const probePromise = mod.probeActivePoeModels();
     await jest.advanceTimersByTimeAsync(15100);
     await probePromise;
     releaseTransports.forEach((resolve) => resolve());
@@ -690,7 +690,7 @@ describe("getProbeSummary()", () => {
     const client = mod.getAiClient() as unknown as MockClient;
     client.chat.completions.create.mockRejectedValue({ status: 404 });
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const summary = mod.getProbeSummary();
     const botNames = mod.getAllPoeModelNames();
@@ -709,7 +709,7 @@ describe("getProbeSummary()", () => {
     const client = mod.getAiClient() as unknown as MockClient;
     client.chat.completions.create.mockRejectedValue(new Error("Service Unavailable"));
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const summary = mod.getProbeSummary();
     const botNames = mod.getAllPoeModelNames();
@@ -728,7 +728,7 @@ describe("getProbeSummary()", () => {
       },
     );
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const summary = mod.getProbeSummary();
     expect(summary[mod.POE_CATALOG_BOT]).toBe("404");
@@ -746,23 +746,23 @@ describe("getProbeSummary()", () => {
       },
     );
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const summary = mod.getProbeSummary();
     expect(summary[mod.POE_CATALOG_BOT]).toBe("404");
     expect(summary[mod.POE_CATALOG_BOT_FALLBACK]).toBeUndefined();
   });
 
-  it("clears previous results when probePoeBotsOnStartup() is called again", async () => {
+  it("clears previous results when probeActivePoeModels() is called again", async () => {
     const client = mod.getAiClient() as unknown as MockClient;
     // First probe: all fail
     client.chat.completions.create.mockRejectedValue(new Error("down"));
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     // Second probe: all succeed
     jest.clearAllMocks();
     client.chat.completions.create.mockResolvedValue({ choices: [] });
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     const summary = mod.getProbeSummary();
     const botNames = mod.getAllPoeModelNames();
@@ -774,7 +774,7 @@ describe("getProbeSummary()", () => {
   it("returns an empty object when the active provider is not 'poe'", async () => {
     mod.setProvider("openai");
 
-    await mod.probePoeBotsOnStartup();
+    await mod.probeActivePoeModels();
 
     expect(mod.getProbeSummary()).toEqual({});
   });

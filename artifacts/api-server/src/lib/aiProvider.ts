@@ -996,9 +996,3 @@ export async function probeActivePoeModels(): Promise<PoeProbeOperation | null> 
   return _bulkProbeInFlight;
 }
 
-/**
- * @deprecated Startup must never call this. Kept temporarily for internal test
- * and caller compatibility; it performs the same bounded, explicit operation.
- */
-export const probePoeBotsOnStartup = probeActivePoeModels;
-

@@ -79,7 +79,7 @@ const mockGetProbeSummary = jest.fn(() => ({}));
 jest.mock("../lib/aiProvider", () => ({
   getProbeSummary: mockGetProbeSummary,
   getAllPoeModelNames: jest.fn(() => []),
-  probePoeBotsOnStartup: jest.fn().mockResolvedValue(undefined),
+  probeActivePoeModels: jest.fn().mockResolvedValue(undefined),
   probeSinglePoeBot: jest.fn().mockResolvedValue(undefined),
   getEnrichModel: jest.fn().mockReturnValue("test-model"),
   getOpenAIFallbackClient: jest.fn(),

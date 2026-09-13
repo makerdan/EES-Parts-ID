@@ -77,7 +77,7 @@ import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
 import {
   setProvider,
   getProbeSummary,
-  probePoeBotsOnStartup,
+  probeActivePoeModels,
   getAllPoeModelNames,
 } from "../lib/aiProvider";
 import {
@@ -162,7 +162,7 @@ describe("GET /api/admin/ai-status — authenticated, provider=poe", () => {
       choices: [{ message: { role: "assistant", content: "hi" } }],
     });
     setProvider("poe");
-    await probePoeBotsOnStartup();
+    await probeActivePoeModels();
   });
 
   it("returns 200 with a bots object shaped as Record<string, BotProbeStatus>", async () => {

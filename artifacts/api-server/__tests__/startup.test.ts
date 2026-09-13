@@ -47,11 +47,11 @@ jest.mock("../src/lib/startServer", () => ({
 
 // ── aiProvider mock ───────────────────────────────────────────────────────────
 const mockInitProvider = jest.fn();
-const mockProbePoeBotsOnStartup = jest.fn();
+const mockProbeActivePoeModels = jest.fn();
 const mockRefreshPoeCatalogue = jest.fn();
 jest.mock("../src/lib/aiProvider", () => ({
   initProvider: mockInitProvider,
-  probePoeBotsOnStartup: mockProbePoeBotsOnStartup,
+  probeActivePoeModels: mockProbeActivePoeModels,
   refreshPoeCatalogue: mockRefreshPoeCatalogue,
 }));
 
@@ -137,7 +137,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   // Default: both helpers resolve immediately (overridden per-test as needed)
   mockInitProvider.mockResolvedValue(undefined);
-  mockProbePoeBotsOnStartup.mockResolvedValue(undefined);
+  mockProbeActivePoeModels.mockResolvedValue(undefined);
   mockRefreshPoeCatalogue.mockResolvedValue(undefined);
   mockStartServer.mockResolvedValue({
     close: (callback: () => void) => callback(),
@@ -189,7 +189,7 @@ describe("server startup sequence (src/index.ts)", () => {
     loadIndex();
     await refreshGate;
 
-    expect(mockProbePoeBotsOnStartup).not.toHaveBeenCalled();
+    expect(mockProbeActivePoeModels).not.toHaveBeenCalled();
   });
 
   it("opens the listener without waiting for optional provider initialization", async () => {

@@ -28,7 +28,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
-// Mock OpenAI so probePoeBotsOnStartup and probeSinglePoeBot use our mock
+// Mock OpenAI so probeActivePoeModels and probeSinglePoeBot use our mock
 jest.mock("openai", () => {
   const { createOpenAIMock } = jest.requireActual(
     "./helpers/openaiMock",
