@@ -145,3 +145,17 @@ mtime_ms = 1788495868925
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/8898d41c-8906-46dd-9c82-7694edd7f379/6ab811f0-31f5-4053-903f-1b14dfc25c4c"
 storage_version_token = "1788495873285736"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "r-IOpLm7ZqCpmh5JjpTOO"
+uri = "file://skill-previews/poe-setup/SKILL.md"
+type = "text"
+title = "Complete rewritten Poe Setup skill"
+description = "Full reviewable SKILL.md candidate with POE_API_KEY2, lazy client initialization, explicit startup preflight guidance, and /v1 versus legacy /bot/ protocol separation."
+logical_id = "0079eb49-4105-4715-af9e-b54042fe4ad7"
+content_hash = "sha256:5f77b42366ae538373942b0410834bc62973ce0a4f602271e1c2cd3e35622bf5"
+size = 34911
+mtime_ms = 1789318419454
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/0079eb49-4105-4715-af9e-b54042fe4ad7/f1d5e025-1e50-4c92-9f2d-c3956e2b8b0a"
+storage_version_token = "1789318487809172"
+content_type = "text/markdown"
