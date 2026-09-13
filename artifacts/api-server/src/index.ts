@@ -36,9 +36,7 @@ async function startApplication(): Promise<void> {
     "@workspace/db"
   );
   const { default: app } = await import("./app");
-  const { initProvider, probePoeBotsOnStartup } = await import(
-    "./lib/aiProvider"
-  );
+  const { initProvider } = await import("./lib/aiProvider");
   const {
     pruneScreenViewLog,
     SCREEN_VIEW_RETENTION_INTERVAL_MS,
@@ -335,16 +333,15 @@ async function pruneAuditLog(): Promise<void> {
     process.on("SIGTERM", () => shutdown("SIGTERM"));
     process.on("SIGINT", () => shutdown("SIGINT"));
 
-    // Optional AI initialization and probes are diagnostic only. They do not
-    // hold the listener open or affect core application readiness.
+    // Provider selection and catalogue metadata are diagnostic only. Catalogue
+    // refresh never sends model completions; live verification is admin-only.
     void withStartupTimeout(initProvider(), INIT_PROVIDER_TIMEOUT_MS, "initProvider")
       .then(async () => {
         const { refreshPoeCatalogue } = await import("./lib/aiProvider");
         await refreshPoeCatalogue();
-        await probePoeBotsOnStartup();
       })
       .catch((err) => {
-        logger.error({ err }, "Poe bot startup probe failed");
+        logger.error({ err }, "Poe provider startup initialization failed");
       });
 
     // Schedule retention independently of incoming telemetry traffic.

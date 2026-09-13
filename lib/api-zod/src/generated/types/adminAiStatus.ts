@@ -9,6 +9,7 @@ import type { AdminAiStatusBots } from './adminAiStatusBots';
 import type { AdminAiStatusOverrides } from './adminAiStatusOverrides';
 import type { AdminAiStatusProvider } from './adminAiStatusProvider';
 import type { AdminAiStatusReference } from './adminAiStatusReference';
+import type { AdminAiStatusVerification } from './adminAiStatusVerification';
 import type { PoeCatalogue } from './poeCatalogue';
 import type { PoeFeatureRoute } from './poeFeatureRoute';
 
@@ -16,6 +17,7 @@ export interface AdminAiStatus {
   provider: AdminAiStatusProvider;
   catalogue: PoeCatalogue;
   bots: AdminAiStatusBots;
+  verification: AdminAiStatusVerification;
   routes: PoeFeatureRoute[];
   overrides: AdminAiStatusOverrides;
   reference: AdminAiStatusReference;

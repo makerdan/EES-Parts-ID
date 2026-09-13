@@ -81,3 +81,4 @@
 - [Help assistant async lifecycles](help-assistant-async-lifecycles.md) — content refresh and assistant requests need independent cancellation and stale-result ownership.
 - [Permission-denied fixtures](permission-denied-fixtures.md) — use same-user mode restrictions and unreadable-aware snapshots; sandbox UID changes may be blocked.
 - [Account skill projection recovery](account-skill-recovery.md) — validate preserved backups against their own manifest and bytes because canonical source revisions may advance.
+- [Provider probe deadlines and permits](provider-probe-deadlines-permits.md) — response deadlines may expire before transports settle; retain concurrency permits until transport settlement.

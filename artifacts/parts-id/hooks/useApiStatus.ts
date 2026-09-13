@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, AppStateStatus } from "react-native";
 
 export type ApiStatus = "ok" | "degraded" | "error" | "unknown";
-export type BotProbeStatus = "ok" | "timeout" | "404" | "error";
+export type BotProbeStatus = "ok" | "timeout" | "404" | "error" | "budget_limited";
 export type ReadinessIssue =
   | {
       detail: "startup_not_ready";

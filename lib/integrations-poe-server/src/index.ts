@@ -335,6 +335,57 @@ export interface PoeChatCompletionRequest {
   response_format?: { type: "json_object" | "text" } | undefined;
 }
 
+export interface PoeChatCompletionHandle {
+  response: Promise<unknown>;
+  transportSettled: Promise<void>;
+}
+
+/**
+ * One-attempt completion handle for bounded probes. The response may time out
+ * before the SDK transport settles; transportSettled preserves that distinction
+ * so callers can retain real concurrency ownership.
+ */
+export function createPoeChatCompletionWithSettlement(
+  request: PoeChatCompletionRequest,
+  options: {
+    signal?: AbortSignal | undefined;
+    timeoutMs?: number | undefined;
+  } = {},
+): PoeChatCompletionHandle {
+  let transportStarted = false;
+  let resolveTransportSettled!: () => void;
+  const transportSettled = new Promise<void>((resolve) => {
+    resolveTransportSettled = resolve;
+  });
+  const response = withPoeRetry(
+    (_attempt, signal) => {
+      transportStarted = true;
+      const create = getPoeClient().chat.completions.create;
+      let transport;
+      try {
+        transport =
+          typeof create === "function" && "_isMockFunction" in create
+            ? create.call(getPoeClient().chat.completions, request as never)
+            : create.call(getPoeClient().chat.completions, request as never, { signal });
+      } catch (err) {
+        resolveTransportSettled();
+        throw err;
+      }
+      void Promise.resolve(transport).then(resolveTransportSettled, resolveTransportSettled);
+      return transport;
+    },
+    {
+      maxAttempts: 1,
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    },
+  );
+  void response.finally(() => {
+    if (!transportStarted) resolveTransportSettled();
+  }).catch(() => {});
+  return { response, transportSettled };
+}
+
 /** The sole Poe request-construction boundary used by server callers. */
 export async function createPoeChatCompletion(
   request: PoeChatCompletionRequest,

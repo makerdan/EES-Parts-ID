@@ -754,7 +754,7 @@ paths:
     get:
       operationId: getAdminAiStatus
       tags: [admin]
-      summary: Get Poe catalogue, probe health, and effective AI routes
+      summary: Get Poe catalogue metadata, explicit verification results, and effective AI routes
       responses:
         "200":
           description: Protected AI routing status
@@ -779,6 +779,42 @@ paths:
                 $ref: "#/components/schemas/AdminAiStatus"
         "401": { description: Admin token required }
         "503": { description: Poe catalogue unavailable }
+
+  /admin/ai-status/probe:
+    post:
+      operationId: probeActiveAdminPoeModels
+      tags: [admin]
+      summary: Explicitly live-verify the bounded set of active Poe route models
+      responses:
+        "200":
+          description: Bounded live-verification results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "401": { description: Admin token required }
+        "403": { description: Admin access required }
+
+  /admin/ai-status/probe/{botName}:
+    post:
+      operationId: probeSingleAdminPoeModel
+      tags: [admin]
+      summary: Explicitly live-verify one active Poe route model
+      parameters:
+        - in: path
+          name: botName
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Updated live-verification results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "400": { description: Model is not in an active route chain }
+        "401": { description: Admin token required }
+        "403": { description: Admin access required }
 
   /admin/ai-status/routes:
     put:
@@ -1873,7 +1909,33 @@ components:
           type: object
           additionalProperties:
             type: string
-            enum: [ok, timeout, "404", error]
+            enum: [ok, timeout, "404", error, budget_limited]
+        verification:
+          type: object
+          properties:
+            models:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, timeout, "404", error, budget_limited]
+                  verifiedAt: { type: string, format: date-time, nullable: true }
+                required: [status, verifiedAt]
+            lastOperation:
+              nullable: true
+              allOf:
+                - type: object
+                  properties:
+                    startedAt: { type: string, format: date-time }
+                    finishedAt: { type: string, format: date-time }
+                    requested: { type: integer, minimum: 0 }
+                    attempted: { type: integer, minimum: 0 }
+                    completed: { type: integer, minimum: 0 }
+                    budgetLimited: { type: boolean }
+                  required: [startedAt, finishedAt, requested, attempted, completed, budgetLimited]
+          required: [models, lastOperation]
         routes:
           type: array
           items:
@@ -1890,7 +1952,7 @@ components:
             readOnly: { type: boolean }
             note: { type: string }
           required: [provider, readOnly, note]
-      required: [provider, catalogue, bots, routes, overrides, reference]
+      required: [provider, catalogue, bots, verification, routes, overrides, reference]
 
     AdminAiRoutesUpdate:
       type: object

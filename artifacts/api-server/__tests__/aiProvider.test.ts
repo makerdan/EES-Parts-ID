@@ -339,14 +339,18 @@ describe("probePoeBotsOnStartup()", () => {
 
   it("resolves and logs a timeout warning for each bot when create never resolves", async () => {
     const client = mod.getAiClient() as unknown as MockClient;
-    // Hang indefinitely — never resolves, never rejects
-    client.chat.completions.create.mockImplementation(() => new Promise(() => {}));
+    const releaseTransports: Array<() => void> = [];
+    client.chat.completions.create.mockImplementation(
+      () => new Promise<void>((resolve) => releaseTransports.push(resolve)),
+    );
 
     const probePromise = mod.probePoeBotsOnStartup();
 
     // Advance past the 15 000 ms probe timeout so all per-bot timers fire
     await jest.advanceTimersByTimeAsync(15100);
     await probePromise;
+    releaseTransports.forEach((resolve) => resolve());
+    await Promise.resolve();
 
     const botNames = mod.getAllPoeModelNames();
     const { warn } = getLoggerMocks();
@@ -413,9 +417,7 @@ describe("probePoeBotsOnStartup()", () => {
     const botNames = mod.getAllPoeModelNames();
     const { warn } = getLoggerMocks();
 
-    // When all bots return 404, the catalog bot also probes its fallback (which
-    // also returns 404), generating one extra warn — so total = botNames.length + 1.
-    expect(warn).toHaveBeenCalledTimes(botNames.length + 1);
+    expect(warn).toHaveBeenCalledTimes(botNames.length);
 
     // Each primary bot (including catalog) gets a "not found" / "not found — probing
     // fallback" message that contains the words "not found".
@@ -425,11 +427,6 @@ describe("probePoeBotsOnStartup()", () => {
         expect.stringContaining("not found"),
       );
     }
-    // The fallback bot also gets a warn about being unavailable.
-    expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ botName: mod.POE_CATALOG_BOT_FALLBACK }),
-      expect.stringContaining("unavailable"),
-    );
   });
 
   it("logs a 'probe failed' warning for each bot when create rejects with a generic error", async () => {
@@ -487,7 +484,9 @@ describe("probePoeBotsOnStartup()", () => {
       throw { weird: true, code: "UNKNOWN_SHAPE" };
     });
 
-    await expect(mod.probePoeBotsOnStartup()).resolves.toBeUndefined();
+    await expect(mod.probePoeBotsOnStartup()).resolves.toEqual(
+      expect.objectContaining({ attempted: botNames.length }),
+    );
 
     const { warn } = getLoggerMocks();
     // One warning per bot — no bot is silenced
@@ -574,7 +573,9 @@ describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (Gemini-3.1-Pro) coverage",
       },
     );
 
-    await expect(mod.probePoeBotsOnStartup()).resolves.toBeUndefined();
+    await expect(mod.probePoeBotsOnStartup()).resolves.toEqual(
+      expect.objectContaining({ attempted: mod.getAllPoeModelNames().length }),
+    );
 
     const { warn } = getLoggerMocks();
     expect(warn).toHaveBeenCalledWith(
@@ -593,7 +594,9 @@ describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (Gemini-3.1-Pro) coverage",
       },
     );
 
-    await expect(mod.probePoeBotsOnStartup()).resolves.toBeUndefined();
+    await expect(mod.probePoeBotsOnStartup()).resolves.toEqual(
+      expect.objectContaining({ attempted: mod.getAllPoeModelNames().length }),
+    );
 
     const { warn } = getLoggerMocks();
     expect(warn).toHaveBeenCalledWith(
@@ -665,11 +668,16 @@ describe("getProbeSummary()", () => {
 
   it("returns 'timeout' for every bot when create never resolves", async () => {
     const client = mod.getAiClient() as unknown as MockClient;
-    client.chat.completions.create.mockImplementation(() => new Promise(() => {}));
+    const releaseTransports: Array<() => void> = [];
+    client.chat.completions.create.mockImplementation(
+      () => new Promise<void>((resolve) => releaseTransports.push(resolve)),
+    );
 
     const probePromise = mod.probePoeBotsOnStartup();
     await jest.advanceTimersByTimeAsync(15100);
     await probePromise;
+    releaseTransports.forEach((resolve) => resolve());
+    await Promise.resolve();
 
     const summary = mod.getProbeSummary();
     const botNames = mod.getAllPoeModelNames();
@@ -710,7 +718,7 @@ describe("getProbeSummary()", () => {
     }
   });
 
-  it("records the fallback catalog bot as 'ok' when primary is 404 and fallback succeeds", async () => {
+  it("does not automatically probe the catalog fallback when the primary is 404", async () => {
     const client = mod.getAiClient() as unknown as MockClient;
     // Mock by model name so the result is independent of call order (probes run in parallel).
     client.chat.completions.create.mockImplementation(
@@ -724,10 +732,10 @@ describe("getProbeSummary()", () => {
 
     const summary = mod.getProbeSummary();
     expect(summary[mod.POE_CATALOG_BOT]).toBe("404");
-    expect(summary[mod.POE_CATALOG_BOT_FALLBACK]).toBe("ok");
+    expect(summary[mod.POE_CATALOG_BOT_FALLBACK]).toBeUndefined();
   });
 
-  it("records the fallback catalog bot as 'error' when both primary and fallback fail", async () => {
+  it("keeps the catalog fallback outside explicit verification results", async () => {
     const client = mod.getAiClient() as unknown as MockClient;
     // Mock by model name: primary catalog → 404, fallback → generic error, all others → ok.
     client.chat.completions.create.mockImplementation(
@@ -742,7 +750,7 @@ describe("getProbeSummary()", () => {
 
     const summary = mod.getProbeSummary();
     expect(summary[mod.POE_CATALOG_BOT]).toBe("404");
-    expect(summary[mod.POE_CATALOG_BOT_FALLBACK]).toBe("error");
+    expect(summary[mod.POE_CATALOG_BOT_FALLBACK]).toBeUndefined();
   });
 
   it("clears previous results when probePoeBotsOnStartup() is called again", async () => {

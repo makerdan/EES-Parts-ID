@@ -174,6 +174,10 @@ describe("GET /api/admin/ai-status — authenticated, provider=poe", () => {
 
     expect(res.body).toHaveProperty("bots");
     expect(typeof res.body.bots).toBe("object");
+    expect(res.body).toHaveProperty("verification");
+    expect(res.body.verification).toEqual(expect.objectContaining({
+      models: expect.any(Object),
+    }));
   });
 
   it("bots object includes all probed bot names after the probe has run", async () => {

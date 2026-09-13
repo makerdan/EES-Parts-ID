@@ -2559,7 +2559,7 @@ export const getGetAdminAiStatusUrl = () => {
 }
 
 /**
- * @summary Get Poe catalogue, probe health, and effective AI routes
+ * @summary Get Poe catalogue metadata, explicit verification results, and effective AI routes
  */
 export const getAdminAiStatus = async ( options?: RequestInit): Promise<AdminAiStatus> => {
 
@@ -2606,7 +2606,7 @@ export type GetAdminAiStatusQueryError = ErrorType<void>
 
 
 /**
- * @summary Get Poe catalogue, probe health, and effective AI routes
+ * @summary Get Poe catalogue metadata, explicit verification results, and effective AI routes
  */
 
 export function useGetAdminAiStatus<TData = Awaited<ReturnType<typeof getAdminAiStatus>>, TError = ErrorType<void>>(
@@ -2696,6 +2696,148 @@ export const useRefreshAdminPoeCatalogue = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getRefreshAdminPoeCatalogueMutationOptions(options));
+    }
+
+export const getProbeActiveAdminPoeModelsUrl = () => {
+
+
+
+
+  return `/api/admin/ai-status/probe`
+}
+
+/**
+ * @summary Explicitly live-verify the bounded set of active Poe route models
+ */
+export const probeActiveAdminPoeModels = async ( options?: RequestInit): Promise<AdminAiStatus> => {
+
+  return customFetch<AdminAiStatus>(getProbeActiveAdminPoeModelsUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getProbeActiveAdminPoeModelsMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof probeActiveAdminPoeModels>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof probeActiveAdminPoeModels>>, TError,void, TContext> => {
+
+const mutationKey = ['probeActiveAdminPoeModels'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof probeActiveAdminPoeModels>>, void> = () => {
+
+
+          return  probeActiveAdminPoeModels(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ProbeActiveAdminPoeModelsMutationResult = NonNullable<Awaited<ReturnType<typeof probeActiveAdminPoeModels>>>
+
+    export type ProbeActiveAdminPoeModelsMutationError = ErrorType<void>
+
+    /**
+ * @summary Explicitly live-verify the bounded set of active Poe route models
+ */
+export const useProbeActiveAdminPoeModels = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof probeActiveAdminPoeModels>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof probeActiveAdminPoeModels>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getProbeActiveAdminPoeModelsMutationOptions(options));
+    }
+
+export const getProbeSingleAdminPoeModelUrl = (botName: string,) => {
+
+
+
+
+  return `/api/admin/ai-status/probe/${botName}`
+}
+
+/**
+ * @summary Explicitly live-verify one active Poe route model
+ */
+export const probeSingleAdminPoeModel = async (botName: string, options?: RequestInit): Promise<AdminAiStatus> => {
+
+  return customFetch<AdminAiStatus>(getProbeSingleAdminPoeModelUrl(botName),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getProbeSingleAdminPoeModelMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof probeSingleAdminPoeModel>>, TError,{botName: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof probeSingleAdminPoeModel>>, TError,{botName: string}, TContext> => {
+
+const mutationKey = ['probeSingleAdminPoeModel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof probeSingleAdminPoeModel>>, {botName: string}> = (props) => {
+          const {botName} = props ?? {};
+
+          return  probeSingleAdminPoeModel(botName,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ProbeSingleAdminPoeModelMutationResult = NonNullable<Awaited<ReturnType<typeof probeSingleAdminPoeModel>>>
+
+    export type ProbeSingleAdminPoeModelMutationError = ErrorType<void>
+
+    /**
+ * @summary Explicitly live-verify one active Poe route model
+ */
+export const useProbeSingleAdminPoeModel = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof probeSingleAdminPoeModel>>, TError,{botName: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof probeSingleAdminPoeModel>>,
+        TError,
+        {botName: string},
+        TContext
+      > => {
+      return useMutation(getProbeSingleAdminPoeModelMutationOptions(options));
     }
 
 export const getUpdateAdminAiRoutesUrl = () => {

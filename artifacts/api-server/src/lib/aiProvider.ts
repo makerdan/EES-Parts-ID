@@ -14,6 +14,7 @@
 import { adminPreferencesTable,db } from "@workspace/db";
 import {
   createPoeChatCompletion,
+  createPoeChatCompletionWithSettlement,
   getPoeClient,
   listPoeModels,
   type PoeCatalogueModel,
@@ -68,7 +69,19 @@ let _client: OpenAI | null = null;
 
 export type PoeFeature = "enrich" | "identify" | "dimensions" | "catalog";
 export type PoeCatalogueFreshness = "fresh" | "stale" | "unavailable";
-export type PoeProbeStatus = "ok" | "timeout" | "404" | "error";
+export type PoeProbeStatus = "ok" | "timeout" | "404" | "error" | "budget_limited";
+export interface PoeProbeResult {
+  status: PoeProbeStatus;
+  verifiedAt: string | null;
+}
+export interface PoeProbeOperation {
+  startedAt: string;
+  finishedAt: string;
+  requested: number;
+  attempted: number;
+  completed: number;
+  budgetLimited: boolean;
+}
 
 export interface PoeFeatureRoute {
   feature: PoeFeature;
@@ -513,21 +526,19 @@ export const POE_DIMENSIONS_BOT = "Claude-Sonnet-4.5";
 
 /**
  * Poe bot used exclusively for catalog PDF extraction (vision capable, Gemini).
- * Name confirmed as "Gemini-3.1-Pro" — validated by probePoeBotsOnStartup() at boot.
- * If the startup probe detects a 404, probePoeBotsOnStartup() automatically switches
- * the effective catalog bot to POE_CATALOG_BOT_FALLBACK without requiring a redeploy.
+ * Name is code-owned. Explicit verification records availability without
+ * changing the configured primary route.
  */
 export const POE_CATALOG_BOT = "Gemini-3.1-Pro";
 
 /**
  * Fallback Poe bot name for catalog PDF extraction.
- * Activated automatically by probePoeBotsOnStartup() when POE_CATALOG_BOT returns 404.
+ * Retained as a code-owned fallback option in the catalog route chain.
  */
 export const POE_CATALOG_BOT_FALLBACK = "Gemini-2.5-Pro";
 
 /**
- * Effective catalog bot name — starts as POE_CATALOG_BOT and may be updated to
- * POE_CATALOG_BOT_FALLBACK at runtime by probePoeBotsOnStartup() when a 404 is detected.
+ * Effective catalog bot name. Live verification never mutates routing.
  * Always read via getCatalogModel() rather than this variable directly.
  */
 let _effectiveCatalogBotName: string = POE_CATALOG_BOT;
@@ -568,9 +579,7 @@ export function getReferenceModel(): string {
 /**
  * Default model for catalog PDF extraction (Gemini vision — dedicated bot).
  * Reflects the currently active provider.
- * When provider is "poe", returns the effective catalog bot name — which may have
- * been automatically switched to POE_CATALOG_BOT_FALLBACK by probePoeBotsOnStartup()
- * if the primary bot returned 404 at startup.
+ * When provider is "poe", returns the code-owned effective catalog bot name.
  */
 export function getCatalogModel(): string {
   return _provider === "openai" ? "gpt-4o" : _effectiveCatalogBotName;
@@ -585,8 +594,7 @@ export function getDimensionsModel(): string {
 }
 
 /**
- * Return every distinct Poe bot name the app may call.
- * Used by probePoeBotsOnStartup() to validate names at boot time.
+ * Return every distinct Poe bot name present in active application route chains.
  */
 export function getAllPoeModelNames(): Array<string> {
   const names = [
@@ -594,7 +602,6 @@ export function getAllPoeModelNames(): Array<string> {
     POE_IDENTIFY_BOT,   // identify (photo-based)
     POE_DIMENSIONS_BOT, // dimensions
     POE_CATALOG_BOT,    // catalog PDF extraction
-    ..._catalogue.models.map((model) => model.name),
     ...getPoeFeatureRoutes().flatMap((route) => route.effective),
   ];
   return [...new Set(names)];
@@ -610,8 +617,7 @@ export function getAllPoeModelNames(): Array<string> {
 /**
  * Returns the ordered list of Poe bot names to attempt for the given feature.
  * The primary bot is first; vision-capable alternates follow.
- * Uses the effective catalog bot name (may have been switched at startup by
- * probePoeBotsOnStartup() if POE_CATALOG_BOT returned 404).
+ * Uses the code-owned effective catalog bot name.
  */
 export function getPoeChainForFeature(feature: PoeFeature): Array<string> {
   return getPoeFeatureRoutes().find((route) => route.feature === feature)?.effective ?? [];
@@ -676,62 +682,182 @@ export function tryGetOpenAIFallbackClient(): OpenAI | null {
   return buildOpenAIClient();
 }
 
-// ── Per-bot probe results ─────────────────────────────────────────────────────
+// ── Explicit live-verification results ────────────────────────────────────────
 
-/** Result status for a single Poe bot startup probe. */
-export type BotProbeStatus = "ok" | "timeout" | "404" | "error";
+const _botProbeResults = new Map<string, PoeProbeResult>();
+let _lastProbeOperation: PoeProbeOperation | null = null;
+let _bulkProbeInFlight: Promise<PoeProbeOperation | null> | null = null;
+let _activeProbeRequests = 0;
+const _probePermitWaiters: Array<{ grant: () => void; cancel: () => void }> = [];
 
-/** Map of bot name → probe result, populated by probePoeBotsOnStartup(). */
-const _botProbeResults = new Map<string, BotProbeStatus>();
+export const POE_PROBE_MAX_MODELS = 8;
+export const POE_PROBE_CONCURRENCY = 2;
+export const POE_PROBE_TIMEOUT_MS = 10_000;
+export const POE_PROBE_AGGREGATE_TIMEOUT_MS = 30_000;
 
-/**
- * Returns a snapshot of every bot that was probed at startup and its result.
- * Returns an empty object when the active provider is not "poe" or before the
- * first probe has completed.
- */
-export function getProbeSummary(): Record<string, BotProbeStatus> {
-  if (_provider !== "poe") return {};
-  return Object.fromEntries(_botProbeResults);
+async function acquireProbePermit(
+  signal?: AbortSignal,
+): Promise<() => void> {
+  let acquiredFromQueue = false;
+  if (_activeProbeRequests >= POE_PROBE_CONCURRENCY) {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const waiter = {
+        grant: () => {
+          if (settled) return;
+          settled = true;
+          acquiredFromQueue = true;
+          _activeProbeRequests += 1;
+          signal?.removeEventListener("abort", waiter.cancel);
+          resolve();
+        },
+        cancel: () => {
+          if (settled) return;
+          settled = true;
+          const index = _probePermitWaiters.indexOf(waiter);
+          if (index >= 0) _probePermitWaiters.splice(index, 1);
+          reject(Object.assign(new Error("Poe verification budget expired"), {
+            name: "AbortError",
+          }));
+        },
+      };
+      if (signal?.aborted) waiter.cancel();
+      else {
+        _probePermitWaiters.push(waiter);
+        signal?.addEventListener("abort", waiter.cancel, { once: true });
+      }
+    });
+  }
+  if (signal?.aborted) {
+    throw Object.assign(new Error("Poe verification budget expired"), {
+      name: "AbortError",
+    });
+  }
+  if (!acquiredFromQueue) _activeProbeRequests += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    _activeProbeRequests -= 1;
+    _probePermitWaiters.shift()?.grant();
+  };
 }
 
-/** Shared timeout budget for all Poe bot probes. */
-const PROBE_TIMEOUT_MS = 15_000;
+async function runBoundedProbeRequest(
+  botName: string,
+  parentSignal?: AbortSignal,
+): Promise<void> {
+  const releasePermit = await acquireProbePermit(parentSignal);
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  let rejectAbort!: (err: Error) => void;
+  const abort = () => {
+    controller.abort();
+    rejectAbort(Object.assign(new Error("Poe verification budget expired"), {
+      name: "AbortError",
+    }));
+  };
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  if (parentSignal?.aborted) abort();
+  else parentSignal?.addEventListener("abort", abort, { once: true });
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(Object.assign(
+        new Error(`Poe request timed out after ${POE_PROBE_TIMEOUT_MS}ms`),
+        { name: "PoeProviderError", kind: "timeout" },
+      ));
+    }, POE_PROBE_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  let response: Promise<unknown>;
+  let transportSettled: Promise<void>;
+  try {
+    const handle = createPoeChatCompletionWithSettlement(
+      {
+        model: botName,
+        messages: [{ role: "user", content: "hi" }],
+        max_completion_tokens: 16,
+      },
+      { timeoutMs: POE_PROBE_TIMEOUT_MS, signal: controller.signal },
+    );
+    response = handle.response;
+    transportSettled = handle.transportSettled;
+  } catch (err) {
+    releasePermit();
+    throw err;
+  }
+  void transportSettled.then(releasePermit, releasePermit);
+  try {
+    await Promise.race([
+      response,
+      aborted,
+      timedOut,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    parentSignal?.removeEventListener("abort", abort);
+  }
+}
+
+export function getProbeSummary(): Record<string, PoeProbeStatus> {
+  if (_provider !== "poe") return {};
+  return Object.fromEntries(
+    [..._botProbeResults].map(([name, result]) => [name, result.status]),
+  );
+}
+
+export function getProbeVerificationSummary(): Record<string, PoeProbeResult> {
+  if (_provider !== "poe") return {};
+  return Object.fromEntries(
+    [..._botProbeResults].map(([name, result]) => [name, { ...result }]),
+  );
+}
+
+export function getLastProbeOperation(): PoeProbeOperation | null {
+  return _lastProbeOperation ? { ..._lastProbeOperation } : null;
+}
 
 /**
  * Probe a single Poe bot and update _botProbeResults for that bot.
  * Contains the full timeout + error-classification logic including the
  * catalog-bot fallback.  Callers must check _provider === "poe" first.
  */
-async function _probeBotAndRecord(botName: string): Promise<void> {
+async function _probeBotAndRecord(
+  botName: string,
+  signal?: AbortSignal,
+  results = _botProbeResults,
+): Promise<void> {
+  const record = (status: PoeProbeStatus) => {
+    results.set(botName, {
+      status,
+      verifiedAt: status === "budget_limited" ? null : new Date().toISOString(),
+    });
+  };
   try {
     try {
-      if (typeof createPoeChatCompletion === "function") {
-        await createPoeChatCompletion(
-          {
-            model: botName,
-            messages: [{ role: "user", content: "hi" }],
-            max_completion_tokens: 16,
-          },
-          { timeoutMs: PROBE_TIMEOUT_MS, maxAttempts: 1 },
-        );
-      } else {
-        await getAiClient().chat.completions.create({
-          model: botName,
-          messages: [{ role: "user", content: "hi" }],
-          max_tokens: 16,
-        });
+      if (signal?.aborted) {
+        record("budget_limited");
+        return;
       }
-      _botProbeResults.set(botName, "ok");
+      await runBoundedProbeRequest(botName, signal);
+      record("ok");
       logger.info({ botName }, `Poe bot '${botName}' — OK`);
     } catch (err: unknown) {
+      if (signal?.aborted || (err instanceof Error && err.name === "AbortError")) {
+        record("budget_limited");
+        return;
+      }
       if (
         err instanceof Error &&
         (err.name === "PoeProviderError" && "kind" in err && (err as { kind?: unknown }).kind === "timeout")
       ) {
-        _botProbeResults.set(botName, "timeout");
+        record("timeout");
         logger.warn(
           { botName },
-          `Poe bot '${botName}' probe timed out after ${PROBE_TIMEOUT_MS}ms — server will continue`,
+          `Poe bot '${botName}' probe timed out after ${POE_PROBE_TIMEOUT_MS}ms`,
         );
         return;
       }
@@ -744,60 +870,14 @@ async function _probeBotAndRecord(botName: string): Promise<void> {
           ? (err as { status: number }).status
           : undefined;
 
-      if (status === 404 && botName === POE_CATALOG_BOT) {
-        _botProbeResults.set(botName, "404");
-        logger.warn(
-          { botName, fallback: POE_CATALOG_BOT_FALLBACK },
-          `Poe catalog bot '${botName}' not found — probing fallback '${POE_CATALOG_BOT_FALLBACK}'`,
-        );
-        try {
-          if (typeof createPoeChatCompletion === "function") {
-            await createPoeChatCompletion(
-              {
-                model: POE_CATALOG_BOT_FALLBACK,
-                messages: [{ role: "user", content: "hi" }],
-                max_completion_tokens: 16,
-              },
-              { timeoutMs: PROBE_TIMEOUT_MS, maxAttempts: 1 },
-            );
-          } else {
-            await getAiClient().chat.completions.create({
-              model: POE_CATALOG_BOT_FALLBACK,
-              messages: [{ role: "user", content: "hi" }],
-              max_tokens: 16,
-            });
-          }
-          _effectiveCatalogBotName = POE_CATALOG_BOT_FALLBACK;
-          _botProbeResults.set(POE_CATALOG_BOT_FALLBACK, "ok");
-          logger.info(
-            { botName: POE_CATALOG_BOT_FALLBACK },
-            `Poe catalog bot switched to fallback '${POE_CATALOG_BOT_FALLBACK}' — OK`,
-          );
-        } catch (fallbackErr: unknown) {
-          const fallbackStatus =
-            fallbackErr != null &&
-            typeof fallbackErr === "object" &&
-            "status" in fallbackErr &&
-            typeof (fallbackErr as { status: unknown }).status === "number"
-              ? (fallbackErr as { status: number }).status
-              : undefined;
-          _botProbeResults.set(
-            POE_CATALOG_BOT_FALLBACK,
-            fallbackStatus === 404 ? "404" : "error",
-          );
-          logger.warn(
-            { botName: POE_CATALOG_BOT_FALLBACK, err: fallbackErr, status: fallbackStatus },
-            `Poe catalog fallback bot '${POE_CATALOG_BOT_FALLBACK}' also unavailable (status=${fallbackStatus ?? "unknown"}) — catalog extraction may fail`,
-          );
-        }
-      } else if (status === 404) {
-        _botProbeResults.set(botName, "404");
+      if (status === 404) {
+        record("404");
         logger.warn(
           { botName },
           `Poe bot '${botName}' not found — check bot name in aiProvider.ts`,
         );
       } else {
-        _botProbeResults.set(botName, "error");
+        record("error");
         logger.warn(
           { botName, err },
           `Poe bot '${botName}' probe failed (status=${status ?? "unknown"}) — transient provider error, server will continue`,
@@ -805,7 +885,7 @@ async function _probeBotAndRecord(botName: string): Promise<void> {
       }
     }
   } catch (err: unknown) {
-    _botProbeResults.set(botName, "error");
+    record("error");
     logger.warn(
       { botName, err },
       `Poe bot '${botName}' probe encountered an unexpected error — server will continue`,
@@ -821,26 +901,104 @@ async function _probeBotAndRecord(botName: string): Promise<void> {
  */
 export async function probeSinglePoeBot(botName: string): Promise<void> {
   if (_provider !== "poe") return;
-  await _probeBotAndRecord(botName);
+  if (!getAllPoeModelNames().includes(botName)) {
+    throw new Error(`Model is not in an active Poe route chain: ${botName}`);
+  }
+  if (_bulkProbeInFlight) {
+    await _bulkProbeInFlight;
+    if (_botProbeResults.has(botName)) return;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), POE_PROBE_AGGREGATE_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    await _probeBotAndRecord(botName, controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
- * Probe each Poe bot name with a minimal completion request.
- * Logs a clear warning for any bot that returns a 404 (renamed / retired)
- * or any other error (e.g. transient 500 from the provider).
- * Advisory only — the server always continues to start regardless of outcome.
- * No-op when the active provider is not "poe".
- * Stores per-bot results in module-level state accessible via getProbeSummary().
+ * Explicit, administrator-triggered bulk verification. Only active route-chain
+ * models are considered, with fixed count, concurrency, attempt, request-timeout,
+ * and aggregate-deadline limits.
  */
-export async function probePoeBotsOnStartup(): Promise<void> {
-  if (_provider !== "poe") {
-    return;
-  }
-
-  const botNames = getAllPoeModelNames();
-  _botProbeResults.clear();
-  logger.info({ botNames }, "Probing Poe bot names on startup…");
-
-  await Promise.all(botNames.map(_probeBotAndRecord));
+export async function probeActivePoeModels(): Promise<PoeProbeOperation | null> {
+  if (_provider !== "poe") return null;
+  if (_bulkProbeInFlight) return _bulkProbeInFlight;
+  _bulkProbeInFlight = (async () => {
+    const allNames = getAllPoeModelNames();
+    const botNames = allNames.slice(0, POE_PROBE_MAX_MODELS);
+    const omitted = allNames.slice(POE_PROBE_MAX_MODELS);
+    const nextResults = new Map<string, PoeProbeResult>();
+    for (const name of omitted) {
+      nextResults.set(name, { status: "budget_limited", verifiedAt: null });
+    }
+    const startedAt = new Date();
+    const controller = new AbortController();
+    let deadlineReached = false;
+    let resolveDeadline!: () => void;
+    const deadline = new Promise<void>((resolve) => {
+      resolveDeadline = resolve;
+    });
+    const timer = setTimeout(() => {
+      deadlineReached = true;
+      controller.abort();
+      resolveDeadline();
+    }, POE_PROBE_AGGREGATE_TIMEOUT_MS);
+    timer.unref?.();
+    let cursor = 0;
+    let attempted = 0;
+    try {
+      const worker = async () => {
+        while (!controller.signal.aborted) {
+          const index = cursor++;
+          const botName = botNames[index];
+          if (!botName) return;
+          attempted += 1;
+          await _probeBotAndRecord(botName, controller.signal, nextResults);
+        }
+      };
+      const workers = Promise.all(
+        Array.from({ length: Math.min(POE_PROBE_CONCURRENCY, botNames.length) }, worker),
+      );
+      await Promise.race([workers, deadline]);
+      if (deadlineReached) {
+        void workers.catch((err: unknown) => {
+          logger.warn({ err }, "Late Poe verification worker failed after aggregate deadline");
+        });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+    for (const name of botNames) {
+      if (!nextResults.has(name)) {
+        nextResults.set(name, { status: "budget_limited", verifiedAt: null });
+      }
+    }
+    const completed = [...nextResults.values()]
+      .filter((result) => result.verifiedAt !== null).length;
+    const operation = {
+      startedAt: startedAt.toISOString(),
+      finishedAt: new Date().toISOString(),
+      requested: allNames.length,
+      attempted,
+      completed,
+      budgetLimited: deadlineReached || omitted.length > 0 || completed < botNames.length,
+    };
+    _botProbeResults.clear();
+    for (const [name, result] of nextResults) _botProbeResults.set(name, result);
+    _lastProbeOperation = operation;
+    return { ...operation };
+  })().finally(() => {
+    _bulkProbeInFlight = null;
+  });
+  return _bulkProbeInFlight;
 }
+
+/**
+ * @deprecated Startup must never call this. Kept temporarily for internal test
+ * and caller compatibility; it performs the same bounded, explicit operation.
+ */
+export const probePoeBotsOnStartup = probeActivePoeModels;
 

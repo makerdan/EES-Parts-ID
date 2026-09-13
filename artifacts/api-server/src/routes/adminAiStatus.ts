@@ -8,10 +8,12 @@ import {
   getPoeCatalogueSnapshot,
   getPoeFallbackOverrides,
   getPoeFeatureRoutes,
+  getLastProbeOperation,
   getProbeSummary,
+  getProbeVerificationSummary,
   getProvider,
   type PoeFeature,
-  probePoeBotsOnStartup,
+  probeActivePoeModels,
   probeSinglePoeBot,
   refreshPoeCatalogue,
   resetPoeFallbacks,
@@ -50,6 +52,10 @@ function statusPayload() {
     provider: getProvider(),
     catalogue: getCatalogueSnapshotCompat(),
     bots: getProbeSummary(),
+    verification: {
+      models: getProbeVerificationSummary(),
+      lastOperation: getLastProbeOperation(),
+    },
     routes: getFeatureRoutesCompat(),
     overrides: getFallbackOverridesCompat(),
     reference: {
@@ -90,10 +96,10 @@ router.post("/ai-status/catalogue/refresh", requireAdminAuth, refreshCatalogue);
 router.post("/ai-status/refresh", requireAdminAuth, refreshCatalogue);
 
 // POST /admin/ai-status/probe
-// Re-runs probePoeBotsOnStartup() on demand and returns the refreshed results.
+// Explicitly verifies the bounded set of active route-chain models.
 router.post("/ai-status/probe", requireAdminAuth, async (_req, res, next) => {
   try {
-    await probePoeBotsOnStartup();
+    await probeActivePoeModels();
     return res.json(GetAdminAiStatusResponse.parse(statusPayload()));
   } catch (err) {
     logger.error({ err }, "adminAiStatus: on-demand probe encountered an unexpected error");

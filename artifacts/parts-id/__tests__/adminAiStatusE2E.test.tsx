@@ -198,6 +198,10 @@ function aiRoutesStatusResponse(
     },
     bots: { [FIRST_BOT]: "ok" },
     routes: [{ feature: "enrich", primary: "Primary Bot", fallbacks }],
+    verification: {
+      models: { [FIRST_BOT]: { status: "ok", verifiedAt: "2026-09-05T00:00:00.000Z" } },
+      lastOperation: null,
+    },
     reference: { provider: "gemini", readOnly: true, note: "Read-only" },
   });
 }
@@ -426,7 +430,7 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     await act(async () => { fireEvent.press(enrichmentCard!); });
     await flushPromises();
 
-    const aiCard = findPressable(rendered.tree.root!, "Re-run probe");
+    const aiCard = findPressable(rendered.tree.root!, "Verify active models");
     expect(aiCard).not.toBeNull();
     expect(instText(rendered.tree.root!)).toContain(FIRST_BOT);
     expect(instText(rendered.tree.root!)).toContain(SECOND_BOT);
@@ -459,7 +463,7 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     await flushPromises();
 
     expect(instText(rendered.tree.root!)).toContain("AI Status");
-    const probeButton = findPressable(rendered.tree.root!, "Re-run probe");
+    const probeButton = findPressable(rendered.tree.root!, "Verify active models");
     expect(probeButton).not.toBeNull();
 
     await act(async () => { fireEvent.press(probeButton!); });
@@ -468,7 +472,7 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     expect(instText(rendered.tree.root!)).toContain("error");
     expect(instText(rendered.tree.root!)).toContain("ok");
     expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain(
-      "AI provider health probe completed",
+      "Live model verification completed",
     );
     expect(callsFor("/admin/ai-status/probe")).toHaveLength(1);
     const probeCall = callsFor("/admin/ai-status/probe")[0]!;
@@ -535,7 +539,7 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     await act(async () => { fireEvent.press(enrichmentCard!); });
     await flushPromises();
 
-    const probeButton = findPressable(rendered.tree.root!, "Re-run probe");
+    const probeButton = findPressable(rendered.tree.root!, "Verify active models");
     expect(probeButton).not.toBeNull();
     const priorResults = instText(rendered.tree.root!);
     // Confirm the baseline before exercising the failing request. This keeps
@@ -657,7 +661,7 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     await act(async () => { fireEvent.press(enrichmentCard!); });
     await flushPromises();
 
-    const probeButton = findPressable(rendered.tree.root!, "Re-run probe");
+    const probeButton = findPressable(rendered.tree.root!, "Verify active models");
     expect(probeButton).not.toBeNull();
     await act(async () => { fireEvent.press(probeButton!); });
     await flushPromises();
@@ -1255,7 +1259,7 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     await flushPromises();
 
     expect(instText(rendered.tree.root!)).toContain("Fallbacks are read-only");
-    expect(instText(rendered.tree.root!)).toContain("Provider evidence: stale");
+    expect(instText(rendered.tree.root!)).toContain("Catalogue metadata: stale");
     expect(instText(rendered.tree.root!)).toContain("1. Fallback Bot");
 
     const resetButton = findPressableByAccessibilityLabel(rendered.tree.root!, "Reset fallbacks");
@@ -1315,7 +1319,7 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     await act(async () => { fireEvent.press(enrichmentCard!); });
     await flushPromises();
 
-    expect(instText(rendered.tree.root!)).toContain("Provider evidence: unknown");
+    expect(instText(rendered.tree.root!)).toContain("Catalogue metadata: unknown");
     expect(instText(rendered.tree.root!)).toContain("unknown or incomplete");
     expect(findPressableByAccessibilityLabel(rendered.tree.root!, "Reset fallbacks")?.props.disabled).toBe(true);
   });

@@ -596,7 +596,40 @@ export const AdminAiStatusProvider = {
   openai: 'openai',
 } as const;
 
-export type AdminAiStatusBots = {[key: string]: 'ok' | 'timeout' | '404' | 'error'};
+export type AdminAiStatusBots = {[key: string]: 'ok' | 'timeout' | '404' | 'error' | 'budget_limited'};
+
+export type AdminAiStatusVerificationModelsStatus = typeof AdminAiStatusVerificationModelsStatus[keyof typeof AdminAiStatusVerificationModelsStatus];
+
+
+export const AdminAiStatusVerificationModelsStatus = {
+  ok: 'ok',
+  timeout: 'timeout',
+  NUMBER_404: '404',
+  error: 'error',
+  budget_limited: 'budget_limited',
+} as const;
+
+export type AdminAiStatusVerificationModels = {[key: string]: {
+  status: AdminAiStatusVerificationModelsStatus;
+  verifiedAt: string | null;
+}};
+
+export type AdminAiStatusVerificationLastOperation = {
+  startedAt: string;
+  finishedAt: string;
+  /** @minimum 0 */
+  requested: number;
+  /** @minimum 0 */
+  attempted: number;
+  /** @minimum 0 */
+  completed: number;
+  budgetLimited: boolean;
+} | null;
+
+export type AdminAiStatusVerification = {
+  models: AdminAiStatusVerificationModels;
+  lastOperation: AdminAiStatusVerificationLastOperation;
+};
 
 export type AdminAiStatusOverrides = {[key: string]: string[]};
 
@@ -617,6 +650,7 @@ export interface AdminAiStatus {
   provider: AdminAiStatusProvider;
   catalogue: PoeCatalogue;
   bots: AdminAiStatusBots;
+  verification: AdminAiStatusVerification;
   routes: PoeFeatureRoute[];
   overrides: AdminAiStatusOverrides;
   reference: AdminAiStatusReference;

@@ -6,4 +6,4 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type AdminAiStatusBots = {[key: string]: 'ok' | 'timeout' | '404' | 'error'};
+export type AdminAiStatusBots = {[key: string]: 'ok' | 'timeout' | '404' | 'error' | 'budget_limited'};

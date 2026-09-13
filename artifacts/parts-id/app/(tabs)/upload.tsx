@@ -150,6 +150,17 @@ type AiStatusPayload = {
     error: string | null;
   };
   bots: Record<string, string>;
+  verification: {
+    models: Record<string, { status: string; verifiedAt: string | null }>;
+    lastOperation: {
+      startedAt: string;
+      finishedAt: string;
+      requested: number;
+      attempted: number;
+      completed: number;
+      budgetLimited: boolean;
+    } | null;
+  };
   routes: Array<{ feature: string; primary: string; fallbacks: Array<string>; effective: Array<string> }>;
   reference: { provider: string; readOnly: boolean; note: string };
 };
@@ -182,6 +193,8 @@ function isAiStatusPayload(value: unknown): value is AiStatusPayload {
     (typeof catalogue.error === "string" || catalogue.error === null) &&
     !!data.bots &&
     typeof data.bots === "object" &&
+    !!data.verification &&
+    typeof data.verification === "object" &&
     Array.isArray(data.routes) &&
     !!data.reference &&
     typeof data.reference === "object"
@@ -1008,7 +1021,7 @@ export default function UploadScreen() {
     setAiStatusLoading(false);
     setAiStatusProbing(true);
     setAiStatusError(null);
-    setAiControlAnnouncement("Checking AI provider health.");
+    setAiControlAnnouncement("Live-verifying active Poe route models.");
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status/probe`, {
         method: "POST",
@@ -1030,13 +1043,17 @@ export default function UploadScreen() {
         }
         setAiStatusBots(partial.bots);
         setAiStatus(null);
-        setAiControlAnnouncement("AI provider health probe completed with unknown catalogue evidence.");
+        setAiControlAnnouncement("Live model verification completed with incomplete status details.");
         return;
       }
       setAiStatusBots(data.bots ?? {});
       setAiStatus(data.catalogue ? data : null);
       if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
-      setAiControlAnnouncement("AI provider health probe completed.");
+      setAiControlAnnouncement(
+        data.verification.lastOperation?.budgetLimited
+          ? "Live model verification completed with budget-limited partial results."
+          : "Live model verification completed.",
+      );
     } catch (err) {
       if (
         isMountedRef.current &&
@@ -4231,7 +4248,7 @@ export default function UploadScreen() {
                       style={[styles.aiProbeBtn, { borderColor: aiStatusProbing ? colors.border : colors.primary }]}
                     >
                       {aiStatusProbing ? <ActivityIndicator size="small" color={colors.primary} /> : (
-                        <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Re-run probe</Text>
+                        <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Verify active models</Text>
                       )}
                     </Pressable>
                     <Pressable
@@ -4249,7 +4266,7 @@ export default function UploadScreen() {
                   <ActivityIndicator size="small" color={colors.primary} style={{ alignSelf: "flex-start" }} />
                 ) : Object.keys(aiStatusBots).length === 0 ? (
                   <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                    No probe results yet. Tap "Re-run probe" to check bot health.
+                     Catalogue metadata does not verify live completions. Use "Verify active models" for an explicit bounded check.
                   </Text>
                 ) : (
                   <View style={styles.aiStatusBotList}>
@@ -4261,7 +4278,10 @@ export default function UploadScreen() {
                       return (
                         <View key={name} style={[styles.aiStatusBotRow, { borderBottomColor: colors.border }]}>
                           <Text style={[styles.aiStatusBotName, { color: colors.foreground }]} numberOfLines={1}>
-                            {name}
+                             {name}
+                             {aiStatus?.verification.models[name]?.verifiedAt
+                               ? ` · verified ${new Date(aiStatus.verification.models[name].verifiedAt!).toLocaleString()}`
+                               : " · not live-verified"}
                           </Text>
                           <View style={[styles.aiStatusBadge, { backgroundColor: dotColor + "20", borderColor: dotColor }]}>
                             <Text style={[styles.aiStatusBadgeDot, { color: dotColor }]}>●</Text>
@@ -4283,10 +4303,15 @@ export default function UploadScreen() {
                 {aiStatus ? (
                   <>
                     <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>
-                      Active provider: <Text style={{ color: colors.foreground }}>{aiProvider}</Text>
-                      {"  "}Provider evidence: <Text style={{ color: getAiEvidenceState(aiStatus.catalogue) === "verified" ? "#10b981" : "#f59e0b" }}>
+                       Active provider: <Text style={{ color: colors.foreground }}>{aiProvider}</Text>
+                       {"  "}Catalogue metadata: <Text style={{ color: getAiEvidenceState(aiStatus.catalogue) === "verified" ? "#10b981" : "#f59e0b" }}>
                         {getAiEvidenceState(aiStatus.catalogue)}
                       </Text>
+                    </Text>
+                    <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                      {aiStatus.verification.lastOperation
+                        ? `Live verification: ${aiStatus.verification.lastOperation.completed}/${aiStatus.verification.lastOperation.requested} completed${aiStatus.verification.lastOperation.budgetLimited ? " (budget limited)" : ""}.`
+                        : "Live verification: not run since this API process started."}
                     </Text>
                     <View style={[styles.aiProviderControl, { borderColor: colors.border }]}>
                       <Text style={[styles.aiStatusSectionTitle, { color: colors.foreground }]}>Provider choice</Text>
