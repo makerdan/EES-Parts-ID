@@ -7,10 +7,12 @@
  * belong to the dependent activation task.
  */
 import nodeAssert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { getTierSteps } from "../validation-steps.mjs";
 import {
   buildGitHubProtectionSnapshot,
@@ -44,6 +46,11 @@ const fastContractChecks = new Map([
   ["replit-config-contract", "node scripts/test/replit-config-contract.test.mjs"],
   ["validation-runtime-contract", "node scripts/test/validation-runtime-contract.test.mjs"],
 ]);
+const protectionReportBuilders = new Set([
+  "buildGitHubCapabilityReport",
+  "buildGitHubSecurityControlReport",
+]);
+const incompleteProtectionEvidenceMarker = "github-protection-freshness: allow-incomplete";
 
 const workflowNames = [
   "ci.yml",
@@ -66,6 +73,99 @@ function workflow(name) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function protectionReportCallSites(files) {
+  const callSites = [];
+  for (const [path, source] of Object.entries(files)) {
+    const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+    const lines = source.split(/\r?\n/);
+    function visit(node) {
+      if (ts.isCallExpression(node)) {
+        const builderName = ts.isIdentifier(node.expression)
+          ? node.expression.text
+          : ts.isPropertyAccessExpression(node.expression)
+            ? node.expression.name.text
+            : undefined;
+        if (protectionReportBuilders.has(builderName)) {
+          const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+          const options = node.arguments[1];
+          const propertyNames = new Set(
+            options && ts.isObjectLiteralExpression(options)
+              ? options.properties
+                .filter((property) => ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property))
+                .map((property) => property.name.getText(sourceFile).replace(/^['"]|['"]$/g, ""))
+              : [],
+          );
+          callSites.push({
+            path,
+            line: line + 1,
+            builderName,
+            hasSnapshot: propertyNames.has("snapshot"),
+            hasCurrentContext: propertyNames.has("currentContext"),
+            allowIncomplete: lines.slice(Math.max(0, line - 2), line + 1)
+              .some((text) => text.includes(incompleteProtectionEvidenceMarker)),
+          });
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sourceFile);
+  }
+  return callSites;
+}
+
+function validateProtectionReportCallSites(files) {
+  return protectionReportCallSites(files).filter(
+    (call) => !call.allowIncomplete && (!call.hasSnapshot || !call.hasCurrentContext),
+  );
+}
+
+function trackedProtectionReportSources() {
+  const paths = execFileSync(
+    "git",
+    ["ls-files", "-z", "--", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx"],
+    { cwd: root, encoding: "utf8" },
+  ).split("\0").filter(Boolean);
+  return Object.fromEntries(
+    paths
+      .filter((path) => path !== "scripts/lib/github-validation-evidence.mjs")
+      .map((path) => [path, read(join(root, path))]),
+  );
+}
+
+function validateProtectionReportFreshnessContract() {
+  const callSites = protectionReportCallSites(trackedProtectionReportSources());
+  nodeAssert.equal(callSites.length, 6, "tracked protection-report builder call-site inventory drifted");
+  nodeAssert.deepEqual(
+    callSites.filter((call) => call.allowIncomplete).map(({ path, builderName }) => ({ path, builderName })),
+    [{
+      path: "scripts/test/github-actions-contract.test.mjs",
+      builderName: "buildGitHubCapabilityReport",
+    }],
+    "only the intentional stale-result fixture may omit freshness evidence",
+  );
+  nodeAssert.deepEqual(
+    validateProtectionReportCallSites(trackedProtectionReportSources()),
+    [],
+    "protection-report builder calls must pass both snapshot and currentContext",
+  );
+
+  const unsafe = {
+    "future-consumer.mjs": [
+      "buildGitHubSecurityControlReport(evidence);",
+      "buildGitHubCapabilityReport(evidence, { snapshot });",
+      "buildGitHubSecurityControlReport(evidence, { currentContext });",
+    ].join("\n"),
+  };
+  const unsafeCalls = validateProtectionReportCallSites(unsafe);
+  nodeAssert.equal(unsafeCalls.length, 3, "negative control must detect every incomplete freshness call");
+  nodeAssert.equal(unsafeCalls[0].hasSnapshot, false);
+  nodeAssert.equal(unsafeCalls[0].hasCurrentContext, false);
+  nodeAssert.equal(unsafeCalls[1].hasSnapshot, true);
+  nodeAssert.equal(unsafeCalls[1].hasCurrentContext, false);
+  nodeAssert.equal(unsafeCalls[2].hasSnapshot, false);
+  nodeAssert.equal(unsafeCalls[2].hasCurrentContext, true);
 }
 
 function jobBlocks(text) {
@@ -367,6 +467,7 @@ function validateCapabilityAndSecurityEvidence() {
   nodeAssert.equal(blockedSecurityReport.controls.dependencyGraph.status, "unavailable");
   nodeAssert.equal(blockedSecurityReport.controls.dependabot.status, "blocked");
   nodeAssert.match(blockedSecurityReport.controls.secretScanning.nextAction, /read-only/i);
+  // github-protection-freshness: allow-incomplete — this fixture must prove omission stays stale.
   const incompleteCapabilityReport = buildGitHubCapabilityReport(unavailableEvidence);
   nodeAssert.equal(incompleteCapabilityReport.status, "stale");
   nodeAssert.equal(incompleteCapabilityReport.current, false);
@@ -591,6 +692,7 @@ async function validateRevisionEvidenceAndFreshness() {
 
 validateSkillContract();
 validateFastContractRegistration();
+validateProtectionReportFreshnessContract();
 validateCapabilityAndSecurityEvidence();
 await validateRevisionEvidenceAndFreshness();
 
