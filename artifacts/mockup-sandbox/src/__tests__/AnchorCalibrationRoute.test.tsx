@@ -84,6 +84,7 @@ function makeApiFixture(options: FixtureOptions = {}) {
   const admin = options.admin ?? true;
   const rejectSaves = options.rejectSaves ?? false;
   let anchorLoadFailuresRemaining = 0;
+  let floorPlanRequestCount = 0;
 
   const fetchMock = vi.fn((url: string, init?: RequestInit) => {
     calls.push([url, init]);
@@ -95,10 +96,11 @@ function makeApiFixture(options: FixtureOptions = {}) {
     }
 
     if (path === "/api/floor-plan/svg") {
+      floorPlanRequestCount += 1;
       return Promise.resolve(
         textResponse(
           200,
-          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="anchor-route-floor-plan" width="1000" height="800" /></svg>',
+          `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="anchor-route-floor-plan-${floorPlanRequestCount}" width="1000" height="800" /></svg>`,
         ),
       );
     }
@@ -198,23 +200,34 @@ function mockMapRect(svg: SVGSVGElement) {
 }
 
 async function renderRoute(fixture?: ReturnType<typeof makeApiFixture>) {
+  const floorPlanCallsBeforeRender =
+    fixture?.calls.filter(
+      ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+    ).length ?? 0;
   let result!: ReturnType<typeof render>;
   await act(async () => {
     result = render(<App />);
   });
   await waitFor(() => {
     expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+    if (fixture) {
+      expect(
+        fixture.calls.filter(
+          ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+        ),
+      ).toHaveLength(floorPlanCallsBeforeRender + 1);
+    }
+    expect(
+      result.container.querySelector(
+        `#anchor-route-floor-plan-${floorPlanCallsBeforeRender + 1}`,
+      ),
+    ).not.toBeNull();
     expect(
       result.container.querySelectorAll('rect[fill="rgba(0,112,255,0.06)"]'),
     ).toHaveLength(2);
     expect(
       result.container.querySelector('g[transform="translate(18,-7) scale(1.25)"]'),
     ).not.toBeNull();
-    if (fixture) {
-      expect(
-        fixture.calls.some(([url]) => new URL(url).pathname === "/api/floor-plan/svg"),
-      ).toBe(true);
-    }
   });
   return result;
 }
@@ -272,7 +285,6 @@ describe("web Anchor Calibration routed workflow", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const { container } = await renderRoute(fixture);
-    expect(container.querySelector("#anchor-route-floor-plan")).not.toBeNull();
     const svg = container.querySelector("svg")!;
     mockMapRect(svg);
 
