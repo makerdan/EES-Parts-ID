@@ -203,7 +203,7 @@ Only the three long-running services are ordinary workflows: `artifacts/api-serv
 
 ### Validation tiers (consolidated runners)
 
-Four tier commands run subsets sequentially via `scripts/run-tier.mjs`, with membership centralized in `scripts/validation-steps.mjs`, and are wrapped in the named-resource `scripts/serial-lock.mjs` (`validation`, `codegen`, `shared-test-results`, and `ports`). Task calls require `TASK_PLAN_FILE`; explicit ad-hoc calls must opt in with `--allow-no-plan`. Tiers are cumulative. Lock budgets begin after acquisition, and stale/dead-holder recovery is always logged.
+Four tier commands run subsets sequentially via `scripts/run-tier.mjs`, with membership centralized in `scripts/validation-steps.mjs`, and are wrapped in the named-resource `scripts/serial-lock.mjs` (`validation`, `codegen`, `shared-test-results`, and `ports`). Task calls require `TASK_PLAN_FILE`; explicit ad-hoc calls must opt in with `--allow-no-plan`. Tiers are cumulative. Lock priorities use integers `1` through `9`, where `1` is highest precedence, `9` is lowest, and the default is `5`; priority reorders waiters only after the grace period. Fast work uses priority `1`, standard and standard-plus work uses `2`, and heavy work uses `3`. Lock budgets begin after acquisition, and stale/dead-holder recovery is always logged.
 
 - **`test-fast`** — static checks only: `gate-guard`, task-scoped Failure Gate and Regression Guard repair/check steps, `tsc`, lint, config, port, and bundle-domain checks. (~5 min)
 - **`test-standard`** — fast + codegen/spec/env checks, `failure-gate-contract`, and tests. (~20 min)
@@ -226,6 +226,7 @@ it in sync with this table when checks change. Note: `tsc` subsumes
 | _(new)_ | `regression-guard-fix` / `regression-guard` | fast (task-scoped declaration repair then strict check) |
 | _(new)_ | `api-route-authorization-contract` | fast |
 | _(new)_ | `skill-mirror-sync-contract` | fast (account authority, local projection, and downstream mirror boundary) |
+| _(new)_ | `port-authority-contract` | fast (isolated cleanup and serialization contract) |
 | _(new)_ | `failure-gate-contract` | standard (focused integration contract) |
 | `api-server-coverage` | `api-server-coverage` | standard-plus / heavy |
 | `api-server-typecheck` | `api-server-typecheck` | fast (via `tsc`) |
@@ -273,9 +274,12 @@ Development ports are declared once in `scripts/dev-ports.json`. Its workflow,
 fallback, legacy, and cleanup sets are checked against the three service
 workflow `waitForPort` values in `.replit` by `scripts/dev-port-contract.mjs`.
 Run `bash scripts/check-hardcoded-ports.sh` before changing a service startup
-command. `scripts/free-dev-ports.mjs` sweeps only those explicitly registered
-ports, sequentially, and refuses to report success while a protected holder is
-still bound. It never scans or kills unregistered ports.
+command. `node scripts/free-dev-ports.mjs` is the workspace-wide cleanup
+entrypoint; it delegates to `scripts/free-ports.mjs --all-dev`, sweeps only
+explicitly registered ports sequentially, and refuses to report success while
+a protected holder is still bound. Individual service startup and recovery
+paths call the same `free-ports.mjs` worker for their registered port. Neither
+entrypoint scans or kills unregistered ports.
 
 The native Parts ID fallback on port `8080` is an intentional compatibility
 exception: `artifacts/parts-id/utils/devPorts.ts` still targets it when native
@@ -286,9 +290,25 @@ registered for cleanup.
 The port cleaner protects the caller's process tree, terminates only socket
 owners discovered through `/proc`, escalates from SIGTERM to SIGKILL with
 diagnostics, and confirms each port is free. Production/deployment paths do not
-invoke the development sweep. No app-owned live-update WebSocket endpoint was
-found during the runtime audit, so no speculative application heartbeat was
-added; the preview's own HMR transport remains under the dev-server supervisor.
+invoke the development sweep.
+
+`scripts/serial-lock.mjs` uses the shared `1`-highest through `9`-lowest scale
+described above, defaults to `5`, and applies priority only after the waiter
+grace period. The codegen, shared-test-result, validation-tier, and port-check
+callers all use that scale. Reentrant same-resource wrappers skip acquisition;
+dead, reused, stale-heartbeat, and over-age holders are reclaimed with loud
+diagnostics under a short kernel-backed `flock` guard; wrapped-command budgets
+begin only after acquisition. The guard inode is persistent, but kernel lock
+ownership is released automatically when its helper exits or is killed.
+
+The browser/e2e phase is skipped because the project has no active browser/e2e
+test command or webServer harness. The generated-file phase applies and codegen
+is serialized on the `codegen` resource. No app-owned live-update WebSocket
+endpoint was found, so application heartbeat machinery is also skipped; the
+preview's HMR transport remains owned by its dev-server supervisor. Runtime
+health checks use `GET /api/healthz`, which reaches the Express backend and
+requires a parsed `ok` or `degraded` status rather than accepting an SPA HTML
+fallback.
 
 ## Admin MFA Enforcement
 

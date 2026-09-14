@@ -20,11 +20,11 @@
  * regenerating the same file, and port collisions between e2e suites.
  *
  * Fix: each heavy command is wrapped as
- *   node scripts/serial-lock.mjs --resource codegen --priority 80 -- <command...>
+ *   node scripts/serial-lock.mjs --resource codegen --priority 2 -- <command...>
  * The wrapper acquires an exclusive resource lock BEFORE the wrapped
  * command starts, so any budget timer inside the command only starts
  * ticking once the step actually has the machine to itself. Steps queue up
- * and run one at a time in whatever order they win the lock.
+ * and run one at a time, with priority applied after a short grace period.
  *
  * Stale-lock handling (three layers, checked by waiting processes):
  *  1. Dead-pid reclaim: the lock file records the holder pid; if that
@@ -49,17 +49,27 @@
  * The holder exports SERIAL_LOCK_HELD_PID; a nested wrapper that sees a
  * live holder pid in that variable skips acquisition and runs the command
  * directly.
+ *
+ * Priority scale: integers 1 through 9, where 1 is highest precedence and 9
+ * is lowest. The default is 5. A lower-precedence waiter yields to a
+ * higher-precedence waiter only after the configured grace period, preventing
+ * a just-arrived waiter from repeatedly bypassing an already queued peer.
+ *
+ * Acquisition and stale-holder reclaim run under a short kernel-backed flock
+ * guard. The guard inode is intentionally persistent; flock releases ownership
+ * when the helper exits or is killed, so a crashed waiter cannot strand it.
  */
 import {
   openSync, closeSync, unlinkSync, mkdirSync, writeSync, readFileSync,
-  utimesSync, statSync, readdirSync, rmSync,
+  utimesSync, statSync, readdirSync, rmSync, renameSync,
 } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
+const criticalHelper = resolve(here, "serial-lock-critical.mjs");
 const POLL_INTERVAL_MS = Number(process.env.SERIAL_LOCK_POLL_MS || 1_000);
 // Generous: a full e2e suite can hold the lock for a long time, and several
 // steps may be queued behind it.
@@ -71,11 +81,13 @@ const HEARTBEAT_MS = Number(process.env.SERIAL_LOCK_HEARTBEAT_MS || 30_000);
 const STALE_HEARTBEAT_MS = Number(process.env.SERIAL_LOCK_STALE_HEARTBEAT_MS || 5 * 60 * 1000);
 // Safety valve: no single step may hold the lock longer than this.
 const MAX_HOLD_MS = Number(process.env.SERIAL_LOCK_MAX_HOLD_MS || 2 * 60 * 60 * 1000);
+// Give an existing waiter a short head start before priority reorders the queue.
+const PRIORITY_GRACE_MS = Number(process.env.SERIAL_LOCK_PRIORITY_GRACE_MS || 2_000);
 
 const argv = process.argv.slice(2);
 const sep = argv.indexOf("--");
 if (sep === -1 || sep === argv.length - 1) {
-  console.error("Usage: serial-lock.mjs [--resource <name>] [--priority <n>] -- <command...>");
+  console.error("Usage: serial-lock.mjs [--resource <name>] [--priority <1-9>] -- <command...>");
   process.exit(2);
 }
 const optionArgs = argv.slice(0, sep);
@@ -86,16 +98,22 @@ function optionValue(name, fallback) {
 const lockResource = String(
   process.env.SERIAL_LOCK_RESOURCE || optionValue("--resource", "global"),
 ).trim().replace(/[^a-zA-Z0-9._-]/g, "-") || "global";
-const priority = Number(optionValue("--priority", process.env.SERIAL_LOCK_PRIORITY || 0));
-if (!Number.isFinite(priority)) {
-  console.error(`[serial-lock] invalid priority: ${optionValue("--priority", process.env.SERIAL_LOCK_PRIORITY || "")}`);
+const priorityIndex = optionArgs.indexOf("--priority");
+const priorityValue = priorityIndex >= 0
+  ? optionArgs[priorityIndex + 1]
+  : process.env.SERIAL_LOCK_PRIORITY || "5";
+const priority = Number(priorityValue);
+if (!/^[1-9]$/.test(String(priorityValue))) {
+  console.error(`[serial-lock] invalid priority: ${priorityValue ?? ""}; expected an integer from 1 to 9 (1 is highest)`);
   process.exit(2);
 }
 const lockFile = process.env.SERIAL_LOCK_FILE
   ? resolve(process.env.SERIAL_LOCK_FILE)
   : resolve(root, ".local", lockResource === "global" ? "serial.lock" : `serial-${lockResource}.lock`);
 const lockDir = dirname(lockFile);
-const queueDir = resolve(root, ".local", "serial-lock-queues", lockResource);
+const queueDir = process.env.SERIAL_LOCK_QUEUE_DIR
+  ? resolve(process.env.SERIAL_LOCK_QUEUE_DIR)
+  : resolve(root, ".local", "serial-lock-queues", lockResource);
 const command = argv.slice(sep + 1);
 const commandLabel = command.join(" ");
 
@@ -134,22 +152,26 @@ function holderIsAlive(holderPid, startTicks) {
   return !startTicks || processStartTicks(holderPid) === startTicks;
 }
 
+let queuedAt = 0;
 function enqueue() {
   mkdirSync(queueDir, { recursive: true });
   const queueFile = resolve(queueDir, `${process.pid}.json`);
-  const fd = openSync(queueFile, "w");
+  const queueTempFile = `${queueFile}.${processStartTicks(process.pid) ?? "unknown"}.tmp`;
+  queuedAt = Date.now();
+  const fd = openSync(queueTempFile, "wx");
   try {
-    writeSync(fd, JSON.stringify({ pid: process.pid, priority, queuedAt: Date.now(), startTicks: processStartTicks(process.pid) }));
+    writeSync(fd, JSON.stringify({ pid: process.pid, priority, queuedAt, startTicks: processStartTicks(process.pid) }));
   } finally {
     closeSync(fd);
   }
+  renameSync(queueTempFile, queueFile);
 }
 
 function dequeue() {
   try { unlinkSync(resolve(queueDir, `${process.pid}.json`)); } catch { /* already gone */ }
 }
 
-function higherPriorityWaiterExists() {
+function precedenceWaiterExists() {
   let entries;
   try {
     entries = readdirSync(queueDir);
@@ -157,16 +179,45 @@ function higherPriorityWaiterExists() {
     return false;
   }
   let found = false;
+  const now = Date.now();
+  const selfMatured = now - queuedAt >= PRIORITY_GRACE_MS;
   for (const entry of entries) {
+    if (entry.endsWith(".tmp")) {
+      const tempPid = Number(entry.split(".json.", 1)[0]);
+      const tempFile = resolve(queueDir, entry);
+      try {
+        const ageMs = now - statSync(tempFile).mtimeMs;
+        if (!holderIsAlive(tempPid, null) && ageMs > POLL_INTERVAL_MS * 2) {
+          rmSync(tempFile, { force: true });
+        }
+      } catch { /* publication completed or another waiter cleaned it */ }
+      continue;
+    }
     if (!entry.endsWith(".json") || entry === `${process.pid}.json`) continue;
     const queueFile = resolve(queueDir, entry);
     try {
       const waiter = JSON.parse(readFileSync(queueFile, "utf8"));
-      if (!holderIsAlive(waiter.pid, waiter.startTicks) && Date.now() - waiter.queuedAt > STALE_HEARTBEAT_MS) {
+      if (!holderIsAlive(waiter.pid, waiter.startTicks) && now - waiter.queuedAt > STALE_HEARTBEAT_MS) {
         rmSync(queueFile, { force: true });
         continue;
       }
-      if (Number(waiter.priority) > priority) found = true;
+      const waiterPriority = Number(waiter.priority);
+      const waiterQueuedAt = Number(waiter.queuedAt);
+      if (!Number.isInteger(waiterPriority) || waiterPriority < 1 || waiterPriority > 9 || !Number.isFinite(waiterQueuedAt)) {
+        rmSync(queueFile, { force: true });
+        continue;
+      }
+      const waiterMatured = now - waiterQueuedAt >= PRIORITY_GRACE_MS;
+      const waiterQueuedFirst =
+        waiterQueuedAt < queuedAt ||
+        (waiterQueuedAt === queuedAt && Number(waiter.pid) < process.pid);
+      if (selfMatured && waiterMatured) {
+        if (waiterPriority < priority || (waiterPriority === priority && waiterQueuedFirst)) {
+          found = true;
+        }
+      } else if (waiterQueuedFirst) {
+        found = true;
+      }
     } catch {
       rmSync(queueFile, { force: true });
     }
@@ -175,38 +226,31 @@ function higherPriorityWaiterExists() {
 }
 
 function tryAcquire() {
-  if (higherPriorityWaiterExists()) return false;
-  try {
-    const fd = openSync(lockFile, "wx");
-    try {
-      writeSync(fd, `${process.pid}\n${Date.now()}\n${priority}\n${processStartTicks(process.pid) ?? ""}\n`);
-    } finally {
-      closeSync(fd);
-    }
-    return true;
-  } catch (err) {
-    if (err.code !== "EEXIST") throw err;
-    // Stale-lock reclaim paths — see header comment.
-    try {
-      const { pid: holderPid, acquiredAt, startTicks, mtimeMs } = readLockInfo();
-      const now = Date.now();
-      let reason = null;
-      if (Number.isInteger(holderPid) && holderPid > 0 && !holderIsAlive(holderPid, startTicks)) {
-        reason = `held by dead or reused pid ${holderPid}`;
-      } else if (now - mtimeMs > STALE_HEARTBEAT_MS) {
-        reason = `heartbeat stale for ${Math.round((now - mtimeMs) / 1000)}s (pid ${holderPid} presumed reused/gone)`;
-      } else if (Number.isFinite(acquiredAt) && acquiredAt > 0 && now - acquiredAt > MAX_HOLD_MS) {
-        reason = `held for ${Math.round((now - acquiredAt) / 60000)} min by pid ${holderPid}, ` +
-          `exceeding the ${Math.round(MAX_HOLD_MS / 60000)} min max-hold safety valve — holder appears hung`;
-      }
-      if (reason) {
-        console.error(`[serial-lock] WARNING: forcibly reclaiming ${lockResource} lock: ${reason}`);
-        console.log(`[serial-lock] reclaiming stale lock (${reason})`);
-        try { unlinkSync(lockFile); } catch { /* raced with another reclaimer */ }
-      }
-    } catch { /* lock vanished between open and read — just retry */ }
-    return false;
-  }
+  if (precedenceWaiterExists()) return false;
+  const result = spawnSync(
+    "flock",
+    [
+      "--exclusive",
+      "--nonblock",
+      `${lockFile}.guard`,
+      process.execPath,
+      criticalHelper,
+      lockFile,
+      lockResource,
+      String(priority),
+      String(process.pid),
+      processStartTicks(process.pid) ?? "",
+      String(STALE_HEARTBEAT_MS),
+      String(MAX_HOLD_MS),
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) throw result.error;
+  if (result.status === 0) return true;
+  if ([1, 3, 4].includes(result.status)) return false;
+  throw new Error(`[serial-lock] acquisition helper exited ${result.status ?? "without status"}`);
 }
 
 let lockAcquired = false;

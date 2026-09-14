@@ -28,6 +28,7 @@ not inferred from this file.
 | lint | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | lint-mocks | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | tsconfig-check | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
+| port-authority-contract | `CI / required` → `pnpm run test-standard-plus` | isolated cleanup and serialization contract coverage | PR, merge queue, main push, manual | tracked contract test |
 | port-guard | `CI / required` → `pnpm run test-standard-plus` | direct portable one-shot scan | PR, merge queue, main push, manual | inferred from tier manifest |
 | bundle-domain-check | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | light-mode-config | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |

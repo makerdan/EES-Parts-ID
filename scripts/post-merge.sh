@@ -334,7 +334,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   git config --global user.name "Post-Merge Bot" 2>/dev/null || true
 
   echo "[post-merge] Regenerating API client and auto-committing any drift..."
-  timeout 120 node scripts/serial-lock.mjs --resource codegen --priority 80 -- pnpm --filter @workspace/api-spec run codegen:fix || {
+  timeout 120 node scripts/serial-lock.mjs --resource codegen --priority 2 -- pnpm --filter @workspace/api-spec run codegen:fix || {
     CODEGEN_EXIT=$?
     if [[ "$CODEGEN_EXIT" -eq 124 ]]; then
       echo "[post-merge] ERROR: codegen:fix timed out after 120s. Aborting."

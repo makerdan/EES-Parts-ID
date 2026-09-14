@@ -23,6 +23,7 @@ const githubSetup = readFileSync(
 );
 
 const standardSteps = getTierSteps("standard");
+const fastSteps = getTierSteps("fast");
 const testStep = standardSteps.find(([name]) => name === "test");
 assert.ok(testStep, "standard validation must define a database-backed test step");
 assert.match(
@@ -45,6 +46,24 @@ assert.match(
   /\["test",\s*"node scripts\/serial-lock\.mjs --resource shared-test-results/,
   "the canonical test step must remain the serialized workspace test command",
 );
+assert.deepEqual(
+  fastSteps.find(([name]) => name === "port-authority-contract"),
+  ["port-authority-contract", "node scripts/test-port-authority.mjs"],
+  "test-fast must keep the focused Port Authority contract reachable",
+);
+
+for (const [tier, priority] of [
+  ["fast", 1],
+  ["standard", 2],
+  ["standard-plus", 2],
+  ["heavy", 3],
+]) {
+  assert.equal(
+    packageJson.scripts?.[`test-${tier}`],
+    `node scripts/serial-lock.mjs --resource validation --priority ${priority} -- node scripts/run-tier.mjs ${tier} --allow-no-plan`,
+    `test-${tier} must remain executable through the documented lock priority scale`,
+  );
+}
 
 assert.match(
   packageJson.engines?.node ?? "",

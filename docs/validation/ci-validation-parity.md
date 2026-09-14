@@ -103,21 +103,22 @@ remote owner.
 | `lint` | `node scripts/check-db-reachability.mjs && pnpm --filter @workspace/parts-id run lint && pnpm --filter @workspace/api-server run lint && pnpm --filter @workspace/mockup-sandbox run lint && pnpm run lint:libs` | `CI` portable validation with the PostgreSQL service and test database environment | direct | inferred |
 | `lint-mocks` | `pnpm --filter @workspace/scripts run lint:mocks` | `CI` portable validation | direct | inferred |
 | `tsconfig-check` | `pnpm --filter @workspace/scripts run tsconfig:check` | `CI` portable validation | direct | inferred |
-| `port-guard` | `node scripts/serial-lock.mjs --resource ports --priority 90 -- bash scripts/check-hardcoded-ports.sh` | `CI` portable validation | direct | inferred |
+| `port-authority-contract` | `node scripts/test-port-authority.mjs` | `CI` portable validation | direct | inferred |
+| `port-guard` | `node scripts/serial-lock.mjs --resource ports --priority 1 -- bash scripts/check-hardcoded-ports.sh` | `CI` portable validation | direct | inferred |
 | `bundle-domain-check` | `pnpm --filter @workspace/parts-id run check:bundle-domain` | `CI` portable validation | direct | inferred |
 | `light-mode-config` | `bash scripts/check-light-mode-config.sh` | `CI` portable validation | direct | inferred |
-| `codegen-check` | `node scripts/serial-lock.mjs --resource codegen --priority 80 -- pnpm --filter @workspace/api-spec run codegen:check` | `CI` portable validation after frozen install | direct | inferred |
+| `codegen-check` | `node scripts/serial-lock.mjs --resource codegen --priority 2 -- pnpm --filter @workspace/api-spec run codegen:check` | `CI` portable validation after frozen install | direct | inferred |
 | `spec-check` | `pnpm --filter @workspace/api-spec run spec:check` | `CI` portable validation | direct | inferred |
 | `env-check` | `pnpm --filter @workspace/scripts env:check` | `CI` portable validation | direct | inferred |
 | `privacy-check` | `pnpm --filter @workspace/scripts privacy:check` | `CI` portable validation | direct | inferred |
 | `privacy-check-contract` | `node scripts/test/production-privacy-check.test.mjs` | `CI` portable validation | direct | inferred |
 | `spec-check-tests` | `pnpm --filter @workspace/api-spec test` | `CI` portable validation | package-specific | inferred |
 | `failure-gate-contract` | `node scripts/test/failure-gate-contract.test.mjs` | `CI` portable validation | direct | inferred |
-| `test` | `node scripts/serial-lock.mjs --resource shared-test-results --priority 60 -- pnpm test` | `CI` portable validation; root `pnpm test` invokes `scripts/test-all.sh` | direct | inferred |
+| `test` | `node scripts/serial-lock.mjs --resource shared-test-results --priority 2 -- pnpm test` | `CI` portable validation; root `pnpm test` invokes `scripts/test-all.sh` | direct | inferred |
 | `serve-proxy-smoke` | `pnpm --filter @workspace/parts-id run test:serve-proxy` | `CI` portable validation | package-specific | inferred |
 | `schema-check` | `pnpm --filter @workspace/db run schema:check` | `CI` portable validation; schema is also prepared before the tier by `push-force` | direct | inferred |
 | `verify-fts` | `pnpm --filter @workspace/db run verify-fts` | `CI` portable validation | direct | inferred |
-| `api-server-coverage` | `node scripts/serial-lock.mjs --resource shared-test-results --priority 60 -- pnpm --filter @workspace/api-server run test:coverage` | `CI` portable validation | package-specific | inferred |
+| `api-server-coverage` | `node scripts/serial-lock.mjs --resource shared-test-results --priority 2 -- pnpm --filter @workspace/api-server run test:coverage` | `CI` portable validation | package-specific | inferred |
 | `security-audit` | `pnpm audit --audit-level=low` | `CI` portable validation; also `Scheduled security audit` | direct | observed for the duplicate scheduled owner; portable execution remains inferred |
 | `post-merge-health-test` | `bash scripts/test-post-merge.sh` | `CI` portable validation | direct | inferred |
 

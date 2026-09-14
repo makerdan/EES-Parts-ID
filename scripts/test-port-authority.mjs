@@ -14,8 +14,9 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -25,6 +26,21 @@ const PORT_CHECK = join(ROOT, "scripts", "check-hardcoded-ports.sh");
 const SLEEP_CODE = "setTimeout(() => process.exit(0), Number(process.argv[1]))";
 const MARK_CODE =
   "require('node:fs').appendFileSync(process.argv[1], process.argv[2] + '\\n')";
+const EXCLUSIVE_MARK_CODE = [
+  "const fs = require('node:fs');",
+  "const guard = process.argv[1];",
+  "const marker = process.argv[2];",
+  "const label = process.argv[3];",
+  "let fd;",
+  "try { fd = fs.openSync(guard, 'wx'); }",
+  "catch { fs.appendFileSync(marker, 'OVERLAP\\n'); process.exit(9); }",
+  "fs.appendFileSync(marker, label + ':start\\n');",
+  "setTimeout(() => {",
+  "  fs.closeSync(fd);",
+  "  fs.rmSync(guard, { force: true });",
+  "  fs.appendFileSync(marker, label + ':end\\n');",
+  "}, 150);",
+].join("");
 const SERVER_CODE = [
   "const net = require('node:net');",
   "const server = net.createServer();",
@@ -47,6 +63,7 @@ function lockEnv(lockFile, overrides = {}) {
     SERIAL_LOCK_TIMEOUT_MS: "5000",
     SERIAL_LOCK_STALE_HEARTBEAT_MS: "10000",
     SERIAL_LOCK_MAX_HOLD_MS: "10000",
+    SERIAL_LOCK_QUEUE_DIR: join(testRoot, "queues", basename(lockFile, ".lock")),
     SERIAL_LOCK_HELD_PID: "",
     SERIAL_LOCK_HELD_RESOURCES: "",
     ...overrides,
@@ -100,7 +117,7 @@ function lockArgs(resource, lockFile, priority, command) {
 }
 
 function queueDirFor(resource) {
-  return join(ROOT, ".local", "serial-lock-queues", resource);
+  return join(testRoot, "queues", resource);
 }
 
 function spawnLock(resource, lockFile, priority, command, overrides = {}) {
@@ -157,32 +174,79 @@ async function test(name, callback) {
   }
 }
 
+await test("serial lock rejects priorities outside the documented 1-9 scale", async () => {
+  const resource = uniqueName("invalid-priority");
+  const lockFile = join(testRoot, `${resource}.lock`);
+  const result = await runProcess(
+    process.execPath,
+    lockArgs(resource, lockFile, 10, [process.execPath, "-e", SLEEP_CODE, "1"]),
+    lockEnv(lockFile),
+  );
+  assert(result.code === 2, `invalid priority exited ${result.code}: ${result.output}`);
+  assert(result.output.includes("expected an integer from 1 to 9"), `missing priority diagnostic: ${result.output}`);
+});
+
+await test("port cleanup rejects a missing port argument", async () => {
+  const result = await runProcess(process.execPath, [FREE_PORTS]);
+  assert(result.code === 2, `missing-port cleanup exited ${result.code}: ${result.output}`);
+  assert(result.output.includes("Usage: free-ports.mjs"), `missing usage diagnostic: ${result.output}`);
+});
+
+await test("port cleanup leaves an unused ephemeral port untouched", async () => {
+  const server = createServer();
+  await new Promise((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  const port = server.address().port;
+  await new Promise((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
+  const result = await runProcess(process.execPath, [FREE_PORTS, String(port)]);
+  assert(result.code === 0, `unused-port cleanup exited ${result.code}: ${result.output}`);
+  assert(!result.output.includes("terminating tree"), `unused port was treated as occupied: ${result.output}`);
+});
+
+await test("serial lock propagates child status and removes the lock", async () => {
+  for (const exitCode of [0, 7]) {
+    const resource = uniqueName(`child-exit-${exitCode}`);
+    const lockFile = join(testRoot, `${resource}.lock`);
+    const result = await runProcess(
+      process.execPath,
+      lockArgs(resource, lockFile, 2, [process.execPath, "-e", `process.exit(${exitCode})`]),
+      lockEnv(lockFile),
+    );
+    assert(result.code === exitCode, `child exit ${exitCode} became ${result.code}: ${result.output}`);
+    assert(!existsSync(lockFile), `lock remained after child exit ${exitCode}`);
+    assert(!existsSync(join(queueDirFor(resource), `${result.child.pid}.json`)), `queue entry remained after child exit ${exitCode}`);
+  }
+});
+
 await test("serial lock honors priority-aware queue ordering", async () => {
   const resource = uniqueName("priority");
   const lockFile = join(testRoot, `${resource}.lock`);
   const marker = join(testRoot, `${resource}.order`);
   const queueDir = queueDirFor(resource);
-  const holder = spawnLock(resource, lockFile, 1, [process.execPath, "-e", SLEEP_CODE, "350"]);
+  const graceEnv = { SERIAL_LOCK_PRIORITY_GRACE_MS: "50" };
+  const holder = spawnLock(resource, lockFile, 5, [process.execPath, "-e", SLEEP_CODE, "350"], graceEnv);
   try {
     await waitFor(() => existsSync(lockFile), "priority holder lock");
-    const low = spawnLock(resource, lockFile, 10, [
+    const low = spawnLock(resource, lockFile, 9, [
       process.execPath,
       "-e",
       MARK_CODE,
       marker,
       "low",
-    ]);
+    ], graceEnv);
     await waitFor(
       () => existsSync(join(queueDir, `${low.child.pid}.json`)),
       "low-priority queue entry",
     );
-    const high = spawnLock(resource, lockFile, 90, [
+    const high = spawnLock(resource, lockFile, 1, [
       process.execPath,
       "-e",
       MARK_CODE,
       marker,
       "high",
-    ]);
+    ], graceEnv);
     const [holderResult, highResult, lowResult] = await Promise.all([
       holder.result,
       high.result,
@@ -194,6 +258,49 @@ await test("serial lock honors priority-aware queue ordering", async () => {
     assert(
       readFileSync(marker, "utf8").trim() === "high\nlow",
       `expected high then low, got ${JSON.stringify(readFileSync(marker, "utf8"))}`,
+    );
+  } finally {
+    if (holder.child.exitCode === null) holder.child.kill("SIGKILL");
+    rmSync(queueDir, { recursive: true, force: true });
+  }
+});
+
+await test("serial lock preserves FIFO order before the priority grace expires", async () => {
+  const resource = uniqueName("priority-grace");
+  const lockFile = join(testRoot, `${resource}.lock`);
+  const marker = join(testRoot, `${resource}.order`);
+  const queueDir = queueDirFor(resource);
+  const graceEnv = { SERIAL_LOCK_PRIORITY_GRACE_MS: "1000" };
+  const holder = spawnLock(resource, lockFile, 5, [process.execPath, "-e", SLEEP_CODE, "300"], graceEnv);
+  try {
+    await waitFor(() => existsSync(lockFile), "grace holder lock");
+    const low = spawnLock(resource, lockFile, 9, [
+      process.execPath,
+      "-e",
+      MARK_CODE,
+      marker,
+      "low",
+    ], graceEnv);
+    await waitFor(() => existsSync(join(queueDir, `${low.child.pid}.json`)), "older low-priority waiter");
+    const high = spawnLock(resource, lockFile, 1, [
+      process.execPath,
+      "-e",
+      MARK_CODE,
+      marker,
+      "high",
+    ], graceEnv);
+    await waitFor(() => existsSync(join(queueDir, `${high.child.pid}.json`)), "newer high-priority waiter");
+    const [holderResult, lowResult, highResult] = await Promise.all([
+      holder.result,
+      low.result,
+      high.result,
+    ]);
+    assert(holderResult.code === 0, `grace holder exited ${holderResult.code}`);
+    assert(lowResult.code === 0, `older waiter exited ${lowResult.code}: ${lowResult.output}`);
+    assert(highResult.code === 0, `newer waiter exited ${highResult.code}: ${highResult.output}`);
+    assert(
+      readFileSync(marker, "utf8").trim() === "low\nhigh",
+      `expected low then high before grace, got ${JSON.stringify(readFileSync(marker, "utf8"))}`,
     );
   } finally {
     if (holder.child.exitCode === null) holder.child.kill("SIGKILL");
@@ -231,12 +338,15 @@ await test("serial lock removes stale queue entries before acquisition", async (
   const lockFile = join(testRoot, `${resource}.lock`);
   const queueDir = queueDirFor(resource);
   const staleQueue = join(queueDir, "987654321.json");
+  const staleTemp = join(queueDir, "987654321.json.old-start.tmp");
   try {
     mkdirSync(queueDir, { recursive: true });
     writeFileSync(
       staleQueue,
       JSON.stringify({ pid: 987654321, priority: 999, queuedAt: Date.now() - 60000, startTicks: "old" }),
     );
+    writeFileSync(staleTemp, "incomplete publication");
+    setMtime(staleTemp, Date.now() - 60000);
     const result = await runProcess(
       process.execPath,
       lockArgs(resource, lockFile, 1, [process.execPath, "-e", SLEEP_CODE, "1"]),
@@ -244,6 +354,7 @@ await test("serial lock removes stale queue entries before acquisition", async (
     );
     assert(result.code === 0, `waiter exited ${result.code}: ${result.output}`);
     assert(!existsSync(staleQueue), "stale queue entry was not removed");
+    assert(!existsSync(staleTemp), "stale queue publication temp was not removed");
   } finally {
     rmSync(queueDir, { recursive: true, force: true });
   }
@@ -302,17 +413,59 @@ for (const recoveryCase of recoveryCases) {
       assert(result.code === 0, `recovery exited ${result.code}: ${result.output}`);
       assert(result.output.includes("WARNING: forcibly reclaiming"), `missing warning: ${result.output}`);
       assert(result.output.includes(recoveryCase.reason), `missing ${recoveryCase.label} reason: ${result.output}`);
+      const diagnostics = result.output
+        .split("\n")
+        .filter((line) => line.includes("forcibly reclaiming") || line.includes("reclaiming stale lock"))
+        .join(" | ");
+      console.log(`  recovery diagnostics: ${diagnostics}`);
     } finally {
       rmSync(queueDirFor(resource), { recursive: true, force: true });
     }
   });
 }
 
+await test("serial lock serializes concurrent stale-lock reclaimers", async () => {
+  const resource = uniqueName("concurrent-reclaim");
+  const lockFile = join(testRoot, `${resource}.lock`);
+  const guard = join(testRoot, `${resource}.guard`);
+  const marker = join(testRoot, `${resource}.order`);
+  try {
+    writeLock(lockFile, { pid: 987654321, acquiredAt: Date.now() });
+    const first = spawnLock(resource, lockFile, 9, [
+      process.execPath,
+      "-e",
+      EXCLUSIVE_MARK_CODE,
+      guard,
+      marker,
+      "first",
+    ], { SERIAL_LOCK_PRIORITY_GRACE_MS: "0" });
+    const second = spawnLock(resource, lockFile, 1, [
+      process.execPath,
+      "-e",
+      EXCLUSIVE_MARK_CODE,
+      guard,
+      marker,
+      "second",
+    ], { SERIAL_LOCK_PRIORITY_GRACE_MS: "0" });
+    const [firstResult, secondResult] = await Promise.all([first.result, second.result]);
+    assert(firstResult.code === 0, `first reclaimer exited ${firstResult.code}: ${firstResult.output}`);
+    assert(secondResult.code === 0, `second reclaimer exited ${secondResult.code}: ${secondResult.output}`);
+    const lines = readFileSync(marker, "utf8").trim().split("\n");
+    assert(!lines.includes("OVERLAP"), `concurrent holders overlapped: ${JSON.stringify(lines)}`);
+    assert(lines.length === 4, `expected two serialized child spans, got ${JSON.stringify(lines)}`);
+    assert(lines[0].endsWith(":start") && lines[1] === lines[0].replace(":start", ":end"), `first span was not serialized: ${JSON.stringify(lines)}`);
+    assert(lines[2].endsWith(":start") && lines[3] === lines[2].replace(":start", ":end"), `second span was not serialized: ${JSON.stringify(lines)}`);
+  } finally {
+    rmSync(guard, { force: true });
+    rmSync(queueDirFor(resource), { recursive: true, force: true });
+  }
+});
+
 await test("serial lock starts the resource budget after queue acquisition", async () => {
   const resource = uniqueName("budget");
   const lockFile = join(testRoot, `${resource}.lock`);
   const marker = join(testRoot, `${resource}.marker`);
-  const holder = spawnLock(resource, lockFile, 1, [process.execPath, "-e", SLEEP_CODE, "350"]);
+  const holder = spawnLock(resource, lockFile, 1, [process.execPath, "-e", SLEEP_CODE, "800"]);
   try {
     await waitFor(() => existsSync(lockFile), "budget holder lock");
     const waiter = await runProcess(
@@ -325,14 +478,14 @@ await test("serial lock starts the resource budget after queue acquisition", asy
         "acquired",
         "20",
       ]),
-      lockEnv(lockFile, { SERIAL_LOCK_BUDGET_MS: "100" }),
+      lockEnv(lockFile, { SERIAL_LOCK_BUDGET_MS: "500" }),
       5000,
     );
     const holderResult = await holder.result;
     assert(holderResult.code === 0, `budget holder exited ${holderResult.code}`);
     assert(waiter.code === 0, `budget waiter exited ${waiter.code}: ${waiter.output}`);
     assert(readFileSync(marker, "utf8").trim() === "acquired", "waiter never ran after acquiring");
-    assert(!waiter.output.includes("budget of 100ms exceeded"), `budget included queue wait: ${waiter.output}`);
+    assert(!waiter.output.includes("budget of 500ms exceeded"), `budget included queue wait: ${waiter.output}`);
   } finally {
     if (holder.child.exitCode === null) holder.child.kill("SIGKILL");
     rmSync(queueDirFor(resource), { recursive: true, force: true });

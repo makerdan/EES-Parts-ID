@@ -15,7 +15,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELD_RESOURCES=",${SERIAL_LOCK_HELD_RESOURCES:-},"
 if [[ "$HELD_RESOURCES" != *,global,* && "$HELD_RESOURCES" != *,shared-test-results,* ]]; then
-  exec node "${SCRIPT_DIR}/serial-lock.mjs" --resource shared-test-results --priority 60 -- bash "${BASH_SOURCE[0]}" "$@"
+  exec node "${SCRIPT_DIR}/serial-lock.mjs" --resource shared-test-results --priority 2 -- bash "${BASH_SOURCE[0]}" "$@"
 fi
 echo "[test-all] serialized run — lock held (waited ${SERIAL_LOCK_WAIT_SECS:-0}s in queue; budgets start now)."
 
