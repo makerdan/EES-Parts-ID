@@ -22,8 +22,8 @@ import {
   StyleSheet,
   Switch,
   Text,
-  View,
   useWindowDimensions,
+  View,
 } from "react-native";
 
 import { AIZeroResultsCard,SearchedAsRow } from "@/components/AISearchFallback";

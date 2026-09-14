@@ -1661,7 +1661,7 @@ export default function UploadScreen() {
     return () => {
       controller.abort();
     };
-  }, [rawCsv, parsedRows.length, adminToken, logoutAdmin, importMode]);
+  }, [rawCsv, parsedRows, adminToken, logoutAdmin, importMode]);
 
   const bulkPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const measurePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);

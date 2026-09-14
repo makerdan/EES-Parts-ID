@@ -41,11 +41,10 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  View,
   useWindowDimensions,
+  View,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   cancelAnimation,
   runOnJS,
@@ -58,6 +57,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ellipse,G, Path, Rect, Svg, SvgUri, SvgXml, Text as SvgText } from "react-native-svg";
 import { z } from "zod";
 

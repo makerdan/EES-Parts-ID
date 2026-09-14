@@ -11,8 +11,8 @@ import {
   SafeAreaView,
   StyleSheet,
   Text,
-  View,
   useWindowDimensions,
+  View,
 } from "react-native";
 
 import { CatalogPickerModal } from "@/components/CatalogPickerModal";
@@ -248,7 +248,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
       };
       pendingCommitRef.current = doCommit;
     },
-    [addEntry, onFound, onClose, resetScan, scanPhase, isAdmin, scheduleTimer],
+    [addEntry, onFound, onClose, scanPhase, isAdmin, scheduleTimer],
   );
 
   const captureNow = useCallback(() => {

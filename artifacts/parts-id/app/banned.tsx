@@ -1,8 +1,8 @@
 import React from "react";
 import {
   ActivityIndicator,
-  ScrollView,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,

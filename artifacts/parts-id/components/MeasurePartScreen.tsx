@@ -36,8 +36,8 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  View,
   useWindowDimensions,
+  View,
 } from "react-native";
 
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";

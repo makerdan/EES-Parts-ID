@@ -7,16 +7,15 @@ import {
   Pressable,
   RefreshControl,
   SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
-  View,
   useWindowDimensions,
+  View,
 } from "react-native";
 
 import { ContactSheet } from "@/components/ContactSheet";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";

@@ -16,14 +16,14 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  View,
   useWindowDimensions,
+  View,
 } from "react-native";
 
 import { BarcodeScanModal } from "@/components/BarcodeScanModal";
 import BarcodeScreen from "@/components/BarcodeScreen";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
