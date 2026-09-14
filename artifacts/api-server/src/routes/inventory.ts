@@ -43,9 +43,9 @@ import { getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } fro
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 import {
   getLogger,
+  type InventoryResponseDiagnostic,
   logger,
   logInventoryResponseSchemaFailure,
-  type InventoryResponseDiagnostic,
 } from "../lib/logger";
 import {
   deletePrivateObjects,
@@ -203,7 +203,9 @@ class InventoryResponseSchemaError extends Error {
   }
 }
 
-function safeInventoryFields(issues: Array<{ path: Array<PropertyKey> }>): string[] {
+function safeInventoryFields(
+  issues: Array<{ path: Array<PropertyKey> }>,
+): Array<string> {
   const fields = new Set<string>();
   for (const issue of issues) {
     const field = [...issue.path]

@@ -5,10 +5,10 @@ import { Router } from "express";
 
 import {
   getAllPoeModelNames,
+  getLastProbeOperation,
   getPoeCatalogueSnapshot,
   getPoeFallbackOverrides,
   getPoeFeatureRoutes,
-  getLastProbeOperation,
   getProbeSummary,
   getProbeVerificationSummary,
   getProvider,

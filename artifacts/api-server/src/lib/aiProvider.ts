@@ -13,7 +13,6 @@
 
 import { adminPreferencesTable,db } from "@workspace/db";
 import {
-  createPoeChatCompletion,
   createPoeChatCompletionWithSettlement,
   getPoeClient,
   listPoeModels,
@@ -541,7 +540,7 @@ export const POE_CATALOG_BOT_FALLBACK = "Gemini-2.5-Pro";
  * Effective catalog bot name. Live verification never mutates routing.
  * Always read via getCatalogModel() rather than this variable directly.
  */
-let _effectiveCatalogBotName: string = POE_CATALOG_BOT;
+const _effectiveCatalogBotName: string = POE_CATALOG_BOT;
 
 const DEFAULT_FALLBACKS: Record<PoeFeature, Array<string>> = {
   enrich: [POE_IDENTIFY_BOT],

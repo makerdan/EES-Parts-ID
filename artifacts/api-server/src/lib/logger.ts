@@ -33,7 +33,7 @@ export function getLogger(res: Response): typeof logger {
 export type InventoryResponseDiagnostic = {
   responseFamily: "list" | "search" | "barcode";
   rowRole: "primary" | "variant" | "size-unknown";
-  fields: string[];
+  fields: Array<string>;
 };
 
 /**
