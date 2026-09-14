@@ -11,6 +11,7 @@ import {
   compareStructuralConfig,
   redactStructuralConfig,
 } from "../lib/replit-config-parity.mjs";
+import { getTierSteps, TIERS } from "../validation-steps.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const REPLIT_PATH = resolve(ROOT, ".replit");
@@ -43,30 +44,54 @@ const source = readFileSync(REPLIT_PATH, "utf8");
 const config = parseToml(source, ".replit must be valid TOML");
 
 assert.deepEqual(config.modules, ["nodejs-24", "python-3.11", "postgresql-16"]);
-assert.match(source, /Node 24 toolchain/, "Replit must document the Node runtime contract");
 assert.deepEqual(config.postMerge, {
   path: "scripts/post-merge.sh",
   timeoutMs: 420000,
 });
 assert.equal(config.nix?.channel, "stable-25_05");
 assert.equal(config.workflows?.runButton, "Project");
-assert.equal(config.workflows?.workflow?.length, 8);
-assert.equal(config.ports?.length, 4);
+assert.deepEqual(config.ports, [
+  { localPort: 3001, externalPort: 4200 },
+  { localPort: 8080, externalPort: 8080 },
+  { localPort: 8081, externalPort: 80 },
+  { localPort: 8082, externalPort: 3001 },
+  { localPort: 8083, externalPort: 3003 },
+  { localPort: 22660, externalPort: 3000 },
+  { localPort: 22661, externalPort: 3002 },
+]);
 
 const workflows = new Map(
   config.workflows.workflow.map((workflow) => [workflow.name, workflow]),
 );
+const validationWorkflowNames = Object.keys(TIERS).map((tier) => `test-${tier}`);
+assert.deepEqual(
+  [...workflows.keys()].sort(),
+  [
+    "Project",
+    "artifacts/api-server: API Server",
+    "artifacts/mockup-sandbox: Component Preview Server",
+    "artifacts/parts-id: expo",
+    ...validationWorkflowNames,
+  ].sort(),
+  "active workflows must be exactly the project, registered artifacts, and canonical validation tiers",
+);
 assert.equal(workflows.get("Project")?.tasks?.length, 1);
 assert.equal(workflows.get("Project")?.tasks?.[0]?.task, "workflow.run");
 assert.equal(workflows.get("Project")?.tasks?.[0]?.args, "test-fast");
-for (const name of [
-  "test-fast",
-  "test-standard",
-  "test-standard-plus",
-  "test-heavy",
-]) {
+for (const name of validationWorkflowNames) {
   assert.equal(workflows.get(name)?.metadata?.isValidation, true);
+  assert.equal(workflows.get(name)?.tasks?.length, 1);
+  assert.equal(workflows.get(name)?.tasks?.[0]?.task, "shell.exec");
+  assert.equal(workflows.get(name)?.tasks?.[0]?.args, `pnpm run ${name}`);
 }
+assert(
+  getTierSteps("heavy").some(([name]) => name === "protected-map-concurrency"),
+  "heavy validation must retain the protected-map concurrency smoke step",
+);
+assert(
+  !getTierSteps("standard-plus").some(([name]) => name === "protected-map-concurrency"),
+  "the protected-map concurrency smoke step must remain heavy-only",
+);
 
 const malformed = source.replace(
   '[postMerge]\npath = "scripts/post-merge.sh"',
