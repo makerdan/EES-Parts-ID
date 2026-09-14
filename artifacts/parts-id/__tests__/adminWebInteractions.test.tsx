@@ -10,7 +10,9 @@
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-jest.mock("react-native", () => require("react-native-web"));
+jest.mock("react-native", () =>
+  require("./helpers/mapMocks").createReactNativeMock(require("react-native-web")),
+);
 
 const mockRouterPush = jest.fn();
 jest.mock("expo-router", () => ({

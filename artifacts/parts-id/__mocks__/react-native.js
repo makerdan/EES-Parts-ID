@@ -27,8 +27,11 @@ const Animated = {
     interpolate() { return this; }
   },
   View: make("rn-animated-view"),
+  createAnimatedComponent: (Component) => Component,
   loop: (a) => ({ start: noop, stop: noop, reset: noop }),
+  parallel: (animations) => ({ start: noop, stop: noop, reset: noop }),
   sequence: (a) => ({ start: noop, stop: noop, reset: noop }),
+  spring: () => ({ start: noop, stop: noop, reset: noop }),
   timing: () => ({ start: noop, stop: noop, reset: noop }),
 };
 const Easing = { linear: noop, ease: noop, in: () => noop, out: () => noop, inOut: () => noop };
@@ -64,9 +67,9 @@ module.exports = {
   Switch: function Switch() { return null; },
   RefreshControl: function RefreshControl() { return null; },
   Keyboard: { dismiss: noop, addListener: () => ({ remove: noop }) },
-  Modal: function Modal({ children, visible }) {
+  Modal: function Modal({ children, visible, ...props }) {
     if (!visible) return null;
-    return React.createElement("rn-modal", {}, children);
+    return React.createElement("rn-modal", props, children);
   },
   /**
    * FlatList — calls renderItem for every entry in data so that child

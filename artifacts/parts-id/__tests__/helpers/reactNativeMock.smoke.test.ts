@@ -10,6 +10,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import type * as React from "react";
 
 const ARTIFACT_ROOT = path.resolve(__dirname, "../..");
 const NATIVE_MOCK_PATH = path.resolve(ARTIFACT_ROOT, "__mocks__/react-native.js");
@@ -30,6 +31,134 @@ const TYPE_ONLY_NATIVE_EXPORTS = new Set([
   "LayoutChangeEvent",
   "ScrollViewProps",
 ]);
+
+type NativeMock = Record<string, unknown>;
+
+const REQUIRED_CALLABLE_NATIVE_APIS = [
+  "Alert.alert",
+  "Animated.Value",
+  "Animated.Value.prototype.interpolate",
+  "Animated.Value.prototype.setValue",
+  "Animated.createAnimatedComponent",
+  "Animated.loop",
+  "Animated.parallel",
+  "Animated.sequence",
+  "Animated.spring",
+  "Animated.timing",
+  "Appearance.addChangeListener",
+  "Appearance.getColorScheme",
+  "Appearance.setColorScheme",
+  "AppState.addEventListener",
+  "BackHandler.addEventListener",
+  "Dimensions.addEventListener",
+  "Dimensions.get",
+  "Easing.in",
+  "Easing.inOut",
+  "Easing.linear",
+  "Easing.out",
+  "Keyboard.addListener",
+  "Keyboard.dismiss",
+  "LayoutAnimation.configureNext",
+  "Linking.addEventListener",
+  "Linking.canOpenURL",
+  "Linking.getInitialURL",
+  "Linking.openSettings",
+  "Linking.openURL",
+  "PanResponder.create",
+  "PixelRatio.get",
+  "PixelRatio.roundToNearestPixel",
+  "Platform.select",
+  "Share.share",
+  "StatusBar.setBackgroundColor",
+  "StatusBar.setBarStyle",
+  "StatusBar.setHidden",
+  "StatusBar.setTranslucent",
+  "StyleSheet.create",
+  "StyleSheet.flatten",
+  "UIManager.getViewManagerConfig",
+  "UIManager.setLayoutAnimationEnabledExperimental",
+] as const;
+
+const REQUIRED_DEFINED_NATIVE_APIS = [
+  "Animated.View",
+  "LayoutAnimation.Presets.easeInEaseOut",
+  "Platform.OS",
+  "StyleSheet.absoluteFill",
+  "StyleSheet.absoluteFillObject",
+  "StyleSheet.hairlineWidth",
+] as const;
+
+function getApiPath(nativeMock: NativeMock, apiPath: string): unknown {
+  let value: unknown = nativeMock;
+  for (const segment of apiPath.split(".")) {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+      return undefined;
+    }
+    value = (value as Record<string, unknown>)[segment];
+  }
+  return value;
+}
+
+function assertNestedNativeContract(nativeMock: NativeMock): void {
+  const missing: string[] = [
+    ...REQUIRED_CALLABLE_NATIVE_APIS.filter(
+      (apiPath) => typeof getApiPath(nativeMock, apiPath) !== "function",
+    ),
+    ...REQUIRED_DEFINED_NATIVE_APIS.filter(
+      (apiPath) => getApiPath(nativeMock, apiPath) === undefined,
+    ),
+  ];
+
+  const appStateSubscription = (
+    getApiPath(nativeMock, "AppState.addEventListener") as
+      | ((event: string, listener: () => void) => { remove?: unknown })
+      | undefined
+  )?.("change", () => {});
+  if (typeof appStateSubscription?.remove !== "function") {
+    missing.push("AppState.addEventListener(...).remove");
+  }
+
+  const animated = nativeMock.Animated as {
+    Value: new (value: number) => unknown;
+    loop: (animation: unknown) => unknown;
+    parallel: (animations: unknown[]) => unknown;
+    sequence: (animations: unknown[]) => unknown;
+    spring: (value: unknown, config: object) => unknown;
+    timing: (value: unknown, config: object) => unknown;
+  };
+  const animationFactoryNames = [
+    "Value",
+    "loop",
+    "parallel",
+    "sequence",
+    "spring",
+    "timing",
+  ] as const;
+  if (animationFactoryNames.every((name) => typeof animated?.[name] === "function")) {
+    const value = new animated.Value(0);
+    const animationFactories = [
+      ["Animated.loop(...)", () => animated.loop(animated.timing(value, {}))],
+      ["Animated.parallel(...)", () => animated.parallel([animated.spring(value, {})])],
+      ["Animated.sequence(...)", () => animated.sequence([animated.timing(value, {})])],
+      ["Animated.spring(...)", () => animated.spring(value, {})],
+      ["Animated.timing(...)", () => animated.timing(value, {})],
+    ] as const;
+    for (const [apiPath, createAnimation] of animationFactories) {
+      const handle = createAnimation() as Record<string, unknown>;
+      for (const method of ["start", "stop", "reset"]) {
+        if (typeof handle?.[method] !== "function") {
+          missing.push(`${apiPath}.${method}`);
+        }
+      }
+    }
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Canonical react-native mock has missing or invalid nested API path(s): ${missing.sort().join(", ")}`,
+    );
+  }
+}
 
 function collectSourceFiles(dir: string, files: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -111,6 +240,57 @@ describe("canonical react-native mock smoke", () => {
     };
 
     expect(typeof nativeMock.PanResponder?.create).toBe("function");
+  });
+
+  it("provides every nested runtime API used by shipped Parts ID sources", () => {
+    const nativeMock = require(NATIVE_MOCK_PATH) as NativeMock;
+
+    expect(() => assertNestedNativeContract(nativeMock)).not.toThrow();
+  });
+
+  it("names the missing nested API path in its diagnostic", () => {
+    const nativeMock = require(NATIVE_MOCK_PATH) as NativeMock;
+    const driftingMock = {
+      ...nativeMock,
+      Appearance: {
+        ...(nativeMock.Appearance as Record<string, unknown>),
+        setColorScheme: undefined,
+      },
+    };
+
+    expect(() => assertNestedNativeContract(driftingMock)).toThrow(
+      "Canonical react-native mock has missing or invalid nested API path(s): Appearance.setColorScheme",
+    );
+  });
+
+  it("rejects non-callable values at callable API paths", () => {
+    const nativeMock = require(NATIVE_MOCK_PATH) as NativeMock;
+    const driftingMock = {
+      ...nativeMock,
+      Animated: {
+        ...(nativeMock.Animated as Record<string, unknown>),
+        parallel: {},
+      },
+    };
+
+    expect(() => assertNestedNativeContract(driftingMock)).toThrow(
+      "Animated.parallel",
+    );
+  });
+
+  it("preserves Modal callbacks for tests that invoke native close behavior", () => {
+    const nativeMock = require(NATIVE_MOCK_PATH) as {
+      Modal: (props: Record<string, unknown>) => React.ReactElement;
+    };
+    const onRequestClose = jest.fn();
+
+    const modal = nativeMock.Modal({
+      children: null,
+      visible: true,
+      onRequestClose,
+    });
+
+    expect((modal.props as Record<string, unknown>).onRequestClose).toBe(onRequestClose);
   });
 
   it("requires every inline react-native factory to start from the canonical mock", () => {
