@@ -47,6 +47,8 @@ jest.mock("../src/lib/startServer", () => ({
 
 // ── aiProvider mock ───────────────────────────────────────────────────────────
 const mockInitProvider = jest.fn();
+
+const mockProbeActivePoeModels = jest.fn();
 const mockProbeActivePoeModels = jest.fn();
 const mockRefreshPoeCatalogue = jest.fn();
 jest.mock("../src/lib/aiProvider", () => ({
@@ -60,7 +62,7 @@ const mockReturning = jest.fn().mockResolvedValue([]);
 const mockUpdateWhere = jest.fn(() => ({ returning: mockReturning }));
 const mockSet = jest.fn(() => ({ where: mockUpdateWhere }));
 const mockUpdate = jest.fn(() => ({ set: mockSet }));
-const mockExecute = jest.fn().mockResolvedValue(undefined);
+const mockExecute = jest.fn().mockResolvedValue({ rows: [{ usable: true }] });
 const mockSelectWhere = jest.fn().mockResolvedValue([]);
 const mockSelectFrom = jest.fn(() => ({
   where: mockSelectWhere,

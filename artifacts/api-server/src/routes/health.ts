@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 import { type IRouter,Router } from "express";
 
 import { getProbeSummary } from "../lib/aiProvider";
-import { appReadiness } from "../lib/readiness";
+import { appReadiness, checkRequiredSchema } from "../lib/readiness";
 
 const router: IRouter = Router();
 
@@ -30,17 +30,7 @@ router.get("/healthz", async (_req, res) => {
   const start = Date.now();
   try {
     await db.execute(sql`SELECT 1`);
-    const schemaResult = await db.execute(sql`
-      SELECT
-        to_regclass('public.inventory') IS NOT NULL
-        AND to_regclass('public.users') IS NOT NULL
-        AND to_regclass('public.admin_preferences') IS NOT NULL
-        AND to_regclass('public.warehouse_zone') IS NOT NULL
-        AS usable
-    `);
-    const schemaUsable = Boolean(
-      (schemaResult as unknown as { rows?: Array<{ usable?: boolean }> }).rows?.[0]?.usable,
-    );
+    const schemaUsable = await checkRequiredSchema(db);
     if (!schemaUsable) {
       res.status(503).json({ status: "error", detail: "schema_unavailable" });
       return;

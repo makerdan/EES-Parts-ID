@@ -4,6 +4,7 @@ import supertest from "supertest";
 const mockExecute = jest.fn();
 const mockGetProbeSummary = jest.fn();
 const mockGetStartupReadiness = jest.fn();
+const mockCheckRequiredSchema = jest.fn();
 
 jest.mock("@workspace/db", () => ({
   db: { execute: mockExecute },
@@ -14,6 +15,7 @@ jest.mock("../src/lib/aiProvider", () => ({
 }));
 jest.mock("../src/lib/readiness", () => ({
   appReadiness: { get: mockGetStartupReadiness },
+  checkRequiredSchema: mockCheckRequiredSchema,
 }));
 
 import healthRouter from "../src/routes/health";
@@ -25,6 +27,10 @@ describe("application liveness and readiness", () => {
     jest.clearAllMocks();
     mockGetStartupReadiness.mockReturnValue({ status: "ready" });
     mockGetProbeSummary.mockReturnValue({});
+    mockCheckRequiredSchema.mockImplementation(async (executor) => {
+      const result = await executor.execute({});
+      return Boolean(result?.rows?.[0]?.usable);
+    });
     mockExecute
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ usable: true }] });

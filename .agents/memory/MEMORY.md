@@ -68,6 +68,7 @@
 - [DB fixture ownership watermarks](db-fixture-ownership-watermarks.md) — identify async DB fixtures with a DB-generated ID watermark, not an app-clock timestamp that can drift from the database clock.
 - [Runtime data boundary](runtime-data-boundary.md) — require explicit database modes, reject production in tooling, and delay database imports until startup validation runs.
 - [API auth before body parsing](api-auth-before-body-parsing.md) — method-aware public route matching and pre-parser auth prevent write-prefix leaks and unauthenticated upload buffering.
+- [Drizzle SQL static helpers in Jest mocks](drizzle-sql-static-mocks.md) — startup tests may expose only the sql tag; shared probes must account for incomplete SQL helper mocks.
 - [Contract assertion normalization](contract-assertion-normalization.md) — static prose contracts should be checked semantically rather than by physical line wrapping.
 - [Schema-validated .replit replacement](dot-replit-schema-replacement.md) — write complete TOML to a temp file and use the validator/replacer instead of patching .replit directly.
 - [Jest hoisted shared mock factories](jest-hoisted-shared-mock-factories.md) — load shared helpers inside hoisted mock callbacks and pass in jest.requireActual modules to avoid TDZ failures.

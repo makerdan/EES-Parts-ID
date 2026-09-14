@@ -1,7 +1,7 @@
 import { eq, lt, sql } from "drizzle-orm";
 
 import { logger } from "./lib/logger";
-import { appReadiness } from "./lib/readiness";
+import { appReadiness, checkRequiredSchema } from "./lib/readiness";
 import { validateEnv } from "./lib/validateEnv";
 
 process.on("uncaughtException", (err) => {
@@ -271,7 +271,12 @@ async function pruneAuditLog(): Promise<void> {
 }
 
   appReadiness.reset();
-  const requiredStartup = Promise.all([
+  const requiredStartup = (async () => {
+    if (!(await checkRequiredSchema(db))) {
+      throw new Error("Required application schema is unavailable");
+    }
+
+    await Promise.all([
       recoverOrphanedJobs(),
       recoverCatalogPdfUploadSessions(),
       initQuickLookupCache(),
@@ -280,6 +285,7 @@ async function pruneAuditLog(): Promise<void> {
       applyZoneSectionNumFix(),
       migrateUsersTable(),
     ]);
+  })();
 
   void Promise.race([requiredStartup, migrationsTimeout]);
   void requiredStartup
