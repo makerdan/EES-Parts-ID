@@ -40,6 +40,10 @@ function guardBody(content) {
   }
   return null;
 }
+function isSelfSatisfying(body) {
+  const match = body.match(/^\s*\*\*Self-satisfying\*\*\s+[—-]\s+(.+?)\s*$/m);
+  return Boolean(match && match[1].trim() && !PLACEHOLDER.test(match[1]));
+}
 function collect(dir) {
   let result = [];
   let entries = [];
@@ -71,6 +75,7 @@ function targets() {
 function issuesFor(path) {
   const body = guardBody(readFileSync(path, "utf8"));
   if (!body) return ["missing ## Regression Guard section"];
+  if (isSelfSatisfying(body)) return [];
   return REQUIRED.filter((line) => !body.includes(line) || PLACEHOLDER.test(body))
     .map((line) => line === "**Covers:**" ? "Regression Guard contains missing or placeholder metadata" : `Regression Guard missing ${line}`);
 }
