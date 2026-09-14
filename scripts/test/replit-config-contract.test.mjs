@@ -56,6 +56,7 @@ assert.deepEqual(config.ports, [
   { localPort: 8081, externalPort: 80 },
   { localPort: 8082, externalPort: 3001 },
   { localPort: 8083, externalPort: 3003 },
+  { localPort: 19000, externalPort: 5000 },
   { localPort: 22660, externalPort: 3000 },
   { localPort: 22661, externalPort: 3002 },
 ]);
