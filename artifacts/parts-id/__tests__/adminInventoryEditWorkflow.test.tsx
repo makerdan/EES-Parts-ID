@@ -233,7 +233,7 @@ function makeCaches(item: InventoryItem) {
 let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 beforeEach(() => {
-  jest.useFakeTimers();
+  jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
   serverItem = makeItem();
   routeItem = { ...serverItem };
   failDescriptionSave = false;
@@ -357,10 +357,12 @@ describe("EditItemScreen — administrator inventory edit workflow", () => {
     });
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(descriptionInput!.props.value).toBe("Original description");
+    expect(findTextInput(activeTree.root!, "Brief description of the part…")!.props.value)
+      .toBe("Original description");
     expect(hasText(activeTree.root!, "Description failed")).toBe(true);
     expect(hasText(activeTree.root!, "✓ Saved")).toBe(false);
     expect(inventoryCache.items[0]!.description).toBe("Original description");
+    expect(searchCache.results[0]!.item.description).toBe("Original description");
     expect(serverItem.description).toBe("Original description");
   });
 });
@@ -385,6 +387,8 @@ describe("EditItemScreen — protected inventory mutations", () => {
     const descriptionInput = findTextInput(activeTree.root!, "Brief description of the part…");
     await act(async () => {
       fireEvent.changeText(descriptionInput!, "Unauthorized change");
+    });
+    await act(async () => {
       fireEvent.press(findPressable(activeTree!.root!, "Save Details")!);
     });
 

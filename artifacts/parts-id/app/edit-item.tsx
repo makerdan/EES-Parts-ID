@@ -506,6 +506,7 @@ export default function EditItemScreen() {
       setSaveStatus("error");
       return;
     }
+    const originalDescription = current.description ?? "";
     setSaveStatus("saving");
     setErrorMsg(null);
     setFieldSaveErrors({});
@@ -583,7 +584,7 @@ export default function EditItemScreen() {
       if (description.trim() !== (current.description ?? "").trim()) {
         ops.push({
           field: "description",
-          restoreFn: () => setDescription(current.description ?? ""),
+          restoreFn: () => setDescription(originalDescription),
           promise: fetchWrite(`${API_BASE}/inventory/${current.id}/description`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },

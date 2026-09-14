@@ -894,8 +894,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     if (anyFailed) {
       // onError: restore the full cache snapshot to roll back any optimistic
       // patches that TanStack mutations (bins, keywords) applied before they
-      // failed. Form values stay intact so failed fields remain retryable.
-    for (const [key, data] of inventorySnapshot) {
+      // failed. Restore rejected form fields to the server truth; the user can
+      // edit them again before retrying.
+      results.forEach((result, index) => {
+        if (result.status === "rejected") ops[index]!.restoreFn();
+      });
+      for (const [key, data] of inventorySnapshot) {
         queryClient.setQueryData(key, data);
       }
       for (const [key, data] of searchSnapshot) {
