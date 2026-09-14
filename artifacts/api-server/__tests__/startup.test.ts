@@ -49,7 +49,6 @@ jest.mock("../src/lib/startServer", () => ({
 const mockInitProvider = jest.fn();
 
 const mockProbeActivePoeModels = jest.fn();
-const mockProbeActivePoeModels = jest.fn();
 const mockRefreshPoeCatalogue = jest.fn();
 jest.mock("../src/lib/aiProvider", () => ({
   initProvider: mockInitProvider,
