@@ -12,6 +12,10 @@ export interface ScreenViewPrivacyReadiness {
 }
 
 /**
+ * VISITOR_PRIVACY_SECRET is preferred so operators can rotate visitor privacy
+ * independently from authentication. SESSION_SECRET and CLERK_SECRET_KEY
+ * remain compatibility fallbacks during migration.
+ *
  * Express is configured with one trusted reverse-proxy hop. req.ip is
  * therefore the proxy-normalized client address, and is used only transiently
  * as HMAC input. It is never logged or persisted.
@@ -19,10 +23,12 @@ export interface ScreenViewPrivacyReadiness {
 export function getScreenViewKeyMaterial(
   env: EnvironmentSource = process.env,
 ): string | null {
-  const candidate = [env["SESSION_SECRET"], env["CLERK_SECRET_KEY"]].find(
-    (value) => value?.trim(),
-  );
-  return candidate?.trim() ? candidate : null;
+  const candidate = [
+    env["VISITOR_PRIVACY_SECRET"],
+    env["SESSION_SECRET"],
+    env["CLERK_SECRET_KEY"],
+  ].find((value) => value?.trim());
+  return candidate?.trim() ?? null;
 }
 
 /**

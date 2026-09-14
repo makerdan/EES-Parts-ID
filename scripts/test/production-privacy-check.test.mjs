@@ -15,6 +15,7 @@ function run(env) {
       ...process.env,
       NODE_ENV: "production",
       REPLIT_DEPLOYMENT: "1",
+      VISITOR_PRIVACY_SECRET: "",
       SESSION_SECRET: "",
       CLERK_SECRET_KEY: "",
       CORS_ALLOWED_ORIGINS: "",
@@ -34,6 +35,19 @@ function run(env) {
 
 {
   const result = run({
+    CORS_ALLOWED_ORIGINS: "https://parts.example",
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /privacy key material: missing/);
+  assert.match(
+    result.stderr,
+    /configure VISITOR_PRIVACY_SECRET \(preferred\), SESSION_SECRET, or CLERK_SECRET_KEY/,
+  );
+}
+
+{
+  const result = run({
+    VISITOR_PRIVACY_SECRET: "dedicated-secret-value",
     SESSION_SECRET: "secret-value",
     CORS_ALLOWED_ORIGINS: "https://parts.example",
   });
@@ -41,6 +55,18 @@ function run(env) {
   assert.match(result.stdout, /privacy key material: present/);
   assert.match(result.stdout, /production CORS configuration: present/);
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /secret-value/);
+}
+
+{
+  const result = run({
+    VISITOR_PRIVACY_SECRET: " ",
+    SESSION_SECRET: "",
+    CLERK_SECRET_KEY: "test-compatibility-clerk-secret",
+    CORS_ALLOWED_ORIGINS: "https://parts.example",
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /privacy key material: present/);
+  assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /test-compatibility-clerk-secret/);
 }
 
 console.log("production privacy check contract passed");

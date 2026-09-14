@@ -14,7 +14,9 @@ const hasValue = (value: string | undefined): boolean => Boolean(value?.trim());
 const isProductionDeployment =
   process.env.NODE_ENV === "production" || process.env.REPLIT_DEPLOYMENT === "1";
 const privacyKeyMaterialConfigured =
-  hasValue(process.env.SESSION_SECRET) || hasValue(process.env.CLERK_SECRET_KEY);
+  hasValue(process.env.VISITOR_PRIVACY_SECRET) ||
+  hasValue(process.env.SESSION_SECRET) ||
+  hasValue(process.env.CLERK_SECRET_KEY);
 const productionCorsConfigured = hasValue(process.env.CORS_ALLOWED_ORIGINS);
 
 console.log(
@@ -46,7 +48,7 @@ if (!productionCorsConfigured) {
 
 if (!privacyKeyMaterialConfigured) {
   console.warn(
-    "[privacy-check] WARNING: configure SESSION_SECRET or CLERK_SECRET_KEY to enable unique-visitor reporting; no unsafe fallback is used.",
+    "[privacy-check] WARNING: configure VISITOR_PRIVACY_SECRET (preferred), SESSION_SECRET, or CLERK_SECRET_KEY to enable unique-visitor reporting; no unsafe fallback is used.",
   );
 }
 

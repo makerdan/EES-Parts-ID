@@ -226,6 +226,7 @@ describe("runtime data boundary", () => {
     const contract = getEnvironmentContract();
     expect(contract.serverOnly).toContain("DATABASE_URL");
     expect(contract.serverOnly).toContain("CLERK_SECRET_KEY");
+    expect(contract.serverOnly).toContain("VISITOR_PRIVACY_SECRET");
     expect(contract.clientPublic).toContain("EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY");
     expect(contract.clientPublic).not.toContain("DATABASE_URL");
     expect(contract.clientPublic).not.toContain("CLERK_SECRET_KEY");
@@ -234,6 +235,7 @@ describe("runtime data boundary", () => {
   it("reports production privacy and CORS readiness using booleans only", () => {
     expect(
       getScreenViewPrivacyReadiness({
+        VISITOR_PRIVACY_SECRET: "dedicated-secret",
         SESSION_SECRET: "do-not-return-this",
         CORS_ALLOWED_ORIGINS: "https://parts.example",
       }),
