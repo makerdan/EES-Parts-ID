@@ -94,6 +94,7 @@ remote owner.
 | `regression-guard` | `node scripts/check-regression-guard.mjs` | Same no-plan invocation | local-only with Replit task provenance dependency; remote path is no-plan bypass | inferred |
 | `api-suite-floor-contract` | `node scripts/test/api-suite-floor-contract.test.mjs` | `CI` portable validation | direct | inferred |
 | `github-actions-contract` | `node scripts/test/github-actions-contract.test.mjs` | `CI` portable validation | direct | inferred |
+| `dependency-security-contract` | `node scripts/test/dependency-security-contract.test.mjs` | `CI` portable validation | direct | tracked contract test |
 | `api-route-authorization-contract` | `node scripts/test/api-route-authorization-contract.test.mjs` | `CI` portable validation | direct | inferred |
 | `skill-mirror-sync-contract` | `node scripts/test/skill-mirror-sync-contract.test.mjs` | `CI` portable validation | direct | inferred |
 | `public-repository-boundary` | `node scripts/test/public-repository-boundary.test.mjs` | `CI` portable validation | direct | inferred |

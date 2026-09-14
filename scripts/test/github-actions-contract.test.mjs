@@ -38,6 +38,7 @@ const fastContractChecks = new Map([
   ["ai-provider-startup-export-contract", "node scripts/test/ai-provider-startup-export-contract.test.mjs"],
   ["poe-setup-targeted-correction-contract", "node skill-previews/poe-setup/targeted-correction-contract.test.mjs"],
   ["skill-mirror-sync-contract", "node scripts/test/skill-mirror-sync-contract.test.mjs"],
+  ["dependency-security-contract", "node scripts/test/dependency-security-contract.test.mjs"],
   ["patched-dependencies-contract", "node scripts/test/patched-dependencies.test.mjs"],
   ["port-authority-contract", "node scripts/test-port-authority.mjs"],
   ["replit-config-contract", "node scripts/test/replit-config-contract.test.mjs"],

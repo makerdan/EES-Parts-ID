@@ -41,6 +41,7 @@ not inferred from this file.
 | spec-check-tests | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | failure-gate-contract | `CI / required` → `pnpm run test-standard-plus` | contract coverage; task archive remains local-only | PR, merge queue, main push, manual | inferred from tier manifest |
 | github-actions-contract | `CI / required` → `pnpm run test-standard-plus` | deterministic workflow and mapping contract | PR, merge queue, main push, manual | tracked contract test |
+| dependency-security-contract | `CI / required` → `pnpm run test-standard-plus` | safe lockfile floors for audited packages and exact `image-size` patch/exception linkage | PR, merge queue, main push, manual | tracked contract test |
 | test | `CI / required` → `pnpm run test-standard-plus` | all canonical Jest/Vitest suites; no separate test job | PR, merge queue, main push, manual | inferred from tier manifest |
 | serve-proxy-smoke | `CI / required` → `pnpm run test-standard-plus` | direct portable smoke coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | schema-check | `CI / required` → `pnpm run test-standard-plus` | isolated PostgreSQL service plus schema preparation | PR, merge queue, main push, manual | inferred from workflow |
