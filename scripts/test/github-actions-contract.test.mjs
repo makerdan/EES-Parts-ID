@@ -29,6 +29,8 @@ const runtimeSkillDir = join(root, ".local", "custom_skills", "install-github-ac
 const workflowDir = join(root, ".github", "workflows");
 const actionPath = join(root, ".github", "actions", "setup-node-pnpm", "action.yml");
 const coveragePath = join(root, "docs", "validation", "github-actions-coverage.md");
+const protectionStatusPath = join(root, "docs", "validation", "github-protection-status.md");
+const installationPath = join(root, "docs", "validation", "github-actions-installation.md");
 const fastContractChecks = new Map([
   ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
   ["github-actions-contract", "node scripts/test/github-actions-contract.test.mjs"],
@@ -305,9 +307,25 @@ function validateCapabilityAndSecurityEvidence() {
     shaPinning: { required: false },
   };
   const capabilityInput = structuredClone(unavailableEvidence);
-  const capabilityReport = buildGitHubCapabilityReport(unavailableEvidence);
+  const reportContext = {
+    repository: "makerdan/EES-Parts-ID",
+    revisionSha: "abcdef0123456789abcdef0123456789abcdef01",
+    policy: { requiredChecks: ["CI / required"], strict: true },
+    permissions: { actions: "read", contents: "read" },
+  };
+  const reportSnapshot = buildGitHubProtectionSnapshot({
+    ...reportContext,
+    capabilities: unavailableEvidence,
+    controls: {},
+  });
+  const capabilityReport = buildGitHubCapabilityReport(unavailableEvidence, {
+    snapshot: reportSnapshot,
+    currentContext: reportContext,
+  });
   nodeAssert.equal(capabilityReport.mode, "read-only");
   nodeAssert.equal(capabilityReport.activationAttempted, false);
+  nodeAssert.equal(capabilityReport.current, true);
+  nodeAssert.equal(capabilityReport.freshness.status, "current");
   nodeAssert.equal(capabilityReport.status, "blocked");
   nodeAssert.equal(capabilityReport.capabilities.actions.status, "blocked");
   nodeAssert.equal(capabilityReport.capabilities.branchProtection.status, "unavailable");
@@ -323,9 +341,14 @@ function validateCapabilityAndSecurityEvidence() {
     dependencyGraph: { vulnerabilityAlertsStatusCode: 204 },
     dependabot: { alertsStatusCode: 200 },
   };
-  const securityReport = buildGitHubSecurityControlReport(securityEvidence);
+  const securityReport = buildGitHubSecurityControlReport(securityEvidence, {
+    snapshot: reportSnapshot,
+    currentContext: reportContext,
+  });
   nodeAssert.equal(securityReport.mode, "read-only");
   nodeAssert.equal(securityReport.mutationAttempted, false);
+  nodeAssert.equal(securityReport.current, true);
+  nodeAssert.equal(securityReport.freshness.status, "current");
   nodeAssert.equal(securityReport.status, "verified");
   for (const control of Object.values(securityReport.controls)) nodeAssert.equal(control.status, "verified");
 
@@ -334,13 +357,19 @@ function validateCapabilityAndSecurityEvidence() {
     pushProtection: {},
     dependencyGraph: { vulnerabilityAlertsStatusCode: 404 },
     dependabot: { alertsStatusCode: 403 },
-  });
+  }, { snapshot: reportSnapshot, currentContext: reportContext });
   nodeAssert.equal(blockedSecurityReport.status, "blocked");
   nodeAssert.equal(blockedSecurityReport.controls.secretScanning.status, "blocked");
   nodeAssert.equal(blockedSecurityReport.controls.pushProtection.status, "unknown");
   nodeAssert.equal(blockedSecurityReport.controls.dependencyGraph.status, "unavailable");
   nodeAssert.equal(blockedSecurityReport.controls.dependabot.status, "blocked");
   nodeAssert.match(blockedSecurityReport.controls.secretScanning.nextAction, /read-only/i);
+  const incompleteCapabilityReport = buildGitHubCapabilityReport(unavailableEvidence);
+  nodeAssert.equal(incompleteCapabilityReport.status, "stale");
+  nodeAssert.equal(incompleteCapabilityReport.current, false);
+  nodeAssert.match(incompleteCapabilityReport.freshness.reasons.join(" "), /evidence context is missing/);
+  nodeAssert.equal(incompleteCapabilityReport.capabilities.actions.status, "stale");
+  nodeAssert.doesNotMatch(JSON.stringify(incompleteCapabilityReport), /Read-only evidence confirms/i);
   const coverage = read(coveragePath);
   nodeAssert.match(coverage, /^\| github-provider-capability-preflight \|/m);
   nodeAssert.match(coverage, /^\| github-security-controls \|/m);
@@ -507,6 +536,50 @@ async function validateRevisionEvidenceAndFreshness() {
   nodeAssert.equal(incomplete.status, "stale");
   nodeAssert.match(incomplete.reasons.join(" "), /permissions evidence is incomplete/);
 
+  const reportEvidence = {
+    actions: { enabled: true },
+    branchProtection: { supported: true },
+    rulesets: { supported: true },
+    selectedActions: { policy: "selected" },
+    shaPinning: { required: true },
+  };
+  const reportControls = {
+    secretScanning: { enabled: true },
+    pushProtection: { status: "enabled" },
+    dependencyGraph: { vulnerabilityAlertsStatusCode: 204 },
+    dependabot: { alertsStatusCode: 200 },
+  };
+  const reportSnapshot = buildGitHubProtectionSnapshot({
+    ...context,
+    capabilities: reportEvidence,
+    controls: reportControls,
+  });
+  const contextChanges = [
+    ["repository", { repository: "another-owner/EES-Parts-ID" }, "repository evidence changed"],
+    ["policy", { policy: { requiredChecks: ["other-check"], strict: true } }, "policy evidence changed"],
+    ["permissions", { permissions: { actions: "read", contents: "write" } }, "permissions evidence changed"],
+    ["revisionSha", { revisionSha: otherRevision }, "revisionSha evidence changed"],
+  ];
+  for (const [label, change, reason] of contextChanges) {
+    const changedContext = { ...context, ...change };
+    const capabilityReport = buildGitHubCapabilityReport(reportEvidence, {
+      snapshot: reportSnapshot,
+      currentContext: changedContext,
+    });
+    const securityReport = buildGitHubSecurityControlReport(reportControls, {
+      snapshot: reportSnapshot,
+      currentContext: changedContext,
+    });
+    for (const report of [capabilityReport, securityReport]) {
+      nodeAssert.equal(report.status, "stale", `${label} must stale the report`);
+      nodeAssert.equal(report.current, false, `${label} must clear current`);
+      nodeAssert.match(report.freshness.reasons.join(" "), new RegExp(reason));
+      const items = report.capabilities ?? report.controls;
+      for (const item of Object.values(items)) nodeAssert.equal(item.status, "stale", `${label} must clear item status`);
+      nodeAssert.doesNotMatch(JSON.stringify(report), /verified|evidence confirms/i);
+    }
+  }
+
   nodeAssert.throws(
     () => buildGitHubValidationEvidenceBundle({ repository: "owner/repo", revisionSha: "not-a-sha" }),
     /exact 40-character hexadecimal SHA/,
@@ -517,6 +590,12 @@ validateSkillContract();
 validateFastContractRegistration();
 validateCapabilityAndSecurityEvidence();
 await validateRevisionEvidenceAndFreshness();
+
+const protectionStatus = read(protectionStatusPath);
+const installation = read(installationPath);
+nodeAssert.match(protectionStatus, /Every protection report must include the freshness result/i);
+nodeAssert.match(protectionStatus, /stale[\s\S]*cannot support a current or[\s\S]*verified claim/i);
+nodeAssert.match(installation, /report consumers must pass both the snapshot and current read-only context/i);
 
 const files = Object.fromEntries(workflowNames.map((name) => [name, workflow(name)]));
 const errors = validateWorkflowContract(files, read(coveragePath));

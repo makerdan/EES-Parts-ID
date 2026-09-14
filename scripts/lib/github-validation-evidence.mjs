@@ -347,7 +347,40 @@ export function evaluateGitHubProtectionFreshness(snapshot, currentContext = {})
   };
 }
 
-export function buildGitHubCapabilityReport(evidence = {}) {
+function staleProtectionReport(report, freshness, itemKey) {
+  if (freshness.current) {
+    return {
+      ...report,
+      current: true,
+      freshness,
+    };
+  }
+  const items = Object.fromEntries(
+    Object.entries(report[itemKey]).map(([key, item]) => [
+      key,
+      {
+        ...item,
+        status: "stale",
+        summary: "Historical read-only evidence is stale and cannot support a current claim.",
+        nextAction: "Re-collect read-only evidence with the current repository, revision, policy, and permission context.",
+      },
+    ]),
+  );
+  return {
+    ...report,
+    current: false,
+    status: "stale",
+    freshness,
+    [itemKey]: items,
+  };
+}
+
+/**
+ * Build a capability report only after checking the snapshot against the
+ * current read-only context. Omitting either argument deliberately produces a
+ * stale report rather than allowing historical evidence to look current.
+ */
+export function buildGitHubCapabilityReport(evidence = {}, { snapshot, currentContext } = {}) {
   const capabilityEvidence = {
     actions: statusFromEvidence(evidence.actions, { booleanKeys: ["enabled", "available"] }),
     branchProtection: statusFromEvidence(evidence.branchProtection, { booleanKeys: ["supported", "available"] }),
@@ -378,7 +411,7 @@ export function buildGitHubCapabilityReport(evidence = {}) {
   );
 
   const statuses = Object.values(capabilities).map(({ status }) => status);
-  return {
+  const report = {
     mode: "read-only",
     activationAttempted: false,
     status: statuses.includes("blocked") || statuses.includes("unavailable")
@@ -388,6 +421,11 @@ export function buildGitHubCapabilityReport(evidence = {}) {
         : "ready",
     capabilities,
   };
+  return staleProtectionReport(
+    report,
+    evaluateGitHubProtectionFreshness(snapshot, currentContext),
+    "capabilities",
+  );
 }
 
 function controlStatus(control, evidence) {
@@ -406,7 +444,12 @@ function controlStatus(control, evidence) {
   return "unknown";
 }
 
-export function buildGitHubSecurityControlReport(evidence = {}) {
+/**
+ * Build a security-control report only after checking the snapshot against the
+ * current read-only context. Omitting either argument deliberately produces a
+ * stale report rather than allowing historical evidence to look verified.
+ */
+export function buildGitHubSecurityControlReport(evidence = {}, { snapshot, currentContext } = {}) {
   const controls = Object.fromEntries(
     SECURITY_CONTROL_DEFINITIONS.map(([key, label, nextAction]) => {
       const status = controlStatus(key, evidence[key]);
@@ -428,7 +471,7 @@ export function buildGitHubSecurityControlReport(evidence = {}) {
     }),
   );
   const statuses = Object.values(controls).map(({ status }) => status);
-  return {
+  const report = {
     mode: "read-only",
     mutationAttempted: false,
     status: statuses.includes("blocked") || statuses.includes("unavailable")
@@ -438,6 +481,11 @@ export function buildGitHubSecurityControlReport(evidence = {}) {
         : "verified",
     controls,
   };
+  return staleProtectionReport(
+    report,
+    evaluateGitHubProtectionFreshness(snapshot, currentContext),
+    "controls",
+  );
 }
 
 export function inspectOptionalRuntimeSkillMirror(mirrorRoot) {

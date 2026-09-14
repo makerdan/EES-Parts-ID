@@ -68,3 +68,10 @@ The read-only evidence contract marks a snapshot `stale` when one of these
 values is missing or differs from the current re-check. A historical
 `verified` control is not a current claim after context changes, and a failed
 or provider-withheld log response is never converted into a passing check.
+
+Every protection report must include the freshness result from the same
+read-only re-check. If the snapshot or current context is missing, or if the
+repository, revision, policy, or permission context differs, the report is
+`stale`; its controls are also marked `stale` and cannot support a current or
+verified claim. Consumers must not display the historical child status as
+current until a new snapshot has been collected and evaluated.

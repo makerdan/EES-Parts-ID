@@ -52,6 +52,12 @@ context, and permission context used at capture time. A snapshot is marked
 provider evidence below must therefore not be described as current after a
 repository, policy, permission, or revision change.
 
+Report consumers must pass both the snapshot and current read-only context to
+the capability and security-control report builders. Those builders always
+attach the freshness result. Missing context and every freshness mismatch
+produce a visible `stale` report and stale child statuses, so no historical
+`ready` or `verified` result can be displayed as current.
+
 ## Repository visibility and billing note
 
 GitHub Actions does not require a public repository. Public repositories receive
