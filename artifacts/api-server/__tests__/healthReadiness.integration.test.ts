@@ -73,6 +73,32 @@ describe("application liveness and readiness", () => {
       .expect(503, { status: "error", detail: "schema_unavailable" });
   });
 
+  it("recovers when the required schema becomes available", async () => {
+    mockExecute
+      .mockReset()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ usable: false }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ usable: true }] });
+
+    const unavailable = await supertest(app).get("/api/healthz").expect(503);
+    expect(unavailable.body).toEqual({
+      status: "error",
+      detail: "schema_unavailable",
+    });
+
+    const recovered = await supertest(app).get("/api/healthz").expect(200);
+    expect(recovered.body).toMatchObject({
+      status: "ok",
+      pool_idle: 2,
+      pool_total: 3,
+    });
+
+    const internalDetails = /inventory|users|admin_preferences|warehouse_zone|migration/i;
+    expect(unavailable.text).not.toMatch(internalDetails);
+    expect(recovered.text).not.toMatch(internalDetails);
+  });
+
   it("recovers after required startup becomes ready", async () => {
     mockGetStartupReadiness.mockReturnValueOnce({ status: "failed" });
     await supertest(app).get("/api/healthz").expect(503);
