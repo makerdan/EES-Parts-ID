@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { FAST } from "../../scripts/validation-steps.mjs";
 
 const candidateUrl = new URL("./SKILL.md", import.meta.url);
 const candidate = readFileSync(candidateUrl, "utf8");
 const candidatePath = fileURLToPath(candidateUrl);
+const expectedCommand =
+  "node skill-previews/poe-setup/targeted-correction-contract.test.mjs";
+
+assert.ok(
+  FAST.some(
+    ([name, command]) =>
+      name === "poe-setup-targeted-correction-contract" &&
+      command === expectedCommand,
+  ),
+  "Poe Setup targeted correction contract must be registered in test-fast",
+);
 
 function rawSdkModuleFrom(skill) {
   const section = skill.match(
