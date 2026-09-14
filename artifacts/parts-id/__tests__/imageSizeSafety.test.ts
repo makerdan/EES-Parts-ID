@@ -7,9 +7,19 @@ type MalformedImage = {
   bytes: number[];
 };
 
-function runParserInChild(bytes: number[]): string {
+function runParserInChild(
+  bytes: number[],
+  inputKind: "buffer" | "filename" = "filename",
+): string {
   const script = `
-    const imageSizePackage = require("image-size");
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+    const metroPackagePath = require.resolve("metro/package.json");
+    const imageSizeEntry = require.resolve("image-size", {
+      paths: [path.dirname(metroPackagePath)],
+    });
+    const imageSizePackage = require(imageSizeEntry);
     const sizeOf =
       typeof imageSizePackage === "function"
         ? imageSizePackage
@@ -18,11 +28,19 @@ function runParserInChild(bytes: number[]): string {
       throw new TypeError("image-size does not expose a CommonJS parser");
     }
     const input = Uint8Array.from(${JSON.stringify(bytes)});
+    const fixtureDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "parts-id-image-size-"),
+    );
+    const fixturePath = path.join(fixtureDirectory, "crafted.png");
+    fs.writeFileSync(fixturePath, input);
+    const parserInput = ${inputKind === "filename" ? "fixturePath" : "input"};
     try {
-      const result = sizeOf(input);
+      const result = sizeOf(parserInput);
       process.stdout.write(JSON.stringify({ result }));
     } catch (error) {
       process.stdout.write(JSON.stringify({ error: String(error && error.message) }));
+    } finally {
+      fs.rmSync(fixtureDirectory, { recursive: true, force: true });
     }
   `;
   return execFileSync(process.execPath, ["-e", script], {
@@ -108,8 +126,29 @@ describe("Metro image-size safety patch", () => {
     });
   });
 
-  it.each(malformedImages)("terminates deterministically for malformed $name input", ({ bytes }) => {
-    const output = JSON.parse(runParserInChild(bytes)) as { result?: unknown; error?: string };
+  it.each(malformedImages)(
+    "terminates deterministically for malformed $name input through Metro's filename path",
+    ({ bytes }) => {
+      const output = JSON.parse(runParserInChild(bytes)) as {
+        result?: unknown;
+        error?: string;
+      };
+      expect(output.result).toBeUndefined();
+      expect(output.error).toEqual(expect.any(String));
+    },
+  );
+
+  it("also rejects malformed headers when Metro passes an in-memory buffer", () => {
+    const firstMalformedImage = malformedImages[0];
+    if (!firstMalformedImage) {
+      throw new Error("Expected at least one malformed image fixture");
+    }
+    const { bytes } = firstMalformedImage;
+    const output = JSON.parse(runParserInChild(bytes, "buffer")) as {
+      result?: unknown;
+      error?: string;
+    };
+
     expect(output.result).toBeUndefined();
     expect(output.error).toEqual(expect.any(String));
   });
