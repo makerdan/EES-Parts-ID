@@ -287,7 +287,10 @@ async function pruneAuditLog(): Promise<void> {
     ]);
   })();
 
-  void Promise.race([requiredStartup, migrationsTimeout]);
+  // The required-startup chain has its own state transition and logging below.
+  // Also consume the race rejection so a failed schema probe cannot surface as
+  // an unhandled rejection and terminate the process before health reports 503.
+  void Promise.race([requiredStartup, migrationsTimeout]).catch(() => undefined);
   void requiredStartup
     .then(() => {
       if (migrationsTimer !== undefined) clearTimeout(migrationsTimer);

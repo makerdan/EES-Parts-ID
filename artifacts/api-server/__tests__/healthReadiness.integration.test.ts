@@ -68,9 +68,20 @@ describe("application liveness and readiness", () => {
       .mockReset()
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ usable: false }] });
-    await supertest(app)
+    const response = await supertest(app)
       .get("/api/healthz")
       .expect(503, { status: "error", detail: "schema_unavailable" });
+    expect(response.body).not.toEqual(
+      expect.objectContaining({
+        table: expect.anything(),
+        tables: expect.anything(),
+        sql: expect.anything(),
+        query: expect.anything(),
+      }),
+    );
+    expect(response.text).not.toMatch(
+      /inventory|users|admin_preferences|warehouse_zone|select|to_regclass/i,
+    );
   });
 
   it("recovers when the required schema becomes available", async () => {

@@ -56,6 +56,19 @@ jest.mock("../src/lib/aiProvider", () => ({
   refreshPoeCatalogue: mockRefreshPoeCatalogue,
 }));
 
+// ── readiness mock ────────────────────────────────────────────────────────────
+const mockCheckRequiredSchema = jest.fn();
+const mockAppReadiness = {
+  reset: jest.fn(),
+  markReady: jest.fn(),
+  markTimedOut: jest.fn(),
+  markFailed: jest.fn(),
+};
+jest.mock("../src/lib/readiness", () => ({
+  appReadiness: mockAppReadiness,
+  checkRequiredSchema: mockCheckRequiredSchema,
+}));
+
 // ── @workspace/db mock (fluent-chain pattern from aiProvider.test.ts) ─────────
 const mockReturning = jest.fn().mockResolvedValue([]);
 const mockUpdateWhere = jest.fn(() => ({ returning: mockReturning }));
@@ -140,6 +153,7 @@ beforeEach(() => {
   mockInitProvider.mockResolvedValue(undefined);
   mockProbeActivePoeModels.mockResolvedValue(undefined);
   mockRefreshPoeCatalogue.mockResolvedValue(undefined);
+  mockCheckRequiredSchema.mockResolvedValue(true);
   mockStartServer.mockResolvedValue({
     close: (callback: () => void) => callback(),
   });
@@ -224,6 +238,20 @@ describe("server startup sequence (src/index.ts)", () => {
     // relying on a fixed flush count.
     resolveInit();
     await startGate;
+    expect(mockStartServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks readiness failed when the required schema is unavailable", async () => {
+    const { promise: failedGate, resolve: resolveFailed } = makeGate();
+    mockCheckRequiredSchema.mockResolvedValueOnce(false);
+    mockAppReadiness.markFailed.mockImplementationOnce(resolveFailed);
+
+    loadIndex();
+    await failedGate;
+
+    expect(mockCheckRequiredSchema).toHaveBeenCalledTimes(1);
+    expect(mockAppReadiness.markFailed).toHaveBeenCalledTimes(1);
+    expect(mockAppReadiness.markReady).not.toHaveBeenCalled();
     expect(mockStartServer).toHaveBeenCalledTimes(1);
   });
 });
