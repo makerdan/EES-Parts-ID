@@ -3128,6 +3128,7 @@ export default function UploadScreen() {
           {activeSection === null ? (
             /* ── Hub home ──────────────────────────────────────────────── */
             <ScrollView
+              style={styles.adminScroll}
               contentContainerStyle={{ padding: 16, paddingBottom: bottomClearance }}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="interactive"
@@ -3227,6 +3228,7 @@ export default function UploadScreen() {
             </ScrollView>
           ) : activeSection === "import" ? (
             <ScrollView
+              style={styles.adminScroll}
               contentContainerStyle={{ padding: 16, paddingBottom: bottomClearance }}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="interactive"
@@ -3806,6 +3808,7 @@ export default function UploadScreen() {
           ) : activeSection === "enrichment" ? (
             /* ── AI & Enrichment section ─────────────────────────────── */
             <ScrollView
+              style={styles.adminScroll}
               contentContainerStyle={{ padding: 16, paddingBottom: bottomClearance }}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="interactive"
@@ -4933,6 +4936,7 @@ export default function UploadScreen() {
           ) : (
             /* ── People & System section ─────────────────────────────── */
             <ScrollView
+              style={styles.adminScroll}
               contentContainerStyle={{ padding: 16, paddingBottom: bottomClearance }}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="interactive"
@@ -4942,6 +4946,8 @@ export default function UploadScreen() {
                 <Text style={[styles.cardTitle, { color: colors.foreground, marginBottom: 8 }]}>🔗 Navigation</Text>
                 <Pressable
                   onPress={() => router.push("/admin")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Admin Dashboard"
                   style={[hubStyles.navRow, { borderColor: colors.border }]}
                 >
                   <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>🏠 Admin Dashboard</Text>
@@ -4949,6 +4955,8 @@ export default function UploadScreen() {
                 </Pressable>
                 <Pressable
                   onPress={() => router.push("/admin-inbox")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Admin Inbox"
                   style={[hubStyles.navRow, { borderColor: colors.border }]}
                 >
                   <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>📬 Inbox</Text>
@@ -4956,6 +4964,8 @@ export default function UploadScreen() {
                 </Pressable>
                 <Pressable
                   onPress={() => router.push("/ai-log")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open AI Log"
                   style={[hubStyles.navRow, { borderColor: colors.border }]}
                 >
                   <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>🤖 AI Log</Text>
@@ -4963,6 +4973,8 @@ export default function UploadScreen() {
                 </Pressable>
                 <Pressable
                   onPress={() => router.push("/admin-audit-log")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Admin Audit Log"
                   style={[hubStyles.navRow, { borderColor: colors.border, borderBottomWidth: 0 }]}
                 >
                   <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>🔍 Audit Log</Text>
@@ -5319,6 +5331,7 @@ const hubStyles = StyleSheet.create({
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
+  adminScroll: { flex: 1, minHeight: 0 },
   header: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1 },
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
