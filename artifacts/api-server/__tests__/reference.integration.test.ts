@@ -478,6 +478,30 @@ describe("GET /api/reference/ask-log", () => {
       expect(answerResponse.body.rows[0].answer).toContain(SEARCH_BENCHMARK_ANSWER_TERM);
       expect(questionElapsed).toBeLessThan(SEARCH_LATENCY_TARGET_MS);
       expect(answerElapsed).toBeLessThan(SEARCH_LATENCY_TARGET_MS);
+
+      const explainResult = await db.transaction(async (tx) => {
+        // A small test database may prefer a sequential scan on cost alone.
+        // Force the planner to consider the indexes so this check verifies
+        // that both trigram indexes remain available for the route predicate.
+        await tx.execute(sql`SET LOCAL enable_seqscan = off`);
+        return tx.execute(sql`
+          EXPLAIN (FORMAT TEXT)
+          SELECT ${referenceLogTable.id}
+          FROM ${referenceLogTable}
+          WHERE ${referenceLogTable.question} ILIKE ${`%${SEARCH_BENCHMARK_QUESTION_TERM}%`}
+             OR ${referenceLogTable.answer} ILIKE ${`%${SEARCH_BENCHMARK_ANSWER_TERM}%`}
+        `);
+      });
+      const planText = explainResult.rows
+        .map((row) => String((row as Record<string, unknown>)["QUERY PLAN"] ?? ""))
+        .join("\n");
+
+      expect(planText).toMatch(
+        /(?:Bitmap Index Scan on|Index Scan using)\s+reference_log_question_trgm_idx\b/,
+      );
+      expect(planText).toMatch(
+        /(?:Bitmap Index Scan on|Index Scan using)\s+reference_log_answer_trgm_idx\b/,
+      );
     } finally {
       await db.delete(referenceLogTable).where(
         inArray(
