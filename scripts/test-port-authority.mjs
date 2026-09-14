@@ -186,6 +186,34 @@ await test("serial lock rejects priorities outside the documented 1-9 scale", as
   assert(result.output.includes("expected an integer from 1 to 9"), `missing priority diagnostic: ${result.output}`);
 });
 
+await test("serial lock fails closed with an actionable diagnostic when flock is unavailable", async () => {
+  const resource = uniqueName("missing-flock");
+  const lockFile = join(testRoot, `${resource}.lock`);
+  const marker = join(testRoot, `${resource}.marker`);
+  const result = await runProcess(
+    process.execPath,
+    lockArgs(resource, lockFile, 1, [
+      process.execPath,
+      "-e",
+      MARK_CODE,
+      marker,
+      "should-not-run",
+    ]),
+    lockEnv(lockFile, { PATH: "" }),
+  );
+  assert(result.code !== 0, `missing-flock wrapper unexpectedly succeeded: ${result.output}`);
+  assert(
+    result.output.includes(`flock utility is unavailable for the ${resource} serialization path`),
+    `missing actionable flock diagnostic: ${result.output}`,
+  );
+  assert(
+    result.output.includes("refusing to fall back to an unsafe lock implementation"),
+    `missing fail-closed diagnostic: ${result.output}`,
+  );
+  assert(!existsSync(marker), "wrapped command ran without the flock guard");
+  assert(!existsSync(lockFile), "missing-flock failure created a lock file");
+});
+
 await test("port cleanup rejects a missing port argument", async () => {
   const result = await runProcess(process.execPath, [FREE_PORTS]);
   assert(result.code === 2, `missing-port cleanup exited ${result.code}: ${result.output}`);

@@ -225,6 +225,23 @@ function precedenceWaiterExists() {
   return found;
 }
 
+function flockUnavailableError(detail = "the command was not found") {
+  return new Error(
+    `[serial-lock] ERROR: the flock utility is unavailable for the ${lockResource} serialization path (${detail}). ` +
+    "Install the host's standard flock utility (usually provided by util-linux); refusing to fall back to an unsafe lock implementation.",
+  );
+}
+
+function ensureFlockAvailable() {
+  const probe = spawnSync("flock", ["--help"], { stdio: "ignore" });
+  if (probe.error) {
+    throw flockUnavailableError(probe.error.code || probe.error.message);
+  }
+  if (probe.status !== 0) {
+    throw flockUnavailableError(`the capability probe exited ${probe.status}`);
+  }
+}
+
 function tryAcquire() {
   if (precedenceWaiterExists()) return false;
   const result = spawnSync(
@@ -247,7 +264,9 @@ function tryAcquire() {
   );
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
-  if (result.error) throw result.error;
+  if (result.error) {
+    throw flockUnavailableError(result.error.code || result.error.message);
+  }
   if (result.status === 0) return true;
   if ([1, 3, 4].includes(result.status)) return false;
   throw new Error(`[serial-lock] acquisition helper exited ${result.status ?? "without status"}`);
@@ -300,6 +319,7 @@ async function acquireWithTimeout() {
   }
 }
 
+ensureFlockAvailable();
 mkdirSync(lockDir, { recursive: true });
 
 // Reentrancy: if an ancestor serial-lock wrapper already holds the lock,
