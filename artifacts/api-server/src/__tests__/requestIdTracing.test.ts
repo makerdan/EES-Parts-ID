@@ -49,7 +49,7 @@ jest.mock("@workspace/db", () => ({
     transaction: jest.fn(),
     delete: jest.fn(),
   },
-  pool: { connect: jest.fn() },
+  pool: { connect: jest.fn(), idleCount: 0, totalCount: 0 },
   inventoryTable: {},
   usersTable: {},
   misspellingMapTable: {},
@@ -74,6 +74,8 @@ const mockGetProbeSummary = jest.fn(() => ({}));
 
 jest.mock("../lib/aiProvider", () => ({
   getProbeSummary: mockGetProbeSummary,
+  getProbeVerificationSummary: jest.fn(() => ({})),
+  getLastProbeOperation: jest.fn(() => null),
   getAllPoeModelNames: jest.fn(() => []),
   probeActivePoeModels: jest.fn().mockResolvedValue(undefined),
   probeSinglePoeBot: jest.fn().mockResolvedValue(undefined),
@@ -87,6 +89,16 @@ jest.mock("../lib/aiProvider", () => ({
   tryPoeBotChain: jest.fn(),
   MAX_IMAGE_BYTES_CLAUDE_SONNET: 1_048_576,
   MAX_IMAGE_BYTES_GPT5_1: 1_048_576,
+}));
+
+// /healthz is a readiness check, not a liveness-only probe. Keep its dependency
+// state explicit so these middleware assertions do not depend on app startup
+// or the test database's schema state.
+jest.mock("../lib/readiness", () => ({
+  appReadiness: {
+    get: jest.fn(() => ({ status: "ready" })),
+  },
+  checkRequiredSchema: jest.fn().mockResolvedValue(true),
 }));
 
 // ── Peripheral mocks so app.ts (all route modules) can be imported ────────────
