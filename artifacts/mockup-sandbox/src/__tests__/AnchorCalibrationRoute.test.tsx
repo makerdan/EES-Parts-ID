@@ -58,6 +58,7 @@ type Anchor = {
 type FixtureOptions = {
   admin?: boolean;
   rejectSaves?: boolean;
+  floorPlanResponses?: Array<Promise<Response>>;
 };
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -97,6 +98,8 @@ function makeApiFixture(options: FixtureOptions = {}) {
 
     if (path === "/api/floor-plan/svg") {
       floorPlanRequestCount += 1;
+      const deferredResponse = options.floorPlanResponses?.[floorPlanRequestCount - 1];
+      if (deferredResponse) return deferredResponse;
       return Promise.resolve(
         textResponse(
           200,
@@ -175,6 +178,16 @@ function makeApiFixture(options: FixtureOptions = {}) {
       anchorLoadFailuresRemaining += count;
     },
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function setCalibrationRoute() {
@@ -499,6 +512,101 @@ describe("web Anchor Calibration routed workflow", () => {
       expect(second.getAllByText("Not placed")).toHaveLength(3);
       expect(second.getByText("0/3 saved · scroll to zoom · drag to pan · 18%")).toBeTruthy();
     });
+  });
+
+  it("keeps the latest floor plan when an older mounted session settles later", async () => {
+    const olderFloorPlan = deferred<Response>();
+    const latestFloorPlan = deferred<Response>();
+    const fixture = makeApiFixture({
+      floorPlanResponses: [olderFloorPlan.promise, latestFloorPlan.promise],
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+
+    const result = render(<App key="older-calibration-session" />);
+
+    await waitFor(() => {
+      expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+      expect(
+        fixture.calls.filter(
+          ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+        ),
+      ).toHaveLength(1);
+    });
+
+    result.rerender(<App key="latest-calibration-session" />);
+    await waitFor(() => {
+      expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+      expect(
+        fixture.calls.filter(
+          ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+        ),
+      ).toHaveLength(2);
+    });
+
+    await act(async () => {
+      latestFloorPlan.resolve(
+        textResponse(
+          200,
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="latest-calibration-floor-plan" width="1000" height="800" /></svg>',
+        ),
+      );
+    });
+    await waitFor(() => {
+      expect(result.container.querySelector("#latest-calibration-floor-plan")).not.toBeNull();
+    });
+
+    await act(async () => {
+      olderFloorPlan.resolve(
+        textResponse(
+          200,
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="stale-calibration-floor-plan" width="1000" height="800" /></svg>',
+        ),
+      );
+    });
+    await waitFor(() => {
+      expect(result.container.querySelector("#latest-calibration-floor-plan")).not.toBeNull();
+      expect(result.container.querySelector("#stale-calibration-floor-plan")).toBeNull();
+    });
+
+    const floorPlanCalls = fixture.calls.filter(
+      ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+    );
+    result.unmount();
+    expect(
+      floorPlanCalls.every(([, init]) => (init?.signal as AbortSignal | undefined)?.aborted),
+    ).toBe(true);
+  });
+
+  it("aborts and ignores a rejected floor-plan response after the calibration route unmounts", async () => {
+    const pendingFloorPlan = deferred<Response>();
+    const fixture = makeApiFixture({
+      floorPlanResponses: [pendingFloorPlan.promise],
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+
+    const result = render(<App />);
+    await waitFor(() => {
+      expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+      expect(
+        fixture.calls.some(
+          ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+        ),
+      ).toBe(true);
+    });
+
+    const floorPlanCall = fixture.calls.find(
+      ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+    );
+    const signal = floorPlanCall?.[1]?.signal as AbortSignal | undefined;
+    expect(signal).toBeDefined();
+
+    result.unmount();
+    expect(signal?.aborted).toBe(true);
+
+    await act(async () => {
+      pendingFloorPlan.reject(new Error("unmounted floor-plan response"));
+    });
+    expect(result.container.querySelector("#stale-calibration-floor-plan")).toBeNull();
   });
 
   it("keeps the last known mapping visible and shows the load error after refresh fails", async () => {
