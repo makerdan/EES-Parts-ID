@@ -66,6 +66,7 @@ import {
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
+import { getValidationHostTools } from "./validation-steps.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -242,6 +243,50 @@ function ensureFlockAvailable() {
   }
 }
 
+function validationTierFromCommand() {
+  const tierIndex = command.findIndex((argument) => argument.endsWith("run-tier.mjs"));
+  const commandTier = tierIndex >= 0 ? command[tierIndex + 1] : null;
+  return commandTier || process.env.VALIDATION_TIER || "fast";
+}
+
+function ensureValidationHostTools() {
+  let requirements;
+  try {
+    requirements = getValidationHostTools(validationTierFromCommand());
+  } catch (error) {
+    console.error(
+      `[serial-lock] ERROR: validation host-tool contract is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return false;
+  }
+
+  const missing = [];
+  for (const requirement of requirements) {
+    const probe = spawnSync(requirement.name, requirement.probeArgs, { stdio: "ignore" });
+    if (probe.error || probe.status !== 0) {
+      const detail = probe.error?.code || `probe exited ${probe.status ?? "without status"}`;
+      missing.push({ ...requirement, detail });
+    }
+  }
+  if (missing.length === 0) return true;
+
+  const tier = validationTierFromCommand();
+  console.error(
+    `[validation-preflight] ERROR: ${missing.length} required host tool(s) are unavailable for ${tier} validation.`,
+  );
+  for (const requirement of missing) {
+    console.error(
+      `[validation-preflight] - ${requirement.name}: ${requirement.capability}; ` +
+      `setup source: ${requirement.setup}; probe: ${requirement.detail}.`,
+    );
+  }
+  console.error(
+    "[validation-preflight] Refusing to queue validation or use an unsafe fallback. " +
+    "Restore the listed host tools, then retry.",
+  );
+  return false;
+}
+
 function tryAcquire() {
   if (precedenceWaiterExists()) return false;
   const result = spawnSync(
@@ -319,6 +364,9 @@ async function acquireWithTimeout() {
   }
 }
 
+if (lockResource === "validation" && !ensureValidationHostTools()) {
+  process.exit(2);
+}
 ensureFlockAvailable();
 mkdirSync(lockDir, { recursive: true });
 

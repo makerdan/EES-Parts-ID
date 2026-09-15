@@ -214,6 +214,78 @@ await test("serial lock fails closed with an actionable diagnostic when flock is
   assert(!existsSync(lockFile), "missing-flock failure created a lock file");
 });
 
+await test("validation preflight reports every missing host tool before queueing", async () => {
+  const resource = "validation";
+  const lockFile = join(testRoot, `${resource}-preflight.lock`);
+  const queueDir = join(testRoot, "queues", "validation-preflight");
+  const marker = join(testRoot, `${resource}-preflight.marker`);
+  const result = await runProcess(
+    process.execPath,
+    lockArgs(resource, lockFile, 1, [
+      process.execPath,
+      "-e",
+      MARK_CODE,
+      marker,
+      "should-not-run",
+    ]),
+    lockEnv(lockFile, {
+      PATH: "",
+      SERIAL_LOCK_QUEUE_DIR: queueDir,
+      VALIDATION_TIER: "fast",
+    }),
+  );
+  assert(result.code === 2, `validation preflight exited ${result.code}: ${result.output}`);
+  for (const tool of ["node", "pnpm", "bash", "git", "flock"]) {
+    assert(
+      result.output.includes(`[validation-preflight] - ${tool}:`),
+      `missing ${tool} preflight diagnostic: ${result.output}`,
+    );
+  }
+  assert(
+    result.output.includes("serialized validation, codegen, test, and port-guard steps"),
+    `missing affected-capability diagnostic: ${result.output}`,
+  );
+  assert(
+    result.output.includes("setup source: the host util-linux package"),
+    `missing setup-source diagnostic: ${result.output}`,
+  );
+  assert(
+    result.output.includes("Refusing to queue validation or use an unsafe fallback"),
+    `missing fail-closed preflight diagnostic: ${result.output}`,
+  );
+  assert(!existsSync(marker), "validation child ran despite failed preflight");
+  assert(!existsSync(lockFile), "validation preflight created a lock file");
+  assert(!existsSync(queueDir), "validation preflight created a queue entry");
+});
+
+await test("standard-plus preflight includes post-merge host tools", async () => {
+  const resource = "validation";
+  const lockFile = join(testRoot, `${resource}-standard-plus.lock`);
+  const queueDir = join(testRoot, "queues", "validation-standard-plus");
+  const result = await runProcess(
+    process.execPath,
+    lockArgs(resource, lockFile, 1, [
+      process.execPath,
+      "scripts/run-tier.mjs",
+      "standard-plus",
+      "--allow-no-plan",
+    ]),
+    lockEnv(lockFile, {
+      PATH: "",
+      SERIAL_LOCK_QUEUE_DIR: queueDir,
+    }),
+  );
+  assert(result.code === 2, `standard-plus preflight exited ${result.code}: ${result.output}`);
+  for (const tool of ["curl", "timeout"]) {
+    assert(
+      result.output.includes(`[validation-preflight] - ${tool}:`),
+      `missing standard-plus ${tool} diagnostic: ${result.output}`,
+    );
+  }
+  assert(!existsSync(lockFile), "standard-plus preflight created a lock file");
+  assert(!existsSync(queueDir), "standard-plus preflight created a queue entry");
+});
+
 await test("port cleanup rejects a missing port argument", async () => {
   const result = await runProcess(process.execPath, [FREE_PORTS]);
   assert(result.code === 2, `missing-port cleanup exited ${result.code}: ${result.output}`);

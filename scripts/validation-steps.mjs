@@ -2,6 +2,77 @@
 /**
  * Single source of truth for validation-tier membership.
  */
+const ALL_VALIDATION_TIERS = ["fast", "standard", "standard-plus", "heavy"];
+
+/**
+ * Host utilities used by validation commands.
+ *
+ * Keep the capability and setup source next to the tier contract so a missing
+ * host dependency can be diagnosed before a validation process enters a
+ * serialized queue. The probes are intentionally simple version/help calls:
+ * they verify that the executable is both discoverable and runnable without
+ * touching the repository or starting a validation step.
+ */
+export const VALIDATION_HOST_TOOLS = Object.freeze([
+  {
+    name: "node",
+    probeArgs: ["--version"],
+    capability: "Node-based validation scripts",
+    setup: "the Replit Node.js 24 module and the pinned .node-version",
+  },
+  {
+    name: "pnpm",
+    probeArgs: ["--version"],
+    capability: "workspace package scripts, typechecks, and test suites",
+    setup: "the repository packageManager declaration (pnpm@10.26.1)",
+  },
+  {
+    name: "bash",
+    probeArgs: ["--version"],
+    capability: "shell-based validation guards and test harnesses",
+    setup: "the host bash package",
+  },
+  {
+    name: "git",
+    probeArgs: ["--version"],
+    capability: "public repository boundary and history checks",
+    setup: "the host Git package",
+  },
+  {
+    name: "flock",
+    probeArgs: ["--help"],
+    capability: "serialized validation, codegen, test, and port-guard steps",
+    setup: "the host util-linux package",
+  },
+]);
+
+export const STANDARD_PLUS_HOST_TOOLS = Object.freeze([
+  ...VALIDATION_HOST_TOOLS,
+  {
+    name: "curl",
+    probeArgs: ["--version"],
+    capability: "standard-plus post-merge health checks",
+    setup: "the host curl package",
+  },
+  {
+    name: "timeout",
+    probeArgs: ["--version"],
+    capability: "standard-plus post-merge command time limits",
+    setup: "the host coreutils package",
+  },
+]);
+
+export function getValidationHostTools(tier = "fast") {
+  if (!ALL_VALIDATION_TIERS.includes(tier)) {
+    throw new Error(
+      `unknown validation tier "${tier}"; expected one of: ${ALL_VALIDATION_TIERS.join(", ")}`,
+    );
+  }
+  return tier === "standard-plus" || tier === "heavy"
+    ? STANDARD_PLUS_HOST_TOOLS
+    : VALIDATION_HOST_TOOLS;
+}
+
 export const FAST = [
   ["node-runtime", "node scripts/check-node-runtime.mjs"],
   ["gate-guard", "bash scripts/check-gate-integrity.sh"],
