@@ -4,7 +4,13 @@ import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { assertTierLock, parsePlanTier } from "../lib/tier-lock-check.mjs";
+import {
+  assertTierLock,
+  parsePlanTier,
+  resolveTaskCompletionSelection,
+  selectExplicitValidation,
+  validateTaskCompletionEvidence,
+} from "../lib/tier-lock-check.mjs";
 import { baselineErrorsForPlan, validateCatalog } from "../lib/failure-baseline.mjs";
 import { DISTRIBUTION_FILES, verify as verifyDistribution } from "../publish-failure-gate.mjs";
 import { getTierSteps } from "../validation-steps.mjs";
@@ -75,6 +81,11 @@ standard
 }
 function planWithoutBaseline() {
   return plan("None known at plan time. Treat every failure as a potential regression.");
+}
+function planForTier(tier) {
+  return planWithoutBaseline()
+    .replace("`test-standard`", `\`test-${tier}\``)
+    .replace("## Validation tier\nstandard", `## Validation tier\n${tier}`);
 }
 
 try {
@@ -200,8 +211,56 @@ try {
     assert.equal(run("scripts/run-tier.mjs", ["heavy"], { TASK_PLAN_FILE: planPath }).status, 2);
   });
   test("plan parser accepts the registered command", () => assert.equal(parsePlanTier(plan()).tier, "standard"));
+  for (const tier of ["fast", "standard", "standard-plus", "heavy"]) {
+    test(`completion selection chooses only test-${tier}`, () => {
+      writeFileSync(planPath, planForTier(tier));
+      assert.deepEqual(resolveTaskCompletionSelection(planPath).commandIds, [`test-${tier}`]);
+    });
+  }
+  test("completion selection rejects missing plan context before launch", () => {
+    assert.equal(resolveTaskCompletionSelection("").ok, false);
+  });
   test("conflicting tier declarations fail closed", () => {
     assert.equal(parsePlanTier(plan().replace("## Validation tier\nstandard", "## Validation tier\nheavy")).ok, false);
+  });
+  test("duplicate tier declarations fail closed", () => {
+    assert.equal(parsePlanTier(`${plan()}\n## Validation tier\nstandard\n`).ok, false);
+  });
+  test("only a terminal successful one-command run is completion evidence", () => {
+    writeFileSync(planPath, planForTier("standard-plus"));
+    const selection = resolveTaskCompletionSelection(planPath);
+    const passedRun = {
+      runId: "run-contract-pass",
+      status: "PASSED",
+      commands: [{ commandId: "test-standard-plus", status: "PASSED" }],
+    };
+    assert.deepEqual(validateTaskCompletionEvidence(selection, passedRun), {
+      ok: true,
+      runId: "run-contract-pass",
+      command: "test-standard-plus",
+      status: "PASSED",
+    });
+    for (const status of ["RUNNING", "FAILED", "STOPPED", "ERROR", "TIMED_OUT"]) {
+      assert.equal(validateTaskCompletionEvidence(selection, { ...passedRun, status }).ok, false);
+    }
+    assert.equal(validateTaskCompletionEvidence(selection, {
+      ...passedRun,
+      commands: [{ commandId: "test-heavy", status: "PASSED" }],
+    }).ok, false);
+    assert.equal(validateTaskCompletionEvidence(selection, {
+      ...passedRun,
+      commands: [...passedRun.commands, { commandId: "test-fast", status: "PASSED" }],
+    }).ok, false);
+  });
+  test("explicit ad-hoc selection cannot masquerade as task completion evidence", () => {
+    const selection = selectExplicitValidation("test-fast");
+    assert.equal(selection.commandIds.length, 1);
+    assert.equal(selection.completionEligible, false);
+    assert.equal(validateTaskCompletionEvidence(selection, {
+      runId: "run-adhoc",
+      status: "PASSED",
+      commands: [{ commandId: "test-fast", status: "PASSED" }],
+    }).ok, false);
   });
   test("task plan symlinks cannot escape scoped writes", () => {
     const outside = join(temp, "outside.md");

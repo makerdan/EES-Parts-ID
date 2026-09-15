@@ -225,13 +225,33 @@ Read the "Pre-existing failures to ignore" section at the start of every task
 before touching any code. If either required section is missing from the plan,
 add the appropriate stub now — then continue. Do not skip this step.
 
-The validation command named in `## Validation` is the **ceiling**. Do not run
-any heavier tier for any reason — including pre-existing failures, flaky retries,
-or self-classification outcomes. Escalation is never the Build agent's call.
+The validation command named in `## Validation` is the **only completion
+command**, not merely a ceiling. Resolve the task plan before launch, start
+exactly that one registered command, wait for its terminal result, and cite its
+successful run ID as completion evidence. Do not start any other tier before or
+during completion, including a broad second completion run. Missing, unreadable,
+duplicate, conflicting, or invalid plan declarations fail closed before launch.
+`--allow-no-plan` and explicit command selection remain available only for
+ad-hoc or remote validation; those runs are not task-plan completion evidence.
 </HARD-GATE>
 
 When a test or validation gate fails, work through the following decision tree
 in order. Do not skip steps.
+
+---
+
+### Task completion protocol
+
+1. Resolve the task plan to exactly one registered command with the repository's
+   completion-selection boundary. Stop before launch if resolution fails.
+2. Start one validation run whose `commandIds` contains only that command.
+3. Wait for the run to become terminal. `RUNNING` and other non-terminal states
+   are not evidence.
+4. Proceed only when the run and its single selected command both report
+   `PASSED`. Failed, stopped, errored, timed-out, mismatched, or multi-command
+   runs cannot authorize completion.
+5. Cite that successful run ID when marking the task complete. Do not request a
+   second broad completion validation.
 
 ---
 
@@ -300,8 +320,9 @@ Once all remaining failures are either:
 
 **Do not attempt further validation fixes.**
 
-If you are tempted to run a heavier tier "to be sure", resist. The Planner
-chose the ceiling; your job is to meet it, not raise it.
+If you are tempted to run another tier "to be sure", resist. The Planner chose
+the one completion command; your job is to pass it and cite that run, not add a
+second validation fan-out.
 
 ---
 

@@ -111,8 +111,12 @@ The script exits 0 if the tier is valid, 1 with a clear error otherwise.
 
 When a task agent finishes work:
 
-1. **`fast`-tier tasks**: The Project gate (`test-fast`) runs automatically on merge. No manual `startValidationRun` call is needed — pass `skip_validation_reason` to `markTaskComplete` citing that the gate covers it.
-2. **Heavier tiers (`standard`, `standard-plus`, `heavy`)**: Call `startValidationRun({ commandIds: ["test-standard"] })` (or the appropriate tier command) before marking complete. Then pass `skip_validation_reason` to `markTaskComplete` with the run ID, e.g. `"Ran test-standard (run-abc123); gate covers fast tier on merge."`.
+1. Resolve the task plan through the completion-selection boundary. Missing, unreadable, duplicate, conflicting, or invalid declarations stop completion before validation starts.
+2. Call `startValidationRun` once with the returned one-element `commandIds` array. This applies equally to `test-fast`, `test-standard`, `test-standard-plus`, and `test-heavy`.
+3. Wait for that run to become terminal. Only a run whose overall status and single selected command are both `PASSED` is completion evidence.
+4. Cite the successful run ID when calling `markTaskComplete`. Do not request or allow a second broad completion validation.
+
+Explicit ad-hoc and remote validation may select one registered tier without a task plan, but those runs are not task-plan-locked completion evidence.
 
 ### `gate-guard` check
 
@@ -191,9 +195,9 @@ do not authorize ignores. Baseline lifecycle rules are in
 `docs/validation/failure-baseline.md`; the opt-in report is
 `pnpm run maintain:validation-baseline`.
 
-Task validation is locked to the plan. Platform completion validation is a
-separate final gate and may run broader registered commands; do not skip that
-completion check merely because it is broader than the task tier.
+Task validation and completion evidence are locked to the same plan-selected
+registered command. The successful terminal run ID is the completion gate; do
+not start a separate broad completion run.
 
 ---
 

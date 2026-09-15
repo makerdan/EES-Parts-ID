@@ -52,7 +52,6 @@
 - [parts-id e2e via Clerk approval gate](parts-id-e2e-clerk-approval.md) — fresh sign-ins land users.status='pending' (403 + pending screen); approve the row via SQL before the tester runs; throwaway users via Clerk backend API.
 - [pnpm lockfile drift on main](pnpm-lockfile-drift.md) — RESOLVED; dep changes surgical again. If drift recurs: revert lockfile, re-link, reconcile via lockfile-only install in isolated commit.
 - [Replit pnpm launcher runtime](replit-pnpm-launcher-runtime.md) — the packaged pnpm executable may run under an older Node patch than the active node on PATH; validate the child runtime directly.
-- [Completion validation pitfalls](completion-validation-pitfalls.md) — validation runs ALL workflows concurrently (unlocked `test` scrambles vendor_map) and gate-guard vs post-merge Tests 34/35 are mutually exclusive → full green impossible until reconciled.
 - [API test database mode](api-test-database-env.md) — direct API-server test runs require explicit `DATABASE_ENV=test` before the suite can start.
 - [SVG load singleton retries](svg-load-singleton-retry.md) — a settled module-level load promise must be discarded when cache data is unusable on either platform, or later cold loads stay blank.
 - [SheetJS ArrayBuffer fixtures](sheetjs-array-buffer-fixtures.md) — type:"array" ODS fixtures return an ArrayBuffer; pass it directly instead of converting it as a number array.
