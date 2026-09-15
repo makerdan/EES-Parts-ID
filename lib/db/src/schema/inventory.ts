@@ -41,6 +41,9 @@ export const inventoryTable = pgTable(
     catalog: text("catalog").notNull(),
     orderPurchase: integer("order_purchase").notNull().default(0),
     orderQuantity: integer("order_quantity").notNull().default(0),
+    totalOpOq: integer("total_op_oq")
+      .notNull()
+      .generatedAlwaysAs(sql`"order_purchase" + "order_quantity"`),
     description: text("description").notNull().default(""),
     binLocations: text("bin_locations")
       .array()
