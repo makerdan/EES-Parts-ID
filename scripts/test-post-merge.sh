@@ -529,6 +529,20 @@ else
   fail "verify-fts — must appear after 'pnpm --filter db push' (push=$PUSH_LINE, verify=$VERIFY_LINE)"
 fi
 
+# Schema synchronization and verification must explicitly select the safe
+# development database boundary. They must never inherit an absent or
+# production DATABASE_ENV from the post-merge runner.
+if grep -Eq 'timeout 90 env DATABASE_ENV=development pnpm --filter db push' "$SCRIPT_DIR/post-merge.sh"; then
+  pass "db push — declares DATABASE_ENV=development"
+else
+  fail "db push — must declare DATABASE_ENV=development"
+fi
+if grep -Eq 'env DATABASE_ENV=development pnpm --filter @workspace/db run verify-fts' "$SCRIPT_DIR/post-merge.sh"; then
+  pass "verify-fts — declares DATABASE_ENV=development"
+else
+  fail "verify-fts — must declare DATABASE_ENV=development"
+fi
+
 # ---------------------------------------------------------------------------
 # Test 12: db push is skipped when no schema files changed
 # Runs post-merge.sh as a subprocess with a mock git that reports only

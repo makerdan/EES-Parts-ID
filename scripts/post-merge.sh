@@ -290,7 +290,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # staying within the 20s post-merge budget.
   if git --no-optional-locks diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q 'lib/db/src/schema'; then
     echo "[post-merge] Schema changed — running db push..."
-    timeout 90 pnpm --filter db push --force || {
+    timeout 90 env DATABASE_ENV=development pnpm --filter db push --force || {
       DB_EXIT=$?
       if [[ "$DB_EXIT" -eq 124 ]]; then
         echo "[post-merge] ERROR: db push timed out after 90s. Aborting."
@@ -303,7 +303,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     # Verify the FTS index after every schema push — a missing or drifted
     # inventory_fts_idx would silently break keyword search.
     echo "[post-merge] Verifying FTS index..."
-    pnpm --filter @workspace/db run verify-fts || {
+    env DATABASE_ENV=development pnpm --filter @workspace/db run verify-fts || {
       echo "[post-merge] ERROR: FTS index check failed. Run 'pnpm --filter @workspace/db run push-force' to rebuild the index."
       exit 1
     }
