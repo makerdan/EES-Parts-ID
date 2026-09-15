@@ -58,12 +58,19 @@ for (const [tier, priority] of [
   ["standard-plus", 2],
   ["heavy", 3],
 ]) {
+  const budgetPrefix = tier === "standard" ? "SERIAL_LOCK_BUDGET_MS=300000 " : "";
   assert.equal(
     packageJson.scripts?.[`test-${tier}`],
-    `node scripts/serial-lock.mjs --resource validation --priority ${priority} -- node scripts/run-tier.mjs ${tier} --allow-no-plan`,
+    `${budgetPrefix}node scripts/serial-lock.mjs --resource validation --priority ${priority} -- node scripts/run-tier.mjs ${tier} --allow-no-plan`,
     `test-${tier} must remain executable through the documented lock priority scale`,
   );
 }
+
+assert.match(
+  tierRunner,
+  /tier execution after lock:/,
+  "the tier report must keep execution time separate from queue wait time",
+);
 
 assert.match(
   packageJson.engines?.node ?? "",

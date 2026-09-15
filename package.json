@@ -15,7 +15,7 @@
     "account-skill:status": "node scripts/account-skill-status.mjs",
     "check:node-runtime": "node scripts/check-node-runtime.mjs",
     "test-fast": "node scripts/serial-lock.mjs --resource validation --priority 1 -- node scripts/run-tier.mjs fast --allow-no-plan",
-    "test-standard": "node scripts/serial-lock.mjs --resource validation --priority 2 -- node scripts/run-tier.mjs standard --allow-no-plan",
+    "test-standard": "SERIAL_LOCK_BUDGET_MS=300000 node scripts/serial-lock.mjs --resource validation --priority 2 -- node scripts/run-tier.mjs standard --allow-no-plan",
     "test-standard-plus": "node scripts/serial-lock.mjs --resource validation --priority 2 -- node scripts/run-tier.mjs standard-plus --allow-no-plan",
     "test-heavy": "node scripts/serial-lock.mjs --resource validation --priority 3 -- node scripts/run-tier.mjs heavy --allow-no-plan",
     "run-locked-tier": "node scripts/run-locked-tier.mjs",
