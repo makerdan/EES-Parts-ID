@@ -49,11 +49,9 @@ jest.mock("../src/lib/startServer", () => ({
 const mockInitProvider = jest.fn();
 
 const mockProbeActivePoeModels = jest.fn();
-const mockRefreshPoeCatalogue = jest.fn();
 jest.mock("../src/lib/aiProvider", () => ({
   initProvider: mockInitProvider,
   probeActivePoeModels: mockProbeActivePoeModels,
-  refreshPoeCatalogue: mockRefreshPoeCatalogue,
 }));
 
 // ── readiness mock ────────────────────────────────────────────────────────────
@@ -152,7 +150,6 @@ beforeEach(() => {
   // Default: both helpers resolve immediately (overridden per-test as needed)
   mockInitProvider.mockResolvedValue(undefined);
   mockProbeActivePoeModels.mockResolvedValue(undefined);
-  mockRefreshPoeCatalogue.mockResolvedValue(undefined);
   mockCheckRequiredSchema.mockResolvedValue(true);
   mockStartServer.mockResolvedValue({
     close: (callback: () => void) => callback(),
@@ -194,16 +191,9 @@ describe("server startup sequence (src/index.ts)", () => {
     expect(mockStartServer).toHaveBeenCalledTimes(1);
   });
 
-  it("never sends live model probes during startup", async () => {
-    const { promise: refreshGate, resolve: resolveRefresh } = makeGate();
-    mockRefreshPoeCatalogue.mockImplementationOnce(() => {
-      resolveRefresh();
-      return Promise.resolve();
-    });
-
+  it("does not start explicit Poe probes during startup", async () => {
     loadIndex();
-    await refreshGate;
-
+    await Promise.resolve();
     expect(mockProbeActivePoeModels).not.toHaveBeenCalled();
   });
 

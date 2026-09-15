@@ -6,16 +6,15 @@ import { Router } from "express";
 import {
   getAllPoeModelNames,
   getLastProbeOperation,
-  getPoeCatalogueSnapshot,
   getPoeFallbackOverrides,
   getPoeFeatureRoutes,
+  getPoeRegistrySnapshot,
   getProbeSummary,
   getProbeVerificationSummary,
   getProvider,
   type PoeFeature,
   probeActivePoeModels,
   probeSinglePoeBot,
-  refreshPoeCatalogue,
   resetPoeFallbacks,
   setPoeFallbacks,
   validatePoeFallbacks,
@@ -25,18 +24,16 @@ import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
 
-const EMPTY_CATALOGUE = {
-  freshness: "unavailable" as const,
+const EMPTY_REGISTRY = {
+  source: "configured_registry" as const,
+  version: "static-v1",
   models: [],
-  fetchedAt: null,
-  lastSuccessAt: null,
-  error: null,
 };
 
-function getCatalogueSnapshotCompat() {
-  return typeof getPoeCatalogueSnapshot === "function"
-    ? getPoeCatalogueSnapshot()
-    : EMPTY_CATALOGUE;
+function getRegistrySnapshotCompat() {
+  return typeof getPoeRegistrySnapshot === "function"
+    ? getPoeRegistrySnapshot()
+    : EMPTY_REGISTRY;
 }
 
 function getFeatureRoutesCompat() {
@@ -50,7 +47,7 @@ function getFallbackOverridesCompat() {
 function statusPayload() {
   return {
     provider: getProvider(),
-    catalogue: getCatalogueSnapshotCompat(),
+    registry: getRegistrySnapshotCompat(),
     bots: getProbeSummary(),
     verification: {
       models: getProbeVerificationSummary(),
@@ -77,23 +74,15 @@ router.get("/ai-status", requireAdminAuth, (_req, res, next) => {
   }
 });
 
-async function refreshCatalogue(_req: Request, res: Response, next: (err?: unknown) => void) {
-  try {
-    const snapshot = await refreshPoeCatalogue();
-    const payload = statusPayload();
-    if (snapshot.freshness === "unavailable") {
-      return res.status(503).json(GetAdminAiStatusResponse.parse(payload));
-    }
-    return res.json(GetAdminAiStatusResponse.parse(payload));
-  } catch (err) {
-    logger.error({ err }, "adminAiStatus: catalogue refresh failed");
-    return void next(err);
-  }
+function retiredCatalogueRefresh(_req: Request, res: Response) {
+  return res.status(410).json({
+    error: "Poe catalogue discovery has been retired; the configured registry is shown in this status response",
+  });
 }
 
-router.post("/ai-status/catalogue/refresh", requireAdminAuth, refreshCatalogue);
+router.post("/ai-status/catalogue/refresh", requireAdminAuth, retiredCatalogueRefresh);
 // Short alias retained for clients that only expose a single refresh action.
-router.post("/ai-status/refresh", requireAdminAuth, refreshCatalogue);
+router.post("/ai-status/refresh", requireAdminAuth, retiredCatalogueRefresh);
 
 // POST /admin/ai-status/probe
 // Explicitly verifies the bounded set of active route-chain models.

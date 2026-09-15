@@ -29,8 +29,6 @@ import {
   getAiClient,
   getModelForFeature,
   getOpenAIModelForFeature,
-  getPoeCatalogueSnapshot,
-  getPoeChainForFeature,
   getProvider,
   getVerifiedPoeRouteSnapshot,
   type PoeFeature,
@@ -161,8 +159,6 @@ type PoeCompletionOptions = {
 };
 
 function verifiedChain(feature: PoeFeature): Array<string> {
-  const catalogue = getPoeCatalogueSnapshot();
-  if (catalogue.freshness !== "fresh") return getPoeChainForFeature(feature);
   return getVerifiedPoeRouteSnapshot(feature).effective;
 }
 

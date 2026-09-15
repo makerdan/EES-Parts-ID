@@ -2559,7 +2559,7 @@ export const getGetAdminAiStatusUrl = () => {
 }
 
 /**
- * @summary Get Poe catalogue metadata, explicit verification results, and effective AI routes
+ * @summary Get the configured Poe registry, explicit verification results, and effective AI routes
  */
 export const getAdminAiStatus = async ( options?: RequestInit): Promise<AdminAiStatus> => {
 
@@ -2606,7 +2606,7 @@ export type GetAdminAiStatusQueryError = ErrorType<void>
 
 
 /**
- * @summary Get Poe catalogue metadata, explicit verification results, and effective AI routes
+ * @summary Get the configured Poe registry, explicit verification results, and effective AI routes
  */
 
 export function useGetAdminAiStatus<TData = Awaited<ReturnType<typeof getAdminAiStatus>>, TError = ErrorType<void>>(
@@ -2636,11 +2636,12 @@ export const getRefreshAdminPoeCatalogueUrl = () => {
 }
 
 /**
- * @summary Refresh the live Poe model catalogue
+ * @deprecated
+ * @summary [Retired] Poe catalogue discovery is no longer supported
  */
-export const refreshAdminPoeCatalogue = async ( options?: RequestInit): Promise<AdminAiStatus> => {
+export const refreshAdminPoeCatalogue = async ( options?: RequestInit): Promise<unknown> => {
 
-  return customFetch<AdminAiStatus>(getRefreshAdminPoeCatalogueUrl(),
+  return customFetch<unknown>(getRefreshAdminPoeCatalogueUrl(),
   {
     ...options,
     method: 'POST'
@@ -2685,7 +2686,8 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type RefreshAdminPoeCatalogueMutationError = ErrorType<void>
 
     /**
- * @summary Refresh the live Poe model catalogue
+ * @deprecated
+ * @summary [Retired] Poe catalogue discovery is no longer supported
  */
 export const useRefreshAdminPoeCatalogue = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshAdminPoeCatalogue>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}

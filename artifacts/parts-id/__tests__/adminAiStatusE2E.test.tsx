@@ -159,7 +159,6 @@ const fetchCalls: FetchCall[] = [];
 let statusResponses: Array<Response | Promise<Response>>;
 let fullProbeResponses: Array<Response | Promise<Response>>;
 let singleProbeResponses: Response[];
-let catalogueRefreshResponses: Array<Response | Promise<Response>>;
 let routeMutationResponses: Array<Response | Promise<Response>>;
 let providerResponses: Array<Response | Promise<Response>>;
 
@@ -174,7 +173,7 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
 function aiRoutesStatusResponse(
   fallbacks: string[] = [],
   provider: "poe" | "openai" = "poe",
-  freshness: "fresh" | "stale" | "unavailable" = "fresh",
+  _legacyFreshness: "fresh" | "stale" | "unavailable" = "fresh",
   models: Array<{
     id: string;
     name: string;
@@ -189,12 +188,10 @@ function aiRoutesStatusResponse(
 ): Response {
   return jsonResponse({
     provider,
-    catalogue: {
-      freshness,
+    registry: {
+      source: "configured_registry",
+      version: "static-v1",
       models,
-      fetchedAt: "2026-09-05T00:00:00.000Z",
-      lastSuccessAt: "2026-09-05T00:00:00.000Z",
-      error: freshness === "fresh" ? null : "Poe catalogue is not freshly verified",
     },
     bots: { [FIRST_BOT]: "ok" },
     routes: [{ feature: "enrich", primary: "Primary Bot", fallbacks }],
@@ -251,9 +248,6 @@ function responseFor(url: string): Response | Promise<Response> {
   }
   if (url === `${API_BASE}/admin/ai-provider`) {
     return providerResponses.shift() ?? jsonResponse({ provider: "poe", persisted: true });
-  }
-  if (url === `${API_BASE}/admin/ai-status/catalogue/refresh`) {
-    return catalogueRefreshResponses.shift() ?? jsonResponse({ bots: {} });
   }
   if (
     url === `${API_BASE}/admin/ai-status/routes` ||
@@ -391,7 +385,6 @@ beforeEach(() => {
   ];
   fullProbeResponses = [];
   singleProbeResponses = [];
-  catalogueRefreshResponses = [];
   routeMutationResponses = [];
   providerResponses = [];
   mockFetch.mockReset();
@@ -680,100 +673,6 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
       jsonResponse({ bots: { "late-probe-bot": "error" } }),
     );
     await flushPromises();
-  });
-
-  it("aborts and ignores a catalogue refresh when the screen unmounts", async () => {
-    let resolvePendingRefresh!: (response: Response) => void;
-    catalogueRefreshResponses = [
-      new Promise<Response>((resolve) => {
-        resolvePendingRefresh = resolve;
-      }),
-    ];
-
-    const rendered = await renderAdminUpload();
-    activeTree = rendered.tree;
-    activeBlur = rendered.blur;
-
-    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
-    expect(enrichmentCard).not.toBeNull();
-    await act(async () => { fireEvent.press(enrichmentCard!); });
-    await flushPromises();
-
-    const refreshButton = findPressable(rendered.tree.root!, "Refresh models");
-    expect(refreshButton).not.toBeNull();
-    await act(async () => { fireEvent.press(refreshButton!); });
-    await flushPromises();
-
-    const refreshCall = callsFor("/admin/ai-status/catalogue/refresh")[0];
-    expect(refreshCall?.init?.signal).toBeInstanceOf(AbortSignal);
-    expect(refreshCall?.init?.signal?.aborted).toBe(false);
-
-    await rendered.tree.unmount();
-    activeTree = null;
-    activeBlur = undefined;
-
-    expect(refreshCall?.init?.signal?.aborted).toBe(true);
-
-    resolvePendingRefresh(
-      jsonResponse({ bots: { "late-catalogue-bot": "ok" } }),
-    );
-    await flushPromises();
-  });
-
-  it("ignores a catalogue refresh response after the admin token is replaced", async () => {
-    let resolveOldRefresh!: (response: Response) => void;
-    catalogueRefreshResponses = [
-      new Promise<Response>((resolve) => {
-        resolveOldRefresh = resolve;
-      }),
-    ];
-    const app = makeAppMock();
-    useApp.mockReturnValue(app);
-
-    const tree = await render(
-      <ApiHealthProvider>
-        <UploadScreen />
-      </ApiHealthProvider>,
-    );
-    activeTree = tree;
-    const blur = capturedFocusCallback?.();
-    activeBlur = blur;
-    await flushPromises();
-
-    const enrichmentCard = findPressable(tree.root!, "AI & Enrichment");
-    expect(enrichmentCard).not.toBeNull();
-    await act(async () => { fireEvent.press(enrichmentCard!); });
-    await flushPromises();
-
-    const refreshButton = findPressable(tree.root!, "Refresh models");
-    expect(refreshButton).not.toBeNull();
-    await act(async () => { fireEvent.press(refreshButton!); });
-    await flushPromises();
-
-    const refreshCall = callsFor("/admin/ai-status/catalogue/refresh")[0];
-    expect(refreshCall?.init?.signal?.aborted).toBe(false);
-
-    app.adminToken = "new-admin-token";
-    await tree.rerender(
-      <ApiHealthProvider>
-        <UploadScreen />
-      </ApiHealthProvider>,
-    );
-    await flushPromises();
-
-    expect(refreshCall?.init?.signal?.aborted).toBe(true);
-    expect(findPressable(tree.root!, "Refresh models")).not.toBeNull();
-
-    resolveOldRefresh(
-      jsonResponse({
-        error: "late-catalogue-error",
-      }, false, 503),
-    );
-    await flushPromises();
-
-    expect(instText(tree.root!)).not.toContain("late-catalogue-error");
-    expect(instText(tree.root!)).not.toContain("Catalogue refresh failed");
-    expect(findPressable(tree.root!, "Refresh models")).not.toBeNull();
   });
 
   it("aborts and ignores a fallback save when the screen unmounts", async () => {
@@ -1132,54 +1031,6 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     await flushPromises();
   });
 
-  it("retains the last good catalogue when a refresh returns a partial error payload", async () => {
-    statusResponses = [aiRoutesStatusResponse()];
-    catalogueRefreshResponses = [
-      jsonResponse({
-        provider: "poe",
-        catalogue: {
-          freshness: "unavailable",
-          models: [{ id: "partial-model", name: "Partial Model" }],
-          fetchedAt: null,
-          lastSuccessAt: null,
-          error: "catalogue service unavailable",
-        },
-        bots: {},
-        routes: [],
-        reference: { provider: "gemini", readOnly: true, note: "Read-only" },
-      }, false, 503),
-      aiRoutesStatusResponse(),
-    ];
-
-    const rendered = await renderAdminUpload();
-    activeTree = rendered.tree;
-    activeBlur = rendered.blur;
-
-    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
-    await act(async () => { fireEvent.press(enrichmentCard!); });
-    await flushPromises();
-
-    const refreshButton = findPressable(rendered.tree.root!, "Refresh models");
-    await act(async () => { fireEvent.press(refreshButton!); });
-    await flushPromises();
-
-    expect(instText(rendered.tree.root!)).toContain("catalogue service unavailable");
-    expect(instText(rendered.tree.root!)).not.toContain("Partial Model");
-    expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain(
-      "Provider catalogue refresh rejected",
-    );
-
-    await act(async () => { fireEvent.press(refreshButton!); });
-    await flushPromises();
-
-    expect(instText(rendered.tree.root!)).toContain("Fallback Bot");
-    expect(instText(rendered.tree.root!)).not.toContain("Partial Model");
-    expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain(
-      "Provider catalogue refreshed",
-    );
-    expect(callsFor("/admin/ai-status/catalogue/refresh")).toHaveLength(2);
-  });
-
   it("preserves the safe route order and explains a rejected fallback save", async () => {
     statusResponses = [aiRoutesStatusResponse(["Fallback Bot"])];
     routeMutationResponses = [
@@ -1235,45 +1086,6 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     );
   });
 
-  it("keeps stale catalogue routes visible but read-only until refresh succeeds", async () => {
-    statusResponses = [aiRoutesStatusResponse(["Fallback Bot"], "poe", "stale")];
-    catalogueRefreshResponses = [
-      jsonResponse({
-        ...aiRoutesStatusResponse(["Late Fallback Bot"], "poe", "unavailable"),
-        catalogue: {
-          freshness: "unavailable",
-          models: [{ id: "partial-model", name: "Partial Model", modalities: ["text"], capabilities: { text: true, vision: true, structuredOutput: true } }],
-          fetchedAt: null,
-          lastSuccessAt: null,
-          error: "catalogue service unavailable",
-        },
-      }, false, 503),
-    ];
-
-    const rendered = await renderAdminUpload();
-    activeTree = rendered.tree;
-    activeBlur = rendered.blur;
-
-    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
-    await act(async () => { fireEvent.press(enrichmentCard!); });
-    await flushPromises();
-
-    expect(instText(rendered.tree.root!)).toContain("Fallbacks are read-only");
-    expect(instText(rendered.tree.root!)).toContain("Catalogue metadata: stale");
-    expect(instText(rendered.tree.root!)).toContain("1. Fallback Bot");
-
-    const resetButton = findPressableByAccessibilityLabel(rendered.tree.root!, "Reset fallbacks");
-    expect(resetButton?.props.disabled).toBe(true);
-
-    const refreshButton = findPressable(rendered.tree.root!, "Refresh models");
-    await act(async () => { fireEvent.press(refreshButton!); });
-    await flushPromises();
-
-    expect(instText(rendered.tree.root!)).toContain("catalogue service unavailable");
-    expect(instText(rendered.tree.root!)).toContain("1. Fallback Bot");
-    expect(instText(rendered.tree.root!)).not.toContain("Partial Model");
-  });
-
   it("does not offer a fallback model whose required capability is unknown or false", async () => {
     statusResponses = [aiRoutesStatusResponse(
       [],
@@ -1298,7 +1110,7 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     expect(instText(rendered.tree.root!)).not.toContain("+ Add Text Only");
   });
 
-  it("marks incomplete capability evidence as unknown and keeps fallback controls disabled", async () => {
+  it("shows static registry metadata independently from live probe results", async () => {
     statusResponses = [aiRoutesStatusResponse(
       [],
       "poe",
@@ -1319,8 +1131,7 @@ describe("UploadScreen — rendered admin AI Status workflow", () => {
     await act(async () => { fireEvent.press(enrichmentCard!); });
     await flushPromises();
 
-    expect(instText(rendered.tree.root!)).toContain("Catalogue metadata: unknown");
-    expect(instText(rendered.tree.root!)).toContain("unknown or incomplete");
-    expect(findPressableByAccessibilityLabel(rendered.tree.root!, "Reset fallbacks")?.props.disabled).toBe(true);
+    expect(instText(rendered.tree.root!)).toContain("Registry: static-v1");
+    expect(findPressableByAccessibilityLabel(rendered.tree.root!, "Reset fallbacks")?.props.disabled).toBe(false);
   });
 });

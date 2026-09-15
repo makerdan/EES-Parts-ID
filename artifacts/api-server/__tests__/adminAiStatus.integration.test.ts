@@ -77,11 +77,12 @@ describe("GET /api/admin/ai-status", () => {
 
     expect(res.body).toHaveProperty("bots");
     expect(typeof res.body.bots).toBe("object");
-    expect(res.body.catalogue).toEqual(expect.objectContaining({
-      freshness: expect.stringMatching(/^(fresh|stale|unavailable)$/),
+    expect(res.body.registry).toEqual(expect.objectContaining({
+      source: "configured_registry",
+      version: expect.any(String),
       models: expect.any(Array),
     }));
-    for (const model of res.body.catalogue.models) {
+    for (const model of res.body.registry.models) {
       expect(model).toEqual(expect.objectContaining({
         id: expect.any(String),
         name: expect.any(String),

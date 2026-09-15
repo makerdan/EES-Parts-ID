@@ -7,7 +7,7 @@
  * history rewrite; this check must not imply that such a rewrite happened.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getTierSteps } from "../validation-steps.mjs";
@@ -52,7 +52,10 @@ function assert(condition, message) {
 }
 
 function trackedPaths() {
-  return git(["ls-files", "-z"]).split("\0").filter(Boolean);
+  return git(["ls-files", "-z"])
+    .split("\0")
+    .filter(Boolean)
+    .filter((filePath) => existsSync(join(ROOT, filePath)));
 }
 
 function isSafeExample(value) {

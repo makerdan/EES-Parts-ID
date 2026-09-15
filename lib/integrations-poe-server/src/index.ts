@@ -352,6 +352,16 @@ export function createPoeChatCompletionWithSettlement(
     timeoutMs?: number | undefined;
   } = {},
 ): PoeChatCompletionHandle {
+  if (!isPoeModelRegistered(request.model)) {
+    const response = Promise.reject(
+      new PoeProviderError(
+        "invalid_request",
+        `Poe model "${request.model.slice(0, 128)}" is not registered for this application`,
+        { status: 400 },
+      ),
+    );
+    return { response, transportSettled: Promise.resolve() };
+  }
   let transportStarted = false;
   let resolveTransportSettled!: () => void;
   const transportSettled = new Promise<void>((resolve) => {
@@ -395,6 +405,7 @@ export async function createPoeChatCompletion(
     timeoutMs?: number | undefined;
   } = {},
 ): Promise<unknown> {
+  assertRegisteredPoeModel(request.model);
   return withPoeRetry(
     (_attempt, signal) => {
       const create = getPoeClient().chat.completions.create;
@@ -437,7 +448,7 @@ export interface PoeCatalogueModel {
   };
   capabilityConfidence: "verified" | "inferred" | "unknown";
   verification: {
-    source: "live_catalogue" | "probe" | "unknown";
+    source: "configured_registry" | "probe" | "unknown";
     owner: string;
     verifiedAt: string | null;
   };
@@ -448,148 +459,97 @@ export interface PoeCatalogueModel {
   raw?: Record<string, unknown>;
 }
 
-function stringArray(value: unknown): Array<string> {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string").map((item) => item.toLowerCase())
-    : [];
-}
-
-function booleanCapability(
-  source: Record<string, unknown>,
-  keys: Array<string>,
-): boolean | null {
-  for (const key of keys) {
-    if (typeof source[key] === "boolean") return source[key] as boolean;
-  }
-  return null;
-}
-
-/** Normalize the deliberately loose model metadata returned by Poe. */
-export function normalizePoeModel(raw: unknown): PoeCatalogueModel | null {
-  if (!raw || typeof raw !== "object") return null;
-  const source = raw as Record<string, unknown>;
-  const id = typeof source.id === "string" ? source.id.trim() : "";
-  const name =
-    typeof source.name === "string"
-      ? source.name.trim()
-      : typeof source.display_name === "string"
-        ? source.display_name.trim()
-        : id;
-  if (!id && !name) return null;
-
-  const capabilitySource =
-    source.capabilities && typeof source.capabilities === "object"
-      ? (source.capabilities as Record<string, unknown>)
-      : source;
-  const modalities: Array<string> = [
-    ...stringArray(source.modalities),
-    ...stringArray(source.input_modalities),
-    ...stringArray(source.inputModalities),
-    ...stringArray(capabilitySource.modalities),
-  ];
-  const hasVisionModality = modalities.some((item) =>
-    ["vision", "image", "images", "multimodal"].includes(item),
-  );
-  const hasTextModality = modalities.some((item) =>
-    ["text", "input_text", "text_input"].includes(item),
-  );
-  const structuredModality = modalities.some((item) =>
-    ["json", "structured", "structured_output", "function_calling"].includes(item),
-  );
-
-  const text =
-    booleanCapability(capabilitySource, ["text", "text_input", "supports_text"]) ??
-    (modalities.length > 0 ? hasTextModality : null);
-  const vision =
-    booleanCapability(capabilitySource, ["vision", "image", "supports_vision"]) ??
-    (modalities.length > 0 ? hasVisionModality : null);
-  const structuredOutput =
-    booleanCapability(capabilitySource, [
-      "structured_output",
-      "structuredOutput",
-      "json_mode",
-      "jsonMode",
-      "function_calling",
-    ]) ?? (modalities.length > 0 ? structuredModality : null);
-
-  const numberValue = (keys: Array<string>): number | null => {
-    for (const key of keys) {
-      if (typeof source[key] === "number" && Number.isFinite(source[key])) {
-        return source[key] as number;
-      }
-      if (
-        typeof capabilitySource[key] === "number" &&
-        Number.isFinite(capabilitySource[key])
-      ) {
-        return capabilitySource[key] as number;
-      }
-    }
-    return null;
-  };
-  const boolValue = (keys: Array<string>): boolean | null =>
-    booleanCapability(source, keys) ?? booleanCapability(capabilitySource, keys);
-  const capabilityValues = [text, vision, structuredOutput];
-  const capabilityConfidence =
-    capabilityValues.every((value) => value !== null)
-      ? "verified"
-      : modalities.length > 0
-        ? "inferred"
-        : "unknown";
-
-  return {
-    id: id || name,
-    name: name || id,
-    modalities: [...new Set(modalities)],
-    endpoint:
-      typeof source.endpoint === "string"
-        ? source.endpoint
-        : POE_CHAT_COMPLETIONS_ENDPOINT,
-    parameters: {
-      maxCompletionTokens: numberValue(["max_completion_tokens", "max_output_tokens"]),
-      temperature: boolValue(["temperature", "supports_temperature"]),
-      responseFormat: boolValue(["response_format", "json_mode", "supports_response_format"]),
-    },
-    limits: {
-      maxInputTokens: numberValue(["max_input_tokens", "context_length", "context_window"]),
-      maxOutputTokens: numberValue(["max_output_tokens", "max_completion_tokens"]),
-      maxImages: numberValue(["max_images", "max_images_per_request"]),
-      maxImageBytes: numberValue(["max_image_bytes", "max_image_size_bytes"]),
-    },
-    capabilities: { text, vision, structuredOutput },
-    capabilityConfidence,
-    verification: {
-      source: "live_catalogue",
-      owner: "api-server",
-      verifiedAt: new Date().toISOString(),
-    },
-    approvedUse: Array.isArray(source.approved_use)
-      ? source.approved_use
-        .filter((value): value is string => typeof value === "string")
-        .slice(0, 16)
-      : [],
+/**
+ * Code-owned Poe model registry.
+ *
+ * This is intentionally the only source of model IDs accepted by the Poe
+ * transport. Do not replace it with provider catalogue discovery: a provider
+ * wide model response is not an authorization boundary for this application.
+ */
+export const POE_MODEL_REGISTRY: ReadonlyArray<PoeCatalogueModel> = [
+  {
+    id: "Claude-Sonnet-4.5",
+    name: "Claude-Sonnet-4.5",
+    modalities: ["text", "vision", "structured_output"],
+    endpoint: POE_CHAT_COMPLETIONS_ENDPOINT,
+    parameters: { maxCompletionTokens: null, temperature: true, responseFormat: true },
+    limits: { maxInputTokens: null, maxOutputTokens: null, maxImages: 10, maxImageBytes: 20 * 1024 * 1024 },
+    capabilities: { text: true, vision: true, structuredOutput: true },
+    capabilityConfidence: "verified",
+    verification: { source: "configured_registry", owner: "application", verifiedAt: null },
+    approvedUse: ["identify", "dimensions", "enrich", "catalog"],
     privacy: "prompt_not_persisted",
-    costNote:
-      typeof source.cost_note === "string"
-        ? source.cost_note.slice(0, 240)
-        : "Provider pricing varies by live Poe model.",
-    latencyNote:
-      typeof source.latency_note === "string"
-        ? source.latency_note.slice(0, 240)
-        : "Latency varies by provider load and model.",
-    raw: source,
+    costNote: "Configured application model",
+    latencyNote: "Latency varies by provider load",
+  },
+  {
+    id: "Gemini-3.1-Pro",
+    name: "Gemini-3.1-Pro",
+    modalities: ["text", "vision", "structured_output"],
+    endpoint: POE_CHAT_COMPLETIONS_ENDPOINT,
+    parameters: { maxCompletionTokens: null, temperature: true, responseFormat: true },
+    limits: { maxInputTokens: null, maxOutputTokens: null, maxImages: 16, maxImageBytes: 20 * 1024 * 1024 },
+    capabilities: { text: true, vision: true, structuredOutput: true },
+    capabilityConfidence: "verified",
+    verification: { source: "configured_registry", owner: "application", verifiedAt: null },
+    approvedUse: ["enrich", "catalog", "identify", "dimensions"],
+    privacy: "prompt_not_persisted",
+    costNote: "Configured application model",
+    latencyNote: "Latency varies by provider load",
+  },
+  {
+    id: "Gemini-2.5-Pro",
+    name: "Gemini-2.5-Pro",
+    modalities: ["text", "vision", "structured_output"],
+    endpoint: POE_CHAT_COMPLETIONS_ENDPOINT,
+    parameters: { maxCompletionTokens: null, temperature: true, responseFormat: true },
+    limits: { maxInputTokens: null, maxOutputTokens: null, maxImages: 16, maxImageBytes: 20 * 1024 * 1024 },
+    capabilities: { text: true, vision: true, structuredOutput: true },
+    capabilityConfidence: "verified",
+    verification: { source: "configured_registry", owner: "application", verifiedAt: null },
+    approvedUse: ["catalog"],
+    privacy: "prompt_not_persisted",
+    costNote: "Configured application fallback model",
+    latencyNote: "Latency varies by provider load",
+  },
+];
+
+export const POE_MODEL_REGISTRY_VERSION = "static-v1";
+
+function clonePoeModel(model: PoeCatalogueModel): PoeCatalogueModel {
+  return {
+    ...model,
+    modalities: [...model.modalities],
+    capabilities: { ...model.capabilities },
+    parameters: { ...model.parameters },
+    limits: { ...model.limits },
+    approvedUse: [...model.approvedUse],
+    ...(model.raw ? { raw: { ...model.raw } } : {}),
+    verification: { ...model.verification },
   };
 }
 
-/** Fetch and normalize the live Poe model catalogue. */
-export async function listPoeModels(): Promise<Array<PoeCatalogueModel>> {
-  const response = await withPoeRequestTimeout((signal) =>
-    getPoeClient().models.list({ signal }),
-  );
-  const data = (response as unknown as { data?: unknown }).data;
-  const rows = Array.isArray(data) ? data : [];
-  return rows
-    .map(normalizePoeModel)
-    .filter((model): model is PoeCatalogueModel => model !== null);
+export function getPoeModelRegistry(): Array<PoeCatalogueModel> {
+  return POE_MODEL_REGISTRY.map(clonePoeModel);
+}
+
+export function getPoeRegistryModel(modelId: string): PoeCatalogueModel | undefined {
+  const model = POE_MODEL_REGISTRY.find((candidate) => candidate.id === modelId);
+  return model ? clonePoeModel(model) : undefined;
+}
+
+export function isPoeModelRegistered(modelId: string): boolean {
+  return POE_MODEL_REGISTRY.some((candidate) => candidate.id === modelId);
+}
+
+function assertRegisteredPoeModel(modelId: string): void {
+  if (!isPoeModelRegistered(modelId)) {
+    throw new PoeProviderError(
+      "invalid_request",
+      `Poe model "${modelId.slice(0, 128)}" is not registered for this application`,
+      { status: 400 },
+    );
+  }
 }
 
 /**

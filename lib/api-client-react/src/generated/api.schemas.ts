@@ -547,28 +547,24 @@ export interface PoeModelCapabilities {
   structuredOutput: boolean | null;
 }
 
-export interface PoeCatalogueModel {
+export interface PoeRegistryModel {
   id: string;
   name: string;
   modalities: string[];
   capabilities: PoeModelCapabilities;
 }
 
-export type PoeCatalogueFreshness = typeof PoeCatalogueFreshness[keyof typeof PoeCatalogueFreshness];
+export type PoeRegistrySource = typeof PoeRegistrySource[keyof typeof PoeRegistrySource];
 
 
-export const PoeCatalogueFreshness = {
-  fresh: 'fresh',
-  stale: 'stale',
-  unavailable: 'unavailable',
+export const PoeRegistrySource = {
+  configured_registry: 'configured_registry',
 } as const;
 
-export interface PoeCatalogue {
-  freshness: PoeCatalogueFreshness;
-  models: PoeCatalogueModel[];
-  fetchedAt: string | null;
-  lastSuccessAt: string | null;
-  error: string | null;
+export interface PoeRegistry {
+  source: PoeRegistrySource;
+  version: string;
+  models: PoeRegistryModel[];
 }
 
 export type PoeFeatureRouteFeature = typeof PoeFeatureRouteFeature[keyof typeof PoeFeatureRouteFeature];
@@ -648,7 +644,7 @@ export type AdminAiStatusReference = {
 
 export interface AdminAiStatus {
   provider: AdminAiStatusProvider;
-  catalogue: PoeCatalogue;
+  registry: PoeRegistry;
   bots: AdminAiStatusBots;
   verification: AdminAiStatusVerification;
   routes: PoeFeatureRoute[];

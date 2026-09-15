@@ -754,7 +754,7 @@ paths:
     get:
       operationId: getAdminAiStatus
       tags: [admin]
-      summary: Get Poe catalogue metadata, explicit verification results, and effective AI routes
+      summary: Get the configured Poe registry, explicit verification results, and effective AI routes
       responses:
         "200":
           description: Protected AI routing status
@@ -769,16 +769,11 @@ paths:
     post:
       operationId: refreshAdminPoeCatalogue
       tags: [admin]
-      summary: Refresh the live Poe model catalogue
+      deprecated: true
+      summary: "[Retired] Poe catalogue discovery is no longer supported"
       responses:
-        "200":
-          description: Refreshed or stale last-good status
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AdminAiStatus"
+        "410": { description: Poe catalogue discovery is retired; use the configured registry }
         "401": { description: Admin token required }
-        "503": { description: Poe catalogue unavailable }
 
   /admin/ai-status/probe:
     post:
@@ -1857,7 +1852,7 @@ components:
         structuredOutput: { type: boolean, nullable: true }
       required: [text, vision, structuredOutput]
 
-    PoeCatalogueModel:
+    PoeRegistryModel:
       type: object
       properties:
         id: { type: string }
@@ -1869,20 +1864,18 @@ components:
           $ref: "#/components/schemas/PoeModelCapabilities"
       required: [id, name, modalities, capabilities]
 
-    PoeCatalogue:
+    PoeRegistry:
       type: object
       properties:
-        freshness:
+        source:
           type: string
-          enum: [fresh, stale, unavailable]
+          enum: [configured_registry]
+        version: { type: string }
         models:
           type: array
           items:
-            $ref: "#/components/schemas/PoeCatalogueModel"
-        fetchedAt: { type: string, format: date-time, nullable: true }
-        lastSuccessAt: { type: string, format: date-time, nullable: true }
-        error: { type: string, nullable: true }
-      required: [freshness, models, fetchedAt, lastSuccessAt, error]
+            $ref: "#/components/schemas/PoeRegistryModel"
+      required: [source, version, models]
 
     PoeFeatureRoute:
       type: object
@@ -1903,8 +1896,8 @@ components:
       type: object
       properties:
         provider: { type: string, enum: [poe, openai] }
-        catalogue:
-          $ref: "#/components/schemas/PoeCatalogue"
+        registry:
+          $ref: "#/components/schemas/PoeRegistry"
         bots:
           type: object
           additionalProperties:
@@ -1952,7 +1945,7 @@ components:
             readOnly: { type: boolean }
             note: { type: string }
           required: [provider, readOnly, note]
-      required: [provider, catalogue, bots, verification, routes, overrides, reference]
+      required: [provider, registry, bots, verification, routes, overrides, reference]
 
     AdminAiRoutesUpdate:
       type: object

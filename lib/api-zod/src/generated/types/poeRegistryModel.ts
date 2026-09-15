@@ -7,7 +7,7 @@
  */
 import type { PoeModelCapabilities } from './poeModelCapabilities';
 
-export interface PoeCatalogueModel {
+export interface PoeRegistryModel {
   id: string;
   name: string;
   modalities: string[];

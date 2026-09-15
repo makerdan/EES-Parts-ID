@@ -1,5 +1,27 @@
 const mockCreatePoeChatCompletion = jest.fn();
-const mockListPoeModels = jest.fn();
+const mockRegistry = [
+  {
+    id: "Claude-Sonnet-4.5",
+    name: "Claude-Sonnet-4.5",
+    modalities: ["text", "vision", "structured_output"],
+    capabilities: { text: true, vision: true, structuredOutput: true },
+    capabilityConfidence: "verified",
+  },
+  {
+    id: "Gemini-3.1-Pro",
+    name: "Gemini-3.1-Pro",
+    modalities: ["text", "vision", "structured_output"],
+    capabilities: { text: true, vision: true, structuredOutput: true },
+    capabilityConfidence: "verified",
+  },
+  {
+    id: "Gemini-2.5-Pro",
+    name: "Gemini-2.5-Pro",
+    modalities: ["text", "vision", "structured_output"],
+    capabilities: { text: true, vision: true, structuredOutput: true },
+    capabilityConfidence: "verified",
+  },
+];
 
 jest.mock("@workspace/integrations-poe-server", () => ({
   createPoeChatCompletion: mockCreatePoeChatCompletion,
@@ -13,7 +35,9 @@ jest.mock("@workspace/integrations-poe-server", () => ({
     };
   }),
   getPoeClient: jest.fn(() => ({ chat: { completions: { create: jest.fn() } } })),
-  listPoeModels: mockListPoeModels,
+  getPoeModelRegistry: () => mockRegistry,
+  getPoeRegistryModel: (id: string) => mockRegistry.find((model) => model.id === id),
+  POE_MODEL_REGISTRY_VERSION: "static-v1",
   resetPoeClient: jest.fn(),
 }));
 
@@ -48,22 +72,16 @@ describe("Poe startup and explicit probe safety", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     setProvider("poe");
-    mockListPoeModels.mockResolvedValue(
-      Array.from({ length: 100 }, (_, index) => ({
-        id: `catalogue-${index}`,
-        name: `Catalogue ${index}`,
-        modalities: ["text", "image"],
-        capabilities: { text: true, vision: true, structuredOutput: true },
-      })),
-    );
     mockCreatePoeChatCompletion.mockResolvedValue({ choices: [] });
   });
 
-  it("refreshes catalogue metadata without sending a completion", async () => {
-    await refreshPoeCatalogue();
-    expect(mockListPoeModels).toHaveBeenCalledTimes(1);
+  it("retires catalogue refresh without sending a provider request", async () => {
+    await expect(refreshPoeCatalogue()).resolves.toEqual(expect.objectContaining({ ok: false }));
     expect(mockCreatePoeChatCompletion).not.toHaveBeenCalled();
-    expect(getAllPoeModelNames()).not.toContain("Catalogue 99");
+    expect(getAllPoeModelNames()).toEqual(
+      expect.arrayContaining(["Claude-Sonnet-4.5", "Gemini-3.1-Pro"]),
+    );
+    expect(getAllPoeModelNames()).not.toContain("Gemini-2.5-Pro");
   });
 
   it("single verification is one attempt with a fixed timeout", async () => {
@@ -141,11 +159,7 @@ describe("Poe startup and explicit probe safety", () => {
   });
 
   it("stops the aggregate operation at its fixed deadline with partial results", async () => {
-    await refreshPoeCatalogue();
-    expect(setPoeFallbacks(
-      "enrich",
-      Array.from({ length: POE_PROBE_MAX_MODELS }, (_, index) => `catalogue-${index}`),
-    ).ok).toBe(true);
+    expect(setPoeFallbacks("enrich", ["Claude-Sonnet-4.5", "Gemini-2.5-Pro"]).ok).toBe(true);
     jest.useFakeTimers();
     mockCreatePoeChatCompletion.mockImplementation(() => new Promise(() => {}));
     try {

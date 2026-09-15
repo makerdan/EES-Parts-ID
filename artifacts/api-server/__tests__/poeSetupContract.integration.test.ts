@@ -36,8 +36,10 @@ describe("Poe setup contract", () => {
     }
   });
 
-  it("fails closed instead of dispatching without a fresh verified catalogue", () => {
-    expect(() => getVerifiedPoeRouteSnapshot("enrich")).toThrow(/catalogue|verified/i);
+  it("authorizes routes from the configured registry without live catalogue state", () => {
+    const snapshot = getVerifiedPoeRouteSnapshot("enrich");
+    expect(snapshot.models.map((model) => model.id)).toEqual(snapshot.effective);
+    expect(snapshot.models.every((model) => model.verification.source === "configured_registry")).toBe(true);
   });
 
   it.each([

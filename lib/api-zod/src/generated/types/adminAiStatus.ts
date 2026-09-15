@@ -10,12 +10,12 @@ import type { AdminAiStatusOverrides } from './adminAiStatusOverrides';
 import type { AdminAiStatusProvider } from './adminAiStatusProvider';
 import type { AdminAiStatusReference } from './adminAiStatusReference';
 import type { AdminAiStatusVerification } from './adminAiStatusVerification';
-import type { PoeCatalogue } from './poeCatalogue';
 import type { PoeFeatureRoute } from './poeFeatureRoute';
+import type { PoeRegistry } from './poeRegistry';
 
 export interface AdminAiStatus {
   provider: AdminAiStatusProvider;
-  catalogue: PoeCatalogue;
+  registry: PoeRegistry;
   bots: AdminAiStatusBots;
   verification: AdminAiStatusVerification;
   routes: PoeFeatureRoute[];

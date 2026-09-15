@@ -15,7 +15,9 @@ import { adminPreferencesTable,db } from "@workspace/db";
 import {
   createPoeChatCompletionWithSettlement,
   getPoeClient,
-  listPoeModels,
+  getPoeModelRegistry,
+  getPoeRegistryModel,
+  POE_MODEL_REGISTRY_VERSION,
   type PoeCatalogueModel,
   resetPoeClient,
 } from "@workspace/integrations-poe-server";
@@ -67,7 +69,6 @@ let _provider: AIProvider = rawProvider as AIProvider;
 let _client: OpenAI | null = null;
 
 export type PoeFeature = "enrich" | "identify" | "dimensions" | "catalog";
-export type PoeCatalogueFreshness = "fresh" | "stale" | "unavailable";
 export type PoeProbeStatus = "ok" | "timeout" | "404" | "error" | "budget_limited";
 export interface PoeProbeResult {
   status: PoeProbeStatus;
@@ -110,7 +111,6 @@ export interface PoeRouteContract {
 export interface PoeVerifiedRouteSnapshot extends PoeFeatureRoute {
   endpoint: string;
   capturedAt: string;
-  catalogueFetchedAt: string;
   models: Array<PoeCatalogueModel>;
   contract: PoeRouteContract;
 }
@@ -124,73 +124,31 @@ class PoeRouteUnavailableError extends Error {
   }
 }
 
-export interface PoeCatalogueSnapshot {
-  freshness: PoeCatalogueFreshness;
+export interface PoeRegistrySnapshot {
+  source: "configured_registry";
+  version: string;
   models: Array<PoeCatalogueModel>;
-  fetchedAt: string | null;
-  lastSuccessAt: string | null;
-  error: string | null;
 }
 
-const _catalogue: {
-  models: Array<PoeCatalogueModel>;
-  fetchedAt: Date | null;
-  lastSuccessAt: Date | null;
-  freshness: PoeCatalogueFreshness;
-  error: string | null;
-} = {
-  models: [],
-  fetchedAt: null,
-  lastSuccessAt: null,
-  freshness: "unavailable",
-  error: null,
-};
-let _catalogueRefreshInFlight: Promise<PoeCatalogueSnapshot> | null = null;
 let _fallbackOverrides: Partial<Record<PoeFeature, Array<string>>> = {};
 
-function snapshotCatalogue(): PoeCatalogueSnapshot {
+export function getPoeRegistrySnapshot(): PoeRegistrySnapshot {
   return {
-    freshness: _catalogue.freshness,
-    models: _catalogue.models.map((model) => ({
-      ...model,
-      modalities: [...model.modalities],
-      capabilities: { ...model.capabilities },
-    })),
-    fetchedAt: _catalogue.fetchedAt?.toISOString() ?? null,
-    lastSuccessAt: _catalogue.lastSuccessAt?.toISOString() ?? null,
-    error: _catalogue.error,
+    source: "configured_registry",
+    version: POE_MODEL_REGISTRY_VERSION,
+    models: getPoeModelRegistry(),
   };
 }
 
 /**
- * Refresh the live catalogue once for all concurrent callers. A failed
- * refresh never discards a previously successful snapshot.
+ * Retained as a compatibility shim for old callers. Live catalogue discovery
+ * is retired and this operation deliberately never contacts Poe.
  */
-export function refreshPoeCatalogue(): Promise<PoeCatalogueSnapshot> {
-  if (_catalogueRefreshInFlight) return _catalogueRefreshInFlight;
-  _catalogueRefreshInFlight = listPoeModels()
-    .then((models) => {
-      _catalogue.models = models;
-      _catalogue.fetchedAt = new Date();
-      _catalogue.lastSuccessAt = _catalogue.fetchedAt;
-      _catalogue.freshness = "fresh";
-      _catalogue.error = null;
-      return snapshotCatalogue();
-    })
-    .catch((err: unknown) => {
-      _catalogue.fetchedAt = new Date();
-      _catalogue.freshness = _catalogue.lastSuccessAt ? "stale" : "unavailable";
-      _catalogue.error = err instanceof Error ? err.message : String(err);
-      return snapshotCatalogue();
-    })
-    .finally(() => {
-      _catalogueRefreshInFlight = null;
-    });
-  return _catalogueRefreshInFlight;
-}
-
-export function getPoeCatalogueSnapshot(): PoeCatalogueSnapshot {
-  return snapshotCatalogue();
+export async function refreshPoeCatalogue(): Promise<{ ok: false; error: string }> {
+  return {
+    ok: false,
+    error: "Poe catalogue discovery has been retired; use the configured registry",
+  };
 }
 
 function primaryForFeature(feature: PoeFeature): string {
@@ -266,7 +224,7 @@ const ROUTE_CONTRACTS: Record<PoeFeature, PoeRouteContract> = {
 };
 
 function modelIsCompatible(feature: PoeFeature, modelName: string): boolean {
-  const model = _catalogue.models.find((candidate) => candidate.id === modelName || candidate.name === modelName);
+  const model = getPoeRegistryModel(modelName);
   if (!model) return false;
   const required = requiredCapabilities(feature);
   return Object.entries(required).every(([key, needed]) => {
@@ -279,14 +237,11 @@ function modelIsCompatible(feature: PoeFeature, modelName: string): boolean {
 }
 
 function canonicalModelId(modelName: string): string {
-  return _catalogue.models.find(
-    (candidate) => candidate.id === modelName || candidate.name === modelName,
-  )?.id ?? modelName;
+  return getPoeRegistryModel(modelName)?.id ?? modelName;
 }
 
 function effectiveFallbacks(feature: PoeFeature): Array<string> {
   const configured = _fallbackOverrides[feature] ?? DEFAULT_FALLBACKS[feature];
-  if (_catalogue.models.length === 0) return [...configured];
   return configured.filter((model) => modelIsCompatible(feature, model));
 }
 
@@ -305,21 +260,15 @@ export function getPoeFeatureRoutes(): Array<PoeFeatureRoute> {
   });
 }
 
-/**
- * Capture an immutable, exact-ID route immediately before a Poe request.
- * Stale catalogue data remains available for diagnostics but cannot dispatch.
- */
+/** Capture an immutable, exact-ID route immediately before a Poe request. */
 export function getVerifiedPoeRouteSnapshot(feature: PoeFeature): PoeVerifiedRouteSnapshot {
-  if (_catalogue.freshness !== "fresh" || !_catalogue.fetchedAt) {
-    throw new PoeRouteUnavailableError(feature, "Poe catalogue is not freshly verified");
-  }
   const route = getPoeFeatureRoutes().find((candidate) => candidate.feature === feature);
   if (!route || route.effective.some((model) => !modelIsCompatible(feature, model))) {
-    throw new PoeRouteUnavailableError(feature, "Poe route has no live model with the required capabilities");
+    throw new PoeRouteUnavailableError(feature, "Poe route has no registered model with the required capabilities");
   }
   const models = route.effective.map((modelName) => {
-    const model = _catalogue.models.find((candidate) => candidate.id === modelName);
-    if (!model) throw new PoeRouteUnavailableError(feature, `Poe model ${modelName} is not live`);
+    const model = getPoeRegistryModel(modelName);
+    if (!model) throw new PoeRouteUnavailableError(feature, `Poe model ${modelName} is not registered`);
     return {
       ...model,
       modalities: [...model.modalities],
@@ -349,7 +298,6 @@ export function getVerifiedPoeRouteSnapshot(feature: PoeFeature): PoeVerifiedRou
     fallbacks: [...route.fallbacks],
     endpoint: models[0]!.endpoint,
     capturedAt: new Date().toISOString(),
-    catalogueFetchedAt: _catalogue.fetchedAt.toISOString(),
     models,
     contract: { ...ROUTE_CONTRACTS[feature], requiredCapabilities: { ...ROUTE_CONTRACTS[feature].requiredCapabilities } },
   };
@@ -382,9 +330,6 @@ export function validatePoeFallbacks(
   if (normalized.includes(primary)) {
     return { ok: false, error: "The code-configured primary model cannot be a fallback" };
   }
-  if (_catalogue.freshness !== "fresh" || _catalogue.models.length === 0) {
-    return { ok: false, error: "Refresh the Poe catalogue before saving fallback models" };
-  }
   const incompatible = normalized.find((model) => !modelIsCompatible(feature, model));
   if (incompatible) return { ok: false, error: describeFallbackIncompatibility(feature, incompatible) };
   return { ok: true, models: normalized };
@@ -398,11 +343,9 @@ const CAPABILITY_LABELS: Record<keyof ReturnType<typeof requiredCapabilities>, s
 
 function describeFallbackIncompatibility(feature: PoeFeature, modelName: string): string {
   const boundedName = modelName.trim().slice(0, 128) || "Selected model";
-  const model = _catalogue.models.find(
-    (candidate) => candidate.id === modelName || candidate.name === modelName,
-  );
+  const model = getPoeRegistryModel(modelName);
   if (!model) {
-    return `${boundedName} is unavailable for ${feature}: it is not in the current verified catalogue`;
+    return `${boundedName} is unavailable for ${feature}: it is not in the configured Poe registry`;
   }
 
   const required = requiredCapabilities(feature);
@@ -441,7 +384,9 @@ function restorePoeFallbacks(value: unknown): void {
   for (const feature of ["enrich", "identify", "dimensions", "catalog"] as Array<PoeFeature>) {
     const models = (value as Record<string, unknown>)[feature];
     if (Array.isArray(models) && models.every((model) => typeof model === "string")) {
-      next[feature] = [...new Set(models as Array<string>)];
+      next[feature] = [...new Set(models as Array<string>)].filter((model) =>
+        modelIsCompatible(feature, model) && model !== primaryForFeature(feature),
+      );
     }
   }
   _fallbackOverrides = next;

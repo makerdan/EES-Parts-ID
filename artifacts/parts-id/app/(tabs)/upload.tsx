@@ -137,17 +137,15 @@ function getRestartNotice(state: RestartState): { title: string; message: string
 }
 type AiStatusPayload = {
   provider: "poe" | "openai";
-  catalogue: {
-    freshness: "fresh" | "stale" | "unavailable";
+  registry: {
+    source: "configured_registry";
+    version: string;
     models: Array<{
       id: string;
       name: string;
       modalities: Array<string>;
       capabilities: { text: boolean | null; vision: boolean | null; structuredOutput: boolean | null };
     }>;
-    fetchedAt: string | null;
-    lastSuccessAt: string | null;
-    error: string | null;
   };
   bots: Record<string, string>;
   verification: {
@@ -168,12 +166,14 @@ type AiStatusPayload = {
 function isAiStatusPayload(value: unknown): value is AiStatusPayload {
   if (!value || typeof value !== "object") return false;
   const data = value as Partial<AiStatusPayload>;
-  const catalogue = data.catalogue;
+  const registry = data.registry;
   const modelsValid =
-    !!catalogue &&
-    typeof catalogue === "object" &&
-    Array.isArray(catalogue.models) &&
-    catalogue.models.every((model) =>
+    !!registry &&
+    typeof registry === "object" &&
+    registry.source === "configured_registry" &&
+    typeof registry.version === "string" &&
+    Array.isArray(registry.models) &&
+    registry.models.every((model) =>
       !!model &&
       typeof model === "object" &&
       typeof model.id === "string" &&
@@ -189,8 +189,6 @@ function isAiStatusPayload(value: unknown): value is AiStatusPayload {
   return (
     (data.provider === "poe" || data.provider === "openai") &&
     modelsValid &&
-    typeof catalogue?.freshness === "string" &&
-    (typeof catalogue.error === "string" || catalogue.error === null) &&
     !!data.bots &&
     typeof data.bots === "object" &&
     !!data.verification &&
@@ -205,24 +203,8 @@ function getAiMutationError(data: unknown, status: number, fallback: string): st
   if (data && typeof data === "object") {
     const error = (data as { error?: unknown }).error;
     if (typeof error === "string" && error.trim()) return error;
-    const catalogueError = (data as { catalogue?: { error?: unknown } }).catalogue?.error;
-    if (typeof catalogueError === "string" && catalogueError.trim()) return catalogueError;
   }
   return status ? `${fallback} (HTTP ${status})` : fallback;
-}
-
-function getAiEvidenceState(catalogue: AiStatusPayload["catalogue"]): "verified" | "stale" | "unknown" {
-  if (catalogue.freshness === "stale") return "stale";
-  if (
-    catalogue.freshness !== "fresh" ||
-    catalogue.models.length === 0 ||
-    catalogue.models.some((model) =>
-      Object.values(model.capabilities).some((capability) => capability === null),
-    )
-  ) {
-    return "unknown";
-  }
-  return "verified";
 }
 
 const SQL_EXAMPLES: Array<{ label: string; group: string; sql: string }> = [
@@ -818,7 +800,6 @@ export default function UploadScreen() {
   const [aiStatusLoading, setAiStatusLoading] = useState(false);
   const [aiStatusError, setAiStatusError] = useState<string | null>(null);
   const [aiStatusProbing, setAiStatusProbing] = useState(false);
-  const [aiCatalogueRefreshing, setAiCatalogueRefreshing] = useState(false);
   const [aiRoutesSaving, setAiRoutesSaving] = useState(false);
   const [aiProvider, setAiProvider] = useState<AiStatusPayload["provider"]>("poe");
   const [aiProviderSaving, setAiProviderSaving] = useState(false);
@@ -828,8 +809,6 @@ export default function UploadScreen() {
   const aiStatusGenerationRef = useRef(0);
   const aiStatusFetchControllerRef = useRef<AbortController | null>(null);
   const aiStatusProbeControllerRef = useRef<AbortController | null>(null);
-  const aiCatalogueGenerationRef = useRef(0);
-  const aiCatalogueControllerRef = useRef<AbortController | null>(null);
   const aiRoutesGenerationRef = useRef(0);
   const aiRoutesControllerRef = useRef<AbortController | null>(null);
   const aiProviderGenerationRef = useRef(0);
@@ -840,11 +819,6 @@ export default function UploadScreen() {
     aiStatusFetchControllerRef.current = null;
     aiStatusProbeControllerRef.current?.abort();
     aiStatusProbeControllerRef.current = null;
-  }, []);
-  const cancelAiCatalogueRefresh = useCallback(() => {
-    aiCatalogueGenerationRef.current += 1;
-    aiCatalogueControllerRef.current?.abort();
-    aiCatalogueControllerRef.current = null;
   }, []);
   const cancelAiRoutes = useCallback(() => {
     aiRoutesGenerationRef.current += 1;
@@ -891,10 +865,10 @@ export default function UploadScreen() {
         return;
       }
       setAiStatusBots(data.bots ?? {});
-      setAiStatus(data.catalogue ? data : null);
+      setAiStatus(data.registry ? data : null);
       if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
       setAiControlAnnouncement(
-        `AI status loaded. Provider evidence is ${getAiEvidenceState(data.catalogue)}.`,
+        `AI status loaded. Configured registry version ${data.registry.version} is active.`,
       );
     } catch (err) {
       if (
@@ -1047,7 +1021,7 @@ export default function UploadScreen() {
         return;
       }
       setAiStatusBots(data.bots ?? {});
-      setAiStatus(data.catalogue ? data : null);
+      setAiStatus(data.registry ? data : null);
       if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
       setAiControlAnnouncement(
         data.verification.lastOperation?.budgetLimited
@@ -1078,68 +1052,6 @@ export default function UploadScreen() {
     }
   }, [adminToken, aiStatusProbing, cancelAiStatusRequests]);
 
-  const refreshAiCatalogue = useCallback(async () => {
-    if (!adminToken || !API_BASE || aiCatalogueRefreshing) return;
-    cancelAiCatalogueRefresh();
-    const requestToken = adminToken;
-    const generation = aiCatalogueGenerationRef.current + 1;
-    aiCatalogueGenerationRef.current = generation;
-    const controller = new AbortController();
-    aiCatalogueControllerRef.current = controller;
-    setAiCatalogueRefreshing(true);
-    setAiStatusError(null);
-    setAiControlAnnouncement("Refreshing provider model catalogue.");
-    try {
-      const res = await fetch(`${API_BASE}/admin/ai-status/catalogue/refresh`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${adminToken}` },
-        signal: controller.signal,
-      });
-      const data = (await res.json().catch(() => ({}))) as unknown;
-      if (
-        !isMountedRef.current ||
-        adminTokenRef.current !== requestToken ||
-        generation !== aiCatalogueGenerationRef.current ||
-        controller.signal.aborted
-      ) return;
-      if (!res.ok) {
-        throw new Error(getAiMutationError(data, res.status, "Catalogue refresh failed"));
-      }
-      if (!isAiStatusPayload(data)) {
-        throw new Error("The API returned an incomplete catalogue status snapshot");
-      }
-      setAiStatus(data);
-      setAiStatusBots(data.bots);
-      setAiProvider(data.provider);
-      setAiControlAnnouncement(
-        `Provider catalogue refreshed. Evidence is ${getAiEvidenceState(data.catalogue)}.`,
-      );
-    } catch (err) {
-      if (
-        isMountedRef.current &&
-        adminTokenRef.current === requestToken &&
-        generation === aiCatalogueGenerationRef.current &&
-        !controller.signal.aborted
-      ) {
-        const message = err instanceof Error ? err.message : "Catalogue refresh failed";
-        setAiStatusError(message);
-        setAiControlAnnouncement(`Provider catalogue refresh rejected: ${message}`);
-      }
-    } finally {
-      if (aiCatalogueControllerRef.current === controller) {
-        aiCatalogueControllerRef.current = null;
-      }
-      if (
-        isMountedRef.current &&
-        adminTokenRef.current === requestToken &&
-        generation === aiCatalogueGenerationRef.current &&
-        !controller.signal.aborted
-      ) {
-        setAiCatalogueRefreshing(false);
-      }
-    }
-  }, [adminToken, aiCatalogueRefreshing, cancelAiCatalogueRefresh]);
-
   const saveAiRoutes = useCallback(async (routes: Array<{ feature: string; fallbacks: Array<string> }>) => {
     if (!adminToken || !API_BASE || aiRoutesSaving) return;
     cancelAiRoutes();
@@ -1169,7 +1081,7 @@ export default function UploadScreen() {
       if (!isAiStatusPayload(data)) {
         throw new Error("The API returned an incomplete fallback status snapshot");
       }
-      setAiStatus(data.catalogue ? data : null);
+      setAiStatus(data.registry ? data : null);
       setAiStatusBots(data.bots ?? {});
       if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
       setAiControlAnnouncement("Fallback route order saved.");
@@ -1263,11 +1175,9 @@ export default function UploadScreen() {
 
   useEffect(() => {
     cancelAiStatusRequests();
-    cancelAiCatalogueRefresh();
     cancelAiRoutes();
     cancelAiProviderSave();
     if (isMountedRef.current) {
-      setAiCatalogueRefreshing(false);
       setAiRoutesSaving(false);
       setAiProviderSaving(false);
       setAiProviderSaveState(null);
@@ -1285,13 +1195,11 @@ export default function UploadScreen() {
     }
     return () => {
       cancelAiStatusRequests();
-      cancelAiCatalogueRefresh();
       cancelAiRoutes();
       cancelAiProviderSave();
     };
   }, [
     adminToken,
-    cancelAiCatalogueRefresh,
     cancelAiProviderSave,
     cancelAiRoutes,
     cancelAiStatusRequests,
@@ -1543,14 +1451,13 @@ export default function UploadScreen() {
       expandDescControllerRef.current?.abort();
       expandDescReaderRef.current?.cancel().catch(() => {});
       cancelAiStatusRequests();
-      cancelAiCatalogueRefresh();
       cancelAiRoutes();
       if (pasteDebounceRef.current) {
         clearTimeout(pasteDebounceRef.current);
         pasteDebounceRef.current = null;
       }
     };
-  }, [cancelAiCatalogueRefresh, cancelAiRoutes, cancelAiStatusRequests]);
+  }, [cancelAiRoutes, cancelAiStatusRequests]);
   // Auto-fetch bin-diff preview whenever the raw CSV changes so admins
   // see a replace-warning before they can press Upload.
   // Uses POST /api/admin/upload/preview (raw CSV text) — the same endpoint
@@ -4254,22 +4161,13 @@ export default function UploadScreen() {
                         <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Verify active models</Text>
                       )}
                     </Pressable>
-                    <Pressable
-                      onPress={aiCatalogueRefreshing ? undefined : refreshAiCatalogue}
-                      disabled={aiCatalogueRefreshing}
-                      style={[styles.aiProbeBtn, { borderColor: aiCatalogueRefreshing ? colors.border : colors.primary }]}
-                    >
-                      {aiCatalogueRefreshing ? <ActivityIndicator size="small" color={colors.primary} /> : (
-                        <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Refresh models</Text>
-                      )}
-                    </Pressable>
                   </View>
                 </View>
                 {aiStatusLoading && Object.keys(aiStatusBots).length === 0 ? (
                   <ActivityIndicator size="small" color={colors.primary} style={{ alignSelf: "flex-start" }} />
                 ) : Object.keys(aiStatusBots).length === 0 ? (
                   <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                     Catalogue metadata does not verify live completions. Use "Verify active models" for an explicit bounded check.
+                     The configured registry controls which models may be routed. Use "Verify active models" for an explicit bounded check.
                   </Text>
                 ) : (
                   <View style={styles.aiStatusBotList}>
@@ -4307,8 +4205,8 @@ export default function UploadScreen() {
                   <>
                     <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>
                        Active provider: <Text style={{ color: colors.foreground }}>{aiProvider}</Text>
-                       {"  "}Catalogue metadata: <Text style={{ color: getAiEvidenceState(aiStatus.catalogue) === "verified" ? "#10b981" : "#f59e0b" }}>
-                        {getAiEvidenceState(aiStatus.catalogue)}
+                       {"  "}Registry: <Text style={{ color: "#10b981" }}>
+                        {aiStatus.registry.version}
                       </Text>
                     </Text>
                     <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
@@ -4373,34 +4271,12 @@ export default function UploadScreen() {
                         </Text>
                       ) : null}
                     </View>
-                    {aiStatus.catalogue.error ? (
-                      <Text style={[styles.aiStatusMeta, { color: colors.destructive }]}>
-                        Last refresh: {aiStatus.catalogue.error}
-                      </Text>
-                    ) : null}
                     <Text style={[styles.aiStatusSectionTitle, { color: colors.foreground }]}>Safe Poe fallbacks</Text>
                     <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                      Primaries are code-owned. Only catalogue models with the required capabilities can be selected as fallbacks.
+                      Primaries are code-owned. Only models in the configured registry with the required capabilities can be selected as fallbacks.
                     </Text>
-                    {aiStatus.catalogue.freshness !== "fresh" ? (
-                      <Text
-                        accessibilityRole="alert"
-                        style={[styles.aiStatusMeta, { color: colors.warning }]}
-                      >
-                        Fallbacks are read-only until a fresh Poe catalogue is available. Refresh models before changing the safe route order.
-                      </Text>
-                    ) : null}
-                    {getAiEvidenceState(aiStatus.catalogue) === "unknown" ? (
-                      <Text
-                        accessibilityRole="alert"
-                        style={[styles.aiStatusMeta, { color: colors.warning }]}
-                      >
-                        Provider capability evidence is unknown or incomplete. Fallbacks remain read-only until a complete, fresh catalogue is available.
-                      </Text>
-                    ) : null}
                     {aiStatus.routes.map((route) => {
-                      const eligible = aiStatus.catalogue.models.filter((model) => {
-                        if (getAiEvidenceState(aiStatus.catalogue) !== "verified") return false;
+                      const eligible = aiStatus.registry.models.filter((model) => {
                         if (route.feature !== "enrich" && model.capabilities.vision !== true) return false;
                         if (model.capabilities.text !== true || model.capabilities.structuredOutput !== true) return false;
                         return !route.fallbacks.includes(model.name) && model.name !== route.primary;
@@ -4423,7 +4299,7 @@ export default function UploadScreen() {
                               <Text style={[styles.aiFallbackText, { color: colors.foreground }]}>{index + 1}. {model}</Text>
                               <View style={styles.aiFallbackActions}>
                                 <Pressable
-                                  disabled={index === 0 || aiRoutesSaving || getAiEvidenceState(aiStatus.catalogue) !== "verified"}
+                                  disabled={index === 0 || aiRoutesSaving}
                                   accessibilityLabel={`Move ${model} fallback up`}
                                   onPress={() => {
                                   const next = [...route.fallbacks];
@@ -4436,7 +4312,7 @@ export default function UploadScreen() {
                                 }}
                                 ><Text style={[styles.aiRouteAction, { color: index === 0 ? colors.muted : colors.primary }]}>↑</Text></Pressable>
                                 <Pressable
-                                  disabled={index === route.fallbacks.length - 1 || aiRoutesSaving || getAiEvidenceState(aiStatus.catalogue) !== "verified"}
+                                  disabled={index === route.fallbacks.length - 1 || aiRoutesSaving}
                                   accessibilityLabel={`Move ${model} fallback down`}
                                   onPress={() => {
                                   const next = [...route.fallbacks];
@@ -4449,7 +4325,7 @@ export default function UploadScreen() {
                                 }}
                                 ><Text style={[styles.aiRouteAction, { color: index === route.fallbacks.length - 1 ? colors.muted : colors.primary }]}>↓</Text></Pressable>
                                 <Pressable
-                                  disabled={aiRoutesSaving || getAiEvidenceState(aiStatus.catalogue) !== "verified"}
+                                  disabled={aiRoutesSaving}
                                   accessibilityLabel={`Remove ${model} fallback`}
                                   onPress={() => update(route.fallbacks.filter((item) => item !== model))}
                                 >
@@ -4460,7 +4336,7 @@ export default function UploadScreen() {
                           ))}
                           {eligible[0] ? (
                             <Pressable
-                              disabled={aiRoutesSaving || getAiEvidenceState(aiStatus.catalogue) !== "verified"}
+                              disabled={aiRoutesSaving}
                               accessibilityLabel={`Add ${eligible[0]!.name} fallback`}
                               onPress={() => update([...route.fallbacks, eligible[0]!.name])}
                             >
@@ -4475,7 +4351,7 @@ export default function UploadScreen() {
                         Reference assistant: Gemini (read-only)
                       </Text>
                       <Pressable
-                        disabled={aiRoutesSaving || getAiEvidenceState(aiStatus.catalogue) !== "verified"}
+                        disabled={aiRoutesSaving}
                         accessibilityLabel="Reset fallbacks"
                         onPress={resetAiRoutes}
                       >

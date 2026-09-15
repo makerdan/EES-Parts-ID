@@ -1147,7 +1147,7 @@ export const AdminRestartResponse = zod.object({
 
 
 /**
- * @summary Get Poe catalogue metadata, explicit verification results, and effective AI routes
+ * @summary Get the configured Poe registry, explicit verification results, and effective AI routes
  */
 export const getAdminAiStatusResponseVerificationLastOperationOneRequestedMin = 0;
 
@@ -1159,8 +1159,9 @@ export const getAdminAiStatusResponseVerificationLastOperationOneCompletedMin = 
 
 export const GetAdminAiStatusResponse = zod.object({
   "provider": zod.enum(['poe', 'openai']),
-  "catalogue": zod.object({
-  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "registry": zod.object({
+  "source": zod.enum(['configured_registry']),
+  "version": zod.string(),
   "models": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -1170,10 +1171,7 @@ export const GetAdminAiStatusResponse = zod.object({
   "vision": zod.boolean().nullable(),
   "structuredOutput": zod.boolean().nullable()
 })
-})),
-  "fetchedAt": zod.coerce.date().nullable(),
-  "lastSuccessAt": zod.coerce.date().nullable(),
-  "error": zod.string().nullable()
+}))
 }),
   "bots": zod.record(zod.string(), zod.enum(['ok', 'timeout', '404', 'error', 'budget_limited'])),
   "verification": zod.object({
@@ -1206,62 +1204,10 @@ export const GetAdminAiStatusResponse = zod.object({
 
 
 /**
- * @summary Refresh the live Poe model catalogue
+ * @deprecated
+ * @summary [Retired] Poe catalogue discovery is no longer supported
  */
-export const refreshAdminPoeCatalogueResponseVerificationLastOperationOneRequestedMin = 0;
-
-export const refreshAdminPoeCatalogueResponseVerificationLastOperationOneAttemptedMin = 0;
-
-export const refreshAdminPoeCatalogueResponseVerificationLastOperationOneCompletedMin = 0;
-
-
-
-export const RefreshAdminPoeCatalogueResponse = zod.object({
-  "provider": zod.enum(['poe', 'openai']),
-  "catalogue": zod.object({
-  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
-  "models": zod.array(zod.object({
-  "id": zod.string(),
-  "name": zod.string(),
-  "modalities": zod.array(zod.string()),
-  "capabilities": zod.object({
-  "text": zod.boolean().nullable(),
-  "vision": zod.boolean().nullable(),
-  "structuredOutput": zod.boolean().nullable()
-})
-})),
-  "fetchedAt": zod.coerce.date().nullable(),
-  "lastSuccessAt": zod.coerce.date().nullable(),
-  "error": zod.string().nullable()
-}),
-  "bots": zod.record(zod.string(), zod.enum(['ok', 'timeout', '404', 'error', 'budget_limited'])),
-  "verification": zod.object({
-  "models": zod.record(zod.string(), zod.object({
-  "status": zod.enum(['ok', 'timeout', '404', 'error', 'budget_limited']),
-  "verifiedAt": zod.coerce.date().nullable()
-})),
-  "lastOperation": zod.object({
-  "startedAt": zod.coerce.date(),
-  "finishedAt": zod.coerce.date(),
-  "requested": zod.number().min(refreshAdminPoeCatalogueResponseVerificationLastOperationOneRequestedMin),
-  "attempted": zod.number().min(refreshAdminPoeCatalogueResponseVerificationLastOperationOneAttemptedMin),
-  "completed": zod.number().min(refreshAdminPoeCatalogueResponseVerificationLastOperationOneCompletedMin),
-  "budgetLimited": zod.boolean()
-}).nullable()
-}),
-  "routes": zod.array(zod.object({
-  "feature": zod.enum(['enrich', 'identify', 'dimensions', 'catalog']),
-  "primary": zod.string(),
-  "fallbacks": zod.array(zod.string()),
-  "effective": zod.array(zod.string())
-})),
-  "overrides": zod.record(zod.string(), zod.array(zod.string())),
-  "reference": zod.object({
-  "provider": zod.enum(['gemini']),
-  "readOnly": zod.boolean(),
-  "note": zod.string()
-})
-})
+export const RefreshAdminPoeCatalogueResponse = zod.void()
 
 
 /**
@@ -1277,8 +1223,9 @@ export const probeActiveAdminPoeModelsResponseVerificationLastOperationOneComple
 
 export const ProbeActiveAdminPoeModelsResponse = zod.object({
   "provider": zod.enum(['poe', 'openai']),
-  "catalogue": zod.object({
-  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "registry": zod.object({
+  "source": zod.enum(['configured_registry']),
+  "version": zod.string(),
   "models": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -1288,10 +1235,7 @@ export const ProbeActiveAdminPoeModelsResponse = zod.object({
   "vision": zod.boolean().nullable(),
   "structuredOutput": zod.boolean().nullable()
 })
-})),
-  "fetchedAt": zod.coerce.date().nullable(),
-  "lastSuccessAt": zod.coerce.date().nullable(),
-  "error": zod.string().nullable()
+}))
 }),
   "bots": zod.record(zod.string(), zod.enum(['ok', 'timeout', '404', 'error', 'budget_limited'])),
   "verification": zod.object({
@@ -1343,8 +1287,9 @@ export const probeSingleAdminPoeModelResponseVerificationLastOperationOneComplet
 
 export const ProbeSingleAdminPoeModelResponse = zod.object({
   "provider": zod.enum(['poe', 'openai']),
-  "catalogue": zod.object({
-  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "registry": zod.object({
+  "source": zod.enum(['configured_registry']),
+  "version": zod.string(),
   "models": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -1354,10 +1299,7 @@ export const ProbeSingleAdminPoeModelResponse = zod.object({
   "vision": zod.boolean().nullable(),
   "structuredOutput": zod.boolean().nullable()
 })
-})),
-  "fetchedAt": zod.coerce.date().nullable(),
-  "lastSuccessAt": zod.coerce.date().nullable(),
-  "error": zod.string().nullable()
+}))
 }),
   "bots": zod.record(zod.string(), zod.enum(['ok', 'timeout', '404', 'error', 'budget_limited'])),
   "verification": zod.object({
@@ -1416,8 +1358,9 @@ export const updateAdminAiRoutesResponseVerificationLastOperationOneCompletedMin
 
 export const UpdateAdminAiRoutesResponse = zod.object({
   "provider": zod.enum(['poe', 'openai']),
-  "catalogue": zod.object({
-  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "registry": zod.object({
+  "source": zod.enum(['configured_registry']),
+  "version": zod.string(),
   "models": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -1427,10 +1370,7 @@ export const UpdateAdminAiRoutesResponse = zod.object({
   "vision": zod.boolean().nullable(),
   "structuredOutput": zod.boolean().nullable()
 })
-})),
-  "fetchedAt": zod.coerce.date().nullable(),
-  "lastSuccessAt": zod.coerce.date().nullable(),
-  "error": zod.string().nullable()
+}))
 }),
   "bots": zod.record(zod.string(), zod.enum(['ok', 'timeout', '404', 'error', 'budget_limited'])),
   "verification": zod.object({
@@ -1479,8 +1419,9 @@ export const resetAdminAiRoutesResponseVerificationLastOperationOneCompletedMin 
 
 export const ResetAdminAiRoutesResponse = zod.object({
   "provider": zod.enum(['poe', 'openai']),
-  "catalogue": zod.object({
-  "freshness": zod.enum(['fresh', 'stale', 'unavailable']),
+  "registry": zod.object({
+  "source": zod.enum(['configured_registry']),
+  "version": zod.string(),
   "models": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -1490,10 +1431,7 @@ export const ResetAdminAiRoutesResponse = zod.object({
   "vision": zod.boolean().nullable(),
   "structuredOutput": zod.boolean().nullable()
 })
-})),
-  "fetchedAt": zod.coerce.date().nullable(),
-  "lastSuccessAt": zod.coerce.date().nullable(),
-  "error": zod.string().nullable()
+}))
 }),
   "bots": zod.record(zod.string(), zod.enum(['ok', 'timeout', '404', 'error', 'budget_limited'])),
   "verification": zod.object({

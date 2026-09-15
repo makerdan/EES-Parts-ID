@@ -342,15 +342,11 @@ async function pruneAuditLog(): Promise<void> {
     process.on("SIGTERM", () => shutdown("SIGTERM"));
     process.on("SIGINT", () => shutdown("SIGINT"));
 
-    // Provider selection and catalogue metadata are diagnostic only. Catalogue
-    // refresh never sends model completions; live verification is admin-only.
+    // Provider selection is diagnostic only. Poe model routing is code-owned
+    // and does not require a provider-wide catalogue request at startup.
     void withStartupTimeout(initProvider(), INIT_PROVIDER_TIMEOUT_MS, "initProvider")
-      .then(async () => {
-        const { refreshPoeCatalogue } = await import("./lib/aiProvider");
-        await refreshPoeCatalogue();
-      })
       .catch((err) => {
-        logger.error({ err }, "Poe provider startup initialization failed");
+        logger.error({ err }, "AI provider startup initialization failed");
       });
 
     // Schedule retention independently of incoming telemetry traffic.

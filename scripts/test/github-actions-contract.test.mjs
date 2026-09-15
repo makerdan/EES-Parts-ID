@@ -8,7 +8,7 @@
  */
 import nodeAssert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -129,6 +129,10 @@ function trackedProtectionReportSources() {
   ).split("\0").filter(Boolean);
   return Object.fromEntries(
     paths
+      // A tracked source file may be intentionally deleted in the working
+      // tree while a generated contract is being migrated. Do not make this
+      // read-only inventory fail before it can inspect the remaining sources.
+      .filter((path) => existsSync(join(root, path)))
       .filter((path) => path !== "scripts/lib/github-validation-evidence.mjs")
       .map((path) => [path, read(join(root, path))]),
   );

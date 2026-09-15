@@ -2,16 +2,22 @@
  * Deterministic regression guard for Poe routing.
  *
  * This deliberately uses provider doubles rather than a live Poe call. It
- * protects the safety boundary between the live catalogue, admin overrides,
+ * protects the safety boundary between the static registry, admin overrides,
  * and request-time fallback dispatch.
  */
 
-const mockListPoeModels = jest.fn();
 const mockCreate = jest.fn();
+const mockRegistry = [
+  model("Claude-Sonnet-4.5"),
+  model("Gemini-3.1-Pro"),
+  model("Gemini-2.5-Pro"),
+];
 
 jest.mock("@workspace/integrations-poe-server", () => ({
   getPoeClient: () => ({ chat: { completions: { create: mockCreate } } }),
-  listPoeModels: mockListPoeModels,
+  getPoeModelRegistry: () => mockRegistry,
+  getPoeRegistryModel: (id: string) => mockRegistry.find((candidate) => candidate.id === id),
+  POE_MODEL_REGISTRY_VERSION: "static-v1",
   resetPoeClient: jest.fn(),
   withPoeRequestTimeout: (operation: (signal: AbortSignal) => Promise<unknown>) =>
     operation(new AbortController().signal),
@@ -39,6 +45,7 @@ jest.mock("../src/lib/logger", () => ({
 import {
   getPoeFeatureRoutes,
   getPoeFallbackOverrides,
+  resetPoeFallbacks,
   refreshPoeCatalogue,
   setPoeFallbacks,
   validatePoeFallbacks,
@@ -56,48 +63,40 @@ function model(name: string, vision = true) {
 }
 
 beforeEach(() => {
-  mockListPoeModels.mockReset();
+  resetPoeFallbacks();
   mockCreate.mockReset();
-  mockListPoeModels.mockResolvedValue([
-    model("Claude-Sonnet-4.5"),
-    model("Gemini-3.1-Pro"),
-    model("Vision-Fallback"),
-    model("Text-Only", false),
-  ]);
 });
 
 describe("Poe routing safety boundary", () => {
-  it("coalesces concurrent refreshes and filters removed or incompatible fallbacks", async () => {
-    let resolveCatalogue: ((value: ReturnType<typeof model>[]) => void) | undefined;
-    mockListPoeModels.mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolveCatalogue = resolve;
-      }),
-    );
-    const first = refreshPoeCatalogue();
-    const second = refreshPoeCatalogue();
-    expect(first).toBe(second);
-    resolveCatalogue?.([model("Claude-Sonnet-4.5"), model("Vision-Fallback")]);
-    await first;
-    expect(mockListPoeModels).toHaveBeenCalledTimes(1);
-
-    expect(setPoeFallbacks("identify", ["Vision-Fallback"])).toEqual({
-      ok: true,
-      models: ["Vision-Fallback"],
+  it("retires catalogue refresh without contacting Poe", async () => {
+    const result = await refreshPoeCatalogue();
+    expect(result).toEqual({
+      ok: false,
+      error: expect.stringMatching(/retired/i),
     });
-    expect(getPoeFeatureRoutes().find((route) => route.feature === "identify")?.fallbacks).toEqual([
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(getPoeFeatureRoutes().find((route) => route.feature === "identify")?.fallbacks).not.toContain(
       "Vision-Fallback",
-    ]);
-
-    mockListPoeModels.mockResolvedValueOnce([model("Claude-Sonnet-4.5")]);
-    const stale = await refreshPoeCatalogue();
-    expect(stale.freshness).toBe("fresh");
-    expect(getPoeFeatureRoutes().find((route) => route.feature === "identify")?.fallbacks).toEqual([]);
+    );
   });
 
-  it("rejects unsafe updates without changing the previous override", async () => {
-    await refreshPoeCatalogue();
-    expect(setPoeFallbacks("identify", ["Vision-Fallback"]).ok).toBe(true);
+  it("filters unknown or incompatible fallbacks against the static registry", () => {
+    expect(setPoeFallbacks("identify", ["Gemini-3.1-Pro"])).toEqual({
+      ok: true,
+      models: ["Gemini-3.1-Pro"],
+    });
+    expect(getPoeFeatureRoutes().find((route) => route.feature === "identify")?.fallbacks).toEqual([
+      "Gemini-3.1-Pro",
+    ]);
+
+    expect(setPoeFallbacks("identify", ["Vision-Fallback"])).toEqual({
+      ok: false,
+      error: expect.stringMatching(/not in the configured Poe registry/i),
+    });
+  });
+
+  it("rejects unsafe updates without changing the previous override", () => {
+    expect(setPoeFallbacks("identify", ["Gemini-3.1-Pro"]).ok).toBe(true);
     const before = getPoeFallbackOverrides();
     expect(validatePoeFallbacks("identify", [POE_IDENTIFY_BOT])).toEqual({
       ok: false,
@@ -105,13 +104,12 @@ describe("Poe routing safety boundary", () => {
     });
     expect(setPoeFallbacks("identify", ["Text-Only"])).toEqual({
       ok: false,
-      error: "Text-Only is unavailable for identify: missing required capabilities (vision)",
+      error: expect.stringMatching(/not in the configured Poe registry/i),
     });
     expect(getPoeFallbackOverrides()).toEqual(before);
   });
 
   it("stops dispatch immediately on Poe authentication failures", async () => {
-    await refreshPoeCatalogue();
     mockCreate.mockRejectedValue({ status: 401, message: "unauthorized" });
     await expect(callPoeBotWithChain("identify", "system", "user")).rejects.toMatchObject({ status: 401 });
     expect(mockCreate).toHaveBeenCalledTimes(1);
