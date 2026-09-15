@@ -52,20 +52,25 @@ assert.deepEqual(
   "test-fast must keep the focused Port Authority contract reachable",
 );
 
-for (const [tier, priority] of [
-  ["fast", 1],
-  ["standard", 2],
-  ["standard-plus", 2],
-  ["heavy", 3],
+for (const [tier, priority, budgetMs] of [
+  ["fast", 1, null],
+  ["standard", 2, 300_000],
+  ["standard-plus", 2, 2_700_000],
+  ["heavy", 3, 2_700_000],
 ]) {
-  const budgetPrefix = tier === "standard" ? "SERIAL_LOCK_BUDGET_MS=300000 " : "";
+  const budgetPrefix = budgetMs === null ? "" : `SERIAL_LOCK_BUDGET_MS=${budgetMs} `;
   assert.equal(
     packageJson.scripts?.[`test-${tier}`],
     `${budgetPrefix}node scripts/serial-lock.mjs --resource validation --priority ${priority} -- node scripts/run-tier.mjs ${tier} --allow-no-plan`,
-    `test-${tier} must remain executable through the documented lock priority scale`,
+    `test-${tier} must keep its documented lock priority and post-acquisition budget`,
   );
 }
 
+assert.match(
+  tierRunner,
+  /queue-wait before start:/,
+  "the tier report must report queue wait separately from execution time",
+);
 assert.match(
   tierRunner,
   /tier execution after lock:/,

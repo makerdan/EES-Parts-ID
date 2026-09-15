@@ -79,8 +79,8 @@ Every task plan must declare exactly one validation tier. This prevents all four
 |---|---|---|---|
 | `fast` | `test-fast` | Static checks: scoped Failure/Regression Guards, `tsc`, lint, config, port, and bundle-domain checks | ~5 min |
 | `standard` | `test-standard` | fast + codegen/spec/env checks, Failure Gate contract coverage, and tests | ~20 min |
-| `standard-plus` | `test-standard-plus` | standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test` | ~30 min |
-| `heavy` | `test-heavy` | Same as standard-plus (currently identical steps) | ~30 min |
+| `standard-plus` | `test-standard-plus` | standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test` | ~30 min (45 min post-lock budget) |
+| `heavy` | `test-heavy` | Same as standard-plus (currently identical steps) | ~30 min (45 min post-lock budget) |
 
 **Picking a tier (defaults unless the plan clearly implies otherwise):**
 - `fast` — pure config or refactor with no logic change
@@ -203,7 +203,7 @@ Only the three long-running services are ordinary workflows: `artifacts/api-serv
 
 ### Validation tiers (consolidated runners)
 
-Four tier commands run subsets sequentially via `scripts/run-tier.mjs`, with membership centralized in `scripts/validation-steps.mjs`, and are wrapped in the named-resource `scripts/serial-lock.mjs` (`validation`, `codegen`, `shared-test-results`, and `ports`). Task calls require `TASK_PLAN_FILE`; explicit ad-hoc calls must opt in with `--allow-no-plan`. Tiers are cumulative. Lock priorities use integers `1` through `9`, where `1` is highest precedence, `9` is lowest, and the default is `5`; priority reorders waiters only after the grace period. Fast work uses priority `1`, standard and standard-plus work uses `2`, and heavy work uses `3`. Lock budgets begin after acquisition, and stale/dead-holder recovery is always logged.
+Four tier commands run subsets sequentially via `scripts/run-tier.mjs`, with membership centralized in `scripts/validation-steps.mjs`, and are wrapped in the named-resource `scripts/serial-lock.mjs` (`validation`, `codegen`, `shared-test-results`, and `ports`). Task calls require `TASK_PLAN_FILE`; explicit ad-hoc calls must opt in with `--allow-no-plan`. Tiers are cumulative. Lock priorities use integers `1` through `9`, where `1` is highest precedence, `9` is lowest, and the default is `5`; priority reorders waiters only after the grace period. Fast work uses priority `1`, standard and standard-plus work uses `2`, and heavy work uses `3`. Standard-plus and heavy each have a 45-minute execution budget for their documented ~30-minute workloads. Lock budgets begin after acquisition, exclude queue wait, and stale/dead-holder recovery is always logged.
 
 - **`test-fast`** — static checks only: `gate-guard`, task-scoped Failure Gate and Regression Guard repair/check steps, `tsc`, lint, config, port, and bundle-domain checks. (~5 min)
 - **`test-standard`** — fast + codegen/spec/env checks, `failure-gate-contract`, and tests. (~20 min)
