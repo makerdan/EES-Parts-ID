@@ -204,7 +204,8 @@ function validateWorkflowContract(files, coverage) {
     if (!/^permissions:\s*$/m.test(text)) errors.push(`${name}: missing top-level permissions`);
     if (!/^concurrency:\s*$/m.test(text)) errors.push(`${name}: missing concurrency`);
     for (const block of jobBlocks(text)) {
-      if (!/^\s+timeout-minutes:\s*[1-9]\d*\s*$/m.test(block.text)) {
+      const callsReusableWorkflow = /^\s+uses:\s+\.\/\.github\/workflows\//m.test(block.text);
+      if (!callsReusableWorkflow && !/^\s+timeout-minutes:\s*[1-9]\d*\s*$/m.test(block.text)) {
         errors.push(`${name}/${block.name}: missing finite timeout-minutes`);
       }
     }
@@ -243,8 +244,11 @@ function validateWorkflowContract(files, coverage) {
     }
   }
   if (!/^    branches:\s*\[main\]\s*$/m.test(ci)) errors.push("ci.yml: push is not limited to main");
-  if (!/^  pull_request:/m.test(lidar) || !/^  merge_group:/m.test(lidar) || !/^  push:/m.test(lidar) || !/^  workflow_dispatch:/m.test(lidar)) {
-    errors.push("lidar-measure-tests.yml: missing one or more revision/manual events");
+  if (!/^  workflow_call:/m.test(lidar)) {
+    errors.push("lidar-measure-tests.yml: native workflow must be reusable by CI");
+  }
+  if (/^\s{2}(pull_request|merge_group|push|workflow_dispatch):/m.test(lidar)) {
+    errors.push("lidar-measure-tests.yml: native workflow must not bypass the CI required aggregator");
   }
   if (/pull_request:/.test(audit) || /pull_request:/.test(readme)) {
     errors.push("maintenance workflows must not execute untrusted pull-request code");
@@ -268,8 +272,10 @@ function validateWorkflowContract(files, coverage) {
 
   const ciJobs = jobBlocks(ci);
   const validate = ciJobs.find((block) => block.name === "validate");
+  const native = ciJobs.find((block) => block.name === "native");
   const required = ciJobs.find((block) => block.name === "required");
   if (!validate) errors.push("ci.yml: missing validate job");
+  if (!native) errors.push("ci.yml: missing native job");
   if (!required) errors.push("ci.yml: missing stable required job");
   if (validate && !/uses:\s+\.\.\/?\.github\/actions\/setup-node-pnpm|uses:\s+\.\/\.github\/actions\/setup-node-pnpm/.test(validate.text)) {
     errors.push("ci.yml/validate: does not use the repository setup component");
@@ -286,9 +292,16 @@ function validateWorkflowContract(files, coverage) {
   if (validate && !/^\s+image:\s+postgres:\d+\.\d+\s*$/m.test(validate.text)) {
     errors.push("ci.yml/validate: PostgreSQL service is not pinned to a major and minor version");
   }
+  if (native && !/name:\s+Native LiDAR validation/.test(native.text)) {
+    errors.push("ci.yml/native: stable native validation job name is missing");
+  }
+  if (native && !/uses:\s+\.\/\.github\/workflows\/lidar-measure-tests\.yml/.test(native.text)) {
+    errors.push("ci.yml/native: does not call the reusable native workflow");
+  }
   if (required && !/if:\s+always\(\)/.test(required.text)) errors.push("ci.yml/required: aggregator is not unconditional");
-  if (required && !/needs:\s+\[validate\]/.test(required.text)) errors.push("ci.yml/required: aggregator dependency is not explicit");
+  if (required && !/needs:\s+\[validate,\s*native\]/.test(required.text)) errors.push("ci.yml/required: aggregator dependencies are not explicit");
   if (required && !/VALIDATE_RESULT: \$\{\{ needs\.validate\.result \}\}/.test(required.text)) errors.push("ci.yml/required: aggregator does not inspect validate result");
+  if (required && !/NATIVE_RESULT: \$\{\{ needs\.native\.result \}\}/.test(required.text)) errors.push("ci.yml/required: aggregator does not inspect native result");
   if (required && !/failure\|cancelled\|skipped\|""/.test(required.text)) errors.push("ci.yml/required: aggregator does not fail closed");
   if (!/retention-days:\s+7/.test(ci)) errors.push("ci.yml: diagnostic retention is not bounded");
   if (!/retention-days:\s+7/.test(lidar) || !/LidarMeasureTests\.xcresult/.test(lidar)) {
@@ -307,6 +320,37 @@ function validateWorkflowContract(files, coverage) {
   if (!/pnpm run test-standard-plus/.test(coverage)) errors.push("coverage: portable owner command is undocumented");
 
   return errors;
+}
+
+function evaluateRequiredGateResults({ validate, native }) {
+  return [validate, native].every((result) => result === "success") ? "success" : "failure";
+}
+
+function validateNativeRequiredGateContract(files) {
+  const ci = files["ci.yml"];
+  const required = jobBlocks(ci).find((block) => block.name === "required");
+  nodeAssert.ok(required, "native required-gate fixtures need the stable required job");
+  nodeAssert.match(ci, /^  pull_request:/m, "CI must run native validation for pull requests");
+  nodeAssert.match(ci, /^  merge_group:/m, "CI must run native validation for merge groups");
+  nodeAssert.match(required.text, /CI \/ required/, "native validation must be represented by the stable required context");
+
+  nodeAssert.equal(
+    evaluateRequiredGateResults({ validate: "success", native: "success" }),
+    "success",
+    "the required gate should pass only when portable and native validation pass",
+  );
+  for (const native of ["failure", "cancelled", "skipped", "", undefined, "queued"]) {
+    nodeAssert.equal(
+      evaluateRequiredGateResults({ validate: "success", native }),
+      "failure",
+      `native result '${native ?? "missing"}' must fail the required gate`,
+    );
+  }
+  nodeAssert.equal(
+    evaluateRequiredGateResults({ validate: "failure", native: "success" }),
+    "failure",
+    "portable failure must still fail the required gate",
+  );
 }
 
 function validateSkillContract() {
@@ -707,6 +751,7 @@ nodeAssert.match(protectionStatus, /stale[\s\S]*cannot support a current or[\s\S
 nodeAssert.match(installation, /report consumers must pass both the snapshot and current read-only context/i);
 
 const files = Object.fromEntries(workflowNames.map((name) => [name, workflow(name)]));
+validateNativeRequiredGateContract(files);
 const errors = validateWorkflowContract(files, read(coveragePath));
 assert(errors.length === 0, errors.join("\n"));
 

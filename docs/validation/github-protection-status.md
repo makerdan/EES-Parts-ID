@@ -21,7 +21,7 @@ result; it does not enable a control, rewrite evidence, or print secret values.
 | Push protection | `verified` | Repository security settings returned `secret_scanning_push_protection.status: enabled` on re-check. |
 | Dependency alerts | `verified` | The vulnerability-alerts endpoint returned HTTP 204 after activation, and the Dependabot alerts endpoint returned HTTP 200 on re-check; these endpoints verify the dependency graph/Dependabot alert surface is enabled. |
 | Pull requests on `main` | `verified` | Branch protection returned a required pull-request review rule. The existing zero-approval requirement is recorded without inventing a new review policy. |
-| Required validation | `verified` | `main` requires strict status context `CI / required`. |
+| Required validation | `verified` | `main` requires strict status context `CI / required`; the tracked aggregator now fails closed unless both portable and native LiDAR validation succeed on pull-request and merge-group paths. This task changes repository workflow contracts only, not GitHub settings. |
 | Conversation resolution | `verified` | Branch protection returned `required_conversation_resolution.enabled: true`. |
 | Administrator enforcement | `verified` | Branch protection returned `enforce_admins.enabled: true`. |
 | Force-push block | `verified` | Branch protection returned `allow_force_pushes.enabled: false`. |
@@ -75,3 +75,13 @@ repository, revision, policy, or permission context differs, the report is
 `stale`; its controls are also marked `stale` and cannot support a current or
 verified claim. Consumers must not display the historical child status as
 current until a new snapshot has been collected and evaluated.
+
+## Required validation contract
+
+The single branch-protection context is `CI / required`. On `pull_request` and
+`merge_group` events, the `CI` workflow calls the reusable LiDAR workflow and
+the portable validation job in parallel, then the required job inspects both
+results. Only two `success` results produce a passing required context.
+`failure`, `cancelled`, `skipped`, missing, and unexpected results all fail
+closed. The native workflow cannot emit an independent advisory result that is
+outside the documented merge gate.
