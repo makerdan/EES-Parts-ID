@@ -19,3 +19,16 @@ synthetic test allowlists, and prohibited path classes. Use clearly synthetic
 `test-*` values in credential-shaped fixtures because test files are still
 scanned. Report historical private paths for owner-led purge rather than
 treating current-tree deletion as history remediation.
+
+Release validation must also prove that the checkout contains the complete
+history/ref set being claimed and that provider protection evidence is bound to
+the exact revision under review; path-only history results and dated prose
+markers are not release proof.
+
+**Why:** A shallow CI checkout can make `rev-list --all` appear clean while
+omitting older objects, and a checked-in protection snapshot can remain marked
+verified after the repository revision changes.
+
+**How to apply:** Fail closed on shallow/incomplete history before reporting
+cleanliness, and compare repository, target SHA, policy, and permission context
+when consuming retained provider evidence.
