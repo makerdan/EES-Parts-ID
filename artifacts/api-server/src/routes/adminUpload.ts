@@ -36,7 +36,7 @@ import { and,eq, or, sql } from "drizzle-orm";
 import { Request, Response, Router } from "express";
 
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
-import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+import { requireApprovedAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
 
@@ -162,7 +162,7 @@ export function parseCsv(csvText: string): Array<ParsedRow> | null {
 // the one produced by /inventory/upsert-batch/preview. Nothing is written to
 // the database. Clients should call this before /admin/upload and warn the
 // user when willReplaceBins > 0.
-router.post("/upload/preview", requireAdminAuth, async (req, res) => {
+router.post("/upload/preview", requireApprovedAdminAuth, async (req, res) => {
   try {
     const contentLength = Number(req.headers["content-length"] ?? 0);
     if (contentLength > UPLOAD_MAX_BYTES) {
@@ -371,7 +371,7 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
 });
 
 // ── POST /admin/upload ────────────────────────────────────────────────────────
-router.post("/upload", requireAdminAuth, async (req, res) => {
+router.post("/upload", requireApprovedAdminAuth, async (req, res) => {
   try {
     const contentLength = Number(req.headers["content-length"] ?? 0);
     if (contentLength > UPLOAD_MAX_BYTES) {
@@ -510,7 +510,7 @@ async function orderUpload(req: Request, res: Response, update: boolean) {
   }
 }
 
-router.post("/upload/orders/preview", requireAdminAuth, (req, res) => orderUpload(req, res, false));
-router.post("/upload/orders", requireAdminAuth, (req, res) => orderUpload(req, res, true));
+router.post("/upload/orders/preview", requireApprovedAdminAuth, (req, res) => orderUpload(req, res, false));
+router.post("/upload/orders", requireApprovedAdminAuth, (req, res) => orderUpload(req, res, true));
 
 export default router;

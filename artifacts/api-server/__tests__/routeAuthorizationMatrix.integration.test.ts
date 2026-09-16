@@ -142,23 +142,25 @@ describe("route access matrix completeness", () => {
     expect(missing).toEqual([]);
   });
 
-  it("requires the admin guard on every admin-only declaration", () => {
+  it("requires the access level's exact admin guard on every privileged declaration", () => {
     const declarations = new Map(
       literalRouteDeclarations().map((declaration) => [
         matrixKey(declaration.method, declaration.path),
         declaration,
       ]),
     );
-    const adminGuardNames = ["requireAdminAuth", "requireApprovedAdminAuth"];
-    const missingGuards = ROUTE_ACCESS_MATRIX
-      .filter((entry) => entry.access === "admin-only")
+    const guardMismatches = ROUTE_ACCESS_MATRIX
+      .filter((entry) => entry.access === "admin-only" || entry.access === "approved-admin")
       .filter((entry) => {
         const source = declarations.get(matrixKey(entry.method, entry.path))?.source ?? "";
-        return !adminGuardNames.some((guardName) => source.includes(guardName));
+        const expectedGuard = entry.access === "approved-admin"
+          ? "requireApprovedAdminAuth"
+          : "requireAdminAuth";
+        return !source.includes(`, ${expectedGuard},`);
       })
       .map((entry) => `${entry.method} ${entry.path} — intended audience: ${entry.access}`);
 
-    expect(missingGuards).toEqual([]);
+    expect(guardMismatches).toEqual([]);
   });
 
   it("keeps public access limited to health and warehouse layout reads", () => {

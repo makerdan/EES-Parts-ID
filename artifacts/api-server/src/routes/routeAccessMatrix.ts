@@ -7,14 +7,15 @@
  *
  *   public        — no Clerk session; only health and warehouse layout reads
  *   approved-user — valid Clerk session mapped to an approved application user
- *   admin-only    — approved admin role and the current session's MFA factor
+ *   approved-admin — approved admin role without an MFA claim requirement
+ *   admin-only     — approved admin role and the current session's MFA factor
  *
  * The common approved-user guard is mounted once in app.ts. Admin routes also
  * carry requireAdminAuth at their individual route declaration so the
  * privileged boundary remains visible next to the handler.
  */
 
-type RouteAccess = "public" | "approved-user" | "admin-only";
+type RouteAccess = "public" | "approved-user" | "approved-admin" | "admin-only";
 type RouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export type RouteAccessEntry = {
@@ -75,10 +76,10 @@ export const ROUTE_ACCESS_MATRIX: ReadonlyArray<RouteAccessEntry> = [
   { method: "POST", path: "/api/admin/users/:clerkUserId/demote", access: "admin-only" },
   { method: "DELETE", path: "/api/admin/users/:clerkUserId", access: "admin-only" },
   { method: "GET", path: "/api/admin/audit-log", access: "admin-only" },
-  { method: "POST", path: "/api/admin/upload/preview", access: "admin-only" },
-  { method: "POST", path: "/api/admin/upload", access: "admin-only" },
-  { method: "POST", path: "/api/admin/upload/orders/preview", access: "admin-only" },
-  { method: "POST", path: "/api/admin/upload/orders", access: "admin-only" },
+  { method: "POST", path: "/api/admin/upload/preview", access: "approved-admin" },
+  { method: "POST", path: "/api/admin/upload", access: "approved-admin" },
+  { method: "POST", path: "/api/admin/upload/orders/preview", access: "approved-admin" },
+  { method: "POST", path: "/api/admin/upload/orders", access: "approved-admin" },
   { method: "POST", path: "/api/admin/catalog-pdf", access: "admin-only" },
   { method: "POST", path: "/api/admin/catalog-pdf/:jobId/cancel", access: "admin-only" },
   { method: "GET", path: "/api/admin/catalog-pdf/:jobId/status", access: "admin-only" },
@@ -125,7 +126,7 @@ export const ROUTE_ACCESS_MATRIX: ReadonlyArray<RouteAccessEntry> = [
   { method: "PATCH", path: "/api/inventory/:id/bins", access: "admin-only" },
   { method: "PATCH", path: "/api/inventory/:id/order", access: "admin-only" },
   { method: "PATCH", path: "/api/inventory/:id/size", access: "admin-only" },
-  { method: "PATCH", path: "/api/inventory/:id/description", access: "admin-only" },
+  { method: "PATCH", path: "/api/inventory/:id/description", access: "approved-admin" },
   { method: "PATCH", path: "/api/inventory/:id/enrich", access: "admin-only" },
   { method: "PATCH", path: "/api/inventory/:id/keywords", access: "admin-only" },
   { method: "PATCH", path: "/api/inventory/:id/photo", access: "admin-only" },

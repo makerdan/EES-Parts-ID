@@ -200,7 +200,7 @@ describe("requireAdminAuth — MFA enforcement", () => {
     );
   });
 
-  describe("requireApprovedAdminAuth — description-save exception", () => {
+  describe("requireApprovedAdminAuth — narrowly scoped approved-admin exception", () => {
     it("allows an approved admin without an MFA claim", () => {
       mockSessionClaims = { amr: ["pwd"] };
 
@@ -241,6 +241,19 @@ describe("requireAdminAuth — MFA enforcement", () => {
       expect(responseBody.json).toHaveBeenCalledWith(
         expect.objectContaining({ error: "Authentication required" }),
       );
+    });
+
+    it("does not weaken the default guard used by unrelated admin operations", () => {
+      mockSessionClaims = { amr: ["pwd"] };
+
+      const exception = buildMocks("admin");
+      requireApprovedAdminAuth(exception.req, exception.res, exception.next);
+      expect(exception.next).toHaveBeenCalledTimes(1);
+
+      const defaultGuard = buildMocks("admin");
+      requireAdminAuth(defaultGuard.req, defaultGuard.res, defaultGuard.next);
+      expect(defaultGuard.next).not.toHaveBeenCalled();
+      expect(defaultGuard.res.status).toHaveBeenCalledWith(403);
     });
   });
 });
