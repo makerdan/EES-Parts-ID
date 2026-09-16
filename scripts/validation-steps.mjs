@@ -109,7 +109,7 @@ export const STANDARD_EXTRA = [
   ["env-check", "pnpm --filter @workspace/scripts env:check"],
   ["privacy-check", "pnpm --filter @workspace/scripts privacy:check"],
   ["privacy-check-contract", "node scripts/test/production-privacy-check.test.mjs"],
-  ["production-database-preflight", "DATABASE_ENV=production NODE_ENV=production pnpm --filter @workspace/api-server run check:production-database"],
+  ["production-database-target", "DATABASE_ENV=production NODE_ENV=production pnpm --filter @workspace/api-server run check:production-database-target"],
   ["spec-check-tests", "pnpm --filter @workspace/api-spec test"],
   ["failure-gate-contract", "node scripts/test/failure-gate-contract.test.mjs"],
   ["test", "node scripts/serial-lock.mjs --resource shared-test-results --priority 2 -- pnpm test"],

@@ -48,12 +48,19 @@ describe("runtime data boundary", () => {
     });
   }
 
-  function runPreflight(databaseEnv: string | undefined) {
+  function runPreflight(
+    databaseEnv: string | undefined,
+    databaseUrl?: string,
+  ) {
     const env = { ...process.env, NODE_ENV: "production" };
+    delete env.DATABASE_URL;
     if (databaseEnv === undefined) {
       delete env.DATABASE_ENV;
     } else {
       env.DATABASE_ENV = databaseEnv;
+    }
+    if (databaseUrl !== undefined) {
+      env.DATABASE_URL = databaseUrl;
     }
     return spawnSync(tsx, [preflight], {
       cwd: apiRoot,
@@ -156,19 +163,35 @@ describe("runtime data boundary", () => {
 
       expect(result.status).toBe(1);
       expect(result.error).toBeUndefined();
-      expect(output).toContain("production build requires DATABASE_ENV=production");
+      expect(output).toContain(
+        "production build requires DATABASE_ENV=production",
+      );
       if (databaseEnv) {
         expect(output).not.toContain(`DATABASE_ENV=${databaseEnv}`);
       }
       expect(output).not.toContain("postgresql://");
+      expect(output).toContain("does not test DATABASE_URL");
     },
   );
 
-  it("accepts the production target through the shared preflight contract", () => {
+  it("accepts the production target without requiring a database URL", () => {
     const result = runPreflight("production");
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("DATABASE_ENV=production confirmed");
+    expect(result.stdout).toContain("DATABASE_ENV=production target confirmed");
+    expect(result.stdout).toContain(
+      "DATABASE_URL and database connectivity were not checked",
+    );
+  });
+
+  it("does not attempt connectivity when a production URL is configured", () => {
+    const databaseUrl = "postgresql://127.0.0.1:1/unreachable-secret";
+    const result = runPreflight("production", databaseUrl);
+    const output = `${result.stdout}\n${result.stderr}`;
+
+    expect(result.status).toBe(0);
+    expect(output).toContain("database connectivity were not checked");
+    expect(output).not.toContain(databaseUrl);
   });
 
   it("shares the production target predicate with startup and preflight callers", () => {

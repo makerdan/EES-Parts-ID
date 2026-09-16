@@ -60,8 +60,8 @@ covered by the canonical tiers.
 |---|---|---|
 | `predev` | Runs API codegen guard before `dev` | Not independently owned |
 | `dev` | Requires `PORT`; frees it, sets `NODE_ENV=development` and `DATABASE_ENV=development`, then runs `tsx src/index.ts` | Not owned |
-| `build` | Runs `check:production-database`, then removes and recreates the esbuild `dist/` output | Not owned |
-| `check:production-database` | Explicit production database-target preflight; no build output | Reached by standard `production-database-preflight` with production env |
+| `build` | Runs `check:production-database-target`, then removes and recreates the esbuild `dist/` output | Not owned |
+| `check:production-database-target` | Explicit production database-target assertion; confirms only `DATABASE_ENV=production`, does not check `DATABASE_URL` or connectivity, and produces no build output | Reached by standard `production-database-target` with production env |
 | `start` | Runs `node --enable-source-maps ./dist/index.mjs`; no build or freshness check | Not owned |
 | `typecheck` | Production and test TypeScript passes; `pretypecheck` runs codegen guard | Reached by fast `tsc` |
 | `test`, `test:coverage`, `test:provider` | Database-mode wrapper and serialized test runner; provider test opts into a live provider | Coverage is canonical in standard-plus; live provider command is not owned |

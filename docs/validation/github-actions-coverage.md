@@ -37,7 +37,7 @@ settings and live run status are not inferred from this file.
 | env-check | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | privacy-check | `CI / required` → `pnpm run test-standard-plus` | direct portable deployment-configuration status check; secret values are never printed | PR, merge queue, main push, manual | inferred from tier manifest |
 | privacy-check-contract | `CI / required` → `pnpm run test-standard-plus` | regression coverage for fail-closed CORS and disabled unique visitors without privacy key material | PR, merge queue, main push, manual | tracked contract test |
-| production-database-preflight | `CI / required` → `pnpm run test-standard-plus` | production build target check; rejects non-production `DATABASE_ENV` before API bundling | PR, merge queue, main push, manual | tracked runtime-boundary contract |
+| production-database-target | `CI / required` → `pnpm run test-standard-plus` | target-safety assertion only; rejects non-production `DATABASE_ENV` before API bundling and does not claim database reachability | PR, merge queue, main push, manual | tracked runtime-boundary contract |
 | spec-check-tests | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | failure-gate-contract | `CI / required` → `pnpm run test-standard-plus` | contract coverage; task archive remains local-only | PR, merge queue, main push, manual | inferred from tier manifest |
 | github-actions-contract | `CI / required` → `pnpm run test-standard-plus` | deterministic workflow and mapping contract | PR, merge queue, main push, manual | tracked contract test |

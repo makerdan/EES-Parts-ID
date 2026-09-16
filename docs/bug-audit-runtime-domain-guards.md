@@ -30,9 +30,9 @@ The audit verified four guard weaknesses:
    operator precedence.
 3. The light-mode default check is an unanchored text search rather than a
    check of the `DEFAULT_SETTINGS` object.
-4. The production database preflight confirms only the environment label; it
-   does not establish database configuration or reachability. This is safe as
-   a build-target assertion but can be misread as a database readiness check.
+4. The production database target assertion confirms only the environment
+   label; it does not establish database configuration or reachability. The
+   command name and output make that target-only scope explicit.
 
 The client reachability guard also has a documented coverage boundary: it
 checks only `@workspace/parts-id`. The current browser-oriented
@@ -52,7 +52,7 @@ as a coverage limitation rather than a current production leak.
 | 1 | Medium | Fail-open / false readiness | `artifacts/parts-id/scripts/check-bundle-domain.js:10-32` | The standalone bundle check exits successfully when its build directory or JavaScript inputs are absent. |
 | 2 | Low | Shell parsing / boundary coverage | `scripts/check-light-mode-config.sh:55-62` | `find` precedence means the raw `useColorScheme` scan selects `.tsx` files but not `.ts` files. |
 | 3 | Low | False positive / assertion precision | `scripts/check-light-mode-config.sh:42-48` | Any matching `themeMode: "light"` text in `AppContext.tsx` can satisfy the default-setting check. |
-| 4 | Medium | Environment ambiguity / false readiness | `artifacts/api-server/scripts/check-production-database.ts:10-18` | Production preflight validates only `DATABASE_ENV=production`, not `DATABASE_URL` or database reachability. |
+| 4 | Medium | Environment ambiguity / false readiness | `artifacts/api-server/scripts/check-production-database.ts:10-27` | Production target assertion validates only `DATABASE_ENV=production`, not `DATABASE_URL` or database reachability. |
 | 5 | Low | Coverage boundary / guard bypass | `scripts/check-db-reachability.mjs:41,261-273` | The graph traversal has one hardcoded client root, so newly added browser artifacts are outside this guard until registered. |
 
 ## Guard matrix
@@ -63,7 +63,7 @@ as a coverage limitation rather than a current production leak.
 | Standalone bundle-domain check | Existing `artifacts/parts-id/static-build/web` files and JavaScript contents | Generated web output already on disk | `bundle-domain-check` in `test-fast`; also runnable from the Parts ID package | `.replit.dev` matches exit 1; missing/empty output currently exits 0; clean scan exits 0. |
 | Build-time bundle-domain check | Resolved deployment domain and Expo web output | Parts ID production build process | `artifacts/parts-id/scripts/build.js` after the web export completes | Missing output, no JavaScript, missing expected domain, or any `.replit.dev` occurrence throws and fails the build. |
 | Client reachability | Workspace globs, package manifests, local `workspace:`, `link:`, and `file:` edges | Static workspace dependency graph | `lint` step in `test-fast`; optional `--self-test` | Missing baseline package or configured root fails; reachable server-only target fails with a dependency chain; clean graph exits 0. |
-| Production database target | `DATABASE_ENV` only | Shared `@workspace/db/runtime-data-boundary` predicate before database import | API production build and `production-database-preflight` in `test-standard` | Missing/invalid/non-production target is caught and exits 1 without printing target or credential values; `production` exits 0 without opening a connection. |
+| Production database target assertion | `DATABASE_ENV` only | Shared `@workspace/db/runtime-data-boundary` predicate before database import | API production build and `production-database-target` in `test-standard` | Missing/invalid/non-production target is caught and exits 1 without printing target or credential values; `production` exits 0 without opening a connection or claiming readiness. |
 | API production startup | `NODE_ENV`, `DATABASE_ENV`, required environment variables, and later database import | API process startup | API `src/index.ts` | `validateEnv()` runs before the dynamic database import; missing production variables exit 1; the database module independently requires `DATABASE_URL` and matching execution mode. |
 
 ## Mode and configuration evaluation
@@ -154,16 +154,16 @@ as a coverage limitation rather than a current production leak.
 - **Risk:** A configuration regression can be reported as healthy if another matching text string remains in the context file. This weakens the guard's claim that new or unset users start in light mode.
 - **Recommended fix:** Use a narrowly scoped structural assertion or a focused contract test that evaluates the `DEFAULT_SETTINGS` initializer, while retaining the current readable failure message. This audit made no fix.
 
-### Finding 4 — Production database preflight confirms a label, not database readiness
+### Finding 4 — Production database target assertion confirms a label, not database readiness
 
-- **File and line:** `artifacts/api-server/scripts/check-production-database.ts:10-18`
+- **File and line:** `artifacts/api-server/scripts/check-production-database.ts:10-27`
 - **Related implementation/configuration:** `lib/db/src/runtimeDataBoundary.ts:63-91`; `artifacts/api-server/src/lib/validateEnv.ts:85-153`; `artifacts/api-server/.replit-artifact/artifact.toml:20-34`
 - **Category:** Environment ambiguity / false readiness
 - **Severity:** Medium
 - **Classification:** Verified scope mismatch; not an unsafe production connection or data mutation.
-- **Evidence:** The preflight imports `assertProductionDatabaseTarget()` and checks only that `DATABASE_ENV` normalizes to `production`. It does not read `DATABASE_URL`, create a pool, or execute a connectivity probe. The production artifact configuration supplies the production label for build and run, while API startup later performs required-variable validation and only then imports the database module. A local invocation with `DATABASE_ENV=production` and no production database connection still exits 0 and prints “confirmed”; no database operation occurs.
-- **Risk:** A green step named `production-database-preflight` can be interpreted as evidence that the deployment database is configured and reachable, when it proves only target selection. A missing URL or unreachable database is deferred to startup, and a network failure is not detected at build/validation time.
-- **Recommended fix:** Preserve this target-only check but name/document it as a target-safety assertion, or add a separately named, explicitly authorized non-production/production connectivity check with strict environment and timeout controls. Do not make a build preflight connect to production implicitly. This audit made no fix.
+- **Evidence:** The target assertion imports `assertProductionDatabaseTarget()` and checks only that `DATABASE_ENV` normalizes to `production`. It does not read `DATABASE_URL`, create a pool, or execute a connectivity probe. The production artifact configuration supplies the production label for build and run, while API startup later performs required-variable validation and only then imports the database module. A local invocation with `DATABASE_ENV=production` and no production database URL still exits 0 and states that URL and connectivity were not checked; no database operation occurs.
+- **Risk boundary:** A missing URL or unreachable database is deferred to startup, and a network failure is not detected at build/validation time. This is intentional: the target assertion does not connect to production implicitly.
+- **Resolution:** Preserve the target-only behavior under the `check:production-database-target` command and `production-database-target` validation label. Its success and failure messages state that `DATABASE_URL` and connectivity are not checked. Any future readiness probe must be a separately named, explicitly authorized operation with strict environment and timeout controls.
 
 ### Finding 5 — Database reachability has a single hardcoded client root
 
