@@ -18,6 +18,11 @@ import { existsSync,readdirSync, readFileSync, statSync } from "fs";
 import { dirname,join } from "path";
 import { fileURLToPath } from "url";
 
+import {
+  collectMigrationColumns,
+  findMissingColumns,
+} from "./schema-migration-columns.ts";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_DIR = join(__dirname, "..");
 const MIGRATIONS_DIR = join(DB_DIR, "drizzle");
@@ -92,10 +97,25 @@ if (sqlFiles.length === 0) {
   process.exit(1);
 }
 
-const allSQL = sqlFiles
-  .map((f) => readFileSync(join(MIGRATIONS_DIR, f), "utf-8"))
-  .join("\n")
-  .toLowerCase();
+const migrationColumns = new Map(
+  sqlFiles.map((fileName) => [
+    fileName,
+    collectMigrationColumns(readFileSync(join(MIGRATIONS_DIR, fileName), "utf-8")),
+  ]),
+);
+
+const migratedTables = new Set<string>();
+const migratedColumns = new Map<string, Set<string>>();
+for (const columnsForFile of migrationColumns.values()) {
+  for (const [tableName, columnNames] of columnsForFile) {
+    migratedTables.add(tableName);
+    const columnsForTable = migratedColumns.get(tableName) ?? new Set<string>();
+    for (const columnName of columnNames) {
+      columnsForTable.add(columnName);
+    }
+    migratedColumns.set(tableName, columnsForTable);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 3. Check each table exists in migrations.
@@ -103,8 +123,7 @@ const allSQL = sqlFiles
 const missingTables: Array<string> = [];
 
 for (const tableName of tableNames) {
-  // A table must appear as a quoted identifier in at least one migration.
-  if (!allSQL.includes(`"${tableName}"`)) {
+  if (!migratedTables.has(tableName.toLowerCase())) {
     missingTables.push(tableName);
   }
 }
@@ -112,14 +131,10 @@ for (const tableName of tableNames) {
 // ---------------------------------------------------------------------------
 // 4. Check each column exists in migrations (skip columns of missing tables).
 // ---------------------------------------------------------------------------
-const missingColumns: Array<ColumnEntry> = [];
-
-for (const entry of columns) {
-  if (missingTables.includes(entry.tableName)) continue;
-  if (!allSQL.includes(`"${entry.columnName}"`)) {
-    missingColumns.push(entry);
-  }
-}
+const missingColumns = findMissingColumns(
+  columns.filter((entry) => !missingTables.includes(entry.tableName)),
+  migratedColumns,
+);
 
 // ---------------------------------------------------------------------------
 // 5. Barrel completeness check — every .ts file in src/schema/ must be
