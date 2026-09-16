@@ -58,10 +58,12 @@ jest.mock("../src/utils/aiHelpers", () => ({
 }));
 
 // ── Imports ───────────────────────────────────────────────────────────────────
-import supertest from "supertest";
 import { db, inventoryTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import express from "express";
+import supertest from "supertest";
 import app from "../src/app";
+import routes from "../src/routes";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import {
   cleanupEditableItem,
@@ -512,6 +514,48 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
     expect(row?.aiKeywords).toEqual(newKeywords);
     // The route also writes pinnedKeywords = keywords to the DB
     expect(row?.pinnedKeywords).toEqual(newKeywords);
+  });
+
+  it("returns saved keywords from repeated search and a fresh app instance", async () => {
+    const newKeywords = ["durable-search-keyword", "admin-edit-confirmation"];
+    const findItem = (body: unknown) => {
+      const results = (body as {
+        results?: Array<{ item?: { id?: number; aiKeywords?: string[] } }>;
+      }).results;
+      return results?.find((result) => result.item?.id === item.id)?.item;
+    };
+
+    const beforeSave = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: item.catalog })
+      .expect(200);
+    expect(findItem(beforeSave.body)?.aiKeywords).toEqual(item.aiKeywords);
+
+    await withAuth(
+      supertest(app)
+        .patch(`/api/inventory/${item.id}/keywords`)
+        .send({ keywords: newKeywords }),
+      ADMIN_TOKEN,
+    ).expect(200);
+
+    const committedRow = await fetchRow(item.id);
+    expect(committedRow?.aiKeywords).toEqual(newKeywords);
+    expect(committedRow?.pinnedKeywords).toEqual(newKeywords);
+
+    const repeatedSearch = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: item.catalog })
+      .expect(200);
+    expect(findItem(repeatedSearch.body)?.aiKeywords).toEqual(newKeywords);
+
+    const freshApp = express();
+    freshApp.use(express.json());
+    freshApp.use("/api", routes);
+    const freshAppSearch = await supertest(freshApp)
+      .post("/api/inventory/search")
+      .send({ keywords: item.catalog })
+      .expect(200);
+    expect(findItem(freshAppSearch.body)?.aiKeywords).toEqual(newKeywords);
   });
 
   it("accepts an empty keywords array (clears keywords)", async () => {
