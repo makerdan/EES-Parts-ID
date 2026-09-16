@@ -44,7 +44,10 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-type MockSearchResult = { item: { id: number; catalog: string } };
+type MockSearchResult = {
+  item: { id: number; catalog: string; totalOpOq?: number };
+  variants?: Array<{ id: number; catalog: string; totalOpOq?: number }>;
+};
 
 function makeCache(results: MockSearchResult[]): QueryCache<MockSearchResult> {
   return {
@@ -241,5 +244,33 @@ describe("invalidateAllCachesAfterSave — combined list + search invalidation c
     ][];
     expect(typeof calls[0]![0].predicate).toBe("function");
     expect(calls[1]![0].queryKey).toEqual(["searchInventory"]);
+  });
+
+  it("patches the saved total in the durable search cache", async () => {
+    const itemId = 7;
+    const cache = makeCache([
+      {
+        item: { id: itemId, catalog: "BREAKER-A", totalOpOq: 3 },
+        variants: [{ id: 8, catalog: "BREAKER-B", totalOpOq: 4 }],
+      },
+    ]);
+    mockGetItem.mockResolvedValue(JSON.stringify(cache));
+
+    await invalidateSearchAndEvictItem({
+      queryClient: { invalidateQueries },
+      asyncStorage: { getItem: mockGetItem, setItem: mockSetItem },
+      itemId,
+      updatedItem: {
+        id: itemId,
+        catalog: "BREAKER-A",
+        totalOpOq: 15,
+      } as never,
+    });
+
+    const [, calledValue] = mockSetItem.mock.calls[0] as [string, string];
+    const written = JSON.parse(calledValue) as QueryCache<MockSearchResult>;
+    const result = written['{"keywords":"breaker"}']!.results[0]!;
+    expect(result.item.totalOpOq).toBe(15);
+    expect(result.variants?.[0]?.totalOpOq).toBe(4);
   });
 });

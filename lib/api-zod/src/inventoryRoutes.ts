@@ -6,6 +6,7 @@ const InventoryItemSchema = z.object({
   catalog: z.string(),
   orderPurchase: z.number().int().nonnegative(),
   orderQuantity: z.number().int().nonnegative(),
+  totalOpOq: z.number().int().nonnegative(),
   description: z.string(),
   binLocations: z
     .array(z.string())

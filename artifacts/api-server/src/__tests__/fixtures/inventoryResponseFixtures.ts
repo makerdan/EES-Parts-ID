@@ -1,4 +1,4 @@
-export type InventoryOrderField = "orderPurchase" | "orderQuantity";
+export type InventoryOrderField = "orderPurchase" | "orderQuantity" | "totalOpOq";
 
 export function makeInventoryItemFixture(overrides: Record<string, unknown> = {}) {
   return {
@@ -7,6 +7,7 @@ export function makeInventoryItemFixture(overrides: Record<string, unknown> = {}
     catalog: "W-999",
     orderPurchase: 5,
     orderQuantity: 10,
+    totalOpOq: 15,
     description: "Test widget",
     binLocations: ["A1"],
     aiKeywords: ["widget"],
@@ -42,6 +43,7 @@ export function makeRawSearchRowFixture(overrides: Record<string, unknown> = {})
     description: "Test widget",
     order_purchase: 5,
     order_quantity: 10,
+    total_op_oq: 15,
     bin_locations: ["A1"],
     ai_keywords: ["widget"],
     pinned_keywords: [],

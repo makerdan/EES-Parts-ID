@@ -239,9 +239,9 @@ describe("InventoryItem response contract", () => {
   );
 
   it.each(Object.entries(envelopeSchemas))(
-    "%s rejects a missing orderPurchase or orderQuantity",
+    "%s rejects a missing required order field",
     (responseName, schema) => {
-      for (const field of ["orderPurchase", "orderQuantity"] as const) {
+      for (const field of ["orderPurchase", "orderQuantity", "totalOpOq"] as const) {
         expect(() => schema.parse(makeResponseFixture(responseName, field))).toThrow();
       }
     },
@@ -263,7 +263,7 @@ describe("Inventory list and search route response contracts", () => {
     });
   });
 
-  it.each(["orderPurchase", "orderQuantity"] as const)(
+  it.each(["orderPurchase", "orderQuantity", "totalOpOq"] as const)(
     "GET /api/inventory returns its documented error when a row is missing %s",
     async (field) => {
       routeTestMode = "list";
@@ -320,7 +320,7 @@ describe("Inventory list and search route response contracts", () => {
     },
   );
 
-  it.each(["order_purchase", "order_quantity"] as const)(
+  it.each(["order_purchase", "order_quantity", "total_op_oq"] as const)(
     "POST /api/inventory/search rejects a malformed primary raw row missing %s",
     async (field) => {
       routeTestMode = "search";

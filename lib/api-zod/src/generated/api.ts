@@ -46,6 +46,8 @@ export const listInventoryResponseItemsItemOrderPurchaseMin = 0;
 
 export const listInventoryResponseItemsItemOrderQuantityMin = 0;
 
+export const listInventoryResponseItemsItemTotalOpOqMin = 0;
+
 
 
 export const ListInventoryResponse = zod.object({
@@ -55,6 +57,7 @@ export const ListInventoryResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(listInventoryResponseItemsItemOrderPurchaseMin),
   "orderQuantity": zod.number().min(listInventoryResponseItemsItemOrderQuantityMin),
+  "totalOpOq": zod.number().min(listInventoryResponseItemsItemTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -74,7 +77,7 @@ export const ListInventoryResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n')),
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n')),
   "total": zod.number(),
   "page": zod.number(),
   "limit": zod.number()
@@ -154,17 +157,25 @@ export const searchInventoryResponseResultsItemItemOrderPurchaseMin = 0;
 
 export const searchInventoryResponseResultsItemItemOrderQuantityMin = 0;
 
+export const searchInventoryResponseResultsItemItemTotalOpOqMin = 0;
+
 export const searchInventoryResponseResultsItemVariantsItemOrderPurchaseMin = 0;
 
 export const searchInventoryResponseResultsItemVariantsItemOrderQuantityMin = 0;
+
+export const searchInventoryResponseResultsItemVariantsItemTotalOpOqMin = 0;
 
 export const searchInventoryResponseSizeUnknownResultsItemItemOrderPurchaseMin = 0;
 
 export const searchInventoryResponseSizeUnknownResultsItemItemOrderQuantityMin = 0;
 
+export const searchInventoryResponseSizeUnknownResultsItemItemTotalOpOqMin = 0;
+
 export const searchInventoryResponseSizeUnknownResultsItemVariantsItemOrderPurchaseMin = 0;
 
 export const searchInventoryResponseSizeUnknownResultsItemVariantsItemOrderQuantityMin = 0;
+
+export const searchInventoryResponseSizeUnknownResultsItemVariantsItemTotalOpOqMin = 0;
 
 
 
@@ -176,6 +187,7 @@ export const SearchInventoryResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(searchInventoryResponseResultsItemItemOrderPurchaseMin),
   "orderQuantity": zod.number().min(searchInventoryResponseResultsItemItemOrderQuantityMin),
+  "totalOpOq": zod.number().min(searchInventoryResponseResultsItemItemTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -195,7 +207,7 @@ export const SearchInventoryResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n'),
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n'),
   "confidence": zod.number(),
   "matchReason": zod.string(),
   "seriesBase": zod.string().nullish(),
@@ -206,6 +218,7 @@ export const SearchInventoryResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(searchInventoryResponseResultsItemVariantsItemOrderPurchaseMin),
   "orderQuantity": zod.number().min(searchInventoryResponseResultsItemVariantsItemOrderQuantityMin),
+  "totalOpOq": zod.number().min(searchInventoryResponseResultsItemVariantsItemTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -225,7 +238,7 @@ export const SearchInventoryResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n'))
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n'))
 })),
   "totalMatches": zod.number(),
   "belowThreshold": zod.number(),
@@ -237,6 +250,7 @@ export const SearchInventoryResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(searchInventoryResponseSizeUnknownResultsItemItemOrderPurchaseMin),
   "orderQuantity": zod.number().min(searchInventoryResponseSizeUnknownResultsItemItemOrderQuantityMin),
+  "totalOpOq": zod.number().min(searchInventoryResponseSizeUnknownResultsItemItemTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -256,7 +270,7 @@ export const SearchInventoryResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n'),
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n'),
   "confidence": zod.number(),
   "matchReason": zod.string(),
   "seriesBase": zod.string().nullish(),
@@ -267,6 +281,7 @@ export const SearchInventoryResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(searchInventoryResponseSizeUnknownResultsItemVariantsItemOrderPurchaseMin),
   "orderQuantity": zod.number().min(searchInventoryResponseSizeUnknownResultsItemVariantsItemOrderQuantityMin),
+  "totalOpOq": zod.number().min(searchInventoryResponseSizeUnknownResultsItemVariantsItemTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -286,7 +301,7 @@ export const SearchInventoryResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n'))
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n'))
 })).optional().describe('Items that have no data for the active size dimension(s); shown as a trailing \"size unknown\" group'),
   "sizeUnknownCount": zod.number().optional().describe('Count of items excluded from the main results because the relevant dimension field is NULL')
 }).describe('Response shape for POST \/inventory\/search.\n`results` contains items that matched all filters; `sizeUnknownResults` is a trailing group of items whose relevant dimension field is NULL and are therefore excluded from size-range filtering but still shown under a \"Size not measured\" section header in the UI.\n')
@@ -382,6 +397,8 @@ export const updateItemBinsResponseOrderPurchaseMin = 0;
 
 export const updateItemBinsResponseOrderQuantityMin = 0;
 
+export const updateItemBinsResponseTotalOpOqMin = 0;
+
 
 
 export const UpdateItemBinsResponse = zod.object({
@@ -390,6 +407,7 @@ export const UpdateItemBinsResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(updateItemBinsResponseOrderPurchaseMin),
   "orderQuantity": zod.number().min(updateItemBinsResponseOrderQuantityMin),
+  "totalOpOq": zod.number().min(updateItemBinsResponseTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -409,7 +427,7 @@ export const UpdateItemBinsResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n')
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n')
 
 
 /**
@@ -434,6 +452,8 @@ export const updateItemOrderResponseOrderPurchaseMin = 0;
 
 export const updateItemOrderResponseOrderQuantityMin = 0;
 
+export const updateItemOrderResponseTotalOpOqMin = 0;
+
 
 
 export const UpdateItemOrderResponse = zod.object({
@@ -442,6 +462,7 @@ export const UpdateItemOrderResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(updateItemOrderResponseOrderPurchaseMin),
   "orderQuantity": zod.number().min(updateItemOrderResponseOrderQuantityMin),
+  "totalOpOq": zod.number().min(updateItemOrderResponseTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -461,7 +482,7 @@ export const UpdateItemOrderResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n')
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n')
 
 
 /**
@@ -518,6 +539,8 @@ export const updateItemDimensionsResponseOrderPurchaseMin = 0;
 
 export const updateItemDimensionsResponseOrderQuantityMin = 0;
 
+export const updateItemDimensionsResponseTotalOpOqMin = 0;
+
 
 
 export const UpdateItemDimensionsResponse = zod.object({
@@ -526,6 +549,7 @@ export const UpdateItemDimensionsResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(updateItemDimensionsResponseOrderPurchaseMin),
   "orderQuantity": zod.number().min(updateItemDimensionsResponseOrderQuantityMin),
+  "totalOpOq": zod.number().min(updateItemDimensionsResponseTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -545,7 +569,7 @@ export const UpdateItemDimensionsResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n')
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n')
 
 
 /**
@@ -559,6 +583,8 @@ export const lookupByBarcodeResponseOrderPurchaseMin = 0;
 
 export const lookupByBarcodeResponseOrderQuantityMin = 0;
 
+export const lookupByBarcodeResponseTotalOpOqMin = 0;
+
 
 
 export const LookupByBarcodeResponse = zod.object({
@@ -567,6 +593,7 @@ export const LookupByBarcodeResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(lookupByBarcodeResponseOrderPurchaseMin),
   "orderQuantity": zod.number().min(lookupByBarcodeResponseOrderQuantityMin),
+  "totalOpOq": zod.number().min(lookupByBarcodeResponseTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -586,7 +613,7 @@ export const LookupByBarcodeResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n')
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n')
 
 
 /**
@@ -604,6 +631,8 @@ export const updateItemBarcodesResponseOrderPurchaseMin = 0;
 
 export const updateItemBarcodesResponseOrderQuantityMin = 0;
 
+export const updateItemBarcodesResponseTotalOpOqMin = 0;
+
 
 
 export const UpdateItemBarcodesResponse = zod.object({
@@ -612,6 +641,7 @@ export const UpdateItemBarcodesResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(updateItemBarcodesResponseOrderPurchaseMin),
   "orderQuantity": zod.number().min(updateItemBarcodesResponseOrderQuantityMin),
+  "totalOpOq": zod.number().min(updateItemBarcodesResponseTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -631,7 +661,7 @@ export const UpdateItemBarcodesResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n')
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n')
 
 
 /**
@@ -649,6 +679,8 @@ export const updateItemSizeResponseOrderPurchaseMin = 0;
 
 export const updateItemSizeResponseOrderQuantityMin = 0;
 
+export const updateItemSizeResponseTotalOpOqMin = 0;
+
 
 
 export const UpdateItemSizeResponse = zod.object({
@@ -657,6 +689,7 @@ export const UpdateItemSizeResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(updateItemSizeResponseOrderPurchaseMin),
   "orderQuantity": zod.number().min(updateItemSizeResponseOrderQuantityMin),
+  "totalOpOq": zod.number().min(updateItemSizeResponseTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -676,7 +709,7 @@ export const UpdateItemSizeResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n')
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n')
 
 
 /**
@@ -694,6 +727,8 @@ export const updateItemDescriptionResponseOrderPurchaseMin = 0;
 
 export const updateItemDescriptionResponseOrderQuantityMin = 0;
 
+export const updateItemDescriptionResponseTotalOpOqMin = 0;
+
 
 
 export const UpdateItemDescriptionResponse = zod.object({
@@ -702,6 +737,7 @@ export const UpdateItemDescriptionResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(updateItemDescriptionResponseOrderPurchaseMin),
   "orderQuantity": zod.number().min(updateItemDescriptionResponseOrderQuantityMin),
+  "totalOpOq": zod.number().min(updateItemDescriptionResponseTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -721,7 +757,7 @@ export const UpdateItemDescriptionResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n')
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n')
 
 
 /**
@@ -735,6 +771,8 @@ export const reenrichItemResponseOrderPurchaseMin = 0;
 
 export const reenrichItemResponseOrderQuantityMin = 0;
 
+export const reenrichItemResponseTotalOpOqMin = 0;
+
 
 
 export const ReenrichItemResponse = zod.object({
@@ -743,6 +781,7 @@ export const ReenrichItemResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(reenrichItemResponseOrderPurchaseMin),
   "orderQuantity": zod.number().min(reenrichItemResponseOrderQuantityMin),
+  "totalOpOq": zod.number().min(reenrichItemResponseTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -762,7 +801,7 @@ export const ReenrichItemResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n')
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n')
 
 
 /**
@@ -780,6 +819,8 @@ export const updateItemKeywordsResponseOrderPurchaseMin = 0;
 
 export const updateItemKeywordsResponseOrderQuantityMin = 0;
 
+export const updateItemKeywordsResponseTotalOpOqMin = 0;
+
 
 
 export const UpdateItemKeywordsResponse = zod.object({
@@ -788,6 +829,7 @@ export const UpdateItemKeywordsResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(updateItemKeywordsResponseOrderPurchaseMin),
   "orderQuantity": zod.number().min(updateItemKeywordsResponseOrderQuantityMin),
+  "totalOpOq": zod.number().min(updateItemKeywordsResponseTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -807,7 +849,7 @@ export const UpdateItemKeywordsResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n')
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n')
 
 
 /**
@@ -847,9 +889,13 @@ export const aiIdentifyPartResponseResultsItemItemOrderPurchaseMin = 0;
 
 export const aiIdentifyPartResponseResultsItemItemOrderQuantityMin = 0;
 
+export const aiIdentifyPartResponseResultsItemItemTotalOpOqMin = 0;
+
 export const aiIdentifyPartResponseResultsItemVariantsItemOrderPurchaseMin = 0;
 
 export const aiIdentifyPartResponseResultsItemVariantsItemOrderQuantityMin = 0;
+
+export const aiIdentifyPartResponseResultsItemVariantsItemTotalOpOqMin = 0;
 
 
 
@@ -868,6 +914,7 @@ export const AiIdentifyPartResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(aiIdentifyPartResponseResultsItemItemOrderPurchaseMin),
   "orderQuantity": zod.number().min(aiIdentifyPartResponseResultsItemItemOrderQuantityMin),
+  "totalOpOq": zod.number().min(aiIdentifyPartResponseResultsItemItemTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -887,7 +934,7 @@ export const AiIdentifyPartResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n'),
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n'),
   "confidence": zod.number(),
   "matchReason": zod.string(),
   "seriesBase": zod.string().nullish(),
@@ -898,6 +945,7 @@ export const AiIdentifyPartResponse = zod.object({
   "catalog": zod.string(),
   "orderPurchase": zod.number().min(aiIdentifyPartResponseResultsItemVariantsItemOrderPurchaseMin),
   "orderQuantity": zod.number().min(aiIdentifyPartResponseResultsItemVariantsItemOrderQuantityMin),
+  "totalOpOq": zod.number().min(aiIdentifyPartResponseResultsItemVariantsItemTotalOpOqMin),
   "description": zod.string(),
   "binLocations": zod.array(zod.string()).describe('Bin locations where this part is stored (a part may live in multiple bins)'),
   "aiKeywords": zod.array(zod.string()),
@@ -917,7 +965,7 @@ export const AiIdentifyPartResponse = zod.object({
 }).nullish().describe('Physical dimensions in millimetres (length, width, height, diameter)'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
-}).describe('Inventory response rows always include orderPurchase and orderQuantity. Both fields are non-negative integers; zero represents an item without an order value.\n'))
+}).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n'))
 }))
 })
 

@@ -157,6 +157,7 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     vendor: "ACME",
     orderPurchase: 0,
     orderQuantity: 0,
+    totalOpOq: 0,
     binLocations: ["AISLE-01"],
     aiKeywords: ["relay"],
     barcodes: [],
@@ -287,6 +288,32 @@ afterEach(async () => {
 // =============================================================================
 
 describe("EditItemScreen — administrator inventory edit workflow", () => {
+  it("shows a read-only live OP/OQ total", async () => {
+    activeTree = await renderScreen();
+
+    const total = findByA11yLabel(activeTree.root!, "Total OP/OQ 0");
+    expect(total).not.toBeNull();
+    expect(total!.props.editable).not.toBe(true);
+
+    const opInput = findTextInput(activeTree.root!, "0");
+    const oqInput = activeTree.root!.queryAll(
+      (node) =>
+        (node.type as string) === "rn-textinput" &&
+        node.props.placeholder === "0",
+      { includeSelf: true },
+    )[1];
+    expect(opInput).not.toBeNull();
+    expect(oqInput).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.changeText(opInput!, "7");
+      fireEvent.changeText(oqInput!, "8");
+    });
+
+    expect(findByA11yLabel(activeTree.root!, "Total OP/OQ 15")).not.toBeNull();
+    expect(hasText(activeTree.root!, "Total OP/OQ")).toBe(true);
+  });
+
   it("loads, saves through the authenticated API, patches caches, and shows the persisted value after reload", async () => {
     activeTree = await renderScreen();
 

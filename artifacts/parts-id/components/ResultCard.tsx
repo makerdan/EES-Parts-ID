@@ -321,6 +321,16 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
           </View>
         )}
 
+        {/* Database-generated OP + OQ total — read-only and active-item aware */}
+        <View style={[cardStyles.totalRow, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+          <Text style={[cardStyles.totalLabel, { color: colors.mutedForeground, fontSize: fs(11) }]}>
+            Total OP/OQ
+          </Text>
+          <Text style={[cardStyles.totalValue, { color: colors.foreground, fontSize: fs(14) }]}>
+            {activeItem.totalOpOq}
+          </Text>
+        </View>
+
         {/* Size variant dropdown — always visible on collapsed card when hasVariants */}
         {hasVariants && !expanded ? (
           <SizeVariantDropdown
@@ -676,6 +686,18 @@ const cardStyles = StyleSheet.create({
   },
   dimIcon: { fontSize: 12 },
   dimText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  totalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: 6,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 8,
+  },
+  totalLabel: { fontFamily: "Inter_600SemiBold" },
+  totalValue: { fontFamily: "Inter_700Bold" },
   thumbnailRow: {
     flexDirection: "row",
     gap: 4,

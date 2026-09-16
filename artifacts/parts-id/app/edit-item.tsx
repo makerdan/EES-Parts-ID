@@ -176,6 +176,13 @@ export default function EditItemScreen() {
   // InventoryItem response; loaded responses always provide both fields.
   const [op, setOp] = useState(String(item?.orderPurchase ?? 0));
   const [oq, setOq] = useState(String(item?.orderQuantity ?? 0));
+  const liveTotalOpOq = (() => {
+    const parsedOp = Number(op.trim() || "0");
+    const parsedOq = Number(oq.trim() || "0");
+    return [parsedOp, parsedOq].every((value) => Number.isSafeInteger(value) && value >= 0)
+      ? parsedOp + parsedOq
+      : 0;
+  })();
   const [size, setSize] = useState(item?.size ?? "");
   const savedSizeRef = useRef((item?.size ?? "").trim());
   const [sizeSaving, setSizeSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -794,7 +801,7 @@ export default function EditItemScreen() {
               ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
               ...(succeededFields.has("barcodes") ? { barcodes: finalBarcodes } : {}),
               ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
-              ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq } : {}),
+              ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq, totalOpOq: parsedOp + parsedOq } : {}),
               ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
               ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
             };
@@ -807,7 +814,7 @@ export default function EditItemScreen() {
                 ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
                 ...(succeededFields.has("barcodes") ? { barcodes: finalBarcodes } : {}),
                 ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
-                ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq } : {}),
+                ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq, totalOpOq: parsedOp + parsedOq } : {}),
                 ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
                 ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
               };
@@ -892,6 +899,7 @@ export default function EditItemScreen() {
             ...(dimsChanged ? { dimensions: newDims } : {}),
             orderPurchase: parsedOp,
             orderQuantity: parsedOq,
+            totalOpOq: parsedOp + parsedOq,
             ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
             ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
           };
@@ -930,6 +938,7 @@ export default function EditItemScreen() {
           ...(dimsChanged ? { dimensions: newDims } : {}),
           orderPurchase: parsedOp,
           orderQuantity: parsedOq,
+          totalOpOq: parsedOp + parsedOq,
           ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
           ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
         };
@@ -1153,6 +1162,21 @@ export default function EditItemScreen() {
                 />
               </View>
             ))}
+            <View
+              style={[
+                s.dimField,
+                {
+                  flex: 1,
+                  justifyContent: "flex-end",
+                  paddingBottom: 8,
+                },
+              ]}
+              accessible
+              accessibilityLabel={`Total OP/OQ ${liveTotalOpOq}`}
+            >
+              <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Total OP/OQ</Text>
+              <Text style={[s.readOnlyValue, { color: colors.foreground }]}>{liveTotalOpOq}</Text>
+            </View>
           </View>
           {fieldSaveErrors.opoq ? (
             <View style={s.fieldErrorRow}>
@@ -1823,6 +1847,15 @@ const s = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 15,
     fontFamily: "Inter_400Regular",
+  },
+  readOnlyValue: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    textAlign: "center",
   },
   dimSummary: {
     fontSize: 13,

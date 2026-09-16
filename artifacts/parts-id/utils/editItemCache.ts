@@ -141,9 +141,39 @@ async function updateStoredFuseItem(
   if (next !== null) await asyncStorage.setItem(FUSE_CACHE_KEY, next);
 }
 
+function updateStoredQueryCache(
+  raw: string,
+  updatedItem: InventoryItem,
+): string | null {
+  const cache = parseStoredQueryCache(raw);
+  if (!cache) return null;
+
+  let changed = false;
+  const nextCache: QueryCache<SearchResult> = {};
+  for (const [key, entry] of Object.entries(cache)) {
+    const patchItem = (item: InventoryItem): InventoryItem => {
+      if (item.id !== updatedItem.id) return item;
+      changed = true;
+      return { ...item, ...updatedItem };
+    };
+    const results = entry.results.map((result) => {
+      const item = patchItem(result.item);
+      const existingVariants = Array.isArray(result.variants) ? result.variants : [];
+      const variants = existingVariants.map(patchItem);
+      return item === result.item && variants.every((variant, index) => variant === existingVariants[index])
+        ? result
+        : { ...result, item, variants };
+    });
+    nextCache[key] = { ...entry, results };
+  }
+  return changed ? JSON.stringify(nextCache) : null;
+}
+
 /**
  * Invalidate the React Query searchInventory cache and evict the edited item
- * from the AsyncStorage offline-search cache.
+ * from the AsyncStorage offline-search cache. When the updated item is
+ * available, patch the durable result cache instead so offline search remains
+ * immediately consistent with the successful save.
  *
  * Called by handleSave after all PATCH requests have resolved successfully.
  * Cache work is non-fatal to the server write, but failures are returned so the
@@ -163,7 +193,10 @@ export async function invalidateSearchAndEvictItem(opts: {
     (async () => {
       try {
         const raw = await opts.asyncStorage.getItem(QUERY_CACHE_KEY);
-        if (raw) {
+        if (raw && opts.updatedItem) {
+          const next = updateStoredQueryCache(raw, opts.updatedItem);
+          if (next !== null) await opts.asyncStorage.setItem(QUERY_CACHE_KEY, next);
+        } else if (raw) {
           const cache = parseStoredQueryCache(raw);
           if (cache) {
             const { pruned, changed } = evictItemFromQueryCache(cache, opts.itemId);

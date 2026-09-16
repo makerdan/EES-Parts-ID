@@ -860,6 +860,7 @@ router.post("/search", async (req, res) => {
             catalog,
             order_purchase AS "orderPurchase",
             order_quantity AS "orderQuantity",
+            total_op_oq AS "totalOpOq",
             description,
             bin_locations AS "binLocations",
             ai_keywords AS "aiKeywords",
@@ -977,6 +978,7 @@ router.post("/search", async (req, res) => {
         catalog: row.catalog,
         orderPurchase: row.order_purchase,
         orderQuantity: row.order_quantity,
+        totalOpOq: row.total_op_oq,
         description: row.description,
         binLocations: row.bin_locations,
         aiKeywords: row.ai_keywords,
@@ -1105,7 +1107,7 @@ router.post("/search", async (req, res) => {
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
-              i.order_purchase, i.order_quantity, i.bin_locations, i.ai_keywords, i.pinned_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.expanded_description, i.size, i.dimensions, i.created_at, i.updated_at,
+              i.order_purchase, i.order_quantity, i.total_op_oq, i.bin_locations, i.ai_keywords, i.pinned_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.expanded_description, i.size, i.dimensions, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 ${inventoryFtsVector('i')},
                 websearch_to_tsquery('english', ${tsQuery})
