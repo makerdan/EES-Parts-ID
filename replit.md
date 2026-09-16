@@ -80,13 +80,13 @@ Every task plan must declare exactly one validation tier. This prevents all four
 | `fast` | `test-fast` | Static checks: scoped Failure/Regression Guards, `tsc`, lint, config, port, and bundle-domain checks | ~5 min |
 | `standard` | `test-standard` | fast + codegen/spec/env checks, Failure Gate contract coverage, and tests | ~20 min |
 | `standard-plus` | `test-standard-plus` | standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test` | ~30 min (45 min post-lock budget) |
-| `heavy` | `test-heavy` | Same as standard-plus (currently identical steps) | ~30 min (45 min post-lock budget) |
+| `heavy` | `test-heavy` | standard-plus + `protected-map-concurrency` | ~30 min (45 min post-lock budget) |
 
 **Picking a tier (defaults unless the plan clearly implies otherwise):**
 - `fast` — pure config or refactor with no logic change
 - `standard` — most feature/bug-fix work; tasks touching only tests, mocks, or doc changes
 - `standard-plus` — DB schema, auth, or API contract changes
-- `heavy` — reserved for future use; currently same as standard-plus
+- `heavy` — standard-plus plus the protected-map concurrency smoke step
 
 ### Plan file format
 
@@ -212,7 +212,7 @@ Four tier commands run subsets sequentially via `scripts/run-tier.mjs`, with mem
 - **`test-fast`** — static checks only: `gate-guard`, task-scoped Failure Gate and Regression Guard repair/check steps, `tsc`, lint, config, port, and bundle-domain checks. (~5 min)
 - **`test-standard`** — fast + codegen/spec/env checks, `failure-gate-contract`, and tests. (~20 min)
 - **`test-standard-plus`** — standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test`. Full quality signal without Playwright browser automation. (~30 min)
-- **`test-heavy`** — standard-plus (same steps, no Playwright currently). For schema migrations, new API routes, auth/security changes, multi-package refactors. (~30 min)
+- **`test-heavy`** — standard-plus + `protected-map-concurrency` (the protected-map smoke step is heavy-only; no Playwright currently). For schema migrations, new API routes, auth/security changes, multi-package refactors. (~30 min)
 
 The table below keeps historical check names discoverable for targeted runs;
 they are validation steps, not standalone workflows. Tier membership lives in

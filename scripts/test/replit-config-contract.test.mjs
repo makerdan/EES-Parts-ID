@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,31 @@ function parseToml(source, label) {
 
 const source = readFileSync(REPLIT_PATH, "utf8");
 const config = parseToml(source, ".replit must be valid TOML");
+const gateScript = resolve(ROOT, "scripts/check-gate-integrity.sh");
+
+function runGateFixture(fixture) {
+  const directory = mkdtempSync(resolve(ROOT, "scripts/test/.replit-gate-"));
+  const fixturePath = resolve(directory, ".replit");
+  writeFileSync(fixturePath, fixture);
+  try {
+    return spawnSync("bash", [gateScript], {
+      encoding: "utf8",
+      env: { ...process.env, REPLIT_FILE: fixturePath },
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function assertGateRejects(fixture, label, diagnostic) {
+  const result = runGateFixture(fixture);
+  assert.equal(result.status, 1, `${label} should fail closed`);
+  assert.match(
+    `${result.stdout}\n${result.stderr}`,
+    diagnostic,
+    `${label} should explain the structural failure`,
+  );
+}
 
 assert.deepEqual(config.modules, ["nodejs-24", "python-3.11", "postgresql-16"]);
 assert.deepEqual(config.postMerge, {
@@ -92,6 +117,64 @@ assert(
 assert(
   !getTierSteps("standard-plus").some(([name]) => name === "protected-map-concurrency"),
   "the protected-map concurrency smoke step must remain heavy-only",
+);
+
+const projectStart = source.indexOf('[[workflows.workflow]]\nname = "Project"');
+const nextWorkflow = source.indexOf(
+  "[[workflows.workflow]]",
+  projectStart + 1,
+);
+assert.notEqual(projectStart, -1, "Project workflow fixture must exist");
+assert.notEqual(nextWorkflow, -1, "Project workflow must not be the final block");
+const projectBlock = source.slice(projectStart, nextWorkflow);
+const withoutProject = source.replace(projectBlock, "");
+assertGateRejects(
+  withoutProject,
+  "missing Project workflow",
+  /missing workflow named "Project"/,
+);
+assertGateRejects(
+  source.replace(projectBlock, projectBlock.replace('name = "Project"', 'name = "Renamed Project"')),
+  "renamed Project workflow",
+  /missing workflow named "Project"/,
+);
+assertGateRejects(
+  source.replace('task = "workflow.run"\nargs = "test-fast"', 'task = "shell.exec"\nargs = "test-fast"'),
+  "wrong Project task type",
+  /must use task = "workflow\.run"/,
+);
+assertGateRejects(
+  source.replace(
+    'task = "workflow.run"\nargs = "test-fast"\n',
+    'task = "workflow.run"\nargs = "test-fast"\n\n[[workflows.workflow.tasks]]\ntask = "workflow.run"\nargs = "test-fast"\n',
+  ),
+  "duplicate Project task",
+  /must contain exactly one task; found 2/,
+);
+assertGateRejects(
+  source.replace('name = "Project"', 'name = "Project"\n<'),
+  "malformed Project workflow",
+  /could not parse .*Invalid statement|could not parse .*TOML/,
+);
+
+const documentation = readFileSync(resolve(ROOT, "replit.md"), "utf8");
+const heavyOnlySteps = getTierSteps("heavy")
+  .map(([name]) => name)
+  .filter((name) => !getTierSteps("standard-plus").some(([step]) => step === name));
+assert.deepEqual(
+  heavyOnlySteps,
+  ["protected-map-concurrency"],
+  "heavy must add only the protected-map concurrency smoke step",
+);
+assert.match(
+  documentation,
+  /\| `heavy` \| `test-heavy` \| standard-plus \+ `protected-map-concurrency` \|/,
+  "tier table must document heavy-only membership",
+);
+assert.match(
+  documentation,
+  /- \*\*`test-heavy`\*\* — standard-plus \+ `protected-map-concurrency`/,
+  "operator tier list must document heavy-only membership",
 );
 
 const malformed = source.replace(
