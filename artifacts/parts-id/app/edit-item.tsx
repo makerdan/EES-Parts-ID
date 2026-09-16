@@ -652,13 +652,9 @@ export default function EditItemScreen() {
       if (dimsChanged) {
         ops.push({
           field: "dimensions",
-          restoreFn: () => {
-            const savedDims = itemRef.current?.dimensions;
-            setDimLength(fmtDim(savedDims?.length));
-            setDimWidth(fmtDim(savedDims?.width));
-            setDimHeight(fmtDim(savedDims?.height));
-            setDimDiameter(fmtDim(savedDims?.diameter));
-          },
+          // Keep the attempted values in the fields when this write fails so
+          // the administrator can retry without re-entering every dimension.
+          restoreFn: () => undefined,
           promise: fetchWrite(`${API_BASE}/inventory/${current.id}/dimensions`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },

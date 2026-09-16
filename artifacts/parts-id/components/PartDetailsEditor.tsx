@@ -418,16 +418,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     dimensionSaveInFlightRef.current = true;
     setMeasureOpen(false);
 
-    // Snapshot the current dimension display values synchronously before any
-    // state update. Functional setState updaters are deferred and may not
-    // execute until after the catch block runs, so they cannot be used for
-    // snapshotting. React state values read directly at callback entry time
-    // always reflect the current render, giving us reliable pre-confirm values.
-    const prevLength = dimLength;
-    const prevWidth = dimWidth;
-    const prevHeight = dimHeight;
-    const prevDiameter = dimDiameter;
-
     setDimLength(fmtDim(dims.length));
     setDimWidth(fmtDim(dims.width));
     setDimHeight(fmtDim(dims.height));
@@ -469,13 +459,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       if (cacheResult && !cacheResult.ok && mountedRef.current) setRefreshWarning(INVENTORY_REFRESH_WARNING);
     } catch (err) {
       if (isAbortError(err) && !mountedRef.current) return;
-      // Restore pre-confirm values so the display matches what is actually
-      // persisted on the server — matching the rollback pattern of the main
-      // Save path.
-      setDimLength(prevLength);
-      setDimWidth(prevWidth);
-      setDimHeight(prevHeight);
-      setDimDiameter(prevDiameter);
       if (mountedRef.current) {
         setFieldSaveErrors(prev => ({
           ...prev,
@@ -485,7 +468,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     } finally {
       dimensionSaveInFlightRef.current = false;
     }
-  }, [adminToken, queryClient, dimLength, dimWidth, dimHeight, dimDiameter, fetchWrite, reportItemSaved]);
+  }, [adminToken, queryClient, fetchWrite, reportItemSaved]);
 
   const retryDimensionsSave = () => {
     const pendingDims = pendingMeasureDimsRef.current;
@@ -761,13 +744,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     if (dimsChanged) {
       ops.push({
         field: "dimensions",
-        restoreFn: () => {
-          const savedDims = itemRef.current?.dimensions;
-          setDimLength(fmtDim(savedDims?.length));
-          setDimWidth(fmtDim(savedDims?.width));
-          setDimHeight(fmtDim(savedDims?.height));
-          setDimDiameter(fmtDim(savedDims?.diameter));
-        },
+        // Keep failed dimension values visible for the field-level retry.
+        restoreFn: () => undefined,
         promise: fetchWrite(`${API_BASE}/inventory/${current.id}/dimensions`, {
           method: "PATCH",
           headers: {
