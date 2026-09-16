@@ -83,3 +83,4 @@
 - [Account skill projection recovery](account-skill-recovery.md) — validate preserved backups against their own manifest and bytes because canonical source revisions may advance.
 - [Provider probe deadlines and permits](provider-probe-deadlines-permits.md) — response deadlines may expire before transports settle; retain concurrency permits until transport settlement.
 - [Serial lock kernel guard](serial-lock-kernel-guard.md) — stale-holder reclaim needs an OS-backed critical section; lease-file unlinking has a replacement race.
+- [Validation runtime controls](validation-runtime-controls.md) — timeout and watchdog paths must own process trees and reject missing or stale result evidence before declaring success.
