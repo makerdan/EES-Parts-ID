@@ -54,9 +54,7 @@ function sessionHasMfa(req: Request): boolean {
  * should call next()).
  */
 function rejectIfMfaMissing(req: Request, res: Response): boolean {
-  // Production must always fail closed. The bypass exists only for local test
-  // and development environments and can never weaken a deployed admin route.
-  if (process.env.NODE_ENV !== "production" && process.env.SKIP_ADMIN_MFA === "true") return false;
+  if (process.env.SKIP_ADMIN_MFA === "true") return false;
   if (sessionHasMfa(req)) return false;
   res.status(403).json({
     error: "MFA required for admin access",
@@ -73,14 +71,8 @@ function rejectIfMfaMissing(req: Request, res: Response): boolean {
  */
 export async function hasCurrentAdminAccess(req: Request): Promise<boolean> {
   const userId = getAuth(req)?.userId;
-  if (!userId || (process.env.NODE_ENV === "production" && !sessionHasMfa(req))) return false;
-  if (process.env.NODE_ENV !== "production" && process.env.SKIP_ADMIN_MFA === "true") {
-    // Development/test bypass follows the same explicit opt-out as the
-    // admin-only middleware, but the database role is still revalidated.
-    if (process.env.ADMIN_CLERK_USER_ID === userId) return true;
-  } else if (!sessionHasMfa(req)) {
-    return false;
-  }
+  if (!userId) return false;
+  if (process.env.SKIP_ADMIN_MFA !== "true" && !sessionHasMfa(req)) return false;
 
   if (process.env.ADMIN_CLERK_USER_ID === userId) return true;
 

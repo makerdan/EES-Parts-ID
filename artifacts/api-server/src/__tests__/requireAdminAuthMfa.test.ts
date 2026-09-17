@@ -18,6 +18,7 @@ import { type NextFunction, type Request, type Response } from "express";
 // Override the global moduleNameMapper stub so we can inject sessionClaims.
 let mockSessionClaims: Record<string, unknown> | null = null;
 let mockUserId: string | null = "jest-mfa-admin-user";
+let mockDbRows: Array<{ role: string; status: string }> = [];
 
 jest.mock("@clerk/express", () => ({
   getAuth: (_req: Request) => ({
@@ -32,15 +33,27 @@ jest.mock("@clerk/express", () => ({
 // the fast path (appUser pre-populated in res.locals), so the DB is not called,
 // but the import must still resolve.
 jest.mock("@workspace/db", () => ({
-  db: { select: jest.fn() },
-  usersTable: { clerkUserId: "clerkUserId", role: "role" },
+  db: {
+    select: jest.fn(() => ({
+      from: jest.fn(() => ({
+        where: jest.fn(() => ({
+          limit: jest.fn(async () => mockDbRows),
+        })),
+      })),
+    })),
+  },
+  usersTable: { clerkUserId: "clerkUserId", role: "role", status: "status" },
 }));
 
 jest.mock("drizzle-orm", () => ({
   eq: jest.fn(),
 }));
 
-import { requireAdminAuth, requireApprovedAdminAuth } from "../middlewares/requireAdminAuth";
+import {
+  hasCurrentAdminAccess,
+  requireAdminAuth,
+  requireApprovedAdminAuth,
+} from "../middlewares/requireAdminAuth";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -93,6 +106,7 @@ describe("requireAdminAuth — MFA enforcement", () => {
     }
     mockSessionClaims = null;
     mockUserId = "jest-mfa-admin-user";
+    mockDbRows = [];
   });
 
   it("(a) passes when admin session includes totp amr claim (MFA enforced by default)", () => {
@@ -169,9 +183,21 @@ describe("requireAdminAuth — MFA enforcement", () => {
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it("fails closed in production even when SKIP_ADMIN_MFA=true", () => {
+  it("passes for an approved admin without MFA in production when SKIP_ADMIN_MFA=true", () => {
     process.env.NODE_ENV = "production";
     process.env.SKIP_ADMIN_MFA = "true";
+    mockSessionClaims = { amr: ["pwd"] };
+
+    const { req, res, next } = buildMocks("admin");
+    requireAdminAuth(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("requires MFA in production when SKIP_ADMIN_MFA is disabled", () => {
+    process.env.NODE_ENV = "production";
+    process.env.SKIP_ADMIN_MFA = "false";
     mockSessionClaims = { amr: ["pwd"] };
 
     const { req, res, next } = buildMocks("admin");
@@ -180,16 +206,19 @@ describe("requireAdminAuth — MFA enforcement", () => {
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(403);
     const responseBody = (res.status as jest.Mock).mock.results[0].value;
-    expect(responseBody.json).toHaveBeenCalledWith(
-      expect.objectContaining({ code: "MFA_REQUIRED" }),
-    );
+    expect(responseBody.json).toHaveBeenCalledWith(expect.objectContaining({ code: "MFA_REQUIRED" }));
   });
 
-  it("non-admin users are rejected with 403 regardless of MFA settings", () => {
-    delete process.env.SKIP_ADMIN_MFA;
-    mockSessionClaims = { amr: ["pwd", "totp"] };
+  it.each([
+    ["approved non-admin", "user", "approved"],
+    ["pending admin", "admin", "pending"],
+    ["banned admin", "admin", "banned"],
+  ] as const)("%s remains rejected when the production bypass is active", (_label, role, status) => {
+    process.env.NODE_ENV = "production";
+    process.env.SKIP_ADMIN_MFA = "true";
+    mockSessionClaims = { amr: ["pwd"] };
 
-    const { req, res, next } = buildMocks("user");
+    const { req, res, next } = buildMocks(role, status);
     requireAdminAuth(req, res, next);
 
     expect(next).not.toHaveBeenCalled();
@@ -198,6 +227,63 @@ describe("requireAdminAuth — MFA enforcement", () => {
     expect(responseBody.json).toHaveBeenCalledWith(
       expect.objectContaining({ error: "Admin access required" }),
     );
+  });
+
+  it("unauthenticated requests remain rejected when the production bypass is active", () => {
+    process.env.NODE_ENV = "production";
+    process.env.SKIP_ADMIN_MFA = "true";
+    mockUserId = null;
+
+    const { req, res, next } = buildMocks("admin", "approved", false);
+    requireAdminAuth(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+
+  describe("hasCurrentAdminAccess", () => {
+    it("allows a password-only approved admin in production when the bypass is active", async () => {
+      process.env.NODE_ENV = "production";
+      process.env.SKIP_ADMIN_MFA = "true";
+      mockSessionClaims = { amr: ["pwd"] };
+      mockDbRows = [{ role: "admin", status: "approved" }];
+
+      const { req } = buildMocks("admin");
+      await expect(hasCurrentAdminAccess(req)).resolves.toBe(true);
+    });
+
+    it("requires MFA when the bypass is disabled", async () => {
+      process.env.NODE_ENV = "production";
+      process.env.SKIP_ADMIN_MFA = "false";
+      mockSessionClaims = { amr: ["pwd"] };
+      mockDbRows = [{ role: "admin", status: "approved" }];
+
+      const { req } = buildMocks("admin");
+      await expect(hasCurrentAdminAccess(req)).resolves.toBe(false);
+    });
+
+    it.each([
+      ["non-admin", "user", "approved"],
+      ["pending admin", "admin", "pending"],
+      ["banned admin", "admin", "banned"],
+    ] as const)("%s remains blocked when the production bypass is active", async (_label, role, status) => {
+      process.env.NODE_ENV = "production";
+      process.env.SKIP_ADMIN_MFA = "true";
+      mockSessionClaims = { amr: ["pwd"] };
+      mockDbRows = [{ role, status }];
+
+      const { req } = buildMocks("admin");
+      await expect(hasCurrentAdminAccess(req)).resolves.toBe(false);
+    });
+
+    it("rejects an unauthenticated request when the production bypass is active", async () => {
+      process.env.NODE_ENV = "production";
+      process.env.SKIP_ADMIN_MFA = "true";
+      mockUserId = null;
+
+      const { req } = buildMocks("admin");
+      await expect(hasCurrentAdminAccess(req)).resolves.toBe(false);
+    });
   });
 
   describe("requireApprovedAdminAuth — narrowly scoped approved-admin exception", () => {

@@ -48,11 +48,11 @@ async function startApplication(): Promise<void> {
     "./routes/catalogPdfUpload"
   );
 
-  if (process.env["SKIP_ADMIN_MFA"] === "true" && isDev) {
-  logger.warn(
-    { SKIP_ADMIN_MFA: "true" },
-    "Admin MFA enforcement is DISABLED (SKIP_ADMIN_MFA=true) — admin accounts are not protected by MFA",
-  );
+  if (process.env["SKIP_ADMIN_MFA"] === "true") {
+    logger.warn(
+      { SKIP_ADMIN_MFA: "true", environment: isDev ? "development" : "production" },
+      "SECURITY WARNING: Admin MFA enforcement is DISABLED (SKIP_ADMIN_MFA=true) — approved admin accounts can use password-only sessions",
+    );
   }
 
 async function recoverOrphanedJobs(): Promise<void> {

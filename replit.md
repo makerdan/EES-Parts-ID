@@ -322,7 +322,9 @@ Admin endpoints enforce multi-factor authentication **by default**. Any admin se
 403 { error: "MFA required for admin access", code: "MFA_REQUIRED" }
 ```
 
-**Disabling (not recommended):** Set `SKIP_ADMIN_MFA=true` in the API server environment (Replit Secrets → api-server). The server emits a startup warning whenever this flag is set. Do not set it in production deployments.
+**Temporary bypass (high risk):** Set `SKIP_ADMIN_MFA=true` in the API server environment to disable MFA enforcement for approved Admin-role users. This explicit bypass works in every environment, including production, and permits password-only Admin sessions. Authentication, approved account status, and Admin-role checks remain enforced. The server emits a high-visibility security warning at startup whenever the bypass is active.
+
+Remove `SKIP_ADMIN_MFA` or set it to any value other than the exact string `true` to restore MFA enforcement without a code change. Use the bypass only for the shortest necessary period and reactivate MFA as soon as uninterrupted Admin access is no longer required.
 
 > **Migration from the old opt-in flag:** If your deployment previously set `ENFORCE_ADMIN_MFA=true`, you can safely remove that variable — MFA is now on by default and that variable is no longer read.
 
