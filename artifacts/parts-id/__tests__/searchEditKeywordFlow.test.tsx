@@ -14,7 +14,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { act, fireEvent, render, type RenderResult } from "@testing-library/react-native";
+import { fireEvent, render, waitFor, type RenderResult } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { InventoryItem, SearchInventoryResponse } from "@workspace/api-client-react";
 import type { TestInstance } from "test-renderer";
@@ -365,20 +365,13 @@ function makeAppContext() {
   };
 }
 
-const flushMicrotasks = async () => {
-  await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-};
-
 let searchTree: RenderResult | null = null;
 let editTree: RenderResult | null = null;
 let queryClient: QueryClient;
+let consoleErrorSpy: jest.SpyInstance;
 
 beforeEach(() => {
-  jest.useFakeTimers();
+  consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
   const item = makeItem();
   const other = makeItem({
     id: 99,
@@ -416,11 +409,14 @@ afterEach(async () => {
     await searchTree.unmount();
     searchTree = null;
   }
-  jest.runOnlyPendingTimers();
-  jest.useRealTimers();
   searchResponse = undefined;
   selectedItem = null;
   queryClient.clear();
+  const lifecycleWarnings = consoleErrorSpy.mock.calls.filter(([message]) =>
+    /overlapping act\(\) calls|not wrapped in act\(\)/i.test(String(message)),
+  );
+  consoleErrorSpy.mockRestore();
+  expect(lifecycleWarnings).toEqual([]);
 });
 
 describe("Search → Edit Part multi-field flow", () => {
@@ -433,18 +429,14 @@ describe("Search → Edit Part multi-field flow", () => {
 
     const searchInput = findHost(searchTree.root!, "keyword-input");
     expect(searchInput).not.toBeNull();
-    await act(async () => {
-      fireEvent.changeText(searchInput!, "old keyword");
-    });
+    await fireEvent.changeText(searchInput!, "old keyword");
 
     const searchButton = findPressable(searchTree.root!, "Search");
     expect(searchButton).not.toBeNull();
-    await act(async () => {
-      fireEvent.press(searchButton!);
-      await Promise.resolve();
-      await Promise.resolve();
+    await fireEvent.press(searchButton!);
+    await waitFor(() => {
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("old keyword");
     });
-    await flushMicrotasks();
 
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/inventory/search"),
@@ -459,9 +451,7 @@ describe("Search → Edit Part multi-field flow", () => {
 
     const editButton = findPressable(searchTree.root!, "Edit Part");
     expect(editButton).not.toBeNull();
-    await act(async () => {
-      fireEvent.press(editButton!);
-    });
+    await fireEvent.press(editButton!);
 
     expect(mockPush).toHaveBeenCalledTimes(1);
     const pushedRoute = mockPush.mock.calls[0]![0] as {
@@ -479,53 +469,39 @@ describe("Search → Edit Part multi-field flow", () => {
     );
     const oldKeywordChip = findPressable(editTree.root!, "old keyword");
     expect(oldKeywordChip).not.toBeNull();
-    await act(async () => {
-      fireEvent.press(oldKeywordChip!);
-    });
+    await fireEvent.press(oldKeywordChip!);
 
     const descriptionInput = findTextInput(editTree.root!, "Brief description of the part…");
     expect(descriptionInput).not.toBeNull();
-    await act(async () => {
-      fireEvent.changeText(descriptionInput!, "  Updated relay  ");
-    });
+    await fireEvent.changeText(descriptionInput!, "  Updated relay  ");
 
     const binInput = findTextInput(editTree.root!, "e.g. A1-04");
     expect(binInput).not.toBeNull();
-    await act(async () => {
-      fireEvent.changeText(binInput!, "  B2-07  ");
-    });
+    await fireEvent.changeText(binInput!, "  B2-07  ");
 
     const keywordInput = findTextInput(editTree.root!, "Type keyword and press Add…");
     expect(keywordInput).not.toBeNull();
-    await act(async () => {
-      fireEvent.changeText(keywordInput!, " Replacement Keyword ");
-    });
+    await fireEvent.changeText(keywordInput!, " Replacement Keyword ");
 
     const opoqInputs = findTextInputs(editTree.root!, "0");
     expect(opoqInputs).toHaveLength(2);
-    await act(async () => {
-      fireEvent.changeText(opoqInputs[0]!, "7");
-      fireEvent.changeText(opoqInputs[1]!, "8");
-    });
+    await fireEvent.changeText(opoqInputs[0]!, "7");
+    await fireEvent.changeText(opoqInputs[1]!, "8");
 
     const dimensionInputs = findTextInputs(editTree.root!, "–");
     expect(dimensionInputs).toHaveLength(4);
-    await act(async () => {
-      fireEvent.changeText(dimensionInputs[0]!, "12.34");
-      fireEvent.changeText(dimensionInputs[1]!, "4.56");
-      fireEvent.changeText(dimensionInputs[2]!, "7");
-    });
+    await fireEvent.changeText(dimensionInputs[0]!, "12.34");
+    await fireEvent.changeText(dimensionInputs[1]!, "4.56");
+    await fireEvent.changeText(dimensionInputs[2]!, "7");
 
     const saveButton = findPressable(editTree.root!, "Save Details");
     expect(saveButton).not.toBeNull();
-    await act(async () => {
-      fireEvent.press(saveButton!);
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+    await fireEvent.press(saveButton!);
+    await waitFor(() => {
+      expect(mockKeywordsMutateAsync).toHaveBeenCalledTimes(1);
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("Total OP/OQ 15");
     });
 
-    expect(mockKeywordsMutateAsync).toHaveBeenCalledTimes(1);
     expect(mockKeywordsMutateAsync).toHaveBeenCalledWith({
       id: 42,
       data: { keywords: ["replacement keyword"] },
@@ -557,7 +533,6 @@ describe("Search → Edit Part multi-field flow", () => {
 
     // The production cache updater has now fed the patched result back into
     // the mounted search screen. No manual re-search is involved.
-    await flushMicrotasks();
     const updatedSelectedCard = cardText(searchTree.root!, "PART-X");
     expect(updatedSelectedCard).toContain("Updated relay");
     expect(updatedSelectedCard).toContain("B2-07");
@@ -576,10 +551,9 @@ describe("Search → Edit Part multi-field flow", () => {
     expect(untouchedCard).not.toContain("Total OP/OQ 15");
 
     expect(mockBack).not.toHaveBeenCalled();
-    await act(async () => {
-      jest.advanceTimersByTime(500);
+    await waitFor(() => {
+      expect(mockBack).toHaveBeenCalledTimes(1);
     });
-    expect(mockBack).toHaveBeenCalledTimes(1);
   });
 
   it("keeps successful fields visible while a rejected field stays unsaved", async () => {
@@ -602,21 +576,15 @@ describe("Search → Edit Part multi-field flow", () => {
       </QueryClientProvider>,
     );
     const searchInput = findHost(searchTree.root!, "keyword-input");
-    await act(async () => {
-      fireEvent.changeText(searchInput!, "old keyword");
-    });
+    await fireEvent.changeText(searchInput!, "old keyword");
     const searchButton = findPressable(searchTree.root!, "Search");
-    await act(async () => {
-      fireEvent.press(searchButton!);
-      await Promise.resolve();
-      await Promise.resolve();
+    await fireEvent.press(searchButton!);
+    await waitFor(() => {
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("old keyword");
     });
-    await flushMicrotasks();
 
     const editButton = findPressable(searchTree.root!, "Edit Part");
-    await act(async () => {
-      fireEvent.press(editButton!);
-    });
+    await fireEvent.press(editButton!);
     editTree = await render(
       <QueryClientProvider client={queryClient}>
         <EditItemScreen />
@@ -624,23 +592,17 @@ describe("Search → Edit Part multi-field flow", () => {
     );
 
     const descriptionInput = findTextInput(editTree.root!, "Brief description of the part…");
-    await act(async () => {
-      fireEvent.changeText(descriptionInput!, "Rejected description");
-    });
+    await fireEvent.changeText(descriptionInput!, "Rejected description");
     const opoqInputs = findTextInputs(editTree.root!, "0");
-    await act(async () => {
-      fireEvent.changeText(opoqInputs[0]!, "7");
-      fireEvent.changeText(opoqInputs[1]!, "8");
-    });
+    await fireEvent.changeText(opoqInputs[0]!, "7");
+    await fireEvent.changeText(opoqInputs[1]!, "8");
 
     const saveButton = findPressable(editTree.root!, "Save Details");
-    await act(async () => {
-      fireEvent.press(saveButton!);
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+    await fireEvent.press(saveButton!);
+    await waitFor(() => {
+      expect(instText(editTree!.root!)).toContain("Description failed");
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("Total OP/OQ 15");
     });
-    await flushMicrotasks();
 
     expect(instText(editTree.root!)).toContain("Description failed");
     const selectedCard = cardText(searchTree.root!, "PART-X");

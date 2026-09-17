@@ -89,3 +89,4 @@
 - [Parts ID focused test runner](parts-id-focused-test-runner.md) — invoke Jest directly for one suite; the package wrapper requires the full suite-count floor.
 - [Standard-tier baseline failures](standard-tier-baseline-failures.md) — classify unrelated full-tier test failures with focused reruns before changing scoped validation work.
 - [Auth-scoped durable drafts](auth-scoped-durable-drafts.md) — tie readiness to the exact user, clear UI state on identity changes, and serialize saves with logout deletion.
+- [RNTL 14 async fireEvent](rntl14-async-fireevent.md) — every fireEvent call returns a promise with its own act scope; await each interaction before starting another lifecycle helper.
