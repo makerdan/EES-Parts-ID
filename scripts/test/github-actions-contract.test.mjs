@@ -53,13 +53,6 @@ const protectionReportBuilders = new Set([
 ]);
 const incompleteProtectionEvidenceMarker = "github-protection-freshness: allow-incomplete";
 
-const workflowNames = [
-  "ci.yml",
-  "lidar-measure-tests.yml",
-  "scheduled-audit.yml",
-  "sync-readme.yml",
-];
-
 function read(path) {
   return readFileSync(path, "utf8");
 }
@@ -70,6 +63,19 @@ function assertRegularFile(path, description) {
 
 function workflow(name) {
   return read(join(workflowDir, name));
+}
+
+function trackedWorkflowNames() {
+  const prefix = ".github/workflows/";
+  const paths = execFileSync("git", ["ls-files", "-z", "--", ".github/workflows"], {
+    cwd: root,
+    encoding: "utf8",
+  }).split("\0").filter(Boolean);
+  assert(paths.length > 0, "tracked workflow inventory is empty");
+  for (const path of paths) {
+    assert(path.startsWith(prefix), `tracked workflow path escaped ${prefix}: ${path}`);
+  }
+  return paths.map((path) => path.slice(prefix.length));
 }
 
 function assert(condition, message) {
@@ -204,6 +210,17 @@ function validateWorkflowContract(files, coverage) {
   for (const [name, text] of Object.entries(files)) {
     if (!/^permissions:\s*$/m.test(text)) errors.push(`${name}: missing top-level permissions`);
     if (!/^concurrency:\s*$/m.test(text)) errors.push(`${name}: missing concurrency`);
+    const hasWritePermission = /^permissions:\s+write-all\s*$/m.test(text)
+      || /^\s+[A-Za-z0-9_-]+:\s+write\s*$/m.test(text);
+    if (hasWritePermission && name !== "sync-readme.yml") {
+      errors.push(`${name}: write permissions are restricted to the README maintenance workflow`);
+    }
+    if (/^  pull_request_target:/m.test(text)) {
+      errors.push(`${name}: untrusted pull-request target trigger is not allowed`);
+    }
+    if (/^  pull_request:/m.test(text) && hasWritePermission) {
+      errors.push(`${name}: pull-request workflows must not grant contents write`);
+    }
     for (const block of jobBlocks(text)) {
       const callsReusableWorkflow = /^\s+uses:\s+\.\/\.github\/workflows\//m.test(block.text);
       if (!callsReusableWorkflow && !/^\s+timeout-minutes:\s*[1-9]\d*\s*$/m.test(block.text)) {
@@ -751,17 +768,48 @@ nodeAssert.match(protectionStatus, /Every protection report must include the fre
 nodeAssert.match(protectionStatus, /stale[\s\S]*cannot support a current or[\s\S]*verified claim/i);
 nodeAssert.match(installation, /report consumers must pass both the snapshot and current read-only context/i);
 
+const workflowNames = trackedWorkflowNames();
 const files = Object.fromEntries(workflowNames.map((name) => [name, workflow(name)]));
 validateNativeRequiredGateContract(files);
 const errors = validateWorkflowContract(files, read(coveragePath));
 assert(errors.length === 0, errors.join("\n"));
 
-const unsafe = { ...files, "ci.yml": ciWithUnsafeAction(files["ci.yml"]) };
+const unsafe = { ...files, "newly-added-unsafe.yml": unsafeNewWorkflow() };
 const unsafeErrors = validateWorkflowContract(unsafe, read(coveragePath));
-assert(unsafeErrors.some((error) => error.includes("mutable or malformed action reference")), "negative control did not reject a mutable action");
+assert(
+  unsafeErrors.some((error) => error.includes("newly-added-unsafe.yml: mutable or malformed action reference")),
+  "negative control did not inspect a newly added workflow for mutable actions",
+);
+assert(
+  unsafeErrors.some((error) => error.includes("newly-added-unsafe.yml: untrusted pull-request target trigger")),
+  "negative control did not inspect a newly added workflow for unsafe pull-request triggers",
+);
+assert(
+  unsafeErrors.some((error) => error.includes("newly-added-unsafe.yml: write permissions")),
+  "negative control did not inspect a newly added workflow for unsafe permissions",
+);
 
 console.log(`GitHub Actions contract: ${workflowNames.length} workflows, ${getTierSteps("standard-plus").length} validation surfaces, and immutable action pins verified.`);
 
-function ciWithUnsafeAction(text) {
-  return text.replace("./.github/actions/setup-node-pnpm", "actions/checkout@v4");
+function unsafeNewWorkflow() {
+  return `name: Newly added unsafe workflow
+
+on:
+  pull_request_target:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: unsafe-new-workflow
+  cancel-in-progress: true
+
+jobs:
+  unsafe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+`;
 }

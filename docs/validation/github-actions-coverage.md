@@ -5,6 +5,14 @@ remain the local authority; GitHub runs the portable `standard-plus` tier and th
 native LiDAR suite through the fail-closed `CI / required` aggregator. GitHub
 settings and live run status are not inferred from this file.
 
+The workflow contract discovers its inventory with `git ls-files` under
+`.github/workflows` and validates every tracked path with the shared permission,
+concurrency, timeout, immutable-action, and pull-request safety rules. Workflow-
+specific checks remain explicit for the named CI, native, audit, and README
+maintenance roles. Adding a tracked workflow therefore cannot bypass the shared
+checks; the contract also includes a negative fixture for an unsafe newly added
+workflow.
+
 | Canonical local check | Remote owner / exact command | Coverage and decision | Event scope | Evidence |
 |---|---|---|---|---|
 | node-runtime | `CI / required` → `pnpm run test-standard-plus` | direct portable check that active Node matches the exact `.node-version` pin and satisfies the bounded Node 24 range in `package.json` `engines.node` | PR, merge queue, main push, manual | inferred from tier manifest |
