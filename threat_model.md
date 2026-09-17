@@ -33,7 +33,7 @@ This scan assumes production deployment on Replit with TLS terminated by the pla
 - **Auth and approval boundary:** `artifacts/api-server/src/middlewares/requireAppAuth.ts`, `artifacts/api-server/src/middlewares/requireAdminAuth.ts`, `artifacts/api-server/src/routes/admin.ts`.
 - **Highest-risk server areas:** `inventory.ts`, `catalogPdf.ts`, `adminUpload.ts`, `adminQuery.ts`, `ai.ts`, `reference.ts`, `floorPlan.ts`, `lib/objectStorage.ts`.
 - **Public surfaces:** `/api/healthz`, `/api/inventory/estimate-dimensions/search`, selected read/search/reference endpoints that are only app-authenticated rather than admin-only.
-- **Dev-only areas to usually ignore:** `artifacts/mockup-sandbox` preview routes, tests, seed scripts, `.agents/`, and other local tooling unless production reachability is proven.
+- **Dev-only areas to usually ignore:** `artifacts/mockup-sandbox` preview routes, tests, seed scripts, `.agents/`, and other local tooling unless production reachability is proven. The runtime-domain guard derives mobile/web roots from each artifact's `.replit-artifact/artifact.toml` kind; Canvas remains covered only by an explicit development-only exclusion, while missing or unknown artifact classifications fail closed.
 
 ## Threat Categories
 
