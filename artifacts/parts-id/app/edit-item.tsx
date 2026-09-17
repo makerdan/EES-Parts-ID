@@ -39,8 +39,20 @@ import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 import { API_BASE } from "@/utils/apiBase";
-import { evictDeletedItemFromAllCaches, invalidateAllCachesAfterSave, invalidateListCache,INVENTORY_REFRESH_WARNING } from "@/utils/editItemCache";
-import { inventorySaveErrorMessage, isAbortError, runInventoryWrite } from "@/utils/inventoryWrite";
+import {
+  evictDeletedItemFromAllCaches,
+  invalidateAllCachesAfterSave,
+  invalidateListCache,
+  INVENTORY_REFRESH_WARNING,
+} from "@/utils/editItemCache";
+import {
+  applySuccessfulInventoryFields,
+  inventorySaveErrorMessage,
+  type InventorySaveOp,
+  isAbortError,
+  resolveInventorySaveResults,
+  runInventoryWrite,
+} from "@/utils/inventoryWrite";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
 function fmtDim(v: number | null | undefined): string {
@@ -584,7 +596,7 @@ export default function EditItemScreen() {
       }
 
     try {
-      const ops: Array<{ field: string; restoreFn: () => void; promise: Promise<unknown> }> = [];
+      const ops: Array<InventorySaveOp> = [];
 
       // ?? "" handles newly-added items where description is null — null becomes ""
       // so a first-time description edit is correctly detected as a change.
@@ -762,23 +774,10 @@ export default function EditItemScreen() {
         const settled = await Promise.allSettled(ops.map(o => o.promise));
         if (!mountedRef.current) return;
 
-        const failedIndices = settled
-          .map((r, i) => r.status === "rejected" ? i : -1)
-          .filter(i => i >= 0);
+        const resolution = resolveInventorySaveResults(ops, settled);
+        const { fieldErrors: newFieldErrors, succeededFields } = resolution;
 
-        if (failedIndices.length > 0) {
-          // Restore rejected fields so the form reflects the server truth.
-          // Succeeded fields remain committed and are kept in the form/cache
-          // for the field-level retry path.
-          for (const index of failedIndices) {
-            ops[index]!.restoreFn();
-          }
-
-          // Which fields succeeded?
-          const succeededFields = new Set(
-            // settled is built from ops.map, so index i always maps to a result.
-            ops.filter((_, i) => settled[i]!.status === "fulfilled").map(o => o.field),
-          );
+        if (resolution.anyFailed) {
 
           // Restore the full cache snapshot first, then re-apply patches for
           // fields that succeeded so they remain visible to the user.
@@ -790,49 +789,16 @@ export default function EditItemScreen() {
           }
 
           if (succeededFields.size > 0) {
-            const partialUpdatedItem: InventoryItem = {
-              ...current,
-              ...(succeededFields.has("description") ? { description: description.trim() } : {}),
-              ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
-              ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
-              ...(succeededFields.has("barcodes") ? { barcodes: finalBarcodes } : {}),
-              ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
-              ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq, totalOpOq: parsedOp + parsedOq } : {}),
-              ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
-              ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
-            };
-            const patchItemPartial = (i: InventoryItem): InventoryItem => {
-              if (i.id !== current.id) return i;
-              return {
-                ...i,
-                ...(succeededFields.has("description") ? { description: description.trim() } : {}),
-                ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
-                ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
-                ...(succeededFields.has("barcodes") ? { barcodes: finalBarcodes } : {}),
-                ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
-                ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq, totalOpOq: parsedOp + parsedOq } : {}),
-                ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
-                ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
-              };
-            };
-            queryClient.setQueriesData<InventoryListResponse>(
-              { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-              (old) => old ? { ...old, items: old.items.map(patchItemPartial) } : old,
-            );
-            queryClient.setQueriesData<SearchInventoryResponse>(
-              { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-              (old) => {
-                if (!old) return old;
-                const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-                  r.item.id === current.id ? { ...r, item: patchItemPartial(r.item) } : r;
-                return {
-            ...old,
-            results: old.results.map(patchResult),
-            // exactOptionalPropertyTypes: only include the optional key when present
-            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-          };
-              },
-            );
+            const partialUpdatedItem = applySuccessfulInventoryFields(current, succeededFields, {
+              description: { description: description.trim() },
+              keywords: { aiKeywords: finalKeywords },
+              bins: { binLocations: finalBins },
+              barcodes: { barcodes: finalBarcodes },
+              dimensions: { dimensions: newDims },
+              opoq: { orderPurchase: parsedOp, orderQuantity: parsedOq, totalOpOq: parsedOp + parsedOq },
+              ...(capturedImageUrl !== undefined ? { photo: { imageUrl: capturedImageUrl, thumbnailUrl: null } } : {}),
+              ...(capturedImageUrl2 !== undefined ? { photo2: { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } } : {}),
+            });
             if (succeededFields.has("photo") && capturedImageUrl !== undefined) setPhotoUri1(capturedImageUrl);
             if (succeededFields.has("photo2") && capturedImageUrl2 !== undefined) setPhotoUri2(capturedImageUrl2);
             itemRef.current = partialUpdatedItem;
@@ -845,13 +811,6 @@ export default function EditItemScreen() {
             if (cacheResult && !cacheResult.ok) setRefreshWarning(INVENTORY_REFRESH_WARNING);
           }
 
-          const newFieldErrors: typeof fieldSaveErrors = {};
-          settled.forEach((result, i) => {
-            if (result.status === "rejected") {
-              newFieldErrors[ops[i]!.field as keyof typeof fieldSaveErrors] =
-                inventorySaveErrorMessage(result.reason);
-            }
-          });
           setFieldSaveErrors(newFieldErrors);
           setCommittedFields(prev => {
             const next = new Set(prev);
@@ -859,69 +818,12 @@ export default function EditItemScreen() {
             return next;
           });
 
-          const fieldLabel: Record<string, string> = {
-            description: "Description",
-            bins: "Bins",
-            barcodes: "Barcodes",
-            keywords: "Keywords",
-            dimensions: "Dimensions",
-            opoq: "OP/OQ",
-            photo: "Photo 1",
-            photo2: "Photo 2",
-          };
-          const savedLabels = [...succeededFields].map(f => fieldLabel[f] ?? f);
-          const failedLabels = Object.keys(newFieldErrors).map(f => fieldLabel[f] ?? f);
-          const parts: Array<string> = [];
-          if (savedLabels.length > 0) parts.push(`${savedLabels.join(", ")} saved`);
-          if (failedLabels.length > 0) parts.push(`${failedLabels.join(", ")} failed`);
-          if (Object.values(newFieldErrors).some(message => message.includes("Session expired"))) {
-            setErrorMsg("Admin session expired. Re-unlock and try again.");
-          } else {
-            setErrorMsg(parts.join(" · ") + " — check connection and retry");
-          }
+          setErrorMsg(resolution.message);
           setSaveStatus("error");
           return;
         }
 
         // All fields saved — patch cache and navigate away.
-        const patchItem = (i: InventoryItem): InventoryItem => {
-          if (i.id !== current.id) return i;
-          return {
-            ...i,
-            description: description.trim(),
-            aiKeywords: finalKeywords,
-            binLocations: finalBins,
-            barcodes: finalBarcodes,
-            ...(dimsChanged ? { dimensions: newDims } : {}),
-            orderPurchase: parsedOp,
-            orderQuantity: parsedOq,
-            totalOpOq: parsedOp + parsedOq,
-            ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
-            ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
-          };
-        };
-        queryClient.setQueriesData<InventoryListResponse>(
-          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-          (old) => {
-            if (!old) return old;
-            return { ...old, items: old.items.map(patchItem) };
-          },
-        );
-        queryClient.setQueriesData<SearchInventoryResponse>(
-          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-          (old) => {
-            if (!old) return old;
-            const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-              r.item.id === current.id ? { ...r, item: patchItem(r.item) } : r;
-            return {
-              ...old,
-              results: old.results.map(patchResult),
-              // exactOptionalPropertyTypes: only include the optional key when present
-              ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-            };
-          },
-        );
-
         if (capturedImageUrl !== undefined) setPhotoUri1(capturedImageUrl);
         if (capturedImageUrl2 !== undefined) setPhotoUri2(capturedImageUrl2);
 

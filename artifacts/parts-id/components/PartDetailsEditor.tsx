@@ -36,8 +36,20 @@ import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { useColors } from "@/hooks/useColors";
 import { API_BASE } from "@/utils/apiBase";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
-import { evictDeletedItemFromAllCaches, invalidateAllCachesAfterSave, invalidateListCache,INVENTORY_REFRESH_WARNING } from "@/utils/editItemCache";
-import { inventorySaveErrorMessage, isAbortError, runInventoryWrite } from "@/utils/inventoryWrite";
+import {
+  evictDeletedItemFromAllCaches,
+  invalidateAllCachesAfterSave,
+  invalidateListCache,
+  INVENTORY_REFRESH_WARNING,
+} from "@/utils/editItemCache";
+import {
+  applySuccessfulInventoryFields,
+  inventorySaveErrorMessage,
+  type InventorySaveOp,
+  isAbortError,
+  resolveInventorySaveResults,
+  runInventoryWrite,
+} from "@/utils/inventoryWrite";
 
 interface CapturedPhoto {
   uri: string;
@@ -631,13 +643,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
     );
 
-    type SaveOp = {
-      field: "description" | "bins" | "keywords" | "dimensions" | "opoq" | "photo" | "photo2";
-      promise: Promise<unknown>;
-      restoreFn: () => void;
-    };
-
-    const ops: Array<SaveOp> = [];
+    const ops: Array<InventorySaveOp> = [];
 
     // ?? "" handles newly-added items where description is null — null becomes ""
     // so a first-time description edit is correctly detected as a change.
@@ -854,29 +860,14 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
 
     const results = await Promise.allSettled(ops.map((o) => o.promise));
     if (!mountedRef.current) return;
-    const newFieldErrors: typeof fieldSaveErrors = {};
-    let anyFailed = false;
-
-    const succeededFields = new Set<string>();
-    results.forEach((result, i) => {
-      // results is built from ops.map, so index i always maps to an op.
-      const op = ops[i]!;
-      if (result.status === "rejected") {
-        anyFailed = true;
-        newFieldErrors[op.field] = inventorySaveErrorMessage(result.reason);
-      } else {
-        succeededFields.add(op.field);
-      }
-    });
+    const resolution = resolveInventorySaveResults(ops, results);
+    const { anyFailed, fieldErrors: newFieldErrors, succeededFields } = resolution;
 
     if (anyFailed) {
       // onError: restore the full cache snapshot to roll back any optimistic
       // patches that TanStack mutations (bins, keywords) applied before they
       // failed. Restore rejected form fields to the server truth; the user can
       // edit them again before retrying.
-      results.forEach((result, index) => {
-        if (result.status === "rejected") ops[index]!.restoreFn();
-      });
       for (const [key, data] of inventorySnapshot) {
         queryClient.setQueryData(key, data);
       }
@@ -889,50 +880,15 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       // Only the failed fields need retry — succeeded fields are already committed.
       let partialUpdatedItem: InventoryItem | null = null;
       if (succeededFields.size > 0) {
-        partialUpdatedItem = {
-          ...current,
-          ...(succeededFields.has("description") ? { description: description.trim() } : {}),
-          ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
-          ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
-          ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
-          ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq } : {}),
-          ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
-          ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
-        };
-        const patchItemPartial = (i: InventoryItem): InventoryItem => {
-          if (i.id !== current.id) return i;
-          return {
-            ...i,
-            ...(succeededFields.has("description") ? { description: description.trim() } : {}),
-            ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
-            ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
-            ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
-            ...(succeededFields.has("opoq") ? { orderPurchase: parsedOp, orderQuantity: parsedOq } : {}),
-            ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
-            ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
-          };
-        };
-        queryClient.setQueriesData<InventoryListResponse>(
-          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-          (old) => {
-            if (!old) return old;
-            return { ...old, items: old.items.map(patchItemPartial) };
-          },
-        );
-        queryClient.setQueriesData<SearchInventoryResponse>(
-          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-          (old) => {
-            if (!old) return old;
-            const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-              r.item.id === current.id ? { ...r, item: patchItemPartial(r.item) } : r;
-            return {
-              ...old,
-              results: old.results.map(patchResult),
-              // exactOptionalPropertyTypes: only include the optional key when present
-              ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-            };
-          },
-        );
+        partialUpdatedItem = applySuccessfulInventoryFields(current, succeededFields, {
+          description: { description: description.trim() },
+          bins: { binLocations: finalBins },
+          keywords: { aiKeywords: finalKeywords },
+          dimensions: { dimensions: newDims },
+          opoq: { orderPurchase: parsedOp, orderQuantity: parsedOq },
+          ...(capturedImageUrl !== undefined ? { photo: { imageUrl: capturedImageUrl, thumbnailUrl: null } } : {}),
+          ...(capturedImageUrl2 !== undefined ? { photo2: { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } } : {}),
+        });
       }
 
       setCommittedFields(prev => {
@@ -971,21 +927,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         if (cacheResult && !cacheResult.ok) setRefreshWarning(INVENTORY_REFRESH_WARNING);
       }
 
-      const fieldLabel: Record<string, string> = {
-        description: "Description",
-        bins: "Bins",
-        keywords: "Keywords",
-        dimensions: "Dimensions",
-        opoq: "OP/OQ",
-        photo: "Photo 1",
-        photo2: "Photo 2",
-      };
-      const savedLabels = [...succeededFields].map(f => fieldLabel[f] ?? f);
-      const failedLabels = Object.keys(newFieldErrors).map(f => fieldLabel[f] ?? f);
-      const parts: Array<string> = [];
-      if (savedLabels.length > 0) parts.push(`${savedLabels.join(", ")} saved`);
-      if (failedLabels.length > 0) parts.push(`${failedLabels.join(", ")} failed`);
-      setErrorMsg(parts.join(" · ") + " — check connection and retry");
+      setErrorMsg(resolution.message);
 
       setFieldSaveErrors(newFieldErrors);
       setSaveStatus("error");
