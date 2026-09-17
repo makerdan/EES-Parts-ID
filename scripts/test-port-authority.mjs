@@ -242,6 +242,57 @@ await test("serial lock fails closed with an actionable diagnostic when flock is
   assert(!existsSync(lockFile), "missing-flock failure created a lock file");
 });
 
+await test("serial lock fails closed when flock disappears during acquisition", async () => {
+  const resource = uniqueName("flock-race");
+  const lockFile = join(testRoot, `${resource}.lock`);
+  const guardFile = `${lockFile}.guard`;
+  const queueDir = queueDirFor(resource);
+  const marker = join(testRoot, `${resource}.marker`);
+  const flockShimDir = join(testRoot, `${resource}-bin`);
+  const flockShim = join(flockShimDir, "flock");
+  mkdirSync(flockShimDir, { recursive: true });
+  writeFileSync(
+    flockShim,
+    [
+      "#!/bin/sh",
+      'if [ "$1" = "--help" ]; then',
+      `  ${process.execPath} -e 'require("node:fs").unlinkSync(${JSON.stringify(flockShim)})'`,
+      "  exit 0",
+      "fi",
+      "exit 127",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  const result = await runProcess(
+    process.execPath,
+    lockArgs(resource, lockFile, 1, [
+      process.execPath,
+      "-e",
+      MARK_CODE,
+      marker,
+      "should-not-run",
+    ]),
+    lockEnv(lockFile, {
+      PATH: flockShimDir,
+    }),
+  );
+  assert(result.code !== 0, `flock-race wrapper unexpectedly succeeded: ${result.output}`);
+  assert(
+    result.output.includes(`flock utility is unavailable for the ${resource} serialization path`),
+    `missing mid-run flock diagnostic: ${result.output}`,
+  );
+  assert(
+    result.output.includes("refusing to fall back to an unsafe lock implementation"),
+    `missing mid-run fail-closed diagnostic: ${result.output}`,
+  );
+  assert(!existsSync(marker), "wrapped command ran after flock disappeared");
+  assert(!existsSync(lockFile), "flock-race failure created a lock file");
+  assert(!existsSync(guardFile), "flock-race failure left a guard file");
+  assert(!existsSync(join(queueDir, `${result.child.pid}.json`)), "flock-race failure left a queue entry");
+});
+
 await test("validation preflight reports every missing host tool before queueing", async () => {
   const resource = "validation";
   const lockFile = join(testRoot, `${resource}-preflight.lock`);
