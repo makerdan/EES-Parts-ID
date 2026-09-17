@@ -5,19 +5,23 @@
  * child processes instead of importing implementation details.
  */
 import {
+  accessSync,
   existsSync,
   copyFileSync,
+  constants,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, delimiter, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { getValidationHostTools } from "./validation-steps.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SERIAL_LOCK = join(ROOT, "scripts", "serial-lock.mjs");
@@ -118,6 +122,30 @@ function lockArgs(resource, lockFile, priority, command) {
 
 function queueDirFor(resource) {
   return join(testRoot, "queues", resource);
+}
+
+function findExecutable(name) {
+  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+    if (!directory) continue;
+    const candidate = join(directory, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Keep searching the host PATH.
+    }
+  }
+  throw new Error(`could not resolve required host utility "${name}"`);
+}
+
+function createIsolatedValidationPath(omittedTool) {
+  const isolatedPath = join(testRoot, `isolated-path-${omittedTool}`);
+  mkdirSync(isolatedPath, { recursive: true });
+  for (const requirement of getValidationHostTools("fast")) {
+    if (requirement.name === omittedTool) continue;
+    symlinkSync(findExecutable(requirement.name), join(isolatedPath, requirement.name));
+  }
+  return isolatedPath;
 }
 
 function spawnLock(resource, lockFile, priority, command, overrides = {}) {
@@ -256,6 +284,50 @@ await test("validation preflight reports every missing host tool before queueing
   assert(!existsSync(marker), "validation child ran despite failed preflight");
   assert(!existsSync(lockFile), "validation preflight created a lock file");
   assert(!existsSync(queueDir), "validation preflight created a queue entry");
+});
+
+await test("validation preflight reports one missing host tool before queueing", async () => {
+  const resource = "validation";
+  const lockFile = join(testRoot, `${resource}-single-preflight.lock`);
+  const queueDir = join(testRoot, "queues", "validation-single-preflight");
+  const marker = join(testRoot, `${resource}-single-preflight.marker`);
+  const isolatedPath = createIsolatedValidationPath("git");
+  const result = await runProcess(
+    process.execPath,
+    lockArgs(resource, lockFile, 1, [
+      process.execPath,
+      "-e",
+      MARK_CODE,
+      marker,
+      "should-not-run",
+    ]),
+    lockEnv(lockFile, {
+      PATH: isolatedPath,
+      SERIAL_LOCK_QUEUE_DIR: queueDir,
+      VALIDATION_TIER: "fast",
+    }),
+  );
+  assert(result.code === 2, `single-tool validation preflight exited ${result.code}: ${result.output}`);
+  assert(
+    result.output.includes("[validation-preflight] ERROR: 1 required host tool(s) are unavailable for fast validation."),
+    `missing single-tool count diagnostic: ${result.output}`,
+  );
+  assert(
+    result.output.includes(
+      "[validation-preflight] - git: public repository boundary and history checks; " +
+      "setup source: the host Git package;",
+    ),
+    `missing affected capability/setup diagnostic: ${result.output}`,
+  );
+  for (const tool of ["node", "pnpm", "bash", "flock"]) {
+    assert(
+      !result.output.includes(`[validation-preflight] - ${tool}:`),
+      `unexpected missing-tool diagnostic for ${tool}: ${result.output}`,
+    );
+  }
+  assert(!existsSync(marker), "validation child ran despite failed single-tool preflight");
+  assert(!existsSync(lockFile), "single-tool validation preflight created a lock file");
+  assert(!existsSync(queueDir), "single-tool validation preflight created a queue entry");
 });
 
 await test("standard-plus preflight includes post-merge host tools", async () => {
