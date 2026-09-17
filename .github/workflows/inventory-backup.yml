@@ -1,0 +1,64 @@
+name: Daily production inventory backup
+
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-inventory-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Create and verify inventory snapshot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - name: Trigger private production backup
+        shell: bash
+        env:
+          INVENTORY_BACKUP_TRIGGER_URL: ${{ secrets.INVENTORY_BACKUP_TRIGGER_URL }}
+          INVENTORY_BACKUP_TRIGGER_SECRET: ${{ secrets.INVENTORY_BACKUP_TRIGGER_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$INVENTORY_BACKUP_TRIGGER_URL"
+          test -n "$INVENTORY_BACKUP_TRIGGER_SECRET"
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          status="$(
+            curl --silent --show-error \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
+              --request POST \
+              --header "Authorization: Bearer $INVENTORY_BACKUP_TRIGGER_SECRET" \
+              --header 'Accept: application/json' \
+              --max-time 540 \
+              "$INVENTORY_BACKUP_TRIGGER_URL"
+          )"
+          if [[ "$status" != "201" ]]; then
+            echo "Inventory backup trigger failed with HTTP $status." >&2
+            exit 1
+          fi
+          node -e '
+            const fs = require("node:fs");
+            const body = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (body.verificationStatus !== "verified" || !body.snapshotId || !body.createdAt) {
+              throw new Error("Backup response did not confirm a verified snapshot");
+            }
+            const forbidden = ["dataPath", "manifestPath", "rows", "contentSha256"];
+            if (forbidden.some((key) => Object.hasOwn(body, key))) {
+              throw new Error("Backup response exposed private snapshot details");
+            }
+            console.log(JSON.stringify({
+              event: "inventory_snapshot_verified",
+              snapshotId: body.snapshotId,
+              createdAt: body.createdAt,
+              rowCount: body.rowCount,
+              anomaly: body.anomaly
+            }));
+          ' "$response_file"
