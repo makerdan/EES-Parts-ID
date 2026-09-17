@@ -5,9 +5,15 @@
  * they can run before the database-backed test step.
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 
 import { getTierSteps } from "../validation-steps.mjs";
 
@@ -105,5 +111,113 @@ assert.doesNotMatch(
   /Unsupported engine|does not match/,
   "runtime diagnostics must not report a stale engine mismatch",
 );
+
+const timeoutReportScript = resolve(root, "scripts/test-timeout-report.mjs");
+const timeoutFixtureDir = mkdtempSync(join(tmpdir(), "timeout-report-contract-"));
+
+function runTimeoutReport({ file, testName, duration }) {
+  const resultPath = join(timeoutFixtureDir, `${file.replaceAll("/", "_")}.json`);
+  const manifestPath = join(timeoutFixtureDir, `${file.replaceAll("/", "_")}.manifest.json`);
+  writeFileSync(
+    resultPath,
+    JSON.stringify({
+      numTotalTests: 1,
+      testResults: [
+        {
+          testFilePath: file,
+          testResults: [
+            {
+              status: "passed",
+              title: testName,
+              fullName: testName,
+              duration,
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  writeFileSync(
+    manifestPath,
+    JSON.stringify([
+      {
+        suite: "contract-fixture",
+        jsonPath: resultPath,
+        wallClockMs: duration,
+        budgetMs: 60_000,
+        exitCode: 0,
+      },
+    ]),
+  );
+  return spawnSync(process.execPath, [timeoutReportScript, manifestPath], {
+    cwd: root,
+    encoding: "utf8",
+  });
+}
+
+try {
+  const boundary = runTimeoutReport({
+    file: "boundary.test.js",
+    testName: "normal test at the exact budget boundary",
+    duration: 10_000,
+  });
+  assert.equal(boundary.status, 0, boundary.stderr);
+  assert.match(
+    boundary.stdout,
+    /RESULT: All suites passed within their budgets\./,
+    "an exact-boundary normal test must remain within budget",
+  );
+  assert.match(
+    boundary.stdout,
+    /TEST BUDGET VIOLATIONS \(completed tests\)[\s\S]*None\./,
+    "the exact boundary must not be reported as a budget violation",
+  );
+
+  const normalOverage = runTimeoutReport({
+    file: "normal.test.js",
+    testName: "normal test over budget",
+    duration: 10_001,
+  });
+  assert.equal(normalOverage.status, 1, normalOverage.stderr);
+  assert.match(
+    normalOverage.stdout,
+    /\[normal-test\] \[contract-fixture\] normal test over budget/,
+    "normal-test budget overage must identify its budget category and test",
+  );
+  assert.match(
+    normalOverage.stdout,
+    /Duration: 10\.00s /,
+    "normal-test budget overage must report the measured duration",
+  );
+  assert.doesNotMatch(
+    normalOverage.stdout,
+    /RESULT: All suites passed within their budgets\./,
+    "a normal-test budget overage must not claim all suites passed",
+  );
+
+  const integrationOverage = runTimeoutReport({
+    file: "warehouse.integration.test.js",
+    testName: "integration test over budget",
+    duration: 20_001,
+  });
+  assert.equal(integrationOverage.status, 1, integrationOverage.stderr);
+  assert.match(
+    integrationOverage.stdout,
+    /\[integration-test\] \[contract-fixture\] integration test over budget/,
+    "integration-test budget overage must identify its distinct budget category and test",
+  );
+  assert.match(
+    integrationOverage.stdout,
+    /Budget: 20\.00s/,
+    "integration-test budget overage must use the integration budget",
+  );
+  assert.doesNotMatch(
+    integrationOverage.stdout,
+    /TIMEOUT VIOLATIONS \(individual tests\)[\s\S]*integration test over budget/,
+    "a completed integration-test overage must remain distinct from framework timeouts",
+  );
+} finally {
+  rmSync(timeoutFixtureDir, { recursive: true, force: true });
+}
 
 console.log("Validation runtime contract: test database mode and Node declarations are aligned");
