@@ -35,6 +35,7 @@ const protectionStatusPath = join(root, "docs", "validation", "github-protection
 const installationPath = join(root, "docs", "validation", "github-actions-installation.md");
 const fastContractChecks = new Map([
   ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
+  ["api-spec-typecheck-contract", "node scripts/test/api-spec-typecheck-contract.test.mjs"],
   ["github-actions-contract", "node scripts/test/github-actions-contract.test.mjs"],
   ["api-route-authorization-contract", "node scripts/test/api-route-authorization-contract.test.mjs"],
   ["ai-provider-startup-export-contract", "node scripts/test/ai-provider-startup-export-contract.test.mjs"],

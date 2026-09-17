@@ -94,6 +94,8 @@ export const FAST = [
   ["patched-dependencies", "node scripts/check-patched-dependencies.mjs"],
   ["replit-config-contract", "node scripts/test/replit-config-contract.test.mjs"],
   ["tsc", 'pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck'],
+  ["api-spec-typecheck-contract", "node scripts/test/api-spec-typecheck-contract.test.mjs"],
+  ["api-spec-typecheck", "pnpm --filter @workspace/api-spec run typecheck"],
   ["lint", "node scripts/check-db-reachability.mjs && pnpm --filter @workspace/parts-id run lint && pnpm --filter @workspace/api-server run lint && pnpm --filter @workspace/mockup-sandbox run lint && pnpm run lint:libs"],
   ["lint-mocks", "pnpm --filter @workspace/scripts run lint:mocks"],
   ["tsconfig-check", "pnpm --filter @workspace/scripts run tsconfig:check"],

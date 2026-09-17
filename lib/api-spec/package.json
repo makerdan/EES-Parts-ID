@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
+    "typecheck": "tsc --build ./tsconfig.json",
     "codegen": "pnpm run dependency:check && orval --config ./orval.config.ts && CODEGEN_ENSURE_SKIP=1 pnpm -w run typecheck:libs",
     "codegen:ensure": "node ./scripts/ensure-codegen.mjs",
     "codegen:check": "pnpm run codegen && git diff --exit-code -- ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated && pnpm run spec:check && pnpm run barrel:check && pnpm run dist:check",
@@ -14,6 +15,7 @@
     "test": "jest"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "@types/jest": "^30.0.0",
     "jest": "^30.3.0",
     "orval": "8.22.0",
