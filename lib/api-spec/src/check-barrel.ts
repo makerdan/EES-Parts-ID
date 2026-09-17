@@ -17,12 +17,29 @@
  *   pnpm --filter @workspace/api-spec run barrel:check
  */
 
-import { readFileSync } from "fs";
-import { dirname, join,resolve } from "path";
+import { existsSync, readFileSync } from "fs";
+import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const API_CLIENT_SRC = resolve(__dirname, "../../../lib/api-client-react/src");
+const manifest = JSON.parse(
+  readFileSync(resolve(__dirname, "../generated-output-manifest.json"), "utf8"),
+) as { sourceFiles: Array<string> };
+
+const clientGeneratedPaths = manifest.sourceFiles.filter((path) =>
+  path.startsWith("lib/api-client-react/src/generated/"),
+);
+const clientGeneratedFiles = new Map(
+  clientGeneratedPaths.map((path) => [path.slice(path.lastIndexOf("/") + 1), path]),
+);
+
+for (const path of clientGeneratedPaths) {
+  if (!existsSync(resolve(__dirname, "../../../", path))) {
+    console.error(`❌  Barrel check cannot run: generated output is missing: ${path}`);
+    process.exit(1);
+  }
+}
 
 /**
  * Extract every name that a TypeScript source file explicitly exports.
@@ -104,8 +121,17 @@ function collectReachableNames(entryFile: string): Set<string> {
 }
 
 const indexFile = resolve(API_CLIENT_SRC, "index.ts");
-const apiFile = resolve(API_CLIENT_SRC, "generated/api.ts");
-const schemasFile = resolve(API_CLIENT_SRC, "generated/api.schemas.ts");
+const apiPath = clientGeneratedFiles.get("api.ts");
+const schemasPath = clientGeneratedFiles.get("api.schemas.ts");
+if (!apiPath || !schemasPath) {
+  console.error(
+    "❌  Barrel check cannot run: the generated-output manifest does not " +
+      "declare api.ts and api.schemas.ts.",
+  );
+  process.exit(1);
+}
+const apiFile = resolve(__dirname, "../../../", apiPath);
+const schemasFile = resolve(__dirname, "../../../", schemasPath);
 
 const reachable = collectReachableNames(indexFile);
 

@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ---------------------------------------------------------------------------
 # API Server health check — confirm the server is up after every merge and
 # automatically restart it if it is not responding.
@@ -67,32 +69,28 @@ CODEGEN_SETTLE_POLL_SECS="${CODEGEN_SETTLE_POLL_SECS:-2}"
 # failure surfaces as cryptic TypeScript import errors on the next run, with no
 # indication that a codegen crash was the root cause.
 #
-# The function checks the two sentinel files that orval always produces:
-#   lib/api-zod/src/generated/api.ts
-#   lib/api-client-react/src/generated/api.ts
+# The function checks the complete generated-output inventory shared with
+# codegen:check and ensure-codegen. It covers every generated source file,
+# required barrel, non-empty generated directory, unexpected file, and (when
+# running inside the repository) untracked generated file.
 #
 # Returns:
-#   0 — both files exist and are non-empty (generated dirs are intact)
-#   1 — one or more files are missing or empty (interrupted codegen detected)
+#   0 — the complete generated-output inventory is valid
+#   1 — one or more outputs are missing, empty, unexpected, or untracked
 #
 # The caller decides what to do; post-merge uses this for:
 #   • pre-flight: warn that codegen was interrupted before re-running it
 #   • post-flight: assert that codegen has fixed the state, exit 1 if not
 # ---------------------------------------------------------------------------
-GENERATED_SENTINELS=(
-  "lib/api-zod/src/generated/api.ts"
-  "lib/api-client-react/src/generated/api.ts"
-)
-
 check_generated_files() {
-  local missing=0
-  for sentinel in "${GENERATED_SENTINELS[@]}"; do
-    if [[ ! -s "$sentinel" ]]; then
-      echo "[post-merge] MISSING or EMPTY generated file: ${sentinel}"
-      missing=1
-    fi
-  done
-  return "$missing"
+  local output
+  if output=$(GENERATED_OUTPUT_ROOT="${GENERATED_OUTPUT_ROOT:-$PWD}" \
+    node "$SCRIPT_DIR/../lib/api-spec/scripts/check-generated-output.mjs" 2>&1); then
+    echo "$output"
+    return 0
+  fi
+  echo "$output"
+  return 1
 }
 
 check_api_health() {
@@ -312,13 +310,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "[post-merge] Schema unchanged — skipping db push and FTS check."
   fi
 
-  # Pre-flight: detect a partial/missing codegen state left by a previously
-  # crashed task agent.  Orval uses clean:true, so a mid-run crash wipes the
-  # generated dirs and leaves them empty.  Without this check the downstream
+  # Pre-flight: detect a partial/missing/unexpected codegen state left by a
+  # previously crashed task agent. Orval uses clean:true, so a mid-run crash
+  # wipes the generated dirs and leaves them empty. Without this check the downstream
   # failure (TypeScript import errors) has no obvious cause; naming the problem
   # here makes it immediately actionable.
   if ! check_generated_files; then
-    echo "[post-merge] WARNING: One or more generated files are missing or empty — a previous codegen run appears to have been interrupted mid-run. Proceeding with codegen:fix to restore them."
+    echo "[post-merge] WARNING: Generated output inventory is incomplete or unexpected — a previous codegen run appears to have been interrupted or left stale files. Proceeding with codegen:fix to restore it."
   else
     echo "[post-merge] Pre-flight: generated files present."
   fi
@@ -345,12 +343,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   }
   echo "[post-merge] API client regenerated and any drift auto-committed."
 
-  # Post-flight: assert that codegen:fix actually produced all sentinel files.
-  # If codegen completed but a file is still missing (e.g. the orval output
-  # config changed and no longer emits the sentinel), fail loudly here rather
-  # than letting the API server crash on start with a cryptic import error.
+  # Post-flight: assert that codegen:fix produced the complete inventory.
+  # If codegen completed but a file is still missing or unexpected output
+  # remains, fail loudly rather than letting consumers receive a partial
+  # contract.
   if ! check_generated_files; then
-    echo "[post-merge] ERROR: Generated files still missing after codegen:fix — codegen may have completed with a different output layout or the orval config may have changed. Manual investigation required."
+    echo "[post-merge] ERROR: Generated output inventory is still invalid after codegen:fix — codegen may have completed with a different output layout or stale files may remain. Manual investigation required."
     exit 1
   fi
 

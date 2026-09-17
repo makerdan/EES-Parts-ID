@@ -100,6 +100,19 @@ FAST_SPAWN_ENV=(
 MOCK_DIR=$(mktemp -d)
 HEAVY_DIR=$(mktemp -d)
 
+prepare_generated_fixture() {
+  local workspace="$1"
+  mkdir -p "$workspace/lib/api-client-react/src" "$workspace/lib/api-zod/src"
+  cp -R "$SCRIPT_DIR/../lib/api-client-react/src/generated" \
+    "$workspace/lib/api-client-react/src/"
+  cp "$SCRIPT_DIR/../lib/api-client-react/src/index.ts" \
+    "$workspace/lib/api-client-react/src/index.ts"
+  cp -R "$SCRIPT_DIR/../lib/api-zod/src/generated" \
+    "$workspace/lib/api-zod/src/"
+  cp "$SCRIPT_DIR/../lib/api-zod/src/index.ts" \
+    "$workspace/lib/api-zod/src/index.ts"
+}
+
 # ---------------------------------------------------------------------------
 # Process cleanup (Port-Authority pattern).
 #
@@ -1150,13 +1163,11 @@ fi
 rm -rf "$VIEWBOX_RESULT_DIR27"
 
 # ---------------------------------------------------------------------------
-# Test 28: check_generated_files — returns 0 when both sentinel files exist
+# Test 28: check_generated_files — returns 0 for the complete inventory
 #
 # Sources post-merge.sh so check_generated_files is in scope, then calls it
-# against real sentinel files.  Both lib/api-zod/src/generated/api.ts and
-# lib/api-client-react/src/generated/api.ts must be non-empty on a healthy
-# checkout.  This test fails if codegen was never run or the sentinel paths
-# have been renamed, giving a clear signal before any typecheck step.
+# against the real generated tree. The complete manifest must be present on a
+# healthy checkout, giving a clear signal before any typecheck step.
 # ---------------------------------------------------------------------------
 SENTINELS_OUTPUT=$(env REPLIT_DEV_DOMAIN="mock-domain.test" bash -c '
   source "'"$SCRIPT_DIR"'/post-merge.sh"
@@ -1192,12 +1203,10 @@ fi
 MOCK_BIN_DIR29=$(mktemp -d)
 MOCK_WORKSPACE29=$(mktemp -d)
 
-# Create the workspace directory tree with ONE sentinel missing.
-mkdir -p "$MOCK_WORKSPACE29/lib/api-zod/src/generated"
-mkdir -p "$MOCK_WORKSPACE29/lib/api-client-react/src/generated"
-# api-zod sentinel exists and is non-empty.
-echo "export const x = 1;" > "$MOCK_WORKSPACE29/lib/api-zod/src/generated/api.ts"
+# Create a complete generated workspace with ONE required output missing.
+prepare_generated_fixture "$MOCK_WORKSPACE29"
 # api-client-react sentinel is MISSING — simulates interrupted codegen.
+rm -f "$MOCK_WORKSPACE29/lib/api-client-react/src/generated/api.ts"
 
 cat > "$MOCK_BIN_DIR29/git" << 'MOCKEOF'
 #!/bin/bash
@@ -1249,7 +1258,7 @@ PREFLIGHT_EXIT=$?
 rm -rf "$MOCK_BIN_DIR29" "$MOCK_WORKSPACE29"
 
 assert_exit     "pre-flight warning — exits 0 after successful codegen:fix"           0 "$PREFLIGHT_EXIT"
-assert_contains "pre-flight warning — prints interrupted codegen warning"              "interrupted mid-run" "$PREFLIGHT_OUTPUT"
+assert_contains "pre-flight warning — prints generated inventory warning"                "Generated output inventory is incomplete or unexpected" "$PREFLIGHT_OUTPUT"
 
 # ---------------------------------------------------------------------------
 # Test 30: post-flight assertion — post-merge exits 1 with a clear error when
@@ -1268,9 +1277,10 @@ assert_contains "pre-flight warning — prints interrupted codegen warning"     
 MOCK_BIN_DIR30=$(mktemp -d)
 MOCK_WORKSPACE30=$(mktemp -d)
 
-mkdir -p "$MOCK_WORKSPACE30/lib/api-zod/src/generated"
-mkdir -p "$MOCK_WORKSPACE30/lib/api-client-react/src/generated"
-# Both sentinels absent — simulates a crash or config change.
+prepare_generated_fixture "$MOCK_WORKSPACE30"
+# Both primary API outputs absent — simulates a crash or config change.
+rm -f "$MOCK_WORKSPACE30/lib/api-zod/src/generated/api.ts"
+rm -f "$MOCK_WORKSPACE30/lib/api-client-react/src/generated/api.ts"
 
 cat > "$MOCK_BIN_DIR30/git" << 'MOCKEOF'
 #!/bin/bash
@@ -1316,7 +1326,7 @@ POSTFLIGHT_EXIT=$?
 rm -rf "$MOCK_BIN_DIR30" "$MOCK_WORKSPACE30"
 
 assert_exit     "post-flight assertion — exits 1 when sentinels still missing"        1 "$POSTFLIGHT_EXIT"
-assert_contains "post-flight assertion — prints clear error about missing files"       "Generated files still missing after codegen:fix" "$POSTFLIGHT_OUTPUT"
+assert_contains "post-flight assertion — prints clear inventory error"                  "Generated output inventory is still invalid after codegen:fix" "$POSTFLIGHT_OUTPUT"
 
 # ---------------------------------------------------------------------------
 # Test 31: run_viewbox_sync_check FAILURE path — post-merge exits non-zero and
