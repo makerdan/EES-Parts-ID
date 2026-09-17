@@ -499,6 +499,7 @@ describe("web Anchor Calibration routed workflow", () => {
     });
     await waitFor(() => {
       expect(fixture.persisted.size).toBe(0);
+      expect(first.queryByRole("button", { name: "Clear" })).toBeNull();
     });
 
     act(() => {
@@ -636,6 +637,7 @@ describe("web Anchor Calibration routed workflow", () => {
     });
     await waitFor(() => {
       expect(fixture.persisted.size).toBe(1);
+      expect(first.getByRole("button", { name: "Anchor 1 saved" })).toBeTruthy();
     });
     act(() => {
       window.dispatchEvent(new Event("focus"));

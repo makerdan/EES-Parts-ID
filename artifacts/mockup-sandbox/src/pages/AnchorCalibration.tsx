@@ -125,6 +125,7 @@ export function AnchorCalibration() {
   const successTimers = useRef<[ReturnType<typeof setTimeout> | null, ReturnType<typeof setTimeout> | null, ReturnType<typeof setTimeout> | null]>([null, null, null]);
   const mountedRef = useRef(true);
   const floorPlanRequestRef = useRef(0);
+  const anchorsFetchSequenceRef = useRef(0);
   const anchorsFetchRef = useRef<{ id: number; controller: AbortController } | null>(null);
   const anchorOperationsRef = useRef<[number, number, number]>([0, 0, 0]);
   const slotControllersRef = useRef<[AbortController | null, AbortController | null, AbortController | null]>([null, null, null]);
@@ -190,13 +191,13 @@ export function AnchorCalibration() {
     if (!mountedRef.current) return;
     anchorsFetchRef.current?.controller.abort();
     const request = {
-      id: anchorsFetchRef.current ? anchorsFetchRef.current.id + 1 : 1,
+      id: ++anchorsFetchSequenceRef.current,
       controller: new AbortController(),
     };
     anchorsFetchRef.current = request;
     const isCurrent = () =>
       mountedRef.current &&
-      anchorsFetchRef.current?.id === request.id &&
+      anchorsFetchRef.current === request &&
       !request.controller.signal.aborted;
     try {
       // Clerk session cookie is sent automatically with same-origin requests.
@@ -227,7 +228,7 @@ export function AnchorCalibration() {
       if (!isCurrent() || isAbortError(error)) return;
       setLoadError("Failed to load anchors");
     } finally {
-      if (anchorsFetchRef.current?.id === request.id) anchorsFetchRef.current = null;
+      if (anchorsFetchRef.current === request) anchorsFetchRef.current = null;
     }
   }, []);
 
