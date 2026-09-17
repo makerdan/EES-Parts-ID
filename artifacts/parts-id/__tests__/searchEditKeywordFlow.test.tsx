@@ -1,5 +1,5 @@
 /**
- * Client-flow confirmation for the admin Search → Edit Part keyword path.
+ * Client-flow confirmation for the admin Search → Edit Part multi-field path.
  *
  * This deliberately mounts the real SearchScreen and EditItemScreen. The
  * search result card is a small deterministic test double so the test can
@@ -111,6 +111,16 @@ jest.mock("@/components/ResultCard", () => {
         "rn-result-card",
         null,
         R.createElement("Text", null, props.result.item.catalog),
+        R.createElement("Text", null, props.result.item.description),
+        R.createElement("Text", null, (props.result.item.binLocations ?? []).join(", ")),
+        R.createElement("Text", null, `Total OP/OQ ${props.result.item.totalOpOq}`),
+        R.createElement(
+          "Text",
+          null,
+          props.result.item.dimensions
+            ? `Dimensions ${props.result.item.dimensions.length} × ${props.result.item.dimensions.width} × ${props.result.item.dimensions.height}`
+            : "",
+        ),
         ...(props.result.item.aiKeywords ?? []).map((keyword) =>
           R.createElement("Text", { key: keyword }, keyword),
         ),
@@ -271,6 +281,7 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     vendor: "ACME",
     orderPurchase: 0,
     orderQuantity: 0,
+    totalOpOq: 0,
     binLocations: ["A1-04"],
     barcodes: [],
     aiKeywords: ["old keyword"],
@@ -308,6 +319,12 @@ function findHost(root: Inst, type: string, predicate?: (node: Inst) => boolean)
 
 function findTextInput(root: Inst, placeholder: string): Inst | null {
   return findHost(root, "rn-textinput", (node) => node.props.placeholder === placeholder);
+}
+
+function findTextInputs(root: Inst, placeholder: string): Array<Inst> {
+  return root
+    .queryAll((node: TestInstance) => (node.type as string) === "rn-textinput", { includeSelf: true })
+    .filter((node: Inst) => node.props.placeholder === placeholder);
 }
 
 function findPressable(root: Inst, text: string): Inst | null {
@@ -367,6 +384,10 @@ beforeEach(() => {
     id: 99,
     catalog: "OTHER-PART",
     description: "Untouched contactor",
+    orderPurchase: 1,
+    orderQuantity: 2,
+    totalOpOq: 3,
+    binLocations: ["Z9-99"],
     aiKeywords: ["untouched"],
   });
   searchResponse = makeSearchData(item, other);
@@ -402,8 +423,8 @@ afterEach(async () => {
   queryClient.clear();
 });
 
-describe("Search → Edit Part keyword flow", () => {
-  it("updates the selected result's part information immediately after saving a keyword", async () => {
+describe("Search → Edit Part multi-field flow", () => {
+  it("updates the selected result's part information immediately after one save", async () => {
     searchTree = await render(
       <QueryClientProvider client={queryClient}>
         <SearchScreen />
@@ -462,10 +483,37 @@ describe("Search → Edit Part keyword flow", () => {
       fireEvent.press(oldKeywordChip!);
     });
 
+    const descriptionInput = findTextInput(editTree.root!, "Brief description of the part…");
+    expect(descriptionInput).not.toBeNull();
+    await act(async () => {
+      fireEvent.changeText(descriptionInput!, "  Updated relay  ");
+    });
+
+    const binInput = findTextInput(editTree.root!, "e.g. A1-04");
+    expect(binInput).not.toBeNull();
+    await act(async () => {
+      fireEvent.changeText(binInput!, "  B2-07  ");
+    });
+
     const keywordInput = findTextInput(editTree.root!, "Type keyword and press Add…");
     expect(keywordInput).not.toBeNull();
     await act(async () => {
-      fireEvent.changeText(keywordInput!, "Replacement Keyword");
+      fireEvent.changeText(keywordInput!, " Replacement Keyword ");
+    });
+
+    const opoqInputs = findTextInputs(editTree.root!, "0");
+    expect(opoqInputs).toHaveLength(2);
+    await act(async () => {
+      fireEvent.changeText(opoqInputs[0]!, "7");
+      fireEvent.changeText(opoqInputs[1]!, "8");
+    });
+
+    const dimensionInputs = findTextInputs(editTree.root!, "–");
+    expect(dimensionInputs).toHaveLength(4);
+    await act(async () => {
+      fireEvent.changeText(dimensionInputs[0]!, "12.34");
+      fireEvent.changeText(dimensionInputs[1]!, "4.56");
+      fireEvent.changeText(dimensionInputs[2]!, "7");
     });
 
     const saveButton = findPressable(editTree.root!, "Save Details");
@@ -482,20 +530,124 @@ describe("Search → Edit Part keyword flow", () => {
       id: 42,
       data: { keywords: ["replacement keyword"] },
     });
-    expect(mockBinsMutateAsync).not.toHaveBeenCalled();
+    expect(mockBinsMutateAsync).toHaveBeenCalledTimes(1);
+    expect(mockBinsMutateAsync).toHaveBeenCalledWith({
+      id: 42,
+      data: { binLocations: ["A1-04", "B2-07"] },
+    });
     expect(mockBarcodesMutateAsync).not.toHaveBeenCalled();
+
+    const requestBodies = new Map(
+      mockFetch.mock.calls
+        .filter(([url]) => String(url).includes("/api/inventory/42/"))
+        .map(([url, init]) => [
+          String(url).replace("http://localhost:8080/api", ""),
+          JSON.parse(String((init as RequestInit).body)) as Record<string, unknown>,
+        ]),
+    );
+    expect(requestBodies.get("/inventory/42/description")).toEqual({ description: "Updated relay" });
+    expect(requestBodies.get("/inventory/42/order")).toEqual({ orderPurchase: 7, orderQuantity: 8 });
+    expect(requestBodies.get("/inventory/42/dimensions")).toEqual({
+      length: 12.3,
+      width: 4.6,
+      height: 7,
+      diameter: null,
+    });
+    expect(requestBodies.size).toBe(3);
+
     // The production cache updater has now fed the patched result back into
     // the mounted search screen. No manual re-search is involved.
     await flushMicrotasks();
     const updatedSelectedCard = cardText(searchTree.root!, "PART-X");
+    expect(updatedSelectedCard).toContain("Updated relay");
+    expect(updatedSelectedCard).toContain("B2-07");
     expect(updatedSelectedCard).toContain("replacement keyword");
+    expect(updatedSelectedCard).toContain("Total OP/OQ 15");
+    expect(updatedSelectedCard).toContain("Dimensions 12.3 × 4.6 × 7");
     expect(updatedSelectedCard).not.toContain("old keyword");
-    expect(cardText(searchTree.root!, "OTHER-PART")).toContain("untouched");
+    const untouchedCard = cardText(searchTree.root!, "OTHER-PART");
+    expect(untouchedCard).toContain("Untouched contactor");
+    expect(untouchedCard).toContain("Z9-99");
+    expect(untouchedCard).toContain("untouched");
+    expect(untouchedCard).toContain("Total OP/OQ 3");
+    expect(untouchedCard).not.toContain("Updated relay");
+    expect(untouchedCard).not.toContain("B2-07");
+    expect(untouchedCard).not.toContain("replacement keyword");
+    expect(untouchedCard).not.toContain("Total OP/OQ 15");
 
     expect(mockBack).not.toHaveBeenCalled();
     await act(async () => {
       jest.advanceTimersByTime(500);
     });
     expect(mockBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps successful fields visible while a rejected field stays unsaved", async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.endsWith("/inventory/42/description")) {
+        return new Response(JSON.stringify({ error: "description rejected" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify(searchResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    searchTree = await render(
+      <QueryClientProvider client={queryClient}>
+        <SearchScreen />
+      </QueryClientProvider>,
+    );
+    const searchInput = findHost(searchTree.root!, "keyword-input");
+    await act(async () => {
+      fireEvent.changeText(searchInput!, "old keyword");
+    });
+    const searchButton = findPressable(searchTree.root!, "Search");
+    await act(async () => {
+      fireEvent.press(searchButton!);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushMicrotasks();
+
+    const editButton = findPressable(searchTree.root!, "Edit Part");
+    await act(async () => {
+      fireEvent.press(editButton!);
+    });
+    editTree = await render(
+      <QueryClientProvider client={queryClient}>
+        <EditItemScreen />
+      </QueryClientProvider>,
+    );
+
+    const descriptionInput = findTextInput(editTree.root!, "Brief description of the part…");
+    await act(async () => {
+      fireEvent.changeText(descriptionInput!, "Rejected description");
+    });
+    const opoqInputs = findTextInputs(editTree.root!, "0");
+    await act(async () => {
+      fireEvent.changeText(opoqInputs[0]!, "7");
+      fireEvent.changeText(opoqInputs[1]!, "8");
+    });
+
+    const saveButton = findPressable(editTree.root!, "Save Details");
+    await act(async () => {
+      fireEvent.press(saveButton!);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushMicrotasks();
+
+    expect(instText(editTree.root!)).toContain("Description failed");
+    const selectedCard = cardText(searchTree.root!, "PART-X");
+    expect(selectedCard).toContain("Electrical relay");
+    expect(selectedCard).not.toContain("Rejected description");
+    expect(selectedCard).toContain("Total OP/OQ 15");
+    expect(cardText(searchTree.root!, "OTHER-PART")).toContain("Untouched contactor");
+    expect(mockBack).not.toHaveBeenCalled();
   });
 });
