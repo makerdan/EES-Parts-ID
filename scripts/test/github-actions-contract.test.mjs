@@ -301,6 +301,27 @@ function validateWorkflowContract(files, coverage) {
   if (validate && !/run:\s+pnpm --filter @workspace\/db run push-force/.test(validate.text)) {
     errors.push("ci.yml/validate: missing explicit database schema preparation");
   }
+  if (validate) {
+    const readinessIndex = validate.text.indexOf("name: Wait for PostgreSQL readiness");
+    const trigramIndex = validate.text.indexOf("name: Enable PostgreSQL trigram extension");
+    const schemaPreparationIndex = validate.text.indexOf("name: Prepare isolated PostgreSQL schema");
+    const trigramCommands = validate.text.match(
+      /run:\s+psql "\$DATABASE_URL" --set=ON_ERROR_STOP=1 --command="CREATE EXTENSION IF NOT EXISTS pg_trgm;"/g,
+    ) ?? [];
+
+    if (trigramCommands.length !== 1) {
+      errors.push("ci.yml/validate: must enable pg_trgm exactly once with fail-closed psql");
+    }
+    if (
+      readinessIndex < 0
+      || trigramIndex < 0
+      || schemaPreparationIndex < 0
+      || readinessIndex > trigramIndex
+      || trigramIndex > schemaPreparationIndex
+    ) {
+      errors.push("ci.yml/validate: pg_trgm initialization must run after readiness and before schema preparation");
+    }
+  }
   if (validate && !/run:\s+pnpm run test-standard-plus/.test(validate.text)) {
     errors.push("ci.yml/validate: canonical validation tier is not run exactly once");
   }
