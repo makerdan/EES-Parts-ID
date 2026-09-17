@@ -19,8 +19,24 @@ import type { TestInstance } from "test-renderer";
 
 // ── Clerk ─────────────────────────────────────────────────────────────────────
 
+const mockGetToken = jest.fn().mockResolvedValue("admin-query-token");
+const mockOpenUserProfile = jest.fn();
+const mockSignOut = jest.fn().mockResolvedValue(undefined);
+const mockAdminAuth = {
+  isLoaded: true,
+  isSignedIn: true,
+  userId: "admin-user",
+  getToken: mockGetToken,
+  signOut: mockSignOut,
+};
+const mockAdminClerk = {
+  openUserProfile: mockOpenUserProfile,
+  signOut: mockSignOut,
+};
+
 jest.mock("@clerk/expo", () => ({
-  useAuth: () => ({ userId: "admin-user" }),
+  useAuth: () => mockAdminAuth,
+  useClerk: () => mockAdminClerk,
 }));
 
 // ── Navigation and platform boundary mocks ────────────────────────────────────
@@ -458,6 +474,14 @@ async function renderAdminImport() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  expect(mockAdminAuth).toMatchObject({
+    isLoaded: true,
+    isSignedIn: true,
+    userId: "admin-user",
+  });
+  expect(mockAdminAuth.getToken).toEqual(expect.any(Function));
+  expect(mockAdminClerk.openUserProfile).toEqual(expect.any(Function));
+  expect(mockAdminClerk.signOut).toEqual(expect.any(Function));
   mockWrittenFiles.length = 0;
   mockInventoryRefetchPages = [];
   mockInventoryResponses = {
