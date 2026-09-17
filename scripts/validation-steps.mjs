@@ -73,6 +73,111 @@ export function getValidationHostTools(tier = "fast") {
     : VALIDATION_HOST_TOOLS;
 }
 
+const SHELL_COMMAND_BOUNDARIES = new Set(["&&", "||", ";", "|", "&", "(", ")"]);
+const SHELL_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+function tokenizeValidationCommand(command) {
+  const tokens = [];
+  let token = "";
+  let quote = null;
+  let escaped = false;
+
+  const pushToken = () => {
+    if (token) tokens.push(token);
+    token = "";
+  };
+
+  for (const character of command) {
+    if (escaped) {
+      token += character;
+      escaped = false;
+      continue;
+    }
+    if (character === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (character === quote) quote = null;
+      else token += character;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      pushToken();
+      continue;
+    }
+    token += character;
+  }
+  if (escaped) token += "\\";
+  pushToken();
+  return tokens;
+}
+
+export function getValidationCommandExecutables(command) {
+  const tokens = tokenizeValidationCommand(command);
+  const executables = [];
+  let atCommandStart = true;
+
+  for (const token of tokens) {
+    if (SHELL_COMMAND_BOUNDARIES.has(token) || token === "--") {
+      atCommandStart = true;
+      continue;
+    }
+    if (!atCommandStart || SHELL_ASSIGNMENT.test(token)) continue;
+    executables.push(token.split("/").pop());
+    atCommandStart = false;
+  }
+  return [...new Set(executables)];
+}
+
+export function assertValidationHostToolContract(
+  tier,
+  steps = getTierSteps(tier),
+) {
+  const declaredTools = new Map(
+    getValidationHostTools(tier).map(({ name, capability, setup }) => [
+      name,
+      { capability, setup },
+    ]),
+  );
+  const missing = [];
+
+  for (const [stepName, command] of assertTierSteps(tier, steps)) {
+    for (const executable of getValidationCommandExecutables(command)) {
+      if (!declaredTools.has(executable)) {
+        missing.push({ stepName, executable });
+      }
+    }
+  }
+
+  if (missing.length > 0) {
+    const details = missing
+      .map(
+        ({ stepName, executable }) =>
+          `step "${stepName}" relies on unlisted host executable "${executable}"`,
+      )
+      .join("; ");
+    throw new Error(
+      `${details}. Add the executable with its validation capability and setup source ` +
+        `to the host-tool contract in scripts/validation-steps.mjs.`,
+    );
+  }
+
+  for (const [name, tool] of declaredTools) {
+    if (!tool.capability || !tool.setup) {
+      throw new Error(
+        `host-tool "${name}" is missing its validation capability or setup source in ` +
+          "scripts/validation-steps.mjs",
+      );
+    }
+  }
+  return steps;
+}
+
 export const FAST = [
   ["node-runtime", "node scripts/check-node-runtime.mjs"],
   ["gate-guard", "bash scripts/check-gate-integrity.sh"],

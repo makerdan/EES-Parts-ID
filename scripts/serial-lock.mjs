@@ -66,7 +66,10 @@ import {
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
-import { getValidationHostTools } from "./validation-steps.mjs";
+import {
+  assertValidationHostToolContract,
+  getValidationHostTools,
+} from "./validation-steps.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -252,7 +255,9 @@ function validationTierFromCommand() {
 function ensureValidationHostTools() {
   let requirements;
   try {
-    requirements = getValidationHostTools(validationTierFromCommand());
+    const tier = validationTierFromCommand();
+    assertValidationHostToolContract(tier);
+    requirements = getValidationHostTools(tier);
   } catch (error) {
     console.error(
       `[serial-lock] ERROR: validation host-tool contract is invalid: ${error instanceof Error ? error.message : String(error)}`,

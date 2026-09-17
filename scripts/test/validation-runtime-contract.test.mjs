@@ -15,7 +15,10 @@ import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
-import { getTierSteps } from "../validation-steps.mjs";
+import {
+  assertValidationHostToolContract,
+  getTierSteps,
+} from "../validation-steps.mjs";
 
 const root = resolve(".");
 const validationSteps = readFileSync(resolve(root, "scripts/validation-steps.mjs"), "utf8");
@@ -30,8 +33,22 @@ const githubSetup = readFileSync(
 
 const standardSteps = getTierSteps("standard");
 const fastSteps = getTierSteps("fast");
+const validationRuntimeStep = fastSteps.find(
+  ([name]) => name === "validation-runtime-contract",
+);
 const testStep = standardSteps.find(([name]) => name === "test");
-assert.ok(testStep, "standard validation must define a database-backed test step");
+assert.ok(
+  testStep,
+  "standard validation must define a database-backed test step",
+);
+assert.deepEqual(
+  validationRuntimeStep,
+  [
+    "validation-runtime-contract",
+    "node scripts/test/validation-runtime-contract.test.mjs",
+  ],
+  "host-tool contract coverage must run in the fast validation tier",
+);
 assert.match(
   tierRunner,
   /name === "test" \? \{ \.\.\.process\.env, DATABASE_ENV: "test" \}/,
@@ -51,6 +68,23 @@ assert.match(
   validationSteps,
   /\["test",\s*"node scripts\/serial-lock\.mjs --resource shared-test-results/,
   "the canonical test step must remain the serialized workspace test command",
+);
+for (const tier of ["fast", "standard", "standard-plus", "heavy"]) {
+  assert.doesNotThrow(
+    () => assertValidationHostToolContract(tier),
+    `${tier} validation commands must use only declared host tools`,
+  );
+}
+assert.throws(
+  () =>
+    assertValidationHostToolContract("fast", [
+      [
+        "synthetic-unlisted-tool",
+        "node scripts/example.mjs && missing-host-tool --check",
+      ],
+    ]),
+  /step "synthetic-unlisted-tool" relies on unlisted host executable "missing-host-tool".*validation capability and setup source.*scripts\/validation-steps\.mjs/s,
+  "an unlisted executable must identify the validation step and where its capability/setup contract belongs",
 );
 assert.deepEqual(
   fastSteps.find(([name]) => name === "port-authority-contract"),
