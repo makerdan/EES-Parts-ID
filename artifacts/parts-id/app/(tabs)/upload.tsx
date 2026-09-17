@@ -273,6 +273,13 @@ type BinDiffSummary = {
 };
 
 type ImportMode = "full" | "opoq";
+type ImportFileType = "csv" | "xlsx" | "ods";
+type SelectedImportFile = {
+  name: string;
+  type: ImportFileType;
+  rowCount: number;
+  status: "parsing" | "ready" | "failed";
+};
 type OpoqUnknownRow = ParsedRow & {
   hasBin: boolean;
   orderPurchase: number;
@@ -476,6 +483,7 @@ function splitCSVLine(line: string): Array<string> {
 // ── Parse .xlsx/.xlsm via read-excel-file ─────────────────────────────────
 async function parseXlsx(uri: string): Promise<Array<ParsedRow>> {
   const response = await fetch(uri);
+  if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
   const arrayBuffer = await response.arrayBuffer();
 
   // Try sheets 1-5, pick the one with the best Vendor/Catalog header match
@@ -498,6 +506,22 @@ async function parseXlsx(uri: string): Promise<Array<ParsedRow>> {
 
   if (!bestRows || bestRows.length < 2) return [];
   return normalizeSpreadsheetRows(bestRows);
+}
+
+function normalizeOpoqIdentity(value: string): string {
+  return value.normalize("NFKC").trim().toLowerCase();
+}
+
+function getImportFileType(name: string): ImportFileType {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  return ext === "ods" ? "ods" : ext === "xlsx" || ext === "xlsm" ? "xlsx" : "csv";
+}
+
+function mergeOpoqRowsInto(merged: Map<string, ParsedRow>, rows: Array<ParsedRow>): void {
+  for (const row of rows) {
+    const key = `${normalizeOpoqIdentity(row.vendor)}\u0000${normalizeOpoqIdentity(row.catalog)}`;
+    merged.set(key, row);
+  }
 }
 
 // ── Inventory row component ───────────────────────────────────────────────
@@ -1244,7 +1268,8 @@ export default function UploadScreen() {
   const [parsedRows, setParsedRows] = useState<Array<ParsedRow>>([]);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [fileType, setFileType] = useState<"csv" | "xlsx" | "ods" | null>(null);
+  const [fileType, setFileType] = useState<ImportFileType | null>(null);
+  const [selectedImportFiles, setSelectedImportFiles] = useState<Array<SelectedImportFile>>([]);
   const [importMode, setImportMode] = useState<ImportMode>("full");
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
   const [activeSection, setActiveSectionState] = useState<AdminSection | null>(null);
@@ -1371,6 +1396,7 @@ export default function UploadScreen() {
     setRawCsv(null);
     setFileName(null);
     setFileType(null);
+    setSelectedImportFiles([]);
     setPasteText("");
     setSkipBinRows(new Set());
     setSelectedUnknownRows(new Set());
@@ -1597,10 +1623,12 @@ export default function UploadScreen() {
     if (!rawCsv || parsedRows.length === 0) {
       setBinDiff(null);
       setBinDiffFailed(false);
+      setBinDiffPending(false);
       setReplaceConfirmed(false);
       setSkipBinRows(new Set());
       setReplaceListOpen(false);
       setOpoqPreview(null);
+      setOpoqPreviewPending(false);
       setOpoqPreviewFailed(false);
       setSelectedUnknownRows(new Set());
       return;
@@ -2345,13 +2373,14 @@ export default function UploadScreen() {
           "application/octet-stream",
           "*/*",
         ],
+        multiple: importMode === "opoq",
         copyToCacheDirectory: true,
       });
 
       if (!isCurrentSelection()) return;
-      if (result.canceled || !result.assets?.[0]) return;
+      if (result.canceled || !result.assets?.length) return;
 
-      const asset = result.assets[0];
+      const assets = result.assets;
       // Clear any previous import before parsing the new selection. This
       // prevents an invalid or empty workbook from leaving stale rows eligible
       // for preview/upload.
@@ -2359,71 +2388,129 @@ export default function UploadScreen() {
       setFileType(null);
       setParsedRows([]);
       setRawCsv(null);
+      setSelectedImportFiles(assets.map(asset => ({
+        name: asset.name,
+        type: getImportFileType(asset.name),
+        rowCount: 0,
+        status: "parsing" as const,
+      })));
+      setUploadError(null);
+      setUploadSuccess(null);
       setRestoredImportNeedsReview(false);
       restoredSkipBinRowsRef.current = null;
       restoredUnknownRowsRef.current = null;
 
-      const ext = asset.name.split(".").pop()?.toLowerCase() ?? "";
-      let rows: Array<ParsedRow> = [];
-      // rawText holds the CSV string that will be sent to the admin upload
-      // endpoint. For CSV/TXT files this is the file's raw text. For XLSX/ODS
-      // files the parsed rows are serialized back to CSV so the server-side
-      // parser sees the same data.
-      let rawText: string | null = null;
+      const mergedOpoqRows = new Map<string, ParsedRow>();
+      let singleFileRows: Array<ParsedRow> = [];
+      let opoqColumnSignature: string | null = null;
+      const parsedFiles: Array<SelectedImportFile> = [];
+      for (const [index, asset] of assets.entries()) {
+        if (!isCurrentSelection()) return;
+        const ext = asset.name.split(".").pop()?.toLowerCase() ?? "";
+        let rows: Array<ParsedRow>;
 
-      if (ext === "csv" || ext === "txt") {
-        const response = await fetch(asset.uri);
-        if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
-        const text = await response.text();
-        if (!isCurrentSelection()) return;
-        rows = parseCSV(text);
-        // Normalize through serializeToCsv so the server always receives a
-        // canonical header row (Vendor,Catalog,Description,BinLocation) even
-        // when the source file used broad client-side aliases like "mfr",
-        // "part#", etc. that the server-side parser wouldn't recognise.
-        rawText = serializeToCsv(rows, new Set());
-        setFileType("csv");
-      } else if (["xlsx", "xlsm"].includes(ext)) {
-        rows = await parseXlsx(asset.uri);
-        if (!isCurrentSelection()) return;
-        // Serialize to CSV so we can send it to admin/upload/preview and
-        // admin/upload which only accept raw CSV text. skipBinRows is empty
-        // at this point (file just loaded), so all bin data is included.
-        rawText = serializeToCsv(rows, new Set());
-        setFileType("xlsx");
-      } else if (ext === "ods") {
-        rows = await parseOds(asset.uri);
-        if (!isCurrentSelection()) return;
-        // ODS is parsed locally, then sent through the same canonical CSV
-        // preview/upload contract as XLSX and CSV imports.
-        rawText = serializeToCsv(rows, new Set());
-        setFileType("ods");
-      } else {
         try {
-          const response = await fetch(asset.uri);
-          if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
-          const text = await response.text();
+          if (ext === "csv" || ext === "txt") {
+            const response = await fetch(asset.uri);
+            if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
+            rows = parseCSV(await response.text());
+          } else if (["xlsx", "xlsm"].includes(ext)) {
+            rows = await parseXlsx(asset.uri);
+          } else if (ext === "ods") {
+            rows = await parseOds(asset.uri);
+          } else {
+            try {
+              const response = await fetch(asset.uri);
+              if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
+              rows = parseCSV(await response.text());
+            } catch {
+              rows = await parseXlsx(asset.uri);
+            }
+          }
+        } catch (err) {
           if (!isCurrentSelection()) return;
-          rows = parseCSV(text);
-          rawText = serializeToCsv(rows, new Set());
-          setFileType("csv");
-        } catch {
-          rows = await parseXlsx(asset.uri);
-          if (!isCurrentSelection()) return;
-          rawText = serializeToCsv(rows, new Set());
-          setFileType("xlsx");
+          const message = err instanceof Error && err.message.includes("must be")
+            ? err.message
+            : `Failed to read "${asset.name}". Please choose the files again.`;
+          setSelectedImportFiles(assets.map((selectedAsset, selectedIndex) => ({
+            name: selectedAsset.name,
+            type: getImportFileType(selectedAsset.name),
+            rowCount: parsedFiles[selectedIndex]?.rowCount ?? 0,
+            status: selectedIndex === index ? "failed" : parsedFiles[selectedIndex] ? "ready" : "parsing",
+          })));
+          setUploadError(message);
+          return;
         }
+
+        if (!isCurrentSelection()) return;
+        if (rows.length === 0) {
+          setSelectedImportFiles(assets.map((selectedAsset, selectedIndex) => ({
+            name: selectedAsset.name,
+            type: getImportFileType(selectedAsset.name),
+            rowCount: parsedFiles[selectedIndex]?.rowCount ?? 0,
+            status: selectedIndex === index ? "failed" : parsedFiles[selectedIndex] ? "ready" : "parsing",
+          })));
+          setUploadError(`No data rows found in "${asset.name}". Ensure it has columns named: vendor, catalog (required), description, bin (optional).`);
+          return;
+        }
+        if (importMode === "opoq") {
+          const opProvided = rows.some(row => row.opProvided);
+          const oqProvided = rows.some(row => row.oqProvided);
+          if (!opProvided && !oqProvided) {
+            setSelectedImportFiles(assets.map((selectedAsset, selectedIndex) => ({
+              name: selectedAsset.name,
+              type: getImportFileType(selectedAsset.name),
+              rowCount: parsedFiles[selectedIndex]?.rowCount ?? 0,
+              status: selectedIndex === index ? "failed" : parsedFiles[selectedIndex] ? "ready" : "parsing",
+            })));
+            setUploadError(`No OP or OQ column found in "${asset.name}". Please choose the files again.`);
+            return;
+          }
+          const columnSignature = `${opProvided ? "op" : ""}:${oqProvided ? "oq" : ""}`;
+          if (opoqColumnSignature !== null && columnSignature !== opoqColumnSignature) {
+            setSelectedImportFiles(assets.map((selectedAsset, selectedIndex) => ({
+              name: selectedAsset.name,
+              type: getImportFileType(selectedAsset.name),
+              rowCount: parsedFiles[selectedIndex]?.rowCount ?? 0,
+              status: selectedIndex === index ? "failed" : parsedFiles[selectedIndex] ? "ready" : "parsing",
+            })));
+            setUploadError(`"${asset.name}" uses different OP/OQ columns than the earlier selected files. Choose files with matching order columns.`);
+            return;
+          }
+          opoqColumnSignature = columnSignature;
+          mergeOpoqRowsInto(mergedOpoqRows, rows);
+        } else {
+          singleFileRows = rows;
+        }
+        const parsedType = getImportFileType(asset.name);
+        parsedFiles.push({ name: asset.name, type: parsedType, rowCount: rows.length, status: "ready" });
+        setSelectedImportFiles([
+          ...parsedFiles,
+          ...assets.slice(index + 1).map(selectedAsset => ({
+            name: selectedAsset.name,
+            type: getImportFileType(selectedAsset.name),
+            rowCount: 0,
+            status: "parsing" as const,
+          })),
+        ]);
       }
 
       if (!isCurrentSelection()) return;
+      const rows = importMode === "opoq" ? [...mergedOpoqRows.values()] : singleFileRows;
       if (rows.length === 0) {
         setUploadError("No data rows found. Ensure your file has columns named: vendor, catalog (required), description, bin (optional).");
         return;
       }
-      setUploadError(null);
       setUploadSuccess(null);
-      setFileName(asset.name);
-      setRawCsv(rawText);
+      if (importMode === "opoq") {
+        setSelectedImportFiles(parsedFiles);
+      } else {
+        setSelectedImportFiles([]);
+        const firstFile = parsedFiles[0]!;
+        setFileName(firstFile.name);
+        setFileType(firstFile.type);
+      }
+      setRawCsv(serializeToCsv(rows, new Set()));
       setParsedRows(rows);
     } catch (err) {
       if (!isCurrentSelection()) return;
@@ -2433,33 +2520,62 @@ export default function UploadScreen() {
     }
   };
 
+  const handleImportModeChange = (mode: ImportMode) => {
+    if (mode === importMode) return;
+    fileSelectionGenerationRef.current += 1;
+    if (pasteDebounceRef.current) {
+      clearTimeout(pasteDebounceRef.current);
+      pasteDebounceRef.current = null;
+    }
+    setImportMode(mode);
+    setParsedRows([]);
+    setRawCsv(null);
+    setFileName(null);
+    setFileType(null);
+    setSelectedImportFiles([]);
+    setPasteText("");
+    setUploadError(null);
+    setUploadSuccess(null);
+    setOpoqResult(null);
+    setRestoredImportNeedsReview(false);
+    restoredSkipBinRowsRef.current = null;
+    restoredUnknownRowsRef.current = null;
+  };
+
   const handlePasteChange = useCallback((text: string) => {
     fileSelectionGenerationRef.current += 1;
     setPasteText(text);
     setFileName(null);
     setFileType(null);
+    setSelectedImportFiles([]);
+    setParsedRows([]);
+    setRawCsv(null);
     setRestoredImportNeedsReview(false);
     restoredSkipBinRowsRef.current = null;
     restoredUnknownRowsRef.current = null;
     if (pasteDebounceRef.current) clearTimeout(pasteDebounceRef.current);
     if (!text.trim()) {
-      setParsedRows([]);
-      setRawCsv(null);
       return;
     }
     pasteDebounceRef.current = setTimeout(() => {
       if (!isMountedRef.current) return;
-      const rows = parseCSV(text);
-      if (rows.length === 0) {
-        setUploadError("No data rows found. Ensure the text has columns: vendor, catalog (required), description, bin (optional).");
+      try {
+        const rows = parseCSV(text);
+        if (rows.length === 0) {
+          setUploadError("No data rows found. Ensure the text has columns: vendor, catalog (required), description, bin (optional).");
+          return;
+        }
+        setUploadError(null);
+        setUploadSuccess(null);
+        setParsedRows(rows);
+        setRawCsv(serializeToCsv(rows, new Set()));
+      } catch (err) {
         setParsedRows([]);
         setRawCsv(null);
-        return;
+        setUploadError(err instanceof Error && err.message.includes("must be")
+          ? err.message
+          : "Failed to parse pasted rows. Please check the spreadsheet values and try again.");
       }
-      setUploadError(null);
-      setUploadSuccess(null);
-      setParsedRows(rows);
-      setRawCsv(serializeToCsv(rows, new Set()));
     }, 400);
   }, []);
 
@@ -2524,6 +2640,7 @@ export default function UploadScreen() {
         setRawCsv(null);
         setFileName(null);
         setFileType(null);
+        setSelectedImportFiles([]);
         setPasteText("");
         if (currentClerkUserId) await clearImportDraft(currentClerkUserId);
         return;
@@ -2568,6 +2685,7 @@ export default function UploadScreen() {
       setRawCsv(null);
       setFileName(null);
       setFileType(null);
+      setSelectedImportFiles([]);
       setPasteText("");
       if (currentClerkUserId) await clearImportDraft(currentClerkUserId);
       if (isMountedRef.current) await inventoryQuery.refetch();
@@ -3325,9 +3443,7 @@ export default function UploadScreen() {
                     <Pressable
                       key={value}
                       onPress={() => {
-                        setImportMode(value);
-                        setOpoqResult(null);
-                        setUploadError(null);
+                        handleImportModeChange(value);
                       }}
                       style={{
                         flex: 1,
@@ -3353,11 +3469,25 @@ export default function UploadScreen() {
 
                 <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
                   <Text style={[styles.pickBtnText, { color: colors.primary }]}>
-                    📂 Choose CSV, Excel, or ODS File
+                    📂 Choose CSV, Excel, or ODS File{importMode === "opoq" ? "s" : ""}
                   </Text>
                 </Pressable>
 
-                {fileName ? (
+                {importMode === "opoq" && selectedImportFiles.length > 0 ? (
+                  <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
+                    {selectedImportFiles.map((file, index) => (
+                      <Text key={`${index}-${file.name}`} style={[styles.fileChipText, { color: file.status === "failed" ? colors.destructive : colors.foreground }]}>
+                        {file.status === "failed" ? "⚠️" : file.status === "parsing" ? "⏳" : file.type === "csv" ? "📄" : "📊"} {file.name}
+                        {file.status === "ready" ? ` (${file.rowCount} rows)` : file.status === "parsing" ? " (reading…)" : " (failed)"}
+                      </Text>
+                    ))}
+                    {parsedRows.length > 0 ? (
+                      <Text style={[styles.fileChipText, { color: colors.foreground, marginTop: 4 }]}>
+                        Combined rows: {parsedRows.length}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : fileName ? (
                   <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
                     <Text style={[styles.fileChipText, { color: colors.foreground }]}>
                       {fileType === "xlsx" || fileType === "ods" ? "📊" : "📄"} {fileName}

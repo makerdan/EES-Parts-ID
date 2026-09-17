@@ -725,4 +725,416 @@ describe("UploadScreen — administrator spreadsheet import workflow", () => {
     expect(uploadBody.csv).toContain('"PASTECO","PASTE-001","pasted row","PASTE-BIN"');
     expect(uploadBody.csv).not.toContain('"OLDCO","OLD-001","old row","OLD-BIN"');
   });
+
+  it("parses OP/OQ files sequentially and lets the last selected file win", async () => {
+    const firstBuffer = new ArrayBuffer(16);
+    const multiSelection = {
+      canceled: false,
+      assets: [
+        { name: "first.xlsx", uri: "file://first.xlsx" },
+        { name: "second.csv", uri: "file://second.csv" },
+      ],
+    };
+    let resolveFirstSheet!: (rows: unknown[][]) => void;
+    const firstSheet = new Promise<unknown[][]>(resolve => { resolveFirstSheet = resolve; });
+    mockGetDocumentAsync.mockResolvedValueOnce(multiSelection);
+    mockReadSheet.mockImplementationOnce(() => firstSheet);
+    mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "file://first.xlsx") {
+        return { ...response({}), arrayBuffer: async () => firstBuffer };
+      }
+      if (url === "file://second.csv") {
+        return response(
+          {},
+          200,
+          [
+            "Vendor,Catalog,Description,BinLocation,OP,OQ",
+            " acme , dup-1 ,new value,B2,9,10",
+            "BETA,CSV-2,csv row,C3,4,5",
+          ].join("\n"),
+        );
+      }
+      if (url.endsWith("/admin/upload/orders/preview")) {
+        apiRequests.push({ url, init });
+        return response({
+          known: 3,
+          unknownWithBins: 0,
+          unknownWithoutBins: 0,
+          rows: [
+            { vendor: "acme", catalog: "dup-1", known: true, hasBins: true, orderPurchase: 9, orderQuantity: 10 },
+            { vendor: "FIRST", catalog: "ONLY-1", known: true, hasBins: true, orderPurchase: 2, orderQuantity: 3 },
+            { vendor: "BETA", catalog: "CSV-2", known: true, hasBins: true, orderPurchase: 4, orderQuantity: 5 },
+          ],
+        });
+      }
+      if (url.endsWith("/admin/upload/orders")) {
+        apiRequests.push({ url, init });
+        return response({ updated: 3 });
+      }
+      if (url.endsWith("/admin/ai-status")) return response({ bots: {} });
+      if (url.endsWith("/inventory/enrich-summary")) return response({ total: 0, enriched: 0, unenriched: 0 });
+      if (url.endsWith("/inventory/bulk-enrich/status")) return response({ running: false, stopRequested: false, force: false, startedAt: null, processed: 0, errors: 0, total: null, finishedAt: null, lastError: null, model: null });
+      if (url.endsWith("/inventory/enrich-measurements/status")) return response({ running: false, startedAt: null, processed: 0, updated: 0, total: null, finishedAt: null, lastError: null });
+      return response({});
+    });
+
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Data Import")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Update OP/OQ Only")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Choose CSV, Excel, or ODS Files")!); });
+
+    await waitFor(() => expect(mockReadSheet).toHaveBeenCalledTimes(1));
+    expect(mockGetDocumentAsync).toHaveBeenCalledWith(expect.objectContaining({ multiple: true }));
+    expect(mockFetch.mock.calls.some(([url]) => url === "file://second.csv")).toBe(false);
+
+    await act(async () => {
+      resolveFirstSheet([
+        ["Vendor", "Catalog", "Description", "BinLocation", "OP", "OQ"],
+        ["ACME", "DUP-1", "old value", "A1", 1, 2],
+        ["FIRST", "ONLY-1", "xlsx row", "A2", 2, 3],
+      ]);
+    });
+
+    await waitFor(() => expect(hasText(screenRoot(), "Combined rows: 3")).toBe(true));
+    expect(hasText(screenRoot(), "first.xlsx")).toBe(true);
+    expect(hasText(screenRoot(), "second.csv")).toBe(true);
+    expect(apiRequests).toHaveLength(1);
+    const previewBody = JSON.parse(String(apiRequests[0]!.init?.body)) as { csv: string };
+    expect(previewBody.csv).toContain('"acme","dup-1","new value","B2"');
+    expect(previewBody.csv).not.toContain('"ACME","DUP-1","old value","A1"');
+    expect(previewBody.csv).toContain('"FIRST","ONLY-1","xlsx row","A2"');
+
+    const update = findPressable(screenRoot(), "Update OP/OQ (3)");
+    expect(update?.props.disabled).toBe(false);
+    await act(async () => { fireEvent.press(update!); });
+    await waitFor(() => expect(apiRequests).toHaveLength(2));
+    const updateBody = JSON.parse(String(apiRequests[1]!.init?.body)) as { csv: string };
+    expect(updateBody.csv).toBe(previewBody.csv);
+  });
+
+  it("identifies the invalid OP/OQ file and blocks the combined update", async () => {
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [
+        { name: "valid.csv", uri: "file://valid.csv" },
+        { name: "empty.xlsx", uri: "file://empty.xlsx" },
+      ],
+    });
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url === "file://valid.csv") {
+        return response({}, 200, "Vendor,Catalog,OP,OQ\nACME,VALID-1,1,2");
+      }
+      if (url === "file://empty.xlsx") return response({});
+      if (url.endsWith("/admin/ai-status")) return response({ bots: {} });
+      if (url.endsWith("/inventory/enrich-summary")) return response({ total: 0, enriched: 0, unenriched: 0 });
+      if (url.endsWith("/inventory/bulk-enrich/status")) return response({ running: false, stopRequested: false, force: false, startedAt: null, processed: 0, errors: 0, total: null, finishedAt: null, lastError: null, model: null });
+      if (url.endsWith("/inventory/enrich-measurements/status")) return response({ running: false, startedAt: null, processed: 0, updated: 0, total: null, finishedAt: null, lastError: null });
+      return response({});
+    });
+    mockReadSheet.mockResolvedValueOnce([]);
+
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Data Import")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Update OP/OQ Only")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Choose CSV, Excel, or ODS Files")!); });
+
+    await waitFor(() => expect(hasText(screenRoot(), 'No data rows found in "empty.xlsx"')).toBe(true));
+    expect(hasText(screenRoot(), "empty.xlsx (failed)")).toBe(true);
+    expect(hasText(screenRoot(), "Preview (")).toBe(false);
+    expect(findPressable(screenRoot(), "Update OP/OQ (")).toBeNull();
+    expect(apiRequests).toHaveLength(0);
+  });
+
+  it("does not let a stale multi-file parse replace a newer OP/OQ selection", async () => {
+    let resolveOldRows!: (rows: unknown[][]) => void;
+    const oldRows = new Promise<unknown[][]>(resolve => { resolveOldRows = resolve; });
+    mockGetDocumentAsync
+      .mockResolvedValueOnce({
+        canceled: false,
+        assets: [
+          { name: "slow.xlsx", uri: "file://slow.xlsx" },
+          { name: "never.csv", uri: "file://never.csv" },
+        ],
+      })
+      .mockResolvedValueOnce({
+        canceled: false,
+        assets: [{ name: "current.csv", uri: "file://current.csv" }],
+      });
+    mockReadSheet.mockImplementationOnce(() => oldRows);
+    mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "file://slow.xlsx") return response({});
+      if (url === "file://never.csv") return response({}, 200, "Vendor,Catalog,OP,OQ\nOLD,NEVER,1,1");
+      if (url === "file://current.csv") return response({}, 200, "Vendor,Catalog,OP,OQ\nNEW,CURRENT,7,8");
+      if (url.endsWith("/admin/upload/orders/preview")) {
+        apiRequests.push({ url, init });
+        return response({
+          known: 1,
+          unknownWithBins: 0,
+          unknownWithoutBins: 0,
+          rows: [{ vendor: "NEW", catalog: "CURRENT", known: true, hasBins: false, orderPurchase: 7, orderQuantity: 8 }],
+        });
+      }
+      if (url.endsWith("/admin/ai-status")) return response({ bots: {} });
+      if (url.endsWith("/inventory/enrich-summary")) return response({ total: 0, enriched: 0, unenriched: 0 });
+      if (url.endsWith("/inventory/bulk-enrich/status")) return response({ running: false, stopRequested: false, force: false, startedAt: null, processed: 0, errors: 0, total: null, finishedAt: null, lastError: null, model: null });
+      if (url.endsWith("/inventory/enrich-measurements/status")) return response({ running: false, startedAt: null, processed: 0, updated: 0, total: null, finishedAt: null, lastError: null });
+      return response({});
+    });
+
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Data Import")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Update OP/OQ Only")!); });
+    const chooseFiles = () => findPressable(screenRoot(), "Choose CSV, Excel, or ODS Files");
+    await act(async () => { fireEvent.press(chooseFiles()!); });
+    await waitFor(() => expect(mockReadSheet).toHaveBeenCalledTimes(1));
+    await act(async () => { fireEvent.press(chooseFiles()!); });
+
+    await waitFor(() => expect(hasText(screenRoot(), "current.csv")).toBe(true));
+    expect(hasText(screenRoot(), "Combined rows: 1")).toBe(true);
+    await act(async () => {
+      resolveOldRows([
+        ["Vendor", "Catalog", "OP", "OQ"],
+        ["OLD", "SLOW", 1, 2],
+      ]);
+    });
+    await flushPromises();
+
+    expect(hasText(screenRoot(), "current.csv")).toBe(true);
+    expect(hasText(screenRoot(), "slow.xlsx")).toBe(false);
+    expect(mockFetch.mock.calls.some(([url]) => url === "file://never.csv")).toBe(false);
+    expect(apiRequests).toHaveLength(1);
+    const previewBody = JSON.parse(String(apiRequests[0]!.init?.body)) as { csv: string };
+    expect(previewBody.csv).toContain('"NEW","CURRENT"');
+    expect(previewBody.csv).not.toContain('"OLD","SLOW"');
+  });
+
+  it("invalidates an unfinished OP/OQ parse when the import mode changes", async () => {
+    let resolveRows!: (rows: unknown[][]) => void;
+    const delayedRows = new Promise<unknown[][]>(resolve => { resolveRows = resolve; });
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [
+        { name: "delayed.xlsx", uri: "file://delayed.xlsx" },
+        { name: "second.csv", uri: "file://second-after-mode-change.csv" },
+      ],
+    });
+    mockReadSheet.mockImplementationOnce(() => delayedRows);
+    mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "file://delayed.xlsx") return response({});
+      if (url === "file://second-after-mode-change.csv") {
+        return response({}, 200, "Vendor,Catalog,OP,OQ\nOLD,SECOND,3,4");
+      }
+      if (url.endsWith("/admin/upload/preview") || url.endsWith("/admin/upload/orders/preview")) {
+        apiRequests.push({ url, init });
+      }
+      if (url.endsWith("/admin/ai-status")) return response({ bots: {} });
+      if (url.endsWith("/inventory/enrich-summary")) return response({ total: 0, enriched: 0, unenriched: 0 });
+      if (url.endsWith("/inventory/bulk-enrich/status")) return response({ running: false, stopRequested: false, force: false, startedAt: null, processed: 0, errors: 0, total: null, finishedAt: null, lastError: null, model: null });
+      if (url.endsWith("/inventory/enrich-measurements/status")) return response({ running: false, startedAt: null, processed: 0, updated: 0, total: null, finishedAt: null, lastError: null });
+      return response({});
+    });
+
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Data Import")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Update OP/OQ Only")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Choose CSV, Excel, or ODS Files")!); });
+    await waitFor(() => expect(mockReadSheet).toHaveBeenCalledTimes(1));
+
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Full Catalog Import")!); });
+    await act(async () => {
+      resolveRows([
+        ["Vendor", "Catalog", "OP", "OQ"],
+        ["OLD", "DELAYED", 1, 2],
+      ]);
+    });
+    await flushPromises();
+
+    expect(hasText(screenRoot(), "delayed.xlsx")).toBe(false);
+    expect(hasText(screenRoot(), "Preview (")).toBe(false);
+    expect(mockFetch.mock.calls.some(([url]) => url === "file://second-after-mode-change.csv")).toBe(false);
+    expect(apiRequests).toHaveLength(0);
+  });
+
+  it("keeps omitted OQ values out of an OP-only multi-file update", async () => {
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [
+        { name: "first-op.csv", uri: "file://first-op.csv" },
+        { name: "second-op.csv", uri: "file://second-op.csv" },
+      ],
+    });
+    mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "file://first-op.csv") return response({}, 200, "Vendor,Catalog,OP\nACME,OP-1,4");
+      if (url === "file://second-op.csv") return response({}, 200, "Vendor,Catalog,OP\nBETA,OP-2,7");
+      if (url.endsWith("/admin/upload/orders/preview")) {
+        apiRequests.push({ url, init });
+        return response({
+          known: 2,
+          unknownWithBins: 0,
+          unknownWithoutBins: 0,
+          rows: [
+            { vendor: "ACME", catalog: "OP-1", known: true, hasBins: false, orderPurchase: 4, orderQuantity: 0 },
+            { vendor: "BETA", catalog: "OP-2", known: true, hasBins: false, orderPurchase: 7, orderQuantity: 0 },
+          ],
+        });
+      }
+      if (url.endsWith("/admin/upload/orders")) {
+        apiRequests.push({ url, init });
+        return response({ updated: 2 });
+      }
+      if (url.endsWith("/admin/ai-status")) return response({ bots: {} });
+      if (url.endsWith("/inventory/enrich-summary")) return response({ total: 0, enriched: 0, unenriched: 0 });
+      if (url.endsWith("/inventory/bulk-enrich/status")) return response({ running: false, stopRequested: false, force: false, startedAt: null, processed: 0, errors: 0, total: null, finishedAt: null, lastError: null, model: null });
+      if (url.endsWith("/inventory/enrich-measurements/status")) return response({ running: false, startedAt: null, processed: 0, updated: 0, total: null, finishedAt: null, lastError: null });
+      return response({});
+    });
+
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Data Import")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Update OP/OQ Only")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Choose CSV, Excel, or ODS Files")!); });
+
+    await waitFor(() => expect(findPressable(screenRoot(), "Update OP/OQ (2)")?.props.disabled).toBe(false));
+    const previewBody = JSON.parse(String(apiRequests[0]!.init?.body)) as { csv: string };
+    expect(previewBody.csv.split("\n")[0]).toContain(",OP");
+    expect(previewBody.csv.split("\n")[0]).not.toContain(",OQ");
+
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Update OP/OQ (2)")!); });
+    await waitFor(() => expect(apiRequests).toHaveLength(2));
+    const updateBody = JSON.parse(String(apiRequests[1]!.init?.body)) as { csv: string };
+    expect(updateBody.csv).toBe(previewBody.csv);
+  });
+
+  it("identifies the file that changes an OP-only batch to OQ-only", async () => {
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [
+        { name: "op-values.csv", uri: "file://op-values.csv" },
+        { name: "oq-values.csv", uri: "file://oq-values.csv" },
+      ],
+    });
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url === "file://op-values.csv") return response({}, 200, "Vendor,Catalog,OP\nACME,ONE,4");
+      if (url === "file://oq-values.csv") return response({}, 200, "Vendor,Catalog,OQ\nBETA,TWO,7");
+      if (url.endsWith("/admin/ai-status")) return response({ bots: {} });
+      if (url.endsWith("/inventory/enrich-summary")) return response({ total: 0, enriched: 0, unenriched: 0 });
+      if (url.endsWith("/inventory/bulk-enrich/status")) return response({ running: false, stopRequested: false, force: false, startedAt: null, processed: 0, errors: 0, total: null, finishedAt: null, lastError: null, model: null });
+      if (url.endsWith("/inventory/enrich-measurements/status")) return response({ running: false, startedAt: null, processed: 0, updated: 0, total: null, finishedAt: null, lastError: null });
+      return response({});
+    });
+
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Data Import")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Update OP/OQ Only")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Choose CSV, Excel, or ODS Files")!); });
+
+    await waitFor(() => expect(hasText(screenRoot(), '"oq-values.csv" uses different OP/OQ columns')).toBe(true));
+    expect(hasText(screenRoot(), "oq-values.csv (failed)")).toBe(true);
+    expect(findPressable(screenRoot(), "Update OP/OQ (")).toBeNull();
+    expect(apiRequests).toHaveLength(0);
+  });
+
+  it("identifies an OP/OQ file that has no order columns", async () => {
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ name: "no-orders.csv", uri: "file://no-orders.csv" }],
+    });
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url === "file://no-orders.csv") return response({}, 200, "Vendor,Catalog\nACME,NONE");
+      if (url.endsWith("/admin/ai-status")) return response({ bots: {} });
+      if (url.endsWith("/inventory/enrich-summary")) return response({ total: 0, enriched: 0, unenriched: 0 });
+      if (url.endsWith("/inventory/bulk-enrich/status")) return response({ running: false, stopRequested: false, force: false, startedAt: null, processed: 0, errors: 0, total: null, finishedAt: null, lastError: null, model: null });
+      if (url.endsWith("/inventory/enrich-measurements/status")) return response({ running: false, startedAt: null, processed: 0, updated: 0, total: null, finishedAt: null, lastError: null });
+      return response({});
+    });
+
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Data Import")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Update OP/OQ Only")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Choose CSV, Excel, or ODS Files")!); });
+
+    await waitFor(() => expect(hasText(screenRoot(), 'No OP or OQ column found in "no-orders.csv"')).toBe(true));
+    expect(hasText(screenRoot(), "no-orders.csv (failed)")).toBe(true);
+    expect(findPressable(screenRoot(), "Update OP/OQ (")).toBeNull();
+    expect(apiRequests).toHaveLength(0);
+  });
+
+  it("keeps pasted OP/OQ input on the existing preview and update contract", async () => {
+    mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/admin/upload/orders/preview")) {
+        apiRequests.push({ url, init });
+        return response({
+          known: 1,
+          unknownWithBins: 0,
+          unknownWithoutBins: 0,
+          rows: [{ vendor: "PASTE", catalog: "OQ-1", known: true, hasBins: false, orderPurchase: 0, orderQuantity: 12 }],
+        });
+      }
+      if (url.endsWith("/admin/upload/orders")) {
+        apiRequests.push({ url, init });
+        return response({ updated: 1 });
+      }
+      if (url.endsWith("/admin/ai-status")) return response({ bots: {} });
+      if (url.endsWith("/inventory/enrich-summary")) return response({ total: 0, enriched: 0, unenriched: 0 });
+      if (url.endsWith("/inventory/bulk-enrich/status")) return response({ running: false, stopRequested: false, force: false, startedAt: null, processed: 0, errors: 0, total: null, finishedAt: null, lastError: null, model: null });
+      if (url.endsWith("/inventory/enrich-measurements/status")) return response({ running: false, startedAt: null, processed: 0, updated: 0, total: null, finishedAt: null, lastError: null });
+      return response({});
+    });
+
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Data Import")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Update OP/OQ Only")!); });
+    const pasteInput = screenRoot().queryAll(
+      (node: TestInstance) =>
+        (node.type as string) === "rn-text-input" &&
+        node.props.placeholder === "Vendor,Catalog,Description,BinLocation\nEATON,BR120,1 Pole Breaker,A1",
+      { includeSelf: true },
+    )[0];
+
+    await act(async () => {
+      fireEvent.changeText(pasteInput!, "Vendor,Catalog,OQ\nPASTE,OQ-1,12");
+      await new Promise(resolve => setTimeout(resolve, 450));
+    });
+    await waitFor(() => expect(findPressable(screenRoot(), "Update OP/OQ (1)")?.props.disabled).toBe(false));
+    const previewBody = JSON.parse(String(apiRequests[0]!.init?.body)) as { csv: string };
+    expect(previewBody.csv).toContain('"PASTE","OQ-1"');
+    expect(previewBody.csv.split("\n")[0]).not.toContain(",OP");
+    expect(previewBody.csv.split("\n")[0]).toContain(",OQ");
+
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Update OP/OQ (1)")!); });
+    await waitFor(() => expect(apiRequests).toHaveLength(2));
+    const updateBody = JSON.parse(String(apiRequests[1]!.init?.body)) as { csv: string };
+    expect(updateBody.csv).toBe(previewBody.csv);
+  });
+
+  it("blocks invalid pasted OP/OQ values without throwing or requesting preview", async () => {
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Data Import")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Update OP/OQ Only")!); });
+    const pasteInput = screenRoot().queryAll(
+      (node: TestInstance) =>
+        (node.type as string) === "rn-text-input" &&
+        node.props.placeholder === "Vendor,Catalog,Description,BinLocation\nEATON,BR120,1 Pole Breaker,A1",
+      { includeSelf: true },
+    )[0];
+
+    await act(async () => {
+      fireEvent.changeText(pasteInput!, "Vendor,Catalog,OP,OQ\nPASTE,BAD-1,-1,not-a-number");
+      await new Promise(resolve => setTimeout(resolve, 450));
+    });
+
+    expect(hasText(screenRoot(), "OP must be a non-negative whole number (row 2)")).toBe(true);
+    expect(hasText(screenRoot(), "Preview (")).toBe(false);
+    expect(findPressable(screenRoot(), "Update OP/OQ (")).toBeNull();
+    expect(apiRequests).toHaveLength(0);
+  });
 });
