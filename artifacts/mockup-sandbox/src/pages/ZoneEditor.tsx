@@ -787,6 +787,7 @@ export function ZoneEditor() {
   const selectedIdsRef = useRef(selectedIds);
   const svgInnerRef = useRef(svgInner);
   const svgDimsRef = useRef(svgDims);
+  const floorPlanRequestRef = useRef(0);
   const fillLoadingRef = useRef(false);
   const fillSensitivityRef = useRef(fillSensitivity);
   const snapEnabledRef = useRef(snapEnabled);
@@ -854,26 +855,38 @@ export function ZoneEditor() {
   // shown when both attempts fail or the env has no fallback configured.
   useEffect(() => {
     const controller = new AbortController();
+    const requestId = ++floorPlanRequestRef.current;
+    const isCurrent = () =>
+      aliveRef.current &&
+      floorPlanRequestRef.current === requestId &&
+      !controller.signal.aborted;
     void (async () => {
       const fallback = (import.meta.env.VITE_FLOOR_PLAN_API_FALLBACK as string | undefined)?.replace(/\/$/, "");
       const urls = [`${API_BASE}/floor-plan/svg`];
       if (fallback && fallback !== API_BASE) urls.push(`${fallback}/floor-plan/svg`);
       for (const url of urls) {
+        if (!isCurrent()) return;
         try {
           const res = await fetch(url, { signal: controller.signal });
           if (res.ok) {
             const raw = await res.text();
-            if (!aliveRef.current || controller.signal.aborted) return;
+            if (!isCurrent()) return;
             setSvgInner(extractSvgInner(raw));
             setSvgDims(extractSvgDims(raw));
             // Invalidate the raster cache whenever the floor plan changes.
             _rasterCache = null;
             return;
           }
-        } catch (err) { if (!isAbortError(err)) { /* fallback is best effort */ } }
+        } catch (err) {
+          if (isAbortError(err) || !isCurrent()) return;
+          /* fallback is best effort */
+        }
       }
     })();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      floorPlanRequestRef.current += 1;
+    };
   }, []);
 
   // Inject the floor plan SVG directly into the SVG DOM so it shares the same
