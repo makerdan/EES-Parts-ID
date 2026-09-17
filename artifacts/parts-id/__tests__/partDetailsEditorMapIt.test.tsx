@@ -30,15 +30,15 @@ import type { InventoryItem } from "@workspace/api-client-react";
 
 // Stable spy exposed to tests — prefixed "mock" so babel-jest hoists it
 // alongside the jest.mock() call that references it.
-const mockInvalidateQueries = jest.fn().mockResolvedValue(undefined);
+const mockInvalidateQueries = jest.fn();
 
 // Captures the onConfirm callback that PartDetailsEditor passes to
 // MeasurePartScreen so tests can invoke handleMeasureConfirm directly.
 let mockMeasureOnConfirm: ((dims: { length: number | null; width: number | null; height: number | null; diameter: number | null }) => void) | null = null;
 
 // Spy for the shared invalidateListCache utility.
-const mockInvalidateListCache = jest.fn().mockResolvedValue(undefined);
-const mockInvalidateAllCachesAfterSave = jest.fn().mockResolvedValue({ ok: true, failures: [] });
+const mockInvalidateListCache = jest.fn();
+const mockInvalidateAllCachesAfterSave = jest.fn();
 
 // ─── @/utils/apiBase ─────────────────────────────────────────────────────────
 
@@ -160,6 +160,18 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
 let activeTree: Awaited<ReturnType<typeof render>> | null = null;
+
+beforeEach(() => {
+  mockInvalidateQueries.mockResolvedValue(undefined);
+  mockInvalidateListCache.mockResolvedValue(undefined);
+  mockInvalidateAllCachesAfterSave.mockImplementation(async (opts: {
+    queryClient: { invalidateQueries: typeof mockInvalidateQueries };
+  }) => {
+    await mockInvalidateListCache({ queryClient: opts.queryClient });
+    await opts.queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+    return { ok: true, failures: [] };
+  });
+});
 
 afterEach(async () => {
   if (activeTree) {
@@ -296,6 +308,7 @@ describe("PartDetailsEditor – expanded-description save path", () => {
         expandedDescription: "Original AI-generated notes about this part",
       }),
     }));
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
 
     mockFetch.mockRestore();
   });
@@ -371,6 +384,7 @@ describe("PartDetailsEditor – expanded-description save path", () => {
       itemId: 1,
       updatedItem: expect.objectContaining({ id: 1, expandedDescription: null }),
     }));
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
 
     mockFetch.mockRestore();
   });
@@ -456,6 +470,10 @@ describe("PartDetailsEditor – dimensions save path", () => {
       itemId: 1,
       updatedItem: expect.objectContaining({ id: 1, dimensions: TEST_DIMS }),
     }));
+    expect(mockInvalidateListCache).toHaveBeenCalledWith(expect.objectContaining({
+      queryClient: expect.any(Object),
+    }));
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
 
     mockFetch.mockRestore();
   });
