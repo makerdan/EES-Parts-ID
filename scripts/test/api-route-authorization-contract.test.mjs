@@ -3,9 +3,13 @@
  * Static contract for privileged API route declarations.
  *
  * The route access matrix is the reviewable audience contract. This check
- * verifies that every entry marked admin-only is also visibly guarded at its
- * router declaration, so a future privileged endpoint cannot rely only on
- * broad app-level authentication.
+ * verifies both directions of the contract: every privileged matrix entry is
+ * visibly guarded at its router declaration, and every guarded declaration is
+ * inventoried in the matrix under the access label for its exact guard.
+ *
+ * It also rejects the former MFA enforcement primitives from production admin
+ * request handling. Admin authorization is role/status based; tests must not
+ * be made green by an MFA bypass flag or fabricated Clerk factor claims.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -43,9 +47,9 @@ function parseRouteMounts(source) {
 
 function parseAdminOnlyEntries(source) {
   const entryPattern =
-    /\{\s*method:\s*"(GET|POST|PUT|PATCH|DELETE)",\s*path:\s*"([^"]+)",\s*access:\s*"(public|approved-user|admin-only)"\s*\}/g;
+    /\{\s*method:\s*"(GET|POST|PUT|PATCH|DELETE)",\s*path:\s*"([^"]+)",\s*access:\s*"(public|approved-user|approved-admin|admin-only)"\s*\}/g;
   return [...source.matchAll(entryPattern)]
-    .filter((match) => match[3] === "admin-only")
+    .filter((match) => match[3] === "admin-only" || match[3] === "approved-admin")
     .map((match) => ({ method: match[1], path: match[2], access: match[3] }));
 }
 
@@ -53,6 +57,9 @@ function routeDeclarationsForModule(source, mount) {
   const declarationPattern =
     /router\.(get|post|put|patch|delete)\(\s*["']([^"']+)["']/g;
   const declarations = new Map();
+  const routerGuard = source.match(
+    /router\.use\(\s*(requireApprovedAdminAuth|requireAdminAuth)\s*\)/,
+  )?.[1];
 
   for (const match of source.matchAll(declarationPattern)) {
     const declarationStart = match.index ?? 0;
@@ -62,8 +69,12 @@ function routeDeclarationsForModule(source, mount) {
       lineEnd === -1 ? source.length : lineEnd,
     );
     const path = normalizePath(`${mount}/${match[2]}`);
+    const guard =
+      declarationLine.match(/\b(requireApprovedAdminAuth|requireAdminAuth)\b/)?.[1] ??
+      routerGuard;
     declarations.set(matrixKey(match[1], path), {
-      guarded: /\brequire(?:Approved)?AdminAuth\b/.test(declarationLine),
+      guard,
+      moduleName: null,
     });
   }
 
@@ -80,21 +91,77 @@ const declarations = new Map();
 for (const [moduleName, mount] of mounts) {
   const source = readFileSync(join(ROUTES_DIR, `${moduleName}.ts`), "utf8");
   for (const [key, declaration] of routeDeclarationsForModule(source, mount)) {
-    declarations.set(key, declaration);
+    declarations.set(key, { ...declaration, moduleName });
   }
 }
 
-const missingGuards = adminOnlyEntries
-  .filter((entry) => !declarations.get(matrixKey(entry.method, entry.path))?.guarded)
-  .map((entry) => `${entry.method} ${entry.path} — intended audience: ${entry.access}`);
+const matrixEntries = new Map(
+  adminOnlyEntries.map((entry) => [matrixKey(entry.method, entry.path), entry]),
+);
+const expectedGuardForAccess = {
+  "admin-only": "requireAdminAuth",
+  "approved-admin": "requireApprovedAdminAuth",
+};
+const missingOrWrongGuards = adminOnlyEntries
+  .filter((entry) => {
+    const declaration = declarations.get(matrixKey(entry.method, entry.path));
+    return declaration?.guard !== expectedGuardForAccess[entry.access];
+  })
+  .map((entry) => {
+    const declaration = declarations.get(matrixKey(entry.method, entry.path));
+    return `${entry.method} ${entry.path} — expected ${expectedGuardForAccess[entry.access]}, found ${declaration?.guard ?? "no declaration/guard"}`;
+  });
 
-if (missingGuards.length > 0) {
+if (missingOrWrongGuards.length > 0) {
   throw new Error([
-    "Unguarded privileged API route declarations:",
-    ...missingGuards.map((route) => `- ${route}`),
+    "Missing or incorrectly guarded privileged API route declarations:",
+    ...missingOrWrongGuards.map((route) => `- ${route}`),
+  ].join("\n"));
+}
+
+const unlistedGuardedRoutes = [...declarations]
+  .filter(([, declaration]) => declaration.guard)
+  .filter(([key, declaration]) => {
+    const matrixEntry = matrixEntries.get(key);
+    return !matrixEntry || expectedGuardForAccess[matrixEntry.access] !== declaration.guard;
+  })
+  .map(([key, declaration]) => `${key} — ${declaration.guard} in ${declaration.moduleName}.ts`);
+
+if (unlistedGuardedRoutes.length > 0) {
+  throw new Error([
+    "Guarded API route declarations missing or mislabeled in the access matrix:",
+    ...unlistedGuardedRoutes.map((route) => `- ${route}`),
+  ].join("\n"));
+}
+
+const forbiddenMfaPatterns = [
+  ["MFA_REQUIRED response", /\bMFA_REQUIRED\b/],
+  ["SKIP_ADMIN_MFA bypass", /\bSKIP_ADMIN_MFA\b/],
+  ["Clerk sessionClaims inspection", /\bsessionClaims\b/],
+  ["Clerk amr factor inspection", /(?:\.\s*amr\b|\[\s*["']amr["']\s*\])/],
+];
+const adminHandlingFiles = new Set([
+  join(ROOT, "artifacts/api-server/src/middlewares/requireAdminAuth.ts"),
+  ...[...declarations.values()]
+    .filter((declaration) => declaration.guard)
+    .map((declaration) => join(ROUTES_DIR, `${declaration.moduleName}.ts`)),
+]);
+const forbiddenMfaUses = [];
+for (const filePath of adminHandlingFiles) {
+  const source = readFileSync(filePath, "utf8");
+  for (const [label, pattern] of forbiddenMfaPatterns) {
+    if (pattern.test(source)) {
+      forbiddenMfaUses.push(`${filePath.slice(ROOT.length + 1)} — ${label}`);
+    }
+  }
+}
+if (forbiddenMfaUses.length > 0) {
+  throw new Error([
+    "MFA-specific behavior remains in administrator request handling:",
+    ...forbiddenMfaUses.map((use) => `- ${use}`),
   ].join("\n"));
 }
 
 console.log(
-  `API route authorization contract: ${adminOnlyEntries.length} admin-only declarations require an approved-admin guard.`,
+  `API route authorization contract: ${adminOnlyEntries.length} privileged declarations are fully inventoried, use the declared admin guard, and contain no MFA enforcement.`,
 );

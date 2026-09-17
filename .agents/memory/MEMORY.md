@@ -89,3 +89,4 @@
 - [Parts ID focused test runner](parts-id-focused-test-runner.md) — invoke Jest directly for one suite; the package wrapper requires the full suite-count floor.
 - [Auth-scoped durable drafts](auth-scoped-durable-drafts.md) — tie readiness to the exact user, clear UI state on identity changes, and serialize saves with logout deletion.
 - [RNTL 14 async fireEvent](rntl14-async-fireevent.md) — every fireEvent call returns a promise with its own act scope; await each interaction before starting another lifecycle helper.
+- [OpenAPI integer Zod enforcement](openapi-integer-zod-enforcement.md) — generated Zod schemas may accept fractions for OpenAPI integer fields; enforce safe integers at write boundaries.

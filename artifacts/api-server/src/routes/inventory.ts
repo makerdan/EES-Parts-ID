@@ -2707,6 +2707,12 @@ router.patch("/:id/order", requireAdminAuth, async (req, res) => {
     if (!parsed.success) {
       return void res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid order values" });
     }
+    if (
+      !Number.isSafeInteger(parsed.data.orderPurchase) ||
+      !Number.isSafeInteger(parsed.data.orderQuantity)
+    ) {
+      return void res.status(400).json({ error: "Order values must be non-negative integers" });
+    }
     const [updated] = await db.update(inventoryTable)
       .set({ orderPurchase: parsed.data.orderPurchase, orderQuantity: parsed.data.orderQuantity, updatedAt: new Date() })
       .where(eq(inventoryTable.id, id))

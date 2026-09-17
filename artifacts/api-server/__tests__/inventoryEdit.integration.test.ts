@@ -10,6 +10,7 @@
  *   PATCH /api/inventory/:id/expanded-description
  *   PATCH /api/inventory/:id/bins
  *   PATCH /api/inventory/:id/barcodes
+ *   PATCH /api/inventory/:id/order
  *   PATCH /api/inventory/:id/keywords
  *   PATCH /api/inventory/:id/dimensions  (partial + full)
  *   PATCH /api/inventory/:id/photo       (remove only — GCS upload is stubbed)
@@ -79,6 +80,8 @@ import type { EditableItem } from "./helpers/testDb";
 
 const ADMIN_TOKEN = ADMIN_TEST_USER_ID;
 const NON_ADMIN_USER = workerQualifiedUserId("jest-edit-nonadmin");
+const PENDING_ADMIN_USER = workerQualifiedUserId("jest-edit-pending-admin");
+const BANNED_ADMIN_USER = workerQualifiedUserId("jest-edit-banned-admin");
 
 let item: EditableItem;
 let restoreTestEnv: (() => void) | undefined;
@@ -98,6 +101,8 @@ beforeAll(async () => {
   // Insert a non-admin user so auth-guard tests can confirm 403.
   // seedTestUser derives the email from the clerkUserId (collision-safe).
   await seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" });
+  await seedTestUser({ clerkUserId: PENDING_ADMIN_USER, status: "pending", role: "admin" });
+  await seedTestUser({ clerkUserId: BANNED_ADMIN_USER, status: "banned", role: "admin" });
 
   item = await seedEditableItem();
 
@@ -109,6 +114,8 @@ afterAll(async () => {
   restoreTestEnv?.();
   await cleanupEditableItem();
   await cleanupTestUser(NON_ADMIN_USER);
+  await cleanupTestUser(PENDING_ADMIN_USER);
+  await cleanupTestUser(BANNED_ADMIN_USER);
 }, 30_000);
 
 function withAuth(req: supertest.Test, token?: string): supertest.Test {
@@ -140,6 +147,7 @@ describe("Edit route auth guard", () => {
     { label: "description",          getPath: () => `/api/inventory/${item?.id ?? 0}/description`,          body: { description: "x" } },
     { label: "bins",                 getPath: () => `/api/inventory/${item?.id ?? 0}/bins`,                 body: { binLocations: ["X1"] } },
     { label: "barcodes",             getPath: () => `/api/inventory/${item?.id ?? 0}/barcodes`,             body: { barcodes: ["999"] } },
+    { label: "order",                getPath: () => `/api/inventory/${item?.id ?? 0}/order`,                body: { orderPurchase: 1, orderQuantity: 2 } },
     { label: "keywords",             getPath: () => `/api/inventory/${item?.id ?? 0}/keywords`,             body: { keywords: ["relay"] } },
     { label: "dimensions",           getPath: () => `/api/inventory/${item?.id ?? 0}/dimensions`,           body: { length: 10 } },
     { label: "expanded-description", getPath: () => `/api/inventory/${item?.id ?? 0}/expanded-description`, body: { expandedDescription: "x" } },
@@ -173,6 +181,76 @@ describe("Edit route auth guard", () => {
       });
     });
   }
+
+  it.each([
+    ["pending admin", PENDING_ADMIN_USER],
+    ["banned admin", BANNED_ADMIN_USER],
+  ])("%s → 403 on a representative admin endpoint", async (_label, userId) => {
+    const res = await withAuth(
+      supertest(app)
+        .patch(`/api/inventory/${item.id}/order`)
+        .send({ orderPurchase: 1, orderQuantity: 2 }),
+      userId,
+    );
+    expect(res.status).toBe(403);
+    expect(res.body).toHaveProperty("error");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH /api/inventory/:id/order
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PATCH /api/inventory/:id/order", () => {
+  afterEach(async () => {
+    await db
+      .update(inventoryTable)
+      .set({ orderPurchase: 0, orderQuantity: 0 })
+      .where(eq(inventoryTable.id, item.id));
+  });
+
+  it("accepts an approved admin without MFA claims, persists OP/OQ, and returns the generated total", async () => {
+    const res = await withAuth(
+      supertest(app)
+        .patch(`/api/inventory/${item.id}/order`)
+        .send({ orderPurchase: 7, orderQuantity: 8 }),
+      ADMIN_TOKEN,
+    ).expect(200);
+
+    expect(res.body).toMatchObject({
+      id: item.id,
+      orderPurchase: 7,
+      orderQuantity: 8,
+      totalOpOq: 15,
+    });
+    const row = await fetchRow(item.id);
+    expect(row).toMatchObject({
+      orderPurchase: 7,
+      orderQuantity: 8,
+      totalOpOq: 15,
+    });
+  });
+
+  it.each([
+    ["a negative OP", { orderPurchase: -1, orderQuantity: 8 }],
+    ["a fractional OQ", { orderPurchase: 7, orderQuantity: 1.5 }],
+    ["a missing OQ", { orderPurchase: 7 }],
+  ])("rejects %s and leaves the prior OP/OQ values intact", async (_label, body) => {
+    const before = await fetchRow(item.id);
+    await withAuth(
+      supertest(app)
+        .patch(`/api/inventory/${item.id}/order`)
+        .send(body),
+      ADMIN_TOKEN,
+    ).expect(400);
+
+    const after = await fetchRow(item.id);
+    expect(after).toMatchObject({
+      orderPurchase: before?.orderPurchase,
+      orderQuantity: before?.orderQuantity,
+      totalOpOq: before?.totalOpOq,
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
