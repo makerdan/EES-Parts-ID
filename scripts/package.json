@@ -7,6 +7,7 @@
     "hello": "tsx ./src/hello.ts",
     "clean-keywords": "tsx ./src/clean-keywords.ts",
     "lint:mocks": "tsx ./src/check-mock-factories.ts",
+    "test:parsers": "tsx ./test/validation-parsers.test.ts",
     "tsconfig:check": "tsx ./src/check-tsconfig-refs.ts",
     "env:check": "tsx ./src/check-env-vars.ts",
     "privacy:check": "tsx ./src/check-production-privacy.ts",
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@types/pg": "^8.11.11",
-    "tsx": "catalog:"
+    "tsx": "catalog:",
+    "typescript": "~5.9.2"
   }
 }

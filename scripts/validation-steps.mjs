@@ -98,6 +98,7 @@ export const FAST = [
   ["api-spec-typecheck", "pnpm --filter @workspace/api-spec run typecheck"],
   ["lint", "node scripts/check-db-reachability.mjs && pnpm --filter @workspace/parts-id run lint && pnpm --filter @workspace/api-server run lint && pnpm --filter @workspace/mockup-sandbox run lint && pnpm run lint:libs"],
   ["lint-mocks", "pnpm --filter @workspace/scripts run lint:mocks"],
+  ["validation-parser-tests", "pnpm --filter @workspace/scripts run test:parsers"],
   ["tsconfig-check", "pnpm --filter @workspace/scripts run tsconfig:check"],
   ["port-authority-contract", "node scripts/test-port-authority.mjs"],
   ["port-guard", "node scripts/serial-lock.mjs --resource ports --priority 1 -- bash scripts/check-hardcoded-ports.sh"],

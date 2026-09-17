@@ -17,17 +17,27 @@ import { existsSync, readFileSync } from "fs";
 import { glob } from "fs/promises";
 import { dirname, relative, resolve } from "path";
 import { fileURLToPath } from "url";
+import ts from "typescript";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(SCRIPT_DIR, "../..");
 const ROOT_TSCONFIG = resolve(ROOT, "tsconfig.json");
 
-function readJsonStripComments(filePath: string): unknown {
+export function parseJsonConfig(filePath: string, raw = readFileSync(filePath, "utf-8")): unknown {
+  const parsed = ts.parseConfigFileTextToJson(filePath, raw);
+  if (!parsed.error) return parsed.config;
+
+  const message = ts.flattenDiagnosticMessageText(parsed.error.messageText, " ");
+  const position =
+    parsed.error.start === undefined
+      ? ""
+      : ` at offset ${parsed.error.start}`;
+  throw new Error(`Invalid JSONC in ${filePath}${position}: ${message}`);
+}
+
+export function readJsonConfig(filePath: string): unknown {
   const raw = readFileSync(filePath, "utf-8");
-  const stripped = raw
-    .replace(/\/\/[^\n]*/g, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "");
-  return JSON.parse(stripped);
+  return parseJsonConfig(filePath, raw);
 }
 
 function hasOptOut(tsconfigPath: string): boolean {
@@ -41,9 +51,19 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const rootConfig = readJsonStripComments(ROOT_TSCONFIG) as {
-    references?: Array<{ path: string }>;
-  };
+  let rootConfig: { references?: Array<{ path: string }> };
+  try {
+    rootConfig = readJsonConfig(ROOT_TSCONFIG) as {
+      references?: Array<{ path: string }>;
+    };
+  } catch (error) {
+    console.error(
+      `tsconfig:check FAILED — could not parse ${ROOT_TSCONFIG}.\n` +
+        `  ${error instanceof Error ? error.message : String(error)}`
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   const referencedPaths = new Set(
     (rootConfig.references ?? []).map((ref) => resolve(ROOT, ref.path))
@@ -97,4 +117,6 @@ async function main(): Promise<void> {
   process.exit(0);
 }
 
-main();
+if (process.argv[1] && import.meta.url === `file://${resolve(process.argv[1])}`) {
+  main();
+}
