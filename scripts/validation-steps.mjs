@@ -205,6 +205,7 @@ export const FAST = [
   ["lint-mocks", "pnpm --filter @workspace/scripts run lint:mocks"],
   ["validation-parser-tests", "pnpm --filter @workspace/scripts run test:parsers"],
   ["tsconfig-check", "pnpm --filter @workspace/scripts run tsconfig:check"],
+  ["static-validation-boundaries", "pnpm --filter @workspace/scripts exec tsx ../scripts/test/static-validation-boundaries.test.mjs"],
   ["port-authority-contract", "node scripts/test-port-authority.mjs"],
   ["port-guard", "node scripts/serial-lock.mjs --resource ports --priority 1 -- bash scripts/check-hardcoded-ports.sh"],
   ["bundle-domain-check", "pnpm --filter @workspace/parts-id run check:bundle-domain"],

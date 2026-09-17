@@ -1,5 +1,9 @@
 {
   "name": "@workspace/integrations-poe-server",
+  "knip": {
+    "entry": ["src/index.ts"],
+    "project": ["src/**/*.ts"]
+  },
   "version": "0.0.0",
   "private": true,
   "serverOnly": true,

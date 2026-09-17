@@ -1,5 +1,10 @@
 {
   "name": "@workspace/api-spec",
+
+  "knip": {
+    "entry": ["src/**/*.ts"],
+    "project": ["src/**/*.ts"]
+  },
   "version": "0.0.0",
   "private": true,
   "scripts": {

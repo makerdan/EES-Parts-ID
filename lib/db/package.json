@@ -1,5 +1,16 @@
 {
   "name": "@workspace/db",
+
+  "knip": {
+    "entry": [
+      "src/index.ts",
+      "src/schema/index.ts",
+      "src/runtimeDataBoundary.ts"
+    ],
+    "project": ["src/**/*.ts"],
+    "ignoreBinaries": ["drizzle-kit"],
+    "ignore": ["scripts/**"]
+  },
   "version": "0.0.0",
   "private": true,
   "serverOnly": true,

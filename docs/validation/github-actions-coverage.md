@@ -30,6 +30,7 @@ settings and live run status are not inferred from this file.
 | lint | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | lint-mocks | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | tsconfig-check | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |
+| static-validation-boundaries | `CI / required` → `pnpm run test-standard-plus` | focused fixtures prove nested TypeScript projects and server-package environment reads cannot be omitted silently | PR, merge queue, main push, manual | tracked contract test |
 | port-authority-contract | `CI / required` → `pnpm run test-standard-plus` | isolated cleanup and serialization contract coverage | PR, merge queue, main push, manual | tracked contract test |
 | port-guard | `CI / required` → `pnpm run test-standard-plus` | direct portable one-shot scan | PR, merge queue, main push, manual | inferred from tier manifest |
 | bundle-domain-check | `CI / required` → `pnpm run test-standard-plus` | direct portable coverage | PR, merge queue, main push, manual | inferred from tier manifest |

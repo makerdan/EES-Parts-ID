@@ -19,7 +19,7 @@
     "test-standard-plus": "SERIAL_LOCK_BUDGET_MS=2700000 node scripts/serial-lock.mjs --resource validation --priority 2 -- node scripts/run-tier.mjs standard-plus --allow-no-plan",
     "test-heavy": "SERIAL_LOCK_BUDGET_MS=2700000 node scripts/serial-lock.mjs --resource validation --priority 3 -- node scripts/run-tier.mjs heavy --allow-no-plan",
     "run-locked-tier": "node scripts/run-locked-tier.mjs",
-    "lint:libs": "eslint lib/ --ext .ts",
+    "lint:libs": "eslint lib/ --ext .ts && node scripts/check-dead-exports.mjs",
     "test": "bash scripts/test-all.sh",
     "audit": "pnpm audit",
     "audit:fix": "pnpm audit --fix"

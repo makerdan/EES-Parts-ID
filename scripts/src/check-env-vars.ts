@@ -14,15 +14,18 @@
  *   pnpm --filter @workspace/scripts env:check
  */
 
-import { readFileSync, readdirSync, statSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync, readdirSync } from "fs";
+import { join, resolve } from "path";
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..");
-const SCAN_DIRS = [
-  join(REPO_ROOT, "artifacts", "api-server", "src"),
-  join(REPO_ROOT, "lib", "db", "src"),
-];
-const ENV_EXAMPLE = join(REPO_ROOT, ".env.example");
+const SERVER_SOURCE_EXTENSIONS = new Set([
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+]);
 
 /**
  * EXPO_PUBLIC_* vars are Expo build-time client vars — not server env vars.
@@ -46,23 +49,99 @@ const CONTRACT_ONLY_VARS = new Set([
  * NODE_ENV is universally understood and is injected by the runtime.
  * JEST_WORKER_ID is injected by Jest in test workers; it is never set by users.
  */
-const ALWAYS_EXPECTED_IN_CODE = new Set(["NODE_ENV", "JEST_WORKER_ID"]);
+const ALWAYS_EXPECTED_IN_CODE = new Set([
+  "NODE_ENV",
+  "JEST_WORKER_ID",
+  "REPLIT_DEPLOYMENT",
+]);
 
 // ---------------------------------------------------------------------------
 // Collect all .ts files under a directory (recursive)
 // ---------------------------------------------------------------------------
-function collectTsFiles(dir: string): string[] {
+function collectSourceFiles(dir: string): string[] {
+  if (
+    dir.endsWith(".ts") ||
+    dir.endsWith(".tsx") ||
+    dir.endsWith(".js") ||
+    dir.endsWith(".jsx") ||
+    dir.endsWith(".mjs") ||
+    dir.endsWith(".cjs")
+  ) {
+    return [dir];
+  }
   const result: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    const stat = statSync(full);
-    if (stat.isDirectory()) {
-      result.push(...collectTsFiles(full));
-    } else if (entry.endsWith(".ts")) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules" || entry.name === "dist") continue;
+      result.push(...collectSourceFiles(full));
+    } else if (
+      entry.isFile() &&
+      SERVER_SOURCE_EXTENSIONS.has(
+        entry.name.slice(entry.name.lastIndexOf(".")),
+      )
+    ) {
       result.push(full);
     }
   }
-  return result;
+  return result.sort();
+}
+
+function collectServerSourceRoots(repoRoot: string): {
+  roots: string[];
+  missing: string[];
+} {
+  const roots: string[] = [];
+  const missing: string[] = [];
+  const apiSourceRoot = join(repoRoot, "artifacts", "api-server", "src");
+  if (existsSync(apiSourceRoot)) roots.push(apiSourceRoot);
+  else missing.push(apiSourceRoot);
+  const libRoot = join(repoRoot, "lib");
+  const pending = [libRoot];
+
+  while (pending.length > 0) {
+    const directory = pending.pop()!;
+    if (!existsSync(directory)) {
+      missing.push(directory);
+      continue;
+    }
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.name === "dist") continue;
+      const fullPath = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(fullPath);
+      } else if (entry.isFile() && entry.name === "package.json") {
+        let manifest: { serverOnly?: boolean };
+        try {
+          manifest = JSON.parse(readFileSync(fullPath, "utf-8")) as {
+            serverOnly?: boolean;
+          };
+        } catch (error) {
+          throw new Error(
+            `could not parse ${fullPath}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+        if (manifest.serverOnly === true) {
+          const sourceRoot = join(resolve(fullPath, ".."), "src");
+          if (existsSync(sourceRoot)) roots.push(sourceRoot);
+          else missing.push(sourceRoot);
+        }
+      }
+    }
+  }
+
+  // This checker itself contains the production privacy contract. Keeping it
+  // in the scan makes changes to that contract visible in env:check output.
+  const privacyChecker = join(
+    repoRoot,
+    "scripts",
+    "src",
+    "check-production-privacy.ts",
+  );
+  if (existsSync(privacyChecker)) roots.push(privacyChecker);
+  return { roots, missing };
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +154,7 @@ function collectTsFiles(dir: string): string[] {
 const ENV_VAR_PATTERN =
   /process\.env(?:\.([A-Z_][A-Z0-9_]*)|\[["']([A-Z_][A-Z0-9_]*)["']\])/g;
 
-function collectCodeVars(files: string[]): Set<string> {
+export function collectCodeVars(files: string[]): Set<string> {
   const vars = new Set<string>();
   for (const file of files) {
     const src = readFileSync(file, "utf-8");
@@ -107,60 +186,85 @@ function collectExampleVars(content: string): Set<string> {
   return vars;
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-const tsFiles = SCAN_DIRS.flatMap(collectTsFiles);
-const codeVars = collectCodeVars(tsFiles);
-const exampleContent = readFileSync(ENV_EXAMPLE, "utf-8");
-const exampleVars = collectExampleVars(exampleContent);
-
-const undocumented = [...codeVars]
-  .filter((v) => !exampleVars.has(v) && !IGNORED_UNDOCUMENTED_VARS.has(v))
-  .sort();
-
-const obsolete = [...exampleVars]
-  .filter(
-    (v) =>
-      !codeVars.has(v) &&
-      !CONTRACT_ONLY_VARS.has(v) &&
-      !IGNORED_PREFIXES.some((p) => v.startsWith(p)),
-  )
-  .sort();
-
-let hasError = false;
-
-if (undocumented.length > 0) {
-  console.error(
-    `\n❌  UNDOCUMENTED env vars (read in server code, missing from .env.example):\n`,
-  );
-  for (const v of undocumented) {
-    console.error(`   ${v}`);
+export function checkEnvVars(repoRoot = REPO_ROOT): {
+  scanRoots: string[];
+  scannedFiles: string[];
+  undocumented: string[];
+  obsolete: string[];
+} {
+  const { roots, missing } = collectServerSourceRoots(repoRoot);
+  if (missing.length > 0) {
+    throw new Error(
+      `declared server package source root(s) missing:\n${missing
+        .map((path) => `  • ${path}`)
+        .join("\n")}`,
+    );
   }
-  console.error(
-    `\nAdd entries for these vars to .env.example with a comment explaining\n` +
-    `their purpose, accepted values, and safe default (or "required").\n`,
-  );
-  hasError = true;
-} else {
-  console.log(`✅  All server env vars are documented in .env.example.`);
+  const scanRoots = roots.filter((root) => existsSync(root));
+  const scannedFiles = scanRoots.flatMap(collectSourceFiles);
+  const codeVars = collectCodeVars(scannedFiles);
+  const exampleContent = readFileSync(join(repoRoot, ".env.example"), "utf-8");
+  const exampleVars = collectExampleVars(exampleContent);
+  const undocumented = [...codeVars]
+    .filter((v) => !exampleVars.has(v) && !IGNORED_UNDOCUMENTED_VARS.has(v))
+    .sort();
+  const obsolete = [...exampleVars]
+    .filter(
+      (v) =>
+        !codeVars.has(v) &&
+        !CONTRACT_ONLY_VARS.has(v) &&
+        !IGNORED_PREFIXES.some((p) => v.startsWith(p)),
+    )
+    .sort();
+  return { scanRoots, scannedFiles, undocumented, obsolete };
 }
 
-if (obsolete.length > 0) {
-  console.warn(
-    `\n⚠️   OBSOLETE env vars (in .env.example, not read by server code):\n`,
-  );
-  for (const v of obsolete) {
-    console.warn(`   ${v}`);
+async function main(): Promise<void> {
+  try {
+    const { undocumented, obsolete } = checkEnvVars();
+    if (undocumented.length > 0) {
+      console.error(
+        `\n❌  UNDOCUMENTED env vars (read in server code, missing from .env.example):\n`,
+      );
+      for (const v of undocumented) {
+        console.error(`   ${v}`);
+      }
+      console.error(
+        `\nAdd entries for these vars to .env.example with a comment explaining\n` +
+          `their purpose, accepted values, and safe default (or "required").\n`,
+      );
+    } else {
+      console.log(`✅  All server env vars are documented in .env.example.`);
+    }
+
+    if (obsolete.length > 0) {
+      console.warn(
+        `\n⚠️   OBSOLETE env vars (in .env.example, not read by server code):\n`,
+      );
+      for (const v of obsolete) {
+        console.warn(`   ${v}`);
+      }
+      console.warn(
+        `\nThese are informational — remove them from .env.example if they are\n` +
+          `no longer needed, or keep them if they are still required by other services.\n`,
+      );
+    }
+
+    if (!undocumented.length && !obsolete.length) {
+      console.log(`✅  .env.example and server code are perfectly in sync.`);
+    }
+    process.exitCode = undocumented.length > 0 ? 1 : 0;
+  } catch (error) {
+    console.error(
+      `env:check FAILED — ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exitCode = 1;
   }
-  console.warn(
-    `\nThese are informational — remove them from .env.example if they are\n` +
-    `no longer needed, or keep them if they are still required by other services.\n`,
-  );
 }
 
-if (!undocumented.length && !obsolete.length) {
-  console.log(`✅  .env.example and server code are perfectly in sync.`);
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === resolve(import.meta.filename)
+) {
+  void main();
 }
-
-process.exit(hasError ? 1 : 0);

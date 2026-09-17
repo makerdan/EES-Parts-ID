@@ -12,7 +12,8 @@
     "pretypecheck": "node scripts/generate-router-types.mjs && node scripts/check-shim-compat-versions.mjs",
     "typecheck": "pnpm -w run typecheck:libs && tsc -p tsconfig.json --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck.tsbuildinfo",
     "test": "node scripts/run-tests.mjs",
-    "lint": "eslint . --ext .ts,.tsx",
+    "lint": "eslint . --ext .ts,.tsx && pnpm run dead-exports",
+    "dead-exports": "node ../../scripts/check-dead-exports.mjs --package-dir .",
     "gen:map": "node ../../scripts/gen-warehouse-map-raw.mjs assets/warehouse-map.svg assets/warehouse-map-raw.ts",
     "check:bundle-domain": "node scripts/check-bundle-domain.js",
     "test:serve-proxy": "node scripts/test-serve-proxy.mjs"

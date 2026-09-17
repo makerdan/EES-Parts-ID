@@ -1,5 +1,15 @@
 {
   "name": "@workspace/integrations-openai-ai-server",
+  "knip": {
+    "entry": [
+      "src/index.ts",
+      "src/batch/index.ts",
+      "src/image/index.ts",
+      "src/audio/index.ts"
+    ],
+    "project": ["src/**/*.{ts,tsx}"],
+    "ignoreBinaries": ["ffmpeg"]
+  },
   "version": "0.0.0",
   "private": true,
   "serverOnly": true,
