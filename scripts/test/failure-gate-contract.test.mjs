@@ -12,7 +12,7 @@ import {
   validateTaskCompletionEvidence,
 } from "../lib/tier-lock-check.mjs";
 import { baselineErrorsForPlan, validateCatalog } from "../lib/failure-baseline.mjs";
-import { DISTRIBUTION_FILES, verify as verifyDistribution } from "../publish-failure-gate.mjs";
+import { DISTRIBUTION_FILES, sync as syncDistribution, verify as verifyDistribution } from "../publish-failure-gate.mjs";
 import { getTierSteps } from "../validation-steps.mjs";
 
 let passed = 0;
@@ -279,6 +279,10 @@ try {
     assert.ok(names.indexOf("plan-gate-fix") < names.indexOf("plan-gate-check"));
     assert.ok(names.indexOf("regression-guard-fix") < names.indexOf("regression-guard"));
   });
+  test("standard runner synchronizes the package before checking its contract", () => {
+    const names = getTierSteps("standard").map(([name]) => name);
+    assert.ok(names.indexOf("failure-gate-package-sync") < names.indexOf("failure-gate-contract"));
+  });
   test("maintenance reports findings without becoming a validation failure", () => {
     const expiredPath = join(temp, "expired.json");
     writeFileSync(expiredPath, JSON.stringify({ version: 1, records: [{ ...record, reviewDeadline: "2026-08-01" }] }));
@@ -307,6 +311,8 @@ try {
     const zip = spawnSync("zip", ["-q", "-X", "-r", staleArchive, "."], { cwd: staging });
     assert.equal(zip.status, 0);
     assert.equal(verifyDistribution(staleArchive), false);
+    assert.equal(syncDistribution(staleArchive), true);
+    assert.equal(verifyDistribution(staleArchive), true);
   });
 } finally {
   rmSync(planPath, { force: true });

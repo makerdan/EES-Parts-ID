@@ -67,7 +67,7 @@ function verify(archivePath = archive) {
   return true;
 }
 
-function publish() {
+function publish(archivePath = archive) {
   const staging = mkdtempSync(join(tmpdir(), "failure-gate-package-"));
   try {
     copyFileSync(".agents/skills/failure-gate/SKILL.md", join(staging, "SKILL.md"));
@@ -80,7 +80,7 @@ function publish() {
       join(staging, "manifest.json"),
       JSON.stringify({ format: 1, source: ".agents/skills/failure-gate/SKILL.md", files: DISTRIBUTION_FILES }, null, 2) + "\n",
     );
-    const temporaryArchive = `${archive}.tmp`;
+    const temporaryArchive = `${archivePath}.tmp`;
     rmSync(temporaryArchive, { force: true });
     const result = spawnSync("zip", ["-q", "-X", "-r", temporaryArchive, "."], {
       cwd: staging,
@@ -90,19 +90,39 @@ function publish() {
       console.error(result.stderr || "[failure-gate-package] zip failed");
       return false;
     }
-    mkdirSync(dirname(archive), { recursive: true });
-    copyFileSync(temporaryArchive, archive);
+    mkdirSync(dirname(archivePath), { recursive: true });
+    copyFileSync(temporaryArchive, archivePath);
     rmSync(temporaryArchive, { force: true });
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }
-  if (!verify()) return false;
-  console.log(`[failure-gate-package] published ${archive}`);
+  if (!verify(archivePath)) return false;
+  console.log(`[failure-gate-package] published ${archivePath}`);
   return true;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.exit(process.argv.includes("--check") ? (verify() ? 0 : 1) : (publish() ? 0 : 1));
+function sync(archivePath = archive) {
+  if (verify(archivePath)) {
+    console.log(`[failure-gate-package] already current: ${archivePath}`);
+    return true;
+  }
+  console.log(`[failure-gate-package] refreshing stale distribution: ${archivePath}`);
+  return publish(archivePath);
 }
 
-export { publish, verify };
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const action = process.argv[2];
+  if (action && !["--check", "--sync"].includes(action)) {
+    console.error("Usage: node scripts/publish-failure-gate.mjs [--check|--sync]");
+    process.exit(2);
+  }
+  process.exit(
+    action === "--check"
+      ? (verify() ? 0 : 1)
+      : action === "--sync"
+        ? (sync() ? 0 : 1)
+        : (publish() ? 0 : 1),
+  );
+}
+
+export { publish, sync, verify };
