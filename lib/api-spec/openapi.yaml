@@ -915,8 +915,118 @@ paths:
                 required:
                   - error
 
+  /admin/snapshots:
+    get:
+      operationId: listAdminInventorySnapshots
+      tags: [admin]
+      summary: List verified private inventory snapshots
+      responses:
+        "200":
+          description: Snapshot metadata
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/InventorySnapshotSummary" }
+        "401": { description: Authentication required }
+        "403": { description: Approved admin required }
+    post:
+      operationId: createAdminInventorySnapshot
+      tags: [admin]
+      summary: Create a verified inventory snapshot
+      responses:
+        "201":
+          description: Snapshot created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InventorySnapshotSummary" }
+  /admin/snapshots/health:
+    get:
+      operationId: getAdminInventorySnapshotHealth
+      tags: [admin]
+      summary: Read inventory backup health
+      responses:
+        "200":
+          description: Backup health
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InventorySnapshotHealth" }
+  /admin/snapshots/dry-run:
+    post:
+      operationId: dryRunAdminInventorySnapshotRestore
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [snapshotId]
+              properties:
+                snapshotId: { type: string }
+      responses:
+        "200":
+          description: Restore comparison
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InventorySnapshotDryRun" }
+  /admin/snapshots/restore:
+    post:
+      operationId: restoreAdminInventorySnapshot
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [snapshotId, confirmationToken]
+              properties:
+                snapshotId: { type: string }
+                confirmationToken: { type: string, minLength: 10 }
+      responses:
+        "200": { description: Inventory restored }
+        "409": { description: Fresh dry-run confirmation required }
+
 components:
   schemas:
+    InventorySnapshotSummary:
+      type: object
+      properties:
+        formatVersion: { type: integer }
+        snapshotId: { type: string }
+        createdAt: { type: string, format: date-time }
+        reason: { type: string }
+        rowCount: { type: integer, minimum: 0 }
+        contentSha256: { type: string }
+        previousValidSnapshotId: { type: [string, "null"] }
+        lastKnownGood: { type: boolean }
+        anomaly: { type: [string, "null"] }
+      required: [formatVersion, snapshotId, createdAt, reason, rowCount, contentSha256, lastKnownGood, anomaly]
+    InventorySnapshotHealth:
+      type: object
+      properties:
+        status: { type: string, enum: [healthy, degraded, critical] }
+        latestSnapshotAt: { type: [string, "null"], format: date-time }
+        latestRowCount: { type: [integer, "null"] }
+        lastKnownGoodSnapshotAt: { type: [string, "null"], format: date-time }
+        lastKnownGoodSnapshotId: { type: [string, "null"] }
+        emptyInventoryAnomaly: { type: boolean }
+        ageHours: { type: [number, "null"] }
+      required: [status, latestSnapshotAt, latestRowCount, lastKnownGoodSnapshotAt, lastKnownGoodSnapshotId, emptyInventoryAnomaly, ageHours]
+    InventorySnapshotDryRun:
+      type: object
+      properties:
+        snapshotId: { type: string }
+        inserts: { type: integer, minimum: 0 }
+        removes: { type: integer, minimum: 0 }
+        updates: { type: integer, minimum: 0 }
+        currentRowCount: { type: integer, minimum: 0 }
+        snapshotRowCount: { type: integer, minimum: 0 }
+        confirmationToken: { type: string }
+        confirmationExpiresAt: { type: string, format: date-time }
+        currentInventorySha256: { type: string }
+      required: [snapshotId, inserts, removes, updates, currentRowCount, snapshotRowCount, confirmationToken, confirmationExpiresAt, currentInventorySha256]
     LivenessStatus:
       type: object
       properties:

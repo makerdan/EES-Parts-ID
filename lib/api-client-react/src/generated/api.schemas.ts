@@ -5,6 +5,62 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface InventorySnapshotSummary {
+  formatVersion: number;
+  snapshotId: string;
+  createdAt: string;
+  reason: string;
+  /** @minimum 0 */
+  rowCount: number;
+  contentSha256: string;
+  /** @nullable */
+  previousValidSnapshotId?: string | null;
+  lastKnownGood: boolean;
+  /** @nullable */
+  anomaly: string | null;
+}
+
+export type InventorySnapshotHealthStatus = typeof InventorySnapshotHealthStatus[keyof typeof InventorySnapshotHealthStatus];
+
+
+export const InventorySnapshotHealthStatus = {
+  healthy: 'healthy',
+  degraded: 'degraded',
+  critical: 'critical',
+} as const;
+
+export interface InventorySnapshotHealth {
+  status: InventorySnapshotHealthStatus;
+  /** @nullable */
+  latestSnapshotAt: string | null;
+  /** @nullable */
+  latestRowCount: number | null;
+  /** @nullable */
+  lastKnownGoodSnapshotAt: string | null;
+  /** @nullable */
+  lastKnownGoodSnapshotId: string | null;
+  emptyInventoryAnomaly: boolean;
+  /** @nullable */
+  ageHours: number | null;
+}
+
+export interface InventorySnapshotDryRun {
+  snapshotId: string;
+  /** @minimum 0 */
+  inserts: number;
+  /** @minimum 0 */
+  removes: number;
+  /** @minimum 0 */
+  updates: number;
+  /** @minimum 0 */
+  currentRowCount: number;
+  /** @minimum 0 */
+  snapshotRowCount: number;
+  confirmationToken: string;
+  confirmationExpiresAt: string;
+  currentInventorySha256: string;
+}
+
 export type LivenessStatusStatus = typeof LivenessStatusStatus[keyof typeof LivenessStatusStatus];
 
 
@@ -760,5 +816,15 @@ export type DeleteUserMe400 = {
 
 export type DeleteUserMe502 = {
   error: string;
+};
+
+export type DryRunAdminInventorySnapshotRestoreBody = {
+  snapshotId: string;
+};
+
+export type RestoreAdminInventorySnapshotBody = {
+  snapshotId: string;
+  /** @minLength 10 */
+  confirmationToken: string;
 };
 

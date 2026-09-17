@@ -6,6 +6,8 @@
  * dependency on google-auth-library (which would conflict with the version
  * already pulled in by @google-cloud/storage).
  */
+import type { Readable } from "node:stream";
+
 import type { StorageOptions } from "@google-cloud/storage";
 import { Storage } from "@google-cloud/storage";
 import { randomUUID } from "crypto";
@@ -92,6 +94,100 @@ export function isPrivateObjectPath(objectPath: string): boolean {
     gcsPath.startsWith(`${root}catalog-images/`) ||
     gcsPath.startsWith(`${root}${CATALOG_PDF_STAGING_NAMESPACE.slice(PRIVATE_NAMESPACE.length + 1)}/`)
   );
+}
+
+const INVENTORY_BACKUP_NAMESPACE = `${PRIVATE_NAMESPACE}/inventory-backups`;
+
+function inventoryBackupObjectPath(snapshotId: string, kind: "data" | "manifest"): string {
+  if (!/^[0-9a-f-]{20,80}$/i.test(snapshotId)) throw new Error("Invalid inventory snapshot ID");
+  return `/objects/${privateObjectDir()}/${INVENTORY_BACKUP_NAMESPACE}/${snapshotId}.${kind === "data" ? "jsonl.gz" : "json"}`;
+}
+
+function requireInventoryBackupPath(objectPath: string): string {
+  const expected = `${privateObjectDir()}/${INVENTORY_BACKUP_NAMESPACE}/`;
+  const gcsPath = objectPathToGcsPath(objectPath);
+  if (!gcsPath.startsWith(expected) || gcsPath.includes("..")) {
+    throw new Error("Object is not an inventory backup");
+  }
+  return gcsPath;
+}
+
+export function getInventoryBackupPaths(snapshotId: string): { dataPath: string; manifestPath: string } {
+  return {
+    dataPath: inventoryBackupObjectPath(snapshotId, "data"),
+    manifestPath: inventoryBackupObjectPath(snapshotId, "manifest"),
+  };
+}
+
+export async function writeInventoryBackupObject(
+  objectPath: string,
+  content: Buffer,
+  contentType: string,
+  metadata: Record<string, string>,
+): Promise<{ generation: string; size: number; md5Hash?: string }> {
+  const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
+  if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
+  const file = gcs.bucket(bucketId).file(requireInventoryBackupPath(objectPath));
+  await file.save(content, {
+    contentType,
+    resumable: false,
+    preconditionOpts: { ifGenerationMatch: 0 },
+    metadata: { cacheControl: "private, no-store", metadata },
+  });
+  const [info] = await file.getMetadata();
+  return {
+    generation: String(info.generation ?? ""),
+    size: Number(info.size ?? content.byteLength),
+    ...(info.md5Hash ? { md5Hash: info.md5Hash } : {}),
+  };
+}
+
+export async function writeInventoryBackupStream(
+  objectPath: string,
+  stream: Readable,
+  contentType: string,
+  metadata: Record<string, string>,
+): Promise<{ generation: string; size: number }> {
+  const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
+  if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
+  const file = gcs.bucket(bucketId).file(requireInventoryBackupPath(objectPath));
+  await new Promise<void>((resolve, reject) => {
+    const destination = file.createWriteStream({
+      contentType,
+      resumable: false,
+      preconditionOpts: { ifGenerationMatch: 0 },
+      metadata: { cacheControl: "private, no-store", metadata },
+    });
+    destination.once("finish", resolve);
+    destination.once("error", reject);
+    stream.once("error", reject);
+    stream.pipe(destination);
+  });
+  const [info] = await file.getMetadata();
+  return { generation: String(info.generation ?? ""), size: Number(info.size ?? 0) };
+}
+
+export async function readInventoryBackupObject(objectPath: string): Promise<Buffer> {
+  const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
+  if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
+  const [content] = await gcs.bucket(bucketId).file(requireInventoryBackupPath(objectPath)).download();
+  return content;
+}
+
+export async function listInventoryBackupManifestPaths(): Promise<Array<string>> {
+  const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
+  if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
+  const prefix = `${privateObjectDir()}/${INVENTORY_BACKUP_NAMESPACE}/`;
+  const [files] = await gcs.bucket(bucketId).getFiles({ prefix });
+  return files
+    .map((file) => `/objects/${file.name}`)
+    .filter((path) => path.endsWith(".json"));
+}
+
+export async function deleteInventoryBackupObject(objectPath: string): Promise<void> {
+  const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
+  if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
+  await gcs.bucket(bucketId).file(requireInventoryBackupPath(objectPath)).delete({ ignoreNotFound: true });
 }
 
 export function isPublicFloorPlanObjectPath(objectPath: string): boolean {

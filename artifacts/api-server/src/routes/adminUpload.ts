@@ -36,6 +36,7 @@ import { and,eq, or, sql } from "drizzle-orm";
 import { Request, Response, Router } from "express";
 
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
+import { createInventorySnapshotLocked, withInventorySnapshotLock } from "../lib/inventorySnapshot";
 import { requireApprovedAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
@@ -407,7 +408,12 @@ router.post("/upload", requireApprovedAdminAuth, async (req, res) => {
 
     // Wrap the entire upsert loop in a transaction so a mid-loop failure rolls
     // back all previously committed rows — enforcing all-or-nothing semantics.
-    await db.transaction(async (tx) => {
+    const mutate = async (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => {
+      // Production bulk imports are protected by a verified immutable snapshot
+      // on this same transaction-scoped advisory lock connection.
+      if (process.env.DATABASE_ENV === "production") {
+        await createInventorySnapshotLocked(tx, "pre-import");
+      }
       for (const row of rows) {
         // Atomic upsert via the (vendor, catalog) unique index. Mirrors the seed
         // importer pattern so concurrent uploads of the same key can't race on
@@ -444,7 +450,12 @@ router.post("/upload", requireApprovedAdminAuth, async (req, res) => {
         if (result[0]?.isNew) inserted++;
         else updated++;
       }
-    });
+    };
+    if (process.env.DATABASE_ENV === "production") {
+      await withInventorySnapshotLock(mutate);
+    } else {
+      await db.transaction(mutate);
+    }
 
     invalidateReferenceAnswerCache().catch(() => {});
 

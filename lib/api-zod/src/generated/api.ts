@@ -1533,3 +1533,99 @@ export const AiReferenceResponse = zod.void()
 export const DeleteUserMeResponse = zod.void()
 
 
+/**
+ * @summary List verified private inventory snapshots
+ */
+export const listAdminInventorySnapshotsResponseRowCountMin = 0;
+
+
+
+export const ListAdminInventorySnapshotsResponseItem = zod.object({
+  "formatVersion": zod.number(),
+  "snapshotId": zod.string(),
+  "createdAt": zod.coerce.date(),
+  "reason": zod.string(),
+  "rowCount": zod.number().min(listAdminInventorySnapshotsResponseRowCountMin),
+  "contentSha256": zod.string(),
+  "previousValidSnapshotId": zod.string().nullish(),
+  "lastKnownGood": zod.boolean(),
+  "anomaly": zod.string().nullable()
+})
+export const ListAdminInventorySnapshotsResponse = zod.array(ListAdminInventorySnapshotsResponseItem)
+
+
+/**
+ * @summary Create a verified inventory snapshot
+ */
+export const createAdminInventorySnapshotResponseRowCountMin = 0;
+
+
+
+export const CreateAdminInventorySnapshotResponse = zod.object({
+  "formatVersion": zod.number(),
+  "snapshotId": zod.string(),
+  "createdAt": zod.coerce.date(),
+  "reason": zod.string(),
+  "rowCount": zod.number().min(createAdminInventorySnapshotResponseRowCountMin),
+  "contentSha256": zod.string(),
+  "previousValidSnapshotId": zod.string().nullish(),
+  "lastKnownGood": zod.boolean(),
+  "anomaly": zod.string().nullable()
+})
+
+
+/**
+ * @summary Read inventory backup health
+ */
+export const GetAdminInventorySnapshotHealthResponse = zod.object({
+  "status": zod.enum(['healthy', 'degraded', 'critical']),
+  "latestSnapshotAt": zod.coerce.date().nullable(),
+  "latestRowCount": zod.number().nullable(),
+  "lastKnownGoodSnapshotAt": zod.coerce.date().nullable(),
+  "lastKnownGoodSnapshotId": zod.string().nullable(),
+  "emptyInventoryAnomaly": zod.boolean(),
+  "ageHours": zod.number().nullable()
+})
+
+
+export const DryRunAdminInventorySnapshotRestoreBody = zod.object({
+  "snapshotId": zod.string()
+})
+
+export const dryRunAdminInventorySnapshotRestoreResponseInsertsMin = 0;
+
+export const dryRunAdminInventorySnapshotRestoreResponseRemovesMin = 0;
+
+export const dryRunAdminInventorySnapshotRestoreResponseUpdatesMin = 0;
+
+export const dryRunAdminInventorySnapshotRestoreResponseCurrentRowCountMin = 0;
+
+export const dryRunAdminInventorySnapshotRestoreResponseSnapshotRowCountMin = 0;
+
+
+
+export const DryRunAdminInventorySnapshotRestoreResponse = zod.object({
+  "snapshotId": zod.string(),
+  "inserts": zod.number().min(dryRunAdminInventorySnapshotRestoreResponseInsertsMin),
+  "removes": zod.number().min(dryRunAdminInventorySnapshotRestoreResponseRemovesMin),
+  "updates": zod.number().min(dryRunAdminInventorySnapshotRestoreResponseUpdatesMin),
+  "currentRowCount": zod.number().min(dryRunAdminInventorySnapshotRestoreResponseCurrentRowCountMin),
+  "snapshotRowCount": zod.number().min(dryRunAdminInventorySnapshotRestoreResponseSnapshotRowCountMin),
+  "confirmationToken": zod.string(),
+  "confirmationExpiresAt": zod.coerce.date(),
+  "currentInventorySha256": zod.string()
+})
+
+
+export const restoreAdminInventorySnapshotBodyConfirmationTokenMin = 10;
+
+
+
+export const RestoreAdminInventorySnapshotBody = zod.object({
+  "snapshotId": zod.string(),
+  "confirmationToken": zod.string().min(restoreAdminInventorySnapshotBodyConfirmationTokenMin)
+})
+
+export const RestoreAdminInventorySnapshotResponse = zod.unknown()
+
+

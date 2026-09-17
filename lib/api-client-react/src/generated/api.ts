@@ -34,6 +34,7 @@ import type {
   DeleteUserMe502,
   DeleteWarehouseZone200,
   DictionaryLookupResponse,
+  DryRunAdminInventorySnapshotRestoreBody,
   EnrichInventoryBody,
   EstimateDimensionsBody,
   EstimateDimensionsResponse,
@@ -42,6 +43,9 @@ import type {
   HealthStatus,
   InventoryItem,
   InventoryListResponse,
+  InventorySnapshotDryRun,
+  InventorySnapshotHealth,
+  InventorySnapshotSummary,
   ListInventoryParams,
   LivenessStatus,
   LookupDictionaryParams,
@@ -49,6 +53,7 @@ import type {
   PublicWarehouseZoneListResponse,
   ReadinessFailure,
   ResetAdminAiRoutesBody,
+  RestoreAdminInventorySnapshotBody,
   SearchInventoryBody,
   SearchInventoryResponse,
   UpdateBarcodesBody,
@@ -3127,5 +3132,360 @@ export const useDeleteUserMe = <TError = ErrorType<DeleteUserMe400 | void | Dele
         TContext
       > => {
       return useMutation(getDeleteUserMeMutationOptions(options));
+    }
+
+export const getListAdminInventorySnapshotsUrl = () => {
+
+
+
+
+  return `/api/admin/snapshots`
+}
+
+/**
+ * @summary List verified private inventory snapshots
+ */
+export const listAdminInventorySnapshots = async ( options?: RequestInit): Promise<InventorySnapshotSummary[]> => {
+
+  return customFetch<InventorySnapshotSummary[]>(getListAdminInventorySnapshotsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminInventorySnapshotsQueryKey = () => {
+    return [
+    `/api/admin/snapshots`
+    ] as const;
+    }
+
+
+export const getListAdminInventorySnapshotsQueryOptions = <TData = Awaited<ReturnType<typeof listAdminInventorySnapshots>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminInventorySnapshots>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminInventorySnapshotsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminInventorySnapshots>>> = ({ signal }) => listAdminInventorySnapshots({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminInventorySnapshots>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminInventorySnapshotsQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminInventorySnapshots>>>
+export type ListAdminInventorySnapshotsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List verified private inventory snapshots
+ */
+
+export function useListAdminInventorySnapshots<TData = Awaited<ReturnType<typeof listAdminInventorySnapshots>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminInventorySnapshots>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminInventorySnapshotsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAdminInventorySnapshotUrl = () => {
+
+
+
+
+  return `/api/admin/snapshots`
+}
+
+/**
+ * @summary Create a verified inventory snapshot
+ */
+export const createAdminInventorySnapshot = async ( options?: RequestInit): Promise<InventorySnapshotSummary> => {
+
+  return customFetch<InventorySnapshotSummary>(getCreateAdminInventorySnapshotUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCreateAdminInventorySnapshotMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAdminInventorySnapshot>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAdminInventorySnapshot>>, TError,void, TContext> => {
+
+const mutationKey = ['createAdminInventorySnapshot'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAdminInventorySnapshot>>, void> = () => {
+
+
+          return  createAdminInventorySnapshot(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAdminInventorySnapshotMutationResult = NonNullable<Awaited<ReturnType<typeof createAdminInventorySnapshot>>>
+
+    export type CreateAdminInventorySnapshotMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Create a verified inventory snapshot
+ */
+export const useCreateAdminInventorySnapshot = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAdminInventorySnapshot>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAdminInventorySnapshot>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCreateAdminInventorySnapshotMutationOptions(options));
+    }
+
+export const getGetAdminInventorySnapshotHealthUrl = () => {
+
+
+
+
+  return `/api/admin/snapshots/health`
+}
+
+/**
+ * @summary Read inventory backup health
+ */
+export const getAdminInventorySnapshotHealth = async ( options?: RequestInit): Promise<InventorySnapshotHealth> => {
+
+  return customFetch<InventorySnapshotHealth>(getGetAdminInventorySnapshotHealthUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminInventorySnapshotHealthQueryKey = () => {
+    return [
+    `/api/admin/snapshots/health`
+    ] as const;
+    }
+
+
+export const getGetAdminInventorySnapshotHealthQueryOptions = <TData = Awaited<ReturnType<typeof getAdminInventorySnapshotHealth>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminInventorySnapshotHealth>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminInventorySnapshotHealthQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminInventorySnapshotHealth>>> = ({ signal }) => getAdminInventorySnapshotHealth({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminInventorySnapshotHealth>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminInventorySnapshotHealthQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminInventorySnapshotHealth>>>
+export type GetAdminInventorySnapshotHealthQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Read inventory backup health
+ */
+
+export function useGetAdminInventorySnapshotHealth<TData = Awaited<ReturnType<typeof getAdminInventorySnapshotHealth>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminInventorySnapshotHealth>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminInventorySnapshotHealthQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getDryRunAdminInventorySnapshotRestoreUrl = () => {
+
+
+
+
+  return `/api/admin/snapshots/dry-run`
+}
+
+export const dryRunAdminInventorySnapshotRestore = async (dryRunAdminInventorySnapshotRestoreBody: DryRunAdminInventorySnapshotRestoreBody, options?: RequestInit): Promise<InventorySnapshotDryRun> => {
+
+  return customFetch<InventorySnapshotDryRun>(getDryRunAdminInventorySnapshotRestoreUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(dryRunAdminInventorySnapshotRestoreBody)
+  }
+);}
+
+
+
+
+
+export const getDryRunAdminInventorySnapshotRestoreMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof dryRunAdminInventorySnapshotRestore>>, TError,{data: BodyType<DryRunAdminInventorySnapshotRestoreBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof dryRunAdminInventorySnapshotRestore>>, TError,{data: BodyType<DryRunAdminInventorySnapshotRestoreBody>}, TContext> => {
+
+const mutationKey = ['dryRunAdminInventorySnapshotRestore'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof dryRunAdminInventorySnapshotRestore>>, {data: BodyType<DryRunAdminInventorySnapshotRestoreBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  dryRunAdminInventorySnapshotRestore(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DryRunAdminInventorySnapshotRestoreMutationResult = NonNullable<Awaited<ReturnType<typeof dryRunAdminInventorySnapshotRestore>>>
+    export type DryRunAdminInventorySnapshotRestoreMutationBody = BodyType<DryRunAdminInventorySnapshotRestoreBody>
+    export type DryRunAdminInventorySnapshotRestoreMutationError = ErrorType<unknown>
+
+    export const useDryRunAdminInventorySnapshotRestore = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof dryRunAdminInventorySnapshotRestore>>, TError,{data: BodyType<DryRunAdminInventorySnapshotRestoreBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof dryRunAdminInventorySnapshotRestore>>,
+        TError,
+        {data: BodyType<DryRunAdminInventorySnapshotRestoreBody>},
+        TContext
+      > => {
+      return useMutation(getDryRunAdminInventorySnapshotRestoreMutationOptions(options));
+    }
+
+export const getRestoreAdminInventorySnapshotUrl = () => {
+
+
+
+
+  return `/api/admin/snapshots/restore`
+}
+
+export const restoreAdminInventorySnapshot = async (restoreAdminInventorySnapshotBody: RestoreAdminInventorySnapshotBody, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getRestoreAdminInventorySnapshotUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(restoreAdminInventorySnapshotBody)
+  }
+);}
+
+
+
+
+
+export const getRestoreAdminInventorySnapshotMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreAdminInventorySnapshot>>, TError,{data: BodyType<RestoreAdminInventorySnapshotBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof restoreAdminInventorySnapshot>>, TError,{data: BodyType<RestoreAdminInventorySnapshotBody>}, TContext> => {
+
+const mutationKey = ['restoreAdminInventorySnapshot'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof restoreAdminInventorySnapshot>>, {data: BodyType<RestoreAdminInventorySnapshotBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  restoreAdminInventorySnapshot(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RestoreAdminInventorySnapshotMutationResult = NonNullable<Awaited<ReturnType<typeof restoreAdminInventorySnapshot>>>
+    export type RestoreAdminInventorySnapshotMutationBody = BodyType<RestoreAdminInventorySnapshotBody>
+    export type RestoreAdminInventorySnapshotMutationError = ErrorType<void>
+
+    export const useRestoreAdminInventorySnapshot = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreAdminInventorySnapshot>>, TError,{data: BodyType<RestoreAdminInventorySnapshotBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof restoreAdminInventorySnapshot>>,
+        TError,
+        {data: BodyType<RestoreAdminInventorySnapshotBody>},
+        TContext
+      > => {
+      return useMutation(getRestoreAdminInventorySnapshotMutationOptions(options));
     }
 

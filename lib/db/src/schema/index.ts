@@ -8,6 +8,7 @@ export * from "./conversations";
 export * from "./electrical_slang_map";
 export * from "./floor_plan_meta";
 export * from "./inventory";
+export * from "./inventory_snapshot_audit";
 export * from "./map_anchor_points";
 export * from "./measure_enrich_job";
 export * from "./messages";

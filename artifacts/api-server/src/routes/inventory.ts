@@ -41,6 +41,7 @@ import Fuse from "fuse.js";
 
 import { getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
+import { createInventorySnapshotLocked, withInventorySnapshotLock } from "../lib/inventorySnapshot";
 import {
   getLogger,
   type InventoryResponseDiagnostic,
@@ -1712,6 +1713,10 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
     // number of round-trips vs. the previous one-insert-per-item approach.
     const CHUNK_SIZE = 500;
 
+    const executeBatch = async (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => {
+    if (process.env.DATABASE_ENV === "production") {
+      await createInventorySnapshotLocked(tx, "pre-import");
+    }
     for (let chunkStart = 0; chunkStart < items.length; chunkStart += CHUNK_SIZE) {
       const chunk = items.slice(chunkStart, chunkStart + CHUNK_SIZE);
 
@@ -1729,7 +1734,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
       // Atomic batch upsert via the (vendor, catalog) unique index. Mirrors the
       // seed-importer pattern so concurrent writers on the same key fall through
       // to the update branch rather than racing on the constraint.
-      const result = await db
+      const result = await tx
         .insert(inventoryTable)
         .values(
           dedupedChunk.map((item) => ({
@@ -1797,12 +1802,18 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
           } = { updatedAt: sql`now()` };
           if (item.orderPurchase === 0 || (isNewItem && item.orderPurchase === undefined)) zeroes.orderPurchase = 0;
           if (item.orderQuantity === 0 || (isNewItem && item.orderQuantity === undefined)) zeroes.orderQuantity = 0;
-          await db.update(inventoryTable).set(zeroes).where(and(
+          await tx.update(inventoryTable).set(zeroes).where(and(
             eq(inventoryTable.vendor, item.vendor.toUpperCase()),
             eq(inventoryTable.catalog, item.catalog),
           ));
         }
       }
+    }
+    };
+    if (process.env.DATABASE_ENV === "production") {
+      await withInventorySnapshotLock(executeBatch);
+    } else {
+      await db.transaction(executeBatch);
     }
 
     invalidateReferenceAnswerCache().catch(() => {});
