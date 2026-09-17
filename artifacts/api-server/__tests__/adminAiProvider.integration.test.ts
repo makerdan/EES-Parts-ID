@@ -18,14 +18,12 @@ const originalEnv = {
   POE_API_KEY2: process.env.POE_API_KEY2,
   AI_INTEGRATIONS_OPENAI_BASE_URL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
   AI_INTEGRATIONS_OPENAI_API_KEY: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  SKIP_ADMIN_MFA: process.env.SKIP_ADMIN_MFA,
 };
 
 process.env.AI_PROVIDER = "poe";
 process.env.POE_API_KEY2 = "test-poe-key";
 process.env.AI_INTEGRATIONS_OPENAI_BASE_URL = "https://test.openai.example/v1";
 process.env.AI_INTEGRATIONS_OPENAI_API_KEY = "test-openai-key";
-process.env.SKIP_ADMIN_MFA = "true";
 
 // ── Provider boundary mock ──────────────────────────────────────────────────────
 const mockCompletionsCreate = jest.fn();

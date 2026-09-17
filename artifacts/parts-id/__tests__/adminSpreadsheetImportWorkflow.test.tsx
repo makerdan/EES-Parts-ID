@@ -19,12 +19,9 @@ import * as DocumentPicker from "expo-document-picker";
 import * as SecureStore from "expo-secure-store";
 import { readSheet } from "read-excel-file/universal";
 
-const mockGetToken = jest.fn().mockResolvedValue("fresh-admin-token");
-const mockOpenUserProfile = jest.fn();
 let mockCurrentUserId: string | undefined = "admin-user";
 jest.mock("@clerk/expo", () => ({
-  useAuth: () => ({ userId: mockCurrentUserId, getToken: mockGetToken }),
-  useClerk: () => ({ openUserProfile: mockOpenUserProfile }),
+  useAuth: () => ({ userId: mockCurrentUserId }),
 }));
 
 jest.mock("expo-router", () => ({
@@ -347,9 +344,6 @@ beforeEach(() => {
   mockRefetch.mockReset();
   mockRefetch.mockResolvedValue(undefined);
   configureNetwork();
-  mockGetToken.mockReset();
-  mockGetToken.mockResolvedValue("fresh-admin-token");
-  mockOpenUserProfile.mockClear();
 });
 
 afterEach(async () => {
@@ -439,52 +433,6 @@ describe("UploadScreen — administrator spreadsheet import workflow", () => {
     expect(apiRequests.filter(request => request.url.endsWith("/admin/upload"))).toHaveLength(0);
     await act(async () => { fireEvent.press(findPressable(screenRoot(), "I reviewed the restored import")!); });
     expect(findPressable(screenRoot(), "Upload 1 Items")?.props.disabled).toBe(false);
-  });
-
-  it("preserves the import and requires a fresh preview after a dormant MFA_REQUIRED response", async () => {
-    let previewCount = 0;
-    mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === "file://valid-workbook.xlsx") return response({});
-      if (url.endsWith("/admin/ai-status")) return response({ bots: {} });
-      if (url.endsWith("/inventory/enrich-summary")) return response({ total: 0, enriched: 0, unenriched: 0 });
-      if (url.endsWith("/inventory/bulk-enrich/status")) return response({ running: false, stopRequested: false, force: false, startedAt: null, processed: 0, errors: 0, total: null, finishedAt: null, lastError: null, model: null });
-      if (url.endsWith("/inventory/enrich-measurements/status")) return response({ running: false, startedAt: null, processed: 0, updated: 0, total: null, finishedAt: null, lastError: null });
-      if (url.endsWith("/admin/upload/preview")) {
-        apiRequests.push({ url, init });
-        previewCount += 1;
-        if (previewCount === 1) return response({ error: "MFA required", code: "MFA_REQUIRED" }, 403);
-        return response({ willReplaceBins: 0, willAddBins: 1, willPreserveBins: 0, noChange: 0, rows: [], willReplaceBarcodes: 0, willAddBarcodes: 0, willPreserveBarcodes: 0, willBarcodeConflicts: 0 });
-      }
-      if (url.endsWith("/admin/upload")) {
-        apiRequests.push({ url, init });
-        return response({ inserted: 1, updated: 0, total: 1 });
-      }
-      return response({});
-    });
-
-    activeTree = await render(<UploadScreen />);
-    await flushPromises();
-    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Data Import")!); });
-    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Choose CSV, Excel, or ODS File")!); });
-    await waitFor(() => expect(hasText(screenRoot(), "Two-factor authentication is required")).toBe(true));
-
-    expect(hasText(screenRoot(), "Preview (1 rows)")).toBe(true);
-    expect(apiRequests.filter(request => request.url.endsWith("/admin/upload"))).toHaveLength(0);
-    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Open Account Settings")!); });
-    expect(mockOpenUserProfile).toHaveBeenCalledTimes(1);
-
-    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Retry import preview")!); });
-    await waitFor(() => expect(apiRequests.filter(request => request.url.endsWith("/admin/upload/preview"))).toHaveLength(2));
-    expect(mockGetToken).toHaveBeenCalledWith({ skipCache: true });
-    expect(apiRequests[1]!.init?.headers).toMatchObject({ Authorization: "Bearer fresh-admin-token" });
-
-    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Upload 1 Items")!); });
-    await waitFor(() => expect(apiRequests.filter(request => request.url.endsWith("/admin/upload"))).toHaveLength(1));
-    expect(apiRequests.map(request => request.url)).toEqual([
-      expect.stringContaining("/admin/upload/preview"),
-      expect.stringContaining("/admin/upload/preview"),
-      expect.stringMatching(/\/admin\/upload$/),
-    ]);
   });
 
   it("previews before commit, requires confirmation, completes upload, and rejects stale invalid selections", async () => {

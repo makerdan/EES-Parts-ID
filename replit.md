@@ -314,19 +314,11 @@ health checks use `GET /api/healthz`, which reaches the Express backend and
 requires a parsed `ok` or `degraded` status rather than accepting an SPA HTML
 fallback.
 
-## Admin MFA Enforcement
+## Admin Authorization
 
-Admin endpoints enforce multi-factor authentication **by default**. Any admin session that lacks a completed second factor (`totp`, `phone_code`, or hardware key) in the Clerk `amr` session claim receives:
+Admin endpoints require an authenticated Clerk session mapped to an approved application user with the `admin` role (`requireAppAuth` + `requireAdminAuth`/`requireApprovedAdminAuth`). Access does not depend on Clerk session MFA claims — an approved admin is authorized regardless of which second factors are present on their session. MFA remains available as a Clerk account-level setting but is not part of this application's authorization boundary.
 
-```
-403 { error: "MFA required for admin access", code: "MFA_REQUIRED" }
-```
-
-**Temporary bypass (high risk):** Set `SKIP_ADMIN_MFA=true` in the API server environment to disable MFA enforcement for approved Admin-role users. This explicit bypass works in every environment, including production, and permits password-only Admin sessions. Authentication, approved account status, and Admin-role checks remain enforced. The server emits a high-visibility security warning at startup whenever the bypass is active.
-
-Remove `SKIP_ADMIN_MFA` or set it to any value other than the exact string `true` to restore MFA enforcement without a code change. Use the bypass only for the shortest necessary period and reactivate MFA as soon as uninterrupted Admin access is no longer required.
-
-> **Migration from the old opt-in flag:** If your deployment previously set `ENFORCE_ADMIN_MFA=true`, you can safely remove that variable — MFA is now on by default and that variable is no longer read.
+> **Migration note:** admin routes previously enforced a second-factor (`amr`) claim by default and could be bypassed with `SKIP_ADMIN_MFA=true`. Both the enforcement and the bypass have been removed; that environment variable is no longer read.
 
 **Admin enrollment:** Admins enable two-factor authentication through the Clerk account portal (Settings → Security → Two-step verification). The mobile app surfaces an Alert with a button to open the portal when MFA is required.
 

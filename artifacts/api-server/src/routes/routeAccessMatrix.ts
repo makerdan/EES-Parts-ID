@@ -7,8 +7,14 @@
  *
  *   public        — no Clerk session; only health and warehouse layout reads
  *   approved-user — valid Clerk session mapped to an approved application user
- *   approved-admin — approved admin role without an MFA claim requirement
- *   admin-only     — approved admin role and the current session's MFA factor
+ *   approved-admin — approved admin role (requireApprovedAdminAuth)
+ *   admin-only     — approved admin role (requireAdminAuth)
+ *
+ * `approved-admin` and `admin-only` both require an authenticated, approved
+ * administrator and do not inspect Clerk session MFA claims. The two labels
+ * are kept distinct only so each route declaration keeps naming its intended
+ * guard function explicitly next to the handler; they carry no behavioral
+ * difference.
  *
  * The common approved-user guard is mounted once in app.ts. Admin routes also
  * carry requireAdminAuth at their individual route declaration so the

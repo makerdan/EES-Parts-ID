@@ -1,15 +1,16 @@
 /**
- * Unit tests for the MFA enforcement logic in requireAdminAuth.
+ * Regression coverage proving MFA claims are irrelevant to admin
+ * authorization.
  *
- * These tests exercise the middleware function directly (not through the full
- * Express app) to isolate the MFA claim-checking logic from the DB and Clerk
- * API layers. The fast path (res.locals.appUser already set by requireAppAuth)
- * is used so no database round-trip is needed.
- *
- * MFA is enforced by default. Three cases:
- *   (a) Admin session WITH a recognised MFA amr claim (default) → passes (next() called)
- *   (b) Admin session WITHOUT MFA amr claim (default)           → 403 MFA_REQUIRED
- *   (c) SKIP_ADMIN_MFA=true                                     → passes regardless of amr
+ * The middleware exercised here (`requireAdminAuth`, `requireApprovedAdminAuth`,
+ * `hasCurrentAdminAccess`) used to reject an otherwise-approved admin whose
+ * Clerk session lacked a recognised second-factor (`amr`) claim, returning
+ * `403 { code: "MFA_REQUIRED" }` unless `SKIP_ADMIN_MFA=true` was set. That
+ * enforcement and its bypass have been removed entirely: an authenticated,
+ * approved administrator is admitted regardless of session MFA claims, and no
+ * environment variable changes that outcome. Every other authorization state
+ * (unauthenticated, pending, banned, non-admin) must remain rejected exactly
+ * as before.
  */
 
 import { type NextFunction, type Request, type Response } from "express";
@@ -88,7 +89,7 @@ function buildMocks(
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("requireAdminAuth — MFA enforcement", () => {
+describe("requireAdminAuth / requireApprovedAdminAuth — MFA claims are irrelevant", () => {
   const ORIGINAL_SKIP = process.env.SKIP_ADMIN_MFA;
   const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 
@@ -109,203 +110,69 @@ describe("requireAdminAuth — MFA enforcement", () => {
     mockDbRows = [];
   });
 
-  it("(a) passes when admin session includes totp amr claim (MFA enforced by default)", () => {
-    delete process.env.SKIP_ADMIN_MFA;
-    mockSessionClaims = { amr: ["pwd", "totp"] };
-
-    const { req, res, next } = buildMocks("admin");
-    requireAdminAuth(req, res, next);
-
-    expect(next).toHaveBeenCalledTimes(1);
-    expect(res.status).not.toHaveBeenCalled();
-  });
-
-  it("(a) passes when admin session includes phone_code amr claim (MFA enforced by default)", () => {
-    delete process.env.SKIP_ADMIN_MFA;
-    mockSessionClaims = { amr: ["pwd", "phone_code"] };
-
-    const { req, res, next } = buildMocks("admin");
-    requireAdminAuth(req, res, next);
-
-    expect(next).toHaveBeenCalledTimes(1);
-    expect(res.status).not.toHaveBeenCalled();
-  });
-
-  it("(b) returns 403 MFA_REQUIRED when amr is absent (MFA enforced by default)", () => {
-    delete process.env.SKIP_ADMIN_MFA;
-    mockSessionClaims = { amr: ["pwd"] };
-
-    const { req, res, next } = buildMocks("admin");
-    requireAdminAuth(req, res, next);
-
-    expect(next).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(403);
-    const responseBody = (res.status as jest.Mock).mock.results[0].value;
-    expect(responseBody.json).toHaveBeenCalledWith(
-      expect.objectContaining({ code: "MFA_REQUIRED" }),
-    );
-  });
-
-  it("(b) returns 403 MFA_REQUIRED when sessionClaims is null (MFA enforced by default)", () => {
-    delete process.env.SKIP_ADMIN_MFA;
-    mockSessionClaims = null;
-
-    const { req, res, next } = buildMocks("admin");
-    requireAdminAuth(req, res, next);
-
-    expect(next).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(403);
-    const responseBody = (res.status as jest.Mock).mock.results[0].value;
-    expect(responseBody.json).toHaveBeenCalledWith(
-      expect.objectContaining({ code: "MFA_REQUIRED" }),
-    );
-  });
-
-  it("(c) passes without MFA when SKIP_ADMIN_MFA=true", () => {
-    process.env.SKIP_ADMIN_MFA = "true";
-    mockSessionClaims = { amr: ["pwd"] };
-
-    const { req, res, next } = buildMocks("admin");
-    requireAdminAuth(req, res, next);
-
-    expect(next).toHaveBeenCalledTimes(1);
-    expect(res.status).not.toHaveBeenCalled();
-  });
-
-  it("(c) passes without MFA when SKIP_ADMIN_MFA=true and sessionClaims is null", () => {
-    process.env.SKIP_ADMIN_MFA = "true";
-    mockSessionClaims = null;
-
-    const { req, res, next } = buildMocks("admin");
-    requireAdminAuth(req, res, next);
-
-    expect(next).toHaveBeenCalledTimes(1);
-    expect(res.status).not.toHaveBeenCalled();
-  });
-
-  it("passes for an approved admin without MFA in production when SKIP_ADMIN_MFA=true", () => {
-    process.env.NODE_ENV = "production";
-    process.env.SKIP_ADMIN_MFA = "true";
-    mockSessionClaims = { amr: ["pwd"] };
-
-    const { req, res, next } = buildMocks("admin");
-    requireAdminAuth(req, res, next);
-
-    expect(next).toHaveBeenCalledTimes(1);
-    expect(res.status).not.toHaveBeenCalled();
-  });
-
-  it("requires MFA in production when SKIP_ADMIN_MFA is disabled", () => {
-    process.env.NODE_ENV = "production";
-    process.env.SKIP_ADMIN_MFA = "false";
-    mockSessionClaims = { amr: ["pwd"] };
-
-    const { req, res, next } = buildMocks("admin");
-    requireAdminAuth(req, res, next);
-
-    expect(next).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(403);
-    const responseBody = (res.status as jest.Mock).mock.results[0].value;
-    expect(responseBody.json).toHaveBeenCalledWith(expect.objectContaining({ code: "MFA_REQUIRED" }));
-  });
-
   it.each([
-    ["approved non-admin", "user", "approved"],
-    ["pending admin", "admin", "pending"],
-    ["banned admin", "admin", "banned"],
-  ] as const)("%s remains rejected when the production bypass is active", (_label, role, status) => {
-    process.env.NODE_ENV = "production";
-    process.env.SKIP_ADMIN_MFA = "true";
-    mockSessionClaims = { amr: ["pwd"] };
+    ["a completed MFA amr claim", { amr: ["pwd", "totp"] }],
+    ["a phone_code amr claim", { amr: ["pwd", "phone_code"] }],
+    ["no second factor at all", { amr: ["pwd"] }],
+    ["null sessionClaims", null],
+  ] as const)("requireAdminAuth passes an approved admin with %s", (_label, claims) => {
+    mockSessionClaims = claims;
 
-    const { req, res, next } = buildMocks(role, status);
+    const { req, res, next } = buildMocks("admin");
     requireAdminAuth(req, res, next);
 
-    expect(next).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(403);
-    const responseBody = (res.status as jest.Mock).mock.results[0].value;
-    expect(responseBody.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: "Admin access required" }),
-    );
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(res.status).not.toHaveBeenCalled();
   });
 
-  it("unauthenticated requests remain rejected when the production bypass is active", () => {
-    process.env.NODE_ENV = "production";
-    process.env.SKIP_ADMIN_MFA = "true";
-    mockUserId = null;
-
-    const { req, res, next } = buildMocks("admin", "approved", false);
-    requireAdminAuth(req, res, next);
-
-    expect(next).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(401);
-  });
-
-  describe("hasCurrentAdminAccess", () => {
-    it("allows a password-only approved admin in production when the bypass is active", async () => {
-      process.env.NODE_ENV = "production";
-      process.env.SKIP_ADMIN_MFA = "true";
-      mockSessionClaims = { amr: ["pwd"] };
-      mockDbRows = [{ role: "admin", status: "approved" }];
-
-      const { req } = buildMocks("admin");
-      await expect(hasCurrentAdminAccess(req)).resolves.toBe(true);
-    });
-
-    it("requires MFA when the bypass is disabled", async () => {
-      process.env.NODE_ENV = "production";
-      process.env.SKIP_ADMIN_MFA = "false";
-      mockSessionClaims = { amr: ["pwd"] };
-      mockDbRows = [{ role: "admin", status: "approved" }];
-
-      const { req } = buildMocks("admin");
-      await expect(hasCurrentAdminAccess(req)).resolves.toBe(false);
-    });
-
-    it.each([
-      ["non-admin", "user", "approved"],
-      ["pending admin", "admin", "pending"],
-      ["banned admin", "admin", "banned"],
-    ] as const)("%s remains blocked when the production bypass is active", async (_label, role, status) => {
-      process.env.NODE_ENV = "production";
-      process.env.SKIP_ADMIN_MFA = "true";
-      mockSessionClaims = { amr: ["pwd"] };
-      mockDbRows = [{ role, status }];
-
-      const { req } = buildMocks("admin");
-      await expect(hasCurrentAdminAccess(req)).resolves.toBe(false);
-    });
-
-    it("rejects an unauthenticated request when the production bypass is active", async () => {
-      process.env.NODE_ENV = "production";
-      process.env.SKIP_ADMIN_MFA = "true";
-      mockUserId = null;
-
-      const { req } = buildMocks("admin");
-      await expect(hasCurrentAdminAccess(req)).resolves.toBe(false);
-    });
-  });
-
-  describe("requireApprovedAdminAuth — narrowly scoped approved-admin exception", () => {
-    it("allows an approved admin without an MFA claim", () => {
+  it("never returns the MFA_REQUIRED response shape, with or without SKIP_ADMIN_MFA set", () => {
+    for (const skip of [undefined, "true", "false"]) {
+      if (skip === undefined) delete process.env.SKIP_ADMIN_MFA;
+      else process.env.SKIP_ADMIN_MFA = skip;
       mockSessionClaims = { amr: ["pwd"] };
 
-      const { req, res, next } = buildMocks("admin");
-      requireApprovedAdminAuth(req, res, next);
+      const { req, res, next, status } = buildMocks("admin");
+      requireAdminAuth(req, res, next);
 
       expect(next).toHaveBeenCalledTimes(1);
-      expect(res.status).not.toHaveBeenCalled();
-    });
+      expect(status).not.toHaveBeenCalledWith(403);
+    }
+  });
 
+  it("requireApprovedAdminAuth also admits an approved admin without an MFA claim", () => {
+    mockSessionClaims = { amr: ["pwd"] };
+
+    const { req, res, next } = buildMocks("admin");
+    requireApprovedAdminAuth(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("SKIP_ADMIN_MFA has no effect on the outcome for a non-admin", () => {
+    process.env.SKIP_ADMIN_MFA = "true";
+    mockSessionClaims = { amr: ["pwd", "totp"] };
+
+    const { req, res, next } = buildMocks("user", "approved");
+    requireAdminAuth(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+
+  describe.each([
+    ["requireAdminAuth", requireAdminAuth],
+    ["requireApprovedAdminAuth", requireApprovedAdminAuth],
+  ] as const)("%s — other authorization states remain enforced", (_name, guard) => {
     it.each([
       ["approved non-admin", "user", "approved"],
       ["pending admin", "admin", "pending"],
       ["banned admin", "admin", "banned"],
-    ] as const)("%s is rejected without MFA", (_label, role, status) => {
-      mockSessionClaims = { amr: ["pwd"] };
+    ] as const)("%s is rejected with 403 regardless of MFA claims", (_label, role, status) => {
+      mockSessionClaims = { amr: ["pwd", "totp"] };
 
       const { req, res, next } = buildMocks(role, status);
-      requireApprovedAdminAuth(req, res, next);
+      guard(req, res, next);
 
       expect(next).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(403);
@@ -315,11 +182,11 @@ describe("requireAdminAuth — MFA enforcement", () => {
       );
     });
 
-    it("rejects an unauthenticated request before checking the database", () => {
+    it("rejects an unauthenticated request with 401 before checking MFA or role", () => {
       mockUserId = null;
 
       const { req, res, next } = buildMocks("admin", "approved", false);
-      requireApprovedAdminAuth(req, res, next);
+      guard(req, res, next);
 
       expect(next).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(401);
@@ -328,18 +195,34 @@ describe("requireAdminAuth — MFA enforcement", () => {
         expect.objectContaining({ error: "Authentication required" }),
       );
     });
+  });
 
-    it("does not weaken the default guard used by unrelated admin operations", () => {
+  describe("hasCurrentAdminAccess", () => {
+    it("allows an approved admin without any MFA claim", async () => {
       mockSessionClaims = { amr: ["pwd"] };
+      mockDbRows = [{ role: "admin", status: "approved" }];
 
-      const exception = buildMocks("admin");
-      requireApprovedAdminAuth(exception.req, exception.res, exception.next);
-      expect(exception.next).toHaveBeenCalledTimes(1);
+      const { req } = buildMocks("admin");
+      await expect(hasCurrentAdminAccess(req)).resolves.toBe(true);
+    });
 
-      const defaultGuard = buildMocks("admin");
-      requireAdminAuth(defaultGuard.req, defaultGuard.res, defaultGuard.next);
-      expect(defaultGuard.next).not.toHaveBeenCalled();
-      expect(defaultGuard.res.status).toHaveBeenCalledWith(403);
+    it.each([
+      ["non-admin", "user", "approved"],
+      ["pending admin", "admin", "pending"],
+      ["banned admin", "admin", "banned"],
+    ] as const)("%s remains blocked even with a completed MFA claim", async (_label, role, status) => {
+      mockSessionClaims = { amr: ["pwd", "totp"] };
+      mockDbRows = [{ role, status }];
+
+      const { req } = buildMocks("admin");
+      await expect(hasCurrentAdminAccess(req)).resolves.toBe(false);
+    });
+
+    it("rejects an unauthenticated request", async () => {
+      mockUserId = null;
+
+      const { req } = buildMocks("admin");
+      await expect(hasCurrentAdminAccess(req)).resolves.toBe(false);
     });
   });
 });

@@ -159,7 +159,7 @@ describe("POST /api/help/ask — grounded worker answers", () => {
 });
 
 describe("POST /api/help/ask — privileged context boundary", () => {
-  it("includes admin records only for a current admin with MFA", async () => {
+  it("includes admin records only for a current approved admin", async () => {
     mockCreate.mockResolvedValueOnce({
       choices: [{ message: { content: "Open the spreadsheet import tool in Admin." } }],
     });

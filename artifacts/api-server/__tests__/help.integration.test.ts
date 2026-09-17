@@ -2,8 +2,8 @@
  * Contract and authorization tests for the structured Help API.
  *
  * The corpus is static and server-owned. These tests still exercise the real
- * app-auth and admin-MFA middleware through the Express app so a client cannot
- * select the admin audience by changing a query parameter or role hint.
+ * app-auth and admin-role middleware through the Express app so a client
+ * cannot select the admin audience by changing a query parameter or role hint.
  */
 
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
@@ -145,7 +145,7 @@ describe("GET /api/help", () => {
 });
 
 describe("GET /api/help/admin", () => {
-  it("returns admin records only after current role and MFA checks", async () => {
+  it("returns admin records only after a current approved-admin role check", async () => {
     const res = await auth(supertest(app).get("/api/help/admin"), ADMIN_TEST_USER_ID).expect(200);
 
     expect(res.body.schemaVersion).toBe(HELP_SCHEMA_VERSION);

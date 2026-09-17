@@ -612,4 +612,135 @@ describe("Search → Edit Part multi-field flow", () => {
     expect(cardText(searchTree.root!, "OTHER-PART")).toContain("Untouched contactor");
     expect(mockBack).not.toHaveBeenCalled();
   });
+
+  it("saves changed OP and OQ values as an admin without an MFA-specific rejection, updating Total OP/OQ", async () => {
+    searchTree = await render(
+      <QueryClientProvider client={queryClient}>
+        <SearchScreen />
+      </QueryClientProvider>,
+    );
+    const searchInput = findHost(searchTree.root!, "keyword-input");
+    await fireEvent.changeText(searchInput!, "old keyword");
+    const searchButton = findPressable(searchTree.root!, "Search");
+    await fireEvent.press(searchButton!);
+    await waitFor(() => {
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("old keyword");
+    });
+
+    const editButton = findPressable(searchTree.root!, "Edit Part");
+    await fireEvent.press(editButton!);
+    editTree = await render(
+      <QueryClientProvider client={queryClient}>
+        <EditItemScreen />
+      </QueryClientProvider>,
+    );
+
+    const opoqInputs = findTextInputs(editTree.root!, "0");
+    expect(opoqInputs).toHaveLength(2);
+    await fireEvent.changeText(opoqInputs[0]!, "9");
+    await fireEvent.changeText(opoqInputs[1]!, "6");
+
+    const saveButton = findPressable(editTree.root!, "Save Details");
+    await fireEvent.press(saveButton!);
+    await waitFor(() => {
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("Total OP/OQ 15");
+    });
+
+    // Only the /order endpoint receives an OP/OQ payload, and it never carries
+    // an MFA-specific rejection — the write must succeed on the first attempt.
+    const orderCall = mockFetch.mock.calls.find(([url]) => String(url).includes("/inventory/42/order"));
+    expect(orderCall).toBeDefined();
+    expect(JSON.parse(String((orderCall![1] as RequestInit).body))).toEqual({
+      orderPurchase: 9,
+      orderQuantity: 6,
+    });
+
+    const updatedCard = cardText(searchTree.root!, "PART-X");
+    expect(updatedCard).toContain("Total OP/OQ 15");
+    await waitFor(() => {
+      expect(mockBack).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("keeps the prior OP/OQ values and Total OP/OQ visible when the order save fails", async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.endsWith("/inventory/42/order")) {
+        return new Response(JSON.stringify({ error: "order update rejected" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify(searchResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    searchTree = await render(
+      <QueryClientProvider client={queryClient}>
+        <SearchScreen />
+      </QueryClientProvider>,
+    );
+    const searchInput = findHost(searchTree.root!, "keyword-input");
+    await fireEvent.changeText(searchInput!, "old keyword");
+    const searchButton = findPressable(searchTree.root!, "Search");
+    await fireEvent.press(searchButton!);
+    await waitFor(() => {
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("old keyword");
+    });
+
+    const editButton = findPressable(searchTree.root!, "Edit Part");
+    await fireEvent.press(editButton!);
+    editTree = await render(
+      <QueryClientProvider client={queryClient}>
+        <EditItemScreen />
+      </QueryClientProvider>,
+    );
+
+    const opoqInputs = findTextInputs(editTree.root!, "0");
+    await fireEvent.changeText(opoqInputs[0]!, "9");
+    await fireEvent.changeText(opoqInputs[1]!, "6");
+
+    const saveButton = findPressable(editTree.root!, "Save Details");
+    await fireEvent.press(saveButton!);
+    await waitFor(() => {
+      expect(instText(editTree!.root!)).toContain("OP/OQ failed");
+    });
+
+    // The failed field's inputs revert to the item's prior saved values, and
+    // the search card keeps showing the pre-edit total rather than a value
+    // computed from the rejected input.
+    const revertedOpoqInputs = findTextInputs(editTree.root!, "0");
+    expect(revertedOpoqInputs).toHaveLength(2);
+    const selectedCard = cardText(searchTree.root!, "PART-X");
+    expect(selectedCard).toContain("Total OP/OQ 0");
+    expect(selectedCard).not.toContain("Total OP/OQ 15");
+    expect(cardText(searchTree.root!, "OTHER-PART")).toContain("Total OP/OQ 3");
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it("shows invalid OP/OQ values without sending a write or changing cached totals", async () => {
+    selectedItem = searchResponse!.results[0]!.item;
+    editTree = await render(
+      <QueryClientProvider client={queryClient}>
+        <EditItemScreen />
+      </QueryClientProvider>,
+    );
+
+    const opoqInputs = findTextInputs(editTree.root!, "0");
+    expect(opoqInputs).toHaveLength(2);
+    await fireEvent.changeText(opoqInputs[0]!, "-1");
+    await fireEvent.changeText(opoqInputs[1]!, "2.5");
+
+    const saveButton = findPressable(editTree.root!, "Save Details");
+    await fireEvent.press(saveButton!);
+    await waitFor(() => {
+      expect(instText(editTree!.root!)).toContain("OP and OQ must be non-negative whole numbers.");
+    });
+
+    expect(
+      mockFetch.mock.calls.some(([url]) => String(url).includes("/inventory/42/order")),
+    ).toBe(false);
+    expect(mockBack).not.toHaveBeenCalled();
+  });
 });

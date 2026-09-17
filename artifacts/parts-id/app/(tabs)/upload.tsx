@@ -1,4 +1,4 @@
-import { useAuth, useClerk } from "@clerk/expo";
+import { useAuth } from "@clerk/expo";
 import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { InventoryItem } from "@workspace/api-client-react";
@@ -109,7 +109,7 @@ function getRestartNotice(state: RestartState): { title: string; message: string
     case "authorization":
       return {
         title: "Restart was not allowed",
-        message: "Admin access with MFA is required. Check your session before trying again.",
+        message: "Current approved-admin access is required. Check your session before trying again.",
       };
     case "rejected":
       return {
@@ -790,8 +790,7 @@ export default function UploadScreen() {
   const isNarrow = screenWidth <= 320;
   const colors = useColors();
   const router = useRouter();
-  const { userId: currentClerkUserId, getToken } = useAuth();
-  const clerk = useClerk();
+  const { userId: currentClerkUserId } = useAuth();
   const { isAdmin, logoutAdmin, adminToken, showToast } = useApp();
   const {
     status: apiStatus,
@@ -1358,9 +1357,6 @@ export default function UploadScreen() {
   const [opoqPreviewFailed, setOpoqPreviewFailed] = useState(false);
   const [selectedUnknownRows, setSelectedUnknownRows] = useState<Set<number>>(new Set());
   const [opoqResult, setOpoqResult] = useState<OpoqResult | null>(null);
-  const [importMfaRequired, setImportMfaRequired] = useState(false);
-  const [importAuthToken, setImportAuthToken] = useState<string | null>(null);
-  const [importPreviewRetry, setImportPreviewRetry] = useState(0);
   const [importDraftReadyUserId, setImportDraftReadyUserId] = useState<string | null>(null);
   const [restoredImportNeedsReview, setRestoredImportNeedsReview] = useState(false);
   const importDraftLoadGenerationRef = useRef(0);
@@ -1380,14 +1376,7 @@ export default function UploadScreen() {
     () => (adminToken ? { Authorization: `Bearer ${adminToken}` } : {} as Record<string, string>),
     [adminToken],
   );
-  const importHeaders = useMemo<Record<string, string>>(() => {
-    const token = importAuthToken ?? adminToken;
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }, [adminToken, importAuthToken]);
-
-  useEffect(() => {
-    setImportAuthToken(null);
-  }, [adminToken]);
+  const importHeaders = adminHeaders;
 
   useEffect(() => {
     const generation = ++importDraftLoadGenerationRef.current;
@@ -1425,8 +1414,6 @@ export default function UploadScreen() {
         setOpoqPreview(null);
         setReplaceConfirmed(false);
         setRestoredImportNeedsReview(true);
-        setImportMfaRequired(false);
-        setImportAuthToken(null);
         setActiveSectionState("import");
       }
     }).catch(err => {
@@ -1465,35 +1452,6 @@ export default function UploadScreen() {
     selectedUnknownRows,
     skipBinRows,
   ]);
-
-  const requireImportMfaRecovery = useCallback(() => {
-    setImportMfaRequired(true);
-    setBinDiff(null);
-    setBinDiffFailed(true);
-    setOpoqPreview(null);
-    setOpoqPreviewFailed(true);
-    setReplaceConfirmed(false);
-  }, []);
-
-  const retryImportAfterMfa = useCallback(async () => {
-    setUploadError(null);
-    try {
-      const freshToken = await getToken({ skipCache: true });
-      if (!freshToken || !isMountedRef.current) {
-        setUploadError("Authentication could not be refreshed. Return from Account Settings and try again.");
-        return;
-      }
-      setImportAuthToken(freshToken);
-      setImportMfaRequired(false);
-      setBinDiffFailed(false);
-      setOpoqPreviewFailed(false);
-      setImportPreviewRetry(value => value + 1);
-    } catch {
-      if (isMountedRef.current) {
-        setUploadError("Authentication could not be refreshed. Return from Account Settings and try again.");
-      }
-    }
-  }, [getToken]);
 
   const selectActiveSection = useCallback((section: AdminSection | null) => {
     activeSectionSelectionRef.current = true;
@@ -1633,8 +1591,8 @@ export default function UploadScreen() {
       setSelectedUnknownRows(new Set());
       return;
     }
-    const requestToken = importAuthToken ?? adminToken;
-    if (!requestToken || importMfaRequired) return;
+    const requestToken = adminToken;
+    if (!requestToken) return;
     const controller = new AbortController();
     if (importMode === "opoq") {
       setOpoqPreviewPending(true);
@@ -1647,11 +1605,7 @@ export default function UploadScreen() {
         body: JSON.stringify({ csv: rawCsv }),
       }).then(async (response) => {
         if (!response.ok) {
-          const body = await response.json().catch(() => ({})) as { error?: string; code?: string };
-          if (body.code === "MFA_REQUIRED") {
-            requireImportMfaRecovery();
-            return;
-          }
+          const body = await response.json().catch(() => ({})) as { error?: string };
           throw new Error(body.error ?? "OP/OQ preview failed");
         }
         const parsed = OpoqPreviewSchema.safeParse(await response.json());
@@ -1704,13 +1658,6 @@ export default function UploadScreen() {
       body: JSON.stringify({ csv: rawCsv }),
     })
       .then(async r => {
-        const errorBody = !r.ok
-          ? await r.json().catch(() => ({})) as { code?: string }
-          : null;
-        if (errorBody?.code === "MFA_REQUIRED") {
-          requireImportMfaRecovery();
-          return;
-        }
         if (r.status === 401) {
           logoutAdmin();
           setUploadError("Admin session expired. Please unlock again.");
@@ -1743,7 +1690,7 @@ export default function UploadScreen() {
     return () => {
       controller.abort();
     };
-  }, [rawCsv, parsedRows, adminToken, importAuthToken, importMfaRequired, importPreviewRetry, logoutAdmin, importMode, requireImportMfaRecovery]);
+  }, [rawCsv, parsedRows, adminToken, logoutAdmin, importMode]);
 
   const bulkPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const measurePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2599,11 +2546,7 @@ export default function UploadScreen() {
           body: JSON.stringify({ csv: rawCsv }),
         });
         if (!response.ok) {
-          const body = await response.json().catch(() => ({})) as { error?: string; code?: string };
-          if (body.code === "MFA_REQUIRED") {
-            requireImportMfaRecovery();
-            return;
-          }
+          const body = await response.json().catch(() => ({})) as { error?: string };
           throw new Error(body.error ?? "OP/OQ update failed");
         }
         const result = await response.json() as { updated?: number };
@@ -2618,11 +2561,6 @@ export default function UploadScreen() {
             body: JSON.stringify({ csv: serializeToCsv(selected, new Set()) }),
           });
           if (!addResponse.ok) {
-            const body = await addResponse.json().catch(() => ({})) as { code?: string };
-            if (body.code === "MFA_REQUIRED") {
-              requireImportMfaRecovery();
-              return;
-            }
             failures = 1;
           } else {
             const added = await addResponse.json() as { inserted?: number };
@@ -2665,9 +2603,7 @@ export default function UploadScreen() {
 
       if (!response.ok) {
         const bodyParsed = ApiErrorSchema.safeParse(await response.json().catch(() => ({})));
-        if (bodyParsed.success && (bodyParsed.data as { code?: string }).code === "MFA_REQUIRED") {
-          requireImportMfaRecovery();
-        } else if (response.status === 401) {
+        if (response.status === 401) {
           logoutAdmin();
           setUploadError("Admin session expired. Please unlock again.");
         } else {
@@ -3919,21 +3855,6 @@ export default function UploadScreen() {
 
                   {/* Upload button — gated on confirmation when replacements exist,
                       and blocked entirely until preview has been successfully loaded */}
-                  {importMfaRequired ? (
-                    <View style={[styles.diffCard, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "55", borderWidth: 1, marginTop: 10 }]}>
-                      <Text style={[styles.diffText, { color: colors.foreground }]}>
-                        Two-factor authentication is required. Your prepared import is preserved. Open Clerk Account Settings, complete setup, then retry. Retry refreshes authentication and runs preview again before upload can continue.
-                      </Text>
-                      <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                        <Pressable onPress={() => clerk.openUserProfile()} style={[styles.skipAllBtn, { borderColor: colors.warning, flex: 1 }]}>
-                          <Text style={[styles.skipAllBtnText, { color: colors.warning }]}>Open Account Settings</Text>
-                        </Pressable>
-                        <Pressable onPress={() => { void retryImportAfterMfa(); }} style={[styles.skipAllBtn, { borderColor: colors.primary, flex: 1 }]}>
-                          <Text style={[styles.skipAllBtnText, { color: colors.primary }]}>Retry import preview</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  ) : null}
                   {restoredImportNeedsReview ? (
                     <View style={[styles.diffCard, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "44", borderWidth: 1, marginTop: 10 }]}>
                       <Text style={[styles.diffText, { color: colors.foreground }]}>
@@ -3957,7 +3878,7 @@ export default function UploadScreen() {
                     const previewRequired = importMode === "opoq"
                       ? opoqPreviewPending || opoqPreviewFailed || opoqPreview === null
                       : binDiffPending || binDiffFailed || binDiff === null;
-                    const isDisabled = uploadPending || importMfaRequired || restoredImportNeedsReview || previewRequired || needsConfirm || hasConflicts;
+                    const isDisabled = uploadPending || restoredImportNeedsReview || previewRequired || needsConfirm || hasConflicts;
                     const btnLabel = importMode === "opoq"
                       ? opoqPreviewPending
                         ? "Checking OP/OQ updates…"

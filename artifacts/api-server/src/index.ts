@@ -16,7 +16,6 @@ process.on("unhandledRejection", (reason) => {
 
 const rawPort = process.env["PORT"];
 const port = rawPort ? Number(rawPort) : NaN;
-const isDev = process.env.NODE_ENV !== "production";
 
 if (!Number.isInteger(port) || port <= 0 || port > 65535) {
   throw new Error(
@@ -47,13 +46,6 @@ async function startApplication(): Promise<void> {
   const { recoverCatalogPdfUploadSessions } = await import(
     "./routes/catalogPdfUpload"
   );
-
-  if (process.env["SKIP_ADMIN_MFA"] === "true") {
-    logger.warn(
-      { SKIP_ADMIN_MFA: "true", environment: isDev ? "development" : "production" },
-      "SECURITY WARNING: Admin MFA enforcement is DISABLED (SKIP_ADMIN_MFA=true) — approved admin accounts can use password-only sessions",
-    );
-  }
 
 async function recoverOrphanedJobs(): Promise<void> {
   try {

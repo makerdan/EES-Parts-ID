@@ -1052,7 +1052,7 @@ export default function EditItemScreen() {
                 <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>{label}</Text>
                 <KeyboardDoneInput
                   value={value}
-                  onChangeText={(v) => { setter(v.replace(/[^0-9]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={(v) => { setter(v); setSaveStatus("idle"); }}
                   placeholder="0"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="number-pad"
