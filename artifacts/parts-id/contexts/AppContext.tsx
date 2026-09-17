@@ -22,6 +22,7 @@ import {
   setAppTokenGetter,
   setOnUnauthorized,
 } from "@/utils/appAuth";
+import { clearImportDraft } from "@/utils/importDraftStorage";
 import { type LogoutHandler,LogoutRegistry } from "@/utils/logoutRegistry";
 import {
   clearSessionStorage,
@@ -779,6 +780,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     recheckControllerRef.current?.abort();
     try {
       await clearSessionStorage(secureDelete, AsyncStorage.multiRemove);
+      if (userId) await clearImportDraft(userId);
     } catch (err) {
       reportStorageError("Could not clear session storage on logout", err);
     }
@@ -789,7 +791,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setApprovalStatus("idle");
     }
     await signOut();
-  }, [signOut]);
+  }, [signOut, userId]);
 
   // Re-verify admin status against the server using a fresh Clerk token. Called
   // when an admin action returns 401/403 so a stale token or a role change is

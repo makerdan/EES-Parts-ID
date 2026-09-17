@@ -16,12 +16,14 @@ import React from "react";
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 import * as DocumentPicker from "expo-document-picker";
+import * as SecureStore from "expo-secure-store";
 import { readSheet } from "read-excel-file/universal";
 
 const mockGetToken = jest.fn().mockResolvedValue("fresh-admin-token");
 const mockOpenUserProfile = jest.fn();
+let mockCurrentUserId: string | undefined = "admin-user";
 jest.mock("@clerk/expo", () => ({
-  useAuth: () => ({ userId: "admin-user", getToken: mockGetToken }),
+  useAuth: () => ({ userId: mockCurrentUserId, getToken: mockGetToken }),
   useClerk: () => ({ openUserProfile: mockOpenUserProfile }),
 }));
 
@@ -77,6 +79,9 @@ jest.mock("@expo/vector-icons", () => ({
 }));
 
 const mockReadSheet = readSheet as jest.Mock;
+const mockSecureGet = SecureStore.getItemAsync as jest.Mock;
+const mockSecureSet = SecureStore.setItemAsync as jest.Mock;
+const mockSecureDelete = SecureStore.deleteItemAsync as jest.Mock;
 jest.mock("read-excel-file/universal", () => ({
   readSheet: jest.fn().mockResolvedValue([]),
 }));
@@ -311,6 +316,8 @@ function configureNetwork() {
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const UploadScreen = (require("../app/(tabs)/upload") as { default: React.ComponentType }).default;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { saveImportDraft } = require("../utils/importDraftStorage") as typeof import("../utils/importDraftStorage");
 
 let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
@@ -320,6 +327,15 @@ function screenRoot(): Inst {
 }
 
 beforeEach(() => {
+  mockCurrentUserId = "admin-user";
+  const secureValues = new Map<string, string>();
+  mockSecureGet.mockImplementation(async (key: string) => secureValues.get(key) ?? null);
+  mockSecureSet.mockImplementation(async (key: string, value: string) => {
+    secureValues.set(key, value);
+  });
+  mockSecureDelete.mockImplementation(async (key: string) => {
+    secureValues.delete(key);
+  });
   useApp.mockReturnValue(makeAdminApp());
   mockGetDocumentAsync.mockReset();
   mockGetDocumentAsync.mockResolvedValue(validWorkbook);
@@ -353,6 +369,78 @@ const flushPromises = () => act(async () => {
 });
 
 describe("UploadScreen — administrator spreadsheet import workflow", () => {
+  it("waits for Clerk identity hydration and never copies a prior user's draft during account switching", async () => {
+    await saveImportDraft("admin-user", {
+      parsedRows: [{ vendor: "ACME", catalog: "XLSX-001", description: "20A breaker", binLocations: ["NEW-B2"], barcodes: [] }],
+      rawCsv: "Vendor,Catalog,Description,BinLocation\nACME,XLSX-001,20A breaker,NEW-B2",
+      fileName: "admin-a.xlsx",
+      fileType: "xlsx",
+      importMode: "full",
+      skipBinRows: [],
+      selectedUnknownRows: [],
+    });
+    mockCurrentUserId = undefined;
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+    expect(hasText(screenRoot(), "admin-a.xlsx")).toBe(false);
+
+    mockCurrentUserId = "admin-user";
+    await activeTree.rerender(<UploadScreen />);
+    await waitFor(() => expect(hasText(screenRoot(), "admin-a.xlsx")).toBe(true));
+
+    mockCurrentUserId = "other-user";
+    await activeTree.rerender(<UploadScreen />);
+    await waitFor(() => expect(hasText(screenRoot(), "admin-a.xlsx")).toBe(false));
+    await flushPromises();
+
+    await activeTree.unmount();
+    activeTree = null;
+    mockCurrentUserId = "admin-user";
+    activeTree = await render(<UploadScreen />);
+    await waitFor(() => expect(hasText(screenRoot(), "admin-a.xlsx")).toBe(true));
+  });
+
+  it("restores a prepared import after remount and reruns preview before enabling commit", async () => {
+    let previewCount = 0;
+    mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "file://valid-workbook.xlsx") return response({});
+      if (url.endsWith("/admin/ai-status")) return response({ bots: {} });
+      if (url.endsWith("/inventory/enrich-summary")) return response({ total: 0, enriched: 0, unenriched: 0 });
+      if (url.endsWith("/inventory/bulk-enrich/status")) return response({ running: false, stopRequested: false, force: false, startedAt: null, processed: 0, errors: 0, total: null, finishedAt: null, lastError: null, model: null });
+      if (url.endsWith("/inventory/enrich-measurements/status")) return response({ running: false, startedAt: null, processed: 0, updated: 0, total: null, finishedAt: null, lastError: null });
+      if (url.endsWith("/admin/upload/preview")) {
+        apiRequests.push({ url, init });
+        previewCount += 1;
+        return response({ willReplaceBins: 1, willAddBins: 0, willPreserveBins: 0, noChange: 0, rows: [{ vendor: "ACME", catalog: "XLSX-001", status: "replace", existingBins: ["OLD-A1"], incomingBins: ["NEW-B2"], barcodeStatus: "none", existingBarcodes: [] }], willReplaceBarcodes: 0, willAddBarcodes: 0, willPreserveBarcodes: 0, willBarcodeConflicts: 0 });
+      }
+      if (url.endsWith("/admin/upload")) {
+        apiRequests.push({ url, init });
+        return response({ inserted: 1, updated: 0, total: 1 });
+      }
+      return response({});
+    });
+
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Data Import")!); });
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "Choose CSV, Excel, or ODS File")!); });
+    await waitFor(() => expect(previewCount).toBe(1));
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "⚠")!); });
+    await waitFor(() => expect(mockSecureSet).toHaveBeenCalled());
+    await activeTree.unmount();
+    activeTree = null;
+
+    apiRequests.length = 0;
+    activeTree = await render(<UploadScreen />);
+    await waitFor(() => expect(hasText(screenRoot(), "inventory.xlsx")).toBe(true));
+    await waitFor(() => expect(previewCount).toBe(2));
+    expect(hasText(screenRoot(), "(kept)")).toBe(true);
+    expect(findPressable(screenRoot(), "Review restored import before upload")?.props.disabled).toBe(true);
+    expect(apiRequests.filter(request => request.url.endsWith("/admin/upload"))).toHaveLength(0);
+    await act(async () => { fireEvent.press(findPressable(screenRoot(), "I reviewed the restored import")!); });
+    expect(findPressable(screenRoot(), "Upload 1 Items")?.props.disabled).toBe(false);
+  });
+
   it("preserves the import and requires a fresh preview after a dormant MFA_REQUIRED response", async () => {
     let previewCount = 0;
     mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {

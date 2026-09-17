@@ -68,6 +68,11 @@ import {
 } from "@/utils/expandDescHandlers";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
 import {
+  clearImportDraft,
+  loadImportDraft,
+  saveImportDraft,
+} from "@/utils/importDraftStorage";
+import {
   BARCODE_ALIASES,
   BIN_ALIASES,
   CATALOG_ALIASES,
@@ -1331,6 +1336,11 @@ export default function UploadScreen() {
   const [importMfaRequired, setImportMfaRequired] = useState(false);
   const [importAuthToken, setImportAuthToken] = useState<string | null>(null);
   const [importPreviewRetry, setImportPreviewRetry] = useState(0);
+  const [importDraftReadyUserId, setImportDraftReadyUserId] = useState<string | null>(null);
+  const [restoredImportNeedsReview, setRestoredImportNeedsReview] = useState(false);
+  const importDraftLoadGenerationRef = useRef(0);
+  const restoredSkipBinRowsRef = useRef<Set<number> | null>(null);
+  const restoredUnknownRowsRef = useRef<Set<number> | null>(null);
 
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
   const isMountedRef = useRef(true);
@@ -1353,6 +1363,82 @@ export default function UploadScreen() {
   useEffect(() => {
     setImportAuthToken(null);
   }, [adminToken]);
+
+  useEffect(() => {
+    const generation = ++importDraftLoadGenerationRef.current;
+    setImportDraftReadyUserId(null);
+    setParsedRows([]);
+    setRawCsv(null);
+    setFileName(null);
+    setFileType(null);
+    setPasteText("");
+    setSkipBinRows(new Set());
+    setSelectedUnknownRows(new Set());
+    setBinDiff(null);
+    setOpoqPreview(null);
+    setReplaceConfirmed(false);
+    setRestoredImportNeedsReview(false);
+    restoredSkipBinRowsRef.current = null;
+    restoredUnknownRowsRef.current = null;
+    if (!currentClerkUserId) {
+      return;
+    }
+    loadImportDraft(currentClerkUserId).then(draft => {
+      if (!isMountedRef.current || generation !== importDraftLoadGenerationRef.current) return;
+      if (draft) {
+        setParsedRows(draft.parsedRows);
+        setRawCsv(draft.rawCsv);
+        setFileName(draft.fileName);
+        setFileType(draft.fileType);
+        setImportMode(draft.importMode);
+        setSkipBinRows(new Set(draft.skipBinRows));
+        setSelectedUnknownRows(new Set(draft.selectedUnknownRows));
+        restoredSkipBinRowsRef.current = new Set(draft.skipBinRows);
+        restoredUnknownRowsRef.current = new Set(draft.selectedUnknownRows);
+        setBinDiff(null);
+        setOpoqPreview(null);
+        setReplaceConfirmed(false);
+        setRestoredImportNeedsReview(true);
+        setImportMfaRequired(false);
+        setImportAuthToken(null);
+        setActiveSectionState("import");
+      }
+    }).catch(err => {
+      if (generation === importDraftLoadGenerationRef.current) {
+        reportStorageError("Could not restore prepared import", err);
+      }
+    }).finally(() => {
+      if (isMountedRef.current && generation === importDraftLoadGenerationRef.current) {
+        setImportDraftReadyUserId(currentClerkUserId);
+      }
+    });
+  }, [currentClerkUserId]);
+
+  useEffect(() => {
+    if (!currentClerkUserId || importDraftReadyUserId !== currentClerkUserId) return;
+    const operation = parsedRows.length > 0 && rawCsv
+      ? saveImportDraft(currentClerkUserId, {
+        parsedRows,
+        rawCsv,
+        fileName,
+        fileType,
+        importMode,
+        skipBinRows: [...skipBinRows],
+        selectedUnknownRows: [...selectedUnknownRows],
+      })
+      : clearImportDraft(currentClerkUserId);
+    operation.catch(err => reportStorageError("Could not save prepared import", err));
+  }, [
+    currentClerkUserId,
+    fileName,
+    fileType,
+    importDraftReadyUserId,
+    importMode,
+    parsedRows,
+    rawCsv,
+    selectedUnknownRows,
+    skipBinRows,
+  ]);
 
   const requireImportMfaRecovery = useCallback(() => {
     setImportMfaRequired(true);
@@ -1563,7 +1649,11 @@ export default function UploadScreen() {
           unknownWithoutBins: parsed.data.unknownWithoutBins,
           unknownRows,
         });
-        setSelectedUnknownRows(new Set());
+        const restoredUnknownRows = restoredUnknownRowsRef.current;
+        restoredUnknownRowsRef.current = null;
+        setSelectedUnknownRows(restoredUnknownRows
+          ? new Set([...restoredUnknownRows].filter(index => parsed.data.rows[index]?.known === false && parsed.data.rows[index]?.hasBins))
+          : new Set());
       }).catch((err) => {
         if (err instanceof Error && err.name === "AbortError") return;
         if (isMountedRef.current) {
@@ -1606,7 +1696,11 @@ export default function UploadScreen() {
         setBinDiff(data);
         setBinDiffFailed(false);
         setReplaceConfirmed(false);
-        setSkipBinRows(new Set());
+        const restoredSkipBinRows = restoredSkipBinRowsRef.current;
+        restoredSkipBinRowsRef.current = null;
+        setSkipBinRows(restoredSkipBinRows
+          ? new Set([...restoredSkipBinRows].filter(index => data.rows[index]?.status === "replace"))
+          : new Set());
         setReplaceListOpen(false);
       })
       .catch(err => {
@@ -2265,6 +2359,9 @@ export default function UploadScreen() {
       setFileType(null);
       setParsedRows([]);
       setRawCsv(null);
+      setRestoredImportNeedsReview(false);
+      restoredSkipBinRowsRef.current = null;
+      restoredUnknownRowsRef.current = null;
 
       const ext = asset.name.split(".").pop()?.toLowerCase() ?? "";
       let rows: Array<ParsedRow> = [];
@@ -2341,6 +2438,9 @@ export default function UploadScreen() {
     setPasteText(text);
     setFileName(null);
     setFileType(null);
+    setRestoredImportNeedsReview(false);
+    restoredSkipBinRowsRef.current = null;
+    restoredUnknownRowsRef.current = null;
     if (pasteDebounceRef.current) clearTimeout(pasteDebounceRef.current);
     if (!text.trim()) {
       setParsedRows([]);
@@ -2365,6 +2465,7 @@ export default function UploadScreen() {
 
   const handleUpload = async () => {
     if (!parsedRows.length || !rawCsv) return;
+    if (restoredImportNeedsReview) return;
     // Defensive guard: never commit an upload if the preview hasn't successfully
     // loaded. The UI already keeps the button disabled in this state, but this
     // guard adds a function-level safety net in case of unexpected state drift.
@@ -2424,6 +2525,7 @@ export default function UploadScreen() {
         setFileName(null);
         setFileType(null);
         setPasteText("");
+        if (currentClerkUserId) await clearImportDraft(currentClerkUserId);
         return;
       }
       // Build the CSV to submit. For rows where the admin toggled "skip bin
@@ -2467,6 +2569,7 @@ export default function UploadScreen() {
       setFileName(null);
       setFileType(null);
       setPasteText("");
+      if (currentClerkUserId) await clearImportDraft(currentClerkUserId);
       if (isMountedRef.current) await inventoryQuery.refetch();
     } catch {
       if (isMountedRef.current) setUploadError("Upload failed — could not save inventory items. Please try again.");
@@ -3701,6 +3804,19 @@ export default function UploadScreen() {
                       </View>
                     </View>
                   ) : null}
+                  {restoredImportNeedsReview ? (
+                    <View style={[styles.diffCard, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "44", borderWidth: 1, marginTop: 10 }]}>
+                      <Text style={[styles.diffText, { color: colors.foreground }]}>
+                        This prepared import was restored after restart. Review the fresh preview and restored choices before allowing upload.
+                      </Text>
+                      <Pressable
+                        onPress={() => setRestoredImportNeedsReview(false)}
+                        style={[styles.skipAllBtn, { borderColor: colors.primary, marginTop: 10 }]}
+                      >
+                        <Text style={[styles.skipAllBtnText, { color: colors.primary }]}>I reviewed the restored import</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
                   {(() => {
                     const pendingReplacements = importMode === "full" && binDiff
                       ? activeReplacementCount(binDiff.willReplaceBins, skipBinRows, binDiff.rows)
@@ -3711,7 +3827,7 @@ export default function UploadScreen() {
                     const previewRequired = importMode === "opoq"
                       ? opoqPreviewPending || opoqPreviewFailed || opoqPreview === null
                       : binDiffPending || binDiffFailed || binDiff === null;
-                    const isDisabled = uploadPending || importMfaRequired || previewRequired || needsConfirm || hasConflicts;
+                    const isDisabled = uploadPending || importMfaRequired || restoredImportNeedsReview || previewRequired || needsConfirm || hasConflicts;
                     const btnLabel = importMode === "opoq"
                       ? opoqPreviewPending
                         ? "Checking OP/OQ updates…"
@@ -3720,6 +3836,8 @@ export default function UploadScreen() {
                       ? "Checking conflicts…"
                       : hasConflicts
                         ? `✕ Fix ${binDiff!.willBarcodeConflicts} barcode conflict${binDiff!.willBarcodeConflicts !== 1 ? "s" : ""} to upload`
+                        : restoredImportNeedsReview
+                          ? "Review restored import before upload"
                         : needsConfirm
                           ? "✓ Confirm replacement to upload"
                           : `⬆️ Upload ${parsedRows.length} Items`;
