@@ -57,3 +57,15 @@ export function findDuplicateConflict<T extends ZoneLike>(
     }) ?? null
   );
 }
+
+export type {
+  AffineMatrix,
+  AffinePoint,
+  AnchorPoint,
+} from "./mapAnchorTransform";
+export {
+  computeAnchorTransform,
+  inverseAnchorPoint,
+  matrixToSvgString,
+  normalizeAnchorPoints,
+} from "./mapAnchorTransform";

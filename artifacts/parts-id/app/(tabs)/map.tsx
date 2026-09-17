@@ -10,6 +10,7 @@
 import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { InventoryItem } from "@workspace/api-client-react";
+import { computeAnchorTransform, matrixToSvgString } from "@workspace/zone-validation";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -29,7 +30,6 @@ import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { type ApiWarehouseZone, useWarehouseZones } from "@/hooks/useWarehouseZones";
 import { parseBin, type WarehouseZone } from "@/lib/aisleHierarchy";
-import { computeAnchorTransform, matrixToSvgString } from "@/utils/mapAnchorTransform";
 import { FUSE_CACHE_KEY, parseFuseCacheItems } from "@/utils/offlineBarcode";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 import { useTrackScreen } from "@/utils/useTrackScreen";
