@@ -34,6 +34,7 @@ const coveragePath = join(root, "docs", "validation", "github-actions-coverage.m
 const protectionStatusPath = join(root, "docs", "validation", "github-protection-status.md");
 const installationPath = join(root, "docs", "validation", "github-actions-installation.md");
 const partsIdPackagePath = join(root, "artifacts", "parts-id", "package.json");
+const lidarPodspecPath = join(root, "artifacts", "parts-id", "modules", "lidar-measure", "lidar-measure.podspec");
 const pnpmLockPath = join(root, "pnpm-lock.yaml");
 const fastContractChecks = new Map([
   ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
@@ -354,11 +355,14 @@ function validateWorkflowContract(files, coverage) {
   if (!/DEVELOPER_DIR:\s+\/Applications\/Xcode_26\.0\.1\.app\/Contents\/Developer/.test(lidar)) {
     errors.push("lidar-measure-tests.yml: native validation must select the pinned Xcode 26.0.1 toolchain");
   }
-  if (!/test .* = "Xcode 26\.0\.1"/.test(lidar) || !/Swift version 6\\\.2/.test(lidar)) {
+  if (!/test "\$\{xcode_version%%/.test(lidar) || !/= "Xcode 26\.0\.1"/.test(lidar) || !/Swift version 6\\\.2/.test(lidar)) {
     errors.push("lidar-measure-tests.yml: native validation must fail before dependency resolution when the pinned Xcode or Swift 6.2 toolchain is unavailable");
   }
   if (!/-scheme\s+lidar-measure-LidarMeasureTests/.test(lidar)) {
     errors.push("lidar-measure-tests.yml: native validation must retain the LiDAR test scheme");
+  }
+  if (!/test\.scheme\s*=\s*\{\s*:code_coverage\s*=>\s*false\s*\}/.test(read(lidarPodspecPath))) {
+    errors.push("lidar-measure.podspec: the LiDAR test spec must opt into a generated shared scheme");
   }
   const partsIdPackage = JSON.parse(read(partsIdPackagePath));
   if (partsIdPackage.dependencies?.["@clerk/expo"] !== "3.6.5") {

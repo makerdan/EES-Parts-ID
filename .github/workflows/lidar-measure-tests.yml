@@ -34,7 +34,8 @@ jobs:
           set -euo pipefail
           test -x "$DEVELOPER_DIR/usr/bin/xcodebuild"
           test -x "$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
-          test "$("$DEVELOPER_DIR/usr/bin/xcodebuild" -version | head -n 1)" = "Xcode 26.0.1"
+          xcode_version="$("$DEVELOPER_DIR/usr/bin/xcodebuild" -version)"
+          test "${xcode_version%%$'\n'*}" = "Xcode 26.0.1"
           "$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift" --version \
             | grep -Eq 'Swift version 6\.2([.[:space:]]|$)'
 
