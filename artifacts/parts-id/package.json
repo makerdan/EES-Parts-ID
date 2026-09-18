@@ -101,9 +101,6 @@
     "lidar-measure": "link:./modules/lidar-measure",
     "pdf-lib": "^1.17.1",
     "tslib": "^2.8.1",
-    "@e965/xlsx": "0.20.3",
-    "expo": "~54.0.35",
-    "react": "19.1.0",
-    "react-native": "0.81.5"
+    "@e965/xlsx": "0.20.3"
   }
 }
