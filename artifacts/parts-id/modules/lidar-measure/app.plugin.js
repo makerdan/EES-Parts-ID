@@ -1,4 +1,5 @@
 const { withInfoPlist } = require('@expo/config-plugins');
+const withLidarMeasureTests = require('./plugin');
 
 /**
  * Expo config plugin for lidar-measure — iOS privacy descriptions.
@@ -10,7 +11,7 @@ const { withInfoPlist } = require('@expo/config-plugins');
  * Runs automatically during `expo prebuild --platform ios`.
  */
 const withLidarPrivacyDescriptions = (config) => {
-  return withInfoPlist(config, (cfg) => {
+  const configWithPrivacyDescriptions = withInfoPlist(config, (cfg) => {
     cfg.modResults['NSCameraUsageDescription'] =
       cfg.modResults['NSCameraUsageDescription'] ||
       'Parts ID uses the camera to measure part dimensions with LiDAR.';
@@ -21,6 +22,8 @@ const withLidarPrivacyDescriptions = (config) => {
 
     return cfg;
   });
+
+  return withLidarMeasureTests(configWithPrivacyDescriptions);
 };
 
 module.exports = withLidarPrivacyDescriptions;

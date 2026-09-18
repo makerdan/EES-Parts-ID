@@ -9,6 +9,8 @@ const path = require('path');
  * includes the LidarMeasureTests test_spec.  Without this, `pod install`
  * creates the test target definition in the .xcodeproj but the scheme is
  * not added to the workspace unless explicitly opted-in via :testspecs.
+ * CocoaPods also keeps development-pod schemes private by default, so the
+ * generated Podfile must explicitly share this pod's scheme for CI.
  *
  * The patch turns:
  *   pod 'lidar-measure', :path => '...'
@@ -29,15 +31,23 @@ const withLidarMeasureTests = (config) => {
 
       let contents = fs.readFileSync(podfilePath, 'utf8');
 
-      const alreadyPatched = contents.includes(":testspecs => ['LidarMeasureTests']");
-      if (alreadyPatched) {
-        return cfg;
+      if (!contents.includes(":share_schemes_for_development_pods => ['lidar-measure']")) {
+        const firstRequire = contents.match(/^require .+$/m);
+        if (!firstRequire) {
+          throw new Error('Unable to locate the CocoaPods require block for LiDAR scheme configuration');
+        }
+        contents = contents.replace(
+          firstRequire[0],
+          `${firstRequire[0]}\n\ninstall! 'cocoapods', :share_schemes_for_development_pods => ['lidar-measure']`
+        );
       }
 
-      contents = contents.replace(
-        /(pod\s+['"]lidar-measure['"][^'\n]*)/g,
-        "$1, :testspecs => ['LidarMeasureTests']"
-      );
+      if (!contents.includes(":testspecs => ['LidarMeasureTests']")) {
+        contents = contents.replace(
+          /(pod\s+['"]lidar-measure['"][^'\n]*)/g,
+          "$1, :testspecs => ['LidarMeasureTests']"
+        );
+      }
 
       fs.writeFileSync(podfilePath, contents, 'utf8');
       return cfg;

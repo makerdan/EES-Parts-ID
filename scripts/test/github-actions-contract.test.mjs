@@ -34,6 +34,8 @@ const coveragePath = join(root, "docs", "validation", "github-actions-coverage.m
 const protectionStatusPath = join(root, "docs", "validation", "github-protection-status.md");
 const installationPath = join(root, "docs", "validation", "github-actions-installation.md");
 const partsIdPackagePath = join(root, "artifacts", "parts-id", "package.json");
+const lidarAppPluginPath = join(root, "artifacts", "parts-id", "modules", "lidar-measure", "app.plugin.js");
+const lidarPluginPath = join(root, "artifacts", "parts-id", "modules", "lidar-measure", "plugin", "index.js");
 const lidarPodspecPath = join(root, "artifacts", "parts-id", "modules", "lidar-measure", "lidar-measure.podspec");
 const pnpmLockPath = join(root, "pnpm-lock.yaml");
 const fastContractChecks = new Map([
@@ -363,6 +365,12 @@ function validateWorkflowContract(files, coverage) {
   }
   if (!/test\.scheme\s*=\s*\{\s*:code_coverage\s*=>\s*false\s*\}/.test(read(lidarPodspecPath))) {
     errors.push("lidar-measure.podspec: the LiDAR test spec must opt into a generated shared scheme");
+  }
+  if (!/:share_schemes_for_development_pods => \['lidar-measure'\]/.test(read(lidarPluginPath))) {
+    errors.push("lidar-measure plugin: Expo prebuild must share the LiDAR development-pod scheme");
+  }
+  if (!/require\(['"]\.\/plugin['"]\)/.test(read(lidarAppPluginPath)) || !/withLidarMeasureTests\(configWithPrivacyDescriptions\)/.test(read(lidarAppPluginPath))) {
+    errors.push("lidar-measure app plugin: the active Expo plugin must apply LiDAR test scheme configuration");
   }
   const partsIdPackage = JSON.parse(read(partsIdPackagePath));
   if (partsIdPackage.dependencies?.["@clerk/expo"] !== "3.6.5") {
