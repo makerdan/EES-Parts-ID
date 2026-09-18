@@ -174,17 +174,6 @@ export async function seedDictionaryFixtures(
   workerInstance = TEST_WORKER_INSTANCE,
 ): Promise<DictionaryFixtures> {
   const fixtures = dictionaryFixturesForWorker(workerInstance);
-  // Some long-lived test databases retain the legacy dictionary-version
-  // triggers even though Drizzle no longer owns their support table. Keep that
-  // test-only compatibility state deterministic so owned fixture writes work
-  // on both fresh and previously provisioned databases.
-  await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS dictionary_version (
-      id integer PRIMARY KEY,
-      version integer NOT NULL DEFAULT 1,
-      updated_at timestamptz NOT NULL DEFAULT now()
-    )
-  `);
   await db
     .insert(abbreviationMapTable)
     .values({

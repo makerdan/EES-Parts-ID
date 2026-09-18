@@ -27,6 +27,39 @@ const DB_PREFLIGHT_TIMEOUT_MS = 5_000;
 // concurrent load (e.g. ~20 validation commands running in parallel after a
 // task merge) it has been observed to exceed 30s even with a reachable DB.
 const DRIZZLE_PUSH_TIMEOUT_MS = 120_000;
+const RETIRED_DICTIONARY_TRIGGER_NAMES = [
+  "trg_dict_ver_synonym_group",
+  "trg_dict_ver_abbreviation_map",
+  "trg_dict_ver_electrical_slang_map",
+  "trg_dict_ver_misspelling_map",
+];
+
+async function removeRetiredDictionaryVersionObjects(client) {
+  const { rows } = await client.query(
+    `
+      SELECT n.nspname AS schema_name, c.relname AS table_name, t.tgname AS trigger_name
+      FROM pg_trigger t
+      JOIN pg_class c ON c.oid = t.tgrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE NOT t.tgisinternal
+        AND t.tgname = ANY($1::text[])
+    `,
+    [RETIRED_DICTIONARY_TRIGGER_NAMES]
+  );
+
+  for (const row of rows) {
+    await client.query(
+      `DROP TRIGGER IF EXISTS ${quoteIdentifier(row.trigger_name)} ON ${quoteIdentifier(row.schema_name)}.${quoteIdentifier(row.table_name)}`
+    );
+  }
+
+  await client.query("DROP FUNCTION IF EXISTS increment_dict_version()");
+  return rows.length;
+}
+
+function quoteIdentifier(value) {
+  return `"${String(value).replaceAll('"', '""')}"`;
+}
 
 async function checkDbReachable() {
   const client = new Client({
@@ -108,6 +141,21 @@ module.exports = async function globalSetup() {
   // ── 2. Schema sync ────────────────────────────────────────────────────────
   const dbPackageDir = path.resolve(__dirname, "../../lib/db");
 
+  const cleanupClient = new Client({
+    connectionString: process.env.DATABASE_URL,
+    connectionTimeoutMillis: DB_PREFLIGHT_TIMEOUT_MS,
+  });
+  try {
+    await cleanupClient.connect();
+    const removedTriggerCount =
+      await removeRetiredDictionaryVersionObjects(cleanupClient);
+    console.log(
+      `[jest globalSetup] retired dictionary-version objects removed (${removedTriggerCount} triggers).`
+    );
+  } finally {
+    await cleanupClient.end().catch(() => {});
+  }
+
   try {
     execSync(
       "pnpm exec drizzle-kit push --force --config ./drizzle.config.ts",
@@ -139,3 +187,6 @@ module.exports = async function globalSetup() {
     );
   }
 };
+
+module.exports.removeRetiredDictionaryVersionObjects =
+  removeRetiredDictionaryVersionObjects;
