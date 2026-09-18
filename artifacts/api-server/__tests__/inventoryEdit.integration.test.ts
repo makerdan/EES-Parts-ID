@@ -123,6 +123,35 @@ function withAuth(req: supertest.Test, token?: string): supertest.Test {
   return token ? req.set("Authorization", `Bearer ${token}`) : req;
 }
 
+/**
+ * Load the inventory routes and their database module in a private Jest
+ * registry. This is the process-restart equivalent for the module-level
+ * dictionary cache: every call starts with a new route module and an empty
+ * cache generation while retaining the real test database.
+ */
+async function loadFreshInventoryRoutes(): Promise<{
+  routes: typeof routes;
+  db: typeof db;
+  logger: typeof logger;
+}> {
+  let freshRoutes!: typeof routes;
+  let freshDb!: typeof db;
+  let freshLogger!: typeof logger;
+
+  await jest.isolateModulesAsync(async () => {
+    jest.doMock("@workspace/db", () => {
+      const actual = jest.requireActual("@workspace/db") as typeof import("@workspace/db");
+      freshDb = actual.db;
+      return actual;
+    });
+
+    freshRoutes = (await import("../src/routes")).default;
+    freshLogger = (await import("../src/lib/logger")).logger;
+  });
+
+  return { routes: freshRoutes, db: freshDb, logger: freshLogger };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth guard — every write route must reject unauthenticated / non-admin callers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -730,6 +759,78 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
       expect(findItem(freshAppSearch.body)?.aiKeywords).toEqual(newKeywords);
     } finally {
       releaseStalledGeneration();
+      dictionaryErrorLog.mockRestore();
+      dictionaryLoad.mockRestore();
+    }
+  });
+
+  it("recovers edited keywords across fresh cache generations and bounds persistent failures", async () => {
+    const newKeywords = ["process-restart-keyword", "pinned-edit-confirmation"];
+    const findItem = (body: unknown) => {
+      const results = (body as {
+        results?: Array<{ item?: { id?: number; aiKeywords?: string[] } }>;
+      }).results;
+      return results?.find((result) => result.item?.id === item.id)?.item;
+    };
+
+    await withAuth(
+      supertest(app)
+        .patch(`/api/inventory/${item.id}/keywords`)
+        .send({ keywords: newKeywords }),
+      ADMIN_TOKEN,
+    ).expect(200);
+
+    const firstGeneration = await loadFreshInventoryRoutes();
+    const firstApp = express();
+    firstApp.use(express.json());
+    firstApp.use("/api", firstGeneration.routes);
+
+    const firstSearch = await supertest(firstApp)
+      .post("/api/inventory/search")
+      .send({ keywords: item.catalog })
+      .expect(200);
+    expect(findItem(firstSearch.body)?.aiKeywords).toEqual(newKeywords);
+
+    const afterFirstSearch = await fetchRow(item.id);
+    expect(afterFirstSearch?.aiKeywords).toEqual(newKeywords);
+    expect(afterFirstSearch?.pinnedKeywords).toEqual(newKeywords);
+
+    const secondGeneration = await loadFreshInventoryRoutes();
+    const failureApp = express();
+    failureApp.use(express.json());
+    failureApp.use("/api", secondGeneration.routes);
+
+    const actualTransaction = secondGeneration.db.transaction.bind(secondGeneration.db);
+    const dictionaryLoad = jest.spyOn(secondGeneration.db, "transaction");
+    const dictionaryErrorLog = jest.spyOn(secondGeneration.logger, "error");
+    dictionaryLoad
+      // The search limiter transaction is unrelated to dictionary loading.
+      .mockImplementationOnce(callback => actualTransaction(callback))
+      .mockRejectedValue(new Error("persistent dictionary database failure after restart"));
+
+    try {
+      const failureResponse = await supertest(failureApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(500);
+
+      expect(failureResponse.body).toEqual({ error: "Search failed" });
+      expect(JSON.stringify(failureResponse.body)).not.toContain(item.catalog);
+      expect(dictionaryLoad).toHaveBeenCalledTimes(3);
+
+      const diagnosticCall = dictionaryErrorLog.mock.calls.find(([fields]) => (
+        typeof fields === "object" &&
+        fields !== null &&
+        "event" in fields &&
+        fields.event === "inventory_dictionary_load_failed"
+      ));
+      expect(diagnosticCall?.[0]).toMatchObject({
+        errorCategory: "dictionary_database_failure",
+        attempts: 2,
+        errorMessage: "persistent dictionary database failure after restart",
+      });
+      expect(JSON.stringify(diagnosticCall?.[0])).not.toContain(item.catalog);
+    } finally {
       dictionaryErrorLog.mockRestore();
       dictionaryLoad.mockRestore();
     }
