@@ -85,10 +85,6 @@ jest.mock("expo-camera", () => ({
   useCameraPermissions: jest.fn(() => [{ granted: false }, jest.fn()]),
 }));
 
-jest.mock("lidar-measure", () => ({
-  isLiDARSupported: jest.fn(() => false),
-}));
-
 jest.mock("expo-file-system/legacy", () => ({
   readAsStringAsync:  jest.fn().mockResolvedValue("base64data"),
   cacheDirectory:     "/tmp/",
@@ -127,8 +123,6 @@ jest.mock("@/contexts/AppContext", () => ({
     adminToken:          "test-token",
     isAdmin:             true,
     isLoading:           false,
-    pendingLidarDims:    null,
-    setPendingLidarDims: jest.fn(),
   })),
 }));
 
@@ -232,8 +226,6 @@ afterEach(async () => {
     adminToken:          "test-token",
     isAdmin:             true,
     isLoading:           false,
-    pendingLidarDims:    null,
-    setPendingLidarDims: jest.fn(),
   });
 });
 

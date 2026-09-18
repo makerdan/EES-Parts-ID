@@ -46,8 +46,7 @@
       "expo-asset",
       "expo-screen-orientation",
       "expo-audio",
-      "@clerk/expo",
-      "./modules/lidar-measure/app.plugin.js"
+      "@clerk/expo"
     ],
     "experiments": {
       "typedRoutes": true,

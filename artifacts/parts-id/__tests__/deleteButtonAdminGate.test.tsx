@@ -93,10 +93,6 @@ jest.mock("expo-camera", () => ({
   useCameraPermissions: jest.fn(() => [{ granted: false }, jest.fn()]),
 }));
 
-jest.mock("lidar-measure", () => ({
-  isLiDARSupported: jest.fn(() => false),
-}));
-
 jest.mock("@/components/KeyboardDoneInput", () => ({
   KeyboardDoneInput: ({ children }: { children?: React.ReactNode }) =>
     (children ?? null) as React.ReactElement | null,
@@ -207,8 +203,6 @@ describe("EditItemScreen – delete button admin gate", () => {
 
   const baseAppContext = {
     isLoading:         true,   // keeps shouldRedirectNonAdmin silent during the test
-    pendingLidarDims:  null,
-    setPendingLidarDims: jest.fn(),
     settings:          {},
   };
 
@@ -267,8 +261,6 @@ describe("delete handler behaviour", () => {
 
   const adminAppCtx = {
     isLoading:           true, // keeps shouldRedirectNonAdmin quiet
-    pendingLidarDims:    null,
-    setPendingLidarDims: jest.fn(),
     settings:            {},
     adminToken:          "test-admin-token",
     isAdmin:             true,
@@ -292,9 +284,6 @@ describe("delete handler behaviour", () => {
 
     const cam = require("expo-camera") as { useCameraPermissions: jest.Mock };
     cam.useCameraPermissions.mockReturnValue([{ granted: false }, jest.fn()]);
-
-    (require("lidar-measure") as { isLiDARSupported: jest.Mock })
-      .isLiDARSupported.mockReturnValue(false);
 
     (require("@/utils/adminGuard") as { shouldRedirectNonAdmin: jest.Mock })
       .shouldRedirectNonAdmin.mockReturnValue(false);

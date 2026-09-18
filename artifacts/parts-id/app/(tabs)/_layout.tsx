@@ -101,14 +101,6 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <Feather name="help-circle" size={22} color={color} />,
         }}
       />
-      <Tabs.Screen
-        name="measure"
-        options={{
-          title: "Measure",
-          tabBarIcon: ({ color }) => <Feather name="maximize" size={22} color={color} />,
-          href: null,
-        }}
-      />
     </Tabs>
   );
 }

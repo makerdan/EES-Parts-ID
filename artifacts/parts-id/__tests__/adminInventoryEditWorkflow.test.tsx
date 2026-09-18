@@ -127,10 +127,6 @@ jest.mock("expo-camera", () => ({
   useCameraPermissions: jest.fn(() => [{ granted: false }, jest.fn()]),
 }));
 
-jest.mock("lidar-measure", () => ({
-  isLiDARSupported: jest.fn(() => false),
-}));
-
 jest.mock("@/utils/apiBase", () => ({
   API_BASE: "http://localhost:8080/api",
   API_ORIGIN: "http://localhost:8080",
@@ -252,8 +248,6 @@ beforeEach(() => {
     adminToken: "admin-test-token",
     isAdmin: true,
     isLoading: false,
-    pendingLidarDims: null,
-    setPendingLidarDims: jest.fn(),
   });
 
   mockFetch.mockReset();
@@ -412,8 +406,6 @@ describe("EditItemScreen — protected inventory mutations", () => {
       adminToken: null,
       isAdmin: false,
       isLoading: false,
-      pendingLidarDims: null,
-      setPendingLidarDims: jest.fn(),
     });
     activeTree = await renderScreen();
 

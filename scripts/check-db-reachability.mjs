@@ -249,16 +249,6 @@ function selfTest() {
       expectChain: true,
     },
     {
-      name: "deep chain via linked module",
-      graph: mk({
-        app: ["lidar-measure"],
-        "lidar-measure": ["shared"],
-        shared: ["@workspace/db"],
-        "@workspace/db": [],
-      }),
-      expectChain: true,
-    },
-    {
       name: "clean graph",
       graph: mk({ app: ["shared"], shared: [], "@workspace/db": [] }),
       expectChain: false,

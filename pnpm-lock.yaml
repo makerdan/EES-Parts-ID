@@ -503,9 +503,6 @@ importers:
       expo-crypto:
         specifier: ~15.0.9
         version: 15.0.9(expo@54.0.35)
-      expo-device:
-        specifier: ^8.0.10
-        version: 8.0.10(expo@54.0.35)
       expo-file-system:
         specifier: ~19.0.23
         version: 19.0.23(expo@54.0.35)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))
@@ -521,9 +518,6 @@ importers:
       expo-sharing:
         specifier: ~14.0.8
         version: 14.0.8(expo@54.0.35)
-      lidar-measure:
-        specifier: link:./modules/lidar-measure
-        version: link:modules/lidar-measure
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
@@ -720,8 +714,6 @@ importers:
       zod-validation-error:
         specifier: ^3.4.0
         version: 3.5.4(zod@3.25.76)
-
-  artifacts/parts-id/modules/lidar-measure: {}
 
   lib/api-client-react:
     dependencies:
@@ -6417,11 +6409,6 @@ packages:
     peerDependencies:
       expo: '*'
 
-  expo-device@8.0.10:
-    resolution: {integrity: sha512-jd5BxjaF7382JkDMaC+P04aXXknB2UhWaVx5WiQKA05ugm/8GH5uaz9P9ckWdMKZGQVVEOC8MHaUADoT26KmFA==}
-    peerDependencies:
-      expo: '*'
-
   expo-document-picker@14.0.8:
     resolution: {integrity: sha512-3tyQKpPqWWFlI8p9RiMX1+T1Zge5mEKeBuXWp1h8PEItFMUDSiOJbQ112sfdC6Hxt8wSxreV9bCRl/NgBdt+fA==}
     peerDependencies:
@@ -9878,10 +9865,6 @@ packages:
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
-    hasBin: true
-
-  ua-parser-js@0.7.41:
-    resolution: {integrity: sha512-O3oYyCMPYgNNHuO7Jjk3uacJWZF8loBgwrfd/5LE/HyZ3lUIOdniQ7DNXJcIgZbwioZxk0fLfI4EVnetdiX5jg==}
     hasBin: true
 
   ua-parser-js@1.0.41:
@@ -16871,11 +16854,6 @@ snapshots:
       base64-js: 1.5.1
       expo: 54.0.35(@babel/core@7.29.7)(@expo/metro-runtime@6.1.2)(expo-router@6.0.24)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)(typescript@5.9.3)
 
-  expo-device@8.0.10(expo@54.0.35):
-    dependencies:
-      expo: 54.0.35(@babel/core@7.29.7)(@expo/metro-runtime@6.1.2)(expo-router@6.0.24)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)(typescript@5.9.3)
-      ua-parser-js: 0.7.41
-
   expo-document-picker@14.0.8(expo@54.0.35):
     dependencies:
       expo: 54.0.35(@babel/core@7.29.7)(@expo/metro-runtime@6.1.2)(expo-router@6.0.24)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)(typescript@5.9.3)
@@ -21353,8 +21331,6 @@ snapshots:
       yaml: 2.9.0
 
   typescript@5.9.3: {}
-
-  ua-parser-js@0.7.41: {}
 
   ua-parser-js@1.0.41: {}
 

@@ -54,14 +54,6 @@ export type PinnedPart = {
   sizeLabel?: string;
 };
 
-/** Dimensions captured by the Measure tab, passed back to an item edit form. */
-export type LidarDims = {
-  length?: number | null;
-  width?: number | null;
-  height?: number | null;
-  diameter?: number | null;
-};
-
 /** Inventory search pre-filter set by cross-tab navigation (e.g. "View in Inventory" after adding a part). */
 export type InventorySearchParams = {
   vendor?: string;
@@ -301,9 +293,6 @@ export interface AppContextValue {
   // Cross-tab: vendor+catalog pre-filter set when navigating from "View in Inventory"
   pendingInventorySearch: InventorySearchParams | null;
   setPendingInventorySearch: (search: InventorySearchParams | null) => void;
-  // Cross-tab: LiDAR dims captured in the Measure tab to pre-fill an item form
-  pendingLidarDims: LidarDims | null;
-  setPendingLidarDims: (dims: LidarDims | null) => void;
   // Persisted resume-progress state so the card survives screen navigation
   resumeProgress: Record<number, ResumeProgress>;
   setResumeProgress: React.Dispatch<React.SetStateAction<Record<number, ResumeProgress>>>;
@@ -347,7 +336,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [pinnedParts, setPinnedParts] = useState<Array<PinnedPart>>([]);
   const [pendingMeasureSearch, setPendingMeasureSearch] = useState<MeasureSearchParams | null>(null);
   const [pendingInventorySearch, setPendingInventorySearch] = useState<InventorySearchParams | null>(null);
-  const [pendingLidarDims, setPendingLidarDims] = useState<LidarDims | null>(null);
   const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [apiInitError, setApiInitError] = useState(false);
@@ -831,8 +819,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setPendingMeasureSearch,
     pendingInventorySearch,
     setPendingInventorySearch,
-    pendingLidarDims,
-    setPendingLidarDims,
     resumeProgress,
     setResumeProgress,
   }), [
@@ -854,7 +840,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     pinnedParts,
     pendingMeasureSearch,
     pendingInventorySearch,
-    pendingLidarDims,
     resumeProgress,
   ]);
 

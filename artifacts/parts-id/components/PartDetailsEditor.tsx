@@ -11,7 +11,6 @@ import {
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
-import { isLiDARSupported } from "lidar-measure";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -94,10 +93,7 @@ interface PartDetailsEditorProps {
  * Lets admins fill in description, bin locations, keywords, and dimensions
  * in one place without navigating to the Upload tab.
  *
- * On iOS devices with LiDAR a "LiDAR" shortcut appears in the dimensions
- * section so admins can capture measurements without navigating to Edit.
- * On non-LiDAR iOS devices the "Estimate" (photo AI) path is shown instead.
- * Android and Web see neither — manual entry only.
+ * Administrators can estimate dimensions from a photo or enter them manually.
  */
 export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onItemDeleted, onItemSaved }: PartDetailsEditorProps) {
   "use no memo";
@@ -159,8 +155,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const [dimHeight, setDimHeight] = useState(fmtDim(existingDims?.height));
   const [dimDiameter, setDimDiameter] = useState(fmtDim(existingDims?.diameter));
   const [measureOpen, setMeasureOpen] = useState(false);
-  const [lidarAvailable, setLidarAvailable] = useState(false);
-  const pendingMeasureDimsRef = useRef<PartDimensions | null>(null);
+  const pendingDimsRef = useRef<PartDimensions | null>(null);
   const [discardDialogVisible, setDiscardDialogVisible] = useState(false);
   const [saveInFlightDialogVisible, setSaveInFlightDialogVisible] = useState(false);
   const savedDescriptionRef = useRef(item?.description ?? "");
@@ -218,10 +213,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     pendingCloseRef.current = null;
     setDiscardDialogVisible(false);
     if (exit) exit();
-  }, []);
-
-  useEffect(() => {
-    setLidarAvailable(isLiDARSupported());
   }, []);
 
   // Photo state — slot 1 (Box / Label)
@@ -426,7 +417,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
     const current = itemRef.current;
     if (!current || !adminToken || dimensionSaveInFlightRef.current) return;
-    pendingMeasureDimsRef.current = dims;
+    pendingDimsRef.current = dims;
     dimensionSaveInFlightRef.current = true;
     setMeasureOpen(false);
 
@@ -454,7 +445,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      pendingMeasureDimsRef.current = null;
+      pendingDimsRef.current = null;
       savedDimsRef.current = {
         length: dims.length ?? null,
         width: dims.width ?? null,
@@ -483,7 +474,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   }, [adminToken, queryClient, fetchWrite, reportItemSaved]);
 
   const retryDimensionsSave = () => {
-    const pendingDims = pendingMeasureDimsRef.current;
+    const pendingDims = pendingDimsRef.current;
     if (pendingDims) void handleMeasureConfirm(pendingDims);
     else void handleSave();
   };
@@ -1483,41 +1474,24 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                   <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
                 ) : null}
               </View>
-              {Platform.OS === "ios" ? (
-                lidarAvailable ? (
-                  <Pressable
-                    onPress={() => setMeasureOpen(true)}
-                    style={[styles.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
-                    accessibilityLabel="Measure dimensions with LiDAR"
-                  >
-                    <Feather name="maximize-2" size={13} color={colors.primary} />
-                    <Text style={[styles.measureBtnText, { color: colors.primary }]}>LiDAR</Text>
-                  </Pressable>
-                ) : (
-                  <Pressable
-                    onPress={() => setMeasureOpen(true)}
-                    style={[styles.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
-                    accessibilityLabel="Estimate dimensions from photo"
-                  >
-                    <Feather name="maximize" size={13} color={colors.primary} />
-                    <Text style={[styles.measureBtnText, { color: colors.primary }]}>Estimate</Text>
-                  </Pressable>
-                )
-              ) : null}
+              <Pressable
+                onPress={() => setMeasureOpen(true)}
+                style={[styles.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+                accessibilityLabel="Estimate dimensions from photo"
+              >
+                <Feather name="maximize" size={13} color={colors.primary} />
+                <Text style={[styles.measureBtnText, { color: colors.primary }]}>Estimate</Text>
+              </Pressable>
             </View>
             <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
-              {Platform.OS === "ios"
-                ? lidarAvailable
-                  ? "Tap LiDAR to measure precisely, or enter values manually. Leave blank if unknown."
-                  : "Tap Estimate to measure from a photo, or enter values manually. Leave blank if unknown."
-                : "Enter physical dimensions in millimetres. Leave blank if unknown."}
+              {"Tap Estimate to measure from a photo, or enter values manually. Leave blank if unknown."}
             </Text>
             <View style={styles.dimGrid}>
               <View style={styles.dimField}>
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Length</Text>
                 <KeyboardDoneInput
                   value={dimLength}
-                  onChangeText={v => { pendingMeasureDimsRef.current = null; setDimLength(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={v => { pendingDimsRef.current = null; setDimLength(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                   placeholder="–"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
@@ -1528,7 +1502,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Width</Text>
                 <KeyboardDoneInput
                   value={dimWidth}
-                  onChangeText={v => { pendingMeasureDimsRef.current = null; setDimWidth(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={v => { pendingDimsRef.current = null; setDimWidth(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                   placeholder="–"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
@@ -1539,7 +1513,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Height</Text>
                 <KeyboardDoneInput
                   value={dimHeight}
-                  onChangeText={v => { pendingMeasureDimsRef.current = null; setDimHeight(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={v => { pendingDimsRef.current = null; setDimHeight(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                   placeholder="–"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
@@ -1550,7 +1524,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Diameter</Text>
                 <KeyboardDoneInput
                   value={dimDiameter}
-                  onChangeText={v => { pendingMeasureDimsRef.current = null; setDimDiameter(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={v => { pendingDimsRef.current = null; setDimDiameter(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                   placeholder="–"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"

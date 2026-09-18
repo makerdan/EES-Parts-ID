@@ -187,8 +187,6 @@ function makeAppMock(overrides: Record<string, unknown> = {}) {
     setPendingInventorySearch: jest.fn(),
     textFontScale: 1,
     pinnedParts: [],
-    pendingLidarDims: null,
-    setPendingLidarDims: jest.fn(),
     approvalStatus: "approved" as const,
     ...overrides,
   };

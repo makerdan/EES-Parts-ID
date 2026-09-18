@@ -41,10 +41,6 @@ jest.mock("expo-camera", () => ({
   useCameraPermissions: jest.fn(() => [mockPermDeniedPermanent, mockRequestPermission]),
 }));
 
-// ─── expo-device ─────────────────────────────────────────────────────────────
-
-jest.mock("expo-device", () => ({ modelName: null }));
-
 // ─── @expo/vector-icons ───────────────────────────────────────────────────────
 
 jest.mock("@expo/vector-icons", () => ({

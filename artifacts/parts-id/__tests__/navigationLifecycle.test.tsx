@@ -350,8 +350,6 @@ function makeAppContext() {
     setPendingMeasureSearch: jest.fn(),
     pendingInventorySearch: null,
     setPendingInventorySearch: jest.fn(),
-    pendingLidarDims: null,
-    setPendingLidarDims: jest.fn(),
     textFontScale: 1,
     pinnedParts: [],
     resumeProgress: {},

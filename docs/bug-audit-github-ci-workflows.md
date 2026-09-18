@@ -15,7 +15,6 @@ type-safety finding was inferred from workflow configuration.
 This audit used:
 
 - `.github/workflows/ci.yml`
-- `.github/workflows/lidar-measure-tests.yml`
 - `.github/workflows/scheduled-audit.yml`
 - `.github/workflows/sync-readme.yml`
 - `.github/actions/setup-node-pnpm/action.yml`
@@ -39,7 +38,6 @@ was changed.
 |---|---|---|---|---|
 | `CI` / `Portable validation` | Pull requests (`opened`, `synchronize`, `reopened`, `ready_for_review`), merge queue (`checks_requested`), push to `main`, manual dispatch | `contents: read` at workflow and job scope | Pinned checkout; shared Node/pnpm setup; PostgreSQL 16.4; readiness loop; isolated schema push; `pnpm run test-standard-plus` | The validation job fails normally. Opt-in Poe validation is `continue-on-error`; diagnostics upload is `always()` and `continue-on-error`, so neither can make the required result green. |
 | `CI` / `CI / required` | Same workflow events | `contents: read` | `if: always()`, `needs: [validate]`; reads `needs.validate.result` | Explicitly fails for `failure`, `cancelled`, `skipped`, empty, and unexpected results. This is the available stable required context. |
-| `LiDAR Measure Tests` / `Run LidarMeasureTests` | Same pull request, merge queue, push, and manual events | `contents: read` | Pinned checkout; shared Node/pnpm setup; Expo iOS prebuild; CocoaPods cache/install; native `xcodebuild test` | Native test step uses `always()` after CocoaPods so a pod failure is visible rather than silently skipped. Result artifacts are diagnostic-only and upload is non-blocking. The workflow has no dependency on `CI / required`. |
 | `Scheduled security audit` / `Daily dependency audit (low+)` | Daily schedule and manual dispatch | `contents: read` | Pinned checkout; shared setup; expiry guard; `pnpm audit --audit-level=low` with two documented advisory exceptions | A setup or audit failure fails this maintenance job. It is not a pull-request required status. |
 | `Sync README from replit.md` / `Copy replit.md → README.md` | Weekly schedule and manual dispatch | `contents: write` | Checkout with credentials; copy `replit.md`; force-with-lease push to `automation/sync-readme`; print compare/PR URL | Maintenance writer, not validation. The commit message contains `[skip ci]`. |
 | `setup-node-pnpm` | Called by the three validation/maintenance workflows that install dependencies | No independent workflow permission | Node from `.node-version`; pinned pnpm input; lockfile-keyed pnpm-store cache; frozen install; no checkout | Shared prerequisite. External actions are SHA-pinned and the local action cannot perform the initial checkout. |
@@ -62,7 +60,6 @@ Artifact retention is bounded to seven days and is not used as a pass signal.
 | # | Severity | Category | File:Line | One-line description |
 |---:|---|---|---|---|
 | 1 | High | Security | `scripts/test/github-actions-contract.test.mjs:55-60, 709-710` | The contract validates only a hard-coded four-workflow list, so a newly added workflow can bypass the repository’s workflow safety checks. |
-| 2 | High | State & data integrity | `.github/workflows/lidar-measure-tests.yml:19-24`; `docs/validation/github-protection-status.md:23-24` | The native PR validation job is not part of the only required branch-protection context, so a portable-green PR can merge with native validation failed. |
 | 3 | Medium | Error handling | `.github/workflows/sync-readme.yml:44` | `[skip ci]` can suppress the required pull-request check for the automation branch and leave its maintenance PR pending. |
 | 4 | Medium | Security | `.github/workflows/sync-readme.yml:3-6, 8-26` | Manual dispatch is not restricted to `main`, although the write-capable workflow is described and implemented as default-branch maintenance. |
 | 5 | Medium | Error handling | `scripts/lib/github-validation-evidence.mjs:276-285` | The read-only evidence collector requests 100 runs/jobs but never follows pagination, so it can report incomplete or absent evidence. |
@@ -88,27 +85,6 @@ Artifact retention is bounded to seven days and is not used as a pass signal.
   explicit classification/allowlist for expected workflow-specific rules.
   Add a negative fixture proving that an added unsafe workflow is rejected and
   that an unexpected workflow cannot silently disappear from the inventory.
-
-### Finding 2 — LiDAR PR failures do not block the required merge gate
-
-- **File and line:** `.github/workflows/lidar-measure-tests.yml:19-24`;
-  `docs/validation/github-protection-status.md:23-24`
-- **Category:** State & data integrity
-- **Severity:** High
-- **Risk:** `Run LidarMeasureTests` runs for pull requests and merge groups, but
-  it is a separate workflow and is not a dependency of `CI / required`.
-  Available branch-protection evidence names only `CI / required` as required.
-  A pull request can therefore pass the Linux `Portable validation` job while
-  the native test fails or never produces a successful result, and still satisfy
-  the configured required context. Native regressions can merge without the
-  workflow reporting a merge-blocking failure. This is distinct from the
-  fail-closed behavior inside `CI`: that aggregator cannot observe a job in a
-  different workflow.
-- **Recommended fix:** Decide whether the native suite is required or
-  advisory. If required, add its stable check (or a fail-closed native
-  aggregator) to branch protection and verify it on both pull-request and
-  merge-group paths. If it is intentionally advisory, remove its required-
-  validation presentation and document that merge safety does not depend on it.
 
 ### Finding 3 — README synchronization can suppress required CI
 
@@ -190,9 +166,7 @@ Artifact retention is bounded to seven days and is not used as a pass signal.
   skipped dependencies, empty results, and unexpected results fail.
 - **Optional jobs and steps:** The live Poe provider check and diagnostic
   uploads are explicitly `continue-on-error`. They cannot turn a failed
-  portable validation job into a successful required result. The LiDAR job is
-  not optional at the workflow trigger level, but its result is not included
-  in the required gate (Finding 2).
+  portable validation job into a successful required result.
 - **Cancellation:** Pull-request and merge-group runs cancel in progress by
   stable ref/PR group. The required job fails closed when its dependency is
   cancelled. Push-to-`main`, scheduled, and manual runs are not cancelled by
@@ -200,10 +174,10 @@ Artifact retention is bounded to seven days and is not used as a pass signal.
 - **Pagination:** The collector requests 100 items but does not continue to
   later pages (Finding 5). The workflow contract itself has a separate
   inventory blind spot (Finding 1).
-- **Diagnostics:** CI and LiDAR artifacts are bounded to seven days and
-  uploads are non-blocking. Missing artifacts cannot create a false pass, but
-  the evidence collector can make an incomplete remote record look definitive
-  unless pagination is fixed.
+- **Diagnostics:** CI artifacts are bounded to seven days and uploads are
+  non-blocking. Missing artifacts cannot create a false pass, but the evidence
+  collector can make an incomplete remote record look definitive unless
+  pagination is fixed.
 
 ## Tooling signals (Phase 0)
 

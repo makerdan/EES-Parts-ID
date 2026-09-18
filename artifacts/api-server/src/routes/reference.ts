@@ -80,8 +80,8 @@ Parts ID is a mobile warehouse app for identifying, locating, and managing elect
 const ADMIN_APP_KNOWLEDGE = `
 **Admin-only features (available to administrators only):**
 
-**Measure tab (admin only, LiDAR devices only):**
-- On an iPhone/iPad with LiDAR, admins can scan a part's real bounding-box dimensions in a few seconds. Values can be reviewed and edited before confirming.
+**Measure tab (admin only):**
+- Admins can capture a part's dimensions. Values can be reviewed and edited before confirming.
 - Launched from an item's edit form, the captured dimensions are written back to pre-fill that item's length/width/height. Launched on its own, the dimensions are applied as a **size-range filter on the Search tab** so you can find similarly sized parts.
 
 **Admin tab & admin tools (admin only):**

@@ -13,8 +13,7 @@ import {
 } from "@workspace/api-client-react";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as FileSystem from "expo-file-system/legacy";
-import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import { isLiDARSupported } from "lidar-measure";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -70,7 +69,7 @@ export default function EditItemScreen() {
   useTrackScreen("Edit Item");
   const colors = useColors();
   const router = useRouter();
-  const { adminToken, isAdmin, isLoading, pendingLidarDims, setPendingLidarDims } = useApp();
+  const { adminToken, isAdmin, isLoading } = useApp();
   const { item: itemParam, section: sectionParam } = useLocalSearchParams<{ item: string; section?: string }>();
   const queryClient = useQueryClient();
   const writeControllersRef = useRef(new Set<AbortController>());
@@ -226,28 +225,6 @@ export default function EditItemScreen() {
   const [committedFields, setCommittedFields] = useState<Set<string>>(new Set());
   const [scannerOpen, setScannerOpen] = useState(false);
   const [measureOpen, setMeasureOpen] = useState(false);
-  const [lidarAvailable, setLidarAvailable] = useState(false);
-
-  useEffect(() => {
-    setLidarAvailable(isLiDARSupported());
-  }, []);
-
-  // Read LiDAR dims captured in the Measure tab and pre-fill the dimension
-  // fields.  The Measure tab stores dims in AppContext (pendingLidarDims) and
-  // navigates back here; we consume and clear them on the next focus.
-  useFocusEffect(
-    useCallback(() => {
-      if (!pendingLidarDims) return;
-      const d = pendingLidarDims;
-      setPendingLidarDims(null);
-      if (d.length != null) setDimLength(String(Math.round(d.length * 10) / 10));
-      if (d.width != null) setDimWidth(String(Math.round(d.width * 10) / 10));
-      if (d.height != null) setDimHeight(String(Math.round(d.height * 10) / 10));
-      if (d.diameter != null) setDimDiameter(String(Math.round(d.diameter * 10) / 10));
-      setSaveStatus("idle");
-    }, [pendingLidarDims, setPendingLidarDims])
-  );
-
   // Scroll to a specific section when navigated here with a section param
   useEffect(() => {
     if (!sectionParam) return;
@@ -1357,42 +1334,17 @@ export default function EditItemScreen() {
                 <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
               ) : null}
             </View>
-            {Platform.OS === "ios" ? (
-              lidarAvailable ? (
-                <Pressable
-                  onPress={() => {
-                    const label = item ? `${item.vendor} · ${item.catalog}` : "";
-                    // Navigate to the dedicated Measure tab — it stores confirmed
-                    // dims in AppContext.pendingLidarDims and navigates back here,
-                    // where useFocusEffect picks them up and pre-fills the form.
-                    (router.navigate as (url: string) => void)(
-                      `/(tabs)/measure?fromItemForm=true&itemLabel=${encodeURIComponent(label)}`
-                    );
-                  }}
-                  style={[s.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
-                  accessibilityLabel="Measure dimensions with LiDAR"
-                >
-                  <Feather name="maximize-2" size={13} color={colors.primary} />
-                  <Text style={[s.measureBtnText, { color: colors.primary }]}>LiDAR</Text>
-                </Pressable>
-              ) : (
-                <Pressable
-                  onPress={() => setMeasureOpen(true)}
-                  style={[s.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
-                  accessibilityLabel="Estimate dimensions from photo"
-                >
-                  <Feather name="maximize" size={13} color={colors.primary} />
-                  <Text style={[s.measureBtnText, { color: colors.primary }]}>Estimate</Text>
-                </Pressable>
-              )
-            ) : null}
+            <Pressable
+              onPress={() => setMeasureOpen(true)}
+              style={[s.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+              accessibilityLabel="Estimate dimensions from photo"
+            >
+              <Feather name="maximize" size={13} color={colors.primary} />
+              <Text style={[s.measureBtnText, { color: colors.primary }]}>Estimate</Text>
+            </Pressable>
           </View>
           <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
-            {Platform.OS === "ios"
-              ? lidarAvailable
-                ? "Tap LiDAR to measure precisely, or enter values manually. Leave blank if unknown."
-                : "Tap Estimate to measure from a photo, or enter values manually. Leave blank if unknown."
-              : "Enter physical dimensions in millimetres. Leave blank if unknown."}
+            {"Tap Estimate to measure from a photo, or enter values manually. Leave blank if unknown."}
           </Text>
           <View style={s.dimGrid}>
             <View style={s.dimField}>
@@ -1621,7 +1573,7 @@ export default function EditItemScreen() {
         </Modal>
       ) : null}
 
-      {/* Measure modal — iOS only (LiDAR or AI Vision estimate) */}
+      {/* Measure modal — AI Vision estimate */}
       {Platform.OS === "ios" ? (
         <MeasurePartScreen
           visible={measureOpen}

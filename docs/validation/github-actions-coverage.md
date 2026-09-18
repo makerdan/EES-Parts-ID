@@ -2,8 +2,8 @@
 
 This matrix is the repository-owned routing contract. The Replit validation tiers
 remain the local authority; GitHub runs the portable `standard-plus` tier through
-the fail-closed `CI / required` aggregator. Native LiDAR validation is intentionally
-not run in CI. GitHub settings and live run status are not inferred from this file.
+the fail-closed `CI / required` aggregator. GitHub settings and live run status
+are not inferred from this file.
 
 The workflow contract discovers its inventory with `git ls-files` under
 `.github/workflows` and validates every tracked path with the shared permission,
@@ -54,7 +54,6 @@ workflow.
 | failure-gate-contract | `CI / required` → `pnpm run test-standard-plus` | contract coverage; task archive remains local-only | PR, merge queue, main push, manual | inferred from tier manifest |
 | github-actions-contract | `CI / required` → `pnpm run test-standard-plus` | deterministic workflow and mapping contract | PR, merge queue, main push, manual | tracked contract test |
 | validation-parser-tests | `CI / required` → `pnpm run test-standard-plus` | syntax-aware fixtures for JSONC parsing, Jest mock call detection, comment-like strings, regex literals, template literals, and workspace subpaths | PR, merge queue, main push, manual | tracked parser fixture test |
-| native-lidar | `CI / required` → reusable `LiDAR Measure Tests` workflow → `xcodebuild test` | required native platform validation; any failure, cancellation, skip, missing result, or unexpected conclusion fails the stable aggregator | PR, merge queue, main push, manual | tracked workflow contract |
 | dependency-security-contract | `CI / required` → `pnpm run test-standard-plus` | safe lockfile floors for audited packages and exact `image-size` patch/exception linkage | PR, merge queue, main push, manual | tracked contract test |
 | parts-id-dependency-contract | `CI / required` → `pnpm run test-standard-plus` | prevents Parts ID runtime packages from also being declared as development dependencies | PR, merge queue, main push, manual | tracked contract test |
 | test | `CI / required` → `pnpm run test-standard-plus` | all canonical Jest/Vitest suites; no separate test job | PR, merge queue, main push, manual | inferred from tier manifest |
@@ -67,11 +66,8 @@ workflow.
 | github-provider-capability-preflight | none | provider-side read-only evidence for Actions, branch protection, rulesets, selected actions, and SHA pinning; unavailable evidence is blocked or unknown and never activatable | owner-approved read-only inspection only | provider evidence contract |
 | github-security-controls | none | provider-side read-only evidence for secret scanning, push protection, dependency graph, and Dependabot; disabled or unavailable controls remain actionable failures | owner-approved read-only inspection only | provider evidence contract |
 
-The macOS `LidarMeasureTests` job is the platform-specific native owner called
-by `CI`. Its result is a dependency of the stable `CI / required` aggregator, so
-the required context cannot pass unless both portable and native validation
-succeed. The scheduled audit is maintenance-only; README synchronization is the
-only write-capable workflow and accepts no pull-request event.
+The scheduled audit is maintenance-only; README synchronization is the only
+write-capable workflow and accepts no pull-request event.
 
 The two provider evidence rows are not local validation commands and do not
 authorize remote changes. They document the evidence boundary that must be

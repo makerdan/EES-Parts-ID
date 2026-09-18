@@ -128,7 +128,7 @@ describe("GET /api/help", () => {
     expect(res.body.audience).toBe("general");
     expect(res.body.records.length).toBeGreaterThan(0);
     expect(res.body.records.every((record: { audience: string }) => record.audience === "general")).toBe(true);
-    expect(JSON.stringify(res.body)).not.toMatch(/admin-only|spreadsheet import|zone editor|LiDAR/i);
+    expect(JSON.stringify(res.body)).not.toMatch(/admin-only|spreadsheet import|zone editor/i);
   });
 
   it("does not let a query parameter select the admin audience", async () => {
@@ -152,12 +152,12 @@ describe("GET /api/help/admin", () => {
     expect(res.body.contentVersion).toBe(HELP_CONTENT_VERSION);
     expect(res.body.audience).toBe("admin");
     expect(res.body.records.every((record: { audience: string }) => record.audience === "admin")).toBe(true);
-    expect(JSON.stringify(res.body)).toMatch(/spreadsheet import|zone editor|LiDAR/i);
+    expect(JSON.stringify(res.body)).toMatch(/spreadsheet import|zone editor/i);
   });
 
   it("rejects an approved non-admin without exposing admin content", async () => {
     const res = await auth(supertest(app).get("/api/help/admin"), APPROVED_USER).expect(403);
-    expect(JSON.stringify(res.body)).not.toMatch(/admin-only|spreadsheet|zone|LiDAR/i);
+    expect(JSON.stringify(res.body)).not.toMatch(/admin-only|spreadsheet|zone/i);
   });
 
   it("rejects a stale admin role from the current database row", async () => {
@@ -167,7 +167,7 @@ describe("GET /api/help/admin", () => {
       .where(eq(usersTable.clerkUserId, STALE_ADMIN_USER));
 
     const res = await auth(supertest(app).get("/api/help/admin"), STALE_ADMIN_USER).expect(403);
-    expect(JSON.stringify(res.body)).not.toMatch(/admin-only|spreadsheet|zone|LiDAR/i);
+    expect(JSON.stringify(res.body)).not.toMatch(/admin-only|spreadsheet|zone/i);
   });
 
   it("supports a single bounded workflow without changing the audience", async () => {

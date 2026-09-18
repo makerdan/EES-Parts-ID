@@ -92,13 +92,11 @@
     "expo-auth-session": "~7.0.11",
     "expo-clipboard": "^8.0.8",
     "expo-crypto": "~15.0.9",
-    "expo-device": "^8.0.10",
     "expo-file-system": "~19.0.23",
     "expo-image-manipulator": "~14.0.8",
     "expo-keep-awake": "^15.0.8",
     "expo-screen-orientation": "^9.0.9",
     "expo-sharing": "~14.0.8",
-    "lidar-measure": "link:./modules/lidar-measure",
     "pdf-lib": "^1.17.1",
     "tslib": "^2.8.1",
     "@e965/xlsx": "0.20.3"

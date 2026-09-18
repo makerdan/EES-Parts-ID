@@ -419,7 +419,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
         )}
       </Pressable>
 
-      {/* Measure modal — iOS only (LiDAR or AI Vision estimate) */}
+      {/* Measure modal — AI Vision estimate */}
       {Platform.OS === "ios" ? (
         <MeasurePartScreen
           visible={measureOpen}

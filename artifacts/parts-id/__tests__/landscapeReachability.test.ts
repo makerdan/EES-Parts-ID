@@ -73,7 +73,7 @@ describe("short-landscape screen reachability", () => {
     expect(text).toMatch(/flexGrow:\s*1/);
   });
 
-  test("map and camera surfaces keep foreground controls above their backgrounds", () => {
+  test("map controls stay above the background and measurement fields remain scrollable", () => {
     const map = source("map.tsx");
     const warehouseMap = componentSource("WarehouseMapView.tsx");
     const measure = componentSource("MeasurePartScreen.tsx");
@@ -82,10 +82,7 @@ describe("short-landscape screen reachability", () => {
     expect(warehouseMap).toContain("shortLandscape");
     expect(warehouseMap).toContain("64 + insets.bottom");
     expect(warehouseMap).toMatch(/zoomControls:[\s\S]*zIndex:\s*30/);
-    expect(measure).toContain("useWindowDimensions");
-    expect(measure).toMatch(/safeAreaShortLandscape:[^}]*zIndex:\s*10/);
     expect(measure).toContain("<ScrollView");
-    expect(measure).toContain("viewfinderBoxShortLandscape");
   });
 
   test.each(["photo.tsx", "help.tsx"])(

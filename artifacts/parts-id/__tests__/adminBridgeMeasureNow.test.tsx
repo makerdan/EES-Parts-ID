@@ -188,7 +188,7 @@ jest.mock("fuse.js", () =>
 // ─── Component mocks: ResultCard, helpers and MeasurePartScreen ───────────────
 //
 // MeasurePartScreen is mocked so we can inspect the props PhotoScreen passes to
-// it without needing the full camera / LiDAR module surface to be present.
+// it without needing the full camera module surface to be present.
 // Each render captures the latest visible, initialItem and onClose refs so the
 // assertions below can query them directly.
 
@@ -576,7 +576,7 @@ describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no
     const measureBtn = findPressable(result.root!!, "Measure Now");
     await act(async () => { fireEvent.press(measureBtn!); });
 
-    // LiDAR / AI estimates often return sub-mm floats; the handler rounds them.
+    // AI estimates often return sub-mm floats; the handler rounds them.
     const confirmedDims = { length: 119.7, width: 84.4, height: 45.5, diameter: null };
     await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });
 

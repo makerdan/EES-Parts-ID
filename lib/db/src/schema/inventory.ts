@@ -91,8 +91,9 @@ export const inventoryTable = pgTable(
     size: text("size"),
     // ── Physical dimensions ──────────────────────────────────────────────────
     // Nullable JSON object: { length?, width?, height?, diameter? } all in mm.
-    // Populated via LiDAR scan or manual entry. Kept as jsonb so the schema
-    // remains flexible (e.g. future tolerance fields) without another migration.
+    // Populated from supported measurement workflows or manual entry. Kept as
+    // jsonb so the schema remains flexible (e.g. future tolerance fields)
+    // without another migration.
     dimensions: jsonb("dimensions").$type<{
       length?: number | null;
       width?: number | null;

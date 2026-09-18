@@ -725,7 +725,7 @@ export function FilterPanel({ values, onChange, dimensionCounts, onApply }: Filt
                   Include items without measured dimensions
                 </Text>
                 <Text style={[nullDimStyles.hint, { color: colors.mutedForeground }]}>
-                  Show parts with no LiDAR scan data alongside size-filtered results
+                  Show parts with no recorded dimensions alongside size-filtered results
                 </Text>
               </View>
             </Pressable>

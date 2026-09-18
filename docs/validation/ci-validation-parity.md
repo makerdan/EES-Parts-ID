@@ -53,7 +53,6 @@ Confidence labels used below:
 |---|---|---|---|---|
 | `CI` / `Portable validation` | `pull_request` (`opened`, `synchronize`, `reopened`, `ready_for_review`), `merge_group` (`checks_requested`), push to `main`, manual dispatch | Ubuntu 24.04; 45-minute timeout; PostgreSQL 16.4 service; readiness loop; `pnpm --filter @workspace/db run push-force`; then exactly `pnpm run test-standard-plus`; sanitized diagnostics are retained for seven days | pre-merge candidate, merge-queue candidate, default-branch monitor, and manual validation; portable owner | observed |
 | `CI` / `CI / required` | Same events as `CI` | Unconditional five-minute job depending on `validate`; reads `needs.validate.result` and fails closed for failure, cancellation, skip, empty, or unexpected results | stable fail-closed aggregator; required status is separately verified in branch protection below | observed |
-| `LiDAR Measure Tests` / `Run LidarMeasureTests` | Same revision/manual events as `CI` | macOS 15; 35-minute timeout; Expo iOS prebuild; CocoaPods cache and install; `xcodebuild test` against iPhone 16; Apple result artifacts retained seven days | supplemental package-specific platform job; not part of the portable tier | observed |
 | `Scheduled security audit` / `Daily dependency audit (low+)` | Daily at `08:00 UTC` and manual dispatch; no pull-request event | Ubuntu 24.04; 15-minute timeout; `pnpm audit --audit-level=low`; read-only contents permission | scheduled maintenance; duplicate command coverage for the portable `security-audit` row, with a separate maintenance cadence | observed |
 | `Sync README from replit.md` / `Copy replit.md → README.md` | Mondays at `07:00 UTC` and manual dispatch; no pull-request event | Ubuntu 24.04; 10-minute timeout; commits only to `automation/sync-readme`, using force-with-lease when the branch exists, and prints a compare URL | scheduled/manual maintenance; remote write operation, not validation | observed |
 | `setup-node-pnpm` | Called by the three validation/platform workflows | Node from `.node-version`; pnpm 10.26.1; lockfile-keyed store cache; `pnpm install --frozen-lockfile`; no checkout and no credentials | shared setup prerequisite | observed |
@@ -140,7 +139,6 @@ Additional relevant commands and their remote decisions:
 | `pnpm --filter @workspace/api-server run test` | `CI` through the `api-server` leg of root `pnpm test` | package-specific | inferred |
 | `pnpm --filter @workspace/mockup-sandbox exec vitest run` | `CI` through the `mockup-sandbox` leg of root `pnpm test` | package-specific | inferred |
 | `pnpm --filter @workspace/api-server run test:coverage` | `CI` through `api-server-coverage` | package-specific | inferred |
-| `pnpm exec expo prebuild --platform ios --no-install`, `pod install`, and the documented `xcodebuild test` invocation | `LiDAR Measure Tests` / `Run LidarMeasureTests` | package-specific | inferred |
 | `pnpm run test-fast` | Replit `Project` → `test-fast`; no GitHub equivalent for the task gate | local-only with Replit Project-gate dependency | observed |
 | `pnpm run test-standard`, `pnpm run test-standard-plus`, `pnpm run test-heavy` | Named Replit validation workflows; GitHub portable owner uses only `test-standard-plus` | duplicate/local execution surface | observed |
 | Three development-server commands in `.replit` | No GitHub job; they are long-running preview workflows with port readiness | local-only with live service/port dependency | observed |
@@ -169,11 +167,6 @@ Additional relevant commands and their remote decisions:
   exception is not removed or renewed. All other low/moderate/high/critical
   findings remain fatal.
 
-- **LiDAR native command reporting:** the native test step now runs with
-  `if: always()` after CocoaPods, prints the exact `xcodebuild test` command
-  phase, and still exits non-zero when either CocoaPods or `xcodebuild` fails.
-  This prevents a pod-install failure from silently skipping the native test
-  signal without weakening fail-closed behavior.
 
 ### Post-fix local validation
 
@@ -205,16 +198,14 @@ blocks completion of the post-merge confirmation.
 |---|---|---|---|---|
 | `b701d45e6587f65a285929c05e9339f7f73919fb` | [commit lookup](https://api.github.com/repos/makerdan/EES-Parts-ID/commits/b701d45e6587f65a285929c05e9339f7f73919fb) returned HTTP 422; [workflow run query](https://api.github.com/repos/makerdan/EES-Parts-ID/actions/runs?head_sha=b701d45e6587f65a285929c05e9339f7f73919fb&per_page=100) by exact `head_sha` returned zero runs | no run ID, job ID, or attempt exists to inspect | **not observed**; the merged revision is not present on GitHub | target revision; current local checkout is `fe84e34...` |
 | `a91289795b048e1fb6375fda78f5ff7cca65f83e` | push to `main`; [CI run #13](https://github.com/makerdan/EES-Parts-ID/actions/runs/33715076900), run ID `33715076900` | `Portable validation`, job `100522441535`, attempt 1; step `Run the canonical standard-plus validation tier` (`pnpm run test-standard-plus`) | failed; `CI / required`, job `100522672766`, then failed closed at `Fail closed unless portable validation passed` | `pnpm run test-standard-plus`; aggregator has no local test command |
-| `a91289795b048e1fb6375fda78f5ff7cca65f83e` | push to `main`; [LiDAR run #11](https://github.com/makerdan/EES-Parts-ID/actions/runs/33715076909), run ID `33715076909` | `Run LidarMeasureTests`, job `100522553259`, attempt 1; `Pod install` failed and `Run LidarMeasureTests` was skipped | failed before the native test command | Expo prebuild + `pod install` + `xcodebuild test` sequence in `artifacts/parts-id` |
 | `a91289795b048e1fb6375fda78f5ff7cca65f83e` | schedule `2026-09-08`; [Scheduled security audit run #45](https://github.com/makerdan/EES-Parts-ID/actions/runs/34227271068), run ID `34227271068` | `Daily dependency audit (low+)`, job `102064354547`, attempt 1; `Audit dependencies (fail on low/moderate/high/critical)` | failed; fresh scheduled result, but not for the task SHA, so it cannot confirm the bounded two-advisory exception on `b701d45...` | `security-audit`: `pnpm audit --audit-level=low` |
 | `a91289795b048e1fb6375fda78f5ff7cca65f83e` | schedule `2026-09-07`; [Scheduled security audit run #44](https://github.com/makerdan/EES-Parts-ID/actions/runs/34130561665), run ID `34130561665` | `Daily security audit (low+)`, job `101769396869`, attempt 1; `pnpm audit --audit-level=low` | failed | `security-audit`: `pnpm audit --audit-level=low` |
 | `a91289795b048e1fb6375fda78f5ff7cca65f83e` | schedule `2026-09-07`; [Sync README run #10](https://github.com/makerdan/EES-Parts-ID/actions/runs/34127383358), run ID `34127383358` | `Copy replit.md → README.md`, job `101759139278`, attempt 1; copy/branch maintenance steps completed | passed | no local validation counterpart; maintenance-only |
 | `c4f6284beaa690b03e4849cbd98c35966e4eb90c` | pull request; [CI run #16](https://github.com/makerdan/EES-Parts-ID/actions/runs/33840964946), run ID `33840964946` | `Portable validation`, job `100922996328`, attempt 1; standard-plus step failed; aggregator job `100923816520` failed closed | failed | `pnpm run test-standard-plus` |
-| `c4f6284beaa690b03e4849cbd98c35966e4eb90c` | pull request; [LiDAR run #14](https://github.com/makerdan/EES-Parts-ID/actions/runs/33840964952), run ID `33840964952` | `Run LidarMeasureTests`, job `100922996290`, attempt 1; `Pod install` failed and native test was skipped | failed | Expo/CocoaPods/xcodebuild sequence |
 
 The GitHub job API exposed the failed steps and results but not the underlying
 log lines: provider job-log requests returned HTTP 403 for the portable,
-required, LiDAR, and scheduled-audit jobs. The provider-side log detail is
+required and scheduled-audit jobs. The provider-side log detail is
 therefore **unknown**. The portable cause is exact from the local reproduction
 and source inspection, and the bounded audit exception is exact from the
 tracked workflow and local audit evidence: it covers only the two named
@@ -246,7 +237,7 @@ workflow names, badges, or dated documents.
    command's explicit `--allow-no-plan` behavior is documented as a no-op, not
    counted as remote semantic coverage.
 4. **Package and platform boundaries stay visible:** API-spec tests, the three
-   root-suite package legs, API coverage, and the macOS LiDAR job are labeled
+   root-suite package legs and API coverage are labeled
    package-specific rather than incorrectly described as shards of one matrix.
 5. **Scheduled audit is an intentional duplicate:** the scheduled audit
    retains an independent daily maintenance signal for the same audit command;
@@ -288,7 +279,7 @@ workflow names, badges, or dated documents.
 
 1. After `b701d45...` is pushed to GitHub, capture one pull-request or
    default-branch run for that exact SHA, including the full portable job logs,
-   the scheduled audit result, the LiDAR native-command step, and all
+   the scheduled audit result and all
    required/aggregator results. Do not substitute the current remote `main`
    SHA or a historical run.
 2. Query and record the provider's merge-queue/ruleset policy source

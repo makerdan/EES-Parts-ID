@@ -7,12 +7,7 @@
  * toJSON() in react-test-renderer@19 can silently drop conditional children
  * that haven't been flushed through act() yet.
  *
- * Exercises:
- *   - isLiDARCapableDevice() — exported pure function
- *   - Phase transition: preview → lidar_scanning → confirm (happy path)
- *   - Phase transition: preview → lidar_scanning → preview (error path)
- *   - Manual entry shortcut (goManual)
- *   - onConfirm callback with parsed dimensions
+ * Exercises manual entry, AI photo estimation, and confirmation callbacks.
  */
 
 // Required for act() to work correctly in the node test environment.
@@ -69,15 +64,6 @@ jest.mock("@/contexts/AppContext", () => ({
   })),
 }));
 
-jest.mock("lidar-measure", () => ({
-  isLiDARSupported: jest.fn().mockReturnValue(false),
-  measureObject: jest.fn().mockRejectedValue(
-    new Error("LiDAR not available in test environment")
-  ),
-  cancelMeasure: jest.fn(),
-  NativeLidarDepthView: null,
-}));
-
 // Both `permission` and `requestPermission` must be stable references across
 // renders.  If either is a new object/function per render, the component's
 // useEffect (deps: [visible, initialDims, permission, requestPermission])
@@ -107,8 +93,6 @@ jest.mock("expo-camera", () => {
   };
 });
 
-jest.mock("expo-device", () => ({ modelName: null }));
-
 jest.mock("@expo/vector-icons", () => ({
   Feather: function Feather() { return null; },
 }));
@@ -117,23 +101,13 @@ jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColo
 
 // ─── Typed handles to mocks ───────────────────────────────────────────────────
 
-import { isLiDARSupported, measureObject } from "lidar-measure";
-const mockIsLiDARSupported = isLiDARSupported as jest.Mock;
-const mockMeasureObject = measureObject as jest.Mock;
-
-// Typed handle to the expo-device mock object so tests can set modelName to
-// control isLiDARCapableDevice() return value (lidarAvailable in component).
-const expoDevice = require("expo-device") as { modelName: string | null };
-
-import { Alert, AppState } from "react-native";
+import { Alert } from "react-native";
 const mockAlert = Alert.alert as jest.Mock;
-const mockAppStateAddListener = AppState.addEventListener as jest.Mock;
 
 // ─── Component under test ─────────────────────────────────────────────────────
 
 import {
   MeasurePartScreen,
-  isLiDARCapableDevice,
   type PartDimensions,
 } from "../components/MeasurePartScreen";
 
@@ -216,283 +190,59 @@ afterEach(async () => {
     rejectPendingMeasure = null;
   }
   // Unmount the renderer tree so the component's cleanup effects run and the
-  // AppState subscription is removed (open-handle source #2).
   if (activeTree) {
     await activeTree.unmount();
     activeTree = null;
   }
   jest.clearAllMocks();
-  // Reset expo-device modelName so isLiDARCapableDevice() returns true by
-  // default (null → unknown/simulator → assume capable) and mutations from
-  // the isLiDARCapableDevice() describe block don't bleed into later tests.
-  expoDevice.modelName = null;
-});
-
-// ─── isLiDARCapableDevice ─────────────────────────────────────────────────────
-
-describe("isLiDARCapableDevice()", () => {
-  let ExpoDevice: { modelName: string | null };
-  beforeEach(() => { ExpoDevice = require("expo-device"); });
-
-  it("returns true when modelName is null (unknown / simulator)", () => {
-    ExpoDevice.modelName = null;
-    expect(isLiDARCapableDevice()).toBe(true);
-  });
-
-  it("returns true for iPhone 12 Pro", () => {
-    ExpoDevice.modelName = "iPhone 12 Pro";
-    expect(isLiDARCapableDevice()).toBe(true);
-  });
-
-  it("returns true for iPhone 15 Pro Max", () => {
-    ExpoDevice.modelName = "iPhone 15 Pro Max";
-    expect(isLiDARCapableDevice()).toBe(true);
-  });
-
-  it("returns true for iPad Pro", () => {
-    ExpoDevice.modelName = "iPad Pro (12.9-inch) (4th generation)";
-    expect(isLiDARCapableDevice()).toBe(true);
-  });
-
-  it("returns false for iPhone 11 (no LiDAR)", () => {
-    ExpoDevice.modelName = "iPhone 11";
-    expect(isLiDARCapableDevice()).toBe(false);
-  });
-
-  it("returns false for iPhone SE (3rd generation)", () => {
-    ExpoDevice.modelName = "iPhone SE (3rd generation)";
-    expect(isLiDARCapableDevice()).toBe(false);
-  });
-
-  it("returns false for iPad Air", () => {
-    ExpoDevice.modelName = "iPad Air (5th generation)";
-    expect(isLiDARCapableDevice()).toBe(false);
-  });
 });
 
 // ─── Preview phase ────────────────────────────────────────────────────────────
 
 describe("MeasurePartScreen – preview phase", () => {
   it("renders null when visible=false", async () => {
-    expoDevice.modelName = "iPhone 11";
     const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} visible={false} />
     );
     expect(result.toJSON()).toBeNull();
   });
 
-  it('shows "Measure Part" in the header', async () => {
-    expoDevice.modelName = "iPhone 11";
+  it('shows "Estimate dimensions" in the header', async () => {
     const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(hasText(result.root!, "Measure Part")).toBe(true);
+    expect(hasText(result.root!, "Estimate dimensions")).toBe(true);
   });
 
-  it("shows LiDAR scan button when lidar is available", async () => {
-    // expoDevice.modelName is null (reset by afterEach) → isLiDARCapableDevice() = true
+  it("shows manual dimension fields and confirmation", async () => {
     const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(findPressable(result.root!, "Scan with LiDAR")).not.toBeNull();
+    expect(hasText(result.root!, "You can also enter dimensions manually below.")).toBe(true);
+    expect(hasText(result.root!, "Confirm dimensions")).toBe(true);
   });
 
-  it("does not show LiDAR scan button when lidar is unavailable", async () => {
-    expoDevice.modelName = "iPhone 11";
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(findPressable(result.root!, "Scan with LiDAR")).toBeNull();
-  });
-
-  it('shows "Enter manually instead" link always', async () => {
-    expoDevice.modelName = "iPhone 11";
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(hasText(result.root!, "Enter manually instead")).toBe(true);
-  });
-
-  it("shows LiDAR unsupported message when lidar is unavailable", async () => {
-    expoDevice.modelName = "iPhone 11";
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(hasText(result.root!, "LiDAR measurement requires a LiDAR-capable device")).toBe(true);
-  });
-
-  it("does not show LiDAR unsupported message when lidar is available", async () => {
-    // expoDevice.modelName is null → isLiDARCapableDevice() = true
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(hasText(result.root!, "LiDAR measurement requires a LiDAR-capable device")).toBe(false);
-  });
 });
 
 // ─── Manual entry shortcut ────────────────────────────────────────────────────
 
-describe("MeasurePartScreen – manual entry shortcut", () => {
-  it('transitions to confirm phase when "Enter manually instead" is pressed', async () => {
-    expoDevice.modelName = "iPhone 11";
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(result.root!, "Enter manually instead");
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
-  });
-});
-
-// ─── Phase: lidar_scanning → confirm (success) ───────────────────────────────
-
-describe("MeasurePartScreen – lidar_scanning → confirm (happy path)", () => {
-  it('shows "LiDAR Scanning…" header immediately after pressing Scan', async () => {
-    // expoDevice.modelName is null → isLiDARCapableDevice() = true
-    let resolveScanning!: (v: { length: number; width: number; height: number }) => void;
-    mockMeasureObject.mockReturnValue(
-      new Promise((res, rej) => { resolveScanning = res; rejectPendingMeasure = rej; })
+describe("MeasurePartScreen – manual entry", () => {
+  it("confirms directly from the editable preview fields", async () => {
+    const onConfirm = jest.fn();
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} onConfirm={onConfirm} />
     );
-
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    expect(findPressable(result.root!, "Scan with LiDAR")).not.toBeNull();
-
-    await press(result.root!, "Scan with LiDAR");
-    expect(hasText(result.root!, "LiDAR Scanning")).toBe(true);
-
-    resolveScanning({ length: 200, width: 100, height: 50 });
-    rejectPendingMeasure = null;
-    await flushPromises();
-  });
-
-  it('transitions to "Review Dimensions" after measureObject resolves', async () => {
-    mockMeasureObject.mockResolvedValue({ length: 200, width: 100, height: 50 });
-
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(result.root!, "Scan with LiDAR");
-    await flushPromises();
-
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
-  });
-
-  it("populates dimension fields with values from measureObject", async () => {
-    mockMeasureObject.mockResolvedValue({ length: 200, width: 100, height: 50 });
-
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(result.root!, "Scan with LiDAR");
-    await flushPromises();
-
-    expect(hasText(result.root!, "200 × 100 × 50 mm")).toBe(true);
-  });
-
-  it("calls measureObject with the 4-second timeout constant", async () => {
-    mockMeasureObject.mockResolvedValue({ length: 100, width: 80, height: 60 });
-
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(result.root!, "Scan with LiDAR");
-    await flushPromises();
-
-    expect(mockMeasureObject).toHaveBeenCalledWith(4);
-  });
-});
-
-// ─── Phase: lidar_scanning → preview (error) ─────────────────────────────────
-
-describe("MeasurePartScreen – lidar_scanning → preview (error path)", () => {
-  it("returns to preview phase when measureObject rejects", async () => {
-    mockMeasureObject.mockRejectedValue(new Error("ERR_NO_MESH"));
-
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(result.root!, "Scan with LiDAR");
-    await flushPromises();
-
-    expect(hasText(result.root!, "Measure Part")).toBe(true);
-  });
-
-  it("shows the error message from the native module via Alert", async () => {
-    mockMeasureObject.mockRejectedValue(new Error("ERR_NO_MESH"));
-
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(result.root!, "Scan with LiDAR");
-    await flushPromises();
-
-    expect(mockAlert).toHaveBeenCalledWith(
-      "LiDAR scan failed",
-      expect.stringContaining("ERR_NO_MESH")
-    );
-  });
-
-  it("uses a generic fallback message when the rejection is not an Error", async () => {
-    mockMeasureObject.mockRejectedValue("non-error string rejection");
-
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(result.root!, "Scan with LiDAR");
-    await flushPromises();
-
-    expect(mockAlert).toHaveBeenCalledWith(
-      "LiDAR scan failed",
-      expect.stringContaining("LiDAR scan failed")
-    );
-  });
-});
-
-// ─── Phase: lidar_scanning → preview (AppState background interrupt) ─────────
-
-describe("MeasurePartScreen – lidar_scanning → preview (background interrupt)", () => {
-  /**
-   * Helper: start a scan that stays pending, then fire the AppState listener
-   * with the given nextState, then assert the phase resets to preview.
-   */
-  async function runInterruptTest(nextState: "background" | "inactive") {
-    // expoDevice.modelName is null → isLiDARCapableDevice() = true
-    // Never resolves during the test — we want the scan to still be in-flight.
-    // Capture the reject so afterEach can settle it and prevent an open handle.
-    mockMeasureObject.mockReturnValue(
-      new Promise((_, rej) => { rejectPendingMeasure = rej; })
-    );
-
-    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
-    await press(result.root!, "Scan with LiDAR");
-
-    // The component must now be in lidar_scanning phase and have registered
-    // an AppState listener.  Grab the change-handler from the mock.
-    expect(mockAppStateAddListener).toHaveBeenCalledWith("change", expect.any(Function));
-    const changeHandler: (s: string) => void =
-      mockAppStateAddListener.mock.calls[mockAppStateAddListener.mock.calls.length - 1][1];
-
-    // Simulate the app moving to background / inactive while scanning.
-    await act(async () => {
-      changeHandler(nextState);
-    });
-
-    expect(hasText(result.root!, "Measure Part")).toBe(true);
-  }
-
-  it("resets to preview when app moves to background mid-scan", async () => {
-    await runInterruptTest("background");
-  });
-
-  it("resets to preview when app becomes inactive mid-scan", async () => {
-    await runInterruptTest("inactive");
+    await press(result.root!, "Confirm dimensions");
+    expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 });
 
 // ─── onConfirm callback ───────────────────────────────────────────────────────
 
 describe("MeasurePartScreen – onConfirm callback", () => {
-  it("fires onConfirm with parsed dimensions after a successful LiDAR scan", async () => {
-    const onConfirm = jest.fn();
-    mockMeasureObject.mockResolvedValue({ length: 200, width: 100, height: 50 });
-
-    const result = await renderComponent(
-      <MeasurePartScreen {...DEFAULT_PROPS} onConfirm={onConfirm} />
-    );
-    await press(result.root!, "Scan with LiDAR");
-    await flushPromises();
-    await press(result.root!, "Save Dimensions");
-
-    expect(onConfirm).toHaveBeenCalledWith<[PartDimensions]>({
-      length: 200,
-      width: 100,
-      height: 50,
-      diameter: null,
-    });
-  });
-
   it("fires onConfirm with null values when fields are empty (manual entry)", async () => {
     const onConfirm = jest.fn();
-    expoDevice.modelName = "iPhone 11";
 
     const result = await renderComponent(
       <MeasurePartScreen {...DEFAULT_PROPS} onConfirm={onConfirm} />
     );
-    await press(result.root!, "Enter manually instead");
-    await press(result.root!, "Save Dimensions");
+    await press(result.root!, "Confirm dimensions");
 
     expect(onConfirm).toHaveBeenCalledWith<[PartDimensions]>({
       length: null,
@@ -523,8 +273,6 @@ describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
   let mockFetch: jest.SpyInstance;
 
   beforeEach(() => {
-    // Use a non-LiDAR device so the Capture & Estimate button is shown instead.
-    expoDevice.modelName = "iPhone 11";
 
     // The camera ref must be non-null for handleCapture to proceed; the
     // forwardRef CameraView mock handles that via useImperativeHandle.
@@ -551,7 +299,7 @@ describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
     );
 
-    await press(result.root!, "Capture & Estimate");
+    await press(result.root!, "Capture & estimate");
     await flushPromises();
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -567,7 +315,7 @@ describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
     );
 
-    await press(result.root!, "Capture & Estimate");
+    await press(result.root!, "Capture & estimate");
     await flushPromises();
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -586,11 +334,13 @@ describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
     );
 
-    // Reach the confirm screen via manual-entry shortcut.
-    await press(result.root!, "Enter manually instead");
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+    await press(result.root!, "Capture & estimate");
+    await flushPromises();
+    expect(hasText(result.root!, "Review dimensions")).toBe(true);
+    mockFetch.mockClear();
 
-    await press(result.root!, "Photo Estimate");
+    await press(result.root!, "Estimate again");
+    await press(result.root!, "Capture & estimate");
     await flushPromises();
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -606,11 +356,13 @@ describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
     );
 
-    // Reach the confirm screen via manual-entry shortcut.
-    await press(result.root!, "Enter manually instead");
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+    await press(result.root!, "Capture & estimate");
+    await flushPromises();
+    expect(hasText(result.root!, "Review dimensions")).toBe(true);
+    mockFetch.mockClear();
 
-    await press(result.root!, "Photo Estimate");
+    await press(result.root!, "Estimate again");
+    await press(result.root!, "Capture & estimate");
     await flushPromises();
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -640,8 +392,6 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
   let mockFetch: jest.SpyInstance;
 
   beforeEach(() => {
-    // Use a non-LiDAR device so the Capture & Estimate button is shown instead.
-    expoDevice.modelName = "iPhone 11";
 
     expoCamera.__mockTakePictureAsync.mockResolvedValue({
       base64: "fake-base64-data",
@@ -666,14 +416,14 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
     );
 
-    await press(result.root!, "Capture & Estimate");
+    await press(result.root!, "Capture & estimate");
     await flushPromises();
 
     expect(mockAlert).toHaveBeenCalledWith(
       "Estimation failed",
       expect.stringContaining("Internal Server Error")
     );
-    expect(hasText(result.root!, "Measure Part")).toBe(true);
+    expect(hasText(result.root!, "Estimate dimensions")).toBe(true);
   });
 
   it("initial capture (admin): non-OK 500 shows Alert and returns to preview", async () => {
@@ -687,14 +437,14 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
     );
 
-    await press(result.root!, "Capture & Estimate");
+    await press(result.root!, "Capture & estimate");
     await flushPromises();
 
     expect(mockAlert).toHaveBeenCalledWith(
       "Estimation failed",
       expect.stringContaining("Server error 500")
     );
-    expect(hasText(result.root!, "Measure Part")).toBe(true);
+    expect(hasText(result.root!, "Estimate dimensions")).toBe(true);
   });
 
   // ── handleCapture: network failure (fetch rejection) ──────────────────────
@@ -708,14 +458,14 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
     );
 
-    await press(result.root!, "Capture & Estimate");
+    await press(result.root!, "Capture & estimate");
     await flushPromises();
 
     expect(mockAlert).toHaveBeenCalledWith(
       "Estimation failed",
       expect.stringContaining("Network request failed")
     );
-    expect(hasText(result.root!, "Measure Part")).toBe(true);
+    expect(hasText(result.root!, "Estimate dimensions")).toBe(true);
   });
 
   it("initial capture (admin): network error shows Alert and returns to preview", async () => {
@@ -727,131 +477,16 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
       <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
     );
 
-    await press(result.root!, "Capture & Estimate");
+    await press(result.root!, "Capture & estimate");
     await flushPromises();
 
     expect(mockAlert).toHaveBeenCalledWith(
       "Estimation failed",
       expect.stringContaining("Network request failed")
     );
-    expect(hasText(result.root!, "Measure Part")).toBe(true);
+    expect(hasText(result.root!, "Estimate dimensions")).toBe(true);
   });
 
-  // ── handleCaptureOnConfirm: non-OK HTTP response → inline error ───────────
-
-  it("re-estimate (non-admin): non-OK 500 shows inline error on confirm screen", async () => {
-    // First call (reaching confirm via initial capture) succeeds; second call fails.
-    mockFetch = jest
-      .spyOn(global, "fetch")
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        json: () => Promise.resolve({ error: "Re-estimate server error" }),
-      } as Response);
-
-    const result = await renderComponent(
-      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
-    );
-
-    // Reach confirm screen via the initial capture path.
-    await press(result.root!, "Capture & Estimate");
-    await flushPromises();
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
-
-    // Trigger re-estimation which will fail.
-    await press(result.root!, "Photo Estimate");
-    await flushPromises();
-
-    expect(hasText(result.root!, "Re-estimate server error")).toBe(true);
-    // Screen stays on confirm, not preview.
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
-  });
-
-  it("re-estimate (admin): non-OK 500 shows inline error on confirm screen", async () => {
-    mockFetch = jest
-      .spyOn(global, "fetch")
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        json: () => Promise.resolve({}),
-      } as Response);
-
-    const result = await renderComponent(
-      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
-    );
-
-    await press(result.root!, "Capture & Estimate");
-    await flushPromises();
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
-
-    await press(result.root!, "Photo Estimate");
-    await flushPromises();
-
-    expect(hasText(result.root!, "Server error 500")).toBe(true);
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
-  });
-
-  // ── handleCaptureOnConfirm: network failure → inline error ────────────────
-
-  it("re-estimate (non-admin): network error shows inline error on confirm screen", async () => {
-    mockFetch = jest
-      .spyOn(global, "fetch")
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
-      } as Response)
-      .mockRejectedValueOnce(new Error("Network request failed"));
-
-    const result = await renderComponent(
-      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
-    );
-
-    await press(result.root!, "Capture & Estimate");
-    await flushPromises();
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
-
-    await press(result.root!, "Photo Estimate");
-    await flushPromises();
-
-    expect(hasText(result.root!, "Network request failed")).toBe(true);
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
-  });
-
-  it("re-estimate (admin): network error shows inline error on confirm screen", async () => {
-    mockFetch = jest
-      .spyOn(global, "fetch")
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
-      } as Response)
-      .mockRejectedValueOnce(new Error("Network request failed"));
-
-    const result = await renderComponent(
-      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
-    );
-
-    await press(result.root!, "Capture & Estimate");
-    await flushPromises();
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
-
-    await press(result.root!, "Photo Estimate");
-    await flushPromises();
-
-    expect(hasText(result.root!, "Network request failed")).toBe(true);
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
-  });
 });
 
 // ─── initialItem dimension seeding ───────────────────────────────────────────
@@ -863,7 +498,6 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
 
 describe("MeasurePartScreen – initialItem dimension seeding", () => {
   it("seeds the dimension fields from initialItem.dimensions when initialDims is null", async () => {
-    expoDevice.modelName = "iPhone 11";
 
     const seedItem = {
       id: 99,
@@ -881,15 +515,10 @@ describe("MeasurePartScreen – initialItem dimension seeding", () => {
       />
     );
 
-    await press(result.root!, "Enter manually instead");
-
-    expect(hasText(result.root!, "200")).toBe(true);
-    expect(hasText(result.root!, "100")).toBe(true);
-    expect(hasText(result.root!, "50")).toBe(true);
+    expect(findInputValues(result.root!)).toEqual(expect.arrayContaining(["200", "100", "50"]));
   });
 
   it("seeds the diameter field when initialItem.dimensions contains only a diameter", async () => {
-    expoDevice.modelName = "iPhone 11";
 
     const seedItem = {
       id: 100,
@@ -907,15 +536,10 @@ describe("MeasurePartScreen – initialItem dimension seeding", () => {
       />
     );
 
-    await press(result.root!, "Enter manually instead");
-
-    // diameter-only: L/W/H are empty so the dimPreview text node is absent;
-    // check the TextInput value prop directly instead.
     expect(findInputValues(result.root!)).toContain("38");
   });
 
   it("prefers explicit initialDims over initialItem.dimensions when both are provided", async () => {
-    expoDevice.modelName = "iPhone 11";
 
     const seedItem = {
       id: 101,
@@ -933,16 +557,11 @@ describe("MeasurePartScreen – initialItem dimension seeding", () => {
       />
     );
 
-    await press(result.root!, "Enter manually instead");
-
-    expect(hasText(result.root!, "200")).toBe(true);
-    expect(hasText(result.root!, "100")).toBe(true);
-    expect(hasText(result.root!, "50")).toBe(true);
-    expect(hasText(result.root!, "999")).toBe(false);
+    expect(findInputValues(result.root!)).toEqual(expect.arrayContaining(["200", "100", "50"]));
+    expect(findInputValues(result.root!)).not.toContain("999");
   });
 
   it("leaves fields empty when both initialDims and initialItem.dimensions are null", async () => {
-    expoDevice.modelName = "iPhone 11";
 
     const seedItem = {
       id: 102,
@@ -960,9 +579,7 @@ describe("MeasurePartScreen – initialItem dimension seeding", () => {
       />
     );
 
-    await press(result.root!, "Enter manually instead");
-
-    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
-    expect(hasText(result.root!, "200")).toBe(false);
+    expect(hasText(result.root!, "Estimate dimensions")).toBe(true);
+    expect(findInputValues(result.root!)).toEqual([]);
   });
 });

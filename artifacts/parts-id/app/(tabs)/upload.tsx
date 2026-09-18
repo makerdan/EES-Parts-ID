@@ -7,7 +7,6 @@ import * as DocumentPicker from "expo-document-picker";
 import { File as FsFile, Paths as FsPaths } from "expo-file-system";
 import { useRouter } from "expo-router";
 import * as Sharing from "expo-sharing";
-import { isLiDARSupported } from "lidar-measure";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -1263,7 +1262,6 @@ export default function UploadScreen() {
     await checkStatus();
   }, [apiCheckAnim, apiChecking, apiRestarting, checkStatus]);
 
-  const lidarSupported = isLiDARSupported();
   const [parsedRows, setParsedRows] = useState<Array<ParsedRow>>([]);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -4656,7 +4654,7 @@ export default function UploadScreen() {
                         <Feather name="chevron-right" size={20} color={colors.success} />
                       </Pressable>
                       {/* Measure Part */}
-                      {lidarSupported && isAdmin && adminToken ? (
+                      {isAdmin && adminToken ? (
                         <Pressable
                           onPress={() => setMeasureVisible(true)}
                           style={[styles.shelfEntryBanner, { backgroundColor: colors.foreground + "0D", borderColor: colors.foreground + "33", marginTop: 10 }]}
@@ -4664,7 +4662,7 @@ export default function UploadScreen() {
                           <View style={{ flex: 1 }}>
                             <Text style={[styles.shelfEntryTitle, { color: colors.foreground }]}>📐 Measure Part</Text>
                             <Text style={[styles.shelfEntryHint, { color: colors.mutedForeground }]}>
-                              Use LiDAR or AI photo estimation to capture part dimensions.
+                              Use AI photo estimation to capture part dimensions.
                             </Text>
                           </View>
                           <Feather name="maximize" size={20} color={colors.foreground} />

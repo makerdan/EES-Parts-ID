@@ -199,9 +199,6 @@ jest.mock("expo-camera", () => ({
   CameraView: () => null,
   useCameraPermissions: jest.fn(() => [{ granted: false }, jest.fn()]),
 }));
-jest.mock("lidar-measure", () => ({
-  isLiDARSupported: jest.fn(() => false),
-}));
 jest.mock("expo-file-system/legacy", () => ({
   readAsStringAsync: jest.fn().mockResolvedValue("base64data"),
   cacheDirectory: "/tmp/",

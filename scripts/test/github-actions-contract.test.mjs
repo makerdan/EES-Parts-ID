@@ -288,9 +288,6 @@ function validateWorkflowContract(files, coverage) {
   const validate = ciJobs.find((block) => block.name === "validate");
   const required = ciJobs.find((block) => block.name === "required");
   if (!validate) errors.push("ci.yml: missing validate job");
-  if (ciJobs.some((block) => block.name === "native") || /lidar-measure-tests/.test(ci)) {
-    errors.push("ci.yml: native LiDAR validation must remain excluded from CI");
-  }
   if (!required) errors.push("ci.yml: missing stable required job");
   if (validate && !/uses:\s+\.\.\/?\.github\/actions\/setup-node-pnpm|uses:\s+\.\/\.github\/actions\/setup-node-pnpm/.test(validate.text)) {
     errors.push("ci.yml/validate: does not use the repository setup component");
