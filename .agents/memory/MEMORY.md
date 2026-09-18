@@ -96,3 +96,4 @@
 - [Shared API codegen ownership](codegen-shared-lock.md) — all destructive generators use one tokenized serial resource and cache the resolved toolchain graph.
 - [Parts ID web build domain](parts-id-web-build-domain.md) — regeneration must use a stable non-preview deployment domain because native validation rejects *.replit.dev.
 - [Protected GitHub history rewrites](protected-github-history-rewrites.md) — protected force rewrites may require both force-push permission and admin bypass; restore rules with a fail-safe trap.
+- [GitHub pull refs survive branch rewrites](github-pull-refs-history.md) — normal clones omit read-only refs/pull; mirror scans can reveal provider-retained history that only GitHub can remove.

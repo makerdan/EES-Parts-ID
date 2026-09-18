@@ -11,24 +11,35 @@ check.
 - [x] Run `node scripts/test/public-repository-boundary.test.mjs`; its synthetic
       public-source/layout fixtures pass and its secret, export, upload, and
       user-data controls fail closed.
-- [x] The reachable-history scan reports no private paths. If it reports any,
-      stop and complete an owner-approved history purge before launch; do not
-      claim that deleting the current-tree copy removed historical data.
-- [x] The history scan proves the checkout is complete (not shallow, partial, or
-      replace-ref based) and scans every bounded reachable text blob for
-      credential and private-data classes before making a release claim.
+- [ ] The reachable-history scan reports no private paths across both public
+      branch heads and provider-retained pull-request refs. The branch-head
+      rewrite is complete, but GitHub still retains rejected historical paths
+      under read-only `refs/pull/*`; provider removal is required before this
+      repository can make a complete public-history claim.
+- [ ] The history scan proves the checkout is complete (not shallow, partial, or
+      replace-ref based), includes provider-retained pull-request refs, and
+      scans every bounded reachable text blob for credential and private-data
+      classes before making a release claim.
 - [ ] Review every new `data/public/` geometry/label change as intentionally
       public and confirm it uses the approved directory, CSV schema, columns,
       and value types with no database IDs, timestamps, inventory, user, or
       operational data.
 
 **2026-09-18 evidence:** A fresh non-shallow clone of the public GitHub
-repository contained eight public heads and no tags. The complete scan reported
-zero historical private-path categories across 7,490 reachable blobs. Six
-changed heads were rewritten atomically with exact leases; the two clean heads
-and all clean tip trees remained unchanged. Protected-branch administrator
-enforcement, required validation, force-push blocking, and deletion blocking
-were restored and re-read after the rewrite.
+repository contained nine public heads and no tags. The branch-head scan
+reported zero historical private-path categories across 7,497 reachable blobs.
+At rewrite time, six changed heads were replaced atomically with exact leases
+and two clean heads remained unchanged; a later clean automation head accounts
+for the ninth head. Protected-branch administrator enforcement, required
+validation, force-push blocking, and deletion blocking were restored and
+re-read after the rewrite.
+
+A mirror fetch also discovered GitHub-retained `refs/pull/*` objects containing
+100 distinct rejected historical paths. GitHub does not permit normal clients
+to delete or force-update these refs. Full public-history release therefore
+remains blocked until GitHub removes the retained pull-request refs, or the
+owner approves replacing the repository. Diagnostics intentionally omit raw
+historical paths and matched values.
 
 ## Runtime boundaries
 

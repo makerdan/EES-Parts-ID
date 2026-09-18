@@ -1,11 +1,11 @@
 # Public repository readiness
 
 **Assessment date:** 2026-09-18
-**Scope:** every public GitHub head and its reachable history in a fresh,
-non-shallow clone
+**Scope:** every public GitHub head plus provider-retained pull-request refs
 **Current-tree status:** boundary guard passes. **Repository visibility status:**
-the owner-approved history rewrite is complete, and the fresh public-GitHub
-scan reports no reachable private-path categories.
+the owner-approved branch-head rewrite is complete, but full public-history
+readiness remains blocked by rejected paths retained in GitHub pull-request
+refs.
 
 ## Intentionally public
 
@@ -38,15 +38,23 @@ layout data must remain source-oriented and reviewable.
 ## Reachable-history rewrite evidence
 
 On 2026-09-18, the owner-approved rewrite removed 100 distinct rejected paths
-from the complete public GitHub ref graph. Six changed heads were replaced in
-one atomic, force-with-lease transaction; the other two public heads already
-had clean, independent histories and remained unchanged.
+from the public branch-head graph. Six changed heads were replaced in one
+atomic, force-with-lease transaction; the other two public heads already had
+clean, independent histories and remained unchanged.
 
-A fresh clone after publication verified all eight public heads and no tags.
+A fresh clone after publication verified all nine current public heads and no
+tags. The ninth head is a later clean automation branch.
 The checkout was non-shallow and non-partial, no replace refs were active, and
 the boundary scanner reported zero historical private-path categories while
-scanning 7,490 reachable blobs. All clean branch tip trees remained
+scanning 7,497 reachable blobs. All clean branch tip trees remained
 byte-identical through the rewrite.
+
+That normal clone does not fetch GitHub's read-only `refs/pull/*` namespace. A
+mirror fetch found that provider-retained pull-request refs still expose the
+same 100 rejected historical paths. Normal Git and GitHub API clients cannot
+delete or force-update these refs. The repository cannot claim a complete
+public-history purge until GitHub removes those retained refs, or the owner
+approves replacing the repository.
 
 The remaining protected-content matches are documented synthetic placeholder
 or test values; no verified live credential was found. Existing clones, forks,
@@ -103,7 +111,8 @@ interpretation of each state.
 
 ## Owner checklist before release
 
-- [x] Complete and verify the reachable-history purge for the findings above.
+- [ ] Complete the provider-side removal of retained pull-request refs, then
+      verify branch heads and `refs/pull/*` with a fresh mirror scan.
 - [ ] Run a provider secret scanner over every rewritten ref and rotate any
       live credential it reports.
 - [ ] Confirm warehouse geometry and public labels are safe to disclose.
