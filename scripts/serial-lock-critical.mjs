@@ -17,6 +17,8 @@ const [
   ownerStartTicks = "",
   staleHeartbeatText,
   maxHoldText,
+  operation = "acquire",
+  expectedToken = "",
 ] = process.argv.slice(2);
 
 const priority = Number(priorityText);
@@ -51,13 +53,27 @@ function holderIsAlive(pid, expectedStartTicks) {
 try {
   const fd = openSync(lockFile, "wx");
   try {
-    writeSync(fd, `${ownerPid}\n${Date.now()}\n${priority}\n${ownerStartTicks}\n`);
+    writeSync(
+      fd,
+      `${ownerPid}\n${Date.now()}\n${priority}\n${ownerStartTicks}\n${expectedToken}\n`,
+    );
   } finally {
     closeSync(fd);
   }
   process.exit(0);
 } catch (error) {
   if (error.code !== "EEXIST") throw error;
+}
+
+if (operation === "release") {
+  try {
+    const [, , , , currentToken = ""] = readFileSync(lockFile, "utf8").split("\n");
+    if (currentToken !== expectedToken) process.exit(0);
+    unlinkSync(lockFile);
+  } catch {
+    // The lock was already released or reclaimed.
+  }
+  process.exit(0);
 }
 
 try {

@@ -63,6 +63,7 @@ import {
   openSync, closeSync, unlinkSync, mkdirSync, writeSync, readFileSync,
   utimesSync, statSync, readdirSync, rmSync, renameSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
@@ -120,6 +121,7 @@ const queueDir = process.env.SERIAL_LOCK_QUEUE_DIR
   : resolve(root, ".local", "serial-lock-queues", lockResource);
 const command = argv.slice(sep + 1);
 const commandLabel = command.join(" ");
+const lockToken = randomUUID();
 
 function pidAlive(pid) {
   try {
@@ -139,16 +141,6 @@ function processStartTicks(pid) {
   } catch {
     return null;
   }
-}
-
-function readLockInfo() {
-  const lines = readFileSync(lockFile, "utf8").split("\n");
-  const pid = Number(lines[0]?.trim());
-  const acquiredAt = Number(lines[1]?.trim());
-  const holderPriority = Number(lines[2]?.trim() || 0);
-  const startTicks = lines[3]?.trim() || null;
-  const mtimeMs = statSync(lockFile).mtimeMs;
-  return { pid, acquiredAt, holderPriority, startTicks, mtimeMs };
 }
 
 function holderIsAlive(holderPid, startTicks) {
@@ -309,6 +301,8 @@ function tryAcquire() {
       processStartTicks(process.pid) ?? "",
       String(STALE_HEARTBEAT_MS),
       String(MAX_HOLD_MS),
+      "acquire",
+      lockToken,
     ],
     { cwd: root, encoding: "utf8" },
   );
@@ -331,10 +325,33 @@ function releaseLock() {
   dequeue();
   if (!lockAcquired) return;
   lockAcquired = false;
-  try {
-    const { pid: holderPid } = readLockInfo();
-    if (holderPid === process.pid) unlinkSync(lockFile);
-  } catch { /* already gone */ }
+  const result = spawnSync(
+    "flock",
+    [
+      "--exclusive",
+      `${lockFile}.guard`,
+      process.execPath,
+      criticalHelper,
+      lockFile,
+      lockResource,
+      "0",
+      String(process.pid),
+      processStartTicks(process.pid) ?? "",
+      "0",
+      "0",
+      "release",
+      lockToken,
+    ],
+    { cwd: root, stdio: "ignore" },
+  );
+  if (result.error || result.status !== 0) {
+    // A failed release is safe: waiters can recover this tokenized lock using
+    // the stale-heartbeat/dead-owner rules, and no successor can be removed
+    // because the release helper checks the token under the same flock guard.
+    console.error(
+      `[serial-lock] WARNING: could not release ${lockResource} lock cleanly; stale recovery will reclaim it safely.`,
+    );
+  }
 }
 
 function startHeartbeat() {

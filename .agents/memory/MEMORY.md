@@ -13,7 +13,7 @@
 - [Poe Bot API Protocol](poe-bot-api-protocol.md) — Poe uses its own SSE protocol (not OpenAI chat/completions); OpenAI SDK with poe.com baseURL was always 404.
 - [pdfjs-dist v5 Node.js legacy build](pdfjs-legacy-node.md) — pdfjs-dist v5+ uses DOMMatrix (browser-only); in Node.js use `import("pdfjs-dist/legacy/build/pdf.mjs")` not `import("pdfjs-dist")`.
 - [FlatList ListHeaderComponent inline function remounts children](flatlist-header-inline-fn.md) — passing an inline arrow function to ListHeaderComponent causes complete remount of all children on every parent re-render; pass a JSX element instead.
-- [Jest SVG require throws before Asset.loadAsync](jest-svg-require.md) — require("*.svg") in a Jest/ts-jest project without a moduleNameMapper throws a SyntaxError synchronously, silently bypassing the Asset.loadAsync call entirely; fix by mapping \\.svg$ to a stub that returns 1.
+- [Jest SVG require throws before Asset.loadAsync](jest-svg-require.md) — require("*.svg") in a Jest/ts-jest project without a moduleNameMapper throws a SyntaxError synchronously, silently bypassing the Asset.loadAsync call entirely; fix by mapping \.svg$ to a stub that returns 1.
 - [jest.clearAllMocks clears ALL mock implementations including non-obvious ones](jest-clearmocks-implementations.md) — clearAllMocks resets getIfValid, Asset.loadAsync, and similar mocks to return undefined; inner beforeEach in nested describe blocks must restore every mock the cold/async path depends on.
 - [panBounds 4th-param svgRenderH](panbounds-svgrenderh.md) — mapViewport.panBounds() takes explicit svgRenderH as 4th arg (not derived internally from SVG_ASPECT); all call sites must pass it.
 - [Jest mockReset needs default Promise after reset](jest-mockreset-promise-default.md) — mockReset() leaves a mock returning undefined; any mock used in a Promise chain needs mockResolvedValue(null) as a default after each reset, or .then() crashes.
@@ -28,7 +28,7 @@
 - [Clerk getToken unstable reference on web](clerk-gettoken-unstable-web.md) — getToken from useAuth() gets a new ref on token refresh; putting it in useCallback deps causes an infinite re-render/re-mount loop manifesting as screen flashing + request storm.
 - [Stuck task in AWAITING_INPUT with no question](awaiting-input-stuck-task.md) — agent crash at state-transition moment; fix is clicking "Update from main" in the Replit UI (cannot be automated).
 - [Silent task failure recovery](silent-task-failure-recovery.md) — FAILED/ERROR with no error message; distinct from AWAITING_INPUT; fix is Retry/re-run in the Replit UI (cannot be automated).
-- [api-zod codegen dev-boot clean race](codegen-dev-boot-race.md) — dev predev must use locked idempotent `codegen:ensure`, not raw `orval` clean, or concurrent api-server boot dies ERR_MODULE_NOT_FOUND.
+- [api-zod codegen dev-boot clean race](codegen-dev-boot-race.md) — dev predev must use locked idempotent codegen:ensure, not raw orval clean, or concurrent api-server boot dies with ERR_MODULE_NOT_FOUND.
 - [Clerk signals useSignIn lacks authenticateWithRedirect](clerk-signals-useSignIn-no-authredirect.md) — @clerk/react 6.11.3 useSignIn() returns a future resource w/o authenticateWithRedirect; use useClerk().client.signIn for web OAuth redirect.
 - [drizzle generate broken — hand-write SQL migrations](drizzle-generate-broken-handwrite-migrations.md) — lib/db generate fails (partial meta); add columns via hand-written drizzle/NNNN.sql + push; schema:check scans quoted column names in .sql.
 - [pipefail echo|grep -q flake](pipefail-echo-grep-flake.md) — `echo "$VAR" | grep -q` under pipefail fails spuriously via SIGPIPE under load; grep the file directly in bash test suites.
@@ -52,18 +52,18 @@
 - [parts-id e2e via Clerk approval gate](parts-id-e2e-clerk-approval.md) — fresh sign-ins land users.status='pending' (403 + pending screen); approve the row via SQL before the tester runs; throwaway users via Clerk backend API.
 - [pnpm lockfile drift on main](pnpm-lockfile-drift.md) — RESOLVED; dep changes surgical again. If drift recurs: revert lockfile, re-link, reconcile via lockfile-only install in isolated commit.
 - [Replit pnpm launcher runtime](replit-pnpm-launcher-runtime.md) — the packaged pnpm executable may run under an older Node patch than the active node on PATH; validate the child runtime directly.
-- [API test database mode](api-test-database-env.md) — direct API-server test runs require explicit `DATABASE_ENV=test` before the suite can start.
+- [API test database mode](api-test-database-env.md) — direct API-server test runs require explicit DATABASE_ENV=test before the suite can start.
 - [SVG load singleton retries](svg-load-singleton-retry.md) — a settled module-level load promise must be discarded when cache data is unusable on either platform, or later cold loads stay blank.
 - [SheetJS ArrayBuffer fixtures](sheetjs-array-buffer-fixtures.md) — type:"array" ODS fixtures return an ArrayBuffer; pass it directly instead of converting it as a number array.
 - [Support analytics privacy](support-analytics-privacy.md) — use keyed rotating grouping or disable unique visitors; disclose bounded UTC windows and suppression.
-- [Knip UI package boundaries](knip-ui-boundaries.md) — dynamically discovered components and CSS-only imports need explicit Knip configuration.
+- [Knip UI package boundaries](knip-ui-package-boundaries.md) — dynamically discovered components and CSS-only imports need explicit Knip configuration.
 - [Standard-tier database pool pressure](standard-db-pool-pressure.md) — concurrent validation can exhaust PostgreSQL clients; confirm affected API suites in isolation before assigning regression ownership.
 - [Mapped Jest context mocks](mapped-jest-context-mocks.md) — when a path is mapped to a manual mock, configure that exported mock instance; a separate local spy may not be consumed by the screen.
 - [Orval barrel append behavior](orval-barrel-append.md) — normalize managed barrel exports because newer Orval runs can append duplicates instead of replacing them.
 - [ESLint import sort order](eslint-import-sort-order.md) — use fix-dry-run output when simple-import-sort rejects valid but noncanonical package/specifier ordering.
 - [Patch published packages instead of vendoring build output](pnpm-patched-published-package.md) — repo-wide dist ignores can silently omit runtime files from directory overrides; patch a pinned registry tarball instead.
 - [GitHub Actions token PR creation policy](github-actions-token-pr-creation.md) — disabling workflow-token PR approval also blocks PR creation; publish a reviewable automation branch instead.
-- [Exact-tree GitHub snapshot transport](exact-tree-snapshot-transport.md) — when raw blob API uploads are blocked, use a temporary shallow clone and verify tree identity before pushing.
+- [Exact-tree GitHub snapshot transport](github-exact-tree-snapshot-transport.md) — when raw blob API uploads are blocked, use a temporary shallow clone and verify tree identity before pushing.
 - [DB fixture ownership watermarks](db-fixture-ownership-watermarks.md) — identify async DB fixtures with a DB-generated ID watermark, not an app-clock timestamp that can drift from the database clock.
 - [Runtime data boundary](runtime-data-boundary.md) — require explicit database modes, reject production in tooling, and delay database imports until startup validation runs.
 - [API auth before body parsing](api-auth-before-body-parsing.md) — method-aware public route matching and pre-parser auth prevent write-prefix leaks and unauthenticated upload buffering.
@@ -73,12 +73,12 @@
 - [Jest hoisted shared mock factories](jest-hoisted-shared-mock-factories.md) — load shared helpers inside hoisted mock callbacks and pass in jest.requireActual modules to avoid TDZ failures.
 - [Disabled query cache observers](disabled-query-cache-observers.md) — when a disabled query-backed screen must react to app-owned cache writes, subscribe to QueryCache and read the stable key directly.
 - [Task-plan heading parser](task-plan-heading-parser.md) — put detailed Validation before Validation tier so the locked runner parses the intended section.
-- [Replit active configuration read boundary](replit-active-config-read-boundary.md) — no documented runtime reader exists; /run/replit/env is environment-only and may contain secrets.
-- [Replit config validation drift](replit-config-validation-drift.md) — standard validation can stop before project checks when an unrelated working-tree .replit port table differs from its contract.
-- [SearchScreen QueryClient test harness](searchscreen-queryclient-test-harness.md) — direct mounts need a provider; result assertions also need seeded active-cache data.
+- [Replit active configuration read boundary](replit-active-config-read-boundary.md) — no documented runtime reader exists; `/run/replit/env` is environment-only and may contain secrets.
+- [Replit config validation drift](replit-config-validation-drift.md) — standard validation can stop before project checks when an unrelated working-tree `.replit` port table differs from its contract.
+- [SearchScreen QueryClient test harness](searchscreen-queryclient-harness.md) — direct mounts need a provider; result assertions also need seeded active-cache data.
 - [API health restart recovery](api-health-restart-recovery.md) — preserve terminal restart outcomes through cleanup and refresh dependent health snapshots on recovery.
-- [Help user-scoped preferences](help-user-scoped-preferences.md) — isolate first-run dismissal per account and ignore stale async reads after account changes.
 - [Help assistant async lifecycles](help-assistant-async-lifecycles.md) — content refresh and assistant requests need independent cancellation and stale-result ownership.
+- [Help user-scoped preferences](help-user-scoped-preferences.md) — isolate first-run dismissal per account and ignore stale async reads after account changes.
 - [Permission-denied fixtures](permission-denied-fixtures.md) — use same-user mode restrictions and unreadable-aware snapshots; sandbox UID changes may be blocked.
 - [Account skill projection recovery](account-skill-recovery.md) — validate preserved backups against their own manifest and bytes because canonical source revisions may advance.
 - [Provider probe deadlines and permits](provider-probe-deadlines-permits.md) — response deadlines may expire before transports settle; retain concurrency permits until transport settlement.
@@ -87,8 +87,10 @@
 - [Validation runtime controls](validation-runtime-controls.md) — timeout and watchdog paths must own process trees and reject missing or stale result evidence before declaring success.
 - [Failure Gate package synchronization](failure-gate-package-sync.md) — refresh the tracked validation archive after changing tier membership or packaged support files.
 - [Parts ID focused test runner](parts-id-focused-test-runner.md) — invoke Jest directly for one suite; the package wrapper requires the full suite-count floor.
+- [Standard-tier baseline failures](standard-tier-baseline-failures.md) — classify unrelated full-tier test failures with focused reruns before changing scoped validation work.
 - [Auth-scoped durable drafts](auth-scoped-durable-drafts.md) — tie readiness to the exact user, clear UI state on identity changes, and serialize saves with logout deletion.
 - [RNTL 14 async fireEvent](rntl14-async-fireevent.md) — every fireEvent call returns a promise with its own act scope; await each interaction before starting another lifecycle helper.
 - [OpenAPI integer Zod enforcement](openapi-integer-zod-enforcement.md) — generated Zod schemas may accept fractions for OpenAPI integer fields; enforce safe integers at write boundaries.
 - [Completion validation tier drift](completion-validation-tier-drift.md) — completion callbacks may run every registered tier; unrelated full-suite failures can reject a task whose declared tier passed.
 - [Public history release boundary](public-history-release-boundary.md) — fail closed on incomplete history scans; report existing historical findings without leaking paths or values until owner purge.
+- [Shared API codegen ownership](codegen-shared-lock.md) — all destructive generators use one tokenized serial resource and cache the resolved toolchain graph.
