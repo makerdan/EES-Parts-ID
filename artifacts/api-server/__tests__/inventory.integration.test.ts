@@ -701,6 +701,46 @@ describe("POST /api/inventory/upsert-batch", () => {
     expect(res.body.total).toBe(1);
   });
 
+  it("rejects fractional OP/OQ values without changing the stored item", async () => {
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { eq } = await import("drizzle-orm");
+
+    await supertest(app)
+      .post("/api/inventory/upsert-batch")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        items: [{
+          vendor: "JEST-VENDOR",
+          catalog: NEW_CATALOG,
+          orderPurchase: 4,
+          orderQuantity: 6,
+        }],
+      })
+      .expect(200);
+
+    await supertest(app)
+      .post("/api/inventory/upsert-batch")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        items: [{
+          vendor: "JEST-VENDOR",
+          catalog: NEW_CATALOG,
+          orderPurchase: 4.5,
+          orderQuantity: 9,
+        }],
+      })
+      .expect(400);
+
+    const [stored] = await db
+      .select({
+        orderPurchase: inventoryTable.orderPurchase,
+        orderQuantity: inventoryTable.orderQuantity,
+      })
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, NEW_CATALOG));
+    expect(stored).toEqual({ orderPurchase: 4, orderQuantity: 6 });
+  });
+
   // ── Bin-preservation guards (Task #455) ──
   // The upsert SET clause uses CASE WHEN array_length(EXCLUDED.bin_locations) > 0
   // so empty/omitted incoming bin arrays must NOT clear existing bins.

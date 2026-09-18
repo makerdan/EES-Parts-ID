@@ -210,6 +210,23 @@ describe("POST /api/warehouse-zones", () => {
 
     expect(res.body).toHaveProperty("error");
   });
+
+  it.each([
+    ["sectionNum", { sectionNum: 1.5 }],
+    ["sortOrder", { sortOrder: 2.5 }],
+  ])("rejects a fractional %s before creating a zone", async (_field, fractionalField) => {
+    await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ ...BASE_ZONE, ...fractionalField })
+      .expect(400);
+
+    const rows = await db
+      .select({ id: warehouseZoneTable.id })
+      .from(warehouseZoneTable)
+      .where(inArray(warehouseZoneTable.aisleId, [BASE_AISLE]));
+    expect(rows).toEqual([]);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -310,6 +327,33 @@ describe("PATCH /api/warehouse-zones/:id", () => {
       .expect(400);
 
     expect(res.body).toHaveProperty("error");
+  });
+
+  it.each([
+    ["sectionNum", { sectionNum: 3.5 }],
+    ["sortOrder", { sortOrder: 4.5 }],
+  ])("rejects a fractional %s without changing the zone", async (_field, fractionalField) => {
+    const create = await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ ...BASE_ZONE, sectionNum: 3, sortOrder: 4 })
+      .expect(201);
+    const id: number = create.body.zone.id;
+
+    await supertest(app)
+      .patch(`/api/warehouse-zones/${id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send(fractionalField)
+      .expect(400);
+
+    const [stored] = await db
+      .select({
+        sectionNum: warehouseZoneTable.sectionNum,
+        sortOrder: warehouseZoneTable.sortOrder,
+      })
+      .from(warehouseZoneTable)
+      .where(sql`${warehouseZoneTable.id} = ${id}`);
+    expect(stored).toEqual({ sectionNum: 3, sortOrder: 4 });
   });
 });
 

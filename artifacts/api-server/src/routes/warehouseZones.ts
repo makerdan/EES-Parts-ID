@@ -235,6 +235,13 @@ router.post("/", requireAdminAuth, async (req, res) => {
     res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
     return;
   }
+  if (
+    (parsed.data.sectionNum != null && !Number.isSafeInteger(parsed.data.sectionNum)) ||
+    (parsed.data.sortOrder != null && !Number.isSafeInteger(parsed.data.sortOrder))
+  ) {
+    res.status(400).json({ error: "sectionNum and sortOrder must be integers" });
+    return;
+  }
   try {
     const {
       aisleId: rawAisleId,
@@ -277,6 +284,13 @@ router.patch("/:id", requireAdminAuth, async (req, res) => {
   const parsed = UpdateWarehouseZoneBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+    return;
+  }
+  if (
+    (parsed.data.sectionNum != null && !Number.isSafeInteger(parsed.data.sectionNum)) ||
+    (parsed.data.sortOrder != null && !Number.isSafeInteger(parsed.data.sortOrder))
+  ) {
+    res.status(400).json({ error: "sectionNum and sortOrder must be integers" });
     return;
   }
   try {
