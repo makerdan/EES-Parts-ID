@@ -12,10 +12,16 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { preflightWebArtifact } = require("../scripts/web-artifact-preflight");
 
-const STATIC_ROOT = path.resolve(__dirname, "..", "static-build");
+const STATIC_ROOT = path.resolve(
+  process.env.PARTS_ID_STATIC_ROOT || path.resolve(__dirname, "..", "static-build"),
+);
 const TEMPLATE_PATH = path.resolve(__dirname, "templates", "landing-page.html");
 const basePath = (process.env.BASE_PATH || "/").replace(/\/+$/, "");
+const SERVER_MODE =
+  process.env.PARTS_ID_SERVER_MODE ||
+  (process.env.NODE_ENV === "development" ? "development" : "production");
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -93,7 +99,8 @@ function serveFile(filePath, res) {
 /**
  * Serve a browser request from the Expo web build (static-build/web/).
  * Falls through to native static files (for Expo Go asset downloads),
- * then falls back to the Expo Go landing page if no web build exists.
+ * then falls back to the Expo Go landing page only in explicit development
+ * mode if no web build exists.
  */
 function serveWebOrFallback(urlPath, req, res, landingPageTemplate, appName) {
   const safePath = path.normalize(urlPath).replace(/^(\.\.(\/|\\|$))+/, "");
@@ -128,8 +135,13 @@ function serveWebOrFallback(urlPath, req, res, landingPageTemplate, appName) {
     return serveFile(webIndexPath, res);
   }
 
-  // 4. No web build — show Expo Go landing page
-  serveLandingPage(req, res, landingPageTemplate, appName);
+  // 4. No web build — the landing page is a development-only fallback.
+  if (SERVER_MODE === "development") {
+    return serveLandingPage(req, res, landingPageTemplate, appName);
+  }
+
+  res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+  res.end("Web artifact is unavailable.");
 }
 
 const landingPageTemplate = fs.readFileSync(TEMPLATE_PATH, "utf-8");
@@ -140,6 +152,13 @@ const API_PORT = parseInt(
   process.env.API_SERVER_PORT || String(devPorts.NATIVE_API_DEV_PORT),
   10,
 );
+
+try {
+  preflightWebArtifact({ staticRoot: STATIC_ROOT, mode: SERVER_MODE });
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
 
 /**
  * Forward /api/* requests to the API server running on localhost:API_PORT.

@@ -19,9 +19,11 @@
 
 import http from "node:http";
 import net from "node:net";
+import fs from "node:fs";
+import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import assert from "node:assert/strict";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -228,6 +230,33 @@ async function waitFor(predicate, timeoutMs = 1000) {
   }
 }
 
+function makeStaticArtifactFixture() {
+  const staticRoot = fs.mkdtempSync(join(os.tmpdir(), "parts-id-serve-artifact-"));
+  const webJsRoot = join(staticRoot, "web", "_expo", "static", "js", "web");
+  fs.mkdirSync(webJsRoot, { recursive: true });
+  fs.mkdirSync(join(staticRoot, "ios"), { recursive: true });
+  fs.mkdirSync(join(staticRoot, "android"), { recursive: true });
+  fs.writeFileSync(join(staticRoot, "web", "index.html"), "<script src=\"bundle.js\"></script>\n");
+  fs.writeFileSync(join(staticRoot, "web", "metadata.json"), "{}\n");
+  fs.writeFileSync(join(staticRoot, "ios", "manifest.json"), "{}\n");
+  fs.writeFileSync(join(staticRoot, "android", "manifest.json"), "{}\n");
+  fs.writeFileSync(
+    join(webJsRoot, "entry.js"),
+    'const API = "https://parts-id.replit.app";\n',
+  );
+  fs.writeFileSync(
+    join(staticRoot, "build-metadata.json"),
+    JSON.stringify({
+      version: 1,
+      buildId: "proxy-test-build",
+      builtAt: new Date().toISOString(),
+      webEntry: "web/index.html",
+      manifests: ["ios/manifest.json", "android/manifest.json"],
+    }) + "\n",
+  );
+  return staticRoot;
+}
+
 // ─── tiny test runner ─────────────────────────────────────────────────────────
 
 let passed = 0;
@@ -257,6 +286,7 @@ async function main() {
   let stubServer;
   let child;
   let exitCode = 0;
+  const staticRoot = makeStaticArtifactFixture();
 
   try {
     const stub = await listenRandom((req, res) => {
@@ -301,6 +331,8 @@ async function main() {
         ...process.env,
         PORT: String(staticPort),
         API_SERVER_PORT: String(stub.port),
+        PARTS_ID_STATIC_ROOT: staticRoot,
+        PARTS_ID_SERVER_MODE: "production",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -453,6 +485,7 @@ async function main() {
   } finally {
     await stopChild(child);
     await closeServer(stubServer);
+    fs.rmSync(staticRoot, { recursive: true, force: true });
   }
 
   process.exitCode = exitCode;

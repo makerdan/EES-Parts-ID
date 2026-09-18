@@ -5,6 +5,10 @@ const { spawn } = require("child_process");
 const { Readable } = require("stream");
 const { pipeline } = require("stream/promises");
 const { findMissingDirectives } = require("./check-react-compiler-directives");
+const { verifyBundleDomain: verifyBundleDomainInputs } = require("./bundle-domain-check");
+const {
+  writeWebBuildMetadata,
+} = require("./web-artifact-preflight");
 
 let metroProcess = null;
 
@@ -783,6 +787,10 @@ async function main() {
   }
 
   await buildWeb(domain, expoPublicReplId);
+  writeWebBuildMetadata({
+    staticRoot: path.join(projectRoot, "static-build"),
+    buildId: timestamp,
+  });
 
   console.log("Build complete! Deploy to:", baseUrl);
   process.exit(0);
@@ -862,60 +870,16 @@ async function buildWeb(domain, expoPublicReplId) {
 // is found. Exported so it can be unit-tested independently.
 function verifyBundleDomain(domain, webOutDir) {
   const jsDir = path.join(webOutDir, "_expo", "static", "js", "web");
+  const result = verifyBundleDomainInputs({
+    scanRoot: jsDir,
+    expectedDomain: domain,
+    label: "web bundle",
+  });
 
-  if (!fs.existsSync(jsDir)) {
-    console.warn(`[Build Guard] verifyBundleDomain: JS output dir not found (${jsDir}), skipping scan.`);
-    return;
-  }
-
-  const jsFiles = fs.readdirSync(jsDir).filter((f) => f.endsWith(".js"));
-
-  if (jsFiles.length === 0) {
-    console.warn(`[Build Guard] verifyBundleDomain: No JS files found in ${jsDir}, skipping scan.`);
-    return;
-  }
-
-  const devDomainPattern = /[a-z0-9-]+\.replit\.dev/g;
-  const violations = [];
-  let domainFound = false;
-
-  for (const file of jsFiles) {
-    const filePath = path.join(jsDir, file);
-    const content = fs.readFileSync(filePath, "utf-8");
-
-    if (content.includes(domain)) {
-      domainFound = true;
-    }
-
-    const matches = [...content.matchAll(devDomainPattern)];
-    for (const m of matches) {
-      violations.push({ file, match: m[0] });
-    }
-  }
-
-  if (violations.length > 0) {
-    const lines = violations.map((v) => `  ${v.file}: "${v.match}"`).join("\n");
-    throw new Error(
-      `[Build Guard] Dev domain found in web bundle — build aborted.\n` +
-      `  A *.replit.dev URL was baked into the finished JS bundle. This domain is\n` +
-      `  access-controlled and will fail for users of the deployed app.\n` +
-      `  Ensure REPLIT_INTERNAL_APP_DOMAIN is set so the correct production domain\n` +
-      `  is used instead of the dev preview URL.\n\n` +
-      `  Matches found:\n${lines}`
-    );
-  }
-
-  if (!domainFound) {
-    throw new Error(
-      `[Build Guard] Expected domain not found in web bundle — build aborted.\n` +
-      `  The intended domain "${domain}" does not appear anywhere in the finished\n` +
-      `  JS bundle. This suggests the domain was not successfully baked into the\n` +
-      `  build, which would cause API calls to fail at runtime.\n` +
-      `  Check that EXPO_PUBLIC_DOMAIN was correctly set during the Expo web export.`
-    );
-  }
-
-  console.log(`[Build Guard] Bundle domain check passed — domain "${domain}" present, no .replit.dev URLs found.`);
+  console.log(
+    `[Build Guard] Bundle domain check passed — scanned ${result.files.length} JS file(s), ` +
+      `domain "${domain}" present, no forbidden domains found.`,
+  );
 }
 
 // Dependency bundles can carry maintainer/support contact details that are not
