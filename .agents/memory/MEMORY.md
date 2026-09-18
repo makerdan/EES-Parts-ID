@@ -95,3 +95,4 @@
 - [Dead-export lint baseline](dead-export-lint-baseline.md) — root lint currently fails because check-dead-exports reports an unlisted `tsc` binary in package metadata.
 - [Shared API codegen ownership](codegen-shared-lock.md) — all destructive generators use one tokenized serial resource and cache the resolved toolchain graph.
 - [Parts ID web build domain](parts-id-web-build-domain.md) — regeneration must use a stable non-preview deployment domain because native validation rejects *.replit.dev.
+- [Protected GitHub history rewrites](protected-github-history-rewrites.md) — protected force rewrites may require both force-push permission and admin bypass; restore rules with a fail-safe trap.
