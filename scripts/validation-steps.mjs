@@ -195,6 +195,7 @@ export const FAST = [
   ["skill-mirror-sync-contract", "node scripts/test/skill-mirror-sync-contract.test.mjs"],
   ["public-repository-boundary", "node scripts/test/public-repository-boundary.test.mjs"],
   ["dependency-security-contract", "node scripts/test/dependency-security-contract.test.mjs"],
+  ["parts-id-dependency-contract", "node scripts/test/parts-id-dependency-contract.test.mjs"],
   ["patched-dependencies-contract", "node scripts/test/patched-dependencies.test.mjs"],
   ["patched-dependencies", "node scripts/check-patched-dependencies.mjs"],
   ["replit-config-contract", "node scripts/test/replit-config-contract.test.mjs"],
