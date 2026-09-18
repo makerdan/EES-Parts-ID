@@ -202,6 +202,8 @@ async function migrateUsersTable(): Promise<void> {
 }
 
   const STARTUP_MIGRATIONS_TIMEOUT_MS = 25_000;
+  const STARTUP_SCHEMA_MAX_ATTEMPTS = 5;
+  const STARTUP_SCHEMA_RETRY_DELAY_MS = 1_000;
 // unref(): these are fallback timers only — they must never be the thing
 // keeping the process (or a Jest worker) alive after everything else is done.
   let migrationsTimer: NodeJS.Timeout | undefined;
@@ -262,11 +264,32 @@ async function pruneAuditLog(): Promise<void> {
   }
 }
 
+  async function waitForRequiredSchema(): Promise<void> {
+    for (let attempt = 1; attempt <= STARTUP_SCHEMA_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        if (await checkRequiredSchema(db)) {
+          return;
+        }
+      } catch {
+        // A schema probe can fail while the database is recovering. Keep the
+        // startup state opaque and let the bounded retry policy decide whether
+        // readiness should remain unavailable.
+      }
+
+      if (attempt < STARTUP_SCHEMA_MAX_ATTEMPTS) {
+        await new Promise<void>((resolve) => {
+          const retryTimer = setTimeout(resolve, STARTUP_SCHEMA_RETRY_DELAY_MS);
+          retryTimer.unref();
+        });
+      }
+    }
+
+    throw new Error("Required application schema is unavailable");
+  }
+
   appReadiness.reset();
   const requiredStartup = (async () => {
-    if (!(await checkRequiredSchema(db))) {
-      throw new Error("Required application schema is unavailable");
-    }
+    await waitForRequiredSchema();
 
     await Promise.all([
       recoverOrphanedJobs(),

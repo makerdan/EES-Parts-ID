@@ -233,15 +233,31 @@ describe("server startup sequence (src/index.ts)", () => {
 
   it("marks readiness failed when the required schema is unavailable", async () => {
     const { promise: failedGate, resolve: resolveFailed } = makeGate();
-    mockCheckRequiredSchema.mockResolvedValueOnce(false);
+    mockCheckRequiredSchema.mockResolvedValue(false);
     mockAppReadiness.markFailed.mockImplementationOnce(resolveFailed);
 
     loadIndex();
     await failedGate;
 
-    expect(mockCheckRequiredSchema).toHaveBeenCalledTimes(1);
+    expect(mockCheckRequiredSchema).toHaveBeenCalledTimes(5);
     expect(mockAppReadiness.markFailed).toHaveBeenCalledTimes(1);
     expect(mockAppReadiness.markReady).not.toHaveBeenCalled();
+    expect(mockStartServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers readiness after a temporary schema outage without restarting", async () => {
+    const { promise: readyGate, resolve: resolveReady } = makeGate();
+    mockCheckRequiredSchema
+      .mockRejectedValueOnce(new Error("temporary schema outage"))
+      .mockResolvedValueOnce(true);
+    mockAppReadiness.markReady.mockImplementationOnce(resolveReady);
+
+    loadIndex();
+    await readyGate;
+
+    expect(mockCheckRequiredSchema).toHaveBeenCalledTimes(2);
+    expect(mockAppReadiness.markFailed).not.toHaveBeenCalled();
+    expect(mockAppReadiness.markReady).toHaveBeenCalledTimes(1);
     expect(mockStartServer).toHaveBeenCalledTimes(1);
   });
 });
