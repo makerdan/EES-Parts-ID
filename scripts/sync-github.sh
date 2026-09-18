@@ -109,6 +109,13 @@ fi
   verification_failure "expected object is not a tree"
 }
 
+if ! current_tree="$(git -C "$repo" rev-parse --verify "HEAD^{tree}" 2>/dev/null)"; then
+  verification_failure "selected repository has no readable current workspace tree"
+fi
+if [[ "${expected_tree,,}" != "$current_tree" ]]; then
+  verification_failure "expected tree is stale for the selected repository workspace; re-read HEAD^{tree} before verifying"
+fi
+
 if ! approved_commit="$(git -C "$repo" rev-parse --verify "${approved_ref}^{commit}" 2>/dev/null)"; then
   verification_failure "approved ref does not resolve to a commit: $approved_ref"
 fi

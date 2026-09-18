@@ -540,6 +540,20 @@ function assertSyncHelperFailsClosed() {
     assert(mismatch.output.includes("VERIFICATION_FAILURE"), "tree mismatch was not labeled");
     assert(!mismatch.output.includes("VERIFIED_SYNCHRONIZATION"), "tree mismatch was reported as verified");
 
+    const staleExpectedTree = runSyncHelper([
+      "--verify",
+      "--repo",
+      repository,
+      "--expected-tree",
+      approvedTree,
+      "--approved-ref",
+      "refs/heads/snapshot/approved",
+    ]);
+    assert(staleExpectedTree.status === 3, "stale expected tree did not return verification-failure status");
+    assert(staleExpectedTree.output.includes("expected tree is stale"), "stale expected tree was not classified");
+    assert(staleExpectedTree.output.includes("selected repository workspace"), "stale tree diagnostic did not identify the workspace");
+    assert(!staleExpectedTree.output.includes("VERIFIED_SYNCHRONIZATION"), "stale expected tree was reported as verified");
+
     const unsupportedRef = runSyncHelper([
       "--verify",
       "--repo",

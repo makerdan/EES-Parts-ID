@@ -69,11 +69,16 @@ bash scripts/sync-github.sh --verify \
   --approved-ref refs/heads/snapshot/<approved-name>
 ```
 
-Status `0` with `VERIFIED_SYNCHRONIZATION` proves that the approved ref's tree
-matches the expected tree and that no push was performed. Missing refs,
-unsupported approval refs, invalid trees, and tree mismatches exit with status
-`3` and `VERIFICATION_FAILURE`. Any other invocation error is a usage failure;
-none of these states authorizes a direct push or a protected-branch bypass.
+Read `HEAD^{tree}` immediately before verification and re-read it after any
+workspace change. The helper binds evidence to the selected repository's
+current workspace tree, so a valid older tree is stale input even when it
+still matches the approved ref. Status `0` with
+`VERIFIED_SYNCHRONIZATION` proves that the current workspace tree matches the
+approved ref's tree and that no push was performed. Missing refs, unsupported
+approval refs, invalid trees, stale expected trees, and approved-ref tree
+mismatches exit with status `3` and `VERIFICATION_FAILURE`. Any other
+invocation error is a usage failure; none of these states authorizes a direct
+push or a protected-branch bypass.
 
 ## Incident response for an accidental commit
 
