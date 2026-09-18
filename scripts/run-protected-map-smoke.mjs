@@ -15,14 +15,83 @@ const suites = [
   "src/__tests__/AnchorCalibrationRoute.test.tsx",
 ];
 
+const configuredSuiteTimeoutMs = Number(process.env.PROTECTED_MAP_SUITE_TIMEOUT_MS ?? 120_000);
+const SUITE_TIMEOUT_MS =
+  Number.isFinite(configuredSuiteTimeoutMs) && configuredSuiteTimeoutMs > 0
+    ? configuredSuiteTimeoutMs
+    : 120_000;
+const TERMINATION_GRACE_MS = 1_000;
+
+function killProcessGroup(child, signal) {
+  if (!child.pid) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch (error) {
+    if (error.code !== "ESRCH") {
+      try {
+        child.kill(signal);
+      } catch (fallbackError) {
+        if (fallbackError.code !== "ESRCH") throw fallbackError;
+      }
+    }
+  }
+}
+
 function runSuite(file) {
   return new Promise((resolve) => {
     const child = spawn(
       "pnpm",
       ["--filter", "@workspace/mockup-sandbox", "exec", "vitest", "run", file],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      { detached: true, stdio: ["ignore", "pipe", "pipe"] },
     );
     let output = "";
+    let timedOut = false;
+    let settled = false;
+    let escalationTimer;
+    let forceFinishTimer;
+    let terminationComplete = false;
+    let pendingResult;
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      output += `[protected-map-smoke] timed out after ${SUITE_TIMEOUT_MS} ms; terminating process group\n`;
+      killProcessGroup(child, "SIGTERM");
+      escalationTimer = setTimeout(() => {
+        killProcessGroup(child, "SIGKILL");
+        terminationComplete = true;
+        if (pendingResult) {
+          finish(pendingResult);
+        } else {
+          forceFinishTimer = setTimeout(
+            () =>
+              finish({
+                file,
+                code: 124,
+                signal: "SIGKILL",
+                output,
+              }),
+            TERMINATION_GRACE_MS,
+          );
+        }
+      }, TERMINATION_GRACE_MS);
+    }, SUITE_TIMEOUT_MS);
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutTimer);
+      clearTimeout(escalationTimer);
+      clearTimeout(forceFinishTimer);
+      resolve({ ...result, timedOut });
+    };
+
+    const reportResult = (result) => {
+      if (timedOut && !terminationComplete) {
+        pendingResult = result;
+        return;
+      }
+      finish(result);
+    };
+
     child.stdout.on("data", (chunk) => {
       output += String(chunk);
     });
@@ -30,12 +99,12 @@ function runSuite(file) {
       output += String(chunk);
     });
     child.on("error", (error) => {
-      resolve({ file, code: 1, output: `${output}${error.stack ?? error}\n` });
+      reportResult({ file, code: 1, output: `${output}${error.stack ?? error}\n` });
     });
     child.on("close", (code, signal) => {
-      resolve({
+      reportResult({
         file,
-        code: code ?? 1,
+        code: timedOut ? 124 : code ?? 1,
         signal,
         output,
       });
@@ -54,9 +123,9 @@ for (const result of results) {
 
   failed = true;
   console.error(
-    `[protected-map-smoke] FAILED owner=${result.file} exit=${result.code}${
-      result.signal ? ` signal=${result.signal}` : ""
-    }`,
+    `[protected-map-smoke] FAILED owner=${result.file} ${
+      result.timedOut ? `reason=timeout timeout=${SUITE_TIMEOUT_MS}ms ` : ""
+    }exit=${result.code}${result.signal ? ` signal=${result.signal}` : ""}`,
   );
   if (result.output.trim()) {
     process.stderr.write(`${result.output.trimEnd()}\n`);

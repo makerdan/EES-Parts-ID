@@ -24,6 +24,7 @@ const projectionRoot = join(workspaceRoot, ACCOUNT_SKILLS_PROJECTION_RELATIVE_PA
 const authoredRoot = join(workspaceRoot, ".agents/skills/catalog");
 const statusCommand = resolve("scripts/account-skill-status.mjs");
 const syncCommand = resolve("scripts/account-skills-sync.mjs");
+const SKILL_MIRROR_COMMAND_TIMEOUT_MS = 5_000;
 
 async function put(path, contents) {
   await mkdir(join(path, ".."), { recursive: true });
@@ -74,24 +75,47 @@ async function snapshotTree(root) {
   return entries;
 }
 
-function runStatus(source = accountSource, mirrorRoot) {
-  return spawnSync(process.execPath, [statusCommand, "--skill", "catalog"], {
-    cwd: workspaceRoot,
+function runBoundedCommand(command, args, { cwd, env, label, timeoutMs = SKILL_MIRROR_COMMAND_TIMEOUT_MS } = {}) {
+  const result = spawnSync(command, args, {
+    cwd: cwd ?? workspaceRoot,
     encoding: "utf8",
     env: {
       ...process.env,
+      ...env,
+    },
+    timeout: timeoutMs,
+    killSignal: "SIGKILL",
+  });
+  const timedOut = result.error?.code === "ETIMEDOUT";
+  result.timedOut = timedOut;
+  result.timeoutMessage = timedOut ? `${label ?? command} timed out after ${timeoutMs} ms` : undefined;
+  return result;
+}
+
+function assertCommandDidNotTimeOut(result, label) {
+  assert.equal(result.timedOut, false, result.timeoutMessage ?? `${label} unexpectedly timed out`);
+}
+
+function runStatus(source = accountSource, mirrorRoot) {
+  const result = runBoundedCommand(process.execPath, [statusCommand, "--skill", "catalog"], {
+    label: "account skill status",
+    env: {
       ACCOUNT_SKILLS_SOURCE: source,
       ...(mirrorRoot ? { ACCOUNT_SKILLS_MIRROR_ROOT: mirrorRoot } : {}),
     },
   });
+  assertCommandDidNotTimeOut(result, "account skill status");
+  return result;
 }
 
 function runSync(source = accountSource, cwd = workspaceRoot) {
-  return spawnSync(process.execPath, [syncCommand], {
+  const result = runBoundedCommand(process.execPath, [syncCommand], {
     cwd,
-    encoding: "utf8",
-    env: { ...process.env, ACCOUNT_SKILLS_SOURCE: source },
+    label: "account skill sync",
+    env: { ACCOUNT_SKILLS_SOURCE: source },
   });
+  assertCommandDidNotTimeOut(result, "account skill sync");
+  return result;
 }
 
 async function canCreateReadPermissionBoundary(filePath) {
@@ -110,6 +134,16 @@ try {
   await put(join(accountSource, "catalog/references/guide.md"), "supporting file\n");
   await put(join(accountSource, "review/SKILL.md"), "# Review\n");
   await put(join(authoredRoot, "SKILL.md"), "# Workspace-authored skill\n");
+
+  const stalledCommand = runBoundedCommand(
+    process.execPath,
+    ["-e", "setInterval(() => {}, 60_000)"],
+    { label: "skill mirror timeout fixture", timeoutMs: 100 },
+  );
+  assert.equal(stalledCommand.timedOut, true);
+  assert.equal(stalledCommand.status, null);
+  assert.equal(stalledCommand.signal, "SIGKILL");
+  assert.match(stalledCommand.timeoutMessage, /skill mirror timeout fixture timed out after 100 ms/);
 
   const deniedCanonicalSource = join(root, "denied-canonical-source");
   const deniedRevisionPath = join(deniedCanonicalSource, ".account-revision");
