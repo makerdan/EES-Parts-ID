@@ -91,3 +91,4 @@
 - [RNTL 14 async fireEvent](rntl14-async-fireevent.md) — every fireEvent call returns a promise with its own act scope; await each interaction before starting another lifecycle helper.
 - [OpenAPI integer Zod enforcement](openapi-integer-zod-enforcement.md) — generated Zod schemas may accept fractions for OpenAPI integer fields; enforce safe integers at write boundaries.
 - [Completion validation tier drift](completion-validation-tier-drift.md) — completion callbacks may run every registered tier; unrelated full-suite failures can reject a task whose declared tier passed.
+- [Public history release boundary](public-history-release-boundary.md) — fail closed on incomplete history scans; report existing historical findings without leaking paths or values until owner purge.

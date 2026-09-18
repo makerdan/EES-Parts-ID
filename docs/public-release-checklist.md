@@ -14,9 +14,13 @@ check.
 - [ ] The reachable-history scan reports no private paths. If it reports any,
       stop and complete an owner-approved history purge before launch; do not
       claim that deleting the current-tree copy removed historical data.
+- [ ] The history scan proves the checkout is complete (not shallow, partial, or
+      replace-ref based) and scans every bounded reachable text blob for
+      credential and private-data classes before making a release claim.
 - [ ] Review every new `data/public/` geometry/label change as intentionally
-      public and confirm it contains no database IDs, timestamps, inventory,
-      user, or operational data.
+      public and confirm it uses the approved directory, CSV schema, columns,
+      and value types with no database IDs, timestamps, inventory, user, or
+      operational data.
 
 ## Runtime boundaries
 
@@ -59,3 +63,7 @@ check.
    tracked-tree and history scan.
 5. Record the incident privately, then publish only a sanitized summary and
    remediation guidance.
+
+Boundary diagnostics report only bounded counts, safe current-tree locations,
+and coarse categories. They never print matched secret values or raw private
+historical paths.

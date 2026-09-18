@@ -69,10 +69,12 @@ node scripts/test/public-repository-boundary.test.mjs
 The same check is part of `test-fast`. It rejects tracked upload/storage
 directories, database/export archives, database-shaped inventory/zone
 backups, non-migration SQL dumps, obvious credential formats, non-synthetic
-email addresses, and user identifiers in fixture/seed paths. It allows
-synthetic examples, database migrations, and intentional public layout
-sources. Any historical findings are reported for owner remediation rather
-than silently treated as purged.
+email addresses, and user identifiers in fixture/seed paths. It also requires a
+non-shallow, non-partial checkout before scanning reachable blob contents,
+applies the same content checks to tracked generated bundles, and validates the
+approved public layout CSV schema and value types. Any historical findings are
+reported for owner remediation rather than silently treated as purged; raw
+historical paths and matched values are never printed.
 
 ## Release documents
 
