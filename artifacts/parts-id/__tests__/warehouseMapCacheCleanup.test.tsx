@@ -55,14 +55,11 @@ jest.mock("expo-asset", () => require("./helpers/mapMocks").createExpoAssetMock(
 // to the "Text" host element name that test-renderer accepts.
 jest.mock("react-native", () => {
   const React = require("react");
-  // jest.requireActual applies moduleNameMapper (→ global __mocks__/react-native.js)
-  // but skips jest.mock() factories, avoiding circular stack overflow.
-  const rnMock = jest.requireActual("react-native") as Record<string, unknown>;
-  return {
-    ...rnMock,
+  const helpers = require("./helpers/mapMocks");
+  return helpers.createReactNativeMock({
     Text: ({ children, ...props }: Record<string, unknown>) =>
       React.createElement("Text", props, children),
-  };
+  });
 });
 
 // ─── @expo/vector-icons ───────────────────────────────────────────────────────

@@ -81,7 +81,7 @@ function findMakeAdminButton(root: Inst) {
   return root.queryAll(
     (n: TestInstance) =>
       (n.type as string) === "rn-pressable" &&
-      n.props.accessibilityLabel === "Make Admin",
+      String(n.props.accessibilityLabel).startsWith("Make "),
     { includeSelf: true },
   );
 }
@@ -91,7 +91,7 @@ function findRevokeAdminButton(root: Inst) {
   return root.queryAll(
     (n: TestInstance) =>
       (n.type as string) === "rn-pressable" &&
-      n.props.accessibilityLabel === "Revoke Admin",
+      String(n.props.accessibilityLabel).startsWith("Revoke admin access for "),
     { includeSelf: true },
   );
 }
@@ -165,5 +165,13 @@ describe("UserAdminButtonRow — button disabled state", () => {
     });
     const [btn] = findMakeAdminButton(result.root);
     expect(btn!.props.disabled).toBe(false);
+  });
+
+  it("includes the target user in the admin action accessibility label", async () => {
+    const result = await renderRow({
+      user: makeUser({ email: "target@example.com", status: "approved", role: "user" }),
+    });
+    const [btn] = findMakeAdminButton(result.root);
+    expect(btn!.props.accessibilityLabel).toBe("Make target@example.com an admin");
   });
 });

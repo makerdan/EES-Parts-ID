@@ -4,27 +4,26 @@
  * Shared configuration inherited by both Jest projects below.
  *
  * Split rationale:
- *   db-serial  — tests that call seedVendors() or mutate canonical table rows
- *                (vendorPriority, vendorNameResolutionMap).  They must run
- *                sequentially because they flip isPrimary flags on live rows
- *                and read them back; concurrent execution produces race-driven
- *                false failures.
+ *   db-serial  — tests that call seedVendors(), mutate canonical table rows
+ *                (vendorPriority, vendorNameResolutionMap), or exercise the
+ *                floor-plan latest-row contract.  They must run sequentially
+ *                because they either flip live canonical state or select the
+ *                globally newest floor_plan_meta row; concurrent execution
+ *                produces race-driven false failures.
  *
  *   parallel   — every other test file.  Pure-unit tests have no DB at all;
  *                integration tests that do touch the DB use JEST-ITG- prefixed
  *                fixture rows that are isolated per suite, so concurrent
  *                execution is safe.
  *
- * closePool() in testDb.ts is guarded with a flag so that the second (or
- * later) test file running in the same Jest worker process does not crash when
- * it tries to close a pool that was already ended by the previous file.
- * jest.integrationSetup.cjs registers a global afterAll that calls closePool()
- * after every test file, ensuring the pool is closed even in test files that
- * never explicitly import closePool().  This allows Jest to exit cleanly
- * without forceExit, and surfaces any genuine resource-leak bugs rather than
- * masking them.
+ * The shared pool is intentionally not closed by individual test files or
+ * setup hooks. It is configured to allow the worker to exit once idle, while
+ * suite cleanup remains free to use the pool through its own afterAll hooks.
+ * A per-file pool shutdown would make neighboring suites race against a
+ * closed shared resource.
  */
 const testConnectionBudget = require("./test-connection-budget.cjs");
+const liveProviderOptIn = process.env.POE_LIVE_PROVIDER === "1";
 
 const sharedConfig = {
   preset: "ts-jest",
@@ -77,6 +76,8 @@ const sharedConfig = {
     "^pdfjs-dist/legacy/build/pdf\\.mjs$": "<rootDir>/__mocks__/pdfjs-dist-legacy.cjs",
     "^@workspace/db$":
       "<rootDir>/../../lib/db/src/index.ts",
+    "^@workspace/db/runtime-data-boundary$":
+      "<rootDir>/../../lib/db/src/runtimeDataBoundary.ts",
     "^@workspace/api-zod$":
       "<rootDir>/../../lib/api-zod/src/index.ts",
     "^@workspace/integrations-openai-ai-server/batch$":
@@ -176,12 +177,22 @@ module.exports = {
     {
       ...sharedConfig,
       displayName: "db-serial",
-      // Only the two test files that mutate canonical (non-prefixed) rows.
-      // maxWorkers:1 keeps them sequential so isPrimary flips in one test
-      // do not race with reads in another.
+      // These suites mutate canonical rows or exercise the floor-plan route's
+      // intentional "latest metadata row wins" production contract.  A
+      // floor-plan suite's object-storage mock is process-local, so another
+      // suite's newer metadata row would pair the wrong hash with the wrong
+      // SVG and turn a valid tile request into a 500.
+      //
+      // maxWorkers:1 keeps all canonical-state and floor-plan suites
+      // sequential, while the rest of the API suite remains parallel.
       testMatch: [
         "<rootDir>/__tests__/vendorPriority.integration.test.ts",
         "<rootDir>/__tests__/vendorNameResolutionMap.integration.test.ts",
+        "<rootDir>/__tests__/floorPlanMapWorkflow.integration.test.ts",
+        "<rootDir>/__tests__/floorPlanTiles.integration.test.ts",
+        "<rootDir>/__tests__/floorPlanViewBoxParsing.integration.test.ts",
+        "<rootDir>/__tests__/publicWarehouseLayout.integration.test.ts",
+        "<rootDir>/__tests__/testIsolation.integration.test.ts",
       ],
       maxWorkers: 1,
     },
@@ -194,8 +205,14 @@ module.exports = {
       testMatch: ["**/__tests__/**/*.test.ts"],
       testPathIgnorePatterns: [
         "/node_modules/",
+        ...(!liveProviderOptIn ? ["/poeModelName\\.live\\.test\\.ts$"] : []),
         "/vendorPriority\\.integration\\.test\\.ts$",
         "/vendorNameResolutionMap\\.integration\\.test\\.ts$",
+        "/floorPlanMapWorkflow\\.integration\\.test\\.ts$",
+        "/floorPlanTiles\\.integration\\.test\\.ts$",
+        "/floorPlanViewBoxParsing\\.integration\\.test\\.ts$",
+        "/publicWarehouseLayout\\.integration\\.test\\.ts$",
+        "/testIsolation\\.integration\\.test\\.ts$",
       ],
       maxWorkers: testConnectionBudget.parallelMaxWorkers,
     },

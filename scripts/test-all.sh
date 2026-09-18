@@ -15,19 +15,9 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELD_RESOURCES=",${SERIAL_LOCK_HELD_RESOURCES:-},"
 if [[ "$HELD_RESOURCES" != *,global,* && "$HELD_RESOURCES" != *,shared-test-results,* ]]; then
-  exec node "${SCRIPT_DIR}/serial-lock.mjs" --resource shared-test-results --priority 60 -- bash "${BASH_SOURCE[0]}" "$@"
+  exec node "${SCRIPT_DIR}/serial-lock.mjs" --resource shared-test-results --priority 2 -- bash "${BASH_SOURCE[0]}" "$@"
 fi
 echo "[test-all] serialized run — lock held (waited ${SERIAL_LOCK_WAIT_SECS:-0}s in queue; budgets start now)."
-
-# Ensure generated API clients are present and current before any suite reads
-# them. codegen:ensure is itself idempotent and file-locked (see
-# lib/api-spec/scripts/ensure-codegen.mjs), so this cannot race a concurrent
-# dev-workflow boot; running it here while we hold the serial lock also means
-# no other test run can observe a mid-regeneration state.
-pnpm --filter @workspace/api-spec run codegen:ensure || {
-  echo "[test-all] ERROR: codegen:ensure failed — generated API clients may be missing."
-  exit 1
-}
 
 # ── Suite definitions: name:pnpm-filter:budget-seconds:runner ────────────────
 # runner: jest | vitest
@@ -50,7 +40,17 @@ SUITES=(
 )
 
 # Total outer wall-clock cap (18 min).
-TOTAL_BUDGET_SECONDS=1080
+TOTAL_BUDGET_SECONDS="${TEST_ALL_TOTAL_BUDGET_SECONDS:-1080}"
+WATCHDOG_GRACE_SECONDS="${TEST_ALL_WATCHDOG_GRACE_SECONDS:-15}"
+
+if ! [[ "$TOTAL_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[test-all] ERROR: TEST_ALL_TOTAL_BUDGET_SECONDS must be a positive integer." >&2
+  exit 2
+fi
+if ! [[ "$WATCHDOG_GRACE_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[test-all] ERROR: TEST_ALL_WATCHDOG_GRACE_SECONDS must be a positive integer." >&2
+  exit 2
+fi
 
 # Where Jest/Vitest JSON files land.
 JSON_DIR="/tmp"
@@ -63,22 +63,103 @@ timestamp_ms() {
   date +%s%3N 2>/dev/null || echo "0"
 }
 
+# The watchdog records the currently running command so it can terminate only
+# this harness's process tree. Killing process group 0 would also terminate an
+# enclosing validation runner when this script is launched from one.
+RUNTIME_DIR="${TMPDIR:-/tmp}/test-all-${BASHPID}"
+TIMEOUT_MARKER="${RUNTIME_DIR}/timeout"
+CURRENT_PID_FILE="${RUNTIME_DIR}/current-pid"
+mkdir -p "$RUNTIME_DIR"
+
+process_tree_signal() {
+  local pid="$1"
+  local signal="$2"
+  local child
+
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 0
+  while read -r child; do
+    [[ -n "$child" ]] || continue
+    process_tree_signal "$child" "$signal"
+  done < <(ps -o pid= --ppid "$pid" 2>/dev/null)
+  kill "-${signal}" "$pid" 2>/dev/null || true
+}
+
 # ── Outer watchdog ────────────────────────────────────────────────────────────
-# Kill this entire script after TOTAL_BUDGET_SECONDS using a background timer.
-# Two-stage: SIGTERM first, then SIGKILL after 15s if the process group hasn't exited.
+# Kill a stalled command after TOTAL_BUDGET_SECONDS using a background timer.
+# Two-stage: SIGTERM first, then SIGKILL after WATCHDOG_GRACE_SECONDS if the
+# process tree has not exited. The marker lets the parent return a stable,
+# distinct timeout status after its wait completes.
 (
   sleep "$TOTAL_BUDGET_SECONDS"
+  printf 'outer wall-clock cap expired\n' > "$TIMEOUT_MARKER"
   echo ""
-  echo "WARNING: Outer 18-minute wall-clock cap reached — sending SIGTERM."
-  kill -TERM 0 2>/dev/null || true
-  sleep 15
-  echo "WARNING: Process group still alive after 15s — sending SIGKILL."
-  kill -KILL 0 2>/dev/null || true
+  echo "WARNING: Outer ${TOTAL_BUDGET_SECONDS}-second wall-clock cap reached — sending SIGTERM."
+  current_pid="$(cat "$CURRENT_PID_FILE" 2>/dev/null || true)"
+  process_tree_signal "$current_pid" TERM
+  sleep "$WATCHDOG_GRACE_SECONDS"
+  echo "WARNING: Process tree still alive after ${WATCHDOG_GRACE_SECONDS}s — sending SIGKILL."
+  current_pid="$(cat "$CURRENT_PID_FILE" 2>/dev/null || true)"
+  process_tree_signal "$current_pid" KILL
 ) &
 WATCHDOG_PID=$!
 
 # Clean up the watchdog whenever we exit normally.
-trap 'kill "$WATCHDOG_PID" 2>/dev/null || true' EXIT
+cleanup_runtime() {
+  kill "$WATCHDOG_PID" 2>/dev/null || true
+  rm -rf "$RUNTIME_DIR"
+}
+trap cleanup_runtime EXIT
+
+run_owned() {
+  local label="$1"
+  shift
+  "$@" &
+  local child_pid=$!
+  printf '%s\n' "$child_pid" > "$CURRENT_PID_FILE"
+
+  set +e
+  wait "$child_pid"
+  local exit_code=$?
+  set -e
+
+  rm -f "$CURRENT_PID_FILE"
+  if [[ -f "$TIMEOUT_MARKER" ]]; then
+    echo "[test-all] ERROR: outer wall-clock cap expired during ${label}; terminating the stalled process tree." >&2
+    return 124
+  fi
+  return "$exit_code"
+}
+
+# Ensure generated API clients are present and current before any suite reads
+# them. codegen:ensure is itself idempotent and file-locked (see
+# lib/api-spec/scripts/ensure-codegen.mjs), so this cannot race a concurrent
+# dev-workflow boot; running it here while we hold the serial lock also means
+# no other test run can observe a mid-regeneration state.
+set +e
+run_owned "codegen:ensure preflight" pnpm --filter @workspace/api-spec run codegen:ensure
+preflight_exit_code=$?
+set -e
+if [ "$preflight_exit_code" -ne 0 ]; then
+  if [ "$preflight_exit_code" -eq 124 ]; then
+    exit 124
+  fi
+  echo "[test-all] ERROR: codegen:ensure failed — generated API clients may be missing."
+  exit 1
+fi
+
+# Keep the API Jest wrapper's focused/full-run selection contract exercised by
+# the canonical workspace test command.
+set +e
+run_owned "API suite-floor preflight" node scripts/test/api-suite-floor-contract.test.mjs
+preflight_exit_code=$?
+set -e
+if [ "$preflight_exit_code" -ne 0 ]; then
+  if [ "$preflight_exit_code" -eq 124 ]; then
+    exit 124
+  fi
+  echo "[test-all] ERROR: API suite-floor contract failed."
+  exit 1
+fi
 
 # ── Run suites ────────────────────────────────────────────────────────────────
 declare -A RESULTS
@@ -103,14 +184,14 @@ for entry in "${SUITES[@]}"; do
   if [ "$runner" = "vitest" ]; then
     # Vitest: pass flags directly to the binary so pnpm's arg pass-through
     # does not swallow --outputFile.  Also redirect stderr so JSON is clean.
-    timeout --kill-after=15s "${budget}s" \
+    run_owned "suite ${name}" timeout --kill-after=15s "${budget}s" \
       pnpm --filter "$filter" exec vitest run \
         --reporter=json \
         --outputFile="${json_file}" \
       2>&1
   else
     # Jest: standard --json --outputFile pass-through via pnpm run test
-    timeout --kill-after=15s "${budget}s" \
+    run_owned "suite ${name}" timeout --kill-after=15s "${budget}s" \
       pnpm --filter "$filter" run test -- \
         --json \
         --outputFile="${json_file}" \

@@ -39,24 +39,65 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
+import { db, usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { seedTestUser, cleanupTestUser } from "./helpers/testDb";
+import {
+  cleanupTestUser,
+  seedTestUser,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 const ADMIN_TOKEN = ADMIN_TEST_USER_ID;
-const NON_ADMIN_USER = "jest-writeauth-user";
+const NON_ADMIN_USER = workerQualifiedUserId("jest-writeauth-user");
+const PENDING_USER = workerQualifiedUserId("jest-writeauth-pending");
+const BANNED_USER = workerQualifiedUserId("jest-writeauth-banned");
 
 beforeAll(async () => {
   // seedTestUser derives the email from the clerkUserId, so parallel suites
   // can never collide on users_email_unique, and re-seeding is an idempotent
   // upsert on clerk_user_id (safe when two workers race).
-  await seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" });
+  await Promise.all([
+    seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" }),
+    seedTestUser({ clerkUserId: PENDING_USER, status: "pending", role: "admin" }),
+    seedTestUser({ clerkUserId: BANNED_USER, status: "banned", role: "admin" }),
+  ]);
 });
 
 afterAll(async () => {
-  await cleanupTestUser(NON_ADMIN_USER);
+  await Promise.all([
+    cleanupTestUser(NON_ADMIN_USER),
+    cleanupTestUser(PENDING_USER),
+    cleanupTestUser(BANNED_USER),
+  ]);
 }, 15_000);
+
+describe("user fixture ownership", () => {
+  it("keeps a concurrent-run decoy when this worker cleans up its user", async () => {
+    const ownedUser = workerQualifiedUserId("jest-writeauth-cleanup");
+    const concurrentRunDecoy = workerQualifiedUserId(
+      "jest-writeauth-cleanup",
+      "other-process-1",
+    );
+
+    await Promise.all([
+      seedTestUser({ clerkUserId: ownedUser }),
+      seedTestUser({ clerkUserId: concurrentRunDecoy }),
+    ]);
+
+    await cleanupTestUser(ownedUser);
+
+    const remainingDecoy = await db
+      .select({ clerkUserId: usersTable.clerkUserId })
+      .from(usersTable)
+      .where(eq(usersTable.clerkUserId, concurrentRunDecoy));
+
+    expect(remainingDecoy).toEqual([{ clerkUserId: concurrentRunDecoy }]);
+    await cleanupTestUser(concurrentRunDecoy);
+  });
+});
 
 /** Runs the standard no-token / non-admin / admin assertions for one route. */
 function describeWriteGuard(
@@ -113,3 +154,37 @@ describeWriteGuard("PATCH /api/inventory/:id/keywords", (token) =>
     keywords: ["motor", "bearing"],
   }),
 );
+
+describe("PATCH /api/inventory/:id/description — auth guard", () => {
+  function send(token?: string): supertest.Test {
+    return withAuth(
+      supertest(app).patch("/api/inventory/1/description"),
+      token,
+    ).send({ description: "auth boundary coverage" });
+  }
+
+  it("unauthenticated → 401", async () => {
+    await send().expect(401);
+  });
+
+  it("approved non-admin → 403", async () => {
+    await send(NON_ADMIN_USER).expect(403);
+  });
+
+  it("pending → 403", async () => {
+    const res = await send(PENDING_USER).expect(403);
+    expect(res.body).toMatchObject({ code: "pending" });
+  });
+
+  it("banned → 403", async () => {
+    const res = await send(BANNED_USER).expect(403);
+    expect(res.body).toMatchObject({ code: "banned" });
+  });
+
+  it("approved admin passes authentication without an MFA_REQUIRED response", async () => {
+    const res = await send(ADMIN_TOKEN);
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(403);
+    expect(res.body.code).not.toBe("MFA_REQUIRED");
+  });
+});

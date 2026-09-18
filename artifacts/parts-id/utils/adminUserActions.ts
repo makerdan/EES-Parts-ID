@@ -21,6 +21,10 @@ export type UserRow = {
   createdAt: string;
 };
 
+export type FetchAdminUsersResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
 export type FetchAdminUsersDeps = {
   apiBase: string;
   adminToken: string;
@@ -34,15 +38,15 @@ export type HandleUserActionDeps = {
   adminToken: string;
   userActionPending: string | null;
   setUserActionPending: (v: string | null) => void;
-  showToast: (message: string, type: "error") => void;
-  fetchUsers: () => Promise<void>;
+  showToast: (message: string, type: "info" | "success" | "error") => void;
+  fetchUsers: () => Promise<FetchAdminUsersResult | void>;
 };
 
 export type DeleteAdminUserDeps = {
   apiBase: string;
   adminToken: string;
   setUserActionPending: (v: string | null) => void;
-  showToast: (message: string, type: "error") => void;
+  showToast: (message: string, type: "info" | "success" | "error") => void;
   showWarning: (message: string) => void;
   removeUser: (clerkUserId: string) => void;
 };
@@ -54,7 +58,7 @@ export type DeleteAdminUserDeps = {
  * On failure (network or non-ok HTTP) populates usersError.
  * The Authorization header is always set from adminToken.
  */
-export async function fetchAdminUsers(deps: FetchAdminUsersDeps): Promise<void> {
+export async function fetchAdminUsers(deps: FetchAdminUsersDeps): Promise<FetchAdminUsersResult> {
   const { apiBase, adminToken, setUsersLoading, setUsersError, setUsersData } = deps;
   setUsersLoading(true);
   setUsersError(null);
@@ -65,8 +69,11 @@ export async function fetchAdminUsers(deps: FetchAdminUsersDeps): Promise<void> 
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const body = (await resp.json()) as { users: Array<UserRow> };
     setUsersData(body.users);
+    return { ok: true };
   } catch (err) {
-    setUsersError(err instanceof Error ? err.message : "Failed to load users");
+    const error = err instanceof Error ? err.message : "Failed to load users";
+    setUsersError(error);
+    return { ok: false, error };
   } finally {
     setUsersLoading(false);
   }
@@ -76,7 +83,9 @@ export async function fetchAdminUsers(deps: FetchAdminUsersDeps): Promise<void> 
  * Sends POST /admin/users/:clerkUserId/approve|ban|promote|demote.
  *
  * Guards against concurrent calls (userActionPending already set).
- * On success calls deps.fetchUsers() to refresh the list.
+ * On success calls deps.fetchUsers() to refresh the list. A failed refresh is
+ * reported separately from the already-completed mutation so the admin is not
+ * encouraged to repeat the action.
  * On failure shows a toast via deps.showToast().
  * The Authorization header is always set from adminToken.
  */
@@ -102,7 +111,29 @@ export async function handleUserAction(
       headers: { Authorization: `Bearer ${adminToken}` },
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    await fetchUsers();
+    await resp.json().catch(() => null);
+
+    let refreshResult: FetchAdminUsersResult | void;
+    try {
+      refreshResult = await fetchUsers();
+    } catch {
+      refreshResult = { ok: false, error: "Refresh request failed" };
+    }
+
+    const actionLabel = {
+      approve: "Approve",
+      ban: "Ban",
+      promote: "Promote",
+      demote: "Demote",
+    }[action];
+    if (refreshResult && !refreshResult.ok) {
+      showToast(
+        `${actionLabel} completed, but the People list could not be refreshed. Tap Retry to sync.`,
+        "error",
+      );
+    } else {
+      showToast(`${actionLabel} completed.`, "success");
+    }
   } catch (err) {
     showToast(
       err instanceof Error ? err.message : `Failed to ${action} user`,
@@ -146,6 +177,9 @@ export async function deleteAdminUser(
       clerkDeleted?: boolean;
       clerkError?: string;
     };
+    if (body.deleted !== true) {
+      throw new Error("The server did not confirm that the user was removed");
+    }
     removeUser(clerkUserId);
     if (body.clerkDeleted === false) {
       showWarning(
@@ -153,6 +187,8 @@ export async function deleteAdminUser(
           ? `User removed from the app but Clerk deletion failed: ${body.clerkError}`
           : "User removed from the app but could not be deleted from Clerk — they may still be able to sign in.",
       );
+    } else {
+      showToast("User removed.", "success");
     }
   } catch (err) {
     showToast(

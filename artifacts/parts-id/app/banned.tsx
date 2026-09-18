@@ -2,6 +2,7 @@ import React from "react";
 import {
   ActivityIndicator,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -30,9 +31,13 @@ export default function BannedScreen() {
     container: {
       flex: 1,
       backgroundColor: colors.background,
-      justifyContent: "center",
+    },
+    scrollContent: {
+      flexGrow: 1,
       alignItems: "center",
-      padding: 32,
+      justifyContent: "center",
+      paddingHorizontal: 32,
+      paddingVertical: 16,
     },
     card: {
       width: "100%",
@@ -91,7 +96,7 @@ export default function BannedScreen() {
   });
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <View style={styles.card}>
         <Text style={styles.icon}>🚫</Text>
         <Text style={styles.title}>Account Disabled</Text>
@@ -114,6 +119,6 @@ export default function BannedScreen() {
           )}
         </Pressable>
       </View>
-    </View>
+    </ScrollView>
   );
 }

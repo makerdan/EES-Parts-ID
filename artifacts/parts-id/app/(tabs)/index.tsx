@@ -1,7 +1,8 @@
 import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
-import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import type { InventoryItem, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
 import { useSearchInventory } from "@workspace/api-client-react";
 import { router,useFocusEffect } from "expo-router";
 import Fuse from "fuse.js";
@@ -21,6 +22,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 
@@ -145,6 +147,7 @@ async function readNewestCacheTimestamp(): Promise<string> {
 }
 
 const INCLUDE_NULL_DIM_KEY = "@partsid/include_null_dimensions";
+const SEARCH_RESULTS_QUERY_KEY = ["searchInventory", "active"] as const;
 
 const DEFAULT_FILTERS: FilterValues = {
   keywords: "",
@@ -189,7 +192,19 @@ export default function SearchScreen() {
   "use no memo";
   useTrackScreen("Search");
   const colors = useColors();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isLandscape = windowWidth > windowHeight;
+  // Keep the final row reachable above the tab bar, while avoiding a large
+  // dead zone on short landscape displays.
+  const bottomClearance = isLandscape ? 84 : 120;
   const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus, showToast, setPinnedParts, pendingMeasureSearch, setPendingMeasureSearch, pendingInventorySearch, setPendingInventorySearch } = useApp();
+  const queryClient = useQueryClient();
+  const [searchCacheVersion, setSearchCacheVersion] = useState(0);
+  useEffect(() => queryClient.getQueryCache().subscribe((event) => {
+    if ("query" in event && event.query.queryKey[0] === SEARCH_RESULTS_QUERY_KEY[0]) {
+      setSearchCacheVersion(version => version + 1);
+    }
+  }), [queryClient]);
   type SearchMode = "search" | "aisle" | "category";
   const [mode, setMode] = useState<SearchMode>("search");
   const [activeCategorySlug, setActiveCategorySlug] = useState<string | null>(null);
@@ -375,6 +390,7 @@ export default function SearchScreen() {
       setSyncError(false);
       setSyncErrorDismissed(false);
       setSearchTimedOut(false);
+      queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, undefined);
       errorToastFiredRef.current = { searchTimeout: false, syncFailure: false, offlineFallback: false };
       aiSearchGenRef.current += 1;
       searchMutationRef.current?.reset();
@@ -385,7 +401,7 @@ export default function SearchScreen() {
   // values (settingsRef, searchMutationRef, aiSearchGenRef) are read via refs
   // on purpose to avoid re-registering the handler on every settings change.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registerLogoutHandler]);
+  }, [queryClient, registerLogoutHandler]);
 
   const buildFuseIndex = useCallback((items: Array<InventoryItem>) => {
     if (!isMountedRef.current) return;
@@ -424,6 +440,57 @@ export default function SearchScreen() {
       });
     }
   }, [buildFuseIndex]);
+
+  const handleItemSaved = useCallback((updatedItem: InventoryItem) => {
+    const items = [...fuseItemsRef.current];
+    const index = items.findIndex(item => item.id === updatedItem.id);
+    if (index >= 0) {
+      items[index] = updatedItem;
+      buildFuseIndex(items);
+    }
+    setDetailsItem(current => current?.id === updatedItem.id ? updatedItem : current);
+  }, [buildFuseIndex]);
+
+  // Keep an open editor pointed at the newest host-side item without replacing
+  // values that the editor has already marked as locally dirty.
+  useEffect(() => {
+    if (!detailsItem) return;
+    const cachedSearch = queryClient.getQueryData<SearchInventoryResponse>(SEARCH_RESULTS_QUERY_KEY);
+    const refreshed = cachedSearch?.results?.find(result => result.item.id === detailsItem.id)?.item
+      ?? fuseItemsRef.current.find(candidate => candidate.id === detailsItem.id);
+    if (refreshed && refreshed !== detailsItem) setDetailsItem(refreshed);
+  }, [detailsItem, queryClient, searchCacheVersion, cachedCount]);
+
+  // A routed edit screen can update the durable Fuse cache while this screen
+  // stays mounted. Reload it whenever Search regains focus, but skip the first
+  // focus because the mount effect above already performs the initial load.
+  const hasFocusedSearchRef = useRef(false);
+  useFocusEffect(useCallback(() => {
+    if (!hasFocusedSearchRef.current) {
+      hasFocusedSearchRef.current = true;
+      return;
+    }
+    let active = true;
+    AsyncStorage.getItem(FUSE_CACHE_KEY).then(raw => {
+      if (!active) return;
+      const cachedSearch = queryClient.getQueryData<SearchInventoryResponse>(SEARCH_RESULTS_QUERY_KEY);
+      const searchItems = cachedSearch?.results?.map(result => result.item) ?? [];
+      const storedItems = raw ? parseFuseCacheItems(raw) ?? [] : [];
+      if (storedItems.length === 0 && searchItems.length === 0) return;
+      const merged = [...storedItems];
+      for (const item of searchItems) {
+        const index = merged.findIndex(candidate => candidate.id === item.id);
+        if (index >= 0) merged[index] = item;
+        else merged.push(item);
+      }
+      buildFuseIndex(merged);
+    }).catch(() => {
+      // The next full sync remains responsible for recovering an unreadable cache.
+    });
+    return () => {
+      active = false;
+    };
+  }, [buildFuseIndex, queryClient]));
 
   // Auto-retry constants
   const SYNC_RETRY_INITIAL_MS = 30_000;   // 30 s first retry
@@ -755,6 +822,7 @@ export default function SearchScreen() {
         if (!isMountedRef.current) return;
         if (searchAbortedRef.current) return; // timed out — discard late response
         if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
+        queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, data);
         setIsOffline(false);
         setOfflineResults(null);
         setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
@@ -934,6 +1002,7 @@ export default function SearchScreen() {
     setAITranslationDismissed(false);
     setAIZeroResults(null);
     searchAbortedRef.current = false;
+    queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, undefined);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
     if (!isCurrentlyConnected) {
@@ -972,7 +1041,7 @@ export default function SearchScreen() {
       }
       runOfflineFallback();
     }, SEARCH_TIMEOUT_MS);
-  }, [mutateSearch, resetSearch, runOfflineFallback, setPinnedParts, showToast, translateQuery]);
+  }, [mutateSearch, queryClient, resetSearch, runOfflineFallback, setPinnedParts, showToast, translateQuery]);
 
   const handleClear = useCallback(() => {
     if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
@@ -1055,6 +1124,7 @@ export default function SearchScreen() {
     setAIZeroResults(null);
     aiSearchGenRef.current += 1;
     searchAbortedRef.current = false;
+    queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, undefined);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     if (pendingSearchTimerRef.current) {
       clearTimeout(pendingSearchTimerRef.current);
@@ -1086,7 +1156,7 @@ export default function SearchScreen() {
       }
       runOfflineFallback();
     }, SEARCH_TIMEOUT_MS);
-  }, [mutateSearch, resetSearch, runOfflineFallback, setPinnedParts, showToast, similarSizeTolerance]);
+  }, [mutateSearch, queryClient, resetSearch, runOfflineFallback, setPinnedParts, showToast, similarSizeTolerance]);
 
   const handleCategorySelect = useCallback(async (slug: string, label: string) => {
     setMode("search");
@@ -1116,6 +1186,7 @@ export default function SearchScreen() {
     setAIZeroResults(null);
     aiSearchGenRef.current += 1;
     searchAbortedRef.current = false;
+    queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, undefined);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     if (pendingSearchTimerRef.current) {
       clearTimeout(pendingSearchTimerRef.current);
@@ -1144,7 +1215,7 @@ export default function SearchScreen() {
       runOfflineFallback();
     }, SEARCH_TIMEOUT_MS);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mutateSearch, resetSearch, runOfflineFallback, setPinnedParts, showToast]);
+  }, [mutateSearch, queryClient, resetSearch, runOfflineFallback, setPinnedParts, showToast]);
 
 
   const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
@@ -1191,16 +1262,17 @@ export default function SearchScreen() {
     return res.json() as Promise<InventoryItem>;
   }, [adminToken]);
 
+  const searchData = queryClient.getQueryData<SearchInventoryResponse>(SEARCH_RESULTS_QUERY_KEY);
   const results: Array<SearchResult> = useMemo(
-    () => offlineResults ?? (searchMutation.data?.results ?? []),
-    [offlineResults, searchMutation.data],
+    () => isOffline ? (offlineResults ?? []) : (searchData?.results ?? []),
+    [isOffline, offlineResults, searchData],
   );
   const sizeUnknownResults: Array<SearchResult> = useMemo(
-    () => isOffline ? [] : (searchMutation.data?.sizeUnknownResults ?? []),
-    [isOffline, searchMutation.data],
+    () => isOffline ? [] : (searchData?.sizeUnknownResults ?? []),
+    [isOffline, searchData],
   );
-  const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
-  const hasResults = searchMutation.isSuccess || offlineResults !== null;
+  const belowThreshold = searchData?.belowThreshold ?? 0;
+  const hasResults = searchData !== undefined || (isOffline && offlineResults !== null);
 
   // True when the user has entered at least one dimension bound.
   // The search button must remain enabled in this state even if the keyword
@@ -1643,7 +1715,7 @@ export default function SearchScreen() {
 
             <ScrollView
               showsVerticalScrollIndicator={false}
-              style={{ maxHeight: 480 }}
+              style={{ maxHeight: Math.min(480, Math.max(220, windowHeight - 72)) }}
               contentContainerStyle={{ paddingBottom: 4 }}
               keyboardShouldPersistTaps="handled"
             >
@@ -2098,6 +2170,7 @@ export default function SearchScreen() {
         <FlatList
           ref={flatListRef}
           data={flatListData}
+          extraData={searchData}
           keyExtractor={item => item.kind === "sizeUnknownHeader" ? "__size-unknown-header__" : String(item.result.item.id) + (item.kind === "sizeUnknown" ? "-unknown" : "")}
           removeClippedSubviews={true}
           maxToRenderPerBatch={8}
@@ -2156,10 +2229,10 @@ export default function SearchScreen() {
             </View>
           );
         }}
-        contentContainerStyle={[styles.listContent, { paddingTop: filterHeaderHeight + 8 }]}
+        contentContainerStyle={[styles.listContent, { paddingTop: filterHeaderHeight + 8, paddingBottom: bottomClearance }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="none"
+        keyboardDismissMode="interactive"
       />
 
         {/* Floating filter overlay — stacked above results */}
@@ -2234,6 +2307,7 @@ export default function SearchScreen() {
         adminToken={adminToken}
         onClose={() => setDetailsItem(null)}
         onShowOnMap={handleShowOnMap}
+        onItemSaved={handleItemSaved}
         onItemDeleted={handleItemDeleted}
       />
 

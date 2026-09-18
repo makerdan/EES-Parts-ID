@@ -10,8 +10,8 @@
 import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { InventoryItem } from "@workspace/api-client-react";
+import { computeAnchorTransform, matrixToSvgString } from "@workspace/zone-validation";
 import { useFocusEffect, useRouter } from "expo-router";
-import * as ScreenOrientation from "expo-screen-orientation";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Linking,
@@ -30,9 +30,7 @@ import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { type ApiWarehouseZone, useWarehouseZones } from "@/hooks/useWarehouseZones";
 import { parseBin, type WarehouseZone } from "@/lib/aisleHierarchy";
-import { computeAnchorTransform, matrixToSvgString } from "@/utils/mapAnchorTransform";
 import { FUSE_CACHE_KEY, parseFuseCacheItems } from "@/utils/offlineBarcode";
-import { swallowOrientationNotAvailable } from "@/utils/orientationLock";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
@@ -42,7 +40,7 @@ function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
   const aisleNum = parseInt(zone.aisleId, 10) || 0;
   return {
     aisleNum,
-    sectionNumbers: [zone.sectionNum],
+    ...(zone.sectionNum === null ? {} : { sectionNumbers: [zone.sectionNum] }),
   };
 }
 
@@ -195,22 +193,26 @@ export default function MapScreen() {
    * a pinned section, regardless of section parity.
    */
   const pinnedZoneIds = useMemo(() => {
-    const ids = new Set<number>();
+    const ids = new Set<ApiWarehouseZone["id"]>();
     for (const zone of zones) {
       const aisleNum = parseInt(zone.aisleId, 10);
       const sections = pinnedSections.get(aisleNum);
-      if (sections && sections.includes(zone.sectionNum)) ids.add(zone.id);
+      if (zone.sectionNum !== null && sections && sections.includes(zone.sectionNum)) {
+        ids.add(zone.id);
+      }
     }
     return ids;
   }, [zones, pinnedSections]);
 
   /** Same as pinnedZoneIds but for variant/related-size pins. */
   const variantZoneIds = useMemo(() => {
-    const ids = new Set<number>();
+    const ids = new Set<ApiWarehouseZone["id"]>();
     for (const zone of zones) {
       const aisleNum = parseInt(zone.aisleId, 10);
       const sections = variantSections.get(aisleNum);
-      if (sections && sections.includes(zone.sectionNum)) ids.add(zone.id);
+      if (zone.sectionNum !== null && sections && sections.includes(zone.sectionNum)) {
+        ids.add(zone.id);
+      }
     }
     return ids;
   }, [zones, variantSections]);
@@ -220,21 +222,13 @@ export default function MapScreen() {
   const pendingMapFocusRef = useRef(pendingMapFocus);
   useEffect(() => { pendingMapFocusRef.current = pendingMapFocus; }, [pendingMapFocus]);
 
-  // Re-sync zones every time the tab comes into focus; unlock landscape orientation.
+  // Re-sync zones every time the tab comes into focus.  The map deliberately
+  // does not lock orientation: locking portrait during blur made the map
+  // briefly blur and discarded the native map gesture surface on rotation.
   // Also consume any pending map focus set from the Search tab ("Show on map").
   useFocusEffect(
     useCallback(() => {
-      let stillFocused = true;
       refetchZones();
-      // Defer orientation unlock past the tab-switch animation so it does not
-      // block the JS thread during the transition and cause a visible freeze.
-      // Gate on stillFocused so a rapid blur before the timer fires cancels it.
-      const orientTimer = setTimeout(() => {
-        if (stillFocused) {
-          void ScreenOrientation.unlockAsync().catch(swallowOrientationNotAvailable);
-        }
-      }, 300);
-
       const focus = pendingMapFocusRef.current;
       if (focus) {
         setPendingMapFocus(null);
@@ -244,13 +238,6 @@ export default function MapScreen() {
         setFocusSectionNum(focus.sectionNum ?? null);
       }
 
-      return () => {
-        stillFocused = false;
-        clearTimeout(orientTimer);
-        void ScreenOrientation.lockAsync(
-          ScreenOrientation.OrientationLock.PORTRAIT_UP,
-        ).catch(swallowOrientationNotAvailable);
-      };
     }, [refetchZones, setPendingMapFocus]),
   );
 
@@ -278,7 +265,7 @@ export default function MapScreen() {
     if (zoneTooltipTimer.current) clearTimeout(zoneTooltipTimer.current);
     if (cycleCountTooltipTimer.current) clearTimeout(cycleCountTooltipTimer.current);
   }, []);
-  const [countedZoneIds, setCountedZoneIds] = useState<Set<number>>(new Set());
+  const [countedZoneIds, setCountedZoneIds] = useState<Set<ApiWarehouseZone["id"]>>(new Set());
 
   React.useEffect(() => {
     let alive = true;

@@ -1,6 +1,6 @@
 import { HELP_ERROR_CODE, type HelpErrorCode } from "@workspace/api-zod";
 
-import { getAiClient, getReferenceModel } from "./aiProvider";
+import { getReferenceModel } from "./aiProvider";
 import {
   ALL_HELP_RECORDS,
   getHelpResponse,
@@ -10,6 +10,7 @@ import {
   type HelpRecord,
   validateHelpRecords,
 } from "./helpContent";
+import { callPoeCompletionWithChain } from "./poeBot";
 
 export const HELP_ASSISTANT_LIMITS = {
   maxQuestionLength: 1_200,
@@ -171,16 +172,14 @@ async function callHelpProvider(
   history: Array<{ q: string; a: string }>,
   question: string,
 ): Promise<string> {
-  const controller = new AbortController();
-  let timeout: NodeJS.Timeout | undefined;
   try {
     const historyMessages = history.flatMap((turn) => [
       { role: "user" as const, content: turn.q },
       { role: "assistant" as const, content: turn.a },
     ]);
-    const providerRequest = getAiClient().chat.completions.create(
+    const response = await callPoeCompletionWithChain(
+      "enrich",
       {
-        model: getReferenceModel(),
         max_completion_tokens: HELP_ASSISTANT_LIMITS.maxCompletionTokens,
         messages: [
           { role: "system", content: systemPrompt },
@@ -188,22 +187,12 @@ async function callHelpProvider(
           { role: "user", content: question },
         ],
       },
-      { signal: controller.signal },
+      {
+        model: getReferenceModel(),
+        timeoutMs: HELP_ASSISTANT_LIMITS.timeoutMs,
+      },
     );
-    const timeoutRequest = new Promise<never>((_, reject) => {
-      timeout = setTimeout(() => {
-        controller.abort();
-        reject(new HelpAssistantError(
-          HELP_ERROR_CODE.TIMEOUT,
-          "The Help assistant timed out.",
-          504,
-          true,
-        ));
-      }, HELP_ASSISTANT_LIMITS.timeoutMs);
-      timeout.unref?.();
-    });
-    const response = await Promise.race([providerRequest, timeoutRequest]);
-    const answer = response.choices[0]?.message?.content?.trim() ?? "";
+    const answer = response.choices?.[0]?.message?.content?.trim() ?? "";
     if (!answer) {
       throw new HelpAssistantError(
         HELP_ERROR_CODE.PROVIDER_UNAVAILABLE,
@@ -239,8 +228,6 @@ async function callHelpProvider(
       503,
       true,
     );
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 

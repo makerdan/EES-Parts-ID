@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ---------------------------------------------------------------------------
 # API Server health check — confirm the server is up after every merge and
 # automatically restart it if it is not responding.
@@ -35,7 +37,10 @@ is_healthy_api_body() {
     let body = "";
     process.stdin.on("data", (chunk) => { body += chunk; });
     process.stdin.on("end", () => {
-      try { process.exit(JSON.parse(body).status === "ok" ? 0 : 1); }
+      try {
+        const status = JSON.parse(body).status;
+        process.exit(status === "ok" || status === "degraded" ? 0 : 1);
+      }
       catch { process.exit(1); }
     });
   '
@@ -64,32 +69,28 @@ CODEGEN_SETTLE_POLL_SECS="${CODEGEN_SETTLE_POLL_SECS:-2}"
 # failure surfaces as cryptic TypeScript import errors on the next run, with no
 # indication that a codegen crash was the root cause.
 #
-# The function checks the two sentinel files that orval always produces:
-#   lib/api-zod/src/generated/api.ts
-#   lib/api-client-react/src/generated/api.ts
+# The function checks the complete generated-output inventory shared with
+# codegen:check and ensure-codegen. It covers every generated source file,
+# required barrel, non-empty generated directory, unexpected file, and (when
+# running inside the repository) untracked generated file.
 #
 # Returns:
-#   0 — both files exist and are non-empty (generated dirs are intact)
-#   1 — one or more files are missing or empty (interrupted codegen detected)
+#   0 — the complete generated-output inventory is valid
+#   1 — one or more outputs are missing, empty, unexpected, or untracked
 #
 # The caller decides what to do; post-merge uses this for:
 #   • pre-flight: warn that codegen was interrupted before re-running it
 #   • post-flight: assert that codegen has fixed the state, exit 1 if not
 # ---------------------------------------------------------------------------
-GENERATED_SENTINELS=(
-  "lib/api-zod/src/generated/api.ts"
-  "lib/api-client-react/src/generated/api.ts"
-)
-
 check_generated_files() {
-  local missing=0
-  for sentinel in "${GENERATED_SENTINELS[@]}"; do
-    if [[ ! -s "$sentinel" ]]; then
-      echo "[post-merge] MISSING or EMPTY generated file: ${sentinel}"
-      missing=1
-    fi
-  done
-  return "$missing"
+  local output
+  if output=$(GENERATED_OUTPUT_ROOT="${GENERATED_OUTPUT_ROOT:-$PWD}" \
+    node "$SCRIPT_DIR/../lib/api-spec/scripts/check-generated-output.mjs" 2>&1); then
+    echo "$output"
+    return 0
+  fi
+  echo "$output"
+  return 1
 }
 
 check_api_health() {
@@ -243,10 +244,31 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   }
   trap cleanup_background_install EXIT TERM INT
 
+  wait_for_background_install() {
+    if [[ -z "${INSTALL_PID:-}" ]]; then
+      return 0
+    fi
+
+    echo "[post-merge] Waiting for background install (PID ${INSTALL_PID}) before dependency-sensitive steps..."
+    local install_exit=0
+    wait "$INSTALL_PID" || install_exit=$?
+    INSTALL_PID=""
+
+    if [[ "$install_exit" -eq 124 ]]; then
+      echo "[post-merge] ERROR: background install timed out after 120s. See /tmp/post-merge-install.log."
+      return 1
+    elif [[ "$install_exit" -ne 0 ]]; then
+      echo "[post-merge] ERROR: background install exited with code ${install_exit}. See /tmp/post-merge-install.log."
+      return 1
+    fi
+
+    echo "[post-merge] Background install completed successfully."
+    return 0
+  }
+
   # Only run pnpm install if the lockfile changed in the merge.
-  # Run in the background so it does not block the health check within the
-  # 20s platform budget — the API server does not need a reinstall to stay
-  # healthy, and packages are already on disk from the merge.
+  # Run it in the background so cleanup and timeout handling remain centralized,
+  # then wait for it before any dependency-sensitive work below.
   if git --no-optional-locks diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q 'pnpm-lock.yaml'; then
     echo "[post-merge] Lockfile changed — installing dependencies in background..."
     timeout 120 sh -c 'CI=true pnpm install --frozen-lockfile' >> /tmp/post-merge-install.log 2>&1 &
@@ -255,13 +277,18 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   else
     echo "[post-merge] Lockfile unchanged — skipping install."
   fi
+
+  # Codegen and schema operations resolve workspace dependencies. Never let
+  # them run against the pre-merge node_modules after a lockfile change.
+  wait_for_background_install || exit 1
+
   # Only run db push + FTS verification if schema files changed in the merge.
   # drizzle-kit push --force takes ~60s and the FTS index check takes ~15s even
   # with no changes; skipping both when the schema is untouched is critical for
   # staying within the 20s post-merge budget.
   if git --no-optional-locks diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q 'lib/db/src/schema'; then
     echo "[post-merge] Schema changed — running db push..."
-    timeout 90 pnpm --filter db push --force || {
+    timeout 90 env DATABASE_ENV=development pnpm --filter db push --force || {
       DB_EXIT=$?
       if [[ "$DB_EXIT" -eq 124 ]]; then
         echo "[post-merge] ERROR: db push timed out after 90s. Aborting."
@@ -274,7 +301,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     # Verify the FTS index after every schema push — a missing or drifted
     # inventory_fts_idx would silently break keyword search.
     echo "[post-merge] Verifying FTS index..."
-    pnpm --filter @workspace/db run verify-fts || {
+    env DATABASE_ENV=development pnpm --filter @workspace/db run verify-fts || {
       echo "[post-merge] ERROR: FTS index check failed. Run 'pnpm --filter @workspace/db run push-force' to rebuild the index."
       exit 1
     }
@@ -283,13 +310,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "[post-merge] Schema unchanged — skipping db push and FTS check."
   fi
 
-  # Pre-flight: detect a partial/missing codegen state left by a previously
-  # crashed task agent.  Orval uses clean:true, so a mid-run crash wipes the
-  # generated dirs and leaves them empty.  Without this check the downstream
+  # Pre-flight: detect a partial/missing/unexpected codegen state left by a
+  # previously crashed task agent. Orval uses clean:true, so a mid-run crash
+  # wipes the generated dirs and leaves them empty. Without this check the downstream
   # failure (TypeScript import errors) has no obvious cause; naming the problem
   # here makes it immediately actionable.
   if ! check_generated_files; then
-    echo "[post-merge] WARNING: One or more generated files are missing or empty — a previous codegen run appears to have been interrupted mid-run. Proceeding with codegen:fix to restore them."
+    echo "[post-merge] WARNING: Generated output inventory is incomplete or unexpected — a previous codegen run appears to have been interrupted or left stale files. Proceeding with codegen:fix to restore it."
   else
     echo "[post-merge] Pre-flight: generated files present."
   fi
@@ -305,7 +332,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   git config --global user.name "Post-Merge Bot" 2>/dev/null || true
 
   echo "[post-merge] Regenerating API client and auto-committing any drift..."
-  timeout 120 node scripts/serial-lock.mjs --resource codegen --priority 80 -- pnpm --filter @workspace/api-spec run codegen:fix || {
+  timeout 120 node scripts/serial-lock.mjs --resource codegen --priority 2 -- pnpm --filter @workspace/api-spec run codegen:fix || {
     CODEGEN_EXIT=$?
     if [[ "$CODEGEN_EXIT" -eq 124 ]]; then
       echo "[post-merge] ERROR: codegen:fix timed out after 120s. Aborting."
@@ -316,12 +343,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   }
   echo "[post-merge] API client regenerated and any drift auto-committed."
 
-  # Post-flight: assert that codegen:fix actually produced all sentinel files.
-  # If codegen completed but a file is still missing (e.g. the orval output
-  # config changed and no longer emits the sentinel), fail loudly here rather
-  # than letting the API server crash on start with a cryptic import error.
+  # Post-flight: assert that codegen:fix produced the complete inventory.
+  # If codegen completed but a file is still missing or unexpected output
+  # remains, fail loudly rather than letting consumers receive a partial
+  # contract.
   if ! check_generated_files; then
-    echo "[post-merge] ERROR: Generated files still missing after codegen:fix — codegen may have completed with a different output layout or the orval config may have changed. Manual investigation required."
+    echo "[post-merge] ERROR: Generated output inventory is still invalid after codegen:fix — codegen may have completed with a different output layout or stale files may remain. Manual investigation required."
     exit 1
   fi
 
@@ -339,23 +366,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     exit 1
   }
 
-  # Push latest main branch to GitHub after every successful merge.
-  # Uses || true so a network error never causes post-merge to report failure.
+  # Enforce the protected snapshot-PR synchronization boundary. The helper is
+  # intentionally a safe no-op; routine post-merge recovery must never publish
+  # local Git history or push directly to protected GitHub main.
   bash "$(dirname "$0")/sync-github.sh" || true
-
-  # Wait for background install to finish before health-checking the server.
-  # A server that started before the install completed may crash due to missing
-  # packages; waiting here avoids a spurious health-check failure and restart.
-  if [ -n "${INSTALL_PID:-}" ]; then
-    echo "[post-merge] Waiting for background install (PID ${INSTALL_PID}) to finish..."
-    INSTALL_EXIT=0
-    wait "$INSTALL_PID" || INSTALL_EXIT=$?
-    if [ "$INSTALL_EXIT" -ne 0 ]; then
-      echo "[post-merge] WARNING: background install exited with code ${INSTALL_EXIT} — see /tmp/post-merge-install.log. Proceeding to health check anyway."
-    else
-      echo "[post-merge] Background install completed successfully."
-    fi
-  fi
 
   # First health check pass.
   if check_api_health "initial"; then

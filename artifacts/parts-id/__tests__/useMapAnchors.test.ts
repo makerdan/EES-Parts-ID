@@ -1,14 +1,13 @@
 /**
  * @jest-environment jsdom
  *
- * Unit tests for useMapAnchors — MFA error path coverage.
+ * Unit tests for useMapAnchors request and failure handling.
  *
  * Covered:
  *   - upsertAnchor: 200 OK → { ok: true }
- *   - upsertAnchor: 403 MFA_REQUIRED → { ok: false, mfaRequired: true }
- *   - upsertAnchor: 5xx server error → { ok: false } (no mfaRequired flag)
- *   - deleteAnchor: 403 MFA_REQUIRED → { ok: false, mfaRequired: true }
- *   - refetch (GET): 403 MFA_REQUIRED → mfaRequired: true, error: false
+ *   - upsertAnchor: 403/5xx server error → { ok: false }
+ *   - deleteAnchor: 403/5xx server error → { ok: false }
+ *   - refetch (GET): 403/5xx server error → error: true
  */
 
 // @ts-ignore
@@ -98,10 +97,10 @@ describe("upsertAnchor — return values", () => {
     expect(putCall).toBeTruthy();
   });
 
-  it("returns { ok: false, mfaRequired: true } when PUT returns 403 MFA_REQUIRED", async () => {
+  it("returns { ok: false } when PUT returns 403", async () => {
     mockFetch.mockImplementation((_url: string, init?: RequestInit) => {
       if (init?.method === "PUT")
-        return makeJsonResponse(403, { code: "MFA_REQUIRED" });
+        return makeJsonResponse(403, { error: "Admin access required" });
       return makeJsonResponse(200, { anchors: [] });
     });
 
@@ -113,11 +112,10 @@ describe("upsertAnchor — return values", () => {
       putResult = await result.current.upsertAnchor(1, VALID_PAYLOAD);
     });
 
-    expect(putResult.ok).toBe(false);
-    expect(putResult.mfaRequired).toBe(true);
+    expect(putResult).toEqual({ ok: false });
   });
 
-  it("returns { ok: false } without mfaRequired when PUT returns a 5xx error", async () => {
+  it("returns { ok: false } when PUT returns a 5xx error", async () => {
     mockFetch.mockImplementation((_url: string, init?: RequestInit) => {
       if (init?.method === "PUT")
         return makeJsonResponse(500, { error: "Internal server error" });
@@ -132,12 +130,10 @@ describe("upsertAnchor — return values", () => {
       putResult = await result.current.upsertAnchor(1, VALID_PAYLOAD);
     });
 
-    expect(putResult.ok).toBe(false);
-    // 5xx must NOT be treated as MFA_REQUIRED
-    expect(putResult.mfaRequired).toBeFalsy();
+    expect(putResult).toEqual({ ok: false });
   });
 
-  it("returns { ok: false } without mfaRequired when PUT returns 403 WITHOUT MFA_REQUIRED code", async () => {
+  it("returns { ok: false } when PUT returns a different 403 body", async () => {
     mockFetch.mockImplementation((_url: string, init?: RequestInit) => {
       if (init?.method === "PUT")
         return makeJsonResponse(403, { code: "FORBIDDEN" });
@@ -152,9 +148,7 @@ describe("upsertAnchor — return values", () => {
       putResult = await result.current.upsertAnchor(1, VALID_PAYLOAD);
     });
 
-    expect(putResult.ok).toBe(false);
-    // A 403 with a different code must NOT be treated as MFA_REQUIRED
-    expect(putResult.mfaRequired).toBeFalsy();
+    expect(putResult).toEqual({ ok: false });
   });
 });
 
@@ -163,10 +157,10 @@ describe("upsertAnchor — return values", () => {
 // =============================================================================
 
 describe("deleteAnchor — return values", () => {
-  it("returns { ok: false, mfaRequired: true } when DELETE returns 403 MFA_REQUIRED", async () => {
+  it("returns { ok: false } when DELETE returns 403", async () => {
     mockFetch.mockImplementation((_url: string, init?: RequestInit) => {
       if (init?.method === "DELETE")
-        return makeJsonResponse(403, { code: "MFA_REQUIRED" });
+        return makeJsonResponse(403, { error: "Admin access required" });
       return makeJsonResponse(200, { anchors: [] });
     });
 
@@ -178,8 +172,7 @@ describe("deleteAnchor — return values", () => {
       delResult = await result.current.deleteAnchor(1);
     });
 
-    expect(delResult.ok).toBe(false);
-    expect(delResult.mfaRequired).toBe(true);
+    expect(delResult).toEqual({ ok: false });
   });
 
   it("returns { ok: true } when DELETE returns 200", async () => {
@@ -199,7 +192,7 @@ describe("deleteAnchor — return values", () => {
     expect(delResult).toEqual({ ok: true });
   });
 
-  it("returns { ok: false } without mfaRequired when DELETE returns a 5xx error", async () => {
+  it("returns { ok: false } when DELETE returns a 5xx error", async () => {
     mockFetch.mockImplementation((_url: string, init?: RequestInit) => {
       if (init?.method === "DELETE")
         return makeJsonResponse(500, { error: "Server error" });
@@ -214,31 +207,28 @@ describe("deleteAnchor — return values", () => {
       delResult = await result.current.deleteAnchor(1);
     });
 
-    expect(delResult.ok).toBe(false);
-    expect(delResult.mfaRequired).toBeFalsy();
+    expect(delResult).toEqual({ ok: false });
   });
 });
 
 // =============================================================================
-// refetch / GET — MFA_REQUIRED
+// refetch / GET failures
 // =============================================================================
 
-describe("refetch (GET) — MFA_REQUIRED", () => {
-  it("sets mfaRequired=true and keeps error=false when GET /admin/map-anchors returns 403 MFA_REQUIRED", async () => {
+describe("refetch (GET) — failures", () => {
+  it("sets error=true when GET /admin/map-anchors returns 403", async () => {
     mockFetch.mockImplementation(() =>
-      makeJsonResponse(403, { code: "MFA_REQUIRED" }),
+      makeJsonResponse(403, { error: "Admin access required" }),
     );
 
     const { result } = renderHook(() => useMapAnchors(ADMIN_TOKEN));
     await flushPromises();
 
-    expect(result.current.mfaRequired).toBe(true);
-    // MFA is a distinct state — it must not set the generic error flag
-    expect(result.current.error).toBe(false);
+    expect(result.current.error).toBe(true);
     expect(result.current.loading).toBe(false);
   });
 
-  it("sets error=true and keeps mfaRequired=false when GET returns a 5xx error", async () => {
+  it("sets error=true when GET returns a 5xx error", async () => {
     mockFetch.mockImplementation(() =>
       makeJsonResponse(500, { error: "Internal error" }),
     );
@@ -247,30 +237,27 @@ describe("refetch (GET) — MFA_REQUIRED", () => {
     await flushPromises();
 
     expect(result.current.error).toBe(true);
-    expect(result.current.mfaRequired).toBe(false);
     expect(result.current.loading).toBe(false);
   });
 
-  it("clears mfaRequired after a successful refetch", async () => {
-    // First fetch: MFA_REQUIRED; second (manual refetch): success
+  it("clears the generic error after a successful refetch", async () => {
     let callCount = 0;
     mockFetch.mockImplementation(() => {
       callCount++;
       if (callCount === 1)
-        return makeJsonResponse(403, { code: "MFA_REQUIRED" });
+        return makeJsonResponse(403, { error: "Admin access required" });
       return makeJsonResponse(200, { anchors: [] });
     });
 
     const { result } = renderHook(() => useMapAnchors(ADMIN_TOKEN));
     await flushPromises();
-    expect(result.current.mfaRequired).toBe(true);
+    expect(result.current.error).toBe(true);
 
     // Manual refetch succeeds
     await act(async () => {
       await result.current.refetch();
     });
 
-    expect(result.current.mfaRequired).toBe(false);
     expect(result.current.error).toBe(false);
   });
 });

@@ -61,7 +61,7 @@ const INITIAL_ZONE: Zone = {
 
 const FLOOR_PLAN_SVG = `
   <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="800" viewBox="0 0 1000 800">
-    <rect width="1000" height="800" fill="#f8fafc"/>
+    <rect id="zone-route-floor-plan" width="1000" height="800" fill="#f8fafc"/>
     <path d="M 10 10 H 990 V 790 H 10 Z" fill="none" stroke="#111827"/>
   </svg>
 `;
@@ -83,7 +83,11 @@ function requestPath(input: RequestInfo | URL): string {
   return String(input);
 }
 
-function makeApiFetch(options: { admin?: boolean; patchOk?: boolean } = {}) {
+function makeApiFetch(options: {
+  admin?: boolean;
+  patchOk?: boolean;
+  floorPlanResponses?: Promise<Response>[];
+} = {}) {
   let zones = [{ ...INITIAL_ZONE }];
   const calls: FetchCall[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -96,6 +100,8 @@ function makeApiFetch(options: { admin?: boolean; patchOk?: boolean } = {}) {
     }
 
     if (path.includes("/floor-plan/svg")) {
+      const pendingResponse = options.floorPlanResponses?.shift();
+      if (pendingResponse) return pendingResponse;
       return new Response(FLOOR_PLAN_SVG, { status: 200, headers: { "Content-Type": "image/svg+xml" } });
     }
 
@@ -131,6 +137,16 @@ function makeApiFetch(options: { admin?: boolean; patchOk?: boolean } = {}) {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 function getZoneRects(container: HTMLElement): SVGRectElement[] {
   return [...container.querySelectorAll("rect")].filter(
     (rect) => rect.getAttribute("fill")?.startsWith("rgba(0, 112, 255"),
@@ -161,6 +177,7 @@ async function renderRoute() {
   });
   await waitFor(() => {
     expect(screen.getByText("Admin — Zone Editor")).toBeTruthy();
+    expect(result.container.querySelector("#zone-route-floor-plan")).not.toBeNull();
     expect(getZoneRects(result.container)).toHaveLength(1);
   });
   const svg = setSvgBounds(result.container);
@@ -302,6 +319,80 @@ describe("web Zone Editor route workflow", () => {
     expect(api.fetchMock.mock.calls.some(([input]) => requestPath(input).includes("/warehouse-zones"))).toBe(false);
     expect(getMutationCalls(api.fetchMock)).toHaveLength(0);
     expect(screen.queryByText("Admin — Zone Editor")).toBeNull();
+  });
+
+  it("keeps the newest floor plan when an older editor session settles later", async () => {
+    const olderFloorPlan = deferred<Response>();
+    const latestFloorPlan = deferred<Response>();
+    const api = makeApiFetch({
+      floorPlanResponses: [olderFloorPlan.promise, latestFloorPlan.promise],
+    });
+    global.fetch = api.fetchMock as unknown as typeof global.fetch;
+
+    const result = render(<App key="older-zone-editor-session" />);
+    await waitFor(() => {
+      expect(screen.getByText("Admin — Zone Editor")).toBeTruthy();
+      expect(
+        api.fetchMock.mock.calls.filter(([input]) => requestPath(input).includes("/floor-plan/svg")),
+      ).toHaveLength(1);
+    });
+
+    result.rerender(<App key="latest-zone-editor-session" />);
+    await waitFor(() => {
+      expect(screen.getByText("Admin — Zone Editor")).toBeTruthy();
+      expect(
+        api.fetchMock.mock.calls.filter(([input]) => requestPath(input).includes("/floor-plan/svg")),
+      ).toHaveLength(2);
+    });
+
+    await act(async () => {
+      latestFloorPlan.resolve(new Response(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="latest-zone-editor-floor-plan" width="1000" height="800" /></svg>',
+        { status: 200, headers: { "Content-Type": "image/svg+xml" } },
+      ));
+    });
+    await waitFor(() => {
+      expect(result.container.querySelector("#latest-zone-editor-floor-plan")).not.toBeNull();
+    });
+
+    await act(async () => {
+      olderFloorPlan.resolve(new Response(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="stale-zone-editor-floor-plan" width="1000" height="800" /></svg>',
+        { status: 200, headers: { "Content-Type": "image/svg+xml" } },
+      ));
+    });
+    await waitFor(() => {
+      expect(result.container.querySelector("#latest-zone-editor-floor-plan")).not.toBeNull();
+      expect(result.container.querySelector("#stale-zone-editor-floor-plan")).toBeNull();
+    });
+  });
+
+  it("aborts and ignores a rejected floor-plan response after the editor unmounts", async () => {
+    const pendingFloorPlan = deferred<Response>();
+    const api = makeApiFetch({ floorPlanResponses: [pendingFloorPlan.promise] });
+    global.fetch = api.fetchMock as unknown as typeof global.fetch;
+
+    const result = render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("Admin — Zone Editor")).toBeTruthy();
+      expect(
+        api.fetchMock.mock.calls.some(([input]) => requestPath(input).includes("/floor-plan/svg")),
+      ).toBe(true);
+    });
+
+    const floorPlanCall = api.fetchMock.mock.calls.find(([input]) =>
+      requestPath(input).includes("/floor-plan/svg"),
+    );
+    const signal = floorPlanCall?.[1]?.signal as AbortSignal | undefined;
+    expect(signal).toBeDefined();
+
+    result.unmount();
+    expect(signal?.aborted).toBe(true);
+
+    await act(async () => {
+      pendingFloorPlan.reject(new Error("unmounted zone-editor floor-plan response"));
+    });
+    expect(result.container.querySelector("#stale-zone-editor-floor-plan")).toBeNull();
   });
 
   it("shows an actionable save error and does not report success when the API rejects an edit", async () => {

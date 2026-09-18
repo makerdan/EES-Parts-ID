@@ -17,9 +17,12 @@
  */
 
 // ── OpenAI / AI provider mocks so importing app.ts succeeds under Jest CJS ─────
-jest.mock("openai", () => jest.fn().mockImplementation(() => ({
-  chat: { completions: { create: jest.fn() } },
-})));
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "../../__tests__/helpers/openaiMock",
+  ) as typeof import("../../__tests__/helpers/openaiMock");
+  return createOpenAIMock(jest);
+});
 
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
   openai: {

@@ -77,7 +77,7 @@ function sendHelp(audience: HelpAudience, req: Request, res: Response): void {
 // GET /help — authenticated general Help records.
 router.get("/", (req, res) => sendHelp("general", req, res));
 
-// GET /help/admin — current admin + MFA required; no client role flag is used.
+// GET /help/admin — current approved admin; no client role flag is used.
 router.get("/admin", requireAdminAuth, (req, res) => sendHelp("admin", req, res));
 
 // POST /help/ask — app-only, corpus-grounded Help Q&A.

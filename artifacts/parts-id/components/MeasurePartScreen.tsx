@@ -33,8 +33,10 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 
@@ -138,6 +140,8 @@ export function MeasurePartScreen({
 }: MeasurePartScreenProps) {
   "use no memo";
   const { settings, updateSetting } = useApp();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const shortLandscape = windowWidth > windowHeight && windowHeight < 500;
   const unit = settings.dimensionUnit;
   const isMountedRef = useRef(true);
   useEffect(() => {
@@ -587,7 +591,7 @@ export function MeasurePartScreen({
           ]}
         />
 
-        <SafeAreaView style={ms.safeArea}>
+         <SafeAreaView style={[ms.safeArea, shortLandscape && ms.safeAreaShortLandscape]}>
           {/* Header */}
           <View style={ms.header}>
             <Pressable onPress={onClose} style={ms.closeBtn} disabled={isScanning}>
@@ -607,8 +611,16 @@ export function MeasurePartScreen({
 
           {/* ── Preview phase ── */}
           {phase === "preview" && (
-            <View style={ms.phaseContainer}>
-              <View style={ms.viewfinderBox}>
+            <ScrollView
+              style={ms.phaseScroll}
+              contentContainerStyle={[
+                ms.phaseContainer,
+                shortLandscape && ms.phaseContainerShortLandscape,
+              ]}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={[ms.viewfinderBox, shortLandscape && ms.viewfinderBoxShortLandscape]}>
                 <View style={[ms.vfCorner, ms.vfTL]} />
                 <View style={[ms.vfCorner, ms.vfTR]} />
                 <View style={[ms.vfCorner, ms.vfBL]} />
@@ -725,12 +737,12 @@ export function MeasurePartScreen({
               <Pressable onPress={goManual} style={ms.manualBtn}>
                 <Text style={ms.manualBtnText}>Enter manually instead</Text>
               </Pressable>
-            </View>
+            </ScrollView>
           )}
 
           {/* ── LiDAR scanning phase ── */}
           {phase === "lidar_scanning" && (
-            <View style={ms.lidarScanContainer}>
+             <View style={[ms.lidarScanContainer, shortLandscape && ms.lidarScanContainerShortLandscape]}>
               {/* Top hint — tells the admin what the green wireframe is */}
               <View style={ms.lidarTopHint}>
                 <View style={ms.lidarDot} />
@@ -821,7 +833,15 @@ export function MeasurePartScreen({
 
           {/* ── Confirm phase ── */}
           {phase === "confirm" && (
-            <View style={ms.confirmContainer}>
+            <ScrollView
+              style={ms.phaseScroll}
+              contentContainerStyle={[
+                ms.confirmContainer,
+                shortLandscape && ms.confirmContainerShortLandscape,
+              ]}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
               <View style={ms.confirmCard}>
                 <Text style={ms.confirmTitle}>
                   {lengthStr || widthStr || heightStr
@@ -1002,7 +1022,7 @@ export function MeasurePartScreen({
                   </Pressable>
                 </View>
               </View>
-            </View>
+            </ScrollView>
           )}
         </SafeAreaView>
       </View>
@@ -1051,6 +1071,10 @@ const ms = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 16,
     paddingBottom: 20,
+  },
+  lidarScanContainerShortLandscape: {
+    paddingHorizontal: 12,
+    paddingBottom: 8,
   },
   lidarTopHint: {
     flexDirection: "row",
@@ -1108,6 +1132,7 @@ const ms = StyleSheet.create({
     textAlign: "center",
   },
   safeArea: { flex: 1 },
+  safeAreaShortLandscape: { paddingBottom: 4, zIndex: 10, elevation: 10 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -1116,6 +1141,8 @@ const ms = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 12,
     backgroundColor: "rgba(0,0,0,0.45)",
+    zIndex: 20,
+    elevation: 20,
   },
   closeBtn: {
     width: 40,
@@ -1126,12 +1153,17 @@ const ms = StyleSheet.create({
     justifyContent: "center",
   },
   headerTitle: { color: "#fff", fontSize: 17, fontFamily: "Inter_600SemiBold" },
+  phaseScroll: { flex: 1 },
   phaseContainer: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 24,
     gap: 18,
+  },
+  phaseContainerShortLandscape: {
+    gap: 8,
+    paddingHorizontal: 12,
   },
   viewfinderBox: {
     width: 240,
@@ -1139,6 +1171,10 @@ const ms = StyleSheet.create({
     position: "relative",
     alignItems: "center",
     justifyContent: "center",
+  },
+  viewfinderBoxShortLandscape: {
+    width: 180,
+    height: 100,
   },
   vfCorner: {
     position: "absolute",
@@ -1249,7 +1285,8 @@ const ms = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     textDecorationLine: "underline",
   },
-  confirmContainer: { flex: 1, justifyContent: "flex-end", padding: 16 },
+  confirmContainer: { flexGrow: 1, justifyContent: "flex-end", padding: 16 },
+  confirmContainerShortLandscape: { padding: 8, paddingBottom: 6 },
   confirmCard: {
     backgroundColor: "#fff",
     borderRadius: 16,

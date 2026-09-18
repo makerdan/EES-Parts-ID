@@ -33,11 +33,15 @@ import {
   restartRuntime,
 } from "../src/routes/admin";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
+import {
+  cleanupTestUser,
+  seedTestUser,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 
 const ADMIN_TOKEN = ADMIN_TEST_USER_ID;
-const NON_ADMIN_USER = "jest-restart-non-admin";
-const DEMOTED_ADMIN_USER = "jest-restart-demoted-admin";
+const NON_ADMIN_USER = workerQualifiedUserId("jest-restart-non-admin");
+const DEMOTED_ADMIN_USER = workerQualifiedUserId("jest-restart-demoted-admin");
 
 const originalNodeEnv = process.env.NODE_ENV;
 let exitSpy: jest.SpyInstance;

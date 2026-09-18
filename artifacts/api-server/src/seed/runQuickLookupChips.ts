@@ -1,5 +1,9 @@
+import { assertDatabaseExecutionMode } from "@workspace/db/runtime-data-boundary";
+
 import { seedQuickLookupChips, seedReferenceAnswerCacheFromChips } from "./quickLookupChips";
 import { seedBreakerAttributeChips } from "./seedBreakerAttributeChips";
+
+assertDatabaseExecutionMode("seed");
 
 async function main() {
   await seedQuickLookupChips();

@@ -20,17 +20,25 @@ import { execSync } from "child_process";
 import {
   existsSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
-import { dirname, join,resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
+
+import { declarationInventoryFailures } from "./check-dist-declarations-helpers";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const API_CLIENT_ROOT = resolve(__dirname, "../../../lib/api-client-react");
 const DIST_DIR = resolve(API_CLIENT_ROOT, "dist");
+const manifest = JSON.parse(
+  readFileSync(resolve(__dirname, "../generated-output-manifest.json"), "utf8"),
+) as {
+  declarationFiles: Array<string>;
+};
 
 /**
  * Strip `//# sourceMappingURL=...` comment lines and normalize trailing
@@ -69,12 +77,35 @@ function diffFiles(
   return `  ${relPath}: files differ (lengths ${aLines.length} vs ${bLines.length})`;
 }
 
-const DTS_FILES = [
-  "index.d.ts",
-  "custom-fetch.d.ts",
-  "generated/api.d.ts",
-  "generated/api.schemas.d.ts",
-];
+function declarationFilesIn(root: string): Set<string> {
+  const files = new Set<string>();
+  function visit(dir: string, prefix = ""): void {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const entryPath = join(dir, entry.name);
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        visit(entryPath, relativePath);
+      } else if (entry.isFile() && entry.name.endsWith(".d.ts")) {
+        files.add(relativePath);
+      }
+    }
+  }
+  visit(root);
+  return files;
+}
+
+const DECLARATION_PREFIX = "lib/api-client-react/dist/";
+const expectedDtsFiles = new Set(
+  manifest.declarationFiles.map((path) => {
+    if (!path.startsWith(DECLARATION_PREFIX)) {
+      throw new Error(
+        `declaration manifest entry is outside api-client-react/dist: ${path}`,
+      );
+    }
+    return path.slice(DECLARATION_PREFIX.length);
+  }),
+);
 
 const tmpDir = mkdtempSync(join(tmpdir(), "dist-check-"));
 
@@ -117,7 +148,10 @@ try {
 
   const failures: Array<string> = [];
 
-  for (const relPath of DTS_FILES) {
+  const freshDtsFiles = declarationFilesIn(tmpDir);
+  const committedDtsFiles = declarationFilesIn(DIST_DIR);
+
+  for (const relPath of expectedDtsFiles) {
     const committedPath = join(DIST_DIR, relPath);
     const freshPath = join(tmpDir, relPath);
 
@@ -138,6 +172,14 @@ try {
     if (diff) failures.push(diff);
   }
 
+  failures.push(
+    ...declarationInventoryFailures(
+      expectedDtsFiles,
+      freshDtsFiles,
+      committedDtsFiles,
+    ),
+  );
+
   if (failures.length > 0) {
     console.error(
       "❌  dist declarations are stale. Run `pnpm --filter @workspace/api-spec run codegen` to rebuild.",
@@ -146,7 +188,7 @@ try {
     process.exit(1);
   } else {
     console.log(
-      `✅  dist declarations are up-to-date (checked ${DTS_FILES.length} files).`,
+      `✅  dist declarations are up-to-date (checked ${expectedDtsFiles.size} files).`,
     );
   }
 } finally {

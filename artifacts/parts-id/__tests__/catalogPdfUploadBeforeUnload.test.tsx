@@ -127,7 +127,7 @@ afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
 // ── Imports (after all jest.mock declarations) ────────────────────────────────
 
 import React from "react";
-import { render, act, RenderResult, fireEvent } from "@testing-library/react-native";
+import { render, act, RenderResult, fireEvent, waitFor } from "@testing-library/react-native";
 import { CatalogPdfUpload } from "../components/CatalogPdfUpload";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -297,15 +297,19 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
 
     const addedHandler = beforeunloadCalls[0]![1];
 
+    await waitFor(() => {
+      expect(mockXhr.send).toHaveBeenCalled();
+      expect(mockXhr.onload).not.toBeNull();
+    });
+
     mockXhr.status = 200;
     mockXhr.responseText = JSON.stringify({ jobId: "job-1", status: "processing" });
     await act(async () => { mockXhr.fireEvent("load"); });
     await flushPromises();
 
-    const removeCalls = (mockRemoveEventListener.mock.calls as [string, unknown][]).filter(
-      ([event, handler]) => event === "beforeunload" && handler === addedHandler,
-    );
-    expect(removeCalls.length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(mockRemoveEventListener).toHaveBeenCalledWith("beforeunload", addedHandler);
+    });
   });
 
   it("does not attach a beforeunload handler on native (Platform.OS = 'ios')", async () => {

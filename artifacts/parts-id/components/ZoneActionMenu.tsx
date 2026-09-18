@@ -41,7 +41,7 @@ export function ZoneActionMenu({ zone, onGoToSection, onDismiss }: ZoneActionMen
           <Text style={[menuStyles.zoneLabel, { color: colors.foreground }]}>
             Aisle {zone.aisleId}
           </Text>
-          {zone.sectionNum > 0 && (
+          {zone.sectionNum !== null && zone.sectionNum > 0 && (
             <Text style={[menuStyles.parityHint, { color: colors.mutedForeground }]}>
               Section {zone.sectionNum}
             </Text>

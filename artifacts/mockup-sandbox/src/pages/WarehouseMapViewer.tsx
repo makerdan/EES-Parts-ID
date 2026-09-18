@@ -61,6 +61,7 @@ export function WarehouseMapViewer() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [zonesError, setZonesError] = useState(false);
   const mountedRef = useRef(true);
+  const floorPlanRequestRef = useRef(0);
 
   const panRef = useRef<{ active: boolean; startX: number; startY: number; originTf: Transform }>({
     active: false,
@@ -75,21 +76,27 @@ export function WarehouseMapViewer() {
   useEffect(() => {
     const controller = new AbortController();
     const signal = controller.signal;
+    const requestId = ++floorPlanRequestRef.current;
+    const isCurrent = () =>
+      mountedRef.current &&
+      floorPlanRequestRef.current === requestId &&
+      !signal.aborted;
     void (async () => {
       const fallback = (import.meta.env.VITE_FLOOR_PLAN_API_FALLBACK as string | undefined)?.replace(/\/$/, "");
       const urls = [`${API_BASE}/floor-plan/svg`];
       if (fallback && fallback !== API_BASE) urls.push(`${fallback}/floor-plan/svg`);
       for (const url of urls) {
+        if (!isCurrent()) return;
         try {
           const res = await fetch(url, { signal });
           if (res.ok) {
             const raw = await res.text();
-            if (signal.aborted || !mountedRef.current) return;
+            if (!isCurrent()) return;
             setSvgInner(extractSvgInner(raw));
             return;
           }
         } catch (error) {
-          if (signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+          if (signal.aborted || (error instanceof Error && error.name === "AbortError") || !isCurrent()) return;
         }
       }
     })();

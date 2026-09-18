@@ -13,6 +13,9 @@
       "path": "./lib/api-zod"
     },
     {
+      "path": "./lib/api-spec"
+    },
+    {
       "path": "./lib/integrations-openai-ai-server"
     },
     {

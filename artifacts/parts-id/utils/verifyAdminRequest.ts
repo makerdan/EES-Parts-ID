@@ -8,7 +8,7 @@
  * ──────────────────
  * • ok response  { isAdmin: true }  → setIsAdmin(true),  setAdminToken(token)
  * • ok response  { isAdmin: false } → if wasAdmin, onDemotion(); setIsAdmin(false), setAdminToken(null)
- * • 403 { code: "MFA_REQUIRED" }   → onMfaRequired?.(); setIsAdmin(false), setAdminToken(null)
+ * • 403 HTTP response               → if wasAdmin, onDemotion(); setIsAdmin(false), setAdminToken(null)
  * • 401 HTTP response               → if wasAdmin, onDemotion(); setIsAdmin(false), setAdminToken(null)
  * • 5xx HTTP response               → admin state LEFT UNCHANGED (transient server error)
  * • other non-ok HTTP (4xx etc.)   → admin state LEFT UNCHANGED (non-authoritative)
@@ -31,13 +31,6 @@ export type VerifyAdminRequestDeps = {
   setAdminToken: (v: string | null) => void;
   /** Called when a demotion transition is detected (wasAdmin=true → isAdmin=false). */
   onDemotion?: () => void;
-  /**
-   * Called when the server rejects the admin request because the session lacks
-   * a completed MFA factor (403 { code: "MFA_REQUIRED" }).
-   * The caller (AppContext) should prompt the user to enable two-factor
-   * authentication via their Clerk account settings.
-   */
-  onMfaRequired?: () => void;
 };
 
 export async function verifyAdminRequest({
@@ -48,7 +41,6 @@ export async function verifyAdminRequest({
   setIsAdmin,
   setAdminToken,
   onDemotion,
-  onMfaRequired,
 }: VerifyAdminRequestDeps): Promise<void> {
   try {
     const resp = await fetch(`${apiBase}/admin/me`, {
@@ -66,23 +58,6 @@ export async function verifyAdminRequest({
       setIsAdmin(admin);
       setAdminToken(admin ? token : null);
     } else if (resp.status === 403) {
-      let code: string | undefined;
-      try {
-        const body = (await resp.json()) as { code?: string };
-        if (signal?.aborted) return;
-        code = body.code;
-      } catch {
-        // ignore parse errors — treat as a generic 403
-      }
-
-      if (signal?.aborted) return;
-      if (code === "MFA_REQUIRED") {
-        onMfaRequired?.();
-        setIsAdmin(false);
-        setAdminToken(null);
-        return;
-      }
-
       if (shouldNotifyDemotion(wasAdmin, false)) {
         onDemotion?.();
       }

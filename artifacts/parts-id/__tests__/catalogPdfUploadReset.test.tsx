@@ -155,6 +155,7 @@ afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
 import React from "react";
 import { render, act, fireEvent } from "@testing-library/react-native";
 import { CatalogPdfUpload } from "../components/CatalogPdfUpload";
+import { clearPdfPickLogs } from "../utils/pdfPickLogger";
 
 // ── PDF fixture helpers ────────────────────────────────────────────────────────
 
@@ -215,6 +216,7 @@ beforeEach(() => {
   const { Platform } = require("react-native") as { Platform: { OS: string } };
   originalPlatformOS = Platform.OS;
   (Platform as { OS: string }).OS = "ios";
+  clearPdfPickLogs();
 });
 
 afterEach(async () => {
@@ -260,6 +262,30 @@ function installImmediateUploadTask(jobId = "test-job-1"): void {
 }
 
 /**
+ * The component probes the durable-session endpoint before falling back to
+ * the legacy native upload transport. Keep that probe explicit in reset
+ * fixtures so the polling response is never mistaken for the probe response.
+ */
+function installTerminalPollingFetch(payload: Record<string, unknown>): void {
+  (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockImplementation(
+    (input: unknown) => {
+      if (String(input).includes("/upload-sessions")) {
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: async () => ({}),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => payload,
+      });
+    },
+  );
+}
+
+/**
  * Picks a PDF file, sets the vendor to "ACME", and presses "Start Extraction".
  * Relies on Platform.OS = "ios" (set in beforeEach) so the native upload path
  * is taken (FileSystem.createUploadTask → uploadAsync resolves → startPolling).
@@ -300,9 +326,7 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
   it('done → "Start new extraction" clears vendor to empty string', async () => {
     installImmediateUploadTask("job-done-1");
 
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
+    installTerminalPollingFetch({
         jobId: "job-done-1",
         status: "done",
         totalPages: 2,
@@ -311,7 +335,6 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
         imagesMatched: 0,
         errorMessage: null,
         aiRawLog: AI_LOG_ENTRIES,
-      }),
     });
 
     const tree = await renderUploadCard();
@@ -336,9 +359,7 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
   it('done → "Start new extraction" clears AI raw log (count badge disappears)', async () => {
     installImmediateUploadTask("job-done-2");
 
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
+    installTerminalPollingFetch({
         jobId: "job-done-2",
         status: "done",
         totalPages: 2,
@@ -347,7 +368,6 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
         imagesMatched: 0,
         errorMessage: null,
         aiRawLog: AI_LOG_ENTRIES,
-      }),
     });
 
     const tree = await renderUploadCard();
@@ -370,9 +390,7 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
   it('cancelled → "Start new job" clears vendor to empty string', async () => {
     installImmediateUploadTask("job-cancelled-1");
 
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
+    installTerminalPollingFetch({
         jobId: "job-cancelled-1",
         status: "cancelled",
         totalPages: 2,
@@ -381,7 +399,6 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
         imagesMatched: 0,
         errorMessage: null,
         aiRawLog: AI_LOG_ENTRIES,
-      }),
     });
 
     const tree = await renderUploadCard();
@@ -403,9 +420,7 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
   it('cancelled → "Start new job" clears AI raw log (count badge disappears)', async () => {
     installImmediateUploadTask("job-cancelled-2");
 
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
+    installTerminalPollingFetch({
         jobId: "job-cancelled-2",
         status: "cancelled",
         totalPages: 2,
@@ -414,7 +429,6 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
         imagesMatched: 0,
         errorMessage: null,
         aiRawLog: AI_LOG_ENTRIES,
-      }),
     });
 
     const tree = await renderUploadCard();
@@ -437,9 +451,7 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
   it('failed (no chunks) → "Try again" clears vendor to empty string', async () => {
     installImmediateUploadTask("job-failed-1");
 
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
+    installTerminalPollingFetch({
         jobId: "job-failed-1",
         status: "failed",
         totalPages: null,
@@ -449,7 +461,6 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
         errorMessage: "processing_error",
         failedChunks: [],
         aiRawLog: AI_LOG_ENTRIES,
-      }),
     });
 
     const tree = await renderUploadCard();
@@ -471,9 +482,7 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
   it('failed (no chunks) → "Try again" clears AI raw log (count badge disappears)', async () => {
     installImmediateUploadTask("job-failed-2");
 
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
+    installTerminalPollingFetch({
         jobId: "job-failed-2",
         status: "failed",
         totalPages: null,
@@ -483,7 +492,6 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
         errorMessage: "processing_error",
         failedChunks: [],
         aiRawLog: AI_LOG_ENTRIES,
-      }),
     });
 
     const tree = await renderUploadCard();

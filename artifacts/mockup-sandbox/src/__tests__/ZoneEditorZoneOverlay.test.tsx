@@ -1,15 +1,16 @@
 /**
  * ZoneEditorZoneOverlay.test.tsx
  *
- * Regression tests that lock in the no-alignment-transform behaviour
- * introduced by Task #850. Zones render at their raw svgX/svgY coordinates;
- * no alignment offset or scale is applied.
+ * Regression tests for the shared three-anchor calibration used by the
+ * Warehouse Map and Zone Editor. Stored zone coordinates remain world-space;
+ * only the rendered editing layer is transformed.
  *
  * Coverage:
- *   1. Overlay position parity   — rect x/y/width/height match raw svgX/svgY/svgWidth/svgHeight
- *   2. No alignment fetch        — GET /warehouse-zones/alignment is never called
- *   3. PATCH payload in raw SVG  — drag-move produces a PATCH body in raw SVG space
- *   4. No calibrate mode UI      — no "Calibrate" button or alignment readout in the DOM
+ *   1. Calibrated overlay        — zone geometry uses the expected SVG matrix
+ *   2. Safe anchor loading       — public anchors are loaded; legacy alignment is not
+ *   3. Inverse-mapped drag       — drag PATCH bodies stay in stored/world space
+ *   4. Identity fallback         — missing or degenerate anchors preserve raw placement
+ *   5. No calibrate mode UI      — editor does not expose calibration controls
  */
 
 import React from "react";
@@ -48,21 +49,44 @@ const ZONE_1 = {
   sortOrder: 0,
 };
 
+// world → floor-plan SVG: x' = 2x + 10, y' = 2y - 5
+const CALIBRATED_ANCHORS = [
+  { name: "A1", svgX: 10, svgY: -5, worldX: 0, worldY: 0 },
+  { name: "A2", svgX: 210, svgY: -5, worldX: 100, worldY: 0 },
+  { name: "A3", svgX: 10, svgY: 195, worldX: 0, worldY: 100 },
+];
+
+const DEGENERATE_ANCHORS = [
+  { name: "A1", svgX: 10, svgY: 10, worldX: 0, worldY: 0 },
+  { name: "A2", svgX: 20, svgY: 20, worldX: 10, worldY: 10 },
+  { name: "A3", svgX: 30, svgY: 30, worldX: 20, worldY: 20 },
+];
+
 // ── Fetch mock factory ────────────────────────────────────────────────────────
 /**
  * Every route that ZoneEditor legitimately hits on mount.
- * Deliberately omits /warehouse-zones/alignment — any call to that URL
+ * Deliberately omits the legacy /warehouse-zones/alignment endpoint — any call to that URL
  * throws an Error so a re-introduction of the alignment fetch fails loudly.
  */
-function makeFetchMock(zones = [ZONE_1]) {
+function makeFetchMock(
+  zones = [ZONE_1],
+  anchors: unknown[] = [],
+) {
   return vi.fn((url: string, init?: RequestInit) => {
     const method = (init?.method ?? "GET").toUpperCase();
     const s = String(url);
 
-    // Guard: alignment fetch must never happen
+    // Guard: legacy alignment fetch must never happen
     if (s.includes("/warehouse-zones/alignment")) {
       throw new Error(`unexpected alignment fetch: ${s}`);
     }
+
+    if (method === "GET" && s.includes("/warehouse-zones/anchors"))
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({ anchors }),
+        text: () => Promise.resolve(""),
+      });
 
     if (method === "GET" && s.includes("/floor-plan/svg"))
       return Promise.resolve({
@@ -101,8 +125,11 @@ function makeFetchMock(zones = [ZONE_1]) {
 }
 
 // ── Render helper ─────────────────────────────────────────────────────────────
-async function setupEditor(zones = [ZONE_1]) {
-  const fetchMock = makeFetchMock(zones);
+async function setupEditor(
+  zones = [ZONE_1],
+  anchors: unknown[] = [],
+) {
+  const fetchMock = makeFetchMock(zones, anchors);
   global.fetch = fetchMock as unknown as typeof global.fetch;
 
   let container!: HTMLElement;
@@ -132,13 +159,11 @@ function getZoneFillRects(container: HTMLElement): SVGRectElement[] {
 }
 
 // ── Drag coordinates ──────────────────────────────────────────────────────────
-// ZONE_1 screen center ≈ ((100+100)*0.18, (100+75)*0.18) = (36, 31.5)
-const DRAG_FROM = { clientX: 36, clientY: 31 };  // inside ZONE_1
 const DRAG_TO   = { clientX: 150, clientY: 120 }; // arbitrary destination
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("ZoneEditor — no-alignment-transform regression", () => {
+describe("ZoneEditor — anchor calibration regression", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
@@ -146,8 +171,8 @@ describe("ZoneEditor — no-alignment-transform regression", () => {
 
   // ── 1. Overlay position parity ────────────────────────────────────────────────
 
-  it("zone rects use raw svgX/svgY/svgWidth/svgHeight with no alignment offset or scale", async () => {
-    const { container } = await setupEditor();
+  it("renders zones through the configured world-to-floor-plan matrix", async () => {
+    const { container } = await setupEditor([ZONE_1], CALIBRATED_ANCHORS);
 
     // Wait for zone rects to appear after the GET /warehouse-zones resolves.
     await waitFor(
@@ -159,16 +184,20 @@ describe("ZoneEditor — no-alignment-transform regression", () => {
     expect(rects).toHaveLength(1);
 
     const rect = rects[0]!;
-    // Attributes must match the raw server values exactly — no translation or scale applied.
-    expect(Number(rect.getAttribute("x"))).toBeCloseTo(ZONE_1.svgX, 1);
-    expect(Number(rect.getAttribute("y"))).toBeCloseTo(ZONE_1.svgY, 1);
-    expect(Number(rect.getAttribute("width"))).toBeCloseTo(ZONE_1.svgWidth, 1);
-    expect(Number(rect.getAttribute("height"))).toBeCloseTo(ZONE_1.svgHeight, 1);
+    // x' = 2x + 10, y' = 2y - 5; geometry stays in the calibrated layer's
+    // local/world coordinates and the matrix performs the visual mapping.
+    expect(rect.getAttribute("x")).toBe(String(ZONE_1.svgX));
+    expect(rect.getAttribute("y")).toBe(String(ZONE_1.svgY));
+    expect(rect.getAttribute("width")).toBe(String(ZONE_1.svgWidth));
+    expect(rect.getAttribute("height")).toBe(String(ZONE_1.svgHeight));
+    const layer = container.querySelector("[data-testid='zone-editor-calibrated-layer']");
+    expect(layer?.getAttribute("transform")).toBe("matrix(2,0,0,2,10,-5)");
+    expect(layer?.getAttribute("data-anchor-transform")).toBe("matrix(2,0,0,2,10,-5)");
   });
 
-  // ── 2. No alignment fetch ─────────────────────────────────────────────────────
+  // ── 2. Safe anchor loading ─────────────────────────────────────────────────────
 
-  it("never calls GET /warehouse-zones/alignment during mount or normal use", async () => {
+  it("loads public anchors without calling the legacy alignment endpoint", async () => {
     const { fetchMock } = await setupEditor();
 
     // Drain all pending async effects.
@@ -177,9 +206,10 @@ describe("ZoneEditor — no-alignment-transform regression", () => {
     }
     await act(async () => {});
 
-    // The throw guard inside makeFetchMock already fails the test if the
-    // alignment URL is hit.  This extra assertion provides a clear failure message
-    // and documents the intent explicitly.
+    const anchorCalls = (fetchMock.mock.calls as [string][]).filter(
+      ([url]) => String(url).includes("/warehouse-zones/anchors"),
+    );
+    expect(anchorCalls.length).toBeGreaterThan(0);
     const alignmentCalls = (fetchMock.mock.calls as [string][]).filter(
       ([url]) => String(url).includes("/warehouse-zones/alignment"),
     );
@@ -188,8 +218,8 @@ describe("ZoneEditor — no-alignment-transform regression", () => {
 
   // ── 3. PATCH payload is in raw SVG space ──────────────────────────────────────
 
-  it("drag-move PATCH body contains raw SVG coordinates (clientX / INITIAL_SCALE formula)", async () => {
-    const { container, fetchMock } = await setupEditor();
+  it("inverse-maps calibrated drag coordinates into the PATCH body", async () => {
+    const { container, fetchMock } = await setupEditor([ZONE_1], CALIBRATED_ANCHORS);
 
     // Wait for zones to load.
     await waitFor(
@@ -199,9 +229,11 @@ describe("ZoneEditor — no-alignment-transform regression", () => {
 
     const zoneRect = getZoneFillRects(container)[0]!;
 
-    // Simulate a drag-move on ZONE_1.
+    // The rendered zone is x=210..610, y=195..495 after calibration. Its
+    // center is floor-plan (410,345), which maps back to stored (200,175).
+    const dragFrom = { clientX: 73.8, clientY: 62.1 };
     await act(async () => {
-      fireEvent.mouseDown(zoneRect, { ...DRAG_FROM, button: 0 });
+      fireEvent.mouseDown(zoneRect, { ...dragFrom, button: 0 });
     });
     await act(async () => {
       document.dispatchEvent(new MouseEvent("mousemove", { ...DRAG_TO, bubbles: true }));
@@ -228,19 +260,99 @@ describe("ZoneEditor — no-alignment-transform regression", () => {
       svgY: number;
     };
 
-    // Expected new position (raw SVG space, no alignment):
-    //   offset at drag start: (DRAG_FROM.clientX / INITIAL_SCALE) - svgX
-    //                       = (36 / 0.18) - 100 = 200 - 100 = 100
-    //   newX = (DRAG_TO.clientX / INITIAL_SCALE) - offset
-    //        = (150 / 0.18) - 100 = 833.3 - 100 = 733.3
-    const expectedX = (DRAG_TO.clientX / INITIAL_SCALE) - (DRAG_FROM.clientX / INITIAL_SCALE - ZONE_1.svgX);
-    const expectedY = (DRAG_TO.clientY / INITIAL_SCALE) - (DRAG_FROM.clientY / INITIAL_SCALE - ZONE_1.svgY);
+    // Inverse: worldX = (floorX - 10) / 2 and worldY = (floorY + 5) / 2.
+    const startWorld = {
+      x: ((dragFrom.clientX / INITIAL_SCALE) - 10) / 2,
+      y: ((dragFrom.clientY / INITIAL_SCALE) + 5) / 2,
+    };
+    const endWorld = {
+      x: ((DRAG_TO.clientX / INITIAL_SCALE) - 10) / 2,
+      y: ((DRAG_TO.clientY / INITIAL_SCALE) + 5) / 2,
+    };
+    const expectedX = endWorld.x - (startWorld.x - ZONE_1.svgX);
+    const expectedY = endWorld.y - (startWorld.y - ZONE_1.svgY);
 
     expect(body.svgX).toBeCloseTo(expectedX, 0);
     expect(body.svgY).toBeCloseTo(expectedY, 0);
   });
 
-  // ── 4. No calibrate mode UI ───────────────────────────────────────────────────
+  it("inverse-maps a calibrated resize pointer into the stored geometry", async () => {
+    const { container, fetchMock } = await setupEditor([ZONE_1], CALIBRATED_ANCHORS);
+    await waitFor(
+      () => expect(getZoneFillRects(container).length).toBeGreaterThan(0),
+      { timeout: 3000 },
+    );
+
+    const zoneRect = getZoneFillRects(container)[0]!;
+    // Select without moving so the resize handles become visible.
+    await act(async () => {
+      fireEvent.mouseDown(zoneRect, { clientX: 73.8, clientY: 62.1, button: 0 });
+      document.dispatchEvent(new MouseEvent("mouseup", { clientX: 73.8, clientY: 62.1, bubbles: true }));
+    });
+    const eastHandle = await waitFor(() => {
+      // Edge handles are painted in n/s/e/w order; index 2 is east.
+      const handle = [...container.querySelectorAll("rect")].filter(
+        (rect) => rect.getAttribute("fill") === "#f59e0b",
+      )[2];
+      if (!handle) throw new Error("resize handle not rendered");
+      return handle;
+    });
+
+    // The east edge starts at stored x=300. Move it to stored x=260.
+    // floorX = 2 * worldX + 10, so the target screen coordinate is 95.4.
+    await act(async () => {
+      fireEvent.mouseDown(eastHandle, { clientX: 109.8, clientY: 62.1, button: 0 });
+      document.dispatchEvent(new MouseEvent("mousemove", {
+        clientX: 95.4,
+        clientY: 62.1,
+        bubbles: true,
+      }));
+      document.dispatchEvent(new MouseEvent("mouseup", {
+        clientX: 95.4,
+        clientY: 62.1,
+        bubbles: true,
+      }));
+    });
+    for (let i = 0; i < 3; i++) {
+      await act(async () => { await Promise.resolve(); });
+    }
+
+    const resizeCalls = (fetchMock.mock.calls as [string, RequestInit][]).filter(
+      ([url, init]) =>
+        String(url).includes(`/warehouse-zones/${ZONE_1.id}`) &&
+        (init?.method ?? "").toUpperCase() === "PATCH" &&
+        String(init?.body).includes("svgWidth"),
+    );
+    expect(resizeCalls).toHaveLength(1);
+    const body = JSON.parse(resizeCalls[0]![1].body as string) as {
+      svgX: number;
+      svgY: number;
+      svgWidth: number;
+      svgHeight: number;
+    };
+    expect(body.svgX).toBe(ZONE_1.svgX);
+    expect(body.svgY).toBe(ZONE_1.svgY);
+    expect(body.svgWidth).toBeCloseTo(160, 0);
+    expect(body.svgHeight).toBe(ZONE_1.svgHeight);
+  });
+
+  it("keeps identity placement when anchors are missing or degenerate", async () => {
+    for (const anchors of [[], DEGENERATE_ANCHORS]) {
+      const { container } = await setupEditor([ZONE_1], anchors);
+      await waitFor(
+        () => expect(getZoneFillRects(container).length).toBeGreaterThan(0),
+        { timeout: 3000 },
+      );
+      const rect = getZoneFillRects(container)[0]!;
+      expect(Number(rect.getAttribute("x"))).toBeCloseTo(ZONE_1.svgX, 1);
+      expect(Number(rect.getAttribute("y"))).toBeCloseTo(ZONE_1.svgY, 1);
+      const layer = container.querySelector("[data-testid='zone-editor-calibrated-layer']");
+      expect(layer?.getAttribute("transform")).toBeNull();
+      cleanup();
+    }
+  });
+
+  // ── 5. No calibrate mode UI ───────────────────────────────────────────────────
 
   it("toolbar contains no 'Calibrate' button and no alignment readout (x / y / % scale)", async () => {
     const { container } = await setupEditor();

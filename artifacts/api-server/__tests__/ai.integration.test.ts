@@ -95,19 +95,25 @@ jest.mock("../src/lib/poeBot", () => {
 import supertest from "supertest";
 import app from "../src/app";
 import { identifyLimiter } from "../src/lib/rateLimiter";
+import { workerQualifiedUserId } from "./helpers/testDb";
+import { setTestEnv } from "./helpers/testEnv";
 
 // Minimal valid base64 string (1×1 white pixel JPEG)
 const TINY_BASE64_JPEG =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAABgUEB//EAB4QAAEEAgMAAAAAAAAAAAAAAAEAAgMREiExQf/EABUBAQEAAAAAAAAAAAAAAAAAAAID/8QAFxEBAQEBAAAAAAAAAAAAAAAAAQACEf/aAAwDAQACEQMRAD8AoN1tq+bNT5e1C7RERFk//9k=";
 
+const TEST_ADMIN_USER_ID = workerQualifiedUserId("jest-admin-user");
+let restoreTestEnv: (() => void) | undefined;
+
 beforeAll(() => {
-  process.env.ADMIN_CLERK_USER_ID = "jest-admin-user";
-  process.env.TEST_DEFAULT_AUTH_USER = "jest-admin-user";
+  restoreTestEnv = setTestEnv({
+    ADMIN_CLERK_USER_ID: TEST_ADMIN_USER_ID,
+    TEST_DEFAULT_AUTH_USER: TEST_ADMIN_USER_ID,
+  });
 });
 
 afterAll(async () => {
-  delete process.env.TEST_DEFAULT_AUTH_USER;
-  delete process.env.ADMIN_CLERK_USER_ID;
+  restoreTestEnv?.();
 });
 
 beforeEach(async () => {

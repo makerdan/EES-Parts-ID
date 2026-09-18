@@ -30,14 +30,15 @@ import type { InventoryItem } from "@workspace/api-client-react";
 
 // Stable spy exposed to tests — prefixed "mock" so babel-jest hoists it
 // alongside the jest.mock() call that references it.
-const mockInvalidateQueries = jest.fn().mockResolvedValue(undefined);
+const mockInvalidateQueries = jest.fn();
 
 // Captures the onConfirm callback that PartDetailsEditor passes to
 // MeasurePartScreen so tests can invoke handleMeasureConfirm directly.
 let mockMeasureOnConfirm: ((dims: { length: number | null; width: number | null; height: number | null; diameter: number | null }) => void) | null = null;
 
 // Spy for the shared invalidateListCache utility.
-const mockInvalidateListCache = jest.fn().mockResolvedValue(undefined);
+const mockInvalidateListCache = jest.fn();
+const mockInvalidateAllCachesAfterSave = jest.fn();
 
 // ─── @/utils/apiBase ─────────────────────────────────────────────────────────
 
@@ -96,7 +97,9 @@ jest.mock("@/components/MeasurePartScreen", () => ({
 // ─── @/utils/editItemCache ────────────────────────────────────────────────────
 
 jest.mock("@/utils/editItemCache", () => ({
+  invalidateAllCachesAfterSave: (...args: unknown[]) => mockInvalidateAllCachesAfterSave(...args),
   invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
+  INVENTORY_REFRESH_WARNING: "Saved, but refresh failed. Search may be stale.",
 }));
 
 // ─── @expo/vector-icons ──────────────────────────────────────────────────────
@@ -145,6 +148,8 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     catalog: "WIDGET-A",
     description: "Test widget",
     vendor: "ACME",
+    orderPurchase: 0,
+    orderQuantity: 0,
     binLocations: ["05-02-001"],
     aiKeywords: [],
     imageUrl: null,
@@ -155,6 +160,18 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
 // ─── Per-test teardown ────────────────────────────────────────────────────────
 
 let activeTree: Awaited<ReturnType<typeof render>> | null = null;
+
+beforeEach(() => {
+  mockInvalidateQueries.mockResolvedValue(undefined);
+  mockInvalidateListCache.mockResolvedValue(undefined);
+  mockInvalidateAllCachesAfterSave.mockImplementation(async (opts: {
+    queryClient: { invalidateQueries: typeof mockInvalidateQueries };
+  }) => {
+    await mockInvalidateListCache({ queryClient: opts.queryClient });
+    await opts.queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+    return { ok: true, failures: [] };
+  });
+});
 
 afterEach(async () => {
   if (activeTree) {
@@ -283,7 +300,14 @@ describe("PartDetailsEditor – expanded-description save path", () => {
       expandedDescription: "Original AI-generated notes about this part",
     });
 
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateAllCachesAfterSave).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateAllCachesAfterSave).toHaveBeenCalledWith(expect.objectContaining({
+      itemId: 1,
+      updatedItem: expect.objectContaining({
+        id: 1,
+        expandedDescription: "Original AI-generated notes about this part",
+      }),
+    }));
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
 
     mockFetch.mockRestore();
@@ -355,7 +379,11 @@ describe("PartDetailsEditor – expanded-description save path", () => {
     });
     expect(JSON.parse(init.body as string)).toEqual({ expandedDescription: null });
 
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateAllCachesAfterSave).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateAllCachesAfterSave).toHaveBeenCalledWith(expect.objectContaining({
+      itemId: 1,
+      updatedItem: expect.objectContaining({ id: 1, expandedDescription: null }),
+    }));
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
 
     mockFetch.mockRestore();
@@ -387,6 +415,7 @@ describe("PartDetailsEditor – expanded-description save path", () => {
     await act(async () => { fireEvent.press(saveBtn!); });
 
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
+    expect(mockInvalidateAllCachesAfterSave).not.toHaveBeenCalled();
 
     const errorNodes = result.root!.queryAll(
       (n: TestInstance) => typeof n.children?.[0] === "string" && (n.children[0] as string).includes("Unauthorized"),
@@ -405,7 +434,7 @@ describe("PartDetailsEditor – expanded-description save path", () => {
 describe("PartDetailsEditor – dimensions save path", () => {
   const TEST_DIMS = { length: 120, width: 80, height: 45, diameter: null };
 
-  it("PATCHes the correct endpoint with all dimension fields and calls invalidateListCache + invalidateQueries on success", async () => {
+  it("PATCHes the correct endpoint with all dimension fields and invalidates all inventory caches on success", async () => {
     const mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
       ok: true,
       json: jest.fn().mockResolvedValue({}),
@@ -436,14 +465,20 @@ describe("PartDetailsEditor – dimensions save path", () => {
     });
     expect(JSON.parse(init.body as string)).toEqual(TEST_DIMS);
 
-    expect(mockInvalidateListCache).toHaveBeenCalledTimes(1);
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateAllCachesAfterSave).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateAllCachesAfterSave).toHaveBeenCalledWith(expect.objectContaining({
+      itemId: 1,
+      updatedItem: expect.objectContaining({ id: 1, dimensions: TEST_DIMS }),
+    }));
+    expect(mockInvalidateListCache).toHaveBeenCalledWith(expect.objectContaining({
+      queryClient: expect.any(Object),
+    }));
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
 
     mockFetch.mockRestore();
   });
 
-  it("shows a user-visible error and does not call invalidateListCache when fetch responds !ok", async () => {
+  it("keeps measured dimensions visible for retry after a failed save", async () => {
     const mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
       ok: false,
       json: jest.fn().mockResolvedValue({ error: "Write failed" }),
@@ -466,6 +501,15 @@ describe("PartDetailsEditor – dimensions save path", () => {
 
     expect(mockInvalidateListCache).not.toHaveBeenCalled();
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
+    expect(mockInvalidateAllCachesAfterSave).not.toHaveBeenCalled();
+
+    const retryBtn = findPressableByA11yLabel(result.root!, "Retry saving dimensions");
+    expect(retryBtn).not.toBeNull();
+    await act(async () => { fireEvent.press(retryBtn!); });
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const [, retryInit] = mockFetch.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(retryInit.body as string)).toEqual(TEST_DIMS);
 
     const errorNodes = result.root!.queryAll(
       (n: TestInstance) => typeof n.children?.[0] === "string" &&

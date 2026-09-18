@@ -15,8 +15,13 @@ jest.mock("expo-font", () => ({
   loadAsync: jest.fn(() => Promise.resolve()),
 }));
 
+const mockPartCard = jest.fn((_props: Record<string, unknown>) => null);
+
 jest.mock("@/components/PartCard", () => ({
-  PartCard: () => null,
+  PartCard: (props: Record<string, unknown>) => {
+    mockPartCard(props);
+    return null;
+  },
 }));
 
 jest.mock("@/components/PhotoLightbox", () => ({
@@ -84,6 +89,9 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     catalog: "BOLT-001",
     vendor: "Acme",
     description: "Standard bolt",
+    orderPurchase: 0,
+    orderQuantity: 0,
+    totalOpOq: 0,
     expandedDescription: null,
     binLocations: ["A1"],
     barcodes: [],
@@ -160,6 +168,25 @@ describe("ResultCard — size variant dropdown", () => {
       { includeSelf: true },
     );
     expect(catalogTexts.length).toBeGreaterThan(0);
+  });
+
+  it("shows the selected variant's authoritative total", async () => {
+    mockPartCard.mockClear();
+    const original = makeItem({ catalog: "BOLT-001", orderPurchase: 2, orderQuantity: 8 });
+    const variant = makeVariant("BOLT-002");
+    Object.assign(variant, { orderPurchase: 0, orderQuantity: 16, totalOpOq: 16 });
+    const result = makeResult(original, [variant]);
+    const rendered = await render(<ResultCard result={result} rank={0} />);
+
+    await act(async () => {
+      findAllWithTestID(rendered.root!, `select-variant-${variant.id}`)[0]!.props.onPress();
+    });
+
+    const totalTexts = rendered.root!.queryAll(
+      (n) => String(n.props.children) === "16",
+      { includeSelf: true },
+    );
+    expect(totalTexts.length).toBeGreaterThan(0);
   });
 
   it("shows back button after selecting a variant", async () => {

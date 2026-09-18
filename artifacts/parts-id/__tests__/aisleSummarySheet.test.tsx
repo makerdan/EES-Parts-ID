@@ -22,25 +22,20 @@ import type { TestInstance } from "test-renderer";
 
 jest.mock("react-native", () => {
   const React = require("react");
-  return {
-    Modal: function Modal({ children, visible, onRequestClose }: { children?: React.ReactNode; visible: boolean; onRequestClose?: () => void }) {
+  return require("./helpers/mapMocks").createReactNativeMock({
+    Modal: function Modal({
+      children,
+      visible,
+      onRequestClose,
+    }: {
+      children?: React.ReactNode;
+      visible: boolean;
+      onRequestClose?: () => void;
+    }) {
       if (!visible) return null;
       return React.createElement("rn-modal", { onRequestClose }, children);
     },
-    View: function View({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) {
-      return React.createElement("rn-view", props, children);
-    },
-    Text: function Text({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) {
-      return React.createElement("Text", props, children);
-    },
-    Pressable: function Pressable({ children, onPress, ...props }: { children?: React.ReactNode; onPress?: () => void; [k: string]: unknown }) {
-      return React.createElement("rn-pressable", { onPress, ...props }, children);
-    },
-    StyleSheet: {
-      create: (s: unknown) => s,
-      flatten: (s: unknown) => s,
-    },
-  };
+  });
 });
 
 // ─── @/hooks/useColors ────────────────────────────────────────────────────────

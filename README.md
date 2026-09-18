@@ -36,6 +36,8 @@ lib/
   api-zod/        # Generated Zod validators
   api-client-react/ # Generated React Query hooks
 scripts/          # CI helpers, codegen, port guards
+data/
+  public/            # intentionally public warehouse layout reference data
 ```
 
 ## Getting started
@@ -54,14 +56,73 @@ pnpm install
 
 ### Environment secrets
 
-| Secret | Purpose |
+Set server-only values in the Replit Secrets pane. Do not put them in `.env`
+files, mobile code, or client build configuration.
+
+| Server value | Purpose |
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string |
+| `DATABASE_ENV` | Explicit database target: `development`, `test`, or `production` |
 | `SESSION_SECRET` | Express session signing key |
 | `CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` | Clerk authentication |
-| `APP_PASSWORD` | App-level password gate |
 | `AI_INTEGRATIONS_OPENAI_API_KEY` | OpenAI via Replit proxy |
 | `POE_API_KEY2` | Poe AI fallback |
+| `DEFAULT_OBJECT_STORAGE_BUCKET_ID` | Replit Object Storage bucket used by server uploads |
+
+### Poe provider route contract
+
+Poe-backed requests use `POE_API_KEY2` only through the server provider
+boundary. The live catalogue is the source of truth for exact model IDs,
+endpoint, supported parameters, limits, capability confidence, verification
+owner/date, privacy, cost, and latency evidence. A request captures an
+immutable verified route immediately before dispatch; stale, unavailable, or
+unknown-capability models fail closed.
+
+| Route | Purpose and bounded input | Validated output | Authorization | Degradation |
+|---|---|---|---|---|
+| `identify` | Part photos (validated MIME/size) and bounded context | `AiIdentifyResponseSchema` | Authenticated | Next verified vision model |
+| `enrich` | One bounded inventory description | `AiEnrichmentResponseSchema` or keywords | Admin | Replit AI |
+| `dimensions` | One validated part image | `AiDimensionsResponseSchema` | Authenticated | Next verified vision model |
+| `catalog` | Page text and bounded catalog images | Validated catalog entries | Admin | Replit AI |
+
+Prompts, images, credentials, and raw provider responses are not persisted or
+included in telemetry. Telemetry is limited to route/model/endpoint, outcome,
+bounded latency/retry data, fallback/cache state, usage counts, and a safe
+provider request ID. Authentication, permission, quota, unsupported-capability,
+invalid-request, timeout, cancellation, unavailable-model, rate-limit, and
+upstream failures use the shared normalized vocabulary. Only eligible transient
+failures retry with bounded, cancellable backoff. The Reference assistant
+remains explicitly Gemini-backed.
+
+Only explicitly public `EXPO_PUBLIC_*` values belong in the client build:
+`EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`, API origins, the Clerk proxy URL, and
+public tool domains. Never expose `DATABASE_URL`, `CLERK_SECRET_KEY`, AI keys,
+or object-storage configuration to the mobile/web bundle.
+
+Inventory imports must read a source file supplied outside the repository:
+
+```bash
+DATABASE_ENV=development DATABASE_URL="$DATABASE_URL" pnpm --filter @workspace/api-server exec tsx \
+  src/seed/import-spreadsheet.ts /path/to/inventory.xlsx
+```
+
+Seed and import commands refuse `DATABASE_ENV=production`. Use a separate
+development or test Replit PostgreSQL database and set `DATABASE_ENV` explicitly
+before running them. Schema synchronization follows the same rule:
+
+```bash
+DATABASE_ENV=development pnpm --filter @workspace/db run push
+```
+
+The deployed API uses `DATABASE_ENV=production` and Replit-hosted PostgreSQL.
+There is no embedded database or database export workflow. Do not commit
+inventory exports, uploaded documents, database backups, or operational logs.
+See [public repository readiness](docs/public-repository-readiness.md) for the
+public/private data boundary and the deterministic repository check.
+Contributors must also read the [security policy](SECURITY.md), [public data
+classification](docs/public-data-classification.md), and [public release
+checklist](docs/public-release-checklist.md) before publishing source or map
+assets.
 
 ### Run (development)
 

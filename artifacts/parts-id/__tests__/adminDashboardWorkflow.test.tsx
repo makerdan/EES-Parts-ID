@@ -59,6 +59,16 @@ jest.mock("expo-sharing", () => {
   };
 });
 
+// ─── expo-clipboard ──────────────────────────────────────────────────────────
+
+jest.mock("expo-clipboard", () => {
+  const mockSetStringAsync = jest.fn().mockResolvedValue(undefined);
+  return {
+    setStringAsync: mockSetStringAsync,
+    __mockSetStringAsync: mockSetStringAsync,
+  };
+});
+
 // ─── react-native-svg ────────────────────────────────────────────────────────
 
 jest.mock("react-native-svg", () => {
@@ -111,10 +121,11 @@ jest.mock("@/utils/apiBase", () => ({
 // ─── @/contexts/ApiHealthContext ─────────────────────────────────────────────
 
 jest.mock("@/contexts/ApiHealthContext", () => {
-  const stable = { reportNetworkFailure: jest.fn() };
+  const stable = { checkStatus: jest.fn(), readinessIssue: null, reportNetworkFailure: jest.fn() };
   return {
     useApiHealth: () => stable,
     ApiHealthProvider: ({ children }: { children: unknown }) => children,
+    __mockApiHealth: stable,
   };
 });
 
@@ -254,6 +265,14 @@ beforeEach(() => {
   mockUseApp.mockReturnValue(makeAdminApp());
   mockFetch.mockReset();
   global.fetch = mockFetch as unknown as typeof fetch;
+  const apiHealthMock = jest.requireMock("@/contexts/ApiHealthContext").__mockApiHealth as {
+    checkStatus: jest.Mock;
+    readinessIssue: unknown;
+    reportNetworkFailure: jest.Mock;
+  };
+  apiHealthMock.checkStatus.mockReset();
+  apiHealthMock.readinessIssue = null;
+  apiHealthMock.reportNetworkFailure.mockReset();
 
   const fileSystemMock = jest.requireMock("expo-file-system") as {
     __mockFileWrite: jest.Mock;
@@ -269,6 +288,12 @@ beforeEach(() => {
   sharingMock.__mockIsAvailableAsync.mockResolvedValue(true);
   sharingMock.__mockShareAsync.mockReset();
   sharingMock.__mockShareAsync.mockResolvedValue(undefined);
+
+  const clipboardMock = jest.requireMock("expo-clipboard") as {
+    __mockSetStringAsync: jest.Mock;
+  };
+  clipboardMock.__mockSetStringAsync.mockReset();
+  clipboardMock.__mockSetStringAsync.mockResolvedValue(undefined);
 });
 
 afterEach(async () => {
@@ -280,6 +305,66 @@ afterEach(async () => {
 });
 
 describe("AdminDashboardScreen — authenticated workflow", () => {
+  it.each([
+    [
+      { detail: "startup_not_ready", startupStatus: "pending" },
+      "Application startup is still in progress.",
+    ],
+    [
+      { detail: "startup_not_ready", startupStatus: "timed_out" },
+      "Application startup timed out. Try again shortly.",
+    ],
+    [
+      { detail: "database_unreachable" },
+      "The application database is temporarily unavailable.",
+    ],
+    [
+      { detail: "schema_unavailable" },
+      "The application schema is temporarily unavailable.",
+    ],
+  ])("shows the bounded readiness message for %j", async (readinessIssue, message) => {
+    const apiHealthMock = jest.requireMock("@/contexts/ApiHealthContext").__mockApiHealth as {
+      readinessIssue: unknown;
+    };
+    apiHealthMock.readinessIssue = readinessIssue;
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => FIRST_STATS } as Response);
+
+    const tree = await render(<AdminScreen />);
+    activeTree = tree;
+    await flushPromises();
+
+    expect(hasText(tree.root, message)).toBe(true);
+    expect(hasText(tree.root, "secret database detail")).toBe(false);
+  });
+
+  it("shows a recoverable initial-load error when the dashboard request fails", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("Dashboard unavailable"));
+
+    const tree = await render(<AdminScreen />);
+    activeTree = tree;
+    await flushPromises();
+
+    expect(hasText(tree.root, "Dashboard unavailable")).toBe(true);
+    expect(hasText(tree.root, "Retry")).toBe(true);
+    expect(hasText(tree.root, "Summary")).toBe(false);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => FIRST_STATS,
+    } as Response);
+    const retryButton = tree.root!.queryAll(
+      (node) => (node.type as string) === "rn-pressable" && instText(node).includes("Retry"),
+      { includeSelf: true },
+    )[0];
+    await act(async () => {
+      retryButton?.props.onPress();
+      await flushPromises();
+    });
+
+    expect(hasText(tree.root, "Summary")).toBe(true);
+    expect(hasText(tree.root, "12")).toBe(true);
+  });
+
   it("loads, refreshes, and exports the dashboard without losing data", async () => {
     let resolveInitial!: (response: Response) => void;
     const initialResponse = new Promise<Response>((resolve) => {
@@ -390,6 +475,106 @@ describe("AdminDashboardScreen — authenticated workflow", () => {
         UTI: "public.comma-separated-values-text",
       },
     );
+  });
+
+  it("keeps the last successful snapshot visible when refresh fails", async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => FIRST_STATS,
+      } as Response)
+      .mockRejectedValueOnce(new Error("API unavailable"));
+
+    const tree = await render(<AdminScreen />);
+    activeTree = tree;
+    await flushPromises();
+
+    expect(hasText(tree.root, "12")).toBe(true);
+    const scrollView = findScrollView(tree.root);
+    const refreshControl = scrollView?.props.refreshControl as
+      | React.ReactElement<{ onRefresh: () => void }>
+      | undefined;
+
+    await act(async () => {
+      refreshControl?.props.onRefresh();
+      await flushPromises();
+    });
+
+    expect(hasText(tree.root, "12")).toBe(true);
+    expect(hasText(tree.root, "Showing the last successful snapshot. Refresh failed: API unavailable")).toBe(true);
+    expect(hasText(tree.root, "Retry refresh")).toBe(true);
+    expect(hasText(tree.root, "Admin Dashboard")).toBe(true);
+  });
+
+  it("shows a copyable native fallback when sharing is unavailable", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => FIRST_STATS,
+    } as Response);
+    const sharingMock = jest.requireMock("expo-sharing") as {
+      __mockIsAvailableAsync: jest.Mock;
+    };
+    sharingMock.__mockIsAvailableAsync.mockResolvedValue(false);
+
+    const tree = await render(<AdminScreen />);
+    activeTree = tree;
+    await flushPromises();
+
+    const exportButton = tree.root!.queryAll(
+      (node) => (node.type as string) === "rn-pressable" && node.props.accessibilityLabel === "Export dashboard CSV",
+      { includeSelf: true },
+    )[0];
+    await act(async () => {
+      exportButton?.props.onPress();
+      await flushPromises();
+    });
+
+    expect(hasText(tree.root, "native sharing is unavailable")).toBe(true);
+    expect(hasText(tree.root, "Copy location")).toBe(true);
+
+    const copyButton = tree.root!.queryAll(
+      (node) => (node.type as string) === "rn-pressable" && node.props.accessibilityLabel === "Copy export location",
+      { includeSelf: true },
+    )[0];
+    await act(async () => {
+      copyButton?.props.onPress();
+      await flushPromises();
+    });
+
+    const clipboardMock = jest.requireMock("expo-clipboard") as {
+      __mockSetStringAsync: jest.Mock;
+    };
+    expect(clipboardMock.__mockSetStringAsync).toHaveBeenCalledWith(
+      expect.stringMatching(/^file:\/\/\/mock-cache\/admin-dashboard-\d{4}-\d{2}-\d{2}\.csv$/),
+    );
+    expect(hasText(tree.root, "Export location copied to the clipboard.")).toBe(true);
+  });
+
+  it("shows a retry action when export fails", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => FIRST_STATS,
+    } as Response);
+    const sharingMock = jest.requireMock("expo-sharing") as {
+      __mockShareAsync: jest.Mock;
+    };
+    sharingMock.__mockShareAsync.mockRejectedValueOnce(new Error("Share cancelled"));
+
+    const tree = await render(<AdminScreen />);
+    activeTree = tree;
+    await flushPromises();
+
+    const exportButton = tree.root!.queryAll(
+      (node) => (node.type as string) === "rn-pressable" && node.props.accessibilityLabel === "Export dashboard CSV",
+      { includeSelf: true },
+    )[0];
+    await act(async () => {
+      exportButton?.props.onPress();
+      await flushPromises();
+    });
+
+    expect(hasText(tree.root, "Export failed: Share cancelled. Try again.")).toBe(true);
+    expect(hasText(tree.root, "Retry export")).toBe(true);
   });
 });
 

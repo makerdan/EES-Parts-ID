@@ -1,18 +1,31 @@
 {
   "name": "@workspace/db",
+
+  "knip": {
+    "entry": [
+      "src/index.ts",
+      "src/schema/index.ts",
+      "src/runtimeDataBoundary.ts"
+    ],
+    "project": ["src/**/*.ts"],
+    "ignoreBinaries": ["drizzle-kit"],
+    "ignore": ["scripts/**"]
+  },
   "version": "0.0.0",
   "private": true,
   "serverOnly": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./schema": "./src/schema/index.ts"
+    "./schema": "./src/schema/index.ts",
+    "./runtime-data-boundary": "./src/runtimeDataBoundary.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate --config ./drizzle.config.ts",
     "push": "drizzle-kit push --config ./drizzle.config.ts",
     "push-force": "drizzle-kit push --force --config ./drizzle.config.ts",
-    "schema:check": "tsx scripts/schema-check.ts",
+    "schema:check": "tsx scripts/schema-check.ts && tsx --test scripts/schema-migration-columns.test.ts",
+    "verify-reference-log-indexes": "tsx scripts/verify-reference-log-indexes.ts",
     "verify-fts": "tsx scripts/verify-fts-index.ts"
   },
   "dependencies": {

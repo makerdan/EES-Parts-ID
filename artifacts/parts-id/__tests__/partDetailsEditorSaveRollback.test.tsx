@@ -41,6 +41,54 @@ jest.mock("@/components/PartPhotoPicker", () => ({
   PartPhotoPicker: () => null,
 }));
 
+jest.mock("react-native", () => {
+  const R = require("react") as typeof React;
+  return require("./helpers/mapMocks").createReactNativeMock({
+    Modal: (props: Record<string, unknown>) =>
+      R.createElement("rn-modal", props, props.children as React.ReactNode),
+  });
+});
+
+let capturedConfirmDialogProps: {
+  visible: boolean;
+  confirmLabel: string;
+  cancelLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+} = {
+  visible: false,
+  confirmLabel: "",
+  cancelLabel: "",
+  onConfirm: jest.fn(),
+  onCancel: jest.fn(),
+};
+let capturedInfoDialogProps: {
+  visible: boolean;
+  title: string;
+  message: string;
+  dismissLabel: string;
+  onDismiss: () => void;
+} = {
+  visible: false,
+  title: "",
+  message: "",
+  dismissLabel: "",
+  onDismiss: jest.fn(),
+};
+
+jest.mock("@/components/ConfirmDialog", () => {
+  return {
+    ConfirmDialog: (props: typeof capturedConfirmDialogProps) => {
+      capturedConfirmDialogProps = props;
+      return null;
+    },
+    InfoDialog: (props: typeof capturedInfoDialogProps) => {
+      capturedInfoDialogProps = props;
+      return null;
+    },
+  };
+});
+
 jest.mock("@workspace/api-client-react", () => ({
   useUpdateItemBins:        jest.fn(() => ({ mutateAsync: (...a: unknown[]) => mockBinsMutateAsync(...a) })),
   useUpdateItemKeywords:    jest.fn(() => ({ mutateAsync: jest.fn().mockResolvedValue(undefined) })),
@@ -67,9 +115,13 @@ jest.mock("@/components/MeasurePartScreen", () => ({
   MeasurePartScreen: () => null,
 }));
 
-jest.mock("@/utils/editItemCache", () => ({
-  invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
-}));
+jest.mock("@/utils/editItemCache", () => {
+  const actual = jest.requireActual("../utils/editItemCache") as typeof import("../utils/editItemCache");
+  return {
+    ...actual,
+    invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
+  };
+});
 
 jest.mock("@expo/vector-icons", () => ({
   Feather: () => null,
@@ -105,6 +157,15 @@ function findPressableByA11yLabel(root: Inst, label: string): Inst | null {
   );
 }
 
+function findMainModal(root: Inst): Inst {
+  const modal = root.queryAll(
+    (n: TestInstance) => typeof n.props.onRequestClose === "function",
+    { includeSelf: true },
+  )[0];
+  if (!modal) throw new Error("Expected the editor modal");
+  return modal;
+}
+
 async function renderEditor(ui: React.ReactElement) {
   const result = await render(ui);
   return result;
@@ -116,6 +177,8 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     catalog: "PART-X",
     description: "Original description",
     vendor: "ACME",
+    orderPurchase: 0,
+    orderQuantity: 0,
     binLocations: ["AISLE-01"],
     aiKeywords: [],
     imageUrl: null,
@@ -138,6 +201,20 @@ afterEach(async () => {
   mockGetQueriesData.mockReturnValue([]);
   mockBinsMutateAsync.mockResolvedValue(undefined);
   mockInvalidateListCache.mockResolvedValue(undefined);
+  capturedConfirmDialogProps = {
+    visible: false,
+    confirmLabel: "",
+    cancelLabel: "",
+    onConfirm: jest.fn(),
+    onCancel: jest.fn(),
+  };
+  capturedInfoDialogProps = {
+    visible: false,
+    title: "",
+    message: "",
+    dismissLabel: "",
+    onDismiss: jest.fn(),
+  };
 });
 
 // Helper: make Alert.alert immediately call the destructive "Remove" callback.
@@ -260,6 +337,81 @@ describe("PartDetailsEditor – handleSave rollback on mutation failure", () => 
     const firstMutateIdx = callLog.indexOf("mutateAsync");
     const lastSnapshotIdx = callLog.lastIndexOf("getQueriesData");
     expect(lastSnapshotIdx).toBeLessThan(firstMutateIdx);
+  });
+});
+
+describe("PartDetailsEditor – guarded close paths", () => {
+  it("routes the header close through a discard / keep-editing confirmation", async () => {
+    const onClose = jest.fn();
+    const item = makeItem();
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={onClose} />,
+    );
+    activeTree = result;
+
+    autoConfirmAlert();
+    const removeBinButton = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
+    expect(removeBinButton).not.toBeNull();
+    await act(async () => { fireEvent.press(removeBinButton!); });
+
+    const closeButton = findPressableByA11yLabel(result.root!, "Close editor");
+    expect(closeButton).not.toBeNull();
+    await act(async () => { fireEvent.press(closeButton!); });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(capturedConfirmDialogProps.visible).toBe(true);
+    expect(capturedConfirmDialogProps.confirmLabel).toBe("Discard");
+    expect(capturedConfirmDialogProps.cancelLabel).toBe("Keep Editing");
+
+    await act(async () => {
+      capturedConfirmDialogProps.onCancel();
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(findPressableByA11yLabel(result.root!, "Remove bin AISLE-01")).toBeNull();
+  });
+
+  it("guards the system request-close path with the same confirmation", async () => {
+    const onClose = jest.fn();
+    const result = await renderEditor(
+      <PartDetailsEditor item={makeItem()} adminToken="test-token" onClose={onClose} />,
+    );
+    activeTree = result;
+
+    autoConfirmAlert();
+    const removeBinButton = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
+    await act(async () => { fireEvent.press(removeBinButton!); });
+
+    await act(async () => { findMainModal(result.root!).props.onRequestClose(); });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(capturedConfirmDialogProps.visible).toBe(true);
+
+    await act(async () => {
+      capturedConfirmDialogProps.onConfirm();
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not dismiss while a save is in flight and explains how to continue", async () => {
+    const onClose = jest.fn();
+    autoConfirmAlert();
+    mockBinsMutateAsync.mockImplementation(() => new Promise<void>(() => undefined));
+    const result = await renderEditor(
+      <PartDetailsEditor item={makeItem()} adminToken="test-token" onClose={onClose} />,
+    );
+    activeTree = result;
+
+    await act(async () => {
+      fireEvent.press(findPressableByA11yLabel(result.root!, "Remove bin AISLE-01")!);
+    });
+    await act(async () => {
+      fireEvent.press(findPressable(result.root!, "Save Details")!);
+    });
+    await act(async () => { findMainModal(result.root!).props.onRequestClose(); });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(capturedInfoDialogProps.visible).toBe(true);
+    expect(capturedInfoDialogProps.title).toBe("Save in progress");
+    expect(capturedInfoDialogProps.dismissLabel).toBe("Keep Editing");
   });
 });
 
@@ -459,5 +611,33 @@ describe("PartDetailsEditor – handleSave onSettled invalidation on success", (
       ([arg]: [{ queryKey: unknown[] }]) => arg.queryKey,
     );
     expect(invalidateCalls).toContainEqual(["searchInventory"]);
+  });
+});
+
+describe("PartDetailsEditor – synchronous save re-entry guard", () => {
+  it("does not dispatch a second request set when Save is activated twice in one tick", async () => {
+    let resolveSave!: () => void;
+    mockBinsMutateAsync.mockImplementation(
+      () => new Promise<void>(resolve => { resolveSave = resolve; }),
+    );
+    autoConfirmAlert();
+
+    const item = makeItem({ binLocations: ["AISLE-01"] });
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
+    );
+    activeTree = result;
+
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
+    await act(async () => { fireEvent.press(removeBinBtn!); });
+    const saveBtn = findPressable(result.root!, "Save Details");
+
+    await act(async () => {
+      const firstSave = saveBtn!.props.onPress() as Promise<void>;
+      const secondSave = saveBtn!.props.onPress() as Promise<void>;
+      expect(mockBinsMutateAsync).toHaveBeenCalledTimes(1);
+      resolveSave();
+      await Promise.all([firstSave, secondSave]);
+    });
   });
 });

@@ -42,33 +42,14 @@ const mockCompletionsCreate = jest.fn().mockResolvedValue({
   choices: [{ message: { role: "assistant", content: "hi" } }],
 });
 
-class MockRateLimitError extends Error {}
-class MockInternalServerError extends Error {}
-class MockAPIConnectionError extends Error {}
-class MockAPIConnectionTimeoutError extends Error {}
-class MockAuthenticationError extends Error {}
-class MockPermissionDeniedError extends Error {}
-
-const mockOpenAIConstructor = jest
-  .fn()
-  .mockImplementation(() => ({
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "../../__tests__/helpers/openaiMock",
+  ) as typeof import("../../__tests__/helpers/openaiMock");
+  return createOpenAIMock(jest, () => ({
     chat: { completions: { create: mockCompletionsCreate } },
   }));
-
-(mockOpenAIConstructor as unknown as Record<string, unknown>).RateLimitError =
-  MockRateLimitError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).InternalServerError =
-  MockInternalServerError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).APIConnectionError =
-  MockAPIConnectionError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).APIConnectionTimeoutError =
-  MockAPIConnectionTimeoutError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).AuthenticationError =
-  MockAuthenticationError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).PermissionDeniedError =
-  MockPermissionDeniedError;
-
-jest.mock("openai", () => mockOpenAIConstructor);
+});
 
 // ── Standard workspace mocks ──────────────────────────────────────────────────
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
@@ -96,10 +77,14 @@ import { ADMIN_TEST_USER_ID } from "../../__tests__/helpers/adminAuth";
 import {
   setProvider,
   getProbeSummary,
-  probePoeBotsOnStartup,
+  probeActivePoeModels,
   getAllPoeModelNames,
 } from "../lib/aiProvider";
-import { seedTestUser, cleanupTestUser } from "../../__tests__/helpers/testDb";
+import {
+  seedTestUser,
+  cleanupTestUser,
+  workerQualifiedUserId,
+} from "../../__tests__/helpers/testDb";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // The bootstrap admin authenticates by presenting their Clerk user id.
@@ -108,7 +93,7 @@ function makeAdminToken(): string {
 }
 
 // An approved, non-admin user — authorised for the app but not for admin routes.
-const NON_ADMIN_USER = "jest-aistatus-nonadmin";
+const NON_ADMIN_USER = workerQualifiedUserId("jest-aistatus-nonadmin");
 
 // ── Setup / teardown ──────────────────────────────────────────────────────────
 beforeAll(async () => {
@@ -177,7 +162,7 @@ describe("GET /api/admin/ai-status — authenticated, provider=poe", () => {
       choices: [{ message: { role: "assistant", content: "hi" } }],
     });
     setProvider("poe");
-    await probePoeBotsOnStartup();
+    await probeActivePoeModels();
   });
 
   it("returns 200 with a bots object shaped as Record<string, BotProbeStatus>", async () => {
@@ -189,6 +174,10 @@ describe("GET /api/admin/ai-status — authenticated, provider=poe", () => {
 
     expect(res.body).toHaveProperty("bots");
     expect(typeof res.body.bots).toBe("object");
+    expect(res.body).toHaveProperty("verification");
+    expect(res.body.verification).toEqual(expect.objectContaining({
+      models: expect.any(Object),
+    }));
   });
 
   it("bots object includes all probed bot names after the probe has run", async () => {

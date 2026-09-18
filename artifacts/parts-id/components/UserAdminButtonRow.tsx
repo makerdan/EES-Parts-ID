@@ -40,7 +40,7 @@ export function UserAdminButtonRow({
       <Pressable
         onPress={onDemote}
         disabled={!!userActionPending}
-        accessibilityLabel="Revoke Admin"
+        accessibilityLabel={`Revoke admin access for ${user.email || user.clerkUserId}`}
         style={{
           borderRadius: 6,
           paddingVertical: 8,
@@ -73,7 +73,7 @@ export function UserAdminButtonRow({
       <Pressable
         onPress={onPromote}
         disabled={!!userActionPending}
-        accessibilityLabel="Make Admin"
+        accessibilityLabel={`Make ${user.email || user.clerkUserId} an admin`}
         style={{
           borderRadius: 6,
           paddingVertical: 8,

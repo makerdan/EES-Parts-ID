@@ -21,6 +21,8 @@ import {
   type HelpResponse,
 } from "@/utils/helpStorage";
 
+const USER_ID = "worker-1";
+
 const GENERAL: HelpResponse = {
   schemaVersion: "1.0",
   contentVersion: "1.0.0",
@@ -44,6 +46,8 @@ const GENERAL: HelpResponse = {
 afterEach(async () => {
   await AsyncStorage.removeItem(HELP_GENERAL_CACHE_KEY);
   await AsyncStorage.removeItem(HELP_ORIENTATION_KEY);
+  await AsyncStorage.removeItem(`${HELP_ORIENTATION_KEY}:${USER_ID}`);
+  await AsyncStorage.removeItem(`${HELP_ORIENTATION_KEY}:worker-2`);
   jest.clearAllMocks();
 });
 
@@ -63,8 +67,22 @@ describe("Help local storage contract", () => {
   });
 
   it("persists dismissal while a storage failure remains non-blocking", async () => {
-    await expect(readHelpOrientationDismissed()).resolves.toBe(false);
-    await saveHelpOrientationDismissed();
-    await expect(readHelpOrientationDismissed()).resolves.toBe(true);
+    await expect(readHelpOrientationDismissed(USER_ID)).resolves.toBe(false);
+    await expect(saveHelpOrientationDismissed(USER_ID)).resolves.toBe(true);
+    await expect(readHelpOrientationDismissed(USER_ID)).resolves.toBe(true);
+  });
+
+  it("keeps orientation preferences isolated between users", async () => {
+    await saveHelpOrientationDismissed(USER_ID);
+
+    await expect(readHelpOrientationDismissed(USER_ID)).resolves.toBe(true);
+    await expect(readHelpOrientationDismissed("worker-2")).resolves.toBe(false);
+  });
+
+  it("reports when dismissal persistence fails", async () => {
+    (AsyncStorage.setItem as jest.Mock).mockRejectedValueOnce(new Error("storage unavailable"));
+
+    await expect(saveHelpOrientationDismissed(USER_ID)).resolves.toBe(false);
+    await expect(readHelpOrientationDismissed(USER_ID)).resolves.toBe(false);
   });
 });

@@ -18,22 +18,23 @@ const originalEnv = {
   POE_API_KEY2: process.env.POE_API_KEY2,
   AI_INTEGRATIONS_OPENAI_BASE_URL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
   AI_INTEGRATIONS_OPENAI_API_KEY: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  SKIP_ADMIN_MFA: process.env.SKIP_ADMIN_MFA,
 };
 
 process.env.AI_PROVIDER = "poe";
 process.env.POE_API_KEY2 = "test-poe-key";
 process.env.AI_INTEGRATIONS_OPENAI_BASE_URL = "https://test.openai.example/v1";
 process.env.AI_INTEGRATIONS_OPENAI_API_KEY = "test-openai-key";
-process.env.SKIP_ADMIN_MFA = "true";
 
 // ── Provider boundary mock ──────────────────────────────────────────────────────
 const mockCompletionsCreate = jest.fn();
-const mockOpenAIConstructor = jest.fn().mockImplementation(() => ({
-  chat: { completions: { create: mockCompletionsCreate } },
-}));
-
-jest.mock("openai", () => mockOpenAIConstructor);
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "./helpers/openaiMock",
+  ) as typeof import("./helpers/openaiMock");
+  return createOpenAIMock(jest, () => ({
+    chat: { completions: { create: mockCompletionsCreate } },
+  }));
+});
 
 // Routes import the workspace AI integration transitively. Keep those imports
 // inert as well; the admin provider route itself only needs the OpenAI boundary.
@@ -62,11 +63,15 @@ import { eq } from "drizzle-orm";
 import type { Express } from "express";
 
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
+import {
+  cleanupTestUser,
+  seedTestUser,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 import type * as AiProviderModule from "../src/lib/aiProvider";
 
 // ── Test state ──────────────────────────────────────────────────────────────────
-const NON_ADMIN_USER_ID = "jest-ai-provider-nonadmin";
+const NON_ADMIN_USER_ID = workerQualifiedUserId("jest-ai-provider-nonadmin");
 const adminToken = ADMIN_TEST_USER_ID;
 
 let app: Express;
@@ -176,6 +181,26 @@ describe("Admin AI-provider switch", () => {
       .expect(200);
 
     expect(laterRead.body).toEqual({ provider: "openai" });
+  });
+
+  it("reports a runtime-only switch when persistence fails", async () => {
+    const insertSpy = jest.spyOn(db, "insert").mockImplementationOnce(() => {
+      throw new Error("database unavailable");
+    });
+
+    try {
+      const switched = await supertest(app)
+        .post("/api/admin/ai-provider")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ provider: "openai" })
+        .expect(200);
+
+      expect(switched.body).toEqual({ provider: "openai", persisted: false });
+      expect(aiProvider.getProvider()).toBe("openai");
+      expect(await readPersistedProvider()).toBe("poe");
+    } finally {
+      insertSpy.mockRestore();
+    }
   });
 });
 

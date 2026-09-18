@@ -126,12 +126,18 @@ for (const entry of manifest) {
         name,
         duration: t.duration ?? null,
         status: t.status,
+        budgetCategory: isIntegration ? "integration-test" : "normal-test",
         testBudgetMs,
         timedOut:
           t.failureMessages?.some((m) =>
             /exceeded timeout|Exceeded timeout|timed out/i.test(m)
           ) ?? false,
       };
+      rec.budgetViolation =
+        (rec.status === "passed" || rec.status === "failed") &&
+        !rec.timedOut &&
+        rec.duration != null &&
+        rec.duration > rec.testBudgetMs;
       completedTests.push(rec);
       allTests.push(rec);
     }
@@ -150,6 +156,7 @@ for (const entry of manifest) {
     wallClockMs,
     budgetMs,
     completedTests,
+    budgetViolationCount: completedTests.filter((t) => t.budgetViolation).length,
     ranCount,
     todoCount,
     estimatedTotal,
@@ -164,6 +171,7 @@ const slowTests = [...allTests]
   .slice(0, 10);
 
 const timedOutTests = allTests.filter((t) => t.timedOut);
+const budgetViolations = allTests.filter((t) => t.budgetViolation);
 
 const incompleteOrTimedOutSuites = suiteReports.filter(
   (s) => s.timedOut || (s.failed && s.ranCount === 0)
@@ -171,6 +179,7 @@ const incompleteOrTimedOutSuites = suiteReports.filter(
 
 const hasViolations =
   timedOutTests.length > 0 ||
+  budgetViolations.length > 0 ||
   incompleteOrTimedOutSuites.length > 0 ||
   suiteReports.some((s) => s.failed || s.timedOut);
 
@@ -187,7 +196,9 @@ console.log("SUMMARY");
 console.log(hr());
 for (const s of suiteReports) {
   const statusTag = s.passed
-    ? "PASSED    "
+    ? s.budgetViolationCount > 0
+      ? "BUDGET_ERR"
+      : "PASSED    "
     : s.timedOut
     ? "TIMED_OUT "
     : "FAILED    ";
@@ -225,6 +236,30 @@ if (slowTests.length === 0) {
     console.log(
       `  ${pad(formatMs(t.duration), 10)}  ${pad(budgetStr, 8)}  ${pad(deltaStr, 10)}  ${pad(suiteName, 14)}  ${testName}`
     );
+  }
+}
+
+// Completed test budget violations
+console.log();
+console.log("TEST BUDGET VIOLATIONS (completed tests)");
+console.log(hr());
+if (budgetViolations.length === 0) {
+  console.log("  None.");
+} else {
+  for (const t of budgetViolations) {
+    const overBy = t.duration - t.testBudgetMs;
+    console.log(`  ✗  [${t.budgetCategory}] [${t.suite}] ${t.name}`);
+    console.log(
+      `     Duration: ${formatMs(t.duration)} / Budget: ${formatMs(t.testBudgetMs)} (over by ${formatMs(overBy)})`
+    );
+    console.log(
+      `     → ${
+        t.status === "passed"
+          ? "Completed successfully"
+          : "Completed with a framework failure"
+      }, but exceeded the applicable test duration budget.`
+    );
+    console.log();
   }
 }
 

@@ -34,33 +34,16 @@ afterAll(() => {
 });
 
 // ── OpenAI constructor mock ───────────────────────────────────────────────────
-// poeBot.ts uses both the OpenAI constructor (for getClient()) and the static
-// error sub-classes (OpenAI.RateLimitError etc.) in isPoeCallTransientError().
-// We must provide both: a callable constructor AND stub classes as properties.
-class MockRateLimitError extends Error {}
-class MockInternalServerError extends Error {}
-class MockAPIConnectionError extends Error {}
-class MockAPIConnectionTimeoutError extends Error {}
-class MockAuthenticationError extends Error {}
-class MockPermissionDeniedError extends Error {}
-
-const mockOpenAIConstructor = jest
-  .fn()
-  .mockImplementation((cfg: { apiKey: string; baseURL?: string }) => ({
+// The canonical helper supplies the static error classes used by poeBot.ts.
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "./helpers/openaiMock",
+  ) as typeof import("./helpers/openaiMock");
+  return createOpenAIMock(jest, (cfg?: { apiKey: string; baseURL?: string }) => ({
     _cfg: cfg,
     chat: { completions: { create: jest.fn() } },
   }));
-
-// Attach static error classes so `instanceof` checks in isPoeCallTransientError
-// and isPoeCallAuthError do not throw "Right-hand side is not an object".
-(mockOpenAIConstructor as unknown as Record<string, unknown>).RateLimitError = MockRateLimitError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).InternalServerError = MockInternalServerError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).APIConnectionError = MockAPIConnectionError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).APIConnectionTimeoutError = MockAPIConnectionTimeoutError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).AuthenticationError = MockAuthenticationError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).PermissionDeniedError = MockPermissionDeniedError;
-
-jest.mock("openai", () => mockOpenAIConstructor);
+});
 
 // ── Workspace / infrastructure mocks ─────────────────────────────────────────
 const mockDbLimit = jest.fn();

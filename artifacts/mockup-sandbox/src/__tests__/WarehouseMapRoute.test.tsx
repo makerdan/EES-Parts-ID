@@ -66,6 +66,19 @@ function setWarehouseMapRoute() {
   window.history.replaceState({}, "", "/warehouse-map");
 }
 
+async function waitForWarehouseMapReady() {
+  await waitFor(() => {
+    expect(screen.getByText("Admin — Warehouse Map Viewer")).toBeTruthy();
+    expect(screen.getByText("Aisle 7")).toBeTruthy();
+
+    const scene = document.querySelector("svg");
+    expect(scene).toBeTruthy();
+    expect(document.querySelectorAll("svg")).toHaveLength(1);
+    expect(scene?.querySelector("#loaded-floor-plan")).toBeTruthy();
+    expect(scene?.querySelector("rect")).toBeTruthy();
+  });
+}
+
 beforeEach(() => {
   authState.isLoaded = true;
   authState.isSignedIn = true;
@@ -86,11 +99,15 @@ describe("Warehouse Map routed workflow", () => {
     const adminResponse = new Promise<Response>((resolve) => {
       resolveAdmin = resolve;
     });
+    let resolveFloorPlan!: (value: Response) => void;
+    const floorPlanResponsePending = new Promise<Response>((resolve) => {
+      resolveFloorPlan = resolve;
+    });
     const fetchMock = vi.fn((...args: [RequestInfo | URL, RequestInit?]) => {
       const [input] = args;
       const url = String(input);
       if (url.endsWith("/admin/me")) return adminResponse;
-      if (url.endsWith("/floor-plan/svg")) return Promise.resolve(floorPlanResponse());
+      if (url.endsWith("/floor-plan/svg")) return floorPlanResponsePending;
       if (url.endsWith("/warehouse-zones")) {
         return Promise.resolve(jsonResponse({ zones: [ZONE] }));
       }
@@ -110,12 +127,13 @@ describe("Warehouse Map routed workflow", () => {
       expect(screen.getByText("Admin — Warehouse Map Viewer")).toBeTruthy();
       expect(screen.getByText("Aisle 7")).toBeTruthy();
     });
+    expect(document.querySelector("#loaded-floor-plan")).toBeNull();
 
-    const scene = document.querySelector("svg");
-    expect(scene).toBeTruthy();
-    expect(document.querySelectorAll("svg")).toHaveLength(1);
-    expect(scene?.querySelector("#loaded-floor-plan")).toBeTruthy();
-    expect(scene?.querySelector("rect")).toBeTruthy();
+    await act(async () => {
+      resolveFloorPlan(floorPlanResponse());
+    });
+    await waitForWarehouseMapReady();
+
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(
       expect.arrayContaining([
         expect.stringContaining("/admin/me"),

@@ -23,20 +23,11 @@ jest.mock("react-native-svg", () => require("./helpers/mapMocks").createSvgMock(
 
 // ─── react-native ─────────────────────────────────────────────────────────────
 
-jest.mock("react-native", () => ({
-  Platform:          { OS: "ios", select: (o: Record<string, unknown>) => o.ios ?? o.default },
-  StyleSheet:        { create: (s: unknown) => s, flatten: (s: unknown) => s },
-  View:              ({ children, onLayout }: { children?: React.ReactNode; onLayout?: (e: unknown) => void }) =>
-                       React.createElement("rn-view", { onLayout }, children),
-  Text:              ({ children }: { children?: React.ReactNode }) => React.createElement("Text", {}, children),
-  ActivityIndicator: () => null,
-  Pressable:         ({ children, onPress }: { children?: React.ReactNode; onPress?: () => void }) =>
-                       React.createElement("rn-pressable", { onPress }, children),
-  PixelRatio:        { get: () => 3 },
-  useColorScheme:    () => "light",
-  LayoutChangeEvent: {},
-  AppState:          { currentState: "active", addEventListener: jest.fn(() => ({ remove: jest.fn() })) },
-}));
+jest.mock("react-native", () =>
+  require("./helpers/mapMocks").createReactNativeMock({
+    PixelRatio: { get: () => 3 },
+  }),
+);
 
 // ─── @expo/vector-icons ──────────────────────────────────────────────────────
 

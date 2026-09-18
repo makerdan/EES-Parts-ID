@@ -1,6 +1,7 @@
 /**
  * Integration tests for the reference routes:
  *  - POST /api/reference/ask (SSE streaming and JSON mode)
+ *  - GET  /api/reference/ask-log (admin-only recent Q&A log)
  *  - GET  /api/reference/quick-lookups
  *  - GET  /api/reference/quick-lookups/:label
  *  - POST /api/reference/quick-lookups/:label (AI fallback + DB write-back)
@@ -73,10 +74,45 @@ import supertest from "supertest";
 import app from "../src/app";
 import { db } from "@workspace/db";
 import { quickLookupCacheTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
-import { sql } from "drizzle-orm";
+import { referenceLogTable } from "@workspace/db";
+import { usersTable } from "@workspace/db";
+import { eq, inArray, sql } from "drizzle-orm";
+import { workerQualifiedUserId } from "./helpers/testDb";
+import { setTestEnv } from "./helpers/testEnv";
 
-const TEST_LABEL = "JEST-REF-TEST-LABEL";
+const TEST_LABEL = workerQualifiedUserId("JEST-REF-TEST-LABEL");
+const ASK_LOG_QUESTION = workerQualifiedUserId("JEST-REF-ASK-LOG-QUESTION");
+const ASK_LOG_SECOND_QUESTION = workerQualifiedUserId("JEST-REF-ASK-LOG-SECOND-QUESTION");
+const MALFORMED_ASK_LOG_QUESTION = workerQualifiedUserId("JEST-REF-MALFORMED-QUESTION");
+const SEARCH_BENCHMARK_PREFIX = workerQualifiedUserId("JEST-REF-SEARCH-BENCHMARK");
+const SEARCH_BENCHMARK_QUESTION_TERM = "JEST-QUESTION-TARGET";
+const SEARCH_BENCHMARK_ANSWER_TERM = "JEST-ANSWER-TARGET";
+const SEARCH_BENCHMARK_ROW_COUNT = 10_000;
+const SEARCH_LATENCY_TARGET_MS = 1_000;
+const UNKNOWN_USER = workerQualifiedUserId("jest-reference-ask-log-unknown-user");
+const NON_ADMIN_ASK_LOG_USER = workerQualifiedUserId(
+  "jest-reference-ask-log-nonadmin",
+);
+const REFERENCE_ADMIN_USER = workerQualifiedUserId("jest-reference-admin");
+let restoreTestEnv: (() => void) | undefined;
+
+const ADMIN_ONLY_REFERENCE_ENDPOINTS = [
+  {
+    name: "GET /api/reference/ask-log",
+    request: () => supertest(app).get("/api/reference/ask-log"),
+  },
+  {
+    name: "POST /api/reference/quick-lookups/:label",
+    request: () =>
+      supertest(app)
+        .post(`/api/reference/quick-lookups/${TEST_LABEL}`)
+        .send({ question: "What is this?" }),
+  },
+  {
+    name: "GET /api/reference/help/admin",
+    request: () => supertest(app).get("/api/reference/help/admin"),
+  },
+] as const;
 
 /**
  * Reconstruct the full answer text from an SSE response body by concatenating
@@ -108,16 +144,32 @@ async function cleanupTestLabel() {
 }
 
 beforeAll(async () => {
-  process.env.ADMIN_CLERK_USER_ID = "jest-admin-user";
-  process.env.TEST_DEFAULT_AUTH_USER = "jest-admin-user";
+  restoreTestEnv = setTestEnv({
+    ADMIN_CLERK_USER_ID: REFERENCE_ADMIN_USER,
+    TEST_DEFAULT_AUTH_USER: REFERENCE_ADMIN_USER,
+  });
+  await db
+    .insert(usersTable)
+    .values({
+      clerkUserId: NON_ADMIN_ASK_LOG_USER,
+      email: `${NON_ADMIN_ASK_LOG_USER}@test.example`,
+      status: "approved",
+      role: "user",
+    })
+    .onConflictDoUpdate({
+      target: usersTable.clerkUserId,
+      set: { status: "approved", role: "user" },
+    });
   await ensureQuickLookupTable();
   await cleanupTestLabel();
 });
 
 afterAll(async () => {
-  delete process.env.TEST_DEFAULT_AUTH_USER;
-  delete process.env.ADMIN_CLERK_USER_ID;
+  restoreTestEnv?.();
   await cleanupTestLabel();
+  await db
+    .delete(usersTable)
+    .where(eq(usersTable.clerkUserId, NON_ADMIN_ASK_LOG_USER));
 });
 
 beforeEach(() => {
@@ -221,7 +273,7 @@ function firstSystemInstruction(): string {
 }
 
 describe("POST /api/reference/ask — admin knowledge scoping", () => {
-  const NON_ADMIN_USER = "jest-nonadmin-user";
+  const NON_ADMIN_USER = workerQualifiedUserId("jest-reference-nonadmin-user");
 
   beforeAll(async () => {
     // Seed an approved, non-admin user so requests authenticated as this user
@@ -239,7 +291,7 @@ describe("POST /api/reference/ask — admin knowledge scoping", () => {
   });
 
   it("admin request: system prompt INCLUDES admin-only knowledge", async () => {
-    // Default auth user (jest-admin-user) is the bootstrap admin.
+    // The scoped default auth user is this suite's bootstrap admin.
     mockGenerateContent.mockResolvedValueOnce({ text: "Answer." });
 
     await supertest(app)
@@ -275,6 +327,248 @@ describe("POST /api/reference/ask — admin knowledge scoping", () => {
     expect(prompt).not.toContain("Measure tab (admin only");
     expect(prompt).not.toContain("SQL console");
   });
+});
+
+// ── GET /api/reference/ask-log — admin-only recent Q&A log ────────────────────
+
+describe("GET /api/reference/ask-log", () => {
+  beforeAll(async () => {
+    await db
+      .insert(referenceLogTable)
+      .values([
+        {
+          question: ASK_LOG_QUESTION,
+          answer: "Jest reference answer",
+          matchedItemCount: 1,
+        },
+        {
+          question: ASK_LOG_SECOND_QUESTION,
+          answer: "Second Jest reference answer",
+          matchedItemCount: 2,
+        },
+      ]);
+  });
+
+  afterAll(async () => {
+    for (const question of [ASK_LOG_QUESTION, ASK_LOG_SECOND_QUESTION, MALFORMED_ASK_LOG_QUESTION]) {
+      await db.delete(referenceLogTable).where(eq(referenceLogTable.question, question));
+    }
+    await db
+      .delete(usersTable)
+      .where(eq(usersTable.clerkUserId, UNKNOWN_USER));
+  });
+
+  it("rejects requests without an authenticated session", async () => {
+    const restoreAuth = setTestEnv({ TEST_DEFAULT_AUTH_USER: undefined });
+
+    try {
+      const res = await supertest(app).get("/api/reference/ask-log").expect(401);
+      expect(res.body).toEqual({ error: "Authentication required" });
+    } finally {
+      restoreAuth();
+    }
+  });
+
+  it("rejects an unknown identity without returning log rows", async () => {
+    const unknownRes = await supertest(app)
+      .get("/api/reference/ask-log")
+      .set("Authorization", `Bearer ${UNKNOWN_USER}`)
+      .expect(403);
+
+    expect(unknownRes.body).not.toHaveProperty("rows");
+    expect(unknownRes.body).not.toHaveProperty(ASK_LOG_QUESTION);
+  });
+
+  it("rejects an approved non-admin without returning log rows", async () => {
+    const nonAdminRes = await supertest(app)
+      .get("/api/reference/ask-log")
+      .set("Authorization", `Bearer ${NON_ADMIN_ASK_LOG_USER}`)
+      .expect(403);
+
+    expect(nonAdminRes.body).toEqual({ error: "Admin access required" });
+  });
+
+  it("returns recent log rows to an authorized administrator", async () => {
+    const res = await supertest(app)
+      .get("/api/reference/ask-log")
+      .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+      .expect(200);
+
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        page: 1,
+        limit: 100,
+        total: expect.any(Number),
+        hasMore: expect.any(Boolean),
+        rows: expect.arrayContaining([
+        expect.objectContaining({
+          question: ASK_LOG_QUESTION,
+          answer: "Jest reference answer",
+          matchedItemCount: 1,
+        }),
+        ]),
+      }),
+    );
+  });
+
+  it("searches on the server and paginates beyond the default latest window", async () => {
+    const searchRes = await supertest(app)
+      .get(`/api/reference/ask-log?search=${encodeURIComponent("SECOND-QUESTION")}&limit=1&page=1`)
+      .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+      .expect(200);
+
+    expect(searchRes.body).toEqual({
+      rows: [
+        expect.objectContaining({
+          question: ASK_LOG_SECOND_QUESTION,
+          answer: "Second Jest reference answer",
+        }),
+      ],
+      page: 1,
+      limit: 1,
+      total: 1,
+      hasMore: false,
+    });
+
+    const pageRes = await supertest(app)
+      .get("/api/reference/ask-log?limit=1&page=2")
+      .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+      .expect(200);
+
+    expect(pageRes.body.page).toBe(2);
+    expect(pageRes.body.limit).toBe(1);
+    expect(pageRes.body.rows).toHaveLength(1);
+    expect(pageRes.body.total).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps question and answer searches responsive across representative retained history", async () => {
+    const benchmarkRows = Array.from({ length: SEARCH_BENCHMARK_ROW_COUNT }, (_, index) => ({
+      question:
+        index === 4_321
+          ? `${SEARCH_BENCHMARK_PREFIX}-${index} ${SEARCH_BENCHMARK_QUESTION_TERM}`
+          : `${SEARCH_BENCHMARK_PREFIX}-${index} question`,
+      answer:
+        index === 7_654
+          ? `${SEARCH_BENCHMARK_PREFIX}-${index} ${SEARCH_BENCHMARK_ANSWER_TERM}`
+          : `${SEARCH_BENCHMARK_PREFIX}-${index} answer`,
+      matchedItemCount: index % 4,
+    }));
+    const insertedRows = await db.insert(referenceLogTable).values(benchmarkRows).returning({ id: referenceLogTable.id });
+
+    try {
+      const questionStart = performance.now();
+      const questionResponse = await supertest(app)
+        .get(`/api/reference/ask-log?search=${SEARCH_BENCHMARK_QUESTION_TERM}&limit=1`)
+        .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+        .expect(200);
+      const questionElapsed = performance.now() - questionStart;
+
+      const answerStart = performance.now();
+      const answerResponse = await supertest(app)
+        .get(`/api/reference/ask-log?search=${SEARCH_BENCHMARK_ANSWER_TERM}&limit=1`)
+        .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+        .expect(200);
+      const answerElapsed = performance.now() - answerStart;
+
+      expect(questionResponse.body.total).toBe(1);
+      expect(questionResponse.body.rows).toHaveLength(1);
+      expect(questionResponse.body.rows[0].question).toContain(SEARCH_BENCHMARK_QUESTION_TERM);
+      expect(answerResponse.body.total).toBe(1);
+      expect(answerResponse.body.rows).toHaveLength(1);
+      expect(answerResponse.body.rows[0].answer).toContain(SEARCH_BENCHMARK_ANSWER_TERM);
+      expect(questionElapsed).toBeLessThan(SEARCH_LATENCY_TARGET_MS);
+      expect(answerElapsed).toBeLessThan(SEARCH_LATENCY_TARGET_MS);
+
+      const explainResult = await db.transaction(async (tx) => {
+        // A small test database may prefer a sequential scan on cost alone.
+        // Force the planner to consider the indexes so this check verifies
+        // that both trigram indexes remain available for the route predicate.
+        await tx.execute(sql`SET LOCAL enable_seqscan = off`);
+        return tx.execute(sql`
+          EXPLAIN (FORMAT TEXT)
+          SELECT ${referenceLogTable.id}
+          FROM ${referenceLogTable}
+          WHERE ${referenceLogTable.question} ILIKE ${`%${SEARCH_BENCHMARK_QUESTION_TERM}%`}
+             OR ${referenceLogTable.answer} ILIKE ${`%${SEARCH_BENCHMARK_ANSWER_TERM}%`}
+        `);
+      });
+      const planText = explainResult.rows
+        .map((row) => String((row as Record<string, unknown>)["QUERY PLAN"] ?? ""))
+        .join("\n");
+
+      expect(planText).toMatch(
+        /(?:Bitmap Index Scan on|Index Scan using)\s+reference_log_question_trgm_idx\b/,
+      );
+      expect(planText).toMatch(
+        /(?:Bitmap Index Scan on|Index Scan using)\s+reference_log_answer_trgm_idx\b/,
+      );
+    } finally {
+      await db.delete(referenceLogTable).where(
+        inArray(
+          referenceLogTable.id,
+          insertedRows.map((row) => row.id),
+        ),
+      );
+    }
+  });
+
+  it.each([
+    "limit=101",
+    "page=21",
+    "page=not-a-number",
+    `search=${"x".repeat(201)}`,
+  ])("rejects an unbounded or invalid query: %s", async (query) => {
+    await supertest(app)
+      .get(`/api/reference/ask-log?${query}`)
+      .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+      .expect(400);
+  });
+
+  it("returns a safe error instead of malformed row contents", async () => {
+    await db.insert(referenceLogTable).values({
+      question: MALFORMED_ASK_LOG_QUESTION,
+      answer: "This answer must not reach the client",
+      matchedItemCount: -1,
+    });
+
+    const res = await supertest(app)
+      .get("/api/reference/ask-log")
+      .set("Authorization", `Bearer ${REFERENCE_ADMIN_USER}`)
+      .expect(500);
+
+    expect(res.body).toEqual({ error: "AI log contains invalid data" });
+    expect(JSON.stringify(res.body)).not.toContain(MALFORMED_ASK_LOG_QUESTION);
+    expect(JSON.stringify(res.body)).not.toContain("This answer must not reach the client");
+  });
+});
+
+// ── Admin-only reference endpoint authorization contract ─────────────────────
+
+describe("Admin-only reference endpoints", () => {
+  it.each(ADMIN_ONLY_REFERENCE_ENDPOINTS)(
+    "$name rejects an anonymous request",
+    async ({ request }) => {
+      const restoreAuth = setTestEnv({ TEST_DEFAULT_AUTH_USER: undefined });
+
+      try {
+        const res = await request().expect(401);
+        expect(res.body).toEqual({ error: "Authentication required" });
+      } finally {
+        restoreAuth();
+      }
+    },
+  );
+
+  it.each(ADMIN_ONLY_REFERENCE_ENDPOINTS)(
+    "$name rejects an approved non-admin",
+    async ({ request }) => {
+      const res = await request()
+        .set("Authorization", `Bearer ${NON_ADMIN_ASK_LOG_USER}`)
+        .expect(403);
+
+      expect(res.body).toEqual({ error: "Admin access required" });
+    },
+  );
 });
 
 // ── GET /api/reference/quick-lookups ──────────────────────────────────────────

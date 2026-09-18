@@ -262,6 +262,15 @@ function findApiPill(root: RenderResult["root"]) {
   )[0] ?? null;
 }
 
+function findPressableByText(root: RenderResult["root"], text: string) {
+  return root!.queryAll(
+    (node) =>
+      (node.type as string) === "rn-pressable" &&
+      instText(node).includes(text),
+    { includeSelf: true },
+  )[0] ?? null;
+}
+
 function latestRestartAlert(): AlertButton[] {
   const call = [...mockAlert.mock.calls]
     .reverse()
@@ -369,11 +378,124 @@ describe("UploadScreen — admin API restart workflow", () => {
     });
     await flushPromises();
 
-    expect(instText(tree!.root)).toContain("● API: ok");
-    expect(mockAlert).toHaveBeenCalledWith(
+    expect(instText(tree!.root)).toContain("● API: healthy");
+    expect(instText(tree!.root)).toContain("API server recovered");
+    expect(instText(tree!.root)).toContain("Dismiss");
+    expect(mockAlert).not.toHaveBeenCalledWith(
       "API server recovered",
       "The API server is back online.",
     );
+  });
+
+  it("keeps an accepted restart failure visible and offers a safe retry", async () => {
+    jest.useFakeTimers();
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/admin/restart")) {
+        return Promise.resolve(response({ restarting: true }, 202));
+      }
+      return Promise.reject(new Error("server still offline"));
+    });
+
+    const tree = await renderUpload();
+    await act(async () => {
+      findApiPill(tree!.root)!.props.onLongPress();
+    });
+    const buttons = latestRestartAlert();
+    await act(async () => {
+      buttons.find((button) => button.text === "Restart")?.onPress?.();
+    });
+    await flushPromises();
+
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await act(async () => {
+        jest.advanceTimersByTime(1_500);
+      });
+      await flushPromises();
+    }
+
+    const visibleText = instText(tree!.root);
+    expect(visibleText).toContain("API server did not recover");
+    expect(visibleText).toContain("accepted");
+    expect(visibleText).toContain("Try again");
+    expect(visibleText).not.toContain("API server recovered");
+    expect(mockAlert).not.toHaveBeenCalledWith(
+      "API server recovered",
+      "The API server is back online.",
+    );
+  });
+
+  it("retries a rejected restart only after a new confirmation", async () => {
+    jest.useFakeTimers();
+    let restartCalls = 0;
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/admin/restart")) {
+        restartCalls++;
+        return Promise.resolve(
+          restartCalls === 1
+            ? response({ message: "not allowed" }, 409)
+            : response({ restarting: true }, 202),
+        );
+      }
+      return Promise.resolve(defaultFetchResponse(url));
+    });
+
+    const tree = await renderUpload();
+    await act(async () => {
+      findApiPill(tree!.root)!.props.onLongPress();
+    });
+    let buttons = latestRestartAlert();
+    await act(async () => {
+      buttons.find((button) => button.text === "Restart")?.onPress?.();
+    });
+    await flushPromises();
+    expect(instText(tree!.root)).toContain("Restart was not accepted");
+    expect(instText(tree!.root)).toContain("Try again");
+
+    await act(async () => {
+      findPressableByText(tree!.root, "Try again")!.props.onPress();
+    });
+    buttons = latestRestartAlert();
+    await act(async () => {
+      buttons.find((button) => button.text === "Restart")?.onPress?.();
+    });
+    await flushPromises();
+    expect(restartCalls).toBe(2);
+    expect(instText(tree!.root)).toContain("Restarting");
+  });
+
+  it("marks a failed bot probe as an error instead of leaving a stale success", async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/admin/ai-status/probe/")) return Promise.resolve(response({}, 503));
+      if (url.endsWith("/admin/restart")) return Promise.resolve(response({ restarting: true }, 202));
+      if (url.endsWith("/healthz")) return Promise.resolve(response({ status: "ok", bots: { poe: "ok" } }));
+      return Promise.resolve(defaultFetchResponse(url));
+    });
+
+    jest.useFakeTimers();
+    const tree = await renderUpload();
+    await act(async () => {
+      findApiPill(tree!.root)!.props.onLongPress();
+    });
+    const buttons = latestRestartAlert();
+    await act(async () => {
+      buttons.find((button) => button.text === "Restart")?.onPress?.();
+    });
+    await flushPromises();
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+    await flushPromises();
+    const botButton = findPressableByText(tree!.root, "poe");
+    expect(botButton).not.toBeNull();
+    await act(async () => {
+      botButton!.props.onPress();
+    });
+    await flushPromises();
+
+    expect(botButton!.props.accessibilityLabel).toContain("poe: error");
   });
 
   it("does not render the restart control or request restart for a non-admin", async () => {

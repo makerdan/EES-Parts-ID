@@ -24,6 +24,7 @@ jest.mock("../lib/aiProvider", () => ({
 
 jest.mock("../middlewares/requireAdminAuth", () => ({
   requireAdminAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
+  requireApprovedAdminAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 import express, { type NextFunction, type Request, type Response } from "express";

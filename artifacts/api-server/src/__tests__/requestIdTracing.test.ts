@@ -49,7 +49,7 @@ jest.mock("@workspace/db", () => ({
     transaction: jest.fn(),
     delete: jest.fn(),
   },
-  pool: { connect: jest.fn() },
+  pool: { connect: jest.fn(), idleCount: 0, totalCount: 0 },
   inventoryTable: {},
   usersTable: {},
   misspellingMapTable: {},
@@ -74,8 +74,10 @@ const mockGetProbeSummary = jest.fn(() => ({}));
 
 jest.mock("../lib/aiProvider", () => ({
   getProbeSummary: mockGetProbeSummary,
+  getProbeVerificationSummary: jest.fn(() => ({})),
+  getLastProbeOperation: jest.fn(() => null),
   getAllPoeModelNames: jest.fn(() => []),
-  probePoeBotsOnStartup: jest.fn().mockResolvedValue(undefined),
+  probeActivePoeModels: jest.fn().mockResolvedValue(undefined),
   probeSinglePoeBot: jest.fn().mockResolvedValue(undefined),
   getEnrichModel: jest.fn().mockReturnValue("test-model"),
   getOpenAIFallbackClient: jest.fn(),
@@ -85,15 +87,27 @@ jest.mock("../lib/aiProvider", () => ({
   setProvider: jest.fn(),
   callPoeBotWithChain: jest.fn(),
   tryPoeBotChain: jest.fn(),
-  PoeBotChainExhaustedError: class PoeBotChainExhaustedError extends Error {},
   MAX_IMAGE_BYTES_CLAUDE_SONNET: 1_048_576,
   MAX_IMAGE_BYTES_GPT5_1: 1_048_576,
 }));
 
+// /healthz is a readiness check, not a liveness-only probe. Keep its dependency
+// state explicit so these middleware assertions do not depend on app startup
+// or the test database's schema state.
+jest.mock("../lib/readiness", () => ({
+  appReadiness: {
+    get: jest.fn(() => ({ status: "ready" })),
+  },
+  checkRequiredSchema: jest.fn().mockResolvedValue(true),
+}));
+
 // ── Peripheral mocks so app.ts (all route modules) can be imported ────────────
-jest.mock("openai", () => jest.fn().mockImplementation(() => ({
-  chat: { completions: { create: jest.fn() } },
-})));
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "../../__tests__/helpers/openaiMock",
+  ) as typeof import("../../__tests__/helpers/openaiMock");
+  return createOpenAIMock(jest);
+});
 
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
   openai: {

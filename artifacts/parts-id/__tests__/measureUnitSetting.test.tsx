@@ -87,34 +87,17 @@ jest.mock("../utils/storageErrorReporter", () => ({
   setStorageErrorHandler: jest.fn(),
 }));
 
-jest.mock("react-native", () => ({
-  Appearance: { setColorScheme: jest.fn() },
-  Platform: { OS: "ios", select: (o: Record<string, unknown>) => o.ios ?? o.default },
-  StyleSheet: {
-    create: (s: unknown) => s,
-    absoluteFill: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
-  },
-  Text: "Text",
-  View: "View",
-  useColorScheme: jest.fn(() => "light"),
-  Modal: function Modal({ children, visible }: { children: unknown; visible: boolean }) {
-    if (!visible) return null;
-    const React = require("react");
-    return React.createElement("rn-modal", {}, children);
-  },
-  Pressable: "Pressable",
-  Alert: { alert: jest.fn() },
-  AppState: { currentState: "active", addEventListener: jest.fn(() => ({ remove: jest.fn() })) },
-  Animated: {
-    Value: class { constructor(_v: number) {} setValue() {} interpolate() { return this; } },
-    View: "Animated.View",
-    loop: () => ({ start: jest.fn(), stop: jest.fn() }),
-    sequence: () => ({ start: jest.fn(), stop: jest.fn() }),
-    timing: () => ({ start: jest.fn(), stop: jest.fn() }),
-  },
-  SafeAreaView: "SafeAreaView",
-  TextInput: "TextInput",
-}));
+jest.mock("react-native", () => {
+  const helpers = require("./helpers/mapMocks");
+  const rn = helpers.createReactNativeMock();
+  return helpers.createReactNativeMock({
+    Appearance: {
+      ...(rn.Appearance as Record<string, unknown>),
+      setColorScheme: jest.fn(),
+    },
+    useColorScheme: jest.fn(() => "light"),
+  });
+});
 
 // ── Imports (after mocks) ─────────────────────────────────────────────────────
 

@@ -12,38 +12,12 @@
  */
 
 // ── OpenAI constructor mock (loaded transitively by ai routes at module init) ─
-const mockCompletionsCreate = jest.fn().mockResolvedValue({
-  id: "chatcmpl-mock",
-  choices: [{ message: { role: "assistant", content: "hi" } }],
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "../../__tests__/helpers/openaiMock",
+  ) as typeof import("../../__tests__/helpers/openaiMock");
+  return createOpenAIMock(jest);
 });
-
-class MockRateLimitError extends Error {}
-class MockInternalServerError extends Error {}
-class MockAPIConnectionError extends Error {}
-class MockAPIConnectionTimeoutError extends Error {}
-class MockAuthenticationError extends Error {}
-class MockPermissionDeniedError extends Error {}
-
-const mockOpenAIConstructor = jest
-  .fn()
-  .mockImplementation(() => ({
-    chat: { completions: { create: mockCompletionsCreate } },
-  }));
-
-(mockOpenAIConstructor as unknown as Record<string, unknown>).RateLimitError =
-  MockRateLimitError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).InternalServerError =
-  MockInternalServerError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).APIConnectionError =
-  MockAPIConnectionError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).APIConnectionTimeoutError =
-  MockAPIConnectionTimeoutError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).AuthenticationError =
-  MockAuthenticationError;
-(mockOpenAIConstructor as unknown as Record<string, unknown>).PermissionDeniedError =
-  MockPermissionDeniedError;
-
-jest.mock("openai", () => mockOpenAIConstructor);
 
 // ── Standard workspace mocks ──────────────────────────────────────────────────
 jest.mock("@workspace/integrations-openai-ai-server", () => ({

@@ -39,7 +39,16 @@ import {
   screenToSvg,
 } from "../utils/svgCoords";
 import { useRubberBand } from "../hooks/useRubberBand";
-import { isValidAisleId, findDuplicateConflict, normalizeAisleId } from "@workspace/zone-validation";
+import {
+  computeAnchorTransform,
+  inverseAnchorPoint,
+  isValidAisleId,
+  findDuplicateConflict,
+  matrixToSvgString,
+  normalizeAisleId,
+  normalizeAnchorPoints,
+  type AffineMatrix,
+} from "@workspace/zone-validation";
 import warehouseMapFallback from "../../public/warehouse-map.svg?raw";
 
 // Strip the outer <svg> wrapper so the inner content can be embedded directly
@@ -240,6 +249,7 @@ interface Zone {
 
 interface Tf { x: number; y: number; s: number }
 interface Pt { x: number; y: number }
+interface RectShape { x: number; y: number; w: number; h: number }
 type Handle = "nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w";
 type Mode = "pan" | "draw" | "fill";
 
@@ -572,6 +582,28 @@ function readDraft(id: number): { form: FormState; savedAt: number } | null {
   } catch { return null; }
 }
 
+function inverseMapRect(rect: RectShape, matrix: AffineMatrix | null): RectShape {
+  if (!matrix) return rect;
+  const points = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y },
+    { x: rect.x, y: rect.y + rect.h },
+    { x: rect.x + rect.w, y: rect.y + rect.h },
+  ].map((point) => inverseAnchorPoint(matrix, point));
+  if (points.some((point) => point === null)) return rect;
+  const valid = points as Pt[];
+  const xs = valid.map((point) => point.x);
+  const ys = valid.map((point) => point.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return {
+    x,
+    y,
+    w: Math.max(...xs) - x,
+    h: Math.max(...ys) - y,
+  };
+}
+
 // ── Undo / Redo singletons (module-level so they survive panel navigation) ────
 // These intentionally live outside React: they persist as long as the JS module
 // is loaded (i.e. the whole browser tab session) and are wiped on full reload.
@@ -590,6 +622,9 @@ export function ZoneEditor() {
   const [svgInner, setSvgInner] = useState<string>(svgFallbackInner);
   // Natural coordinate dimensions of the floor plan SVG (for rasterizer mapping).
   const [svgDims, setSvgDims] = useState<{ w: number; h: number }>(svgFallbackDims);
+  // Stored/world zone coordinates are rendered through this matrix into the
+  // floor-plan SVG coordinate space. Null is the safe identity fallback.
+  const [anchorMatrix, setAnchorMatrix] = useState<AffineMatrix | null>(null);
   const [tf, setTf] = useState<Tf>({ x: 0, y: 0, s: INITIAL_SCALE });
   const [mode, setMode] = useState<Mode>("pan");
   // Grid preferences are opt-in and local to this browser. They never enter
@@ -787,6 +822,8 @@ export function ZoneEditor() {
   const selectedIdsRef = useRef(selectedIds);
   const svgInnerRef = useRef(svgInner);
   const svgDimsRef = useRef(svgDims);
+  const floorPlanRequestRef = useRef(0);
+  const anchorMatrixRef = useRef<AffineMatrix | null>(anchorMatrix);
   const fillLoadingRef = useRef(false);
   const fillSensitivityRef = useRef(fillSensitivity);
   const snapEnabledRef = useRef(snapEnabled);
@@ -796,6 +833,8 @@ export function ZoneEditor() {
   const multiDragReferenceIdRef = useRef<number | null>(null);
   const aliveRef = useRef(true);
   const fetchAbortRef = useRef<AbortController | null>(null);
+  const anchorAbortRef = useRef<AbortController | null>(null);
+  const anchorFetchIdRef = useRef(0);
   const saveAbortRef = useRef<AbortController | null>(null);
   const dragAbortRef = useRef<AbortController | null>(null);
   const fillAbortRef = useRef<AbortController | null>(null);
@@ -814,6 +853,7 @@ export function ZoneEditor() {
   useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   useEffect(() => { svgInnerRef.current = svgInner; }, [svgInner]);
   useEffect(() => { svgDimsRef.current = svgDims; }, [svgDims]);
+  useEffect(() => { anchorMatrixRef.current = anchorMatrix; }, [anchorMatrix]);
   useEffect(() => { fillLoadingRef.current = fillLoading; }, [fillLoading]);
   useEffect(() => { snapEnabledRef.current = snapEnabled; }, [snapEnabled]);
   useEffect(() => { gridSpacingRef.current = gridSpacing; }, [gridSpacing]);
@@ -854,26 +894,38 @@ export function ZoneEditor() {
   // shown when both attempts fail or the env has no fallback configured.
   useEffect(() => {
     const controller = new AbortController();
+    const requestId = ++floorPlanRequestRef.current;
+    const isCurrent = () =>
+      aliveRef.current &&
+      floorPlanRequestRef.current === requestId &&
+      !controller.signal.aborted;
     void (async () => {
       const fallback = (import.meta.env.VITE_FLOOR_PLAN_API_FALLBACK as string | undefined)?.replace(/\/$/, "");
       const urls = [`${API_BASE}/floor-plan/svg`];
       if (fallback && fallback !== API_BASE) urls.push(`${fallback}/floor-plan/svg`);
       for (const url of urls) {
+        if (!isCurrent()) return;
         try {
           const res = await fetch(url, { signal: controller.signal });
           if (res.ok) {
             const raw = await res.text();
-            if (!aliveRef.current || controller.signal.aborted) return;
+            if (!isCurrent()) return;
             setSvgInner(extractSvgInner(raw));
             setSvgDims(extractSvgDims(raw));
             // Invalidate the raster cache whenever the floor plan changes.
             _rasterCache = null;
             return;
           }
-        } catch (err) { if (!isAbortError(err)) { /* fallback is best effort */ } }
+        } catch (err) {
+          if (isAbortError(err) || !isCurrent()) return;
+          /* fallback is best effort */
+        }
       }
     })();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      floorPlanRequestRef.current += 1;
+    };
   }, []);
 
   // Inject the floor plan SVG directly into the SVG DOM so it shares the same
@@ -971,8 +1023,45 @@ export function ZoneEditor() {
     [],
   );
 
+  const fetchAnchorTransform = useCallback(() => {
+    const controller = new AbortController();
+    const requestId = ++anchorFetchIdRef.current;
+    anchorAbortRef.current?.abort();
+    anchorAbortRef.current = controller;
+
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/warehouse-zones/anchors`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { anchors?: unknown };
+        if (
+          !aliveRef.current ||
+          controller.signal.aborted ||
+          requestId !== anchorFetchIdRef.current
+        ) return;
+        const matrix = computeAnchorTransform(normalizeAnchorPoints(data.anchors));
+        anchorMatrixRef.current = matrix;
+        setAnchorMatrix(matrix);
+      } catch (err) {
+        if (
+          isAbortError(err) ||
+          !aliveRef.current ||
+          controller.signal.aborted ||
+          requestId !== anchorFetchIdRef.current
+        ) return;
+        // Calibration is best-effort. A failed, incomplete, or malformed
+        // response must never prevent the zone list from loading.
+        anchorMatrixRef.current = null;
+        setAnchorMatrix(null);
+      }
+    })();
+  }, []);
+
   const fetchZones = useCallback(async () => {
     if (!aliveRef.current) return;
+    fetchAnchorTransform();
     // Stamp this request so stale responses can be detected and discarded.
     const myId = ++fetchIdRef.current;
     fetchAbortRef.current?.abort();
@@ -1004,7 +1093,7 @@ export function ZoneEditor() {
     } finally {
       if (aliveRef.current && !controller.signal.aborted && myId === fetchIdRef.current) setLoading(false);
     }
-  }, []);
+  }, [fetchAnchorTransform]);
 
   useEffect(() => { void fetchZones(); }, [fetchZones]);
 
@@ -1863,6 +1952,7 @@ export function ZoneEditor() {
     return () => {
       aliveRef.current = false;
       fetchAbortRef.current?.abort();
+      anchorAbortRef.current?.abort();
       saveAbortRef.current?.abort();
       dragAbortRef.current?.abort();
       fillAbortRef.current?.abort();
@@ -1978,29 +2068,42 @@ export function ZoneEditor() {
   }, []);
 
   // ── SVG coordinate utility ──────────────────────────────────────────────────
-  // Returns a point in raw SVG space (svgX/svgY space used by all stored zone
-  // coordinates).  Inverts only the outer pan/zoom transform (tf); zones are
-  // rendered directly in that space with no extra alignment offset.
+  // Returns a point in floor-plan SVG space. This is intentionally separate
+  // from getZonePt because floor-fill rasterization and the embedded floor plan
+  // operate in this coordinate space.
   const getSvgPt = useCallback((clientX: number, clientY: number): Pt => {
     if (!svgRef.current) return { x: 0, y: 0 };
     const rect = svgRef.current.getBoundingClientRect();
     return screenToSvg(clientX, clientY, rect, tfRef.current);
   }, []);
 
+  // Convert a floor-plan pointer into the stored/world coordinate space used
+  // by the zone API. Invalid calibration safely behaves as identity.
+  const getZonePt = useCallback((clientX: number, clientY: number): Pt => {
+    const svgPoint = getSvgPt(clientX, clientY);
+    return inverseAnchorPoint(anchorMatrixRef.current, svgPoint) ?? svgPoint;
+  }, [getSvgPt]);
+
+  const floorPlanRectToZoneRect = useCallback(
+    (rect: RectShape): RectShape => inverseMapRect(rect, anchorMatrixRef.current),
+    [],
+  );
+
   const handlePlaceStandardRect = useCallback(() => {
     if (!aliveRef.current) return;
-    const rect = placeStandardRect(
+    const floorPlanRect = placeStandardRect(
       svgDimsRef.current,
       { w: standardWidth, h: standardHeight },
       { snap: snapEnabledRef.current, spacing: gridSpacingRef.current },
     );
+    const rect = floorPlanRectToZoneRect(floorPlanRect);
     setMode("draw");
     setSelectedIds(new Set());
     setSelectionOrder([]);
     setDraftRect(null);
     setPendingRect(rect);
     setForm({ aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0 });
-  }, [setForm, standardHeight, standardWidth]);
+  }, [floorPlanRectToZoneRect, setForm, standardHeight, standardWidth]);
 
   const handleZoneContextMenu = (e: React.MouseEvent, zone: Zone) => {
     e.preventDefault();
@@ -2018,7 +2121,7 @@ export function ZoneEditor() {
   const { rubberRect, onSvgMouseDown: onRubberMouseDown } = useRubberBand({
     zonesRef,
     tfRef,
-    getSvgPt,
+    getSvgPt: getZonePt,
     selectedIds,
     setSelectedIds,
     setPendingRect,
@@ -2082,7 +2185,7 @@ export function ZoneEditor() {
         return;
       }
 
-      // Convert pixel bounding box to zone coordinate space (raw svgX/svgY).
+      // Convert pixel bounding box to floor-plan SVG user units first.
       // Step 1: pixel → SVG user units
       const scaleX = dims.w / cw;
       const scaleY = dims.h / ch;
@@ -2092,17 +2195,13 @@ export function ZoneEditor() {
         w: bounds.w * scaleX,
         h: bounds.h * scaleY,
       };
-      // Step 2: SVG user units are already zone coords (no alignment offset).
-      const rect = {
-        x: svgRect.x,
-        y: svgRect.y,
-        w: svgRect.w,
-        h: svgRect.h,
-      };
+      // Keep the flash in floor-plan space, but convert the pending zone back
+      // to stored/world space before it reaches the editor form and API.
+      const rect = floorPlanRectToZoneRect(svgRect);
 
       // Flash the detected rectangle as a fillFlashRect (~300 ms) for visual feedback.
       if (!aliveRef.current || fillController.signal.aborted) return;
-      setFillFlashRect(rect);
+      setFillFlashRect(svgRect);
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(resolve, 300);
         fillController.signal.addEventListener("abort", () => {
@@ -2130,7 +2229,7 @@ export function ZoneEditor() {
       fillLoadingRef.current = false;
       if (aliveRef.current) setFillLoading(false);
     }
-  }, [setForm]);
+  }, [floorPlanRectToZoneRect, setForm]);
 
   // Keep the ref in sync so onSvgMouseDown always calls the latest version.
   useEffect(() => { handleFillClickRef.current = handleFillClick; }, [handleFillClick]);
@@ -2152,7 +2251,7 @@ export function ZoneEditor() {
         return;
       }
 
-      const p = getSvgPt(e.clientX, e.clientY);
+      const p = getZonePt(e.clientX, e.clientY);
 
       if (state.t === "draw") {
         ixRef.current = { ...state, x2: p.x, y2: p.y };
@@ -2368,7 +2467,8 @@ export function ZoneEditor() {
         let currentDelta = (() => {
           if (!svgRef.current) return null;
           const rect = svgRef.current.getBoundingClientRect();
-          const p = screenToSvg(e.clientX, e.clientY, rect, tfRef.current);
+          const svgPoint = screenToSvg(e.clientX, e.clientY, rect, tfRef.current);
+          const p = inverseAnchorPoint(anchorMatrixRef.current, svgPoint) ?? svgPoint;
           return { x: p.x - state.startX, y: p.y - state.startY };
         })();
         if (currentDelta && snapEnabledRef.current) {
@@ -2445,7 +2545,7 @@ export function ZoneEditor() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp as EventListener);
     };
-  }, [fetchZones, getSvgPt, patchZone, pushUndo, setForm]);
+  }, [fetchZones, getZonePt, patchZone, pushUndo, setForm]);
 
   // ── React event handlers (attached to SVG element) ──────────────────────────
   const onSvgMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -2469,7 +2569,7 @@ export function ZoneEditor() {
       // any previously drawn pending rect visible.
       ixRef.current = { t: "fillPending", sx: e.clientX, sy: e.clientY };
     } else {
-      const p = getSvgPt(e.clientX, e.clientY);
+      const p = getZonePt(e.clientX, e.clientY);
       ixRef.current = { t: "draw", x1: p.x, y1: p.y, x2: p.x, y2: p.y };
       setDraftRect({ x: p.x, y: p.y, w: 0, h: 0 });
       setPendingRect(null);
@@ -2504,7 +2604,7 @@ export function ZoneEditor() {
     if (selectedIdsRef.current.size > 1 && selectedIdsRef.current.has(zone.id)) {
       // Cancel any pending auto-save before starting a drag
       if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
-      const p = getSvgPt(e.clientX, e.clientY);
+      const p = getZonePt(e.clientX, e.clientY);
       // Snapshot the current positions of all selected zones
       const origins = new Map<number, Pt>();
       for (const z of zonesRef.current) {
@@ -2525,7 +2625,7 @@ export function ZoneEditor() {
     setSelectedIds(new Set([zone.id]));
     setSelectionOrder([zone.id]);
     setPendingRect(null);
-    const p = getSvgPt(e.clientX, e.clientY);
+    const p = getZonePt(e.clientX, e.clientY);
     dragBaseRef.current = zone;
     isDraggingRef.current = true;
     ixRef.current = {
@@ -3042,9 +3142,31 @@ export function ZoneEditor() {
                   perfectly crisp at any zoom level (no rasterisation). */}
               <g ref={floorPlanRef} pointerEvents="none" />
 
-              {/* Zone overlays — rendered directly in raw SVG coordinate space,
-                  matching the Map tab (WarehouseMapViewer). No extra alignment
-                  transform; getSvgPt inverts only tf. */}
+              {/* Fill feedback is deliberately floor-plan-space: it visualizes
+                  the rasterized bounds before those bounds are inverse-mapped
+                  into stored/world zone coordinates. */}
+              {fillFlashRect && fillFlashRect.w > 0 && fillFlashRect.h > 0 && (
+                <rect
+                  x={fillFlashRect.x}
+                  y={fillFlashRect.y}
+                  width={fillFlashRect.w}
+                  height={fillFlashRect.h}
+                  fill="rgba(0,112,255,0.15)"
+                  stroke="#0070ff"
+                  strokeWidth={sw}
+                  strokeDasharray={`${14 / tf.s} ${7 / tf.s}`}
+                  style={{ pointerEvents: "none" }}
+                />
+              )}
+
+              {/* Stored/world zone geometry and all zone-owned editing visuals
+                  share the same world→floor-plan calibration as Warehouse Map.
+                  The floor plan and grid remain outside this transform. */}
+              <g
+                data-testid="zone-editor-calibrated-layer"
+                data-anchor-transform={anchorMatrix ? matrixToSvgString(anchorMatrix) : "identity"}
+                transform={anchorMatrix ? matrixToSvgString(anchorMatrix) : undefined}
+              >
               {displayZones.map((zone) => {
                 const sel = selectedIds.has(zone.id);
                 const fill = zone.isInventory
@@ -3161,21 +3283,6 @@ export function ZoneEditor() {
                 />
               )}
 
-              {/* Fill flash (300 ms feedback after fill click — blue) */}
-              {fillFlashRect && fillFlashRect.w > 0 && fillFlashRect.h > 0 && (
-                <rect
-                  x={fillFlashRect.x}
-                  y={fillFlashRect.y}
-                  width={fillFlashRect.w}
-                  height={fillFlashRect.h}
-                  fill="rgba(0,112,255,0.15)"
-                  stroke="#0070ff"
-                  strokeWidth={sw}
-                  strokeDasharray={`${14 / tf.s} ${7 / tf.s}`}
-                  style={{ pointerEvents: "none" }}
-                />
-              )}
-
               {/* Pending rect (drawn, awaiting form submission — blue) */}
               {pendingRect && (
                 <>
@@ -3257,6 +3364,7 @@ export function ZoneEditor() {
                   style={{ pointerEvents: "none" }}
                 />
               )}
+              </g>
             </g>
           </svg>
 

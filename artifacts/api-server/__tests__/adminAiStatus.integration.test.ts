@@ -28,15 +28,19 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
-// Mock OpenAI so probePoeBotsOnStartup and probeSinglePoeBot use our mock
-jest.mock("openai", () =>
-  jest.fn().mockImplementation(() => ({
+// Mock OpenAI so probeActivePoeModels and probeSinglePoeBot use our mock
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "./helpers/openaiMock",
+  ) as typeof import("./helpers/openaiMock");
+  return createOpenAIMock(jest, () => ({
     chat: { completions: { create: mockCreate } },
-  })),
-);
+  }));
+});
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
+import { db } from "@workspace/db";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { getAllPoeModelNames } from "../src/lib/aiProvider";
@@ -73,6 +77,21 @@ describe("GET /api/admin/ai-status", () => {
 
     expect(res.body).toHaveProperty("bots");
     expect(typeof res.body.bots).toBe("object");
+    expect(res.body.registry).toEqual(expect.objectContaining({
+      source: "configured_registry",
+      version: expect.any(String),
+      models: expect.any(Array),
+    }));
+    for (const model of res.body.registry.models) {
+      expect(model).toEqual(expect.objectContaining({
+        id: expect.any(String),
+        name: expect.any(String),
+        capabilities: expect.any(Object),
+      }));
+      expect(Object.keys(model.capabilities)).toEqual(
+        expect.arrayContaining(["text", "vision", "structuredOutput"]),
+      );
+    }
   });
 });
 
@@ -167,5 +186,47 @@ describe("POST /api/admin/ai-status/probe/:botName", () => {
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({ model: firstBot }),
     );
+  });
+});
+
+describe("Admin AI fallback mutation contracts", () => {
+  it("rejects malformed fallback updates without changing route state", async () => {
+    const res = await supertest(app)
+      .put("/api/admin/ai-status/routes")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ feature: "identify", fallbacks: [""] })
+      .expect(400);
+
+    expect(res.body).toEqual({ error: "fallbacks must be an array of model names" });
+  });
+
+  it("rejects unknown reset features with a bounded error", async () => {
+    const res = await supertest(app)
+      .post("/api/admin/ai-status/routes/reset")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ feature: "unknown" })
+      .expect(400);
+
+    expect(res.body).toEqual({ error: "Unknown Poe feature" });
+  });
+
+  it("keeps fallback state unchanged when reset persistence is rejected", async () => {
+    const insertSpy = jest.spyOn(db, "insert").mockImplementationOnce(() => {
+      throw new Error("database unavailable");
+    });
+
+    try {
+      const res = await supertest(app)
+        .post("/api/admin/ai-status/routes/reset")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({})
+        .expect(503);
+
+      expect(res.body).toEqual({
+        error: "Fallback choices could not be reset; the previous routes remain active",
+      });
+    } finally {
+      insertSpy.mockRestore();
+    }
   });
 });

@@ -14,9 +14,9 @@
  * exact declaration without making the scaffold invent provenance.
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { dirname, fileURLToPath } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const argv = process.argv.slice(2);
 const valueFor = (flag) => {

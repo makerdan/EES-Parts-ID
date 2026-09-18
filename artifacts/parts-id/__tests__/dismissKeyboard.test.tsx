@@ -17,32 +17,14 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 const mockKeyboardDismiss = jest.fn();
 
 jest.mock("react-native", () => {
-  const React = require("react");
-
-  function make(tag: string) {
-    return function RNMock({
-      children,
-      ...props
-    }: {
-      children?: React.ReactNode;
-      [k: string]: unknown;
-    }) {
-      return React.createElement(tag, props, children);
-    };
-  }
-
-  return {
-    Keyboard: { dismiss: mockKeyboardDismiss },
-    View: make("rn-view"),
-    StyleSheet: {
-      create: (s: unknown) => s,
-      flatten: (s: unknown) => s,
+  const helpers = require("./helpers/mapMocks");
+  const rn = helpers.createReactNativeMock();
+  return helpers.createReactNativeMock({
+    Keyboard: {
+      ...(rn.Keyboard as Record<string, unknown>),
+      dismiss: mockKeyboardDismiss,
     },
-    Platform: {
-      OS: "ios",
-      select: (o: Record<string, unknown>) => o.ios ?? o.default,
-    },
-  };
+  });
 });
 
 // ─── Imports (after mocks) ────────────────────────────────────────────────────

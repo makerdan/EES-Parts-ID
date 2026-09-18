@@ -310,13 +310,13 @@ describe("GET /api/admin/catalog-pdf/reviews — non-numeric ?jobId= guard", () 
     expect(res.body.error).toMatch(/invalid jobid/i);
   });
 
-  it("returns 200 (not 400) when ?jobId= is a valid numeric string", async () => {
-    // Any numeric jobId is syntactically valid — the response may be an empty
-    // list if no items belong to that job, but it must not be a 400.
+  it("returns 404 for a syntactically valid but absent jobId", async () => {
+    // Numeric syntax is valid, but absent and foreign jobs intentionally share
+    // the same non-disclosing not-found response.
     await supertest(app)
       .get("/api/admin/catalog-pdf/reviews?jobId=99999999")
       .set("Authorization", `Bearer ${adminToken}`)
-      .expect(200);
+      .expect(404);
   });
 
   it("returns 200 (not 400) when ?jobId= is absent", async () => {

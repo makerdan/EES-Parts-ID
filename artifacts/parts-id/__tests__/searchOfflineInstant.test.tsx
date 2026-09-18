@@ -315,6 +315,7 @@ jest.mock("@/utils/scanHistory", () => ({}));
 
 import React from "react";
 import { render, act, RenderResult, fireEvent } from "@testing-library/react-native";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { TestInstance } from "test-renderer";
 
 import SearchScreen from "../app/(tabs)/index";
@@ -408,9 +409,17 @@ const flushMicrotasks = () =>
 // triggers async state updates that outlive the suite and emit "Cannot log
 // after tests are done" warnings.
 const mountedTrees: RenderResult[] = [];
+let queryClient: QueryClient;
 
 async function mountScreen() {
-  const result = await render(<SearchScreen />);
+  queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const result = await render(
+    <QueryClientProvider client={queryClient}>
+      <SearchScreen />
+    </QueryClientProvider>,
+  );
   mountedTrees.push(result);
   await flushMicrotasks();
   return result;
@@ -445,6 +454,7 @@ afterEach(async () => {
     const t = mountedTrees.pop()!;
     await t.unmount();
   }
+  queryClient?.clear();
   jest.runOnlyPendingTimers();
   jest.useRealTimers();
 });

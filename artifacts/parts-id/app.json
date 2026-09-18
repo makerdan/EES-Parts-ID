@@ -31,7 +31,7 @@
       "themeColor": "#f59e0b",
       "backgroundColor": "#ffffff",
       "display": "standalone",
-      "orientation": "portrait",
+      "orientation": "any",
       "lang": "en"
     },
     "plugins": [
@@ -46,6 +46,7 @@
       "expo-asset",
       "expo-screen-orientation",
       "expo-audio",
+      "@clerk/expo",
       "./modules/lidar-measure/app.plugin.js"
     ],
     "experiments": {

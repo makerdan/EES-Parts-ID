@@ -27,8 +27,11 @@ const Animated = {
     interpolate() { return this; }
   },
   View: make("rn-animated-view"),
+  createAnimatedComponent: (Component) => Component,
   loop: (a) => ({ start: noop, stop: noop, reset: noop }),
+  parallel: (animations) => ({ start: noop, stop: noop, reset: noop }),
   sequence: (a) => ({ start: noop, stop: noop, reset: noop }),
+  spring: () => ({ start: noop, stop: noop, reset: noop }),
   timing: () => ({ start: noop, stop: noop, reset: noop }),
 };
 const Easing = { linear: noop, ease: noop, in: () => noop, out: () => noop, inOut: () => noop };
@@ -64,9 +67,9 @@ module.exports = {
   Switch: function Switch() { return null; },
   RefreshControl: function RefreshControl() { return null; },
   Keyboard: { dismiss: noop, addListener: () => ({ remove: noop }) },
-  Modal: function Modal({ children, visible }) {
+  Modal: function Modal({ children, visible, ...props }) {
     if (!visible) return null;
-    return React.createElement("rn-modal", {}, children);
+    return React.createElement("rn-modal", props, children);
   },
   /**
    * FlatList — calls renderItem for every entry in data so that child
@@ -127,11 +130,15 @@ module.exports = {
   Alert: {
     alert: jest.fn(),
   },
+  Share: {
+    share: jest.fn(() => Promise.resolve({ action: "sharedAction" })),
+  },
   StyleSheet: {
     create: (styles) => styles,
     hairlineWidth: 0.5,
     flatten: (s) => s,
     absoluteFill: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
+    absoluteFillObject: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
   },
   Platform: {
     OS: "ios",
@@ -161,6 +168,7 @@ module.exports = {
   Appearance: {
     getColorScheme: () => "light",
     addChangeListener: () => ({ remove: noop }),
+    setColorScheme: noop,
   },
   Linking: {
     openURL: jest.fn(() => Promise.resolve()),

@@ -56,6 +56,13 @@ async function checkDbReachable() {
 }
 
 module.exports = async function globalSetup() {
+  const databaseEnvironment = process.env.DATABASE_ENV?.trim().toLowerCase();
+  if (databaseEnvironment !== "test") {
+    throw new Error(
+      "[jest globalSetup] DATABASE_ENV=test is required — refusing to run tests against a non-test database."
+    );
+  }
+
   if (!process.env.DATABASE_URL) {
     throw new Error(
       "[jest globalSetup] DATABASE_URL is not set — cannot sync test DB schema."

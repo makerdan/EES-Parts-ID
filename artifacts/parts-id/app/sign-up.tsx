@@ -6,6 +6,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -146,10 +147,8 @@ export default function SignUpScreen() {
     container: {
       flex: 1,
       backgroundColor: colors.background,
-      justifyContent: "center",
-      alignItems: "center",
-      padding: 32,
     },
+    scroll: { flex: 1, width: "100%" },
     card: {
       width: "100%",
       maxWidth: 380,
@@ -158,6 +157,14 @@ export default function SignUpScreen() {
       padding: 32,
       borderWidth: 1,
       borderColor: colors.border,
+    },
+    scrollContent: {
+      flexGrow: 1,
+      width: "100%",
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 32,
+      paddingVertical: 16,
     },
     logo: { fontSize: 40, textAlign: "center", marginBottom: 8 },
     title: {
@@ -263,6 +270,7 @@ export default function SignUpScreen() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.container}
       >
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <View style={styles.card}>
           <Text style={styles.logo}>📧</Text>
           <Text style={styles.title}>Check your email</Text>
@@ -306,7 +314,8 @@ export default function SignUpScreen() {
           >
             <Text style={styles.secondaryButtonText}>Resend code</Text>
           </Pressable>
-        </View>
+          </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     );
   }
@@ -316,6 +325,7 @@ export default function SignUpScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       style={styles.container}
     >
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
       <View style={styles.card}>
         <Text style={styles.logo}>⚡</Text>
         <Text style={styles.title}>Create Account</Text>
@@ -375,6 +385,7 @@ export default function SignUpScreen() {
         {/* Required for Clerk bot protection */}
         <View nativeID="clerk-captcha" style={styles.captcha} />
       </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }

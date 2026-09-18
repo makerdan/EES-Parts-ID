@@ -6,9 +6,9 @@
  *
  * Scenarios covered:
  *   1. FileSystem.readAsStringAsync (expo-file-system/legacy) throws →
- *      fieldSaveErrors.photo is shown ("Could not save — check connection")
+ *      fieldSaveErrors.photo preserves the read error
  *   2. PATCH /photo returns a non-ok response →
- *      fieldSaveErrors.photo is shown
+ *      fieldSaveErrors.photo preserves the server error
  *   3. Happy path: readAsStringAsync succeeds + PATCH ok →
  *      fetch is called with the correct imageBase64 body
  *   4. Slot-2 (photo2) upload error also surfaces as fieldSaveErrors.photo2
@@ -172,6 +172,8 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     catalog: "PART-X",
     description: "A test part",
     vendor: "ACME",
+    orderPurchase: 0,
+    orderQuantity: 0,
     binLocations: [],
     aiKeywords: [],
     imageUrl: null,
@@ -205,7 +207,7 @@ afterEach(async () => {
 // =============================================================================
 
 describe("PartDetailsEditor – FileSystem.readAsStringAsync failure surfaces as photo field error", () => {
-  it("shows 'Could not save — check connection' under the photo slot when readAsStringAsync throws", async () => {
+  it("shows the read failure under the photo slot when readAsStringAsync throws", async () => {
     mockReadAsStringAsync.mockRejectedValueOnce(new Error("disk read failed"));
 
     const item = makeItem();
@@ -227,7 +229,7 @@ describe("PartDetailsEditor – FileSystem.readAsStringAsync failure surfaces as
     await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
-    expect(hasText(result.root!, "Could not save — check connection")).toBe(true);
+    expect(hasText(result.root!, "disk read failed")).toBe(true);
   });
 
   it("does NOT show the error banner (errorMsg) for a photo-slot failure — it uses fieldSaveErrors instead", async () => {
@@ -245,7 +247,7 @@ describe("PartDetailsEditor – FileSystem.readAsStringAsync failure surfaces as
     await flushPromises();
 
     // The field-level error must be shown, not an errorMsg banner.
-    expect(hasText(result.root!, "Could not save — check connection")).toBe(true);
+    expect(hasText(result.root!, "permission denied")).toBe(true);
   });
 });
 
@@ -254,7 +256,7 @@ describe("PartDetailsEditor – FileSystem.readAsStringAsync failure surfaces as
 // =============================================================================
 
 describe("PartDetailsEditor – PATCH /photo non-ok response surfaces as photo field error", () => {
-  it("shows 'Could not save — check connection' when the server returns a 400 error", async () => {
+  it("shows the server error when the server returns a 400 response", async () => {
     mockReadAsStringAsync.mockResolvedValue("base64data==");
     mockFetch.mockResolvedValue({
       ok: false,
@@ -275,7 +277,7 @@ describe("PartDetailsEditor – PATCH /photo non-ok response surfaces as photo f
     await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
-    expect(hasText(result.root!, "Could not save — check connection")).toBe(true);
+    expect(hasText(result.root!, "Invalid image format")).toBe(true);
   });
 
   it("shows session-expired field error when the server returns a 401", async () => {
@@ -375,7 +377,7 @@ describe("PartDetailsEditor – successful photo upload calls PATCH /photo with 
 // =============================================================================
 
 describe("PartDetailsEditor – slot-2 photo upload error surfaces as photo2 field error", () => {
-  it("shows 'Could not save — check connection' under slot 2 when readAsStringAsync throws", async () => {
+  it("shows the slot-2 read failure under slot 2 when readAsStringAsync throws", async () => {
     mockReadAsStringAsync.mockRejectedValueOnce(new Error("slot 2 disk error"));
 
     const item = makeItem();
@@ -395,6 +397,6 @@ describe("PartDetailsEditor – slot-2 photo upload error surfaces as photo2 fie
     await act(async () => { fireEvent.press(saveBtn!); });
     await flushPromises();
 
-    expect(hasText(result.root!, "Could not save — check connection")).toBe(true);
+    expect(hasText(result.root!, "slot 2 disk error")).toBe(true);
   });
 });

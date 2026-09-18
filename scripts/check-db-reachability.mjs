@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Guard: server-only packages (the Postgres driver, AI/LLM server SDKs, and
- * anything else holding API keys) must never be reachable from the parts-id
- * mobile/web client bundle.
+ * anything else holding API keys) must never be reachable from a mobile/web
+ * client bundle.
  *
  * Forbidden targets = @workspace/db (hard baseline) plus every workspace
  * package whose package.json sets `"serverOnly": true`. To mark a new lib as
@@ -19,6 +19,8 @@
  * - Builds a dependency graph over local edges: `workspace:` specs (resolved
  *   by name) plus `link:` and `file:` specs (resolved by path to the target
  *   package's real name).
+ * - Derives mobile/web client roots from each artifact's
+ *   .replit-artifact/artifact.toml metadata.
  * - BFS from each client root; fails with the offending chain if
  *   @workspace/db is reachable.
  *
@@ -27,7 +29,7 @@
  * CI: wired into the "lint" validation tier step (see scripts/validation-steps.mjs).
  */
 import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -37,8 +39,21 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE_FORBIDDEN_TARGETS = ["@workspace/db"];
 // Additionally, any workspace package with `"serverOnly": true` in its
 // package.json is treated as a forbidden target (API keys, server SDKs, etc.).
-// Client-side packages that must never (transitively) depend on server-only code.
-const CLIENT_ROOTS = ["@workspace/parts-id"];
+// Artifact kinds that produce a browser/client bundle. Any new artifact with
+// one of these kinds is automatically included in the reachability scan.
+const CLIENT_ARTIFACT_KINDS = new Set(["mobile", "web"]);
+
+// Development-only artifacts must be listed by package name instead of being
+// omitted from the inventory. A new design/tooling artifact therefore fails
+// closed until its exclusion is deliberately reviewed here.
+const DEVELOPMENT_ONLY_ARTIFACT_EXCLUSIONS = new Map([
+  [
+    "@workspace/mockup-sandbox",
+    "Canvas is a development-only design preview, not a production client bundle",
+  ],
+]);
+
+const SERVER_ARTIFACT_KINDS = new Set(["api"]);
 
 function readWorkspaceGlobs(root) {
   const yaml = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
@@ -99,6 +114,28 @@ function readPackageName(dir) {
   }
 }
 
+function readArtifactKind(root, dir) {
+  const relativeDir = relative(root, dir).split("/");
+  if (relativeDir.length !== 2 || relativeDir[0] !== "artifacts") return null;
+
+  const metadataPath = join(dir, ".replit-artifact", "artifact.toml");
+  if (!existsSync(metadataPath)) {
+    throw new Error(
+      `check-db-reachability: artifact package ${relativeDir[1]} is missing ` +
+        `.replit-artifact/artifact.toml; every artifact must declare its kind`,
+    );
+  }
+  const metadata = readFileSync(metadataPath, "utf8");
+  const match = metadata.match(/^\s*kind\s*=\s*"([^"]+)"\s*$/m);
+  if (!match) {
+    throw new Error(
+      `check-db-reachability: artifact package ${relativeDir[1]} has no ` +
+        `declared kind in .replit-artifact/artifact.toml`,
+    );
+  }
+  return match[1];
+}
+
 export function buildGraph(root) {
   const packages = new Map(); // name -> { dir, deps: Set<string> }
   const dirs = readWorkspaceGlobs(root).flatMap((g) => expandGlob(root, g));
@@ -112,6 +149,7 @@ export function buildGraph(root) {
       pkg,
       deps: new Set(),
       serverOnly: pkg.serverOnly === true,
+      artifactKind: readArtifactKind(root, dir),
     });
   }
   for (const [, entry] of packages) {
@@ -141,6 +179,37 @@ export function collectForbiddenTargets(packages) {
     if (entry.serverOnly) targets.add(name);
   }
   return [...targets].sort();
+}
+
+export function collectClientRoots(packages) {
+  const roots = [];
+  for (const [name, entry] of packages) {
+    if (!entry.artifactKind) continue;
+    if (CLIENT_ARTIFACT_KINDS.has(entry.artifactKind)) {
+      roots.push(name);
+      continue;
+    }
+    if (SERVER_ARTIFACT_KINDS.has(entry.artifactKind)) continue;
+    const exclusionReason = DEVELOPMENT_ONLY_ARTIFACT_EXCLUSIONS.get(name);
+    if (exclusionReason) {
+      if (entry.artifactKind !== "design") {
+        throw new Error(
+          `check-db-reachability: development-only exclusion for ${name} ` +
+            `does not match its artifact kind "${entry.artifactKind}"`,
+        );
+      }
+      continue;
+    }
+    throw new Error(
+      `check-db-reachability: artifact ${name} has unclassified kind ` +
+        `"${entry.artifactKind}"; classify it as a client/server artifact or ` +
+        `add an explicit development-only exclusion`,
+    );
+  }
+  if (roots.length === 0) {
+    throw new Error("check-db-reachability: no client artifacts were found in the workspace");
+  }
+  return roots.sort();
 }
 
 // BFS from root, tracking the path so we can print the offending chain.
@@ -227,14 +296,67 @@ function selfTest() {
     console.log(`${pass ? "ok" : "FAIL"}: self-test "${c.name}"${chain ? ` (${chain.join(" -> ")})` : ""}`);
     if (!pass) ok = false;
   }
+
+  const inventoryGraph = mk({
+    "@workspace/parts-id": ["shared"],
+    "@workspace/browser-preview": ["deep-shared"],
+    "@workspace/mockup-sandbox": [],
+    "@workspace/api-server": [],
+    shared: [],
+    "deep-shared": ["server-lib"],
+    "server-lib": ["@workspace/db"],
+    "@workspace/db": [],
+  });
+  inventoryGraph.get("@workspace/parts-id").artifactKind = "mobile";
+  inventoryGraph.get("@workspace/browser-preview").artifactKind = "web";
+  inventoryGraph.get("@workspace/mockup-sandbox").artifactKind = "design";
+  inventoryGraph.get("@workspace/api-server").artifactKind = "api";
+
+  const inventoryRoots = collectClientRoots(inventoryGraph);
+  const expectedRoots = ["@workspace/browser-preview", "@workspace/parts-id"];
+  const inventoryPass =
+    JSON.stringify(inventoryRoots) === JSON.stringify(expectedRoots) &&
+    !inventoryRoots.includes("@workspace/mockup-sandbox") &&
+    !inventoryRoots.includes("@workspace/api-server");
+  console.log(
+    `${inventoryPass ? "ok" : "FAIL"}: self-test "client roots include newly added browser artifacts and only explicit dev exclusions"`,
+  );
+  if (!inventoryPass) ok = false;
+
+  const browserLeak = findPathTo(inventoryGraph, "@workspace/browser-preview", "@workspace/db");
+  const browserLeakPass =
+    browserLeak?.join(" -> ") ===
+    "@workspace/browser-preview -> deep-shared -> server-lib -> @workspace/db";
+  console.log(
+    `${browserLeakPass ? "ok" : "FAIL"}: self-test "new browser root rejects a deep forbidden dependency"${browserLeak ? ` (${browserLeak.join(" -> ")})` : ""}`,
+  );
+  if (!browserLeakPass) ok = false;
+
+  const unclassifiedGraph = mk({ "@workspace/future-artifact": [] });
+  unclassifiedGraph.get("@workspace/future-artifact").artifactKind = "unknown";
+  let rejectedUnclassified = false;
+  try {
+    collectClientRoots(unclassifiedGraph);
+  } catch {
+    rejectedUnclassified = true;
+  }
+  console.log(
+    `${rejectedUnclassified ? "ok" : "FAIL"}: self-test "unclassified artifact is rejected"`,
+  );
+  if (!rejectedUnclassified) ok = false;
+
   // Real-repo sanity: link: edge from parts-id must be present in the graph.
   const real = buildGraph(ROOT);
+  const realRoots = collectClientRoots(real);
   const partsId = real.get("@workspace/parts-id");
-  if (!partsId || partsId.deps.size === 0) {
+  if (!partsId || partsId.deps.size === 0 || !realRoots.includes("@workspace/parts-id")) {
     console.log("FAIL: self-test: @workspace/parts-id missing or has no local dep edges");
     ok = false;
   } else {
-    console.log(`ok: self-test: @workspace/parts-id local edges: ${[...partsId.deps].join(", ")}`);
+    console.log(
+      `ok: self-test: client roots: ${realRoots.join(", ")}; ` +
+        `@workspace/parts-id local edges: ${[...partsId.deps].join(", ")}`,
+    );
   }
   return ok;
 }
@@ -259,15 +381,8 @@ function main() {
   }
 
   let failed = false;
-  for (const rootName of CLIENT_ROOTS) {
-    if (!packages.has(rootName)) {
-      console.error(
-        `check-db-reachability: client root ${rootName} not found in workspace; ` +
-          `update CLIENT_ROOTS in scripts/check-db-reachability.mjs.`,
-      );
-      failed = true;
-      continue;
-    }
+  const clientRoots = collectClientRoots(packages);
+  for (const rootName of clientRoots) {
     for (const target of forbiddenTargets) {
       const chain = findPathTo(packages, rootName, target);
       if (chain) {

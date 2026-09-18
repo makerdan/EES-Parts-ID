@@ -209,7 +209,7 @@ function clearMetroCache() {
 
 async function checkMetroHealth() {
   try {
-    const response = await fetch(`http://localhost:${metroPort}/status`, {
+    const response = await fetch(`http://127.0.0.1:${metroPort}/status`, {
       signal: AbortSignal.timeout(5000),
     });
     return response.ok;
@@ -218,9 +218,59 @@ async function checkMetroHealth() {
   }
 }
 
+function isMetroReadyOutput(output) {
+  return /\bWaiting on https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+\b/.test(
+    output,
+  );
+}
+
+function getMetroStartArgs(port) {
+  return [
+    "exec",
+    "expo",
+    "start",
+    "--clear",
+    "--no-dev",
+    "--minify",
+    "--localhost",
+    "--port",
+    String(port),
+  ];
+}
+
 function getExpoPublicReplId() {
   return process.env.REPL_ID || process.env.EXPO_PUBLIC_REPL_ID;
 }
+
+// Expo's public env convention is an allowlist, not a license to pass server
+// credentials into a client build. Metro still needs the inherited process
+// environment for its toolchain, so remove all server-only and unknown public
+// variables before starting it.
+const SERVER_ONLY_ENV_VARS = [
+  "DATABASE_URL",
+  "DATABASE_ENV",
+  "AI_PROVIDER",
+  "CORS_ALLOWED_ORIGINS",
+  "CLERK_PUBLISHABLE_KEY",
+  "CLERK_SECRET_KEY",
+  "AI_INTEGRATIONS_GEMINI_API_KEY",
+  "AI_INTEGRATIONS_GEMINI_BASE_URL",
+  "AI_INTEGRATIONS_OPENAI_API_KEY",
+  "AI_INTEGRATIONS_OPENAI_BASE_URL",
+  "POE_API_KEY2",
+  "DEFAULT_OBJECT_STORAGE_BUCKET_ID",
+  "PRIVATE_OBJECT_DIR",
+  "SESSION_SECRET",
+];
+
+const CLIENT_PUBLIC_ENV_VARS = new Set([
+  "EXPO_PUBLIC_API_BASE",
+  "EXPO_PUBLIC_APP_URL",
+  "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY",
+  "EXPO_PUBLIC_CLERK_PROXY_URL",
+  "EXPO_PUBLIC_DOMAIN",
+  "EXPO_PUBLIC_REPL_ID",
+]);
 
 async function startMetro(expoPublicDomain, expoPublicReplId) {
   const isRunning = await checkMetroHealth();
@@ -239,6 +289,14 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
     EXPO_PUBLIC_CLERK_PROXY_URL: resolveClerkProxyUrl(expoPublicDomain),
     NODE_OPTIONS: "--max-old-space-size=4096",
   };
+  for (const name of SERVER_ONLY_ENV_VARS) {
+    delete env[name];
+  }
+  for (const name of Object.keys(env)) {
+    if (name.startsWith("EXPO_PUBLIC_") && !CLIENT_PUBLIC_ENV_VARS.has(name)) {
+      delete env[name];
+    }
+  }
 
   const clerkError = getClerkAuthConfigError(
     env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY,
@@ -254,14 +312,7 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
 
   metroProcess = spawn(
     "pnpm",
-    [
-      "exec",
-      "expo",
-      "start",
-      "--no-dev",
-      "--minify",
-      "--localhost",
-    ],
+    getMetroStartArgs(metroPort),
     {
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,
@@ -270,10 +321,17 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
     },
   );
 
+  let metroReadyFromOutput = false;
+
   if (metroProcess.stdout) {
     metroProcess.stdout.on("data", (data) => {
       const output = data.toString().trim();
-      if (output) console.log(`[Metro] ${output}`);
+      if (output) {
+        console.log(`[Metro] ${output}`);
+        if (isMetroReadyOutput(output)) {
+          metroReadyFromOutput = true;
+        }
+      }
     });
   }
   if (metroProcess.stderr) {
@@ -286,15 +344,26 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
   for (let i = 0; i < 60; i++) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
+    if (metroProcess.exitCode !== null) {
+      exitWithError(
+        `Metro exited before becoming ready (exit code ${metroProcess.exitCode})`,
+      );
+    }
+
     const healthy = await checkMetroHealth();
-    if (healthy) {
-      console.log("Metro ready");
+    if (healthy || metroReadyFromOutput) {
+      console.log(
+        healthy
+          ? "Metro ready (status endpoint)"
+          : "Metro ready (Expo startup signal)",
+      );
       return;
     }
   }
 
-  console.error("Metro timeout");
-  process.exit(1);
+  exitWithError(
+    `Metro timeout: no successful status response or Expo startup signal on port ${metroPort}`,
+  );
 }
 
 async function downloadFile(url, outputPath) {
@@ -931,6 +1000,8 @@ module.exports = {
   stripProtocol,
   resolveClerkProxyUrl,
   getClerkAuthConfigError,
+  isMetroReadyOutput,
+  getMetroStartArgs,
   verifyBundleDomain,
   verifyNativeBundleDomain,
 };

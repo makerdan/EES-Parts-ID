@@ -21,6 +21,7 @@ import * as fs from "fs";
 import * as path from "path";
 import React, { useState } from "react";
 import { act, fireEvent, render } from "@testing-library/react-native";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Text } from "react-native";
 
 // ── expo-router ───────────────────────────────────────────────────────────────
@@ -380,6 +381,8 @@ function AppNavigationBoundary() {
   );
 }
 
+let queryClient: QueryClient;
+
 function flushPromises() {
   return act(async () => {
     for (let i = 0; i < 12; i += 1) await Promise.resolve();
@@ -388,6 +391,9 @@ function flushPromises() {
 
 beforeEach(() => {
   jest.useFakeTimers();
+  queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   appStateListeners.clear();
   registeredLogoutHandler = null;
   navigateToLogin = null;
@@ -428,6 +434,7 @@ afterEach(() => {
   appStateListeners.clear();
   registeredLogoutHandler = null;
   navigateToLogin = null;
+  queryClient.clear();
 });
 
 describe("Parts ID navigation lifecycle", () => {
@@ -450,7 +457,11 @@ describe("Parts ID navigation lifecycle", () => {
       },
     );
 
-    const tree = await render(<AppNavigationBoundary />);
+    const tree = await render(
+      <QueryClientProvider client={queryClient}>
+        <AppNavigationBoundary />
+      </QueryClientProvider>,
+    );
     await flushPromises();
 
     expect(mockFetchInventoryPages).toHaveBeenCalledTimes(1);
@@ -493,7 +504,11 @@ describe("Parts ID navigation lifecycle", () => {
     );
     mockFetchWithAuth.mockRejectedValue(new Error("offline"));
 
-    const tree = await render(<AppNavigationBoundary />);
+    const tree = await render(
+      <QueryClientProvider client={queryClient}>
+        <AppNavigationBoundary />
+      </QueryClientProvider>,
+    );
     await flushPromises();
 
     expect(mockFetchInventoryPages).toHaveBeenCalledTimes(1);

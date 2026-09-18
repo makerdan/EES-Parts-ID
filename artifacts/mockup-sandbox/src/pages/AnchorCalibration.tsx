@@ -124,6 +124,8 @@ export function AnchorCalibration() {
   const [status, setStatus] = useState("");
   const successTimers = useRef<[ReturnType<typeof setTimeout> | null, ReturnType<typeof setTimeout> | null, ReturnType<typeof setTimeout> | null]>([null, null, null]);
   const mountedRef = useRef(true);
+  const floorPlanRequestRef = useRef(0);
+  const anchorsFetchSequenceRef = useRef(0);
   const anchorsFetchRef = useRef<{ id: number; controller: AbortController } | null>(null);
   const anchorOperationsRef = useRef<[number, number, number]>([0, 0, 0]);
   const slotControllersRef = useRef<[AbortController | null, AbortController | null, AbortController | null]>([null, null, null]);
@@ -148,6 +150,11 @@ export function AnchorCalibration() {
   useEffect(() => {
     const controller = new AbortController();
     const signal = controller.signal;
+    const requestId = ++floorPlanRequestRef.current;
+    const isCurrent = () =>
+      mountedRef.current &&
+      floorPlanRequestRef.current === requestId &&
+      !signal.aborted;
     void (async () => {
       const fallback = (
         import.meta.env.VITE_FLOOR_PLAN_API_FALLBACK as string | undefined
@@ -156,16 +163,17 @@ export function AnchorCalibration() {
       if (fallback && fallback !== API_BASE)
         urls.push(`${fallback}/floor-plan/svg`);
       for (const url of urls) {
+        if (!isCurrent()) return;
         try {
           const res = await fetch(url, { signal });
           if (res.ok) {
             const raw = await res.text();
-            if (signal.aborted || !mountedRef.current) return;
+            if (!isCurrent()) return;
             setSvgInner(extractSvgInner(raw));
             return;
           }
         } catch (error) {
-          if (isAbortError(error) || signal.aborted) return;
+          if (isAbortError(error) || !isCurrent()) return;
           /* try next */
         }
       }
@@ -183,13 +191,13 @@ export function AnchorCalibration() {
     if (!mountedRef.current) return;
     anchorsFetchRef.current?.controller.abort();
     const request = {
-      id: anchorsFetchRef.current ? anchorsFetchRef.current.id + 1 : 1,
+      id: ++anchorsFetchSequenceRef.current,
       controller: new AbortController(),
     };
     anchorsFetchRef.current = request;
     const isCurrent = () =>
       mountedRef.current &&
-      anchorsFetchRef.current?.id === request.id &&
+      anchorsFetchRef.current === request &&
       !request.controller.signal.aborted;
     try {
       // Clerk session cookie is sent automatically with same-origin requests.
@@ -220,12 +228,29 @@ export function AnchorCalibration() {
       if (!isCurrent() || isAbortError(error)) return;
       setLoadError("Failed to load anchors");
     } finally {
-      if (anchorsFetchRef.current?.id === request.id) anchorsFetchRef.current = null;
+      if (anchorsFetchRef.current === request) anchorsFetchRef.current = null;
     }
   }, []);
 
   useEffect(() => {
     void refetchAnchors();
+    const refreshOnFocus = () => {
+      void refetchAnchors();
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refetchAnchors();
+      }
+    };
+
+    // A second admin session can change the shared mapping while this tab is
+    // open. Rehydrate whenever the tab becomes the active calibration surface.
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [refetchAnchors]);
 
   // Fetch zone rectangles and alignment on mount (silently swallow errors).

@@ -31,6 +31,7 @@ const mockUpdateReturning = jest.fn();
 const mockUpdateWhere = jest.fn(() => ({ returning: mockUpdateReturning }));
 const mockUpdateSet = jest.fn(() => ({ where: mockUpdateWhere }));
 const mockUpdate = jest.fn(() => ({ set: mockUpdateSet }));
+const mockTransaction = jest.fn();
 
 // ── Select-chain mocks ────────────────────────────────────────────────────────
 // Supports two endings:
@@ -45,6 +46,7 @@ jest.mock("@workspace/db", () => ({
   db: {
     insert: mockInsert,
     select: mockSelect,
+    transaction: mockTransaction,
     update: mockUpdate,
     // Fire-and-forget ANALYZE call in upsert-batch; must exist or throws synchronously.
     execute: jest.fn().mockResolvedValue(undefined),
@@ -90,6 +92,7 @@ jest.mock("../middlewares/requireAppAuth", () => ({
 
 jest.mock("../middlewares/requireAdminAuth", () => ({
   requireAdminAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
+  requireApprovedAdminAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 // ── Answer cache mock ─────────────────────────────────────────────────────────
@@ -121,31 +124,16 @@ import {
   UpdateItemKeywordsResponse,
   UpsertBatchPreviewResponse,
 } from "@workspace/api-zod";
+import { makeInventoryItemFixture } from "./fixtures/inventoryResponseFixtures";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** A complete, well-formed inventory row that satisfies every *Response schema. */
 function makeWellFormedRow(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 42,
-    vendor: "ACME",
-    catalog: "W-999",
-    description: "Test widget",
-    binLocations: ["A1"],
-    aiKeywords: ["widget"],
-    barcodes: ["012345678901"],
-    enrichedAt: null,
-    imageUrl: null,
-    thumbnailUrl: null,
-    imageUrl2: null,
-    thumbnailUrl2: null,
-    expandedDescription: null,
-    dimensions: null,
+  return makeInventoryItemFixture({
     pinnedKeywords: [],
-    createdAt: new Date("2025-06-01T00:00:00Z"),
-    updatedAt: new Date("2025-06-01T00:00:00Z"),
     ...overrides,
-  };
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -156,6 +144,16 @@ function makeWellFormedRow(overrides: Record<string, unknown> = {}) {
 // ─────────────────────────────────────────────────────────────────────────────
 beforeEach(() => {
   jest.clearAllMocks();
+
+  mockTransaction.mockImplementation(async (callback: (tx: {
+    insert: typeof mockInsert;
+    select: typeof mockSelect;
+    update: typeof mockUpdate;
+  }) => Promise<unknown>) => callback({
+    insert: mockInsert,
+    select: mockSelect,
+    update: mockUpdate,
+  }));
 
   // Restore insert chain (default: returning resolves to [{ isNew: false }])
   mockInsert.mockReturnValue({ values: mockInsertValues });

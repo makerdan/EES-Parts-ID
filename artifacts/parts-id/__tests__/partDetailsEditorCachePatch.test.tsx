@@ -89,10 +89,14 @@ jest.mock("@/components/MeasurePartScreen", () => ({
   MeasurePartScreen: () => null,
 }));
 
-jest.mock("@/utils/editItemCache", () => ({
-  invalidateListCache:           (...args: unknown[]) => mockInvalidateListCache(...args),
-  evictDeletedItemFromAllCaches: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock("@/utils/editItemCache", () => {
+  const actual = jest.requireActual("../utils/editItemCache") as typeof import("../utils/editItemCache");
+  return {
+    ...actual,
+    invalidateListCache:           (...args: unknown[]) => mockInvalidateListCache(...args),
+    evictDeletedItemFromAllCaches: jest.fn().mockResolvedValue(undefined),
+  };
+});
 
 jest.mock("@expo/vector-icons", () => ({
   Feather: () => null,
@@ -170,6 +174,8 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     catalog:      "PART-X",
     description:  "Old description",
     vendor:       "ACME",
+    orderPurchase: 0,
+    orderQuantity: 0,
     binLocations: ["AISLE-01"],
     aiKeywords:   ["relay"],
     imageUrl:     null,

@@ -13,6 +13,7 @@ runs:
     - name: Set up Node.js from repository version
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
+        # Keep GitHub on the same exact runtime contract checked locally.
         node-version-file: .node-version
 
     - name: Set up pnpm
