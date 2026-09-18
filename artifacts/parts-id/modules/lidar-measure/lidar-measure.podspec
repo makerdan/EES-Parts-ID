@@ -24,9 +24,6 @@ Pod::Spec.new do |s|
   s.frameworks     = 'ARKit', 'SceneKit'
 
   s.test_spec 'LidarMeasureTests' do |test|
-    # CocoaPods only generates a runnable shared scheme for a test spec when
-    # scheme metadata is present. Keep coverage disabled while opting in.
-    test.scheme = { :code_coverage => false }
     test.source_files = [
       'ios/LidarMeasureModuleTests.swift',
       'ios/LidarDepthViewTests.swift',

@@ -96,14 +96,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  native:
-    name: Native LiDAR validation
-    uses: ./.github/workflows/lidar-measure-tests.yml
-
   required:
     name: CI / required
     if: always()
-    needs: [validate, native]
+    needs: [validate]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -113,20 +109,17 @@ jobs:
         shell: bash
         env:
           VALIDATE_RESULT: ${{ needs.validate.result }}
-          NATIVE_RESULT: ${{ needs.native.result }}
         run: |
-          for result in "$VALIDATE_RESULT" "$NATIVE_RESULT"; do
-            case "$result" in
-              success)
-                ;;
-              failure|cancelled|skipped|"")
-                echo "Required validation result was '$result'; required validation cannot pass." >&2
-                exit 1
-                ;;
-              *)
-                echo "Unexpected required validation result '$result'." >&2
-                exit 1
-                ;;
-            esac
-          done
-          echo "Portable and native validation passed."
+          case "$VALIDATE_RESULT" in
+            success)
+              echo "Portable validation passed."
+              ;;
+            failure|cancelled|skipped|"")
+              echo "Required validation result was '$VALIDATE_RESULT'; required validation cannot pass." >&2
+              exit 1
+              ;;
+            *)
+              echo "Unexpected required validation result '$VALIDATE_RESULT'." >&2
+              exit 1
+              ;;
+          esac

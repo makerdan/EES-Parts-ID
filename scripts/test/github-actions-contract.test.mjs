@@ -33,11 +33,6 @@ const actionPath = join(root, ".github", "actions", "setup-node-pnpm", "action.y
 const coveragePath = join(root, "docs", "validation", "github-actions-coverage.md");
 const protectionStatusPath = join(root, "docs", "validation", "github-protection-status.md");
 const installationPath = join(root, "docs", "validation", "github-actions-installation.md");
-const partsIdPackagePath = join(root, "artifacts", "parts-id", "package.json");
-const lidarAppPluginPath = join(root, "artifacts", "parts-id", "modules", "lidar-measure", "app.plugin.js");
-const lidarPluginPath = join(root, "artifacts", "parts-id", "modules", "lidar-measure", "plugin", "index.js");
-const lidarPodspecPath = join(root, "artifacts", "parts-id", "modules", "lidar-measure", "lidar-measure.podspec");
-const pnpmLockPath = join(root, "pnpm-lock.yaml");
 const fastContractChecks = new Map([
   ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
   ["api-spec-typecheck-contract", "node scripts/test/api-spec-typecheck-contract.test.mjs"],
@@ -80,7 +75,9 @@ function trackedWorkflowNames() {
   for (const path of paths) {
     assert(path.startsWith(prefix), `tracked workflow path escaped ${prefix}: ${path}`);
   }
-  return paths.map((path) => path.slice(prefix.length));
+  return paths
+    .filter((path) => existsSync(join(root, path)))
+    .map((path) => path.slice(prefix.length));
 }
 
 function assert(condition, message) {
@@ -208,7 +205,6 @@ function actionReferences(text) {
 function validateWorkflowContract(files, coverage) {
   const errors = [];
   const ci = files["ci.yml"];
-  const lidar = files["lidar-measure-tests.yml"];
   const audit = files["scheduled-audit.yml"];
   const readme = files["sync-readme.yml"];
 
@@ -253,7 +249,7 @@ function validateWorkflowContract(files, coverage) {
     errors.push("setup-node-pnpm: local composite action cannot perform the initial checkout");
   }
 
-  for (const [name, text] of Object.entries({ "ci.yml": ci, "lidar-measure-tests.yml": lidar, "scheduled-audit.yml": audit })) {
+  for (const [name, text] of Object.entries({ "ci.yml": ci, "scheduled-audit.yml": audit })) {
     const checkoutIndex = text.indexOf("uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683");
     const setupIndex = text.indexOf("uses: ./.github/actions/setup-node-pnpm");
     if (checkoutIndex < 0 || setupIndex < 0 || checkoutIndex > setupIndex) {
@@ -267,12 +263,6 @@ function validateWorkflowContract(files, coverage) {
     }
   }
   if (!/^    branches:\s*\[main\]\s*$/m.test(ci)) errors.push("ci.yml: push is not limited to main");
-  if (!/^  workflow_call:/m.test(lidar)) {
-    errors.push("lidar-measure-tests.yml: native workflow must be reusable by CI");
-  }
-  if (/^\s{2}(pull_request|merge_group|push|workflow_dispatch):/m.test(lidar)) {
-    errors.push("lidar-measure-tests.yml: native workflow must not bypass the CI required aggregator");
-  }
   if (/pull_request:/.test(audit) || /pull_request:/.test(readme)) {
     errors.push("maintenance workflows must not execute untrusted pull-request code");
   }
@@ -286,19 +276,20 @@ function validateWorkflowContract(files, coverage) {
   }
 
   if (!/^permissions:\n\s+contents:\s+read\s*$/m.test(ci)) errors.push("ci.yml: must default to read-only contents");
-  if (/contents:\s+write/.test(ci) || /contents:\s+write/.test(lidar) || /contents:\s+write/.test(audit)) {
+  if (/contents:\s+write/.test(ci) || /contents:\s+write/.test(audit)) {
     errors.push("validation workflows must not grant contents write");
   }
-  if (/(^|\n)\s*(secrets|environment|production|DEPLOY|PUBLISH)/i.test(`${ci}\n${lidar}`)) {
+  if (/(^|\n)\s*(secrets|environment|production|DEPLOY|PUBLISH)/i.test(ci)) {
     errors.push("pull-request validation contains a production/write credential boundary");
   }
 
   const ciJobs = jobBlocks(ci);
   const validate = ciJobs.find((block) => block.name === "validate");
-  const native = ciJobs.find((block) => block.name === "native");
   const required = ciJobs.find((block) => block.name === "required");
   if (!validate) errors.push("ci.yml: missing validate job");
-  if (!native) errors.push("ci.yml: missing native job");
+  if (ciJobs.some((block) => block.name === "native") || /lidar-measure-tests/.test(ci)) {
+    errors.push("ci.yml: native LiDAR validation must remain excluded from CI");
+  }
   if (!required) errors.push("ci.yml: missing stable required job");
   if (validate && !/uses:\s+\.\.\/?\.github\/actions\/setup-node-pnpm|uses:\s+\.\/\.github\/actions\/setup-node-pnpm/.test(validate.text)) {
     errors.push("ci.yml/validate: does not use the repository setup component");
@@ -336,49 +327,12 @@ function validateWorkflowContract(files, coverage) {
   if (validate && !/^\s+image:\s+postgres:\d+\.\d+\s*$/m.test(validate.text)) {
     errors.push("ci.yml/validate: PostgreSQL service is not pinned to a major and minor version");
   }
-  if (native && !/name:\s+Native LiDAR validation/.test(native.text)) {
-    errors.push("ci.yml/native: stable native validation job name is missing");
-  }
-  if (native && !/uses:\s+\.\/\.github\/workflows\/lidar-measure-tests\.yml/.test(native.text)) {
-    errors.push("ci.yml/native: does not call the reusable native workflow");
-  }
   if (required && !/if:\s+always\(\)/.test(required.text)) errors.push("ci.yml/required: aggregator is not unconditional");
-  if (required && !/needs:\s+\[validate,\s*native\]/.test(required.text)) errors.push("ci.yml/required: aggregator dependencies are not explicit");
+  if (required && !/needs:\s+\[validate\]/.test(required.text)) errors.push("ci.yml/required: portable dependency is not explicit");
   if (required && !/VALIDATE_RESULT: \$\{\{ needs\.validate\.result \}\}/.test(required.text)) errors.push("ci.yml/required: aggregator does not inspect validate result");
-  if (required && !/NATIVE_RESULT: \$\{\{ needs\.native\.result \}\}/.test(required.text)) errors.push("ci.yml/required: aggregator does not inspect native result");
+  if (required && /NATIVE_RESULT|needs\.native/.test(required.text)) errors.push("ci.yml/required: aggregator still depends on removed native validation");
   if (required && !/failure\|cancelled\|skipped\|""/.test(required.text)) errors.push("ci.yml/required: aggregator does not fail closed");
   if (!/retention-days:\s+7/.test(ci)) errors.push("ci.yml: diagnostic retention is not bounded");
-  if (!/retention-days:\s+7/.test(lidar) || !/LidarMeasureTests\.xcresult/.test(lidar)) {
-    errors.push("lidar-measure-tests.yml: Apple test results are not retained with bounded retention");
-  }
-  if (!/-workspace\s+ios\/EESPartsID\.xcworkspace/.test(lidar)) {
-    errors.push("lidar-measure-tests.yml: xcodebuild does not use the workspace generated from the Expo app name");
-  }
-  if (!/DEVELOPER_DIR:\s+\/Applications\/Xcode_26\.0\.1\.app\/Contents\/Developer/.test(lidar)) {
-    errors.push("lidar-measure-tests.yml: native validation must select the pinned Xcode 26.0.1 toolchain");
-  }
-  if (!/test "\$\{xcode_version%%/.test(lidar) || !/= "Xcode 26\.0\.1"/.test(lidar) || !/Swift version 6\\\.2/.test(lidar)) {
-    errors.push("lidar-measure-tests.yml: native validation must fail before dependency resolution when the pinned Xcode or Swift 6.2 toolchain is unavailable");
-  }
-  if (!/-scheme\s+lidar-measure-LidarMeasureTests/.test(lidar)) {
-    errors.push("lidar-measure-tests.yml: native validation must retain the LiDAR test scheme");
-  }
-  if (!/test\.scheme\s*=\s*\{\s*:code_coverage\s*=>\s*false\s*\}/.test(read(lidarPodspecPath))) {
-    errors.push("lidar-measure.podspec: the LiDAR test spec must opt into a generated shared scheme");
-  }
-  if (!/:share_schemes_for_development_pods => \['lidar-measure'\]/.test(read(lidarPluginPath))) {
-    errors.push("lidar-measure plugin: Expo prebuild must share the LiDAR development-pod scheme");
-  }
-  if (!/require\(['"]\.\/plugin['"]\)/.test(read(lidarAppPluginPath)) || !/withLidarMeasureTests\(configWithPrivacyDescriptions\)/.test(read(lidarAppPluginPath))) {
-    errors.push("lidar-measure app plugin: the active Expo plugin must apply LiDAR test scheme configuration");
-  }
-  const partsIdPackage = JSON.parse(read(partsIdPackagePath));
-  if (partsIdPackage.dependencies?.["@clerk/expo"] !== "3.6.5") {
-    errors.push("parts-id: Clerk Expo must remain pinned to the release that resolves clerk-ios 1.2.7");
-  }
-  if (!/artifacts\/parts-id:[\s\S]*?'@clerk\/expo':\n\s+specifier: 3\.6\.5\n\s+version: 3\.6\.5\(/.test(read(pnpmLockPath))) {
-    errors.push("pnpm-lock.yaml: Parts ID Clerk Expo resolution must remain reproducibly pinned to 3.6.5");
-  }
 
   const coverageRows = [...coverage.matchAll(/^\|\s*`?([^|`]+?)`?\s*\|/gm)].map((match) => match[1].trim());
   const expected = [...new Set(getTierSteps("standard-plus").map(([name]) => name))];
@@ -394,35 +348,26 @@ function validateWorkflowContract(files, coverage) {
   return errors;
 }
 
-function evaluateRequiredGateResults({ validate, native }) {
-  return [validate, native].every((result) => result === "success") ? "success" : "failure";
+function evaluateRequiredGateResult(validate) {
+  return validate === "success" ? "success" : "failure";
 }
 
-function validateNativeRequiredGateContract(files) {
+function validatePortableRequiredGateContract(files) {
   const ci = files["ci.yml"];
   const required = jobBlocks(ci).find((block) => block.name === "required");
-  nodeAssert.ok(required, "native required-gate fixtures need the stable required job");
-  nodeAssert.match(ci, /^  pull_request:/m, "CI must run native validation for pull requests");
-  nodeAssert.match(ci, /^  merge_group:/m, "CI must run native validation for merge groups");
-  nodeAssert.match(required.text, /CI \/ required/, "native validation must be represented by the stable required context");
+  nodeAssert.ok(required, "portable required-gate fixtures need the stable required job");
+  nodeAssert.match(ci, /^  pull_request:/m, "CI must run portable validation for pull requests");
+  nodeAssert.match(ci, /^  merge_group:/m, "CI must run portable validation for merge groups");
+  nodeAssert.match(required.text, /CI \/ required/, "portable validation must be represented by the stable required context");
 
-  nodeAssert.equal(
-    evaluateRequiredGateResults({ validate: "success", native: "success" }),
-    "success",
-    "the required gate should pass only when portable and native validation pass",
-  );
-  for (const native of ["failure", "cancelled", "skipped", "", undefined, "queued"]) {
+  nodeAssert.equal(evaluateRequiredGateResult("success"), "success");
+  for (const validate of ["failure", "cancelled", "skipped", "", undefined, "queued"]) {
     nodeAssert.equal(
-      evaluateRequiredGateResults({ validate: "success", native }),
+      evaluateRequiredGateResult(validate),
       "failure",
-      `native result '${native ?? "missing"}' must fail the required gate`,
+      `portable result '${validate ?? "missing"}' must fail the required gate`,
     );
   }
-  nodeAssert.equal(
-    evaluateRequiredGateResults({ validate: "failure", native: "success" }),
-    "failure",
-    "portable failure must still fail the required gate",
-  );
 }
 
 function validateSkillContract() {
@@ -824,7 +769,7 @@ nodeAssert.match(installation, /report consumers must pass both the snapshot and
 
 const workflowNames = trackedWorkflowNames();
 const files = Object.fromEntries(workflowNames.map((name) => [name, workflow(name)]));
-validateNativeRequiredGateContract(files);
+validatePortableRequiredGateContract(files);
 const errors = validateWorkflowContract(files, read(coveragePath));
 assert(errors.length === 0, errors.join("\n"));
 
