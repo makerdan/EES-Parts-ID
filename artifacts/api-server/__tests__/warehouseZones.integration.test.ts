@@ -25,14 +25,58 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { seedFixtures, cleanupFixtures } from "./helpers/testDb";
+import {
+  cleanupFixtures,
+  seedFixtures,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 import { db, inventoryTable, warehouseZoneTable } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
 import { UpdateWarehouseZoneResponse } from "@workspace/api-zod";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 const ADMIN_SECRET = "jest-zone-secret";
 let adminToken: string;
+
+const ZONE_PREFIX = workerQualifiedUserId("JEST-ZONE").toUpperCase();
+const BASE_AISLE = `${ZONE_PREFIX}-A1`;
+const UPDATED_AISLE = `${ZONE_PREFIX}-A2`;
+const SHAPE_AISLE = `${ZONE_PREFIX}-SHAPE`;
+
+function uniqueNumericAisleId(seed: string): string {
+  let hash = 0;
+  for (const character of workerQualifiedUserId(seed)) {
+    hash = (hash * 31 + character.charCodeAt(0)) % 90;
+  }
+  return String(10 + hash);
+}
+
+const COVERAGE_AISLE_87 = uniqueNumericAisleId("coverage-87");
+const COVERAGE_AISLE_89 = uniqueNumericAisleId("coverage-89");
+
+const BASE_ZONE = {
+  aisleId: BASE_AISLE,
+  svgX: 10,
+  svgY: 20,
+  svgWidth: 100,
+  svgHeight: 50,
+};
+
+const COVERAGE_CATALOGS = [
+  `${ZONE_PREFIX}-COV-87A`,
+  `${ZONE_PREFIX}-COV-87B`,
+  `${ZONE_PREFIX}-COV-89A`,
+  `${ZONE_PREFIX}-COV-BAD1`,
+  `${ZONE_PREFIX}-COV-BAD2`,
+];
+
+const OWNED_AISLES = [
+  BASE_AISLE,
+  UPDATED_AISLE,
+  SHAPE_AISLE,
+  COVERAGE_AISLE_87,
+  COVERAGE_AISLE_89,
+];
 
 beforeAll(async () => {
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
@@ -50,24 +94,12 @@ afterEach(async () => {
 // ── Cleanup helpers ───────────────────────────────────────────────────────────
 
 async function cleanupZones() {
-  // Scope the delete to aisleIds this file creates. Do NOT use a bare
-  // 'JEST-%' pattern — warehouseZonesAutoNumber.integration.test.ts uses
-  // 'JEST-AN*' zones and a concurrent afterEach blanket delete would wipe
-  // their fixtures mid-test, causing spurious 404/500 failures.
+  // Delete only aisle ids created by this worker and suite. Never use a
+  // shared prefix: another worker may be using a similarly-labelled zone.
   await db
     .delete(warehouseZoneTable)
-    .where(
-      sql`${warehouseZoneTable.aisleId} LIKE ${"JEST-%"} AND ${warehouseZoneTable.aisleId} NOT LIKE ${"JEST-AN%"}`,
-    );
+    .where(inArray(warehouseZoneTable.aisleId, OWNED_AISLES));
 }
-
-const BASE_ZONE = {
-  aisleId: "JEST-A1",
-  svgX: 10,
-  svgY: 20,
-  svgWidth: 100,
-  svgHeight: 50,
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/warehouse-zones
@@ -163,7 +195,7 @@ describe("POST /api/warehouse-zones", () => {
     const res = await supertest(app)
       .post("/api/warehouse-zones")
       .set("Authorization", `Bearer ${adminToken}`)
-      .send({ aisleId: "JEST-A1" })
+      .send({ aisleId: BASE_AISLE })
       .expect(400);
 
     expect(res.body).toHaveProperty("error");
@@ -216,10 +248,10 @@ describe("PATCH /api/warehouse-zones/:id", () => {
     const res = await supertest(app)
       .patch(`/api/warehouse-zones/${id}`)
       .set("Authorization", `Bearer ${adminToken}`)
-      .send({ aisleId: "JEST-A2" })
+      .send({ aisleId: UPDATED_AISLE })
       .expect(200);
 
-    expect(res.body.zone.aisleId).toBe("JEST-A2");
+    expect(res.body.zone.aisleId).toBe(UPDATED_AISLE);
     expect(res.body.zone.id).toBe(id);
   });
 
@@ -383,14 +415,6 @@ describe("DELETE /api/warehouse-zones/:id", () => {
 // cleanupFixtures() alone would silently skip them. seedFixtures() uses
 // onConflictDoNothing, so those orphaned rows would not be re-inserted, making
 // the baseline unsortedCount include them and the +2 delta assertion wrong.
-const COVERAGE_CATALOGS = [
-  "JEST-ITG-COV-87A",
-  "JEST-ITG-COV-87B",
-  "JEST-ITG-COV-89A",
-  "JEST-ITG-COV-BAD1",
-  "JEST-ITG-COV-BAD2",
-];
-
 describe("GET /api/warehouse-zones/coverage", () => {
   async function cleanupCoverageFixtures() {
     // Remove catalogs tracked by this worker (no-op in beforeAll).
@@ -409,7 +433,12 @@ describe("GET /api/warehouse-zones/coverage", () => {
     }
     await db
       .delete(warehouseZoneTable)
-      .where(sql`${warehouseZoneTable.aisleId} = ${"87"}`);
+      .where(
+        inArray(warehouseZoneTable.aisleId, [
+          COVERAGE_AISLE_87,
+          COVERAGE_AISLE_89,
+        ]),
+      );
   }
 
   beforeAll(async () => {
@@ -445,44 +474,44 @@ describe("GET /api/warehouse-zones/coverage", () => {
       // aisle 87 — valid bins, will have a matching zone
       {
         vendor: "JEST",
-        catalog: "JEST-ITG-COV-87A",
+        catalog: COVERAGE_CATALOGS[0]!,
         description: "Coverage fixture aisle 87 item A",
-        binLocations: ["87-01-100"],
+        binLocations: [`${COVERAGE_AISLE_87}-01-100`],
       },
       {
         vendor: "JEST",
-        catalog: "JEST-ITG-COV-87B",
+        catalog: COVERAGE_CATALOGS[1]!,
         description: "Coverage fixture aisle 87 item B",
-        binLocations: ["87-02-200"],
+        binLocations: [`${COVERAGE_AISLE_87}-02-200`],
       },
       // aisle 89 — valid bin, NO matching zone → should appear in uncoveredAisles
       {
         vendor: "JEST",
-        catalog: "JEST-ITG-COV-89A",
+        catalog: COVERAGE_CATALOGS[2]!,
         description: "Coverage fixture aisle 89 item A",
-        binLocations: ["89-01-100"],
+        binLocations: [`${COVERAGE_AISLE_89}-01-100`],
       },
       // no valid bins → should increment unsortedCount
       {
         vendor: "JEST",
-        catalog: "JEST-ITG-COV-BAD1",
+        catalog: COVERAGE_CATALOGS[3]!,
         description: "Coverage fixture no-bin item 1",
         binLocations: ["BAD-BIN"],
       },
       {
         vendor: "JEST",
-        catalog: "JEST-ITG-COV-BAD2",
+        catalog: COVERAGE_CATALOGS[4]!,
         description: "Coverage fixture no-bin item 2",
         binLocations: [],
       },
     ]);
 
-    // Create a zone for aisle "87" so it is covered (requires admin auth)
+    // Create a zone for the first fixture aisle so it is covered.
     await supertest(app)
       .post("/api/warehouse-zones")
       .set("Authorization", `Bearer ${adminToken}`)
       .send({
-        aisleId: "87",
+        aisleId: COVERAGE_AISLE_87,
         svgX: 0,
         svgY: 0,
         svgWidth: 10,
@@ -504,21 +533,23 @@ describe("GET /api/warehouse-zones/coverage", () => {
     const { rows: unsortedRows } = await db.execute(sql`
       SELECT COUNT(*)::int AS cnt
       FROM inventory
-      WHERE catalog IN ('JEST-ITG-COV-BAD1', 'JEST-ITG-COV-BAD2')
+      WHERE catalog IN (${sql.join(
+        COVERAGE_CATALOGS.slice(3).map((catalog) => sql`${catalog}`),
+        sql`, `,
+      )})
     `);
     const ourUnsortedCount = (unsortedRows[0] as { cnt: number }).cnt;
     expect(ourUnsortedCount).toBe(2);
 
-    // aisle "89" has inventory but no zone → must appear in uncoveredAisles
-    expect(uncoveredAisles).toContain("89");
+    // The second fixture aisle has inventory but no zone.
+    expect(uncoveredAisles).toContain(COVERAGE_AISLE_89);
 
-    // aisle "87" has inventory AND a zone → must NOT appear in uncoveredAisles
-    expect(uncoveredAisles).not.toContain("87");
+    // The first fixture aisle has inventory AND a zone.
+    expect(uncoveredAisles).not.toContain(COVERAGE_AISLE_87);
 
-    // The pre-existing uncovered aisles should still be present (non-regression)
-    for (const a of baseUncovered) {
-      expect(uncoveredAisles).toContain(a);
-    }
+    // The global inventory set is shared by concurrent suites, so its
+    // pre-existing uncovered list can legitimately change between requests.
+    // The assertions above cover this suite's owned aisle contract exactly.
   }, 30_000);
 });
 
@@ -555,7 +586,7 @@ describe("zone response shape — sectionCode absent after section_code deprecat
     const res = await supertest(app)
       .patch(`/api/warehouse-zones/${id}`)
       .set("Authorization", `Bearer ${adminToken}`)
-      .send({ aisleId: "JEST-SHAPE" })
+      .send({ aisleId: SHAPE_AISLE })
       .expect(200);
 
     const parsed = UpdateWarehouseZoneResponse.safeParse(res.body);

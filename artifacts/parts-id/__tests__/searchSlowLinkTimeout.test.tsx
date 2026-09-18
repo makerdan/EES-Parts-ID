@@ -328,6 +328,7 @@ jest.mock("@/utils/scanHistory", () => ({}));
 
 import React from "react";
 import { render, act, RenderResult, fireEvent } from "@testing-library/react-native";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { TestInstance } from "test-renderer";
 
 import SearchScreen from "../app/(tabs)/index";
@@ -424,9 +425,17 @@ const flushMicrotasks = () =>
 // triggers async state updates that outlive the suite and emit "Cannot log
 // after tests are done" warnings.
 const mountedTrees: RenderResult[] = [];
+let queryClient: QueryClient;
 
 async function mountScreen() {
-  const result = await render(<SearchScreen />);
+  queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const result = await render(
+    <QueryClientProvider client={queryClient}>
+      <SearchScreen />
+    </QueryClientProvider>,
+  );
   mountedTrees.push(result);
   // Let mount effects settle (Fuse cache load / sync, history load, etc.).
   await flushMicrotasks();
@@ -448,7 +457,11 @@ async function triggerSearch(result: RenderResult) {
   // The real useSearchInventory re-renders the tree when isPending flips to
   // true. Our hook mock only mutates a plain flag, so drive the equivalent
   // re-render explicitly to surface the loading spinner.
-  await result.rerender(<SearchScreen />);
+  await result.rerender(
+    <QueryClientProvider client={queryClient}>
+      <SearchScreen />
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
@@ -467,6 +480,7 @@ afterEach(async () => {
     const t = mountedTrees.pop()!;
     await t.unmount();
   }
+  queryClient?.clear();
   jest.runOnlyPendingTimers();
   jest.useRealTimers();
 });

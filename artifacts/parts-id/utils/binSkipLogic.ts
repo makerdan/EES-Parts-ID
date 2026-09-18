@@ -10,6 +10,10 @@ export type ParsedRow = {
   description: string;
   binLocations: Array<string>;
   barcodes: Array<string>;
+  op?: number;
+  oq?: number;
+  opProvided?: boolean;
+  oqProvided?: boolean;
 };
 
 export type BinDiffRow = {
@@ -87,12 +91,22 @@ export function preservedBinCount(
  * whose index is in skipBinRows (so the server keeps the existing assignment).
  */
 export function serializeToCsv(rows: Array<ParsedRow>, skipBinRows: Set<number>): string {
-  const header = "Vendor,Catalog,Description,BinLocation,Barcodes";
+  const includeOp = rows.some((row) => row.opProvided);
+  const includeOq = rows.some((row) => row.oqProvided);
+  const header = [
+    "Vendor", "Catalog", "Description", "BinLocation", "Barcodes",
+    ...(includeOp ? ["OP"] : []),
+    ...(includeOq ? ["OQ"] : []),
+  ].join(",");
   const escapeField = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const lines = rows.map((row, i) => {
     const bin = skipBinRows.has(i) ? "" : row.binLocations.join(";");
     const barcodes = row.barcodes.join(";");
-    return [row.vendor, row.catalog, row.description, bin, barcodes]
+    return [
+      row.vendor, row.catalog, row.description, bin, barcodes,
+      ...(includeOp ? [String(row.op ?? 0)] : []),
+      ...(includeOq ? [String(row.oq ?? 0)] : []),
+    ]
       .map(escapeField)
       .join(",");
   });

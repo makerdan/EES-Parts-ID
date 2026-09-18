@@ -7,8 +7,11 @@ module.exports = {
   setupFiles: ["<rootDir>/jest.env-setup.js"],
   moduleNameMapper: {
     "^expo$": "<rootDir>/__mocks__/expo.js",
+    "^expo-crypto$": "<rootDir>/__mocks__/expo-crypto.js",
     "^@clerk/expo$": "<rootDir>/__mocks__/clerk-expo.js",
     "^react-native$": "<rootDir>/__mocks__/react-native.js",
+    "^react-native-keyboard-controller$":
+      "<rootDir>/__mocks__/react-native-keyboard-controller.js",
     "^react-native-safe-area-context$": "<rootDir>/__mocks__/react-native-safe-area-context.js",
     "^expo-clipboard$": "<rootDir>/__mocks__/expo-clipboard.js",
     "^expo-image-manipulator$": "<rootDir>/__mocks__/expo-image-manipulator.js",

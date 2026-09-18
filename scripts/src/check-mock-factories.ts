@@ -17,11 +17,13 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
-import { join, dirname, resolve, extname } from "path";
+import { join, dirname, resolve, extname, relative, sep } from "path";
+import { fileURLToPath } from "url";
+import ts from "typescript";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-const REPO_ROOT = resolve(new URL(".", import.meta.url).pathname, "../..");
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 /** Directories to scan for test files (relative to REPO_ROOT). */
 const SCAN_DIRS = [
@@ -68,29 +70,51 @@ function walkTestFiles(dir: string): string[] {
 
 // ── Module resolution ─────────────────────────────────────────────────────────
 
-const EXTENSIONS = [".ts", ".tsx", "/index.ts", "/index.tsx"];
+const EXTENSIONS = [
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  "/index.ts",
+  "/index.tsx",
+  "/index.mts",
+  "/index.cts",
+  "/index.js",
+  "/index.jsx",
+];
 
-function resolveModulePath(rawPath: string, fromFile: string): string | null {
+function resolveFile(base: string): string | null {
+  if (extname(base) && existsSync(base)) return base;
+  for (const ext of EXTENSIONS) {
+    const candidate = base + ext;
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+export function resolveModulePath(rawPath: string, fromFile: string): string | null {
   const fromDir = dirname(fromFile);
 
   if (rawPath.startsWith(".")) {
-    const base = resolve(fromDir, rawPath);
-    if (extname(base) && existsSync(base)) return base;
-    for (const ext of EXTENSIONS) {
-      const candidate = base + ext;
-      if (existsSync(candidate)) return candidate;
-    }
-    return null;
+    return resolveFile(resolve(fromDir, rawPath));
   }
 
   if (rawPath.startsWith("@workspace/")) {
-    const srcDir = WORKSPACE_MAP[rawPath];
-    if (!srcDir) return null;
-    for (const idx of ["index.ts", "index.tsx"]) {
-      const p = join(REPO_ROOT, srcDir, idx);
-      if (existsSync(p)) return p;
+    const packageName = Object.keys(WORKSPACE_MAP).find(
+      (name) => rawPath === name || rawPath.startsWith(`${name}/`),
+    );
+    if (!packageName) return null;
+
+    const srcRoot = resolve(REPO_ROOT, WORKSPACE_MAP[packageName]!);
+    const subpath = rawPath.slice(packageName.length).replace(/^\/+/, "");
+    const base = resolve(srcRoot, subpath || ".");
+    const relativeToRoot = relative(srcRoot, base);
+    if (relativeToRoot === ".." || relativeToRoot.startsWith(`..${sep}`)) {
+      return null;
     }
-    return null;
+    return resolveFile(base);
   }
 
   // Third-party npm package — skip.
@@ -103,22 +127,54 @@ function resolveModulePath(rawPath: string, fromFile: string): string | null {
  * Returns the names of top-level `export class Foo` declarations in a source
  * file.  Uses a simple regex — accurate enough for well-structured TS source.
  */
-function exportedClassNames(filePath: string): string[] {
+export function exportedClassNames(filePath: string): string[] {
   if (!existsSync(filePath)) return [];
   const src = readFileSync(filePath, "utf-8");
-  const names: string[] = [];
-  // Match: export class Foo / export abstract class Foo
-  const re = /\bexport\s+(?:abstract\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(src)) !== null) {
-    names.push(m[1]!);
-  }
-  return names;
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    src,
+    ts.ScriptTarget.Latest,
+    true,
+    filePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const localClasses = new Set<string>();
+  const exportedClasses = new Set<string>();
+
+  const hasExportModifier = (node: ts.Node): boolean =>
+    ts.canHaveModifiers(node) &&
+    !!ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isClassDeclaration(node) && node.name) {
+      localClasses.add(node.name.text);
+      if (hasExportModifier(node)) exportedClasses.add(node.name.text);
+    }
+
+    if (
+      ts.isExportDeclaration(node) &&
+      node.exportClause &&
+      ts.isNamedExports(node.exportClause)
+    ) {
+      for (const element of node.exportClause.elements) {
+        if (localClasses.has(element.propertyName?.text ?? element.name.text)) {
+          exportedClasses.add(element.name.text);
+        }
+      }
+    }
+
+    if (ts.isExportAssignment(node) && ts.isIdentifier(node.expression)) {
+      if (localClasses.has(node.expression.text)) exportedClasses.add("default");
+    }
+
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return [...exportedClasses];
 }
 
 // ── jest.mock call parsing ────────────────────────────────────────────────────
 
-interface MockCall {
+export interface MockCall {
   /** First argument: the module path. */
   modulePath: string;
   /** Whether the factory body calls jest.requireActual. */
@@ -137,72 +193,61 @@ interface MockCall {
  *  4. Walk balanced parens to capture the full call text, then search for
  *     `jest.requireActual` within it.
  */
-function parseMockCalls(src: string): MockCall[] {
+export function parseMockCalls(src: string, filePath = "fixture.ts"): MockCall[] {
   const calls: MockCall[] = [];
-  const lines = src.split("\n");
-
-  // Build a lookup: character offset → 1-based line number.
-  const offsetToLine = (offset: number): number => {
-    let lineNo = 1;
-    for (let i = 0; i < offset && i < src.length; i++) {
-      if (src[i] === "\n") lineNo++;
-    }
-    return lineNo;
-  };
-
-  const mockRe = /jest\.mock\(/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = mockRe.exec(src)) !== null) {
-    const callStart = match.index;
-
-    // Walk balanced parentheses to find the end of the jest.mock(…) call.
-    let depth = 1;
-    let i = callStart + match[0].length; // position right after the opening `(`
-    let inString: string | null = null;
-    let escaped = false;
-
-    while (i < src.length && depth > 0) {
-      const ch = src[i];
-      if (escaped) { escaped = false; i++; continue; }
-      if (ch === "\\") { escaped = true; i++; continue; }
-      if (inString) {
-        if (ch === inString) inString = null;
-        i++; continue;
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    src,
+    ts.ScriptTarget.Latest,
+    true,
+    filePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const isJestMethodCall = (expression: ts.Expression, method: string): boolean =>
+    ts.isPropertyAccessExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    expression.expression.text === "jest" &&
+    expression.name.text === method;
+  const isModulePath = (
+    node: ts.Node | undefined,
+  ): node is ts.StringLiteral | ts.NoSubstitutionTemplateLiteral =>
+    !!node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node));
+  const containsRequireActualCall = (node: ts.Node): boolean => {
+    let found = false;
+    const visit = (child: ts.Node): void => {
+      if (ts.isCallExpression(child) && isJestMethodCall(child.expression, "requireActual")) {
+        found = true;
+        return;
       }
-      if (ch === '"' || ch === "'" || ch === "`") { inString = ch; i++; continue; }
-      if (ch === "(") depth++;
-      else if (ch === ")") depth--;
-      i++;
+      ts.forEachChild(child, visit);
+    };
+    ts.forEachChild(node, visit);
+    return found;
+  };
+  const visit = (node: ts.Node): void => {
+    const factory = ts.isCallExpression(node) ? node.arguments[1] : undefined;
+    if (
+      ts.isCallExpression(node) &&
+      isJestMethodCall(node.expression, "mock") &&
+      node.arguments.length >= 2 &&
+      isModulePath(node.arguments[0]) &&
+      factory !== undefined &&
+      (ts.isArrowFunction(factory) || ts.isFunctionExpression(factory))
+    ) {
+      calls.push({
+        modulePath: node.arguments[0].text,
+        factoryCallsRequireActual: containsRequireActualCall(factory),
+        line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
+      });
     }
-
-    const callText = src.slice(callStart, i);
-
-    // Extract the first string argument (the module path).
-    const pathMatch = callText.match(/jest\.mock\(\s*(['"`])(.+?)\1/);
-    if (!pathMatch) continue;
-    const modulePath = pathMatch[2]!;
-
-    // Determine whether a factory (second argument) is present.
-    // Look for a comma after the closing quote, then a `(` or `=>`
-    // which signals an arrow/function expression.
-    const afterPath = callText.slice(pathMatch[0].length);
-    const hasFactory = /,\s*(?:async\s*)?(?:\(|function\s)/.test(afterPath) ||
-                        /,\s*(?:async\s+)?\(/.test(afterPath);
-    if (!hasFactory) continue;
-
-    const factoryCallsRequireActual = callText.includes("jest.requireActual");
-    const line = offsetToLine(callStart);
-
-    calls.push({ modulePath, factoryCallsRequireActual, line });
-  }
-
-  return lines.length > 0 ? calls : []; // silence unused var warning
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return calls;
 }
 
 // ── Violation type ────────────────────────────────────────────────────────────
 
-interface Violation {
+export interface Violation {
   testFile: string;
   line: number;
   modulePath: string;
@@ -212,7 +257,7 @@ interface Violation {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-function scanFile(filePath: string): Violation[] {
+export function scanFile(filePath: string): Violation[] {
   let src: string;
   try {
     src = readFileSync(filePath, "utf-8");
@@ -272,4 +317,6 @@ function main(): void {
   process.exit(1);
 }
 
-main();
+if (process.argv[1] && import.meta.url === `file://${resolve(process.argv[1])}`) {
+  main();
+}

@@ -17,7 +17,6 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { Alert } from "react-native";
 import { act, fireEvent, render } from "@testing-library/react-native";
 import type { RenderResult } from "@testing-library/react-native";
 import { makeAppMock, flushPromises as rawFlush } from "./helpers/appMocks";
@@ -96,7 +95,7 @@ jest.mock("@/utils/nearestZoneCorner", () => ({
 // ─── @/hooks/useMapAnchors ───────────────────────────────────────────────────
 
 // Stable function refs so useEffect deps never cycle.
-type AnchorMutResult = { ok: boolean; mfaRequired?: boolean };
+type AnchorMutResult = { ok: boolean };
 const mockUpsertAnchor   = jest.fn<Promise<AnchorMutResult>, [number, unknown]>().mockResolvedValue({ ok: true });
 const mockDeleteAnchor   = jest.fn<Promise<AnchorMutResult>, [number]>().mockResolvedValue({ ok: true });
 const mockAnchorsRefetch = jest.fn<Promise<void>, []>().mockResolvedValue(undefined);
@@ -108,7 +107,6 @@ jest.mock("@/hooks/useMapAnchors", () => ({
     anchors:      _mockAnchors,
     loading:      false,
     error:        false,
-    mfaRequired:  false,
     refetch:      mockAnchorsRefetch,
     upsertAnchor: mockUpsertAnchor,
     deleteAnchor: mockDeleteAnchor,
@@ -498,53 +496,6 @@ describe("Cache invalidation after confirm", () => {
 // =============================================================================
 // (g) Double-tap guard
 // =============================================================================
-
-// =============================================================================
-// MFA_REQUIRED during confirm
-// =============================================================================
-
-describe("MFA_REQUIRED during confirm", () => {
-  // Alert.alert is auto-mocked by the react-native jest preset.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mockAlert = Alert.alert as jest.Mock<any, any>;
-
-  it("shows an MFA-specific Alert and NOT the generic retry message when upsertAnchor returns mfaRequired: true", async () => {
-    // Slot 1 returns MFA_REQUIRED
-    mockUpsertAnchor.mockResolvedValueOnce({ ok: false, mfaRequired: true });
-
-    activeTree = await renderScreen([...VALID_ANCHORS]);
-    await goToReview(activeTree);
-    await pressConfirm(activeTree);
-
-    // Alert must have been called with the MFA-specific title
-    expect(mockAlert).toHaveBeenCalledWith(
-      "Two-Factor Authentication Required",
-      expect.stringMatching(/two-factor authentication \(2fa\)/i),
-      expect.any(Array),
-    );
-
-    // The generic connection-error banner must NOT be shown
-    expect(activeTree.queryByText(/could not save all anchors/i)).toBeNull();
-  });
-
-  it("shows the generic retry message and NOT an MFA Alert when upsertAnchor returns { ok: false, mfaRequired: false }", async () => {
-    // Slot 1 fails with a generic (non-MFA) error
-    mockUpsertAnchor.mockResolvedValueOnce({ ok: false, mfaRequired: false });
-
-    activeTree = await renderScreen([...VALID_ANCHORS]);
-    await goToReview(activeTree);
-    await pressConfirm(activeTree);
-
-    // Generic "could not save" error must appear
-    expect(activeTree.queryByText(/could not save all anchors/i)).not.toBeNull();
-
-    // Alert must NOT have been called with the MFA title
-    const mfaAlertCall = mockAlert.mock.calls.find(
-      ([title]: [string]) => /two-factor/i.test(title),
-    );
-    expect(mfaAlertCall).toBeUndefined();
-  });
-});
 
 describe("Double-tap guard", () => {
   it("issues only one batch of 3 PUT calls when Confirm is tapped rapidly twice", async () => {

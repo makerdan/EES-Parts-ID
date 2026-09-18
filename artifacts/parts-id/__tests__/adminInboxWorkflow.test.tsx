@@ -120,12 +120,14 @@ const CONTACT_ROWS = [
 
 type MockResponse = {
   ok: boolean;
+  status: number;
   json: () => Promise<unknown>;
 };
 
-function jsonResponse(value: unknown, ok = true): MockResponse {
+function jsonResponse(value: unknown, ok = true, status = ok ? 200 : 500): MockResponse {
   return {
     ok,
+    status,
     json: async () => value,
   };
 }
@@ -149,6 +151,18 @@ function findPressable(root: Inst, text: string): Inst | null {
         { includeSelf: true },
       )
       .find((node) => instText(node).includes(text)) ?? null
+  );
+}
+
+function findPressableByLabel(root: Inst, label: string): Inst | null {
+  return (
+    root
+      .queryAll(
+        (node: TestInstance) =>
+          (node.type as string) === "rn-pressable" && node.props.accessibilityLabel === label,
+        { includeSelf: true },
+      )
+      .at(0) ?? null
   );
 }
 
@@ -232,6 +246,11 @@ describe("AdminInboxScreen — protected inbox workflow", () => {
 
     const unreadRow = findPressable(getRoot(), "Need help identifying a part");
     expect(unreadRow).not.toBeNull();
+    expect(unreadRow!.props.accessibilityRole).toBe("button");
+    expect(unreadRow!.props.accessibilityLabel).toContain("Need help identifying a part");
+    expect(unreadRow!.props.accessibilityLabel).toContain("unread");
+    expect(unreadRow!.props.accessibilityLabel).toContain("expand message");
+    expect(unreadRow!.props.accessibilityState).toEqual({ expanded: false });
 
     await act(async () => {
       void fireEvent.press(unreadRow!);
@@ -262,6 +281,9 @@ describe("AdminInboxScreen — protected inbox workflow", () => {
     const updatedRow = findPressable(getRoot(), "Need help identifying a part");
     expect(updatedRow).not.toBeNull();
     expect(flattenStyle(updatedRow!.props.style).borderLeftWidth).toBe(1);
+    expect(updatedRow!.props.accessibilityLabel).toContain("read");
+    expect(updatedRow!.props.accessibilityLabel).toContain("collapse message");
+    expect(updatedRow!.props.accessibilityState).toEqual({ expanded: true });
   });
 
   it("keeps an unread message unread when the mark-as-read request fails", async () => {
@@ -284,9 +306,122 @@ describe("AdminInboxScreen — protected inbox workflow", () => {
     });
 
     expect(instText(getRoot())).toContain("The label is worn off. Can you help?");
+    expect(instText(getRoot())).toContain(
+      "Could not mark message as read. It remains unread. Please try again.",
+    );
     expect(hasExactText(getRoot(), "1")).toBe(true);
     const failedRow = findPressable(getRoot(), "Need help identifying a part");
     expect(flattenStyle(failedRow!.props.style).borderLeftWidth).toBe(3);
+
+    const dismissButton = findPressableByLabel(getRoot(), "Dismiss mark as read error");
+    expect(dismissButton).not.toBeNull();
+    await act(async () => {
+      void fireEvent.press(dismissButton!);
+      await flushPromises();
+    });
+
+    expect(instText(getRoot())).not.toContain(
+      "Could not mark message as read. It remains unread. Please try again.",
+    );
+    expect(hasExactText(getRoot(), "1")).toBe(true);
+  });
+
+  it("shows the same feedback for a server rejection and marks the message read after retry", async () => {
+    let patchAttempts = 0;
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        patchAttempts += 1;
+        return Promise.resolve(
+          patchAttempts === 1
+            ? jsonResponse({ error: "Message not found" }, false, 404)
+            : jsonResponse({ id: UNREAD_ID }),
+        );
+      }
+      return Promise.resolve(jsonResponse([CONTACT_ROWS[0]]));
+    });
+
+    activeTree = await render(React.createElement(AdminInboxScreen));
+    await act(async () => {
+      await flushPromises();
+    });
+
+    const unreadRow = findPressable(getRoot(), "Need help identifying a part");
+    expect(unreadRow).not.toBeNull();
+
+    await act(async () => {
+      void fireEvent.press(unreadRow!);
+      await flushPromises();
+    });
+
+    expect(instText(getRoot())).toContain("The label is worn off. Can you help?");
+    expect(instText(getRoot())).toContain(
+      "Could not mark message as read. It remains unread. Please try again.",
+    );
+    expect(hasExactText(getRoot(), "1")).toBe(true);
+    const failedRow = findPressable(getRoot(), "Need help identifying a part");
+    expect(flattenStyle(failedRow!.props.style).borderLeftWidth).toBe(3);
+
+    const retryButton = findPressableByLabel(getRoot(), "Retry marking message as read");
+    expect(retryButton).not.toBeNull();
+
+    await act(async () => {
+      void fireEvent.press(retryButton!);
+      await flushPromises();
+    });
+
+    expect(patchAttempts).toBe(2);
+    expect(hasExactText(getRoot(), "1")).toBe(false);
+    expect(instText(getRoot())).not.toContain(
+      "Could not mark message as read. It remains unread. Please try again.",
+    );
+    const updatedRow = findPressable(getRoot(), "Need help identifying a part");
+    expect(flattenStyle(updatedRow!.props.style).borderLeftWidth).toBe(1);
+  });
+
+  it("keeps loaded messages and unread count visible when refresh fails, then recovers on retry", async () => {
+    let getAttempts = 0;
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") return Promise.resolve(jsonResponse({ id: UNREAD_ID }));
+      getAttempts += 1;
+      if (getAttempts === 2) return Promise.reject(new Error("refresh unavailable"));
+      return Promise.resolve(jsonResponse(CONTACT_ROWS));
+    });
+
+    activeTree = await render(React.createElement(AdminInboxScreen));
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(instText(getRoot())).toContain("Need help identifying a part");
+    expect(hasExactText(getRoot(), "1")).toBe(true);
+
+    const refreshButton = findPressableByLabel(getRoot(), "Refresh inbox");
+    expect(refreshButton).not.toBeNull();
+
+    await act(async () => {
+      void fireEvent.press(refreshButton!);
+      await flushPromises();
+    });
+
+    expect(getAttempts).toBe(2);
+    expect(instText(getRoot())).toContain("Need help identifying a part");
+    expect(instText(getRoot())).toContain(
+      "Could not refresh the inbox. Your loaded messages are still shown.",
+    );
+    expect(hasExactText(getRoot(), "1")).toBe(true);
+    expect(findPressableByLabel(getRoot(), "Retry inbox refresh")).not.toBeNull();
+
+    await act(async () => {
+      void fireEvent.press(findPressableByLabel(getRoot(), "Retry inbox refresh")!);
+      await flushPromises();
+    });
+
+    expect(getAttempts).toBe(3);
+    expect(instText(getRoot())).toContain("Need help identifying a part");
+    expect(instText(getRoot())).not.toContain(
+      "Could not refresh the inbox. Your loaded messages are still shown.",
+    );
+    expect(hasExactText(getRoot(), "1")).toBe(true);
   });
 });
 

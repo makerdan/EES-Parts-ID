@@ -35,6 +35,11 @@ export type HelpResponse = {
   records: Array<HelpRecord>;
 };
 
+function getOrientationStorageKey(userId: string | null | undefined): string | null {
+  const normalizedUserId = userId?.trim();
+  return normalizedUserId ? `${HELP_ORIENTATION_KEY}:${normalizedUserId}` : null;
+}
+
 function isStringList(value: unknown): value is Array<string> {
   return Array.isArray(value) && value.length > 0 &&
     value.every((item) => typeof item === "string" && item.length <= 500);
@@ -110,19 +115,25 @@ export async function writeCachedGeneralHelp(response: HelpResponse): Promise<vo
   }
 }
 
-export async function readHelpOrientationDismissed(): Promise<boolean> {
+export async function readHelpOrientationDismissed(userId: string | null | undefined): Promise<boolean> {
+  const storageKey = getOrientationStorageKey(userId);
+  if (!storageKey) return false;
   try {
-    return (await AsyncStorage.getItem(HELP_ORIENTATION_KEY)) === "dismissed";
+    return (await AsyncStorage.getItem(storageKey)) === "dismissed";
   } catch (error) {
     reportStorageError("Could not read Help orientation state", error);
     return false;
   }
 }
 
-export async function saveHelpOrientationDismissed(): Promise<void> {
+export async function saveHelpOrientationDismissed(userId: string | null | undefined): Promise<boolean> {
+  const storageKey = getOrientationStorageKey(userId);
+  if (!storageKey) return false;
   try {
-    await AsyncStorage.setItem(HELP_ORIENTATION_KEY, "dismissed");
+    await AsyncStorage.setItem(storageKey, "dismissed");
+    return true;
   } catch (error) {
     reportStorageError("Could not save Help orientation state", error);
+    return false;
   }
 }

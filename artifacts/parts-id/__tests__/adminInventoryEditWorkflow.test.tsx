@@ -104,11 +104,19 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   },
 }));
 
-jest.mock("@/utils/editItemCache", () => ({
-  evictDeletedItemFromAllCaches: jest.fn().mockResolvedValue(undefined),
-  invalidateAllCachesAfterSave: (...args: unknown[]) => mockInvalidateAllCachesAfterSave(...args),
-  invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
-}));
+jest.mock("@/utils/editItemCache", () => {
+  const actual = jest.requireActual("@/utils/editItemCache") as {
+    invalidateAllCachesAfterSave: (...args: unknown[]) => Promise<unknown>;
+  };
+  return {
+    evictDeletedItemFromAllCaches: jest.fn().mockResolvedValue(undefined),
+    invalidateAllCachesAfterSave: (...args: unknown[]) => {
+      mockInvalidateAllCachesAfterSave(...args);
+      return actual.invalidateAllCachesAfterSave(...args);
+    },
+    invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
+  };
+});
 
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
@@ -155,6 +163,9 @@ function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     catalog: "EDIT-WORKFLOW",
     description: "Original description",
     vendor: "ACME",
+    orderPurchase: 0,
+    orderQuantity: 0,
+    totalOpOq: 0,
     binLocations: ["AISLE-01"],
     aiKeywords: ["relay"],
     barcodes: [],
@@ -231,7 +242,7 @@ function makeCaches(item: InventoryItem) {
 let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 
 beforeEach(() => {
-  jest.useFakeTimers();
+  jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
   serverItem = makeItem();
   routeItem = { ...serverItem };
   failDescriptionSave = false;
@@ -285,6 +296,32 @@ afterEach(async () => {
 // =============================================================================
 
 describe("EditItemScreen — administrator inventory edit workflow", () => {
+  it("shows a read-only live OP/OQ total", async () => {
+    activeTree = await renderScreen();
+
+    const total = findByA11yLabel(activeTree.root!, "Total OP/OQ 0");
+    expect(total).not.toBeNull();
+    expect(total!.props.editable).not.toBe(true);
+
+    const opInput = findTextInput(activeTree.root!, "0");
+    const oqInput = activeTree.root!.queryAll(
+      (node) =>
+        (node.type as string) === "rn-textinput" &&
+        node.props.placeholder === "0",
+      { includeSelf: true },
+    )[1];
+    expect(opInput).not.toBeNull();
+    expect(oqInput).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.changeText(opInput!, "7");
+      fireEvent.changeText(oqInput!, "8");
+    });
+
+    expect(findByA11yLabel(activeTree.root!, "Total OP/OQ 15")).not.toBeNull();
+    expect(hasText(activeTree.root!, "Total OP/OQ")).toBe(true);
+  });
+
   it("loads, saves through the authenticated API, patches caches, and shows the persisted value after reload", async () => {
     activeTree = await renderScreen();
 
@@ -355,10 +392,12 @@ describe("EditItemScreen — administrator inventory edit workflow", () => {
     });
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(descriptionInput!.props.value).toBe("Original description");
+    expect(findTextInput(activeTree.root!, "Brief description of the part…")!.props.value)
+      .toBe("Original description");
     expect(hasText(activeTree.root!, "Description failed")).toBe(true);
     expect(hasText(activeTree.root!, "✓ Saved")).toBe(false);
     expect(inventoryCache.items[0]!.description).toBe("Original description");
+    expect(searchCache.results[0]!.item.description).toBe("Original description");
     expect(serverItem.description).toBe("Original description");
   });
 });
@@ -383,6 +422,8 @@ describe("EditItemScreen — protected inventory mutations", () => {
     const descriptionInput = findTextInput(activeTree.root!, "Brief description of the part…");
     await act(async () => {
       fireEvent.changeText(descriptionInput!, "Unauthorized change");
+    });
+    await act(async () => {
       fireEvent.press(findPressable(activeTree!.root!, "Save Details")!);
     });
 

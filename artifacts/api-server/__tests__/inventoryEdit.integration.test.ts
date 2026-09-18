@@ -10,6 +10,7 @@
  *   PATCH /api/inventory/:id/expanded-description
  *   PATCH /api/inventory/:id/bins
  *   PATCH /api/inventory/:id/barcodes
+ *   PATCH /api/inventory/:id/order
  *   PATCH /api/inventory/:id/keywords
  *   PATCH /api/inventory/:id/dimensions  (partial + full)
  *   PATCH /api/inventory/:id/photo       (remove only — GCS upload is stubbed)
@@ -49,29 +50,42 @@ jest.mock("../src/utils/imageResize", () => ({
 }));
 
 jest.mock("../src/utils/aiHelpers", () => ({
-  estimateImageBytes: jest.fn().mockReturnValue(1024),
+  ...(
+    jest.requireActual("./helpers/aiHelpersMock") as typeof import("./helpers/aiHelpersMock")
+  ).createAiHelpersMock(
+    jest.requireActual("../src/utils/aiHelpers"),
+    { estimateImageBytes: 1024 },
+  ),
 }));
 
 // ── Imports ───────────────────────────────────────────────────────────────────
-import supertest from "supertest";
 import { db, inventoryTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import express from "express";
+import supertest from "supertest";
 import app from "../src/app";
+import { logger } from "../src/lib/logger";
+import routes from "../src/routes";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import {
   cleanupEditableItem,
   seedEditableItem,
   seedTestUser,
   cleanupTestUser,
+  workerQualifiedUserId,
 } from "./helpers/testDb";
+import { setTestEnv } from "./helpers/testEnv";
 import type { EditableItem } from "./helpers/testDb";
 
 // ── Test-wide state ───────────────────────────────────────────────────────────
 
 const ADMIN_TOKEN = ADMIN_TEST_USER_ID;
-const NON_ADMIN_USER = "jest-edit-nonadmin";
+const NON_ADMIN_USER = workerQualifiedUserId("jest-edit-nonadmin");
+const PENDING_ADMIN_USER = workerQualifiedUserId("jest-edit-pending-admin");
+const BANNED_ADMIN_USER = workerQualifiedUserId("jest-edit-banned-admin");
 
 let item: EditableItem;
+let restoreTestEnv: (() => void) | undefined;
 
 /** Re-fetch the live DB row so we can assert what was actually committed. */
 async function fetchRow(id: number) {
@@ -88,41 +102,41 @@ beforeAll(async () => {
   // Insert a non-admin user so auth-guard tests can confirm 403.
   // seedTestUser derives the email from the clerkUserId (collision-safe).
   await seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" });
+  await seedTestUser({ clerkUserId: PENDING_ADMIN_USER, status: "pending", role: "admin" });
+  await seedTestUser({ clerkUserId: BANNED_ADMIN_USER, status: "banned", role: "admin" });
 
   item = await seedEditableItem();
 
   // Authenticate all subsequent requests as admin by default.
-  process.env.TEST_DEFAULT_AUTH_USER = ADMIN_TOKEN;
+  restoreTestEnv = setTestEnv({ TEST_DEFAULT_AUTH_USER: ADMIN_TOKEN });
 }, 30_000);
 
 afterAll(async () => {
-  delete process.env.TEST_DEFAULT_AUTH_USER;
-  // Cleanup can race the db-serial project's global pool teardown when Jest
-  // runs both projects sequentially in the same process.  Silently skip on
-  // pool-ended to avoid a false "suite failed" from afterAll errors; the
-  // seedEditableItem() guard (DELETE before INSERT) ensures idempotency on
-  // the next run anyway.
-  try {
-    await cleanupEditableItem();
-    await cleanupTestUser(NON_ADMIN_USER);
-  } catch {
-    // pool already closed — no-op
-  }
+  restoreTestEnv?.();
+  await cleanupEditableItem();
+  await cleanupTestUser(NON_ADMIN_USER);
+  await cleanupTestUser(PENDING_ADMIN_USER);
+  await cleanupTestUser(BANNED_ADMIN_USER);
 }, 30_000);
 
 function withAuth(req: supertest.Test, token?: string): supertest.Test {
   return token ? req.set("Authorization", `Bearer ${token}`) : req;
 }
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // Auth guard — every write route must reject unauthenticated / non-admin callers
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("Edit route auth guard", () => {
   // Clear TEST_DEFAULT_AUTH_USER so no-token requests actually get 401,
   // then restore it so the rest of the suite keeps the admin default.
-  beforeAll(() => { delete process.env.TEST_DEFAULT_AUTH_USER; });
-  afterAll(() => { process.env.TEST_DEFAULT_AUTH_USER = ADMIN_TOKEN; });
+  let restoreAuthDefault: (() => void) | undefined;
+  beforeAll(() => {
+    restoreAuthDefault = setTestEnv({ TEST_DEFAULT_AUTH_USER: undefined });
+  });
+  afterAll(() => {
+    restoreAuthDefault?.();
+  });
 
   type GuardRoute = {
     label: string;
@@ -134,6 +148,7 @@ describe("Edit route auth guard", () => {
     { label: "description",          getPath: () => `/api/inventory/${item?.id ?? 0}/description`,          body: { description: "x" } },
     { label: "bins",                 getPath: () => `/api/inventory/${item?.id ?? 0}/bins`,                 body: { binLocations: ["X1"] } },
     { label: "barcodes",             getPath: () => `/api/inventory/${item?.id ?? 0}/barcodes`,             body: { barcodes: ["999"] } },
+    { label: "order",                getPath: () => `/api/inventory/${item?.id ?? 0}/order`,                body: { orderPurchase: 1, orderQuantity: 2 } },
     { label: "keywords",             getPath: () => `/api/inventory/${item?.id ?? 0}/keywords`,             body: { keywords: ["relay"] } },
     { label: "dimensions",           getPath: () => `/api/inventory/${item?.id ?? 0}/dimensions`,           body: { length: 10 } },
     { label: "expanded-description", getPath: () => `/api/inventory/${item?.id ?? 0}/expanded-description`, body: { expandedDescription: "x" } },
@@ -167,11 +182,81 @@ describe("Edit route auth guard", () => {
       });
     });
   }
+
+  it.each([
+    ["pending admin", PENDING_ADMIN_USER],
+    ["banned admin", BANNED_ADMIN_USER],
+  ])("%s → 403 on a representative admin endpoint", async (_label, userId) => {
+    const res = await withAuth(
+      supertest(app)
+        .patch(`/api/inventory/${item.id}/order`)
+        .send({ orderPurchase: 1, orderQuantity: 2 }),
+      userId,
+    );
+    expect(res.status).toBe(403);
+    expect(res.body).toHaveProperty("error");
+  });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH /api/inventory/:id/order
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PATCH /api/inventory/:id/order", () => {
+  afterEach(async () => {
+    await db
+      .update(inventoryTable)
+      .set({ orderPurchase: 0, orderQuantity: 0 })
+      .where(eq(inventoryTable.id, item.id));
+  });
+
+  it("accepts an approved admin without MFA claims, persists OP/OQ, and returns the generated total", async () => {
+    const res = await withAuth(
+      supertest(app)
+        .patch(`/api/inventory/${item.id}/order`)
+        .send({ orderPurchase: 7, orderQuantity: 8 }),
+      ADMIN_TOKEN,
+    ).expect(200);
+
+    expect(res.body).toMatchObject({
+      id: item.id,
+      orderPurchase: 7,
+      orderQuantity: 8,
+      totalOpOq: 15,
+    });
+    const row = await fetchRow(item.id);
+    expect(row).toMatchObject({
+      orderPurchase: 7,
+      orderQuantity: 8,
+      totalOpOq: 15,
+    });
+  });
+
+  it.each([
+    ["a negative OP", { orderPurchase: -1, orderQuantity: 8 }],
+    ["a fractional OQ", { orderPurchase: 7, orderQuantity: 1.5 }],
+    ["a missing OQ", { orderPurchase: 7 }],
+  ])("rejects %s and leaves the prior OP/OQ values intact", async (_label, body) => {
+    const before = await fetchRow(item.id);
+    await withAuth(
+      supertest(app)
+        .patch(`/api/inventory/${item.id}/order`)
+        .send(body),
+      ADMIN_TOKEN,
+    ).expect(400);
+
+    const after = await fetchRow(item.id);
+    expect(after).toMatchObject({
+      orderPurchase: before?.orderPurchase,
+      orderQuantity: before?.orderQuantity,
+      totalOpOq: before?.totalOpOq,
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/description
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/description — happy paths", () => {
   it("updates description and commits the value to the DB", async () => {
@@ -267,9 +352,9 @@ describe("PATCH /api/inventory/:id/description — error paths", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/expanded-description
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/expanded-description — happy paths", () => {
   it("updates expanded description and returns { success: true }", async () => {
@@ -320,9 +405,9 @@ describe("PATCH /api/inventory/:id/expanded-description — happy paths", () => 
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/bins
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/bins — happy paths", () => {
   afterEach(async () => {
@@ -410,9 +495,9 @@ describe("PATCH /api/inventory/:id/bins — error paths", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/barcodes
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/barcodes — happy paths", () => {
   afterEach(async () => {
@@ -480,9 +565,9 @@ describe("PATCH /api/inventory/:id/barcodes — error paths", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/keywords
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
   afterEach(async () => {
@@ -490,6 +575,45 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
       .update(inventoryTable)
       .set({ aiKeywords: item.aiKeywords, pinnedKeywords: item.aiKeywords })
       .where(eq(inventoryTable.id, item.id));
+  });
+
+  it("keeps persistent dictionary failures bounded and does not leak inventory data", async () => {
+    const failureApp = express();
+    failureApp.use(express.json());
+    failureApp.use("/api", routes);
+    const actualTransaction = db.transaction.bind(db);
+    const dictionaryLoad = jest.spyOn(db, "transaction");
+    const dictionaryErrorLog = jest.spyOn(logger, "error");
+    dictionaryLoad
+      // The search limiter transaction is unrelated to dictionary loading.
+      .mockImplementationOnce(callback => actualTransaction(callback))
+      .mockRejectedValue(new Error("persistent dictionary database failure"));
+
+    try {
+      const response = await supertest(failureApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(500);
+
+      expect(response.body).toEqual({ error: "Search failed" });
+      expect(JSON.stringify(response.body)).not.toContain(item.catalog);
+      expect(dictionaryLoad).toHaveBeenCalledTimes(3);
+
+      const diagnosticCall = dictionaryErrorLog.mock.calls.find(([fields]) => (
+        typeof fields === "object" &&
+        fields !== null &&
+        "event" in fields &&
+        fields.event === "inventory_dictionary_load_failed"
+      ));
+      expect(diagnosticCall?.[0]).toMatchObject({
+        errorCategory: "dictionary_database_failure",
+        attempts: 2,
+        errorMessage: "persistent dictionary database failure",
+      });
+    } finally {
+      dictionaryErrorLog.mockRestore();
+      dictionaryLoad.mockRestore();
+    }
   });
 
   it("replaces aiKeywords + pinnedKeywords and commits to DB", async () => {
@@ -508,6 +632,72 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
     expect(row?.aiKeywords).toEqual(newKeywords);
     // The route also writes pinnedKeywords = keywords to the DB
     expect(row?.pinnedKeywords).toEqual(newKeywords);
+  });
+
+  it("returns saved keywords from repeated search and a fresh app instance", async () => {
+    const newKeywords = ["durable-search-keyword", "admin-edit-confirmation"];
+    const findItem = (body: unknown) => {
+      const results = (body as {
+        results?: Array<{ item?: { id?: number; aiKeywords?: string[] } }>;
+      }).results;
+      return results?.find((result) => result.item?.id === item.id)?.item;
+    };
+
+    // The first dictionary transaction can lose a connection during the full
+    // API workload. The loader must recover in the same request so this
+    // persistence contract is not coupled to incidental pool timing.
+    const recoveryApp = express();
+    recoveryApp.use(express.json());
+    recoveryApp.use("/api", routes);
+    const actualTransaction = db.transaction.bind(db);
+    const dictionaryLoad = jest.spyOn(db, "transaction");
+    dictionaryLoad
+      // The search limiter also uses a transaction. Let that unrelated
+      // transaction run before injecting the dictionary initialization fault.
+      .mockImplementationOnce(callback => actualTransaction(callback))
+      .mockRejectedValueOnce(new Error("temporary dictionary connection unavailable"));
+
+    try {
+      await supertest(recoveryApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(200);
+      expect(dictionaryLoad).toHaveBeenCalledTimes(3);
+
+      const beforeSave = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(200);
+      expect(findItem(beforeSave.body)?.aiKeywords).toEqual(item.aiKeywords);
+
+      await withAuth(
+        supertest(app)
+          .patch(`/api/inventory/${item.id}/keywords`)
+          .send({ keywords: newKeywords }),
+        ADMIN_TOKEN,
+      ).expect(200);
+
+      const committedRow = await fetchRow(item.id);
+      expect(committedRow?.aiKeywords).toEqual(newKeywords);
+      expect(committedRow?.pinnedKeywords).toEqual(newKeywords);
+
+      const repeatedSearch = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(200);
+      expect(findItem(repeatedSearch.body)?.aiKeywords).toEqual(newKeywords);
+
+      const freshApp = express();
+      freshApp.use(express.json());
+      freshApp.use("/api", routes);
+      const freshAppSearch = await supertest(freshApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(200);
+      expect(findItem(freshAppSearch.body)?.aiKeywords).toEqual(newKeywords);
+    } finally {
+      dictionaryLoad.mockRestore();
+    }
   });
 
   it("accepts an empty keywords array (clears keywords)", async () => {
@@ -542,9 +732,9 @@ describe("PATCH /api/inventory/:id/keywords — error paths", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/dimensions
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/dimensions — happy paths", () => {
   afterEach(async () => {
@@ -643,9 +833,9 @@ describe("PATCH /api/inventory/:id/dimensions — error paths", () => {
   });
 });
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/inventory/:id/photo — remove only (GCS upload stubbed)
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/photo — remove", () => {
   it("removes slot-1 photo and commits null imageUrl to DB", async () => {

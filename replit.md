@@ -21,7 +21,7 @@ pnpm workspace monorepo using TypeScript. **Parts ID** — Expo (React Native) e
 ## Artifacts
 
 ### parts-id (Expo mobile app)
-- Password-only login (server-side: APP_PASSWORD secret validates via POST /api/auth/app-login and returns a signed session token; password never ships in the JS bundle)
+- Clerk authentication; the client receives only the Clerk publishable key and public API/origin configuration
 - **Google OAuth redirect URL**: set `EXPO_PUBLIC_APP_URL` to the canonical production origin (e.g. `https://your-app.replit.app`). The web OAuth callback is built from this value so the redirect URL is predictable. In Clerk Dashboard → Paths → "Allowed redirect URLs" add `https://your-app.replit.app/sso-callback`. Without this entry Google rejects the redirect and the user sees a blank page. Omit the env var in local dev — it falls back to `window.location.origin`.
 - 3 tabs: Search, Photo ID, Upload/Inventory
 - Dark industrial amber theme (primary: #f59e0b, dark bg: #0d1117)
@@ -47,7 +47,12 @@ Tables: `inventory`, `abbreviation_map`, `vendor_map`, `synonym_map`, `misspelli
 
 ### Seed Data
 210 abbreviations, 66 vendors, 177 synonyms, 283 misspellings, 144 slang entries
-Seed: `node --import tsx/esm --no-warnings src/seed/run.ts` from `artifacts/api-server/`
+Seed: `DATABASE_ENV=development node --import tsx/esm --no-warnings src/seed/run.ts` from `artifacts/api-server/`
+
+`DATABASE_URL` is provided by Replit PostgreSQL and is server-only. The API
+requires `DATABASE_ENV=production` in deployment; tests require `test`; seed
+and schema commands reject `production`. Never place database URLs, Clerk
+secret material, AI keys, or object-storage settings in the mobile/web bundle.
 
 ## Key Commands
 
@@ -74,14 +79,14 @@ Every task plan must declare exactly one validation tier. This prevents all four
 |---|---|---|---|
 | `fast` | `test-fast` | Static checks: scoped Failure/Regression Guards, `tsc`, lint, config, port, and bundle-domain checks | ~5 min |
 | `standard` | `test-standard` | fast + codegen/spec/env checks, Failure Gate contract coverage, and tests | ~20 min |
-| `standard-plus` | `test-standard-plus` | standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test` | ~30 min |
-| `heavy` | `test-heavy` | Same as standard-plus (currently identical steps) | ~30 min |
+| `standard-plus` | `test-standard-plus` | standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test` | ~30 min (45 min post-lock budget) |
+| `heavy` | `test-heavy` | standard-plus + `protected-map-concurrency` | ~30 min (45 min post-lock budget) |
 
 **Picking a tier (defaults unless the plan clearly implies otherwise):**
 - `fast` — pure config or refactor with no logic change
 - `standard` — most feature/bug-fix work; tasks touching only tests, mocks, or doc changes
 - `standard-plus` — DB schema, auth, or API contract changes
-- `heavy` — reserved for future use; currently same as standard-plus
+- `heavy` — standard-plus plus the protected-map concurrency smoke step
 
 ### Plan file format
 
@@ -106,8 +111,12 @@ The script exits 0 if the tier is valid, 1 with a clear error otherwise.
 
 When a task agent finishes work:
 
-1. **`fast`-tier tasks**: The Project gate (`test-fast`) runs automatically on merge. No manual `startValidationRun` call is needed — pass `skip_validation_reason` to `markTaskComplete` citing that the gate covers it.
-2. **Heavier tiers (`standard`, `standard-plus`, `heavy`)**: Call `startValidationRun({ commandIds: ["test-standard"] })` (or the appropriate tier command) before marking complete. Then pass `skip_validation_reason` to `markTaskComplete` with the run ID, e.g. `"Ran test-standard (run-abc123); gate covers fast tier on merge."`.
+1. Resolve the task plan through the completion-selection boundary. Missing, unreadable, duplicate, conflicting, or invalid declarations stop completion before validation starts.
+2. Call `startValidationRun` once with the returned one-element `commandIds` array. This applies equally to `test-fast`, `test-standard`, `test-standard-plus`, and `test-heavy`.
+3. Wait for that run to become terminal. Only a run whose overall status and single selected command are both `PASSED` is completion evidence.
+4. Cite the successful run ID when calling `markTaskComplete`. Do not request or allow a second broad completion validation.
+
+Explicit ad-hoc and remote validation may select one registered tier without a task plan, but those runs are not task-plan-locked completion evidence.
 
 ### `gate-guard` check
 
@@ -186,9 +195,9 @@ do not authorize ignores. Baseline lifecycle rules are in
 `docs/validation/failure-baseline.md`; the opt-in report is
 `pnpm run maintain:validation-baseline`.
 
-Task validation is locked to the plan. Platform completion validation is a
-separate final gate and may run broader registered commands; do not skip that
-completion check merely because it is broader than the task tier.
+Task validation and completion evidence are locked to the same plan-selected
+registered command. The successful terminal run ID is the completion gate; do
+not start a separate broad completion run.
 
 ---
 
@@ -198,12 +207,12 @@ Only the three long-running services are ordinary workflows: `artifacts/api-serv
 
 ### Validation tiers (consolidated runners)
 
-Four tier commands run subsets sequentially via `scripts/run-tier.mjs`, with membership centralized in `scripts/validation-steps.mjs`, and are wrapped in the named-resource `scripts/serial-lock.mjs` (`validation`, `codegen`, `shared-test-results`, and `ports`). Task calls require `TASK_PLAN_FILE`; explicit ad-hoc calls must opt in with `--allow-no-plan`. Tiers are cumulative. Lock budgets begin after acquisition, and stale/dead-holder recovery is always logged.
+Four tier commands run subsets sequentially via `scripts/run-tier.mjs`, with membership centralized in `scripts/validation-steps.mjs`, and are wrapped in the named-resource `scripts/serial-lock.mjs` (`validation`, `codegen`, `shared-test-results`, and `ports`). Task calls require `TASK_PLAN_FILE`; explicit ad-hoc calls must opt in with `--allow-no-plan`. Tiers are cumulative. Lock priorities use integers `1` through `9`, where `1` is highest precedence, `9` is lowest, and the default is `5`; priority reorders waiters only after the grace period. Fast work uses priority `1`, standard and standard-plus work uses `2`, and heavy work uses `3`. Standard-plus and heavy each have a 45-minute execution budget for their documented ~30-minute workloads. Lock budgets begin after acquisition, exclude queue wait, and stale/dead-holder recovery is always logged.
 
 - **`test-fast`** — static checks only: `gate-guard`, task-scoped Failure Gate and Regression Guard repair/check steps, `tsc`, lint, config, port, and bundle-domain checks. (~5 min)
 - **`test-standard`** — fast + codegen/spec/env checks, `failure-gate-contract`, and tests. (~20 min)
 - **`test-standard-plus`** — standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test`. Full quality signal without Playwright browser automation. (~30 min)
-- **`test-heavy`** — standard-plus (same steps, no Playwright currently). For schema migrations, new API routes, auth/security changes, multi-package refactors. (~30 min)
+- **`test-heavy`** — standard-plus + `protected-map-concurrency` (the protected-map smoke step is heavy-only; no Playwright currently). For schema migrations, new API routes, auth/security changes, multi-package refactors. (~30 min)
 
 The table below keeps historical check names discoverable for targeted runs;
 they are validation steps, not standalone workflows. Tier membership lives in
@@ -219,6 +228,9 @@ it in sync with this table when checks change. Note: `tsc` subsumes
 | _(new)_ | `plan-gate-check` | fast (strict Failure Gate lint) |
 | _(new)_ | `plan-gate-stubs` | fast (stub-placeholder warning count; always exits 0) |
 | _(new)_ | `regression-guard-fix` / `regression-guard` | fast (task-scoped declaration repair then strict check) |
+| _(new)_ | `api-route-authorization-contract` | fast |
+| _(new)_ | `skill-mirror-sync-contract` | fast (account authority, local projection, and downstream mirror boundary) |
+| _(new)_ | `port-authority-contract` | fast (isolated cleanup and serialization contract) |
 | _(new)_ | `failure-gate-contract` | standard (focused integration contract) |
 | `api-server-coverage` | `api-server-coverage` | standard-plus / heavy |
 | `api-server-typecheck` | `api-server-typecheck` | fast (via `tsc`) |
@@ -226,6 +238,8 @@ it in sync with this table when checks change. Note: `tsc` subsumes
 | `canvas-typecheck` | `canvas-typecheck` | fast (via `tsc`) |
 | `codegen:check` | `codegen-check` | standard |
 | `env:check` | `env-check` | standard |
+| `privacy:check` | `privacy-check` | standard |
+| _(new)_ | `privacy-check-contract` | standard |
 | `lint` | `lint` | fast |
 | `lint:mocks` | `lint-mocks` | fast |
 | `parts-id-typecheck` | `parts-id-typecheck` | fast (via `tsc`) |
@@ -243,34 +257,68 @@ it in sync with this table when checks change. Note: `tsc` subsumes
 | `typecheck:libs` | `typecheck-libs` | fast (via `tsc`) |
 | `verify-fts` | `verify-fts` | standard-plus / heavy |
 
+### Public release security boundary
+
+The repository intentionally publishes application source and minimized
+warehouse layout references only. Replit-hosted PostgreSQL, Object Storage,
+Secrets, Clerk sessions, analytics, logs, support data, and uploaded catalog or
+part files remain runtime-private. Never commit those values or files.
+
+Read [the security policy](SECURITY.md), [the public data classification](docs/public-data-classification.md),
+[the public release checklist](docs/public-release-checklist.md), and [the
+GitHub protection status](docs/validation/github-protection-status.md) before
+publishing source or layout changes. The public-repository boundary check is
+the first-class `public-repository-boundary` step in `test-fast` and is run
+through the existing GitHub validation tier; do not add a second workflow for
+it.
+
 ### Port Authority contract
 
 Development ports are declared once in `scripts/dev-ports.json`. Its workflow,
 fallback, legacy, and cleanup sets are checked against the three service
 workflow `waitForPort` values in `.replit` by `scripts/dev-port-contract.mjs`.
 Run `bash scripts/check-hardcoded-ports.sh` before changing a service startup
-command. `scripts/free-dev-ports.mjs` sweeps only those explicitly registered
-ports, sequentially, and refuses to report success while a protected holder is
-still bound. It never scans or kills unregistered ports.
+command. `node scripts/free-dev-ports.mjs` is the workspace-wide cleanup
+entrypoint; it delegates to `scripts/free-ports.mjs --all-dev`, sweeps only
+explicitly registered ports sequentially, and refuses to report success while
+a protected holder is still bound. Individual service startup and recovery
+paths call the same `free-ports.mjs` worker for their registered port. Neither
+entrypoint scans or kills unregistered ports.
+
+The native Parts ID fallback on port `8080` is an intentional compatibility
+exception: `artifacts/parts-id/utils/devPorts.ts` still targets it when native
+development bypasses the Expo workflow. The retired mappings `8082`, `8083`,
+`22660`, and `22661` have no current workflow or artifact consumer and are not
+registered for cleanup.
 
 The port cleaner protects the caller's process tree, terminates only socket
 owners discovered through `/proc`, escalates from SIGTERM to SIGKILL with
 diagnostics, and confirms each port is free. Production/deployment paths do not
-invoke the development sweep. No app-owned live-update WebSocket endpoint was
-found during the runtime audit, so no speculative application heartbeat was
-added; the preview's own HMR transport remains under the dev-server supervisor.
+invoke the development sweep.
 
-## Admin MFA Enforcement
+`scripts/serial-lock.mjs` uses the shared `1`-highest through `9`-lowest scale
+described above, defaults to `5`, and applies priority only after the waiter
+grace period. The codegen, shared-test-result, validation-tier, and port-check
+callers all use that scale. Reentrant same-resource wrappers skip acquisition;
+dead, reused, stale-heartbeat, and over-age holders are reclaimed with loud
+diagnostics under a short kernel-backed `flock` guard; wrapped-command budgets
+begin only after acquisition. The guard inode is persistent, but kernel lock
+ownership is released automatically when its helper exits or is killed.
 
-Admin endpoints enforce multi-factor authentication **by default**. Any admin session that lacks a completed second factor (`totp`, `phone_code`, or hardware key) in the Clerk `amr` session claim receives:
+The browser/e2e phase is skipped because the project has no active browser/e2e
+test command or webServer harness. The generated-file phase applies and codegen
+is serialized on the `codegen` resource. No app-owned live-update WebSocket
+endpoint was found, so application heartbeat machinery is also skipped; the
+preview's HMR transport remains owned by its dev-server supervisor. Runtime
+health checks use `GET /api/healthz`, which reaches the Express backend and
+requires a parsed `ok` or `degraded` status rather than accepting an SPA HTML
+fallback.
 
-```
-403 { error: "MFA required for admin access", code: "MFA_REQUIRED" }
-```
+## Admin Authorization
 
-**Disabling (not recommended):** Set `SKIP_ADMIN_MFA=true` in the API server environment (Replit Secrets → api-server). The server emits a startup warning whenever this flag is set. Do not set it in production deployments.
+Admin endpoints require an authenticated Clerk session mapped to an approved application user with the `admin` role (`requireAppAuth` + `requireAdminAuth`/`requireApprovedAdminAuth`). Access does not depend on Clerk session MFA claims — an approved admin is authorized regardless of which second factors are present on their session. MFA remains available as a Clerk account-level setting but is not part of this application's authorization boundary.
 
-> **Migration from the old opt-in flag:** If your deployment previously set `ENFORCE_ADMIN_MFA=true`, you can safely remove that variable — MFA is now on by default and that variable is no longer read.
+> **Migration note:** admin routes previously enforced a second-factor (`amr`) claim by default and could be bypassed with `SKIP_ADMIN_MFA=true`. Both the enforcement and the bypass have been removed; that environment variable is no longer read.
 
 **Admin enrollment:** Admins enable two-factor authentication through the Clerk account portal (Settings → Security → Two-step verification). The mobile app surfaces an Alert with a button to open the portal when MFA is required.
 

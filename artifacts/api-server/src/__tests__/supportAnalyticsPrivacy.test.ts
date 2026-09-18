@@ -1,6 +1,7 @@
 import {
   deriveRotatingVisitorHash,
   getScreenViewKeyMaterial,
+  getScreenViewPrivacyReadiness,
   getScreenViewRateLimitKey,
 } from "../lib/screenViewPrivacy";
 import {
@@ -16,17 +17,37 @@ import {
 } from "../lib/supportAnalyticsReport";
 
 describe("support analytics privacy primitives", () => {
+  const originalVisitorPrivacySecret = process.env.VISITOR_PRIVACY_SECRET;
   const originalSessionSecret = process.env.SESSION_SECRET;
   const originalClerkSecret = process.env.CLERK_SECRET_KEY;
 
   afterEach(() => {
+    if (originalVisitorPrivacySecret === undefined) {
+      delete process.env.VISITOR_PRIVACY_SECRET;
+    } else {
+      process.env.VISITOR_PRIVACY_SECRET = originalVisitorPrivacySecret;
+    }
     if (originalSessionSecret === undefined) delete process.env.SESSION_SECRET;
     else process.env.SESSION_SECRET = originalSessionSecret;
     if (originalClerkSecret === undefined) delete process.env.CLERK_SECRET_KEY;
     else process.env.CLERK_SECRET_KEY = originalClerkSecret;
   });
 
+  it("prefers the dedicated privacy secret over authentication secrets", () => {
+    process.env.VISITOR_PRIVACY_SECRET = "dedicated-privacy-secret";
+    process.env.SESSION_SECRET = "session-secret";
+    process.env.CLERK_SECRET_KEY = "test-clerk-secret";
+
+    expect(getScreenViewKeyMaterial()).toBe("dedicated-privacy-secret");
+    const dedicatedHash = deriveRotatingVisitorHash("203.0.113.10");
+
+    delete process.env.VISITOR_PRIVACY_SECRET;
+    expect(getScreenViewKeyMaterial()).toBe("session-secret");
+    expect(deriveRotatingVisitorHash("203.0.113.10")).not.toBe(dedicatedHash);
+  });
+
   it("uses domain-separated keyed material and rotates visitor grouping daily", () => {
+    delete process.env.VISITOR_PRIVACY_SECRET;
     process.env.SESSION_SECRET = "test-server-held-session-secret";
     delete process.env.CLERK_SECRET_KEY;
     const day = Date.UTC(2026, 0, 2, 12);
@@ -42,12 +63,58 @@ describe("support analytics privacy primitives", () => {
   });
 
   it("disables unique grouping without configured server-held material", () => {
+    delete process.env.VISITOR_PRIVACY_SECRET;
     delete process.env.SESSION_SECRET;
     delete process.env.CLERK_SECRET_KEY;
 
     expect(getScreenViewKeyMaterial()).toBeNull();
     expect(deriveRotatingVisitorHash("203.0.113.10")).toBeNull();
     expect(getScreenViewRateLimitKey("203.0.113.10")).toBe("privacy-disabled");
+  });
+
+  it("reports deployment readiness without exposing key material", () => {
+    expect(
+      getScreenViewPrivacyReadiness({
+        VISITOR_PRIVACY_SECRET: "dedicated-server-held-secret",
+        SESSION_SECRET: "compatibility-session-secret",
+        CORS_ALLOWED_ORIGINS: " https://parts.example ",
+      }),
+    ).toEqual({
+      privacyKeyMaterialConfigured: true,
+      productionCorsConfigured: true,
+      uniqueVisitorReportingAvailable: true,
+    });
+
+    expect(
+      getScreenViewPrivacyReadiness({
+        VISITOR_PRIVACY_SECRET: " ",
+        SESSION_SECRET: " ",
+        CLERK_SECRET_KEY: "",
+        CORS_ALLOWED_ORIGINS: "",
+      }),
+    ).toEqual({
+      privacyKeyMaterialConfigured: false,
+      productionCorsConfigured: false,
+      uniqueVisitorReportingAvailable: false,
+    });
+  });
+
+  it("uses nonblank compatibility secrets when the dedicated secret is blank", () => {
+    expect(
+      getScreenViewKeyMaterial({
+        VISITOR_PRIVACY_SECRET: " \t",
+        SESSION_SECRET: "  compatibility-session-secret  ",
+        CLERK_SECRET_KEY: "test-clerk-secret",
+      }),
+    ).toBe("compatibility-session-secret");
+
+    expect(
+      getScreenViewKeyMaterial({
+        VISITOR_PRIVACY_SECRET: "",
+        SESSION_SECRET: "",
+        CLERK_SECRET_KEY: "  test-compatibility-clerk-secret  ",
+      }),
+    ).toBe("test-compatibility-clerk-secret");
   });
 
   it("uses one UTC calendar window and suppresses small cells", () => {

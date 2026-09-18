@@ -10,7 +10,7 @@ import { and, count, eq, gte, lt, sql } from "drizzle-orm";
 import { Router } from "express";
 
 import { logger } from "../lib/logger";
-import { getScreenViewKeyMaterial } from "../lib/screenViewPrivacy";
+import { getScreenViewPrivacyReadiness } from "../lib/screenViewPrivacy";
 import {
   getSupportAnalyticsWindow,
   privacySafeCount,
@@ -96,7 +96,7 @@ router.get("/dashboard-stats", requireAdminAuth, async (_req, res) => {
     const aiTotal = Number(aiTotalRows[0]?.total ?? 0);
     const screenTotal = Number(screenTotalRows[0]?.total ?? 0);
     const uniqueVisitors = Number(screenUniqueRows[0]?.cnt ?? 0);
-    const uniqueVisitorsAvailable = getScreenViewKeyMaterial() !== null;
+    const privacyReadiness = getScreenViewPrivacyReadiness();
 
     res.json({
       generatedAt: now.toISOString(),
@@ -109,7 +109,7 @@ router.get("/dashboard-stats", requireAdminAuth, async (_req, res) => {
       privacy: {
         minimumCellCount: SUPPORT_ANALYTICS_MIN_CELL_COUNT,
         suppressedValue: "Suppressed",
-        uniqueVisitorsAvailable,
+        uniqueVisitorsAvailable: privacyReadiness.uniqueVisitorReportingAvailable,
         aggregateOnly: true,
       },
       ai: {
@@ -121,7 +121,9 @@ router.get("/dashboard-stats", requireAdminAuth, async (_req, res) => {
       },
       screenViews: {
         viewsInWindow: privacySafeCount(screenTotal),
-        uniqueVisitorsInWindow: uniqueVisitorsAvailable ? privacySafeCount(uniqueVisitors) : null,
+        uniqueVisitorsInWindow: privacyReadiness.uniqueVisitorReportingAvailable
+          ? privacySafeCount(uniqueVisitors)
+          : null,
         byScreen: screenByNameRows.map((row) => ({
           screenName: row.screenName,
           total: Number(row.total),

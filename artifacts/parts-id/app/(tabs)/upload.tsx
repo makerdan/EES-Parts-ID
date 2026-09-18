@@ -42,11 +42,13 @@ import { ShelfCatalogEntry } from "@/components/ShelfCatalogEntry";
 import { UserAdminButtonRow } from "@/components/UserAdminButtonRow";
 import { useApiHealth } from "@/contexts/ApiHealthContext";
 import { useApp } from "@/contexts/AppContext";
+import type { RestartState } from "@/hooks/useApiStatus";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
 import {
   deleteAdminUser,
   fetchAdminUsers,
+  type FetchAdminUsersResult,
   handleUserAction as runUserAction,
 } from "@/utils/adminUserActions";
 import { API_BASE } from "@/utils/apiBase";
@@ -66,12 +68,19 @@ import {
 } from "@/utils/expandDescHandlers";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
 import {
+  clearImportDraft,
+  loadImportDraft,
+  saveImportDraft,
+} from "@/utils/importDraftStorage";
+import {
   BARCODE_ALIASES,
   BIN_ALIASES,
   CATALOG_ALIASES,
   DESC_ALIASES,
   findSpreadsheetColumn,
   normalizeSpreadsheetRows,
+  OP_ALIASES,
+  OQ_ALIASES,
   parseBinCell,
   parseOds,
   VENDOR_ALIASES,
@@ -87,6 +96,121 @@ type ExpandDescDraft = {
   remaining: number | null;
   savedAt: number;
 };
+
+type AdminSection = "import" | "enrichment" | "warehouse" | "people";
+
+function getRestartNotice(state: RestartState): { title: string; message: string } | null {
+  switch (state) {
+    case "recovered":
+      return {
+        title: "API server recovered",
+        message: "The API server is back online and the latest health check confirmed it.",
+      };
+    case "authorization":
+      return {
+        title: "Restart was not allowed",
+        message: "Current approved-admin access is required. Check your session before trying again.",
+      };
+    case "rejected":
+      return {
+        title: "Restart was not accepted",
+        message: "The API server did not accept the request, so no restart was confirmed.",
+      };
+    case "timeout":
+      return {
+        title: "Restart request timed out",
+        message: "The server did not respond in time. It was not treated as restarted.",
+      };
+    case "server_failure":
+      return {
+        title: "Restart request failed",
+        message: "The API server could not process the request. Check its status before trying again.",
+      };
+    case "recovery_failed":
+      return {
+        title: "API server did not recover",
+        message: "The restart was accepted, but the server did not come back online before the recovery window ended.",
+      };
+    case "cancelled":
+      return {
+        title: "Restart monitoring stopped",
+        message: "Recovery was not confirmed after the screen or app was interrupted. Check the API status before trying again.",
+      };
+    default:
+      return null;
+  }
+}
+type AiStatusPayload = {
+  provider: "poe" | "openai";
+  registry: {
+    source: "configured_registry";
+    version: string;
+    models: Array<{
+      id: string;
+      name: string;
+      modalities: Array<string>;
+      capabilities: { text: boolean | null; vision: boolean | null; structuredOutput: boolean | null };
+    }>;
+  };
+  bots: Record<string, string>;
+  verification: {
+    models: Record<string, { status: string; verifiedAt: string | null }>;
+    lastOperation: {
+      startedAt: string;
+      finishedAt: string;
+      requested: number;
+      attempted: number;
+      completed: number;
+      budgetLimited: boolean;
+    } | null;
+  };
+  routes: Array<{ feature: string; primary: string; fallbacks: Array<string>; effective: Array<string> }>;
+  reference: { provider: string; readOnly: boolean; note: string };
+};
+
+function isAiStatusPayload(value: unknown): value is AiStatusPayload {
+  if (!value || typeof value !== "object") return false;
+  const data = value as Partial<AiStatusPayload>;
+  const registry = data.registry;
+  const modelsValid =
+    !!registry &&
+    typeof registry === "object" &&
+    registry.source === "configured_registry" &&
+    typeof registry.version === "string" &&
+    Array.isArray(registry.models) &&
+    registry.models.every((model) =>
+      !!model &&
+      typeof model === "object" &&
+      typeof model.id === "string" &&
+      typeof model.name === "string" &&
+      Array.isArray(model.modalities) &&
+      !!model.capabilities &&
+      typeof model.capabilities === "object" &&
+      ["text", "vision", "structuredOutput"].every((key) => {
+        const capability = model.capabilities[key as keyof typeof model.capabilities];
+        return typeof capability === "boolean" || capability === null;
+      }),
+    );
+  return (
+    (data.provider === "poe" || data.provider === "openai") &&
+    modelsValid &&
+    !!data.bots &&
+    typeof data.bots === "object" &&
+    !!data.verification &&
+    typeof data.verification === "object" &&
+    Array.isArray(data.routes) &&
+    !!data.reference &&
+    typeof data.reference === "object"
+  );
+}
+
+function getAiMutationError(data: unknown, status: number, fallback: string): string {
+  if (data && typeof data === "object") {
+    const error = (data as { error?: unknown }).error;
+    if (typeof error === "string" && error.trim()) return error;
+  }
+  return status ? `${fallback} (HTTP ${status})` : fallback;
+}
 
 const SQL_EXAMPLES: Array<{ label: string; group: string; sql: string }> = [
   {
@@ -146,6 +270,32 @@ type BinDiffSummary = {
   willAddBarcodes: number;
   willPreserveBarcodes: number;
   willBarcodeConflicts: number;
+};
+
+type ImportMode = "full" | "opoq";
+type ImportFileType = "csv" | "xlsx" | "ods";
+type SelectedImportFile = {
+  name: string;
+  type: ImportFileType;
+  rowCount: number;
+  status: "parsing" | "ready" | "failed";
+};
+type OpoqUnknownRow = ParsedRow & {
+  hasBin: boolean;
+  orderPurchase: number;
+  orderQuantity: number;
+};
+type OpoqPreview = {
+  known: number;
+  unknownWithBins: number;
+  unknownWithoutBins: number;
+  unknownRows: Array<OpoqUnknownRow>;
+};
+type OpoqResult = {
+  knownUpdated: number;
+  unknownAdded: number;
+  unknownSkipped: number;
+  failures: number;
 };
 
 type EnrichProgress = {
@@ -238,16 +388,36 @@ const BinDiffSummarySchema = z.object({
 });
 const BulkJobWrapperSchema = z.object({ job: BulkJobStatusSchema });
 const MeasureJobWrapperSchema = z.object({ job: MeasureJobStatusSchema });
-const ApiErrorSchema = z.object({ error: z.string().optional() });
+const ApiErrorSchema = z.object({ error: z.string().optional(), code: z.string().optional() });
 const UploadResultSchema = z.object({ inserted: z.number(), updated: z.number(), total: z.number() });
-const QueryResultSchema = z.object({
-  columns: z.array(z.string()).optional(),
-  rows: z.array(z.record(z.string(), z.unknown())).optional(),
-  rowCount: z.number().optional(),
-  error: z.string().optional(),
+const OpoqPreviewSchema = z.object({
+  known: z.number(),
+  unknownWithBins: z.number(),
+  unknownWithoutBins: z.number(),
+  rows: z.array(z.object({
+    vendor: z.string(),
+    catalog: z.string(),
+    known: z.boolean(),
+    hasBins: z.boolean(),
+    orderPurchase: z.number(),
+    orderQuantity: z.number(),
+  })),
 });
+const QueryResultSchema = z.object({
+  columns: z.array(z.string().min(1)),
+  rows: z.array(z.record(z.string(), z.unknown())),
+  rowCount: z.number().int().nonnegative(),
+  truncated: z.boolean().optional(),
+  strippedColumns: z.array(z.string()).optional(),
+}).refine(
+  data =>
+    new Set(data.columns).size === data.columns.length &&
+    data.rowCount === data.rows.length &&
+    (data.rows.length === 0 || data.columns.length > 0),
+  { message: "Query result columns and rows are inconsistent" },
+);
 
-// ── Parse CSV text ─────────────────────────────────────────────────────────
+const QueryErrorResponseSchema = z.object({ error: z.string().min(1) });
 function parseCSV(rawText: string): Array<ParsedRow> {
   // Strip UTF-8 BOM (\uFEFF) if present so Excel-exported files parse correctly.
   const text = rawText.startsWith("\uFEFF") ? rawText.slice(1) : rawText;
@@ -260,6 +430,16 @@ function parseCSV(rawText: string): Array<ParsedRow> {
   const descCol = findSpreadsheetColumn(headers, DESC_ALIASES);
   const binCol = findSpreadsheetColumn(headers, BIN_ALIASES);
   const barcodeCol = findSpreadsheetColumn(headers, BARCODE_ALIASES);
+  const opCol = findSpreadsheetColumn(headers, OP_ALIASES);
+  const oqCol = findSpreadsheetColumn(headers, OQ_ALIASES);
+  const parseInteger = (value: string, label: string, rowNumber: number) => {
+    const trimmed = value.trim();
+    if (!trimmed) return 0;
+    if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed))) {
+      throw new Error(`${label} must be a non-negative whole number (row ${rowNumber})`);
+    }
+    return Number(trimmed);
+  };
 
   const rows: Array<ParsedRow> = [];
   for (let i = 1; i < lines.length; i++) {
@@ -273,6 +453,8 @@ function parseCSV(rawText: string): Array<ParsedRow> {
       description: descCol >= 0 ? cells[descCol]?.trim() ?? "" : "",
       binLocations: binCol >= 0 ? parseBinCell(cells[binCol] ?? "") : [],
       barcodes: barcodeCol >= 0 ? (cells[barcodeCol] ?? "").trim().split(/[,;|]/).map(b => b.trim()).filter(b => b.length > 0) : [],
+      ...(opCol >= 0 ? { op: parseInteger(cells[opCol] ?? "", "OP", i + 1), opProvided: true } : {}),
+      ...(oqCol >= 0 ? { oq: parseInteger(cells[oqCol] ?? "", "OQ", i + 1), oqProvided: true } : {}),
     });
   }
   return rows;
@@ -301,6 +483,7 @@ function splitCSVLine(line: string): Array<string> {
 // ── Parse .xlsx/.xlsm via read-excel-file ─────────────────────────────────
 async function parseXlsx(uri: string): Promise<Array<ParsedRow>> {
   const response = await fetch(uri);
+  if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
   const arrayBuffer = await response.arrayBuffer();
 
   // Try sheets 1-5, pick the one with the best Vendor/Catalog header match
@@ -323,6 +506,22 @@ async function parseXlsx(uri: string): Promise<Array<ParsedRow>> {
 
   if (!bestRows || bestRows.length < 2) return [];
   return normalizeSpreadsheetRows(bestRows);
+}
+
+function normalizeOpoqIdentity(value: string): string {
+  return value.normalize("NFKC").trim().toLowerCase();
+}
+
+function getImportFileType(name: string): ImportFileType {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  return ext === "ods" ? "ods" : ext === "xlsx" || ext === "xlsm" ? "xlsx" : "csv";
+}
+
+function mergeOpoqRowsInto(merged: Map<string, ParsedRow>, rows: Array<ParsedRow>): void {
+  for (const row of rows) {
+    const key = `${normalizeOpoqIdentity(row.vendor)}\u0000${normalizeOpoqIdentity(row.catalog)}`;
+    merged.set(key, row);
+  }
 }
 
 // ── Inventory row component ───────────────────────────────────────────────
@@ -395,7 +594,11 @@ const rowStyles = StyleSheet.create({
 // notice — there is no password to enter.
 function AdminRestricted({ colors }: { colors: ReturnType<typeof useColors> }) {
   return (
-    <View style={[gateStyles.container, { backgroundColor: colors.background }]}>
+    <ScrollView
+      style={[gateStyles.scroll, { backgroundColor: colors.background }]}
+      contentContainerStyle={gateStyles.container}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={[gateStyles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[gateStyles.icon]}>🔒</Text>
         <Text style={[gateStyles.title, { color: colors.foreground }]}>Admin Access Required</Text>
@@ -404,12 +607,13 @@ function AdminRestricted({ colors }: { colors: ReturnType<typeof useColors> }) {
           account admin access, then reopen this tab.
         </Text>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const gateStyles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+  scroll: { flex: 1 },
+  container: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 24, paddingBottom: 96 },
   card: { width: "100%", maxWidth: 380, borderRadius: 16, padding: 28, borderWidth: 1, alignItems: "center", gap: 14 },
   icon: { fontSize: 40 },
   title: { fontSize: 20, fontFamily: "Inter_700Bold", textAlign: "center" },
@@ -578,7 +782,11 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
 export default function UploadScreen() {
   "use no memo";
   useTrackScreen("Upload");
-  const { width: screenWidth } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const isLandscape = screenWidth > screenHeight;
+  // Keep controls clear of the tab bar without wasting scarce short-landscape
+  // vertical space.
+  const bottomClearance = isLandscape ? 84 : 100;
   const isNarrow = screenWidth <= 320;
   const colors = useColors();
   const router = useRouter();
@@ -586,79 +794,449 @@ export default function UploadScreen() {
   const { isAdmin, logoutAdmin, adminToken, showToast } = useApp();
   const {
     status: apiStatus,
+    checking: apiChecking,
+    lastCheckedAt: apiLastCheckedAt,
     restarting: apiRestarting,
+    restartState: apiRestartState,
     triggerRestart,
+    dismissRestartNotice,
     checkStatus,
     bots: apiBots,
     probeSingleBot,
   } = useApiHealth();
   const apiCheckAnim = useRef(new Animated.Value(1)).current;
-  const [apiChecking, setApiChecking] = useState(false);
   const [activeBadge, setActiveBadge] = useState<string | null>(null);
   const probingBotsRef = useRef<Set<string>>(new Set());
   const [probingBots, setProbingBots] = useState<Set<string>>(new Set());
 
   const reprobe = useCallback(async (botName: string) => {
     if (probingBotsRef.current.has(botName)) return;
+    const requestToken = adminToken;
     probingBotsRef.current.add(botName);
     setProbingBots(new Set(probingBotsRef.current));
     try {
       await probeSingleBot(botName);
     } finally {
       probingBotsRef.current.delete(botName);
-      setProbingBots(new Set(probingBotsRef.current));
+      if (isMountedRef.current && adminTokenRef.current === requestToken) {
+        setProbingBots(new Set(probingBotsRef.current));
+      }
     }
-  }, [probeSingleBot]);
+  }, [adminToken, probeSingleBot]);
 
   const [aiStatusBots, setAiStatusBots] = useState<Record<string, string>>({});
+  const [aiStatus, setAiStatus] = useState<AiStatusPayload | null>(null);
   const [aiStatusLoading, setAiStatusLoading] = useState(false);
   const [aiStatusError, setAiStatusError] = useState<string | null>(null);
   const [aiStatusProbing, setAiStatusProbing] = useState(false);
+  const [aiRoutesSaving, setAiRoutesSaving] = useState(false);
+  const [aiProvider, setAiProvider] = useState<AiStatusPayload["provider"]>("poe");
+  const [aiProviderSaving, setAiProviderSaving] = useState(false);
+  const [aiProviderSaveState, setAiProviderSaveState] = useState<"saved" | "runtime-only" | null>(null);
+  const [aiProviderError, setAiProviderError] = useState<string | null>(null);
+  const [aiControlAnnouncement, setAiControlAnnouncement] = useState<string | null>(null);
+  const aiStatusGenerationRef = useRef(0);
+  const aiStatusFetchControllerRef = useRef<AbortController | null>(null);
+  const aiStatusProbeControllerRef = useRef<AbortController | null>(null);
+  const aiRoutesGenerationRef = useRef(0);
+  const aiRoutesControllerRef = useRef<AbortController | null>(null);
+  const aiProviderGenerationRef = useRef(0);
+  const aiProviderControllerRef = useRef<AbortController | null>(null);
+  const cancelAiStatusRequests = useCallback(() => {
+    aiStatusGenerationRef.current += 1;
+    aiStatusFetchControllerRef.current?.abort();
+    aiStatusFetchControllerRef.current = null;
+    aiStatusProbeControllerRef.current?.abort();
+    aiStatusProbeControllerRef.current = null;
+  }, []);
+  const cancelAiRoutes = useCallback(() => {
+    aiRoutesGenerationRef.current += 1;
+    aiRoutesControllerRef.current?.abort();
+    aiRoutesControllerRef.current = null;
+  }, []);
+  const cancelAiProviderSave = useCallback(() => {
+    aiProviderGenerationRef.current += 1;
+    aiProviderControllerRef.current?.abort();
+    aiProviderControllerRef.current = null;
+  }, []);
 
   const fetchAiStatus = useCallback(async () => {
     if (!adminToken || !API_BASE) return;
+    cancelAiStatusRequests();
+    const generation = aiStatusGenerationRef.current + 1;
+    aiStatusGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiStatusFetchControllerRef.current = controller;
     setAiStatusLoading(true);
     setAiStatusError(null);
+    setAiControlAnnouncement("Loading AI status.");
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status`, {
         headers: { Authorization: `Bearer ${adminToken}` },
+        signal: controller.signal,
+        cache: "no-store",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { bots: Record<string, string> };
+      const data = (await res.json()) as AiStatusPayload;
+      if (
+        !isMountedRef.current ||
+        generation !== aiStatusGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
+      if (!isAiStatusPayload(data)) {
+        const partial = data as Partial<AiStatusPayload>;
+        if (!partial.bots || typeof partial.bots !== "object" || Array.isArray(partial.bots)) {
+          throw new Error("The API returned an incomplete AI status snapshot");
+        }
+        setAiStatusBots(partial.bots);
+        setAiStatus(null);
+        setAiControlAnnouncement("AI status loaded. Provider evidence is unknown.");
+        return;
+      }
       setAiStatusBots(data.bots ?? {});
+      setAiStatus(data.registry ? data : null);
+      if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
+      setAiControlAnnouncement(
+        `AI status loaded. Configured registry version ${data.registry.version} is active.`,
+      );
     } catch (err) {
-      setAiStatusError(err instanceof Error ? err.message : "Failed to load AI status");
+      if (
+        isMountedRef.current &&
+        generation === aiStatusGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        const message = err instanceof Error ? err.message : "Failed to load AI status";
+        setAiStatusError(message);
+        setAiControlAnnouncement(`AI status request rejected: ${message}`);
+      }
     } finally {
-      setAiStatusLoading(false);
+      if (aiStatusFetchControllerRef.current === controller) {
+        aiStatusFetchControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        generation === aiStatusGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusLoading(false);
+      }
     }
-  }, [adminToken]);
+  }, [adminToken, cancelAiStatusRequests]);
+
+  const saveAiProvider = useCallback(async (provider: AiStatusPayload["provider"]) => {
+    if (!adminToken || !API_BASE || aiProviderSaving) return;
+    cancelAiProviderSave();
+    const requestToken = adminToken;
+    const generation = aiProviderGenerationRef.current + 1;
+    aiProviderGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiProviderControllerRef.current = controller;
+    setAiProviderSaving(true);
+    setAiProviderError(null);
+    setAiProviderSaveState(null);
+    setAiControlAnnouncement("Saving AI provider selection.");
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-provider`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+        signal: controller.signal,
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        provider?: AiStatusPayload["provider"];
+        persisted?: boolean;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      if (data.provider !== "poe" && data.provider !== "openai") {
+        throw new Error("The API returned an invalid provider");
+      }
+
+      // The mutation response confirms the write, but the status endpoint is
+      // the source of truth for what this admin session should display.
+      const statusRes = await fetch(`${API_BASE}/admin/ai-status`, {
+        headers: { Authorization: `Bearer ${requestToken}` },
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      const statusData = await statusRes.json().catch(() => ({}));
+      if (!statusRes.ok) {
+        const statusError = statusData && typeof statusData === "object" && "error" in statusData
+          ? String((statusData as { error?: unknown }).error)
+          : `HTTP ${statusRes.status}`;
+        throw new Error(`Provider changed, but active status could not be confirmed (${statusError})`);
+      }
+      if (!isAiStatusPayload(statusData)) {
+        throw new Error("Provider changed, but the API returned an incomplete status snapshot");
+      }
+      if (statusData.provider !== data.provider) {
+        throw new Error("Provider changed, but the active provider could not be confirmed");
+      }
+      if (
+        !isMountedRef.current ||
+        adminTokenRef.current !== requestToken ||
+        generation !== aiProviderGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
+
+      setAiStatusBots(statusData.bots);
+      setAiStatus(statusData);
+      setAiProvider(statusData.provider);
+      setAiProviderSaveState(data.persisted === true ? "saved" : "runtime-only");
+      setAiControlAnnouncement(
+        data.persisted === true
+          ? `AI provider ${statusData.provider} saved.`
+          : `AI provider ${statusData.provider} switched for this session; saving will need a retry.`,
+      );
+    } catch (err) {
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiProviderGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        const message = err instanceof Error ? err.message : "AI provider choice could not be saved";
+        setAiProviderError(message);
+        setAiControlAnnouncement(`AI provider selection rejected: ${message}`);
+      }
+    } finally {
+      if (aiProviderControllerRef.current === controller) {
+        aiProviderControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiProviderGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiProviderSaving(false);
+      }
+    }
+  }, [adminToken, aiProviderSaving, cancelAiProviderSave]);
 
   const triggerAiProbe = useCallback(async () => {
     if (!adminToken || !API_BASE || aiStatusProbing) return;
+    cancelAiStatusRequests();
+    const generation = aiStatusGenerationRef.current + 1;
+    aiStatusGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiStatusProbeControllerRef.current = controller;
+    setAiStatusLoading(false);
     setAiStatusProbing(true);
     setAiStatusError(null);
+    setAiControlAnnouncement("Live-verifying active Poe route models.");
     try {
       const res = await fetch(`${API_BASE}/admin/ai-status/probe`, {
         method: "POST",
         headers: { Authorization: `Bearer ${adminToken}` },
+        signal: controller.signal,
+        cache: "no-store",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { bots: Record<string, string> };
+      const data = (await res.json()) as AiStatusPayload;
+      if (
+        !isMountedRef.current ||
+        generation !== aiStatusGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
+      if (!isAiStatusPayload(data)) {
+        const partial = data as Partial<AiStatusPayload>;
+        if (!partial.bots || typeof partial.bots !== "object" || Array.isArray(partial.bots)) {
+          throw new Error("The API returned an incomplete probe status snapshot");
+        }
+        setAiStatusBots(partial.bots);
+        setAiStatus(null);
+        setAiControlAnnouncement("Live model verification completed with incomplete status details.");
+        return;
+      }
       setAiStatusBots(data.bots ?? {});
+      setAiStatus(data.registry ? data : null);
+      if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
+      setAiControlAnnouncement(
+        data.verification.lastOperation?.budgetLimited
+          ? "Live model verification completed with budget-limited partial results."
+          : "Live model verification completed.",
+      );
     } catch (err) {
-      setAiStatusError(err instanceof Error ? err.message : "Probe failed");
+      if (
+        isMountedRef.current &&
+        generation === aiStatusGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        const message = err instanceof Error ? err.message : "Probe failed";
+        setAiStatusError(message);
+        setAiControlAnnouncement(`AI provider probe rejected: ${message}`);
+      }
     } finally {
-      setAiStatusProbing(false);
+      if (aiStatusProbeControllerRef.current === controller) {
+        aiStatusProbeControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        generation === aiStatusGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiStatusProbing(false);
+      }
     }
-  }, [adminToken, aiStatusProbing]);
+  }, [adminToken, aiStatusProbing, cancelAiStatusRequests]);
+
+  const saveAiRoutes = useCallback(async (routes: Array<{ feature: string; fallbacks: Array<string> }>) => {
+    if (!adminToken || !API_BASE || aiRoutesSaving) return;
+    cancelAiRoutes();
+    const requestToken = adminToken;
+    const generation = aiRoutesGenerationRef.current + 1;
+    aiRoutesGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiRoutesControllerRef.current = controller;
+    setAiRoutesSaving(true);
+    setAiStatusError(null);
+    setAiControlAnnouncement("Saving fallback route order.");
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-status/routes`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ routes: Object.fromEntries(routes.map((route) => [route.feature, route.fallbacks])) }),
+        signal: controller.signal,
+      });
+      const data = (await res.json()) as AiStatusPayload & { error?: string };
+      if (
+        !isMountedRef.current ||
+        adminTokenRef.current !== requestToken ||
+        generation !== aiRoutesGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
+      if (!res.ok) throw new Error(getAiMutationError(data, res.status, "Fallback choices could not be saved"));
+      if (!isAiStatusPayload(data)) {
+        throw new Error("The API returned an incomplete fallback status snapshot");
+      }
+      setAiStatus(data.registry ? data : null);
+      setAiStatusBots(data.bots ?? {});
+      if (data.provider === "poe" || data.provider === "openai") setAiProvider(data.provider);
+      setAiControlAnnouncement("Fallback route order saved.");
+    } catch (err) {
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiRoutesGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        const message = err instanceof Error ? err.message : "Fallback choices could not be saved";
+        setAiStatusError(message);
+        setAiControlAnnouncement(
+          `Fallback route save rejected: ${message}. The existing safe route order remains active.`,
+        );
+      }
+    } finally {
+      if (aiRoutesControllerRef.current === controller) {
+        aiRoutesControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiRoutesGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiRoutesSaving(false);
+      }
+    }
+  }, [adminToken, aiRoutesSaving, cancelAiRoutes]);
+
+  const resetAiRoutes = useCallback(async () => {
+    if (!adminToken || !API_BASE || aiRoutesSaving) return;
+    cancelAiRoutes();
+    const requestToken = adminToken;
+    const generation = aiRoutesGenerationRef.current + 1;
+    aiRoutesGenerationRef.current = generation;
+    const controller = new AbortController();
+    aiRoutesControllerRef.current = controller;
+    setAiRoutesSaving(true);
+    setAiStatusError(null);
+    setAiControlAnnouncement("Resetting fallback route order.");
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-status/routes/reset`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        signal: controller.signal,
+      });
+      const data = (await res.json()) as AiStatusPayload & { error?: string };
+      if (
+        !isMountedRef.current ||
+        adminTokenRef.current !== requestToken ||
+        generation !== aiRoutesGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
+      if (!res.ok) throw new Error(getAiMutationError(data, res.status, "Fallback choices could not be reset"));
+      if (!isAiStatusPayload(data)) {
+        throw new Error("The API returned an incomplete fallback status snapshot");
+      }
+      setAiStatus(data);
+      setAiStatusBots(data.bots ?? {});
+      setAiControlAnnouncement("Fallback route order reset.");
+    } catch (err) {
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiRoutesGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        const message = err instanceof Error ? err.message : "Fallback choices could not be reset";
+        setAiStatusError(message);
+        setAiControlAnnouncement(
+          `Fallback route reset rejected: ${message}. The existing safe route order remains active.`,
+        );
+      }
+    } finally {
+      if (aiRoutesControllerRef.current === controller) {
+        aiRoutesControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        adminTokenRef.current === requestToken &&
+        generation === aiRoutesGenerationRef.current &&
+        !controller.signal.aborted
+      ) {
+        setAiRoutesSaving(false);
+      }
+    }
+  }, [adminToken, aiRoutesSaving, cancelAiRoutes]);
 
   useEffect(() => {
-    if (adminToken) {
-      fetchAiStatus();
+    cancelAiStatusRequests();
+    cancelAiRoutes();
+    cancelAiProviderSave();
+    if (isMountedRef.current) {
+      setAiRoutesSaving(false);
+      setAiProviderSaving(false);
+      setAiProviderSaveState(null);
+      setAiProviderError(null);
+      if (adminToken) {
+        setAiStatus(null);
+        setAiStatusBots({});
+      }
     }
-  }, [adminToken, fetchAiStatus]);
+    if (adminToken) {
+      void fetchAiStatus();
+    } else if (isMountedRef.current) {
+      setAiStatusLoading(false);
+      setAiStatusProbing(false);
+    }
+    return () => {
+      cancelAiStatusRequests();
+      cancelAiRoutes();
+      cancelAiProviderSave();
+    };
+  }, [
+    adminToken,
+    cancelAiProviderSave,
+    cancelAiRoutes,
+    cancelAiStatusRequests,
+    fetchAiStatus,
+  ]);
 
   const handleRestartPress = useCallback(() => {
+    if (apiRestarting || apiChecking) return;
     Alert.alert(
       "Restart API server?",
       "The server will briefly go offline while it restarts.",
@@ -668,45 +1246,34 @@ export default function UploadScreen() {
           text: "Restart",
           style: "destructive",
           onPress: () => {
-            void triggerRestart().then((outcome) => {
-              if (outcome === "recovered") {
-                Alert.alert("API server recovered", "The API server is back online.");
-              } else if (outcome === "authorization") {
-                Alert.alert("Restart denied", "Admin access with MFA is required.");
-              } else if (outcome === "rejected") {
-                Alert.alert("Restart not accepted", "The API server did not accept the restart request.");
-              } else if (outcome === "timeout") {
-                Alert.alert("Restart timed out", "The API server did not respond in time. It was not treated as restarted.");
-              } else if (outcome === "server_failure") {
-                Alert.alert("Restart failed", "The API server could not process the restart request.");
-              } else if (outcome === "recovery_failed") {
-                Alert.alert("API server did not recover", "The restart was accepted, but the server did not become healthy.");
-              }
-            });
+            void triggerRestart();
           },
         },
       ],
     );
-  }, [triggerRestart]);
+  }, [apiChecking, apiRestarting, triggerRestart]);
 
   const handleCheckPress = useCallback(async () => {
+    if (apiChecking || apiRestarting) return;
     const native = Platform.OS !== "web";
     Animated.sequence([
       Animated.timing(apiCheckAnim, { toValue: 0.82, duration: 100, useNativeDriver: native }),
       Animated.spring(apiCheckAnim, { toValue: 1, useNativeDriver: native, tension: 240, friction: 7 }),
     ]).start();
-    setApiChecking(true);
     await checkStatus();
-    setApiChecking(false);
-  }, [apiCheckAnim, checkStatus]);
+  }, [apiCheckAnim, apiChecking, apiRestarting, checkStatus]);
 
   const lidarSupported = isLiDARSupported();
   const [parsedRows, setParsedRows] = useState<Array<ParsedRow>>([]);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [fileType, setFileType] = useState<"csv" | "xlsx" | "ods" | null>(null);
+  const [fileType, setFileType] = useState<ImportFileType | null>(null);
+  const [selectedImportFiles, setSelectedImportFiles] = useState<Array<SelectedImportFile>>([]);
+  const [importMode, setImportMode] = useState<ImportMode>("full");
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
-  const [activeSection, setActiveSection] = useState<"import" | "enrichment" | "warehouse" | "people" | null>(null);
+  const [activeSection, setActiveSectionState] = useState<AdminSection | null>(null);
+  const [activeSectionStorageReady, setActiveSectionStorageReady] = useState(false);
+  const [activeSectionStorageError, setActiveSectionStorageError] = useState<"read" | "write" | null>(null);
   const [addpartScrollY, setAddpartScrollY] = useState(0);
   const [measureVisible, setMeasureVisible] = useState(false);
   const [measuredDims, setMeasuredDims] = useState<PartDimensions | null>(null);
@@ -715,6 +1282,7 @@ export default function UploadScreen() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadPending, setUploadPending] = useState(false);
   const [inventoryPage, setInventoryPage] = useState(1);
+  const [inventoryItems, setInventoryItems] = useState<Array<InventoryItem>>([]);
   const [binEditorItem, setBinEditorItem] = useState<InventoryItem | null>(null);
   const [shelfEntryOpen, setShelfEntryOpen] = useState(false);
   const [bulkShelfOpen, setBulkShelfOpen] = useState(false);
@@ -748,11 +1316,14 @@ export default function UploadScreen() {
   const [queryError, setQueryError] = useState<string | null>(null);
   const [queryExportPending, setQueryExportPending] = useState<"csv" | "xlsx" | null>(null);
   const [queryHelpOpen, setQueryHelpOpen] = useState(false);
+  const queryContainsWriteKeyword = /\b(DELETE|DROP|TRUNCATE|UPDATE|INSERT|ALTER|CREATE|GRANT|REVOKE)\b/i.test(queryText);
 
   // User management tab state
   const [usersData, setUsersData] = useState<Array<import("@/utils/adminUserActions").UserRow>>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
+  const [usersLastUpdatedAt, setUsersLastUpdatedAt] = useState<number | null>(null);
+  const [usersFilter, setUsersFilter] = useState("");
   const [userActionPending, setUserActionPending] = useState<string | null>(null);
   const [userSectionsExpanded, setUserSectionsExpanded] = useState<Record<string, boolean>>({
     admins: true,
@@ -765,7 +1336,12 @@ export default function UploadScreen() {
   const [exportError, setExportError] = useState<string | null>(null);
 
   // Floor plan upload state (admin-only)
-  const [floorPlanFile, setFloorPlanFile] = useState<{ name: string; uri: string } | null>(null);
+  const [floorPlanFile, setFloorPlanFile] = useState<{
+    name: string;
+    uri: string;
+    size?: number;
+    mimeType?: string;
+  } | null>(null);
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
   const [floorPlanResult, setFloorPlanResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -776,43 +1352,193 @@ export default function UploadScreen() {
   const [skipBinRows, setSkipBinRows] = useState<Set<number>>(new Set());
   const [replaceListOpen, setReplaceListOpen] = useState(false);
   const [replaceListSearch, setReplaceListSearch] = useState("");
+  const [opoqPreview, setOpoqPreview] = useState<OpoqPreview | null>(null);
+  const [opoqPreviewPending, setOpoqPreviewPending] = useState(false);
+  const [opoqPreviewFailed, setOpoqPreviewFailed] = useState(false);
+  const [selectedUnknownRows, setSelectedUnknownRows] = useState<Set<number>>(new Set());
+  const [opoqResult, setOpoqResult] = useState<OpoqResult | null>(null);
+  const [importDraftReadyUserId, setImportDraftReadyUserId] = useState<string | null>(null);
+  const [restoredImportNeedsReview, setRestoredImportNeedsReview] = useState(false);
+  const importDraftLoadGenerationRef = useRef(0);
+  const restoredSkipBinRowsRef = useRef<Set<number> | null>(null);
+  const restoredUnknownRowsRef = useRef<Set<number> | null>(null);
 
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
   const isMountedRef = useRef(true);
   const screenGenerationRef = useRef(0);
+  const fileSelectionGenerationRef = useRef(0);
   const pasteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeSectionSelectionRef = useRef(false);
+  const activeSectionPersistenceGenerationRef = useRef(0);
 
   // Build admin auth headers for protected API calls
   const adminHeaders = useMemo<Record<string, string>>(
     () => (adminToken ? { Authorization: `Bearer ${adminToken}` } : {} as Record<string, string>),
     [adminToken],
   );
+  const importHeaders = adminHeaders;
 
-  // Persist activeSection across tab switches so the user doesn't lose their
-  // place when they navigate away and come back.
-  const ACTIVE_SECTION_KEY = "admin_activeSection";
   useEffect(() => {
-    AsyncStorage.getItem(ACTIVE_SECTION_KEY).then((val) => {
-      if (!isMountedRef.current) return;
-      if (val === "import" || val === "enrichment" || val === "warehouse" || val === "people") {
-        setActiveSection(val);
+    const generation = ++importDraftLoadGenerationRef.current;
+    setImportDraftReadyUserId(null);
+    setParsedRows([]);
+    setRawCsv(null);
+    setFileName(null);
+    setFileType(null);
+    setSelectedImportFiles([]);
+    setPasteText("");
+    setSkipBinRows(new Set());
+    setSelectedUnknownRows(new Set());
+    setBinDiff(null);
+    setOpoqPreview(null);
+    setReplaceConfirmed(false);
+    setRestoredImportNeedsReview(false);
+    restoredSkipBinRowsRef.current = null;
+    restoredUnknownRowsRef.current = null;
+    if (!currentClerkUserId) {
+      return;
+    }
+    loadImportDraft(currentClerkUserId).then(draft => {
+      if (!isMountedRef.current || generation !== importDraftLoadGenerationRef.current) return;
+      if (draft) {
+        setParsedRows(draft.parsedRows);
+        setRawCsv(draft.rawCsv);
+        setFileName(draft.fileName);
+        setFileType(draft.fileType);
+        setImportMode(draft.importMode);
+        setSkipBinRows(new Set(draft.skipBinRows));
+        setSelectedUnknownRows(new Set(draft.selectedUnknownRows));
+        restoredSkipBinRowsRef.current = new Set(draft.skipBinRows);
+        restoredUnknownRowsRef.current = new Set(draft.selectedUnknownRows);
+        setBinDiff(null);
+        setOpoqPreview(null);
+        setReplaceConfirmed(false);
+        setRestoredImportNeedsReview(true);
+        setActiveSectionState("import");
       }
     }).catch(err => {
-      if (isMountedRef.current) reportStorageError('AsyncStorage read failed (ACTIVE_SECTION_KEY)', err);
+      if (generation === importDraftLoadGenerationRef.current) {
+        reportStorageError("Could not restore prepared import", err);
+      }
+    }).finally(() => {
+      if (isMountedRef.current && generation === importDraftLoadGenerationRef.current) {
+        setImportDraftReadyUserId(currentClerkUserId);
+      }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [currentClerkUserId]);
+
   useEffect(() => {
-    if (activeSection === null) {
-      AsyncStorage.removeItem(ACTIVE_SECTION_KEY).catch(() => {});
-    } else {
-      AsyncStorage.setItem(ACTIVE_SECTION_KEY, activeSection).catch(() => {});
+    if (!currentClerkUserId || importDraftReadyUserId !== currentClerkUserId) return;
+    const operation = parsedRows.length > 0 && rawCsv
+      ? saveImportDraft(currentClerkUserId, {
+        parsedRows,
+        rawCsv,
+        fileName,
+        fileType,
+        importMode,
+        skipBinRows: [...skipBinRows],
+        selectedUnknownRows: [...selectedUnknownRows],
+      })
+      : clearImportDraft(currentClerkUserId);
+    operation.catch(err => reportStorageError("Could not save prepared import", err));
+  }, [
+    currentClerkUserId,
+    fileName,
+    fileType,
+    importDraftReadyUserId,
+    importMode,
+    parsedRows,
+    rawCsv,
+    selectedUnknownRows,
+    skipBinRows,
+  ]);
+
+  const selectActiveSection = useCallback((section: AdminSection | null) => {
+    activeSectionSelectionRef.current = true;
+    setActiveSectionState(section);
+  }, []);
+
+  // Keep the section setter name stable for existing admin navigation contracts,
+  // while routing every user selection through the persistence guard.
+  const setActiveSection = useCallback((section: AdminSection | null) => {
+    selectActiveSection(section);
+  }, [selectActiveSection]);
+
+  const ACTIVE_SECTION_KEY = "admin_activeSection";
+  const restoreActiveSection = useCallback(async () => {
+    try {
+      const val = await AsyncStorage.getItem(ACTIVE_SECTION_KEY);
+      if (!isMountedRef.current) return;
+      if (
+        !activeSectionSelectionRef.current &&
+        (val === "import" || val === "enrichment" || val === "warehouse" || val === "people")
+      ) {
+        setActiveSectionState(val);
+      }
+    } catch (err) {
+      if (isMountedRef.current) {
+        reportStorageError("AsyncStorage read failed (ACTIVE_SECTION_KEY)", err);
+        setActiveSectionStorageError("read");
+      }
+    } finally {
+      if (isMountedRef.current) setActiveSectionStorageReady(true);
     }
-  }, [activeSection]);
+  }, []);
+
+  const persistActiveSection = useCallback(async (section: AdminSection | null) => {
+    const generation = ++activeSectionPersistenceGenerationRef.current;
+    try {
+      if (section === null) {
+        await AsyncStorage.removeItem(ACTIVE_SECTION_KEY);
+      } else {
+        await AsyncStorage.setItem(ACTIVE_SECTION_KEY, section);
+      }
+      if (isMountedRef.current && generation === activeSectionPersistenceGenerationRef.current) {
+        setActiveSectionStorageError(null);
+      }
+    } catch (err) {
+      if (isMountedRef.current && generation === activeSectionPersistenceGenerationRef.current) {
+        reportStorageError(
+          `AsyncStorage ${section === null ? "remove" : "write"} failed (ACTIVE_SECTION_KEY)`,
+          err,
+        );
+        setActiveSectionStorageError("write");
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void restoreActiveSection();
+  }, [restoreActiveSection]);
+
+  useEffect(() => {
+    if (!activeSectionStorageReady) return;
+    void persistActiveSection(activeSection);
+  }, [activeSection, activeSectionStorageReady, persistActiveSection]);
+
+  const retryActiveSectionStorage = useCallback(() => {
+    setActiveSectionStorageError(null);
+    if (activeSectionStorageError === "read") {
+      setActiveSectionStorageReady(false);
+      void restoreActiveSection();
+    } else {
+      void persistActiveSection(activeSection);
+    }
+  }, [activeSection, activeSectionStorageError, persistActiveSection, restoreActiveSection]);
 
   // Keep a ref so interval callbacks always see the current token
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+
+  useEffect(() => {
+    const pageItems = inventoryQuery.data?.items;
+    if (!pageItems) return;
+    setInventoryItems(previous => {
+      if (inventoryPage === 1) return pageItems;
+      const existingIds = new Set(previous.map(item => item.id));
+      return [...previous, ...pageItems.filter(item => !existingIds.has(item.id))];
+    });
+  }, [inventoryPage, inventoryQuery.data?.items]);
 
   // SSE reader refs — cancelled on unmount to prevent setState on unmounted component
   const enrichReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
@@ -828,18 +1554,21 @@ export default function UploadScreen() {
     return () => {
       isMountedRef.current = false;
       screenGenerationRef.current += 1;
+      fileSelectionGenerationRef.current += 1;
       enrichAbortedRef.current = true;
       enrichControllerRef.current?.abort();
       enrichReaderRef.current?.cancel().catch(() => {});
       expandDescAbortedRef.current = true;
       expandDescControllerRef.current?.abort();
       expandDescReaderRef.current?.cancel().catch(() => {});
+      cancelAiStatusRequests();
+      cancelAiRoutes();
       if (pasteDebounceRef.current) {
         clearTimeout(pasteDebounceRef.current);
         pasteDebounceRef.current = null;
       }
     };
-  }, []);
+  }, [cancelAiRoutes, cancelAiStatusRequests]);
   // Auto-fetch bin-diff preview whenever the raw CSV changes so admins
   // see a replace-warning before they can press Upload.
   // Uses POST /api/admin/upload/preview (raw CSV text) — the same endpoint
@@ -852,17 +1581,76 @@ export default function UploadScreen() {
     if (!rawCsv || parsedRows.length === 0) {
       setBinDiff(null);
       setBinDiffFailed(false);
+      setBinDiffPending(false);
       setReplaceConfirmed(false);
       setSkipBinRows(new Set());
       setReplaceListOpen(false);
+      setOpoqPreview(null);
+      setOpoqPreviewPending(false);
+      setOpoqPreviewFailed(false);
+      setSelectedUnknownRows(new Set());
       return;
     }
-    if (!adminToken) return;
+    const requestToken = adminToken;
+    if (!requestToken) return;
     const controller = new AbortController();
+    if (importMode === "opoq") {
+      setOpoqPreviewPending(true);
+      setOpoqPreviewFailed(false);
+      setOpoqPreview(null);
+      fetch(`${API_BASE}/admin/upload/orders/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${requestToken}` },
+        signal: controller.signal,
+        body: JSON.stringify({ csv: rawCsv }),
+      }).then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(body.error ?? "OP/OQ preview failed");
+        }
+        const parsed = OpoqPreviewSchema.safeParse(await response.json());
+        if (!parsed.success) throw new Error("Unexpected OP/OQ preview response");
+        const unknownRows = parsed.data.rows
+          .map((row, index) => ({ row, source: parsedRows[index] }))
+          .filter(({ row }) => !row.known)
+          .map(({ row, source }) => ({
+            vendor: row.vendor,
+            catalog: row.catalog,
+            description: source?.description ?? "",
+            binLocations: source?.binLocations ?? [],
+            barcodes: source?.barcodes ?? [],
+            op: source?.op ?? row.orderPurchase,
+            oq: source?.oq ?? row.orderQuantity,
+            orderPurchase: row.orderPurchase,
+            orderQuantity: row.orderQuantity,
+            hasBin: row.hasBins,
+          }));
+        setOpoqPreview({
+          known: parsed.data.known,
+          unknownWithBins: parsed.data.unknownWithBins,
+          unknownWithoutBins: parsed.data.unknownWithoutBins,
+          unknownRows,
+        });
+        const restoredUnknownRows = restoredUnknownRowsRef.current;
+        restoredUnknownRowsRef.current = null;
+        setSelectedUnknownRows(restoredUnknownRows
+          ? new Set([...restoredUnknownRows].filter(index => parsed.data.rows[index]?.known === false && parsed.data.rows[index]?.hasBins))
+          : new Set());
+      }).catch((err) => {
+        if (err instanceof Error && err.name === "AbortError") return;
+        if (isMountedRef.current) {
+          setOpoqPreviewFailed(true);
+          setUploadError(err instanceof Error ? err.message : "OP/OQ preview failed");
+        }
+      }).finally(() => {
+        if (!controller.signal.aborted && isMountedRef.current) setOpoqPreviewPending(false);
+      });
+      return () => controller.abort();
+    }
     setBinDiffPending(true);
     setBinDiffFailed(false);
     setBinDiff(null);
-    const token = adminToken;
+    const token = requestToken;
     fetch(`${API_BASE}/admin/upload/preview`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -883,7 +1671,11 @@ export default function UploadScreen() {
         setBinDiff(data);
         setBinDiffFailed(false);
         setReplaceConfirmed(false);
-        setSkipBinRows(new Set());
+        const restoredSkipBinRows = restoredSkipBinRowsRef.current;
+        restoredSkipBinRowsRef.current = null;
+        setSkipBinRows(restoredSkipBinRows
+          ? new Set([...restoredSkipBinRows].filter(index => data.rows[index]?.status === "replace"))
+          : new Set());
         setReplaceListOpen(false);
       })
       .catch(err => {
@@ -898,7 +1690,7 @@ export default function UploadScreen() {
     return () => {
       controller.abort();
     };
-  }, [rawCsv, parsedRows.length, adminToken, logoutAdmin]);
+  }, [rawCsv, parsedRows, adminToken, logoutAdmin, importMode]);
 
   const bulkPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const measurePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1509,6 +2301,11 @@ export default function UploadScreen() {
   }, [expandDescResults, expandDescStreamDone, expandDescModel, expandDescRemaining]);
 
   const handlePickFile = async () => {
+    const selectionGeneration = fileSelectionGenerationRef.current + 1;
+    fileSelectionGenerationRef.current = selectionGeneration;
+    const isCurrentSelection = () =>
+      isMountedRef.current && fileSelectionGenerationRef.current === selectionGeneration;
+
     setPasteText("");
     if (pasteDebounceRef.current) clearTimeout(pasteDebounceRef.current);
     try {
@@ -1523,13 +2320,14 @@ export default function UploadScreen() {
           "application/octet-stream",
           "*/*",
         ],
+        multiple: importMode === "opoq",
         copyToCacheDirectory: true,
       });
 
-      if (!isMountedRef.current) return;
-      if (result.canceled || !result.assets?.[0]) return;
+      if (!isCurrentSelection()) return;
+      if (result.canceled || !result.assets?.length) return;
 
-      const asset = result.assets[0];
+      const assets = result.assets;
       // Clear any previous import before parsing the new selection. This
       // prevents an invalid or empty workbook from leaving stale rows eligible
       // for preview/upload.
@@ -1537,109 +2335,254 @@ export default function UploadScreen() {
       setFileType(null);
       setParsedRows([]);
       setRawCsv(null);
+      setSelectedImportFiles(assets.map(asset => ({
+        name: asset.name,
+        type: getImportFileType(asset.name),
+        rowCount: 0,
+        status: "parsing" as const,
+      })));
+      setUploadError(null);
+      setUploadSuccess(null);
+      setRestoredImportNeedsReview(false);
+      restoredSkipBinRowsRef.current = null;
+      restoredUnknownRowsRef.current = null;
 
-      const ext = asset.name.split(".").pop()?.toLowerCase() ?? "";
-      let rows: Array<ParsedRow> = [];
-      // rawText holds the CSV string that will be sent to the admin upload
-      // endpoint. For CSV/TXT files this is the file's raw text. For XLSX/ODS
-      // files the parsed rows are serialized back to CSV so the server-side
-      // parser sees the same data.
-      let rawText: string | null = null;
+      const mergedOpoqRows = new Map<string, ParsedRow>();
+      let singleFileRows: Array<ParsedRow> = [];
+      let opoqColumnSignature: string | null = null;
+      const parsedFiles: Array<SelectedImportFile> = [];
+      for (const [index, asset] of assets.entries()) {
+        if (!isCurrentSelection()) return;
+        const ext = asset.name.split(".").pop()?.toLowerCase() ?? "";
+        let rows: Array<ParsedRow>;
 
-      if (ext === "csv" || ext === "txt") {
-        const response = await fetch(asset.uri);
-        if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
-        const text = await response.text();
-        if (!isMountedRef.current) return;
-        rows = parseCSV(text);
-        // Normalize through serializeToCsv so the server always receives a
-        // canonical header row (Vendor,Catalog,Description,BinLocation) even
-        // when the source file used broad client-side aliases like "mfr",
-        // "part#", etc. that the server-side parser wouldn't recognise.
-        rawText = serializeToCsv(rows, new Set());
-        setFileType("csv");
-      } else if (["xlsx", "xlsm"].includes(ext)) {
-        rows = await parseXlsx(asset.uri);
-        if (!isMountedRef.current) return;
-        // Serialize to CSV so we can send it to admin/upload/preview and
-        // admin/upload which only accept raw CSV text. skipBinRows is empty
-        // at this point (file just loaded), so all bin data is included.
-        rawText = serializeToCsv(rows, new Set());
-        setFileType("xlsx");
-      } else if (ext === "ods") {
-        rows = await parseOds(asset.uri);
-        if (!isMountedRef.current) return;
-        // ODS is parsed locally, then sent through the same canonical CSV
-        // preview/upload contract as XLSX and CSV imports.
-        rawText = serializeToCsv(rows, new Set());
-        setFileType("ods");
-      } else {
         try {
-          const response = await fetch(asset.uri);
-          if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
-          const text = await response.text();
-          if (!isMountedRef.current) return;
-          rows = parseCSV(text);
-          rawText = serializeToCsv(rows, new Set());
-          setFileType("csv");
-        } catch {
-          rows = await parseXlsx(asset.uri);
-          if (!isMountedRef.current) return;
-          rawText = serializeToCsv(rows, new Set());
-          setFileType("xlsx");
+          if (ext === "csv" || ext === "txt") {
+            const response = await fetch(asset.uri);
+            if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
+            rows = parseCSV(await response.text());
+          } else if (["xlsx", "xlsm"].includes(ext)) {
+            rows = await parseXlsx(asset.uri);
+          } else if (ext === "ods") {
+            rows = await parseOds(asset.uri);
+          } else {
+            try {
+              const response = await fetch(asset.uri);
+              if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
+              rows = parseCSV(await response.text());
+            } catch {
+              rows = await parseXlsx(asset.uri);
+            }
+          }
+        } catch (err) {
+          if (!isCurrentSelection()) return;
+          const message = err instanceof Error && err.message.includes("must be")
+            ? err.message
+            : `Failed to read "${asset.name}". Please choose the files again.`;
+          setSelectedImportFiles(assets.map((selectedAsset, selectedIndex) => ({
+            name: selectedAsset.name,
+            type: getImportFileType(selectedAsset.name),
+            rowCount: parsedFiles[selectedIndex]?.rowCount ?? 0,
+            status: selectedIndex === index ? "failed" : parsedFiles[selectedIndex] ? "ready" : "parsing",
+          })));
+          setUploadError(message);
+          return;
         }
+
+        if (!isCurrentSelection()) return;
+        if (rows.length === 0) {
+          setSelectedImportFiles(assets.map((selectedAsset, selectedIndex) => ({
+            name: selectedAsset.name,
+            type: getImportFileType(selectedAsset.name),
+            rowCount: parsedFiles[selectedIndex]?.rowCount ?? 0,
+            status: selectedIndex === index ? "failed" : parsedFiles[selectedIndex] ? "ready" : "parsing",
+          })));
+          setUploadError(`No data rows found in "${asset.name}". Ensure it has columns named: vendor, catalog (required), description, bin (optional).`);
+          return;
+        }
+        if (importMode === "opoq") {
+          const opProvided = rows.some(row => row.opProvided);
+          const oqProvided = rows.some(row => row.oqProvided);
+          if (!opProvided && !oqProvided) {
+            setSelectedImportFiles(assets.map((selectedAsset, selectedIndex) => ({
+              name: selectedAsset.name,
+              type: getImportFileType(selectedAsset.name),
+              rowCount: parsedFiles[selectedIndex]?.rowCount ?? 0,
+              status: selectedIndex === index ? "failed" : parsedFiles[selectedIndex] ? "ready" : "parsing",
+            })));
+            setUploadError(`No OP or OQ column found in "${asset.name}". Please choose the files again.`);
+            return;
+          }
+          const columnSignature = `${opProvided ? "op" : ""}:${oqProvided ? "oq" : ""}`;
+          if (opoqColumnSignature !== null && columnSignature !== opoqColumnSignature) {
+            setSelectedImportFiles(assets.map((selectedAsset, selectedIndex) => ({
+              name: selectedAsset.name,
+              type: getImportFileType(selectedAsset.name),
+              rowCount: parsedFiles[selectedIndex]?.rowCount ?? 0,
+              status: selectedIndex === index ? "failed" : parsedFiles[selectedIndex] ? "ready" : "parsing",
+            })));
+            setUploadError(`"${asset.name}" uses different OP/OQ columns than the earlier selected files. Choose files with matching order columns.`);
+            return;
+          }
+          opoqColumnSignature = columnSignature;
+          mergeOpoqRowsInto(mergedOpoqRows, rows);
+        } else {
+          singleFileRows = rows;
+        }
+        const parsedType = getImportFileType(asset.name);
+        parsedFiles.push({ name: asset.name, type: parsedType, rowCount: rows.length, status: "ready" });
+        setSelectedImportFiles([
+          ...parsedFiles,
+          ...assets.slice(index + 1).map(selectedAsset => ({
+            name: selectedAsset.name,
+            type: getImportFileType(selectedAsset.name),
+            rowCount: 0,
+            status: "parsing" as const,
+          })),
+        ]);
       }
 
+      if (!isCurrentSelection()) return;
+      const rows = importMode === "opoq" ? [...mergedOpoqRows.values()] : singleFileRows;
       if (rows.length === 0) {
         setUploadError("No data rows found. Ensure your file has columns named: vendor, catalog (required), description, bin (optional).");
         return;
       }
-      setUploadError(null);
       setUploadSuccess(null);
-      setFileName(asset.name);
-      setRawCsv(rawText);
+      if (importMode === "opoq") {
+        setSelectedImportFiles(parsedFiles);
+      } else {
+        setSelectedImportFiles([]);
+        const firstFile = parsedFiles[0]!;
+        setFileName(firstFile.name);
+        setFileType(firstFile.type);
+      }
+      setRawCsv(serializeToCsv(rows, new Set()));
       setParsedRows(rows);
-    } catch {
-      setUploadError("Failed to read file. Please try again.");
+    } catch (err) {
+      if (!isCurrentSelection()) return;
+      setUploadError(err instanceof Error && err.message.includes("must be")
+        ? err.message
+        : "Failed to read file. Please try again.");
     }
   };
 
+  const handleImportModeChange = (mode: ImportMode) => {
+    if (mode === importMode) return;
+    fileSelectionGenerationRef.current += 1;
+    if (pasteDebounceRef.current) {
+      clearTimeout(pasteDebounceRef.current);
+      pasteDebounceRef.current = null;
+    }
+    setImportMode(mode);
+    setParsedRows([]);
+    setRawCsv(null);
+    setFileName(null);
+    setFileType(null);
+    setSelectedImportFiles([]);
+    setPasteText("");
+    setUploadError(null);
+    setUploadSuccess(null);
+    setOpoqResult(null);
+    setRestoredImportNeedsReview(false);
+    restoredSkipBinRowsRef.current = null;
+    restoredUnknownRowsRef.current = null;
+  };
+
   const handlePasteChange = useCallback((text: string) => {
+    fileSelectionGenerationRef.current += 1;
     setPasteText(text);
     setFileName(null);
     setFileType(null);
+    setSelectedImportFiles([]);
+    setParsedRows([]);
+    setRawCsv(null);
+    setRestoredImportNeedsReview(false);
+    restoredSkipBinRowsRef.current = null;
+    restoredUnknownRowsRef.current = null;
     if (pasteDebounceRef.current) clearTimeout(pasteDebounceRef.current);
     if (!text.trim()) {
-      setParsedRows([]);
-      setRawCsv(null);
       return;
     }
     pasteDebounceRef.current = setTimeout(() => {
       if (!isMountedRef.current) return;
-      const rows = parseCSV(text);
-      if (rows.length === 0) {
-        setUploadError("No data rows found. Ensure the text has columns: vendor, catalog (required), description, bin (optional).");
+      try {
+        const rows = parseCSV(text);
+        if (rows.length === 0) {
+          setUploadError("No data rows found. Ensure the text has columns: vendor, catalog (required), description, bin (optional).");
+          return;
+        }
+        setUploadError(null);
+        setUploadSuccess(null);
+        setParsedRows(rows);
+        setRawCsv(serializeToCsv(rows, new Set()));
+      } catch (err) {
         setParsedRows([]);
         setRawCsv(null);
-        return;
+        setUploadError(err instanceof Error && err.message.includes("must be")
+          ? err.message
+          : "Failed to parse pasted rows. Please check the spreadsheet values and try again.");
       }
-      setUploadError(null);
-      setUploadSuccess(null);
-      setParsedRows(rows);
-      setRawCsv(serializeToCsv(rows, new Set()));
     }, 400);
   }, []);
 
   const handleUpload = async () => {
     if (!parsedRows.length || !rawCsv) return;
+    if (restoredImportNeedsReview) return;
     // Defensive guard: never commit an upload if the preview hasn't successfully
     // loaded. The UI already keeps the button disabled in this state, but this
     // guard adds a function-level safety net in case of unexpected state drift.
-    if (binDiffPending || binDiffFailed || binDiff === null) return;
+    if (importMode === "opoq") {
+      if (opoqPreviewPending || opoqPreviewFailed || !opoqPreview) return;
+    } else if (binDiffPending || binDiffFailed || binDiff === null) return;
     setUploadError(null);
     setUploadSuccess(null);
     setUploadPending(true);
     try {
+      if (importMode === "opoq") {
+        const response = await fetch(`${API_BASE}/admin/upload/orders`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...importHeaders },
+          body: JSON.stringify({ csv: rawCsv }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(body.error ?? "OP/OQ update failed");
+        }
+        const result = await response.json() as { updated?: number };
+        const eligible = opoqPreview!.unknownRows.filter((row) => row.hasBin);
+        const selected = eligible.filter((row) => selectedUnknownRows.has(opoqPreview!.unknownRows.indexOf(row)));
+        let unknownAdded = 0;
+        let failures = 0;
+        if (selected.length > 0) {
+          const addResponse = await fetch(`${API_BASE}/admin/upload`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...importHeaders },
+            body: JSON.stringify({ csv: serializeToCsv(selected, new Set()) }),
+          });
+          if (!addResponse.ok) {
+            failures = 1;
+          } else {
+            const added = await addResponse.json() as { inserted?: number };
+            unknownAdded = added.inserted ?? selected.length;
+          }
+        }
+        setOpoqResult({
+          knownUpdated: result.updated ?? 0,
+          unknownAdded,
+          unknownSkipped: opoqPreview!.unknownRows.length - selected.length,
+          failures,
+        });
+        await inventoryQuery.refetch();
+        setParsedRows([]);
+        setRawCsv(null);
+        setFileName(null);
+        setFileType(null);
+        setSelectedImportFiles([]);
+        setPasteText("");
+        if (currentClerkUserId) await clearImportDraft(currentClerkUserId);
+        return;
+      }
       // Build the CSV to submit. For rows where the admin toggled "skip bin
       // update" we rebuild the CSV with those bin cells blanked so the server
       // preserves the existing assignment instead of overwriting it.
@@ -1652,7 +2595,7 @@ export default function UploadScreen() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...adminHeaders,
+          ...importHeaders,
         },
         body: JSON.stringify({ csv: csvToSubmit }),
       });
@@ -1678,7 +2621,9 @@ export default function UploadScreen() {
       setRawCsv(null);
       setFileName(null);
       setFileType(null);
+      setSelectedImportFiles([]);
       setPasteText("");
+      if (currentClerkUserId) await clearImportDraft(currentClerkUserId);
       if (isMountedRef.current) await inventoryQuery.refetch();
     } catch {
       if (isMountedRef.current) setUploadError("Upload failed — could not save inventory items. Please try again.");
@@ -1830,13 +2775,37 @@ export default function UploadScreen() {
 
   // ── Floor plan upload handlers ─────────────────────────────────────────────
   const handlePickFloorPlan = async () => {
-    const result = await DocumentPicker.getDocumentAsync({
-      type: ["image/svg+xml", "text/plain", "*/*"],
-      copyToCacheDirectory: true,
-    });
+    let result: DocumentPicker.DocumentPickerResult;
+    try {
+      result = await DocumentPicker.getDocumentAsync({
+        type: ["image/svg+xml", "text/plain", "*/*"],
+        copyToCacheDirectory: true,
+      });
+    } catch {
+      setFloorPlanResult({ success: false, message: "Could not open the file picker. Please try again." });
+      return;
+    }
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
-    setFloorPlanFile({ name: asset.name, uri: asset.uri });
+    const fileName = asset.name ?? "selected file";
+    const allowedMimeTypes = new Set(["image/svg+xml", "text/plain"]);
+    if (!/\.svg$/i.test(fileName) || Boolean(asset.mimeType && !allowedMimeTypes.has(asset.mimeType))) {
+      setFloorPlanResult({
+        success: false,
+        message: "Choose an SVG file with an .svg extension (maximum 10 MB).",
+      });
+      return;
+    }
+    if (asset.size !== undefined && asset.size > FLOOR_PLAN_MAX_BYTES) {
+      setFloorPlanResult({ success: false, message: "That SVG is too large. Choose a file smaller than 10 MB." });
+      return;
+    }
+    setFloorPlanFile({
+      name: fileName,
+      uri: asset.uri,
+      ...(asset.size !== undefined ? { size: asset.size } : {}),
+      ...(asset.mimeType !== undefined ? { mimeType: asset.mimeType } : {}),
+    });
     setFloorPlanResult(null);
   };
 
@@ -1845,7 +2814,18 @@ export default function UploadScreen() {
     setFloorPlanUploading(true);
     setFloorPlanResult(null);
     try {
-      const content = await fetch(floorPlanFile.uri).then(r => r.text());
+      const fileResponse = await fetch(floorPlanFile.uri);
+      if (!fileResponse.ok) throw new Error("file read failed");
+      const content = await fileResponse.text();
+      const contentBytes = new TextEncoder().encode(content).byteLength;
+      if (contentBytes > FLOOR_PLAN_MAX_BYTES) {
+        setFloorPlanResult({ success: false, message: "That SVG is too large. Choose a file smaller than 10 MB." });
+        return;
+      }
+      if (!/<svg(?:\s|>)/i.test(content) || !/<\/svg\s*>/i.test(content)) {
+        setFloorPlanResult({ success: false, message: "The selected file does not contain a complete SVG document." });
+        return;
+      }
       const token = adminTokenRef.current;
       if (!token) {
         setFloorPlanResult({ success: false, message: "Admin session expired — please lock and unlock again" });
@@ -1870,12 +2850,30 @@ export default function UploadScreen() {
     }
   };
 
-  const inventory = inventoryQuery.data?.items ?? [];
-  const inventoryTotal = inventoryQuery.data?.total ?? 0;
+  const inventory = inventoryItems;
+  const inventoryTotal = inventoryQuery.data?.total ?? inventoryItems.length;
+  const hasLoadedInventory = inventoryItems.length > 0;
+  const isInitialInventoryLoading = inventoryQuery.isLoading && !hasLoadedInventory;
+  const isInitialInventoryError = inventoryQuery.isError && !hasLoadedInventory;
+  const isLaterInventoryPage = inventoryPage > 1;
+  const isLaterInventoryPageLoading =
+    isLaterInventoryPage && hasLoadedInventory && inventoryQuery.isFetching;
+  const isLaterInventoryPageError =
+    isLaterInventoryPage && hasLoadedInventory && inventoryQuery.isError;
+  const hasMoreInventory = inventoryPage * 50 < inventoryTotal;
 
-  const fetchUsers = async () => {
-    if (!adminToken) return;
-    await fetchAdminUsers({ apiBase: API_BASE, adminToken, setUsersLoading, setUsersError, setUsersData });
+  const fetchUsers = async (): Promise<FetchAdminUsersResult> => {
+    if (!adminToken) return { ok: false, error: "Admin session unavailable" };
+    const result = await fetchAdminUsers({
+      apiBase: API_BASE,
+      adminToken,
+      setUsersLoading,
+      setUsersError,
+      setUsersData,
+    });
+    if (!result) return { ok: true };
+    if (result.ok) setUsersLastUpdatedAt(Date.now());
+    return result;
   };
 
   const handleUserAction = async (
@@ -1920,6 +2918,34 @@ export default function UploadScreen() {
     );
   };
 
+  const apiStateLabel = apiRestarting
+    ? "restarting"
+    : apiChecking
+    ? "checking"
+    : apiStatus === "ok"
+    ? "healthy"
+    : apiStatus === "degraded"
+    ? "degraded"
+    : apiStatus === "error"
+    ? "offline"
+    : "unavailable";
+  const apiStateDescription = apiChecking
+    ? "Checking the API now."
+    : apiRestarting
+    ? "The server is restarting. Do not send another restart request."
+    : apiStatus === "ok"
+    ? "The API is responding normally."
+    : apiStatus === "degraded"
+    ? "The API is responding, but one or more services are degraded."
+    : apiStatus === "error"
+    ? "The API did not respond successfully. It may be offline."
+    : "No successful health check yet. Check again to confirm availability.";
+  const restartNotice = getRestartNotice(apiRestartState);
+  const canRetryRestart = restartNotice !== null && apiRestartState !== "recovered";
+  const lastCheckedLabel = apiLastCheckedAt === null
+    ? "No completed health check yet"
+    : `Last checked ${new Date(apiLastCheckedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -1927,7 +2953,12 @@ export default function UploadScreen() {
         <View style={styles.headerRow}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {activeSection !== null ? (
-              <Pressable onPress={() => setActiveSection(null)} style={{ padding: 4 }}>
+              <Pressable
+                onPress={() => selectActiveSection(null)}
+                style={{ padding: 4 }}
+                accessibilityRole="button"
+                accessibilityLabel="Back to Admin Hub"
+              >
                 <Feather name="chevron-left" size={22} color={colors.foreground} />
               </Pressable>
             ) : null}
@@ -1949,6 +2980,9 @@ export default function UploadScreen() {
                   <Pressable
                     onPress={handleCheckPress}
                     onLongPress={handleRestartPress}
+                    disabled={apiChecking || apiRestarting}
+                    accessibilityRole="button"
+                    accessibilityLabel={`API status: ${apiStateLabel}. Tap to check now. Long press to restart the API.`}
                     style={[
                       styles.apiStatusPill,
                       {
@@ -1968,16 +3002,31 @@ export default function UploadScreen() {
                     <Text style={styles.apiStatusPillText}>
                       {apiRestarting
                         ? "⟳ Restarting…"
+                        : apiChecking
+                        ? "◌ API: checking"
                         : apiStatus === "ok"
-                        ? "● API: ok"
+                        ? "● API: healthy"
                         : apiStatus === "degraded"
                         ? "● API: degraded"
                         : apiStatus === "error"
-                        ? "● API: error"
-                        : "● API: …"}
+                        ? "● API: offline"
+                        : "● API: unavailable"}
                     </Text>
                   </Pressable>
                 </Animated.View>
+                <Pressable
+                  onPress={handleRestartPress}
+                  disabled={apiChecking || apiRestarting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Restart API"
+                  style={[styles.restartApiButton, {
+                    borderColor: colors.border,
+                    backgroundColor: colors.card,
+                    opacity: apiChecking || apiRestarting ? 0.5 : 1,
+                  }]}
+                >
+                  <Text style={[styles.restartApiButtonText, { color: colors.foreground }]}>Restart API</Text>
+                </Pressable>
                 {Object.keys(apiBots).length > 0 ? (
                   <View>
                     <View style={styles.botStatusRow}>
@@ -2069,6 +3118,77 @@ export default function UploadScreen() {
         </View>
       </View>
 
+      {isAdmin ? (
+        <View
+          style={[
+            styles.apiHealthCard,
+            {
+              backgroundColor: apiStatus === "error" || apiRestartState === "recovery_failed"
+                ? colors.destructive + "12"
+                : apiStatus === "ok" && apiRestartState === "idle"
+                ? colors.success + "12"
+                : colors.card,
+              borderColor: apiStatus === "error" || apiRestartState === "recovery_failed"
+                ? colors.destructive + "55"
+                : colors.border,
+            },
+          ]}
+          accessibilityLiveRegion="polite"
+        >
+          <View style={styles.apiHealthCopy}>
+            <Text style={[styles.apiHealthTitle, { color: colors.foreground }]}>
+              {restartNotice?.title ?? `API status: ${apiStateLabel}`}
+            </Text>
+            <Text style={[styles.apiHealthDescription, { color: colors.mutedForeground }]}>
+              {restartNotice?.message ?? apiStateDescription}
+            </Text>
+            <Text style={[styles.apiHealthMeta, { color: colors.mutedForeground }]}>
+              {lastCheckedLabel}
+            </Text>
+          </View>
+          <View style={styles.apiHealthActions}>
+            <Pressable
+              onPress={handleCheckPress}
+              disabled={apiChecking || apiRestarting}
+              accessibilityRole="button"
+              accessibilityLabel="Check API status"
+              style={[
+                styles.apiHealthAction,
+                { borderColor: colors.border, opacity: apiChecking || apiRestarting ? 0.5 : 1 },
+              ]}
+            >
+              <Text style={[styles.apiHealthActionText, { color: colors.primary }]}>
+                {apiChecking ? "Checking…" : "Check now"}
+              </Text>
+            </Pressable>
+            {canRetryRestart ? (
+              <Pressable
+                onPress={handleRestartPress}
+                disabled={apiChecking || apiRestarting}
+                accessibilityRole="button"
+                accessibilityLabel="Try restarting the API again"
+                style={[
+                  styles.apiHealthAction,
+                  { borderColor: colors.primary, opacity: apiChecking || apiRestarting ? 0.5 : 1 },
+                ]}
+              >
+                <Text style={[styles.apiHealthActionText, { color: colors.primary }]}>Try again</Text>
+              </Pressable>
+            ) : null}
+            {restartNotice ? (
+              <Pressable
+                onPress={dismissRestartNotice}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss API restart message"
+                style={styles.apiHealthDismiss}
+              >
+                <Text style={[styles.apiHealthDismissText, { color: colors.mutedForeground }]}>Dismiss</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
+
       {/* Admin gate — inventory tools are restricted to admin-role users */}
       {!isAdmin ? (
         <AdminRestricted colors={colors} />
@@ -2083,13 +3203,36 @@ export default function UploadScreen() {
               </Pressable>
             </View>
           ) : null}
+          {activeSectionStorageError ? (
+            <View
+              style={[
+                styles.inlineBanner,
+                styles.errorBanner,
+                { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" },
+              ]}
+            >
+              <Text style={[styles.inlineBannerText, { color: colors.destructive }]}>
+                {activeSectionStorageError === "read"
+                  ? "Could not restore your place — retry"
+                  : "Could not save your place — retry"}
+              </Text>
+              <Pressable
+                onPress={retryActiveSectionStorage}
+                style={styles.bannerClose}
+                accessibilityRole="button"
+                accessibilityLabel="Retry saving your place"
+              >
+                <Text style={{ color: colors.destructive, fontSize: 14 }}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : null}
           {uploadSuccess ? (
             <View style={[styles.inlineBanner, styles.successBanner, { backgroundColor: "#10b98115", borderColor: "#10b98155" }]}>
               <Text style={[styles.inlineBannerText, { color: "#059669" }]}>
                 Upload complete — inserted {uploadSuccess.inserted}, updated {uploadSuccess.updated} ({uploadSuccess.total} total)
               </Text>
               <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                <Pressable onPress={() => { setUploadSuccess(null); setActiveSection("enrichment"); }}>
+                <Pressable onPress={() => { setUploadSuccess(null); selectActiveSection("enrichment"); }}>
                   <Text style={{ color: "#059669", fontSize: 12, fontFamily: "Inter_600SemiBold" }}>View →</Text>
                 </Pressable>
                 <Pressable onPress={() => setUploadSuccess(null)} style={styles.bannerClose}>
@@ -2098,11 +3241,26 @@ export default function UploadScreen() {
               </View>
             </View>
           ) : null}
+          {opoqResult ? (
+            <View style={[styles.inlineBanner, styles.successBanner, { backgroundColor: "#10b98115", borderColor: "#10b98155" }]}>
+              <Text style={[styles.inlineBannerText, { color: "#059669" }]}>
+                OP/OQ update complete — {opoqResult.knownUpdated} known updated · {opoqResult.unknownAdded} added · {opoqResult.unknownSkipped} skipped · {opoqResult.failures} failed
+              </Text>
+              <Pressable onPress={() => setOpoqResult(null)} style={styles.bannerClose}>
+                <Text style={{ color: "#059669", fontSize: 14 }}>✕</Text>
+              </Pressable>
+            </View>
+          ) : null}
 
           {/* ── Hub home & section views ─────────────────────────────── */}
           {activeSection === null ? (
             /* ── Hub home ──────────────────────────────────────────────── */
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+            <ScrollView
+              style={styles.adminScroll}
+              contentContainerStyle={{ padding: 16, paddingBottom: bottomClearance }}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+            >
               {/* Health strip */}
               <View style={[hubStyles.healthStrip, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <View style={hubStyles.healthItem}>
@@ -2134,8 +3292,11 @@ export default function UploadScreen() {
               {/* 2×2 section card grid */}
               <View style={hubStyles.cardGrid}>
                 <Pressable
-                  onPress={() => setActiveSection("import")}
+                  onPress={() => selectActiveSection("import")}
                   style={({ pressed }) => [hubStyles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Data Import section"
+                  accessibilityState={{ selected: activeSection === "import" }}
                 >
                   <Text style={hubStyles.sectionCardIcon}>📥</Text>
                   <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>Data Import</Text>
@@ -2143,8 +3304,11 @@ export default function UploadScreen() {
                 </Pressable>
 
                 <Pressable
-                  onPress={() => setActiveSection("enrichment")}
+                  onPress={() => selectActiveSection("enrichment")}
                   style={({ pressed }) => [hubStyles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open AI and Enrichment section"
+                  accessibilityState={{ selected: activeSection === "enrichment" }}
                 >
                   <Text style={hubStyles.sectionCardIcon}>🤖</Text>
                   <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>AI & Enrichment</Text>
@@ -2159,8 +3323,11 @@ export default function UploadScreen() {
                 </Pressable>
 
                 <Pressable
-                  onPress={() => setActiveSection("warehouse")}
+                  onPress={() => selectActiveSection("warehouse")}
                   style={({ pressed }) => [hubStyles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Warehouse section"
+                  accessibilityState={{ selected: activeSection === "warehouse" }}
                 >
                   <Text style={hubStyles.sectionCardIcon}>📦</Text>
                   <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>Warehouse</Text>
@@ -2177,6 +3344,9 @@ export default function UploadScreen() {
                 <Pressable
                   onPress={() => { setActiveSection("people"); fetchUsers(); }}
                   style={({ pressed }) => [hubStyles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open People and System section"
+                  accessibilityState={{ selected: activeSection === "people" }}
                 >
                   <Text style={hubStyles.sectionCardIcon}>👥</Text>
                   <Text style={[hubStyles.sectionCardTitle, { color: colors.foreground }]}>People & System</Text>
@@ -2185,7 +3355,12 @@ export default function UploadScreen() {
               </View>
             </ScrollView>
           ) : activeSection === "import" ? (
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+            <ScrollView
+              style={styles.adminScroll}
+              contentContainerStyle={{ padding: 16, paddingBottom: bottomClearance }}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+            >
               {/* File upload card */}
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>📁 Import File</Text>
@@ -2196,14 +3371,59 @@ export default function UploadScreen() {
                   Multiple bins per row: separate with ; or |{"\n"}
                   Multiple barcodes per row: separate with , ; or |
                 </Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                  {([
+                    ["full", "Full Catalog Import"],
+                    ["opoq", "Update OP/OQ Only"],
+                  ] as const).map(([value, label]) => (
+                    <Pressable
+                      key={value}
+                      onPress={() => {
+                        handleImportModeChange(value);
+                      }}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        paddingHorizontal: 8,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: importMode === value ? colors.primary : colors.border,
+                        backgroundColor: importMode === value ? colors.primary + "18" : colors.muted,
+                      }}
+                    >
+                      <Text style={{ color: importMode === value ? colors.primary : colors.mutedForeground, fontSize: 12, fontFamily: "Inter_600SemiBold", textAlign: "center" }}>
+                        {label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                {importMode === "opoq" ? (
+                  <Text style={[styles.cardHint, { color: colors.mutedForeground, marginTop: 8 }]}>
+                    Only OP/OQ values for known parts will change. Unknown rows are shown for review; rows with bins can optionally be added.
+                  </Text>
+                ) : null}
 
                 <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
                   <Text style={[styles.pickBtnText, { color: colors.primary }]}>
-                    📂 Choose CSV, Excel, or ODS File
+                    📂 Choose CSV, Excel, or ODS File{importMode === "opoq" ? "s" : ""}
                   </Text>
                 </Pressable>
 
-                {fileName ? (
+                {importMode === "opoq" && selectedImportFiles.length > 0 ? (
+                  <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
+                    {selectedImportFiles.map((file, index) => (
+                      <Text key={`${index}-${file.name}`} style={[styles.fileChipText, { color: file.status === "failed" ? colors.destructive : colors.foreground }]}>
+                        {file.status === "failed" ? "⚠️" : file.status === "parsing" ? "⏳" : file.type === "csv" ? "📄" : "📊"} {file.name}
+                        {file.status === "ready" ? ` (${file.rowCount} rows)` : file.status === "parsing" ? " (reading…)" : " (failed)"}
+                      </Text>
+                    ))}
+                    {parsedRows.length > 0 ? (
+                      <Text style={[styles.fileChipText, { color: colors.foreground, marginTop: 4 }]}>
+                        Combined rows: {parsedRows.length}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : fileName ? (
                   <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
                     <Text style={[styles.fileChipText, { color: colors.foreground }]}>
                       {fileType === "xlsx" || fileType === "ods" ? "📊" : "📄"} {fileName}
@@ -2250,8 +3470,51 @@ export default function UploadScreen() {
                   <Text style={[styles.cardTitle, { color: colors.foreground }]}>
                     Preview ({parsedRows.length} rows)
                   </Text>
+                  {importMode === "opoq" ? (
+                    <View style={[styles.diffCard, { backgroundColor: colors.muted, marginBottom: 10 }]}>
+                      {opoqPreviewPending ? (
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <ActivityIndicator size="small" color={colors.primary} />
+                          <Text style={[styles.diffText, { color: colors.mutedForeground }]}>Classifying known parts and review rows…</Text>
+                        </View>
+                      ) : opoqPreview ? (
+                        <>
+                          <Text style={[styles.diffText, { color: colors.foreground }]}>
+                            Known parts to update: {opoqPreview.known}
+                          </Text>
+                          <Text style={[styles.diffText, { color: colors.warning }]}>
+                            Unknown with bins: {opoqPreview.unknownWithBins} (eligible to add)
+                          </Text>
+                          <Text style={[styles.diffText, { color: colors.mutedForeground }]}>
+                            Unknown without bins: {opoqPreview.unknownWithoutBins} (skipped for review)
+                          </Text>
+                          {opoqPreview.unknownRows.map((row, index) => (
+                            <Pressable
+                              key={`${row.vendor}-${row.catalog}-${index}`}
+                              disabled={!row.hasBin}
+                              onPress={() => setSelectedUnknownRows((previous) => {
+                                const next = new Set(previous);
+                                if (next.has(index)) next.delete(index); else next.add(index);
+                                return next;
+                              })}
+                              style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8, opacity: row.hasBin ? 1 : 0.55 }}
+                            >
+                              <View style={[styles.checkbox, { borderColor: row.hasBin ? colors.warning : colors.border, backgroundColor: selectedUnknownRows.has(index) ? colors.warning : "transparent" }]}>
+                                {selectedUnknownRows.has(index) ? <Text style={{ color: colors.primaryForeground, fontSize: 11 }}>✓</Text> : null}
+                              </View>
+                              <Text style={[styles.diffText, { color: colors.foreground, flex: 1 }]}>
+                                {row.vendor} {row.catalog} · OP {row.orderPurchase} / OQ {row.orderQuantity}{row.hasBin ? "" : " · no bin — review only"}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </>
+                      ) : opoqPreviewFailed ? (
+                        <Text style={[styles.diffText, { color: colors.destructive }]}>Could not preview OP/OQ updates. Re-select the file to retry.</Text>
+                      ) : null}
+                    </View>
+                  ) : null}
 
-                  {(() => {
+                  {importMode === "full" ? (() => {
                     const hasBarcodes = parsedRows.some(r => r.barcodes.length > 0);
                     return (
                       <>
@@ -2354,7 +3617,7 @@ export default function UploadScreen() {
                         })}
                       </>
                     );
-                  })()}
+                  })() : null}
 
                   {parsedRows.length > 8 ? (
                     <Text style={[styles.moreRows, { color: colors.mutedForeground }]}>
@@ -2363,12 +3626,12 @@ export default function UploadScreen() {
                   ) : null}
 
                   {/* Bin diff summary / warning */}
-                  {binDiffPending ? (
+                  {importMode === "full" && binDiffPending ? (
                     <View style={[styles.diffCard, { backgroundColor: colors.muted }]}>
                       <ActivityIndicator size="small" color={colors.primary} />
                       <Text style={[styles.diffText, { color: colors.mutedForeground, marginLeft: 8 }]}>Checking for bin conflicts…</Text>
                     </View>
-                  ) : binDiff ? (
+                  ) : importMode === "full" && binDiff ? (
                     <>
                       {/* Summary chips */}
                       <View style={styles.diffSummaryRow}>
@@ -2582,7 +3845,7 @@ export default function UploadScreen() {
                   ) : null}
 
                   {/* Preview failed — hard block with retry hint */}
-                  {binDiffFailed ? (
+                  {importMode === "full" && binDiffFailed ? (
                     <View style={[styles.diffCard, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "44", borderWidth: 1, marginTop: 10 }]}>
                       <Text style={[styles.diffText, { color: colors.destructive }]}>
                         ⚠ Could not check for bin conflicts. Upload is disabled until the check succeeds. Please re-select the file, re-paste, or re-authenticate and try again.
@@ -2592,19 +3855,40 @@ export default function UploadScreen() {
 
                   {/* Upload button — gated on confirmation when replacements exist,
                       and blocked entirely until preview has been successfully loaded */}
+                  {restoredImportNeedsReview ? (
+                    <View style={[styles.diffCard, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "44", borderWidth: 1, marginTop: 10 }]}>
+                      <Text style={[styles.diffText, { color: colors.foreground }]}>
+                        This prepared import was restored after restart. Review the fresh preview and restored choices before allowing upload.
+                      </Text>
+                      <Pressable
+                        onPress={() => setRestoredImportNeedsReview(false)}
+                        style={[styles.skipAllBtn, { borderColor: colors.primary, marginTop: 10 }]}
+                      >
+                        <Text style={[styles.skipAllBtnText, { color: colors.primary }]}>I reviewed the restored import</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
                   {(() => {
-                    const pendingReplacements = binDiff
+                    const pendingReplacements = importMode === "full" && binDiff
                       ? activeReplacementCount(binDiff.willReplaceBins, skipBinRows, binDiff.rows)
                       : 0;
                     const needsConfirm = pendingReplacements > 0 && !replaceConfirmed;
-                    const hasConflicts = binDiff ? binDiff.willBarcodeConflicts > 0 : false;
+                    const hasConflicts = importMode === "full" && binDiff ? binDiff.willBarcodeConflicts > 0 : false;
                     // Block upload if preview hasn't been fetched yet (pending or failed)
-                    const previewRequired = binDiffPending || binDiffFailed || binDiff === null;
-                    const isDisabled = uploadPending || previewRequired || needsConfirm || hasConflicts;
-                    const btnLabel = binDiffPending
+                    const previewRequired = importMode === "opoq"
+                      ? opoqPreviewPending || opoqPreviewFailed || opoqPreview === null
+                      : binDiffPending || binDiffFailed || binDiff === null;
+                    const isDisabled = uploadPending || restoredImportNeedsReview || previewRequired || needsConfirm || hasConflicts;
+                    const btnLabel = importMode === "opoq"
+                      ? opoqPreviewPending
+                        ? "Checking OP/OQ updates…"
+                        : `Update OP/OQ (${opoqPreview?.known ?? 0})`
+                      : binDiffPending
                       ? "Checking conflicts…"
                       : hasConflicts
                         ? `✕ Fix ${binDiff!.willBarcodeConflicts} barcode conflict${binDiff!.willBarcodeConflicts !== 1 ? "s" : ""} to upload`
+                        : restoredImportNeedsReview
+                          ? "Review restored import before upload"
                         : needsConfirm
                           ? "✓ Confirm replacement to upload"
                           : `⬆️ Upload ${parsedRows.length} Items`;
@@ -2633,13 +3917,21 @@ export default function UploadScreen() {
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   Upload an updated warehouse floor plan (SVG). The app fetches the new plan on next launch — no app update required.
                 </Text>
-                <Pressable onPress={handlePickFloorPlan} style={[styles.pickBtn, { borderColor: colors.primary }]}>
+                <Pressable
+                  accessibilityLabel="Choose SVG floor plan file"
+                  accessibilityRole="button"
+                  onPress={handlePickFloorPlan}
+                  style={[styles.pickBtn, { borderColor: colors.primary }]}
+                >
                   <Text style={[styles.pickBtnText, { color: colors.primary }]}>
                     {floorPlanFile ? `📄 ${floorPlanFile.name}` : "Choose SVG File"}
                   </Text>
                 </Pressable>
                 {floorPlanFile ? (
                   <Pressable
+                    accessibilityLabel="Upload selected floor plan"
+                    accessibilityRole="button"
+                    accessibilityState={{ busy: floorPlanUploading }}
                     onPress={handleUploadFloorPlan}
                     disabled={floorPlanUploading}
                     style={[
@@ -2670,7 +3962,12 @@ export default function UploadScreen() {
             </ScrollView>
           ) : activeSection === "enrichment" ? (
             /* ── AI & Enrichment section ─────────────────────────────── */
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+            <ScrollView
+              style={styles.adminScroll}
+              contentContainerStyle={{ padding: 16, paddingBottom: bottomClearance }}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+            >
                     {/* PDF Catalog Import */}
                     <CatalogPdfUpload
                       adminToken={adminToken}
@@ -3089,31 +4386,36 @@ export default function UploadScreen() {
                     </View>
 
               {/* AI Status card — moved from Data Import */}
+              {isAdmin && adminToken ? (
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                {aiControlAnnouncement ? (
+                  <Text
+                    testID="admin-ai-control-announcement"
+                    accessibilityLiveRegion="polite"
+                    style={styles.srOnly}
+                  >
+                    {aiControlAnnouncement}
+                  </Text>
+                ) : null}
                 <View style={styles.aiStatusHeader}>
                   <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 AI Status</Text>
-                  <Pressable
-                    onPress={aiStatusProbing ? undefined : triggerAiProbe}
-                    disabled={aiStatusProbing}
-                    style={[
-                      styles.aiProbeBtn,
-                      { borderColor: aiStatusProbing ? colors.border : colors.primary },
-                    ]}
-                  >
-                    {aiStatusProbing ? (
-                      <ActivityIndicator size="small" color={colors.primary} />
-                    ) : (
-                      <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Re-run probe</Text>
-                    )}
-                  </Pressable>
+                  <View style={styles.aiStatusActions}>
+                    <Pressable
+                      onPress={aiStatusProbing ? undefined : triggerAiProbe}
+                      disabled={aiStatusProbing}
+                      style={[styles.aiProbeBtn, { borderColor: aiStatusProbing ? colors.border : colors.primary }]}
+                    >
+                      {aiStatusProbing ? <ActivityIndicator size="small" color={colors.primary} /> : (
+                        <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Verify active models</Text>
+                      )}
+                    </Pressable>
+                  </View>
                 </View>
                 {aiStatusLoading && Object.keys(aiStatusBots).length === 0 ? (
                   <ActivityIndicator size="small" color={colors.primary} style={{ alignSelf: "flex-start" }} />
-                ) : aiStatusError ? (
-                  <Text style={[styles.aiStatusError, { color: colors.destructive }]}>⚠ {aiStatusError}</Text>
                 ) : Object.keys(aiStatusBots).length === 0 ? (
                   <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                    No probe results yet. Tap "Re-run probe" to check bot health.
+                     The configured registry controls which models may be routed. Use "Verify active models" for an explicit bounded check.
                   </Text>
                 ) : (
                   <View style={styles.aiStatusBotList}>
@@ -3125,7 +4427,10 @@ export default function UploadScreen() {
                       return (
                         <View key={name} style={[styles.aiStatusBotRow, { borderBottomColor: colors.border }]}>
                           <Text style={[styles.aiStatusBotName, { color: colors.foreground }]} numberOfLines={1}>
-                            {name}
+                             {name}
+                             {aiStatus?.verification.models[name]?.verifiedAt
+                               ? ` · verified ${new Date(aiStatus.verification.models[name].verifiedAt!).toLocaleString()}`
+                               : " · not live-verified"}
                           </Text>
                           <View style={[styles.aiStatusBadge, { backgroundColor: dotColor + "20", borderColor: dotColor }]}>
                             <Text style={[styles.aiStatusBadgeDot, { color: dotColor }]}>●</Text>
@@ -3136,7 +4441,177 @@ export default function UploadScreen() {
                     })}
                   </View>
                 )}
+                {aiStatusError ? (
+                  <Text
+                    accessibilityRole="alert"
+                    style={[styles.aiStatusError, { color: colors.destructive }]}
+                  >
+                    ⚠ {aiStatusError}
+                  </Text>
+                ) : null}
+                {aiStatus ? (
+                  <>
+                    <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>
+                       Active provider: <Text style={{ color: colors.foreground }}>{aiProvider}</Text>
+                       {"  "}Registry: <Text style={{ color: "#10b981" }}>
+                        {aiStatus.registry.version}
+                      </Text>
+                    </Text>
+                    <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                      {aiStatus.verification.lastOperation
+                        ? `Live verification: ${aiStatus.verification.lastOperation.completed}/${aiStatus.verification.lastOperation.requested} completed${aiStatus.verification.lastOperation.budgetLimited ? " (budget limited)" : ""}.`
+                        : "Live verification: not run since this API process started."}
+                    </Text>
+                    <View style={[styles.aiProviderControl, { borderColor: colors.border }]}>
+                      <Text style={[styles.aiStatusSectionTitle, { color: colors.foreground }]}>Provider choice</Text>
+                      <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                        Changes the runtime provider and saves the choice for future API restarts.
+                      </Text>
+                      <View style={styles.aiProviderButtons}>
+                        {(["poe", "openai"] as const).map((provider) => {
+                          const selected = aiProvider === provider;
+                          return (
+                            <Pressable
+                              key={provider}
+                              onPress={() => void saveAiProvider(provider)}
+                              disabled={aiProviderSaving}
+                              accessibilityLabel={`Use ${provider === "poe" ? "Poe" : "OpenAI"} AI provider`}
+                              style={[
+                                styles.aiProviderButton,
+                                {
+                                  backgroundColor: selected ? colors.primary : colors.card,
+                                  borderColor: selected ? colors.primary : colors.border,
+                                  opacity: aiProviderSaving ? 0.6 : 1,
+                                },
+                              ]}
+                            >
+                              <Text style={[styles.aiProviderButtonText, { color: selected ? colors.primaryForeground : colors.foreground }]}>
+                                {provider === "poe" ? "Poe" : "OpenAI"}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                      {aiProviderSaveState === "saved" ? (
+                        <Text style={[styles.aiProviderSuccess, { color: colors.success }]}>
+                          Provider choice saved and will survive an API restart.
+                        </Text>
+                      ) : aiProviderSaveState === "runtime-only" ? (
+                        <View style={[styles.aiProviderWarning, { backgroundColor: colors.muted, borderColor: colors.warning }]}>
+                          <Text style={[styles.aiProviderWarningText, { color: colors.foreground }]}>
+                            Provider switched for this session, but could not be saved. It may revert after the API restarts.
+                          </Text>
+                          <Pressable
+                            onPress={() => void saveAiProvider(aiProvider)}
+                            disabled={aiProviderSaving}
+                            accessibilityLabel="Retry saving AI provider"
+                            style={[styles.aiProviderRetry, { borderColor: colors.warning }]}
+                          >
+                            <Text style={[styles.aiProviderRetryText, { color: colors.foreground }]}>
+                              {aiProviderSaving ? "Retrying…" : "Retry save"}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+                      {aiProviderError ? (
+                        <Text style={[styles.aiStatusError, { color: colors.destructive }]}>
+                          ⚠ {aiProviderError}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Text style={[styles.aiStatusSectionTitle, { color: colors.foreground }]}>Safe Poe fallbacks</Text>
+                    <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                      Primaries are code-owned. Only models in the configured registry with the required capabilities can be selected as fallbacks.
+                    </Text>
+                    {aiStatus.routes.map((route) => {
+                      const eligible = aiStatus.registry.models.filter((model) => {
+                        if (route.feature !== "enrich" && model.capabilities.vision !== true) return false;
+                        if (model.capabilities.text !== true || model.capabilities.structuredOutput !== true) return false;
+                        return !route.fallbacks.includes(model.name) && model.name !== route.primary;
+                      });
+                      const update = (fallbacks: Array<string>) => {
+                        void saveAiRoutes(aiStatus.routes.map((item) => (
+                          item.feature === route.feature ? { feature: item.feature, fallbacks } : { feature: item.feature, fallbacks: item.fallbacks }
+                        )));
+                      };
+                      return (
+                        <View key={route.feature} style={[styles.aiRouteRow, { borderTopColor: colors.border }]}>
+                          <View style={styles.aiRouteHeading}>
+                            <Text style={[styles.aiRouteFeature, { color: colors.foreground }]}>{route.feature}</Text>
+                            <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>Primary: {route.primary}</Text>
+                          </View>
+                          {route.fallbacks.length === 0 ? (
+                            <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>No configured fallbacks</Text>
+                          ) : route.fallbacks.map((model, index) => (
+                            <View key={model} style={styles.aiFallbackRow}>
+                              <Text style={[styles.aiFallbackText, { color: colors.foreground }]}>{index + 1}. {model}</Text>
+                              <View style={styles.aiFallbackActions}>
+                                <Pressable
+                                  disabled={index === 0 || aiRoutesSaving}
+                                  accessibilityLabel={`Move ${model} fallback up`}
+                                  onPress={() => {
+                                  const next = [...route.fallbacks];
+                                  const current = next[index];
+                                  const previous = next[index - 1];
+                                  if (!current || !previous) return;
+                                  next[index - 1] = current;
+                                  next[index] = previous;
+                                  update(next);
+                                }}
+                                ><Text style={[styles.aiRouteAction, { color: index === 0 ? colors.muted : colors.primary }]}>↑</Text></Pressable>
+                                <Pressable
+                                  disabled={index === route.fallbacks.length - 1 || aiRoutesSaving}
+                                  accessibilityLabel={`Move ${model} fallback down`}
+                                  onPress={() => {
+                                  const next = [...route.fallbacks];
+                                  const current = next[index];
+                                  const following = next[index + 1];
+                                  if (!current || !following) return;
+                                  next[index] = following;
+                                  next[index + 1] = current;
+                                  update(next);
+                                }}
+                                ><Text style={[styles.aiRouteAction, { color: index === route.fallbacks.length - 1 ? colors.muted : colors.primary }]}>↓</Text></Pressable>
+                                <Pressable
+                                  disabled={aiRoutesSaving}
+                                  accessibilityLabel={`Remove ${model} fallback`}
+                                  onPress={() => update(route.fallbacks.filter((item) => item !== model))}
+                                >
+                                  <Text style={[styles.aiRouteAction, { color: colors.destructive }]}>×</Text>
+                                </Pressable>
+                              </View>
+                            </View>
+                          ))}
+                          {eligible[0] ? (
+                            <Pressable
+                              disabled={aiRoutesSaving}
+                              accessibilityLabel={`Add ${eligible[0]!.name} fallback`}
+                              onPress={() => update([...route.fallbacks, eligible[0]!.name])}
+                            >
+                              <Text style={[styles.aiAddFallback, { color: colors.primary }]}>+ Add {eligible[0]!.name}</Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      );
+                    })}
+                    <View style={styles.aiRouteFooter}>
+                      <Text style={[styles.aiStatusMeta, { color: colors.mutedForeground }]}>
+                        Reference assistant: Gemini (read-only)
+                      </Text>
+                      <Pressable
+                        disabled={aiRoutesSaving}
+                        accessibilityLabel="Reset fallbacks"
+                        onPress={resetAiRoutes}
+                      >
+                        <Text style={[styles.aiAddFallback, { color: colors.primary }]}>
+                          {aiRoutesSaving ? "Saving…" : "Reset fallbacks"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </>
+                ) : null}
               </View>
+              ) : null}
 
             </ScrollView>
           ) : activeSection === "warehouse" ? (
@@ -3217,36 +4692,89 @@ export default function UploadScreen() {
                     />
                     <View style={{ padding: 16 }}>
                       {/* Inventory header */}
-                      {inventoryQuery.isLoading ? (
+                      {isInitialInventoryLoading ? (
                         <View style={styles.loadingContainer}>
                           <ActivityIndicator size="large" color={colors.primary} />
-                          <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading inventory…</Text>
+                          <Text accessibilityLiveRegion="polite" style={[styles.loadingText, { color: colors.mutedForeground }]}>
+                            Loading inventory…
+                          </Text>
+                        </View>
+                      ) : isInitialInventoryError ? (
+                        <View
+                          accessibilityLiveRegion="assertive"
+                          style={[styles.inventoryErrorBox, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}
+                        >
+                          <Text style={[styles.inventoryErrorTitle, { color: colors.destructive }]}>Inventory unavailable</Text>
+                          <Text style={[styles.inventoryErrorText, { color: colors.mutedForeground }]}>
+                            We could not load inventory items. Your read-only tools are still safe to use.
+                          </Text>
+                          <Pressable
+                            accessibilityLabel="Retry inventory"
+                            accessibilityRole="button"
+                            onPress={() => void inventoryQuery.refetch()}
+                            style={[styles.retryInventoryBtn, { borderColor: colors.destructive }]}
+                          >
+                            <Text style={[styles.retryInventoryText, { color: colors.destructive }]}>Retry</Text>
+                          </Pressable>
                         </View>
                       ) : (
-                        <View style={styles.inventoryHeader}>
-                          <Text style={[styles.inventoryCount, { color: colors.foreground }]}>
-                            {inventoryTotal} items total
-                          </Text>
-                          <View style={styles.inventoryHeaderActions}>
-                            <Pressable
-                              onPress={handleExportCsv}
-                              disabled={exportPending}
-                              style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card, opacity: exportPending ? 0.6 : 1 }]}
-                            >
-                              {exportPending ? (
-                                <ActivityIndicator size="small" color={colors.primary} />
-                              ) : (
-                                <Text style={[styles.exportCsvText, { color: colors.primary }]}>⬇ Export CSV</Text>
-                              )}
-                            </Pressable>
-                            <Pressable
-                              onPress={() => handleEnrich()}
-                              style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
-                            >
-                              <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
-                            </Pressable>
+                        <>
+                          <View style={styles.inventoryHeader}>
+                            <Text style={[styles.inventoryCount, { color: colors.foreground }]}>
+                              {inventoryTotal} items total
+                            </Text>
+                            <View style={styles.inventoryHeaderActions}>
+                              <Pressable
+                                onPress={handleExportCsv}
+                                disabled={exportPending}
+                                style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card, opacity: exportPending ? 0.6 : 1 }]}
+                              >
+                                {exportPending ? (
+                                  <ActivityIndicator size="small" color={colors.primary} />
+                                ) : (
+                                  <Text style={[styles.exportCsvText, { color: colors.primary }]}>⬇ Export CSV</Text>
+                                )}
+                              </Pressable>
+                              <Pressable
+                                onPress={() => handleEnrich()}
+                                style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
+                              >
+                                <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
+                              </Pressable>
+                            </View>
                           </View>
-                        </View>
+                          {isLaterInventoryPageLoading ? (
+                            <Text
+                              accessibilityLiveRegion="polite"
+                              style={[styles.inventoryPageStatus, { color: colors.mutedForeground }]}
+                            >
+                              Loading inventory page {inventoryPage}…
+                            </Text>
+                          ) : null}
+                          {isLaterInventoryPageError ? (
+                            <View
+                              accessibilityLiveRegion="assertive"
+                              style={[styles.inventoryErrorBox, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}
+                            >
+                              <Text style={[styles.inventoryErrorTitle, { color: colors.destructive }]}>
+                                Inventory page {inventoryPage} unavailable
+                              </Text>
+                              <Text style={[styles.inventoryErrorText, { color: colors.mutedForeground }]}>
+                                The {inventoryItems.length} items already loaded are still visible. Retry page {inventoryPage} to continue.
+                              </Text>
+                              <Pressable
+                                accessibilityLabel={`Retry inventory page ${inventoryPage}`}
+                                accessibilityRole="button"
+                                onPress={() => void inventoryQuery.refetch()}
+                                style={[styles.retryInventoryBtn, { borderColor: colors.destructive }]}
+                              >
+                                <Text style={[styles.retryInventoryText, { color: colors.destructive }]}>
+                                  Retry page {inventoryPage}
+                                </Text>
+                              </Pressable>
+                            </View>
+                          ) : null}
+                        </>
                       )}
                       {exportError ? (
                         <View style={[styles.exportErrorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
@@ -3265,6 +4793,8 @@ export default function UploadScreen() {
                           Run a read-only SELECT against the live database. INSERT, UPDATE, DELETE, and DDL are blocked. Results capped at 500 rows.
                         </Text>
                         <Pressable
+                           accessibilityLabel={queryHelpOpen ? "Hide query examples" : "Show query examples and table reference"}
+                           accessibilityRole="button"
                           onPress={() => setQueryHelpOpen(v => !v)}
                           style={[styles.queryHelpToggle, { borderColor: colors.border }]}
                         >
@@ -3331,16 +4861,16 @@ export default function UploadScreen() {
                           style={[styles.queryInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                           textAlignVertical="top"
                         />
-                        {/\b(DELETE|DROP|TRUNCATE|UPDATE|INSERT)\b/i.test(queryText) ? (
+                         {queryContainsWriteKeyword ? (
                           <View style={[styles.queryWriteWarning, { backgroundColor: "#f59e0b18", borderColor: "#f59e0b44" }]}>
                             <Text style={[styles.queryWriteWarningText, { color: "#b45309" }]}>
-                              ⚠ This query contains a write operation. Make sure you intend to modify data.
+                               ⚠ Write operations are blocked. Use a read-only SELECT query to run this tool.
                             </Text>
                           </View>
                         ) : null}
                         <Pressable
                           onPress={async () => {
-                            if (!adminToken || queryRunning) return;
+                             if (!adminToken || queryRunning || queryContainsWriteKeyword) return;
                             setQueryRunning(true);
                             setQueryError(null);
                             setQueryResult(null);
@@ -3355,22 +4885,35 @@ export default function UploadScreen() {
                                 setQueryError("Admin session expired. Please unlock again.");
                                 return;
                               }
-                              const qParsed = QueryResultSchema.safeParse(await res.json());
-                              if (!qParsed.success) { console.warn("[upload] query result unexpected shape:", qParsed.error.message); setQueryError("Unexpected response from server — query failed."); return; }
-                              const data = qParsed.data;
-                              if (!res.ok || data.error) {
-                                setQueryError(data.error ?? "Query failed");
+                               const body: unknown = await res.json();
+                               if (!res.ok) {
+                                 const errorParsed = QueryErrorResponseSchema.safeParse(body);
+                                 setQueryError(errorParsed.success ? errorParsed.data.error : `Query failed: HTTP ${res.status}`);
                                 return;
                               }
-                              setQueryResult({ columns: data.columns ?? [], rows: data.rows ?? [], rowCount: data.rowCount ?? 0 });
+                               const qParsed = QueryResultSchema.safeParse(body);
+                               if (!qParsed.success) {
+                                 console.warn("[upload] query result unexpected shape:", qParsed.error.message);
+                                 setQueryError("Results could not be displayed. Retry the query.");
+                                 return;
+                               }
+                               const data = qParsed.data;
+                               setQueryResult({
+                                 columns: data.columns,
+                                 rows: data.rows,
+                                 rowCount: data.rowCount,
+                               });
                             } catch {
                               setQueryError("Network error — could not reach the server.");
                             } finally {
                               setQueryRunning(false);
                             }
                           }}
-                          disabled={queryRunning || !queryText.trim()}
-                          style={[styles.queryRunBtn, { backgroundColor: (queryRunning || !queryText.trim()) ? colors.muted : colors.primary }]}
+                           accessibilityLabel="Run read-only query"
+                           accessibilityRole="button"
+                           accessibilityState={{ busy: queryRunning, disabled: queryRunning || !queryText.trim() || queryContainsWriteKeyword }}
+                           disabled={queryRunning || !queryText.trim() || queryContainsWriteKeyword}
+                           style={[styles.queryRunBtn, { backgroundColor: (queryRunning || !queryText.trim() || queryContainsWriteKeyword) ? colors.muted : colors.primary }]}
                         >
                           {queryRunning ? (
                             <ActivityIndicator color={colors.primaryForeground} />
@@ -3391,8 +4934,13 @@ export default function UploadScreen() {
                           ) : (
                             <View style={styles.queryResultsWrapper}>
                               <Text style={[styles.queryRowCount, { color: colors.mutedForeground }]}>
-                                {queryResult.rowCount} row{queryResult.rowCount !== 1 ? "s" : ""}
+                                 {queryResult.rowCount} row{queryResult.rowCount !== 1 ? "s" : ""} returned
                               </Text>
+                               {queryResult.rows.length > QUERY_DISPLAY_ROW_LIMIT ? (
+                                 <Text style={[styles.queryLimitNote, { color: colors.mutedForeground }]}>
+                                   Showing the first {QUERY_DISPLAY_ROW_LIMIT} rows for responsiveness. Exports include all {queryResult.rows.length} rows returned by the server.
+                                 </Text>
+                               ) : null}
                               <ScrollView horizontal showsHorizontalScrollIndicator>
                                 <View>
                                   <View style={[styles.queryHeaderRow, { backgroundColor: colors.muted }]}>
@@ -3402,7 +4950,7 @@ export default function UploadScreen() {
                                       </Text>
                                     ))}
                                   </View>
-                                  {queryResult.rows.map((row, ri) => (
+                                   {queryResult.rows.slice(0, QUERY_DISPLAY_ROW_LIMIT).map((row, ri) => (
                                     <View
                                       key={ri}
                                       style={[
@@ -3412,9 +4960,16 @@ export default function UploadScreen() {
                                     >
                                       {queryResult.columns.map(col => {
                                         const val = row[col];
-                                        const display = val === null || val === undefined ? "" : Array.isArray(val) ? val.join(", ") : String(val);
+                                         const { display, full } = formatQueryValue(val);
                                         return (
-                                          <Text key={col} style={[styles.queryDataCell, { color: colors.foreground, minWidth: 110 }]} numberOfLines={2}>
+                                           <Text
+                                             key={col}
+                                             accessibilityLabel={`${col}: ${full}`}
+                                             selectable
+                                             style={[styles.queryDataCell, { color: colors.foreground, minWidth: 110 }]}
+                                             numberOfLines={3}
+                                             ellipsizeMode="tail"
+                                           >
                                             {display}
                                           </Text>
                                         );
@@ -3425,6 +4980,9 @@ export default function UploadScreen() {
                               </ScrollView>
                               <View style={styles.queryExportRow}>
                                 <Pressable
+                                   accessibilityLabel="Download query results as CSV"
+                                   accessibilityRole="button"
+                                   accessibilityState={{ busy: queryExportPending === "csv", disabled: queryExportPending !== null }}
                                   onPress={() => handleQueryExport("csv")}
                                   disabled={queryExportPending !== null}
                                   style={[styles.queryExportBtn, { borderColor: colors.border, backgroundColor: queryExportPending === "csv" ? colors.muted : colors.card }]}
@@ -3436,6 +4994,9 @@ export default function UploadScreen() {
                                   )}
                                 </Pressable>
                                 <Pressable
+                                   accessibilityLabel="Download query results as Excel"
+                                   accessibilityRole="button"
+                                   accessibilityState={{ busy: queryExportPending === "xlsx", disabled: queryExportPending !== null }}
                                   onPress={() => handleQueryExport("xlsx")}
                                   disabled={queryExportPending !== null}
                                   style={[styles.queryExportBtn, { borderColor: colors.border, backgroundColor: queryExportPending === "xlsx" ? colors.muted : colors.card }]}
@@ -3454,15 +5015,17 @@ export default function UploadScreen() {
                     </View>
                   </View>
                 }
-                ListEmptyComponent={!inventoryQuery.isLoading ? (
+                ListEmptyComponent={!inventoryQuery.isLoading && !inventoryQuery.isError ? (
                   <View style={styles.emptyContainer}>
                     <Text style={styles.emptyEmoji}>📦</Text>
-                    <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
+                    <Text accessibilityRole="header" accessibilityLiveRegion="polite" style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
                     <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
                       Upload a CSV or Excel file to add inventory items.
                     </Text>
                     <Pressable
-                      onPress={() => setActiveSection("import")}
+                      accessibilityLabel="Go to Import"
+                      accessibilityRole="button"
+                      onPress={() => selectActiveSection("import")}
                       style={[styles.goUploadBtn, { backgroundColor: colors.primary }]}
                     >
                       <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>Go to Import</Text>
@@ -3470,25 +5033,45 @@ export default function UploadScreen() {
                   </View>
                 ) : null}
                 ListFooterComponent={() =>
-                  inventoryQuery.data && inventoryPage * 50 < inventoryTotal ? (
+                  hasMoreInventory ? (
                     <Pressable
+                      accessibilityLabel={`Load next inventory page, page ${inventoryPage + 1}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ busy: inventoryQuery.isFetching }}
+                      disabled={inventoryQuery.isFetching}
                       onPress={() => setInventoryPage(p => p + 1)}
                       style={[styles.loadMoreBtn, { borderColor: colors.border }]}
                     >
-                      <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load More</Text>
+                      <Text style={[styles.loadMoreText, { color: colors.primary }]}>
+                        {inventoryQuery.isFetching ? "Loading…" : "Load More"}
+                      </Text>
                     </Pressable>
+                  ) : inventory.length > 0 && !isLaterInventoryPageError && !isLaterInventoryPageLoading ? (
+                    <Text
+                      accessibilityLiveRegion="polite"
+                      style={[styles.inventoryPageStatus, { color: colors.mutedForeground }]}
+                    >
+                      All inventory items loaded.
+                    </Text>
                   ) : null
                 }
               />
             </View>
           ) : (
             /* ── People & System section ─────────────────────────────── */
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+            <ScrollView
+              style={styles.adminScroll}
+              contentContainerStyle={{ padding: 16, paddingBottom: bottomClearance }}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+            >
               {/* Navigation rows */}
               <View style={[styles.queryCard, { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 14 }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground, marginBottom: 8 }]}>🔗 Navigation</Text>
                 <Pressable
                   onPress={() => router.push("/admin")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Admin Dashboard"
                   style={[hubStyles.navRow, { borderColor: colors.border }]}
                 >
                   <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>🏠 Admin Dashboard</Text>
@@ -3496,6 +5079,8 @@ export default function UploadScreen() {
                 </Pressable>
                 <Pressable
                   onPress={() => router.push("/admin-inbox")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Admin Inbox"
                   style={[hubStyles.navRow, { borderColor: colors.border }]}
                 >
                   <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>📬 Inbox</Text>
@@ -3503,6 +5088,8 @@ export default function UploadScreen() {
                 </Pressable>
                 <Pressable
                   onPress={() => router.push("/ai-log")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open AI Log"
                   style={[hubStyles.navRow, { borderColor: colors.border }]}
                 >
                   <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>🤖 AI Log</Text>
@@ -3510,6 +5097,8 @@ export default function UploadScreen() {
                 </Pressable>
                 <Pressable
                   onPress={() => router.push("/admin-audit-log")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Admin Audit Log"
                   style={[hubStyles.navRow, { borderColor: colors.border, borderBottomWidth: 0 }]}
                 >
                   <Text style={[hubStyles.navRowText, { color: colors.foreground }]}>🔍 Audit Log</Text>
@@ -3523,31 +5112,111 @@ export default function UploadScreen() {
                   <Pressable
                     onPress={fetchUsers}
                     disabled={usersLoading}
+                    accessibilityRole="button"
+                    accessibilityLabel={usersError && usersData.length > 0 ? "Retry loading users" : "Refresh users"}
                     style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}
                   >
                     <Text style={{ fontSize: 12, color: colors.primary, fontFamily: "Inter_600SemiBold" }}>
-                      {usersLoading ? "Loading…" : "Refresh"}
+                      {usersLoading ? "Loading…" : usersError && usersData.length > 0 ? "Retry" : "Refresh"}
                     </Text>
                   </Pressable>
                 </View>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   Approve, ban, and manage admin access for users who have signed up via the app.
                 </Text>
-                {usersError ? (
-                  <View style={{ backgroundColor: colors.destructive + "15", borderRadius: 8, padding: 12, marginTop: 8 }}>
-                    <Text style={{ color: colors.destructive, fontFamily: "Inter_400Regular", fontSize: 13 }}>⚠ {usersError}</Text>
+                <TextInput
+                  value={usersFilter}
+                  onChangeText={setUsersFilter}
+                  placeholder="Filter by email or user ID"
+                  placeholderTextColor={colors.mutedForeground}
+                  accessibilityLabel="Filter people by email or user ID"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    borderRadius: 8,
+                    color: colors.foreground,
+                    paddingHorizontal: 10,
+                    paddingVertical: 8,
+                    marginTop: 10,
+                    fontSize: 13,
+                  }}
+                />
+                {usersError && usersData.length > 0 ? (
+                  <View
+                    accessibilityRole="alert"
+                    style={{ backgroundColor: colors.destructive + "15", borderRadius: 8, padding: 12, marginTop: 8 }}
+                  >
+                    <Text style={{ color: colors.destructive, fontFamily: "Inter_400Regular", fontSize: 13 }}>
+                      ⚠ Refresh failed — showing the last known list from{" "}
+                      {usersLastUpdatedAt ? new Date(usersLastUpdatedAt).toLocaleTimeString() : "an earlier refresh"}.{" "}
+                      {usersError}
+                    </Text>
+                    <Pressable
+                      onPress={fetchUsers}
+                      disabled={usersLoading}
+                      accessibilityRole="button"
+                      accessibilityLabel="Retry loading the last known user list"
+                      style={{ alignSelf: "flex-start", marginTop: 8, paddingVertical: 4 }}
+                    >
+                      <Text style={{ color: colors.primary, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>
+                        Retry
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+                {usersError && usersData.length === 0 ? (
+                  <View
+                    accessibilityRole="alert"
+                    style={{ backgroundColor: colors.destructive + "15", borderRadius: 8, padding: 12, marginTop: 8 }}
+                  >
+                    <Text style={{ color: colors.destructive, fontFamily: "Inter_400Regular", fontSize: 13 }}>
+                      ⚠ Unable to load users. {usersError}
+                    </Text>
+                    <Pressable
+                      onPress={fetchUsers}
+                      disabled={usersLoading}
+                      accessibilityRole="button"
+                      accessibilityLabel="Retry loading users"
+                      style={{ alignSelf: "flex-start", marginTop: 8, paddingVertical: 4 }}
+                    >
+                      <Text style={{ color: colors.primary, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>
+                        Retry
+                      </Text>
+                    </Pressable>
                   </View>
                 ) : null}
                 {usersLoading && usersData.length === 0 ? (
                   <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 24 }} />
-                ) : usersData.length === 0 ? (
-                  <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 16, textAlign: "center" }}>
-                    No users yet. Tap Refresh to load.
-                  </Text>
                 ) : (() => {
-                  const adminUsers = usersData.filter((u) => u.role === "admin");
-                  const regularUsers = usersData.filter((u) => u.role !== "admin" && u.status !== "pending");
-                  const requestUsers = usersData.filter((u) => u.status === "pending");
+                  if (usersData.length === 0) {
+                    return (
+                      <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 16, textAlign: "center" }}>
+                        {usersLastUpdatedAt ? "No users found." : "No users yet. Tap Refresh to load."}
+                      </Text>
+                    );
+                  }
+                  const normalizedFilter = usersFilter.trim().toLowerCase();
+                  const visibleUsers = usersData.filter((user) => {
+                    if (!normalizedFilter) return true;
+                    return [
+                      user.email,
+                      user.clerkUserId,
+                      user.status,
+                      user.role ?? "user",
+                    ].some((value) => value.toLowerCase().includes(normalizedFilter));
+                  });
+                  const adminUsers = visibleUsers.filter((u) => u.role === "admin");
+                  const regularUsers = visibleUsers.filter((u) => u.role !== "admin" && u.status !== "pending");
+                  const requestUsers = visibleUsers.filter((u) => u.status === "pending");
+                  if (visibleUsers.length === 0) {
+                    return (
+                      <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 16, textAlign: "center" }}>
+                        No users match “{usersFilter.trim()}”.
+                      </Text>
+                    );
+                  }
 
                   const renderUserCard = (user: import("@/utils/adminUserActions").UserRow) => {
                     const isSelf = user.clerkUserId === currentClerkUserId;
@@ -3572,7 +5241,12 @@ export default function UploadScreen() {
                         }}
                       >
                         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                          <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: colors.foreground, flex: 1 }}>
+                        <Text
+                          accessibilityLabel={`User email ${user.email || "not provided"}`}
+                          numberOfLines={1}
+                          ellipsizeMode="middle"
+                          style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: colors.foreground, flex: 1 }}
+                        >
                             {user.email || "(no email)"}
                           </Text>
                           {isSelf ? (
@@ -3581,7 +5255,12 @@ export default function UploadScreen() {
                             </View>
                           ) : null}
                         </View>
-                        <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: colors.mutedForeground }}>
+                        <Text
+                          accessibilityLabel={`User ID ${user.clerkUserId}`}
+                          numberOfLines={1}
+                          ellipsizeMode="middle"
+                          style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: colors.mutedForeground }}
+                        >
                           ID: {user.clerkUserId}
                         </Text>
                         <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
@@ -3607,6 +5286,8 @@ export default function UploadScreen() {
                                 <Pressable
                                   onPress={() => handleUserAction(user.clerkUserId, "approve")}
                                   disabled={!!userActionPending}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Approve ${user.email || user.clerkUserId}`}
                                   style={{
                                     flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
                                     backgroundColor: "#10b98115", borderWidth: 1, borderColor: "#10b98144",
@@ -3624,6 +5305,8 @@ export default function UploadScreen() {
                                 <Pressable
                                   onPress={() => handleUserAction(user.clerkUserId, "ban")}
                                   disabled={!!userActionPending}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Ban ${user.email || user.clerkUserId}`}
                                   style={{
                                     flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
                                     backgroundColor: colors.destructive + "15", borderWidth: 1, borderColor: colors.destructive + "44",
@@ -3640,6 +5323,8 @@ export default function UploadScreen() {
                               <Pressable
                                 onPress={() => handleDeleteUser(user.clerkUserId, user.email)}
                                 disabled={!!userActionPending}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Delete ${user.email || user.clerkUserId}`}
                                 style={{
                                   flex: 1, borderRadius: 6, paddingVertical: 8, alignItems: "center",
                                   backgroundColor: colors.destructive + "15", borderWidth: 1, borderColor: colors.destructive + "44",
@@ -3674,6 +5359,9 @@ export default function UploadScreen() {
                           onPress={() =>
                             setUserSectionsExpanded((prev) => ({ ...prev, [key]: !expanded }))
                           }
+                          accessibilityRole="button"
+                          accessibilityState={{ expanded }}
+                          accessibilityLabel={`${title} users, ${expanded ? "expanded" : "collapsed"}`}
                           style={{
                             flexDirection: "row",
                             alignItems: "center",
@@ -3767,6 +5455,7 @@ const hubStyles = StyleSheet.create({
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
+  adminScroll: { flex: 1, minHeight: 0 },
   header: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1 },
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
@@ -3776,6 +5465,18 @@ const styles = StyleSheet.create({
   headerActions: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1, maxWidth: "58%" },
   apiStatusPill: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
   apiStatusPillText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#ffffff" },
+  restartApiButton: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  restartApiButtonText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  apiHealthCard: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderRadius: 10, padding: 12, marginHorizontal: 16, marginTop: 12 },
+  apiHealthCopy: { flex: 1, gap: 2, minWidth: 0 },
+  apiHealthTitle: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  apiHealthDescription: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  apiHealthMeta: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+  apiHealthActions: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" },
+  apiHealthAction: { borderWidth: 1, borderRadius: 7, paddingHorizontal: 9, paddingVertical: 6 },
+  apiHealthActionText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  apiHealthDismiss: { paddingHorizontal: 4, paddingVertical: 6 },
+  apiHealthDismissText: { fontSize: 11, fontFamily: "Inter_500Medium" },
   botStatusRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, justifyContent: "flex-end" },
   botStatusChip: { flexDirection: "row", alignItems: "center", borderRadius: 10, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 2, gap: 3 },
   botStatusDot: { fontSize: 8 },
@@ -3860,6 +5561,12 @@ const styles = StyleSheet.create({
   inventoryHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
   inventoryCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   inventoryHeaderActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  inventoryErrorBox: { borderWidth: 1, borderRadius: 8, padding: 12, gap: 6, marginBottom: 10 },
+  inventoryErrorTitle: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  inventoryErrorText: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  retryInventoryBtn: { alignSelf: "flex-start", borderWidth: 1, borderRadius: 7, paddingHorizontal: 12, paddingVertical: 7, marginTop: 2 },
+  retryInventoryText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  inventoryPageStatus: { fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 8, textAlign: "center" },
   exportCsvBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, borderWidth: 1, minWidth: 36, alignItems: "center", justifyContent: "center" },
   exportCsvText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   exportErrorBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, marginBottom: 10 },
@@ -3904,6 +5611,7 @@ const styles = StyleSheet.create({
   queryEmptyText: { fontSize: 13, fontFamily: "Inter_400Regular" },
   queryResultsWrapper: { gap: 8 },
   queryRowCount: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  queryLimitNote: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
   queryHeaderRow: { flexDirection: "row", paddingHorizontal: 8, paddingVertical: 8, borderRadius: 4 },
   queryHeaderCell: { fontSize: 11, fontFamily: "Inter_700Bold", letterSpacing: 0.3, paddingRight: 12 },
   queryDataRow: { flexDirection: "row", paddingHorizontal: 8, paddingVertical: 8, borderBottomWidth: 1 },
@@ -3911,7 +5619,9 @@ const styles = StyleSheet.create({
   queryExportRow: { flexDirection: "row", gap: 8, paddingTop: 4 },
   queryExportBtn: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: "center", justifyContent: "center", minHeight: 40 },
   queryExportBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  aiStatusHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  aiStatusHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  aiStatusActions: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1 },
+  srOnly: { position: "absolute", width: 1, height: 1, opacity: 0 },
   aiProbeBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, minWidth: 44, alignItems: "center" },
   aiProbeBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   aiStatusError: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
@@ -3921,6 +5631,26 @@ const styles = StyleSheet.create({
   aiStatusBadge: { flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   aiStatusBadgeDot: { fontSize: 8 },
   aiStatusBadgeText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  aiStatusMeta: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  aiStatusSectionTitle: { fontSize: 14, fontFamily: "Inter_700Bold", marginTop: 6 },
+  aiProviderControl: { borderWidth: 1, borderRadius: 8, padding: 12, marginTop: 10, gap: 6 },
+  aiProviderButtons: { flexDirection: "row", gap: 8, marginTop: 2 },
+  aiProviderButton: { flex: 1, borderWidth: 1, borderRadius: 7, paddingVertical: 8, alignItems: "center" },
+  aiProviderButtonText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  aiProviderSuccess: { fontSize: 12, fontFamily: "Inter_500Medium", lineHeight: 17 },
+  aiProviderWarning: { borderWidth: 1, borderRadius: 7, padding: 9, gap: 8, marginTop: 2 },
+  aiProviderWarningText: { fontSize: 12, fontFamily: "Inter_500Medium", lineHeight: 17 },
+  aiProviderRetry: { alignSelf: "flex-start", borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  aiProviderRetryText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  aiRouteRow: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 9, marginTop: 5, gap: 5 },
+  aiRouteHeading: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 8 },
+  aiRouteFeature: { fontSize: 13, fontFamily: "Inter_700Bold", textTransform: "capitalize" },
+  aiFallbackRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 26 },
+  aiFallbackText: { flex: 1, fontSize: 12, fontFamily: "Inter_500Medium" },
+  aiFallbackActions: { flexDirection: "row", gap: 10 },
+  aiRouteAction: { fontSize: 17, fontFamily: "Inter_700Bold", minWidth: 16, textAlign: "center" },
+  aiAddFallback: { fontSize: 12, fontFamily: "Inter_600SemiBold", paddingVertical: 3 },
+  aiRouteFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 },
   shelfEntryBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -3934,3 +5664,32 @@ const styles = StyleSheet.create({
   shelfEntryTitle: { fontSize: 15, fontFamily: "Inter_700Bold", marginBottom: 2 },
   shelfEntryHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
 });
+
+function formatQueryValue(value: unknown): { display: string; full: string } {
+  if (value === null || value === undefined) return { display: "—", full: "No value" };
+  if (typeof value === "string") {
+    return {
+      display: value.length > 500 ? `${value.slice(0, 499)}…` : value,
+      full: value,
+    };
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    const full = String(value);
+    return { display: full, full };
+  }
+
+  let full: string;
+  try {
+    full = JSON.stringify(value) ?? String(value);
+  } catch {
+    full = String(value);
+  }
+  return {
+    display: full.length > 500 ? `${full.slice(0, 499)}…` : full,
+    full,
+  };
+}
+
+const FLOOR_PLAN_MAX_BYTES = 10 * 1024 * 1024;
+
+const QUERY_DISPLAY_ROW_LIMIT = 100;

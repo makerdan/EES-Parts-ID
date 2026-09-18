@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { InventoryItem } from "@workspace/api-client-react";
-import { useUpdateItemKeywords } from "@workspace/api-client-react";
+import { updateItemKeywords, useUpdateItemKeywords } from "@workspace/api-client-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -21,6 +21,7 @@ import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { arraysEqual } from "@/utils/arraysEqual";
 import { drainSave } from "@/utils/drainSave";
+import { inventorySaveErrorMessage, isAbortError, runInventoryWrite } from "@/utils/inventoryWrite";
 
 interface KeywordEditorProps {
   item: InventoryItem | null;
@@ -42,10 +43,18 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   const colors = useColors();
   const queryClient = useQueryClient();
   const { showToast } = useApp();
+  const writeControllersRef = useRef(new Set<AbortController>());
+  const mountedRef = useRef(true);
+  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [keywords, setKeywords] = useState<Array<string>>(item?.aiKeywords ?? []);
   const [newKeyword, setNewKeyword] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const updateMutation = useUpdateItemKeywords();
+  const updateMutation = useUpdateItemKeywords({
+    mutation: {
+      mutationFn: ({ id, data }) =>
+        runInventoryWrite(writeControllersRef.current, signal => updateItemKeywords(id, data, { signal })),
+    },
+  });
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks the live Promise returned by performSaveForId, keyed by item id.
   // handleClose awaits this to ensure it waits for an already-running drain
@@ -145,18 +154,21 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
         await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
         if (itemRef.current?.id === id) {
           setSaveStatus("saved");
-          setTimeout(() => {
+          if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+          statusTimerRef.current = setTimeout(() => {
+            statusTimerRef.current = null;
             if (itemRef.current?.id === id) setSaveStatus("idle");
           }, 1800);
         }
       } catch (err) {
+        if (isAbortError(err) && !mountedRef.current) return;
         console.warn("KeywordEditor: save failed:", err);
-        s.latest = s.lastSaved;
-        if (itemRef.current?.id === id) {
-          setKeywords(s.lastSaved);
+        if (itemRef.current?.id === id && mountedRef.current) {
           setSaveStatus("error");
         }
-        showToast("Save failed — changes reverted.", "error");
+        if (mountedRef.current) {
+          showToast(inventorySaveErrorMessage(err, "Save failed — changes are still pending. Retry when ready."), "error");
+        }
       } finally {
         s.saving = false;
         // Only clear our own promise — do not clobber a newer drain's ref.
@@ -199,8 +211,13 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
 
   // Cancel any pending debounce on unmount.
   useEffect(() => {
+    const controllers = writeControllersRef.current;
     return () => {
+      mountedRef.current = false;
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
     };
   }, []);
 

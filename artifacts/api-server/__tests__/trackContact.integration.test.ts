@@ -23,15 +23,44 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import { contactMessagesTable, db, screenViewLogTable, usersTable } from "@workspace/db";
-import { eq, like } from "drizzle-orm";
+import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import supertest from "supertest";
 
 import app from "../src/app";
 import { contactLimiter, screenViewLimiter } from "../src/lib/rateLimiter";
+import { deriveRotatingVisitorHash } from "../src/lib/screenViewPrivacy";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
+import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
 
-const NON_ADMIN_USER = "jest-trackcontact-user";
+const TEST_INSTANCE = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
+const NON_ADMIN_USER = `jest-trackcontact-user-${TEST_INSTANCE}`;
 const SUBJECT_PREFIX = "JEST-CONTACT-";
+const SCREEN_TEST_IP = `2001:db8:${((process.pid >>> 16) & 0xffff).toString(16)}:${(
+  process.pid & 0xffff
+).toString(16)}::1`;
+const SCREEN_TEST_VISITOR_HASH = deriveRotatingVisitorHash(SCREEN_TEST_IP);
+
+const seededContactMessageIds = new Set<number>();
+const seededScreenViewIds = new Set<number>();
+
+function trackContactMessage(id: unknown): asserts id is number {
+  if (typeof id !== "number") throw new Error("Expected contact message id");
+  seededContactMessageIds.add(id);
+}
+
+async function cleanupTrackContactFixtures(): Promise<void> {
+  await cleanupTestUser(NON_ADMIN_USER);
+
+  const contactMessageIds = [...seededContactMessageIds];
+  if (contactMessageIds.length > 0) {
+    await db.delete(contactMessagesTable).where(inArray(contactMessagesTable.id, contactMessageIds));
+  }
+
+  const screenViewIds = [...seededScreenViewIds];
+  if (screenViewIds.length > 0) {
+    await db.delete(screenViewLogTable).where(inArray(screenViewLogTable.id, screenViewIds));
+  }
+}
 
 /** Polls until `fn` returns a truthy value or the timeout elapses. */
 async function waitFor<T>(fn: () => Promise<T>, timeoutMs = 3000): Promise<T> {
@@ -47,21 +76,13 @@ async function waitFor<T>(fn: () => Promise<T>, timeoutMs = 3000): Promise<T> {
 beforeAll(async () => {
   process.env.ADMIN_CLERK_USER_ID = ADMIN_TEST_USER_ID;
   process.env.TEST_DEFAULT_AUTH_USER = ADMIN_TEST_USER_ID;
-  await db
-    .insert(usersTable)
-    .values({ clerkUserId: NON_ADMIN_USER, email: "tc@test.example", status: "approved", role: "user" })
-    .onConflictDoUpdate({
-      target: usersTable.clerkUserId,
-      set: { status: "approved", role: "user" },
-    });
+  await seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" });
 });
 
 afterAll(async () => {
   delete process.env.TEST_DEFAULT_AUTH_USER;
   delete process.env.ADMIN_CLERK_USER_ID;
-  await db.delete(usersTable).where(like(usersTable.clerkUserId, "jest-trackcontact-%"));
-  await db.delete(contactMessagesTable).where(like(contactMessagesTable.subject, `${SUBJECT_PREFIX}%`));
-  await db.delete(screenViewLogTable).where(like(screenViewLogTable.screenName, "JEST-SCREEN-%"));
+  await cleanupTrackContactFixtures();
 }, 15_000);
 
 beforeEach(async () => {
@@ -82,11 +103,18 @@ afterEach(() => {
 
 describe("POST /api/track/screen-view", () => {
   it("returns 204 and logs a valid screen view with a rotating keyed visitor id", async () => {
-    const startedAt = new Date();
+    if (!SCREEN_TEST_VISITOR_HASH) throw new Error("Screen-view test requires keyed visitor material");
+    const [latestScreenView] = await db
+      .select({ id: screenViewLogTable.id })
+      .from(screenViewLogTable)
+      .orderBy(desc(screenViewLogTable.id))
+      .limit(1);
+    const previousMaxId = latestScreenView?.id ?? 0;
 
     await supertest(app)
       .post("/api/track/screen-view")
       .send({ version: 1, event: "screen_view", screen: "Search" })
+      .set("X-Forwarded-For", SCREEN_TEST_IP)
       .expect(204);
 
     // Insert is fire-and-forget via setImmediate — poll until visible
@@ -94,11 +122,18 @@ describe("POST /api/track/screen-view", () => {
       const found = await db
         .select()
         .from(screenViewLogTable)
-        .where(eq(screenViewLogTable.screenName, "Search"));
-      return found.filter((row) => row.createdAt >= startedAt).slice(-1);
+        .where(
+          and(
+            eq(screenViewLogTable.screenName, "Search"),
+            eq(screenViewLogTable.visitorHash, SCREEN_TEST_VISITOR_HASH),
+            gt(screenViewLogTable.id, previousMaxId),
+          ),
+        );
+      return found;
     });
 
     expect(rows.length).toBeGreaterThan(0);
+    seededScreenViewIds.add(rows[0]!.id);
     expect(rows[0]!.visitorHash).toMatch(/^[0-9a-f]{64}$/);
     // Raw IP must never be stored
     expect(rows[0]!.visitorHash).not.toContain(".");
@@ -148,7 +183,7 @@ describe("POST /api/contact", () => {
       .send({ subject, body: "Test message body", senderToken: "jest-sender" })
       .expect(201);
 
-    expect(typeof res.body.id).toBe("number");
+    trackContactMessage(res.body.id);
 
     const [row] = await db
       .select()
@@ -169,6 +204,7 @@ describe("POST /api/contact", () => {
       .send({ subject, body: "Anon body" })
       .expect(201);
 
+    trackContactMessage(res.body.id);
     const [row] = await db
       .select()
       .from(contactMessagesTable)
@@ -219,9 +255,11 @@ describe("GET /api/contact (admin only)", () => {
     const older = `${SUBJECT_PREFIX}older-${Date.now()}`;
     const newer = `${SUBJECT_PREFIX}newer-${Date.now()}`;
     const r1 = await supertest(app).post("/api/contact").send({ subject: older, body: "b1" }).expect(201);
+    trackContactMessage(r1.body.id);
     // Ensure distinct createdAt ordering
     await new Promise((r) => setTimeout(r, 20));
     const r2 = await supertest(app).post("/api/contact").send({ subject: newer, body: "b2" }).expect(201);
+    trackContactMessage(r2.body.id);
 
     const res = await supertest(app)
       .get("/api/contact")
@@ -244,6 +282,7 @@ describe("PATCH /api/contact/:id/read (admin only)", () => {
       .post("/api/contact")
       .send({ subject, body: "to be read" })
       .expect(201);
+    trackContactMessage(created.body.id);
 
     const res = await supertest(app)
       .patch(`/api/contact/${created.body.id}/read`)
@@ -280,5 +319,50 @@ describe("PATCH /api/contact/:id/read (admin only)", () => {
       .patch("/api/contact/1/read")
       .set("Authorization", `Bearer ${NON_ADMIN_USER}`)
       .expect(403);
+  });
+});
+
+describe("contact tracking fixture cleanup", () => {
+  it("does not remove same-prefix rows owned by another suite", async () => {
+    const otherSuiteUser = `jest-trackcontact-other-suite-${TEST_INSTANCE}`;
+    const otherSuiteSubject = `${SUBJECT_PREFIX}other-suite-${TEST_INSTANCE}`;
+    const otherSuiteScreen = "Search";
+    const otherSuiteVisitorHash = "f".repeat(64);
+
+    await seedTestUser({ clerkUserId: otherSuiteUser, status: "approved", role: "user" });
+    const [otherMessage] = await db
+      .insert(contactMessagesTable)
+      .values({ senderToken: "other-suite", subject: otherSuiteSubject, body: "keep me" })
+      .returning({ id: contactMessagesTable.id });
+    const [otherScreenView] = await db
+      .insert(screenViewLogTable)
+      .values({ screenName: otherSuiteScreen, visitorHash: otherSuiteVisitorHash })
+      .returning({ id: screenViewLogTable.id });
+
+    try {
+      await cleanupTrackContactFixtures();
+
+      const [remainingUser] = await db
+        .select()
+        .from(usersTable)
+        .where(eq(usersTable.clerkUserId, otherSuiteUser));
+      const [remainingMessage] = await db
+        .select()
+        .from(contactMessagesTable)
+        .where(eq(contactMessagesTable.id, otherMessage!.id));
+      const [remainingScreenView] = await db
+        .select()
+        .from(screenViewLogTable)
+        .where(eq(screenViewLogTable.id, otherScreenView!.id));
+
+      expect(remainingUser?.clerkUserId).toBe(otherSuiteUser);
+      expect(remainingMessage?.subject).toBe(otherSuiteSubject);
+      expect(remainingScreenView?.screenName).toBe(otherSuiteScreen);
+      expect(remainingScreenView?.visitorHash).toBe(otherSuiteVisitorHash);
+    } finally {
+      await cleanupTestUser(otherSuiteUser);
+      await db.delete(contactMessagesTable).where(eq(contactMessagesTable.id, otherMessage!.id));
+      await db.delete(screenViewLogTable).where(eq(screenViewLogTable.id, otherScreenView!.id));
+    }
   });
 });

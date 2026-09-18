@@ -65,14 +65,14 @@ sleep() { :; }
 # The sleep() override above only applies to functions sourced into THIS
 # shell; a spawned `bash post-merge.sh` gets the real /bin/sleep.  Without
 # this, every spawn pays the 2s codegen-settle floor (~11 spawns ≈ 22s), and
-# sync-github.sh performs a real network push whenever GITHUB_TOKEN is set.
+# sync-github.sh is an explicit no-op that enforces protected snapshot sync.
 #
 #   CODEGEN_SETTLE_* = 0  — wait_for_codegen_settle returns immediately
 #                           (sleep 0 + empty poll window); the settle
 #                           behaviour itself is unit-tested via the sourced
 #                           function in Tests 23/24 with mocked sleep.
-#   GITHUB_TOKEN=""       — sync-github.sh's -z guard fires and it exits 0
-#                           without any network call.
+#   GITHUB_TOKEN=""       — keeps spawned environments credential-free even
+#                           though sync-github.sh never reads the token.
 #
 # Every subprocess spawn below is prefixed with:
 #   env "${FAST_SPAWN_ENV[@]}" ...
@@ -99,6 +99,19 @@ FAST_SPAWN_ENV=(
 # ---------------------------------------------------------------------------
 MOCK_DIR=$(mktemp -d)
 HEAVY_DIR=$(mktemp -d)
+
+prepare_generated_fixture() {
+  local workspace="$1"
+  mkdir -p "$workspace/lib/api-client-react/src" "$workspace/lib/api-zod/src"
+  cp -R "$SCRIPT_DIR/../lib/api-client-react/src/generated" \
+    "$workspace/lib/api-client-react/src/"
+  cp "$SCRIPT_DIR/../lib/api-client-react/src/index.ts" \
+    "$workspace/lib/api-client-react/src/index.ts"
+  cp -R "$SCRIPT_DIR/../lib/api-zod/src/generated" \
+    "$workspace/lib/api-zod/src/"
+  cp "$SCRIPT_DIR/../lib/api-zod/src/index.ts" \
+    "$workspace/lib/api-zod/src/index.ts"
+}
 
 # ---------------------------------------------------------------------------
 # Process cleanup (Port-Authority pattern).
@@ -292,6 +305,11 @@ reset_mock '{"status":"ok","uptime":123}'
 OUTPUT=$(check_api_health "test-extra-fields" 2>&1)
 assert_exit "extra JSON fields accepted — exit 0" 0 $?
 
+# Readiness may be degraded by database latency while still being safe to serve.
+reset_mock '{"status":"degraded","db_latency_ms":750}'
+OUTPUT=$(check_api_health "test-degraded-ready" 2>&1)
+assert_exit "degraded readiness accepted — exit 0" 0 $?
+
 # ---------------------------------------------------------------------------
 # Test 6: post-merge.sh contains the codegen step
 # Ensures the codegen command is present in the script and appears before
@@ -399,9 +417,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 10: pnpm install in background — script continues and exits 0
-# Verifies that when the lockfile changes the script still exits 0 (install
-# is fire-and-forget; failure is logged to /tmp, not fatal to post-merge).
+# Test 10: pnpm install in background — successful install is collected
+# Verifies that when the lockfile changes the script waits for the bounded
+# background install and continues after it exits successfully.
 # ---------------------------------------------------------------------------
 MOCK_BIN_DIR=$(mktemp -d)
 # Mock `timeout` that exits 0 immediately (background install completes fast).
@@ -437,8 +455,72 @@ for _attempt in 1 2 3; do
 done
 rm -rf "$MOCK_BIN_DIR"
 
-assert_exit     "install timeout — exits non-zero"         0 "$INSTALL_BG_EXIT"
-assert_contains "install timeout — prints timeout message" "background" "$INSTALL_BG_OUTPUT"
+assert_exit     "background install — exits zero"              0 "$INSTALL_BG_EXIT"
+assert_contains "background install — reports background work" "background" "$INSTALL_BG_OUTPUT"
+
+# ---------------------------------------------------------------------------
+# Test 10b: dependency install completes before codegen starts
+#
+# The install mock deliberately pauses before creating a completion sentinel.
+# The codegen mock fails if that sentinel is absent. This catches the production
+# race where a lockfile-changing merge ran codegen with stale or missing tools
+# while `pnpm install --frozen-lockfile` was still running.
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR_ORDER=$(mktemp -d)
+INSTALL_COMPLETE_FILE="$MOCK_BIN_DIR_ORDER/install_complete"
+CODEGEN_CALLED_FILE="$MOCK_BIN_DIR_ORDER/codegen_called"
+CODEGEN_EARLY_FILE="$MOCK_BIN_DIR_ORDER/codegen_started_early"
+
+cat > "$MOCK_BIN_DIR_ORDER/timeout" << MOCKEOF
+#!/bin/bash
+if [[ "\$*" == *"pnpm install --frozen-lockfile"* ]]; then
+  command sleep 0.2
+  touch "$INSTALL_COMPLETE_FILE"
+  exit 0
+fi
+if [[ "\$*" == *"codegen:fix"* ]]; then
+  touch "$CODEGEN_CALLED_FILE"
+  if [[ ! -f "$INSTALL_COMPLETE_FILE" ]]; then
+    touch "$CODEGEN_EARLY_FILE"
+    exit 77
+  fi
+  exit 0
+fi
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR_ORDER/timeout"
+
+cat > "$MOCK_BIN_DIR_ORDER/git" << 'MOCKEOF'
+#!/bin/bash
+if [[ "$*" == *"diff --name-only"* ]]; then
+  echo "pnpm-lock.yaml"
+fi
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR_ORDER/git"
+
+cat > "$MOCK_BIN_DIR_ORDER/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR_ORDER/curl"
+
+ORDER_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR_ORDER:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+ORDER_EXIT=$?
+
+assert_exit "install ordering — post-merge exits zero" 0 "$ORDER_EXIT"
+if [[ -f "$CODEGEN_CALLED_FILE" ]]; then
+  pass "install ordering — codegen was reached"
+else
+  fail "install ordering — codegen was not reached"
+fi
+if [[ -f "$INSTALL_COMPLETE_FILE" && ! -f "$CODEGEN_EARLY_FILE" ]]; then
+  pass "install ordering — install completed before codegen"
+else
+  fail "install ordering — codegen started before install completed"
+fi
+assert_contains "install ordering — wait is reported" "before dependency-sensitive steps" "$ORDER_OUTPUT"
+rm -rf "$MOCK_BIN_DIR_ORDER"
 
 # ---------------------------------------------------------------------------
 # Test 11: verify-fts step is present in post-merge.sh
@@ -458,6 +540,20 @@ if [[ -n "$PUSH_LINE" && -n "$VERIFY_LINE" && "$VERIFY_LINE" -gt "$PUSH_LINE" ]]
   pass "verify-fts — runs after db push"
 else
   fail "verify-fts — must appear after 'pnpm --filter db push' (push=$PUSH_LINE, verify=$VERIFY_LINE)"
+fi
+
+# Schema synchronization and verification must explicitly select the safe
+# development database boundary. They must never inherit an absent or
+# production DATABASE_ENV from the post-merge runner.
+if grep -Eq 'timeout 90 env DATABASE_ENV=development pnpm --filter db push' "$SCRIPT_DIR/post-merge.sh"; then
+  pass "db push — declares DATABASE_ENV=development"
+else
+  fail "db push — must declare DATABASE_ENV=development"
+fi
+if grep -Eq 'env DATABASE_ENV=development pnpm --filter @workspace/db run verify-fts' "$SCRIPT_DIR/post-merge.sh"; then
+  pass "verify-fts — declares DATABASE_ENV=development"
+else
+  fail "verify-fts — must declare DATABASE_ENV=development"
 fi
 
 # ---------------------------------------------------------------------------
@@ -717,21 +813,20 @@ assert_exit     "codegen:fix commit fail — post-merge exits non-zero"  1 "$COD
 assert_contains "codegen:fix commit fail — prints error message"       "codegen:fix failed" "$CODEGEN_FAIL_OUTPUT"
 
 # ---------------------------------------------------------------------------
-# Test 18: background install exits non-zero — script logs warning and proceeds
+# Test 18: background install exits non-zero — script fails before codegen
 #
 # Spawns post-merge.sh with:
 #   - mock git  : reports pnpm-lock.yaml changed so the install branch is taken
 #   - mock timeout: exits 1 when called for pnpm install (failed install);
-#                   passes through all other timeout-wrapped commands so codegen
-#                   and db-push steps succeed normally
-#   - mock pnpm : exits 0 for all calls (codegen:fix, etc.)
-#   - mock curl : returns '{"status":"ok"}' so the health check passes
+#                   passes through all other timeout-wrapped commands
+#   - mock pnpm : records if a dependency-sensitive command is reached
 #
 # Verifies:
-#   (a) the WARNING message about the non-zero install exit is logged
-#   (b) post-merge proceeds to the health check and exits 0 (not aborted)
+#   (a) the ERROR message about the non-zero install exit is logged
+#   (b) post-merge exits 1 before codegen or the health check
 # ---------------------------------------------------------------------------
 MOCK_BIN_DIR18=$(mktemp -d)
+INSTALL_FAIL_CODEGEN_FILE="$MOCK_BIN_DIR18/codegen_reached"
 
 cat > "$MOCK_BIN_DIR18/git" << 'MOCKEOF'
 #!/bin/bash
@@ -754,8 +849,11 @@ fi
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR18/timeout"
 
-cat > "$MOCK_BIN_DIR18/pnpm" << 'MOCKEOF'
+cat > "$MOCK_BIN_DIR18/pnpm" << MOCKEOF
 #!/bin/bash
+if echo "\$*" | grep -q 'codegen:fix'; then
+  touch "$INSTALL_FAIL_CODEGEN_FILE"
+fi
 exit 0
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR18/pnpm"
@@ -768,11 +866,15 @@ chmod +x "$MOCK_BIN_DIR18/curl"
 
 INSTALL_FAIL_OUTPUT=$(env "${FAST_SPAWN_ENV[@]}" PATH="$MOCK_BIN_DIR18:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
 INSTALL_FAIL_EXIT=$?
-rm -rf "$MOCK_BIN_DIR18"
 
-assert_exit     "install fail — script exits 0 (warning, not abort)"          0 "$INSTALL_FAIL_EXIT"
-assert_contains "install fail — WARNING message logged"                        "WARNING: background install exited" "$INSTALL_FAIL_OUTPUT"
-assert_contains "install fail — proceeds to health check after install wait"   "health check" "$INSTALL_FAIL_OUTPUT"
+assert_exit     "install fail — script exits non-zero" 1 "$INSTALL_FAIL_EXIT"
+assert_contains "install fail — ERROR message logged" "ERROR: background install exited" "$INSTALL_FAIL_OUTPUT"
+if [[ ! -f "$INSTALL_FAIL_CODEGEN_FILE" && "$INSTALL_FAIL_OUTPUT" != *"Starting API health check"* ]]; then
+  pass "install fail — aborts before codegen and health check"
+else
+  fail "install fail — dependency-sensitive work continued after install failure"
+fi
+rm -rf "$MOCK_BIN_DIR18"
 
 # ---------------------------------------------------------------------------
 # Test 19: env:check exits 0 — all server env vars are documented
@@ -1061,13 +1163,11 @@ fi
 rm -rf "$VIEWBOX_RESULT_DIR27"
 
 # ---------------------------------------------------------------------------
-# Test 28: check_generated_files — returns 0 when both sentinel files exist
+# Test 28: check_generated_files — returns 0 for the complete inventory
 #
 # Sources post-merge.sh so check_generated_files is in scope, then calls it
-# against real sentinel files.  Both lib/api-zod/src/generated/api.ts and
-# lib/api-client-react/src/generated/api.ts must be non-empty on a healthy
-# checkout.  This test fails if codegen was never run or the sentinel paths
-# have been renamed, giving a clear signal before any typecheck step.
+# against the real generated tree. The complete manifest must be present on a
+# healthy checkout, giving a clear signal before any typecheck step.
 # ---------------------------------------------------------------------------
 SENTINELS_OUTPUT=$(env REPLIT_DEV_DOMAIN="mock-domain.test" bash -c '
   source "'"$SCRIPT_DIR"'/post-merge.sh"
@@ -1103,12 +1203,10 @@ fi
 MOCK_BIN_DIR29=$(mktemp -d)
 MOCK_WORKSPACE29=$(mktemp -d)
 
-# Create the workspace directory tree with ONE sentinel missing.
-mkdir -p "$MOCK_WORKSPACE29/lib/api-zod/src/generated"
-mkdir -p "$MOCK_WORKSPACE29/lib/api-client-react/src/generated"
-# api-zod sentinel exists and is non-empty.
-echo "export const x = 1;" > "$MOCK_WORKSPACE29/lib/api-zod/src/generated/api.ts"
+# Create a complete generated workspace with ONE required output missing.
+prepare_generated_fixture "$MOCK_WORKSPACE29"
 # api-client-react sentinel is MISSING — simulates interrupted codegen.
+rm -f "$MOCK_WORKSPACE29/lib/api-client-react/src/generated/api.ts"
 
 cat > "$MOCK_BIN_DIR29/git" << 'MOCKEOF'
 #!/bin/bash
@@ -1160,7 +1258,7 @@ PREFLIGHT_EXIT=$?
 rm -rf "$MOCK_BIN_DIR29" "$MOCK_WORKSPACE29"
 
 assert_exit     "pre-flight warning — exits 0 after successful codegen:fix"           0 "$PREFLIGHT_EXIT"
-assert_contains "pre-flight warning — prints interrupted codegen warning"              "interrupted mid-run" "$PREFLIGHT_OUTPUT"
+assert_contains "pre-flight warning — prints generated inventory warning"                "Generated output inventory is incomplete or unexpected" "$PREFLIGHT_OUTPUT"
 
 # ---------------------------------------------------------------------------
 # Test 30: post-flight assertion — post-merge exits 1 with a clear error when
@@ -1179,9 +1277,10 @@ assert_contains "pre-flight warning — prints interrupted codegen warning"     
 MOCK_BIN_DIR30=$(mktemp -d)
 MOCK_WORKSPACE30=$(mktemp -d)
 
-mkdir -p "$MOCK_WORKSPACE30/lib/api-zod/src/generated"
-mkdir -p "$MOCK_WORKSPACE30/lib/api-client-react/src/generated"
-# Both sentinels absent — simulates a crash or config change.
+prepare_generated_fixture "$MOCK_WORKSPACE30"
+# Both primary API outputs absent — simulates a crash or config change.
+rm -f "$MOCK_WORKSPACE30/lib/api-zod/src/generated/api.ts"
+rm -f "$MOCK_WORKSPACE30/lib/api-client-react/src/generated/api.ts"
 
 cat > "$MOCK_BIN_DIR30/git" << 'MOCKEOF'
 #!/bin/bash
@@ -1227,7 +1326,7 @@ POSTFLIGHT_EXIT=$?
 rm -rf "$MOCK_BIN_DIR30" "$MOCK_WORKSPACE30"
 
 assert_exit     "post-flight assertion — exits 1 when sentinels still missing"        1 "$POSTFLIGHT_EXIT"
-assert_contains "post-flight assertion — prints clear error about missing files"       "Generated files still missing after codegen:fix" "$POSTFLIGHT_OUTPUT"
+assert_contains "post-flight assertion — prints clear inventory error"                  "Generated output inventory is still invalid after codegen:fix" "$POSTFLIGHT_OUTPUT"
 
 # ---------------------------------------------------------------------------
 # Test 31: run_viewbox_sync_check FAILURE path — post-merge exits non-zero and
@@ -1448,11 +1547,10 @@ else
   fail "cleanup-trap — post-merge.sh is missing the background-install cleanup trap"
 fi
 
-# Behavioral check: an aborted post-merge.sh must not leave its background
-# install running.  Mocks: git reports the lockfile changed (install branch
-# taken), the mocked `timeout` starts a long-lived sleep for the install call
-# but fails the codegen:fix call, so post-merge takes its early-abort exit-1
-# path while the fake install is still running.  The EXIT trap must kill it.
+# Behavioral check: an interrupted post-merge.sh must not leave its background
+# install running. Mocks report a lockfile change and start a long-lived fake
+# install. The test sends SIGTERM while post-merge is waiting for that install;
+# the TERM/EXIT trap must terminate the child before the script exits.
 MOCK_BIN_DIR36=$(mktemp -d)
 BG_MARKER36="$MOCK_BIN_DIR36/bg_running"
 # Distinctive duration so pgrep cannot match unrelated sleeps.
@@ -1465,8 +1563,7 @@ echo "pnpm-lock.yaml"
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR36/git"
 
-# timeout: long-lived fake install for the `pnpm install` call; hard failure
-# for codegen:fix so post-merge aborts (exit 1) while the install runs.
+# timeout: long-lived fake install for the `pnpm install` call.
 cat > "$MOCK_BIN_DIR36/timeout" << MOCKEOF
 #!/bin/bash
 shift
@@ -1490,11 +1587,28 @@ echo '{"status":"ok"}'
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR36/curl"
 
-CLEANUP36_OUTPUT=$(PATH="$MOCK_BIN_DIR36:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" \
-  bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
-CLEANUP36_EXIT=$?
+PATH="$MOCK_BIN_DIR36:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" \
+  bash "$SCRIPT_DIR/post-merge.sh" > "$MOCK_BIN_DIR36/output" 2>&1 &
+CLEANUP36_PID=$!
 
-assert_exit "cleanup-trap behavioral — post-merge aborts (exit 1) on codegen failure" 1 "$CLEANUP36_EXIT"
+for _attempt in $(seq 1 50); do
+  [[ -f "$BG_MARKER36" ]] && break
+  command sleep 0.05
+done
+
+if [[ -f "$BG_MARKER36" ]]; then
+  kill -TERM "$CLEANUP36_PID" 2>/dev/null || true
+fi
+
+CLEANUP36_EXIT=0
+wait "$CLEANUP36_PID" 2>/dev/null || CLEANUP36_EXIT=$?
+CLEANUP36_OUTPUT=$(cat "$MOCK_BIN_DIR36/output" 2>/dev/null || true)
+
+if [[ "$CLEANUP36_EXIT" -ne 0 ]]; then
+  pass "cleanup-trap behavioral — interrupted post-merge exits non-zero"
+else
+  fail "cleanup-trap behavioral — interrupted post-merge unexpectedly exits zero"
+fi
 
 if [[ ! -f "$BG_MARKER36" ]]; then
   fail "cleanup-trap behavioral — background install never started (mock setup problem)"
@@ -1637,6 +1751,51 @@ assert_exit "Port Authority recovery — focused contention and cleanup tests" \
 if [[ "$PORT_AUTHORITY_EXIT" -ne 0 ]]; then
   echo "  Port Authority test output:"
   echo "$PORT_AUTHORITY_OUTPUT" | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
+# Test 42: API development startup declares its database target and preserves
+#          import-time diagnostics
+#
+# The shared database package deliberately rejects ambiguous execution modes.
+# The managed API workflow launches the package's dev script directly, so that
+# command must own DATABASE_ENV=development. The outer startApplication catch
+# keeps failures in its initial dynamic imports from degrading to an opaque
+# unhandled-rejection `{}` log.
+# ---------------------------------------------------------------------------
+API_SERVER_PKG="$SCRIPT_DIR/../artifacts/api-server/package.json"
+API_SERVER_INDEX="$SCRIPT_DIR/../artifacts/api-server/src/index.ts"
+
+if [[ -f "$API_SERVER_PKG" ]] &&
+   node -e '
+     const dev = require(process.argv[1]).scripts?.dev ?? "";
+     process.exit(/\bNODE_ENV=development\b/.test(dev) &&
+                  /\bDATABASE_ENV=development\b/.test(dev) ? 0 : 1);
+   ' "$API_SERVER_PKG"; then
+  pass "api-dev-runtime — development command declares NODE_ENV and DATABASE_ENV explicitly"
+else
+  fail "api-dev-runtime — API dev command must declare NODE_ENV=development and DATABASE_ENV=development"
+fi
+
+if [[ -f "$API_SERVER_INDEX" ]] &&
+   grep -q 'startApplication().catch' "$API_SERVER_INDEX" &&
+   grep -q 'Fatal error before server startup initialized' "$API_SERVER_INDEX"; then
+  pass "api-startup-diagnostics — import-time startup failures have a serialized top-level catch"
+else
+  fail "api-startup-diagnostics — startApplication must catch and log import-time failures with the err serializer"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 43: routine post-merge recovery cannot bypass protected GitHub sync
+# ---------------------------------------------------------------------------
+GITHUB_SYNC_SCRIPT="$SCRIPT_DIR/sync-github.sh"
+if [[ -f "$GITHUB_SYNC_SCRIPT" ]] &&
+   grep -q 'protected snapshot PR flow' "$GITHUB_SYNC_SCRIPT" &&
+   ! grep -q 'RDC34-Parts-ID' "$GITHUB_SYNC_SCRIPT" &&
+   ! grep -Eq 'GITHUB_TOKEN.*github\\.com|git[^#]*push[^#]*main' "$GITHUB_SYNC_SCRIPT"; then
+  pass "github-sync-boundary — helper cannot expose credentials, target the obsolete repository, or push main directly"
+else
+  fail "github-sync-boundary — sync helper must be a protected-snapshot no-op without credential URLs or direct main pushes"
 fi
 
 # ---------------------------------------------------------------------------

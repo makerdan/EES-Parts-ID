@@ -11,7 +11,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Alert, Appearance, AppState, Platform, StyleSheet, Text, useColorScheme,View } from "react-native";
+import { Appearance, AppState, Platform, StyleSheet, Text, useColorScheme,View } from "react-native";
 
 import colorTokens from "@/constants/colors";
 import type { ResumeProgress } from "@/types/catalogPdf";
@@ -22,6 +22,7 @@ import {
   setAppTokenGetter,
   setOnUnauthorized,
 } from "@/utils/appAuth";
+import { clearImportDraft } from "@/utils/importDraftStorage";
 import { type LogoutHandler,LogoutRegistry } from "@/utils/logoutRegistry";
 import {
   clearSessionStorage,
@@ -327,8 +328,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const { isSignedIn, getToken, userId, isLoaded: clerkLoaded } = useAuth();
   const clerk = useClerk();
   const { signOut } = clerk;
-  const clerkRef = useRef(clerk);
-  useEffect(() => { clerkRef.current = clerk; }, [clerk]);
 
   // ── Local state ───────────────────────────────────────────────────────────
   const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>("idle");
@@ -435,20 +434,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (mountedRef.current && epoch === authEpochRef.current && !signal?.aborted) {
           showToastRef.current("Your admin access has been revoked.", "error");
         }
-      },
-      onMfaRequired: () => {
-        if (!mountedRef.current || epoch !== authEpochRef.current || signal?.aborted) return;
-        Alert.alert(
-          "Two-Factor Authentication Required",
-          "Admin access requires two-factor authentication (2FA). Enable it in your account settings under Security → Two-step verification.",
-          [
-            { text: "Dismiss", style: "cancel" },
-            {
-              text: "Open Account Settings",
-              onPress: () => { clerkRef.current?.openUserProfile(); },
-            },
-          ],
-        );
       },
     });
   }, []);
@@ -779,6 +764,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     recheckControllerRef.current?.abort();
     try {
       await clearSessionStorage(secureDelete, AsyncStorage.multiRemove);
+      if (userId) await clearImportDraft(userId);
     } catch (err) {
       reportStorageError("Could not clear session storage on logout", err);
     }
@@ -789,7 +775,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setApprovalStatus("idle");
     }
     await signOut();
-  }, [signOut]);
+  }, [signOut, userId]);
 
   // Re-verify admin status against the server using a fresh Clerk token. Called
   // when an admin action returns 401/403 so a stale token or a role change is

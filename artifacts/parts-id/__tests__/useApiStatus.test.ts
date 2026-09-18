@@ -50,14 +50,19 @@ jest.mock("expo-router", () => ({
 let capturedAppStateListener: ((state: string) => void) | null = null;
 const mockSubscriptionRemove = jest.fn();
 
-jest.mock("react-native", () => ({
-  AppState: {
-    addEventListener: jest.fn((_event: string, cb: (state: string) => void) => {
-      capturedAppStateListener = cb;
-      return { remove: mockSubscriptionRemove };
-    }),
-  },
-}));
+jest.mock("react-native", () => {
+  const helpers = require("./helpers/mapMocks");
+  const rn = helpers.createReactNativeMock();
+  return helpers.createReactNativeMock({
+    AppState: {
+      ...(rn.AppState as Record<string, unknown>),
+      addEventListener: jest.fn((_event: string, cb: (state: string) => void) => {
+        capturedAppStateListener = cb;
+        return { remove: mockSubscriptionRemove };
+      }),
+    },
+  });
+});
 
 // ---------------------------------------------------------------------------
 // fetch mock — installed on global so the hook can call it unmodified.
@@ -208,6 +213,72 @@ describe("useApiStatus", () => {
       await flushPromises();
 
       expect(result.current.status).toBe("error");
+    });
+
+    it.each([
+      [
+        { status: "error", detail: "startup_not_ready", startup_status: "pending" },
+        { detail: "startup_not_ready", startupStatus: "pending" },
+      ],
+      [
+        { status: "error", detail: "startup_not_ready", startup_status: "timed_out" },
+        { detail: "startup_not_ready", startupStatus: "timed_out" },
+      ],
+      [
+        { status: "error", detail: "database_unreachable" },
+        { detail: "database_unreachable" },
+      ],
+      [
+        { status: "error", detail: "schema_unavailable" },
+        { detail: "schema_unavailable" },
+      ],
+    ])(
+      "preserves the bounded readiness category from a 503 response: %j",
+      async (body, expected) => {
+        mockFetch.mockResolvedValue({
+          ok: false,
+          status: 503,
+          json: async () => body,
+        } as Response);
+
+        const { result } = renderHook(() =>
+          useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN }),
+        );
+
+        act(() => { triggerFocus(); });
+        await flushPromises();
+
+        expect(result.current.status).toBe("error");
+        expect(result.current.readinessIssue).toEqual(expected);
+      },
+    );
+
+    it("clears a readiness category after the next successful health check", async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 503,
+          json: async () => ({ status: "error", detail: "schema_unavailable" }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ status: "ok" }),
+        } as Response);
+
+      const { result } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN }),
+      );
+
+      act(() => { triggerFocus(); });
+      await flushPromises();
+      expect(result.current.readinessIssue).toEqual({ detail: "schema_unavailable" });
+
+      await act(async () => {
+        await result.current.checkStatus();
+      });
+
+      expect(result.current.status).toBe("ok");
+      expect(result.current.readinessIssue).toBeNull();
     });
 
     it("calls /healthz with cache: 'no-store' and an AbortSignal", async () => {

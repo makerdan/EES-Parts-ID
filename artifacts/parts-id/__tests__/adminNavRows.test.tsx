@@ -277,11 +277,16 @@ const UploadScreen = (require("../app/(tabs)/upload") as { default: React.Compon
 // ── Helper: render as admin and tap "People & System" to open the section ─────
 
 async function renderAdminPeopleSection() {
-  useApp.mockReturnValue(makeAppMock({ isAdmin: true, adminToken: "tok-abc" }));
-  activeTree = await renderComponent(React.createElement(UploadScreen));
-  const peopleCard = findPressable(activeTree!.root!!, "People & System");
+  const result = await renderAdminHub();
+  const peopleCard = findPressable(result.root!, "People & System");
   await act(async () => { fireEvent.press(peopleCard!); });
   await flushPromises();
+  return result;
+}
+
+async function renderAdminHub() {
+  useApp.mockReturnValue(makeAppMock({ isAdmin: true, adminToken: "tok-abc" }));
+  activeTree = await renderComponent(React.createElement(UploadScreen));
   return activeTree;
 }
 
@@ -344,7 +349,100 @@ describe("UploadScreen — admin nav rows visible when isAdmin=true", () => {
 });
 
 // =============================================================================
-// § 3 — Navigation: each row pushes the correct route
+// § 3 — Hub recovery and accessibility
+// =============================================================================
+
+describe("UploadScreen — admin hub section recovery", () => {
+  it("keeps the selected section visible and offers retry when persistence fails", async () => {
+    const storage = jest.requireMock("@react-native-async-storage/async-storage") as {
+      setItem: jest.Mock;
+    };
+    storage.setItem.mockRejectedValueOnce(new Error("storage unavailable"));
+
+    const result = await renderAdminHub();
+    const importCard = findPressable(result.root!, "Data Import");
+    await act(async () => { fireEvent.press(importCard!); });
+    await flushPromises();
+
+    expect(hasText(result.root!, "Import File")).toBe(true);
+    expect(hasText(result.root!, "Could not save your place — retry")).toBe(true);
+    expect(storage.setItem).toHaveBeenCalledWith("admin_activeSection", "import");
+
+    storage.setItem.mockResolvedValue(undefined);
+    const retry = findPressable(result.root!, "Retry");
+    await act(async () => { fireEvent.press(retry!); });
+    await flushPromises();
+
+    expect(hasText(result.root!, "Could not save your place — retry")).toBe(false);
+    expect(storage.setItem).toHaveBeenLastCalledWith("admin_activeSection", "import");
+
+    const storageWithRemove = jest.requireMock("@react-native-async-storage/async-storage") as {
+      removeItem: jest.Mock;
+    };
+    storageWithRemove.removeItem.mockRejectedValueOnce(new Error("storage unavailable"));
+    const backControl = result.root!.queryAll(
+      (node) =>
+        (node.type as string) === "rn-pressable" &&
+        node.props.accessibilityLabel === "Back to Admin Hub",
+      { includeSelf: true },
+    );
+    await act(async () => { fireEvent.press(backControl[0]!); });
+    await flushPromises();
+
+    expect(hasText(result.root!, "Admin Hub")).toBe(true);
+    expect(hasText(result.root!, "Could not save your place — retry")).toBe(true);
+
+    storageWithRemove.removeItem.mockResolvedValue(undefined);
+    const removeRetry = findPressable(result.root!, "Retry");
+    await act(async () => { fireEvent.press(removeRetry!); });
+    await flushPromises();
+    expect(hasText(result.root!, "Could not save your place — retry")).toBe(false);
+  });
+
+  it("restores the persisted section after the hub mounts", async () => {
+    const storage = jest.requireMock("@react-native-async-storage/async-storage") as {
+      getItem: jest.Mock;
+    };
+    storage.getItem.mockResolvedValueOnce("warehouse");
+
+    const result = await renderAdminHub();
+    await flushPromises();
+
+    expect(hasText(result.root!, "Shelf Catalog Entry")).toBe(true);
+  });
+
+  it("gives each section card and the back control explicit accessible semantics", async () => {
+    const result = await renderAdminHub();
+    const expectedCards = [
+      ["Data Import", "Open Data Import section"],
+      ["AI & Enrichment", "Open AI and Enrichment section"],
+      ["Warehouse", "Open Warehouse section"],
+      ["People & System", "Open People and System section"],
+    ];
+
+    for (const [visibleLabel, accessibilityLabel] of expectedCards as Array<[string, string]>) {
+      const card = findPressable(result.root!, visibleLabel);
+      expect(card?.props.accessibilityRole).toBe("button");
+      expect(card?.props.accessibilityLabel).toBe(accessibilityLabel);
+      expect(card?.props.accessibilityState).toEqual({ selected: false });
+    }
+
+    const importCard = findPressable(result.root!, "Data Import");
+    await act(async () => { fireEvent.press(importCard!); });
+    await flushPromises();
+    const backControl = result.root!.queryAll(
+      (node) =>
+        (node.type as string) === "rn-pressable" &&
+        node.props.accessibilityLabel === "Back to Admin Hub",
+      { includeSelf: true },
+    );
+    expect(backControl).toHaveLength(1);
+    expect(backControl[0]?.props.accessibilityRole).toBe("button");
+  });
+});
+
+// =============================================================================
+// § 4 — Navigation: each row pushes the correct route
 // =============================================================================
 
 describe("UploadScreen — admin nav rows navigate to correct routes", () => {

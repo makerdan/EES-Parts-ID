@@ -14,6 +14,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 
 const authState = {
@@ -23,13 +24,14 @@ const authState = {
 
 const redirectToSignIn = vi.fn();
 const signOut = vi.fn();
+const clerkState = { redirectToSignIn, signOut };
 
 vi.mock("@clerk/react", () => ({
   ClerkProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SignIn: () => null,
   SignUp: () => null,
   useAuth: () => authState,
-  useClerk: () => ({ redirectToSignIn, signOut }),
+  useClerk: () => clerkState,
 }));
 
 vi.mock("../auth/clerkConfig", () => ({
@@ -56,6 +58,7 @@ type Anchor = {
 type FixtureOptions = {
   admin?: boolean;
   rejectSaves?: boolean;
+  floorPlanResponses?: Array<Promise<Response>>;
 };
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -81,6 +84,8 @@ function makeApiFixture(options: FixtureOptions = {}) {
   const calls: Array<[string, RequestInit | undefined]> = [];
   const admin = options.admin ?? true;
   const rejectSaves = options.rejectSaves ?? false;
+  let anchorLoadFailuresRemaining = 0;
+  let floorPlanRequestCount = 0;
 
   const fetchMock = vi.fn((url: string, init?: RequestInit) => {
     calls.push([url, init]);
@@ -92,10 +97,13 @@ function makeApiFixture(options: FixtureOptions = {}) {
     }
 
     if (path === "/api/floor-plan/svg") {
+      floorPlanRequestCount += 1;
+      const deferredResponse = options.floorPlanResponses?.[floorPlanRequestCount - 1];
+      if (deferredResponse) return deferredResponse;
       return Promise.resolve(
         textResponse(
           200,
-          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect width="1000" height="800" /></svg>',
+          `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="anchor-route-floor-plan-${floorPlanRequestCount}" width="1000" height="800" /></svg>`,
         ),
       );
     }
@@ -122,6 +130,12 @@ function makeApiFixture(options: FixtureOptions = {}) {
     }
 
     if (path === "/api/admin/map-anchors" && method === "GET") {
+      if (anchorLoadFailuresRemaining > 0) {
+        anchorLoadFailuresRemaining -= 1;
+        return Promise.resolve(
+          jsonResponse(503, { error: "Calibration temporarily unavailable" }),
+        );
+      }
       return Promise.resolve(
         jsonResponse(200, {
           anchors: [...persisted.values()].sort((a, b) => a.id - b.id),
@@ -156,11 +170,32 @@ function makeApiFixture(options: FixtureOptions = {}) {
     return Promise.resolve(jsonResponse(404, { error: "Unhandled test request" }));
   });
 
-  return { persisted, calls, fetchMock };
+  return {
+    persisted,
+    calls,
+    fetchMock,
+    failNextAnchorLoads(count = 1) {
+      anchorLoadFailuresRemaining += count;
+    },
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function setCalibrationRoute() {
   window.history.replaceState({}, "", "/anchor-calibration");
+}
+
+function resetRoute() {
+  window.history.replaceState({}, "", "/");
 }
 
 function mockMapRect(svg: SVGSVGElement) {
@@ -177,13 +212,35 @@ function mockMapRect(svg: SVGSVGElement) {
   } as DOMRect);
 }
 
-async function renderRoute() {
+async function renderRoute(fixture?: ReturnType<typeof makeApiFixture>) {
+  const floorPlanCallsBeforeRender =
+    fixture?.calls.filter(
+      ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+    ).length ?? 0;
   let result!: ReturnType<typeof render>;
   await act(async () => {
     result = render(<App />);
   });
   await waitFor(() => {
-    expect(screen.getByText("Admin — Anchor Calibration")).toBeTruthy();
+    expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+    if (fixture) {
+      expect(
+        fixture.calls.filter(
+          ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+        ),
+      ).toHaveLength(floorPlanCallsBeforeRender + 1);
+    }
+    expect(
+      result.container.querySelector(
+        `#anchor-route-floor-plan-${floorPlanCallsBeforeRender + 1}`,
+      ),
+    ).not.toBeNull();
+    expect(
+      result.container.querySelectorAll('rect[fill="rgba(0,112,255,0.06)"]'),
+    ).toHaveLength(2);
+    expect(
+      result.container.querySelector('g[transform="translate(18,-7) scale(1.25)"]'),
+    ).not.toBeNull();
   });
   return result;
 }
@@ -228,16 +285,19 @@ describe("web Anchor Calibration routed workflow", () => {
 
   afterEach(() => {
     cleanup();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    setCalibrationRoute();
+    resetRoute();
   });
 
   it("loads, places, saves, reloads, and clears persisted calibration anchors", async () => {
     const fixture = makeApiFixture();
-    global.fetch = fixture.fetchMock as unknown as typeof global.fetch;
+    vi.stubGlobal("fetch", fixture.fetchMock);
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    const { container } = await renderRoute();
+    const { container } = await renderRoute(fixture);
     const svg = container.querySelector("svg")!;
     mockMapRect(svg);
 
@@ -299,7 +359,7 @@ describe("web Anchor Calibration routed workflow", () => {
     });
 
     cleanup();
-    const { container: reloadedContainer } = await renderRoute();
+    const { container: reloadedContainer } = await renderRoute(fixture);
 
     await waitFor(() => {
       const inputs = screen.getAllByRole("textbox");
@@ -334,9 +394,9 @@ describe("web Anchor Calibration routed workflow", () => {
 
   it("shows rejected saves without mutating data and blocks non-admins before protected loads", async () => {
     const rejectedFixture = makeApiFixture({ rejectSaves: true });
-    global.fetch = rejectedFixture.fetchMock as unknown as typeof global.fetch;
+    vi.stubGlobal("fetch", rejectedFixture.fetchMock);
 
-    const { container } = await renderRoute();
+    const { container } = await renderRoute(rejectedFixture);
     const svg = container.querySelector("svg")!;
     mockMapRect(svg);
     await placePoint(
@@ -366,7 +426,7 @@ describe("web Anchor Calibration routed workflow", () => {
     cleanup();
     authState.isSignedIn = true;
     const deniedFixture = makeApiFixture({ admin: false });
-    global.fetch = deniedFixture.fetchMock as unknown as typeof global.fetch;
+    vi.stubGlobal("fetch", deniedFixture.fetchMock);
     setCalibrationRoute();
     await act(async () => {
       render(<App />);
@@ -390,5 +450,216 @@ describe("web Anchor Calibration routed workflow", () => {
         new URL(url).pathname.includes("/api/warehouse-zones"),
       ),
     ).toBe(false);
+  });
+
+  it("refreshes another open session after shared anchors are saved and cleared", async () => {
+    const fixture = makeApiFixture();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const firstSession = await renderRoute(fixture);
+    const secondSession = await renderRoute(fixture);
+    const first = within(firstSession.container);
+    const second = within(secondSession.container);
+    const firstSvg = firstSession.container.querySelector("svg")!;
+    mockMapRect(firstSvg);
+
+    await placePoint(
+      firstSvg,
+      first.getAllByRole("button", { name: /^Place$/ })[0]!,
+      180,
+      120,
+    );
+    const firstInputs = first.getAllByRole("textbox");
+    await act(async () => {
+      fireEvent.change(firstInputs[0]!, { target: { value: "North Door" } });
+      fireEvent.change(firstInputs[1]!, { target: { value: "12.5" } });
+      fireEvent.change(firstInputs[2]!, { target: { value: "7.3" } });
+      fireEvent.click(first.getByRole("button", { name: "Save Anchor 1" }));
+    });
+    await waitFor(() => {
+      expect(fixture.persisted.size).toBe(1);
+      expect(first.getByRole("button", { name: "Anchor 1 saved" })).toBeTruthy();
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      const inputs = second.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("North Door");
+      expect((inputs[1] as HTMLInputElement).value).toBe("12.5");
+      expect((inputs[2] as HTMLInputElement).value).toBe("7.3");
+      expect(second.getByText(/x: 777\.8,\s+y: 444\.4/)).toBeTruthy();
+      expect(second.getByText("1/3 saved · scroll to zoom · drag to pan · 18%")).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.click(first.getByRole("button", { name: "Clear" }));
+    });
+    await waitFor(() => {
+      expect(fixture.persisted.size).toBe(0);
+      expect(first.queryByRole("button", { name: "Clear" })).toBeNull();
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      const inputs = second.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("");
+      expect((inputs[1] as HTMLInputElement).value).toBe("");
+      expect((inputs[2] as HTMLInputElement).value).toBe("");
+      expect(second.getAllByText("Not placed")).toHaveLength(3);
+      expect(second.getByText("0/3 saved · scroll to zoom · drag to pan · 18%")).toBeTruthy();
+    });
+  });
+
+  it("keeps the latest floor plan when an older mounted session settles later", async () => {
+    const olderFloorPlan = deferred<Response>();
+    const latestFloorPlan = deferred<Response>();
+    const fixture = makeApiFixture({
+      floorPlanResponses: [olderFloorPlan.promise, latestFloorPlan.promise],
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+
+    const result = render(<App key="older-calibration-session" />);
+
+    await waitFor(() => {
+      expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+      expect(
+        fixture.calls.filter(
+          ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+        ),
+      ).toHaveLength(1);
+    });
+
+    result.rerender(<App key="latest-calibration-session" />);
+    await waitFor(() => {
+      expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+      expect(
+        fixture.calls.filter(
+          ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+        ),
+      ).toHaveLength(2);
+    });
+
+    await act(async () => {
+      latestFloorPlan.resolve(
+        textResponse(
+          200,
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="latest-calibration-floor-plan" width="1000" height="800" /></svg>',
+        ),
+      );
+    });
+    await waitFor(() => {
+      expect(result.container.querySelector("#latest-calibration-floor-plan")).not.toBeNull();
+    });
+
+    await act(async () => {
+      olderFloorPlan.resolve(
+        textResponse(
+          200,
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="stale-calibration-floor-plan" width="1000" height="800" /></svg>',
+        ),
+      );
+    });
+    await waitFor(() => {
+      expect(result.container.querySelector("#latest-calibration-floor-plan")).not.toBeNull();
+      expect(result.container.querySelector("#stale-calibration-floor-plan")).toBeNull();
+    });
+
+    const floorPlanCalls = fixture.calls.filter(
+      ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+    );
+    result.unmount();
+    expect(
+      floorPlanCalls.every(([, init]) => (init?.signal as AbortSignal | undefined)?.aborted),
+    ).toBe(true);
+  });
+
+  it("aborts and ignores a rejected floor-plan response after the calibration route unmounts", async () => {
+    const pendingFloorPlan = deferred<Response>();
+    const fixture = makeApiFixture({
+      floorPlanResponses: [pendingFloorPlan.promise],
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+
+    const result = render(<App />);
+    await waitFor(() => {
+      expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+      expect(
+        fixture.calls.some(
+          ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+        ),
+      ).toBe(true);
+    });
+
+    const floorPlanCall = fixture.calls.find(
+      ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+    );
+    const signal = floorPlanCall?.[1]?.signal as AbortSignal | undefined;
+    expect(signal).toBeDefined();
+
+    result.unmount();
+    expect(signal?.aborted).toBe(true);
+
+    await act(async () => {
+      pendingFloorPlan.reject(new Error("unmounted floor-plan response"));
+    });
+    expect(result.container.querySelector("#stale-calibration-floor-plan")).toBeNull();
+  });
+
+  it("keeps the last known mapping visible and shows the load error after refresh fails", async () => {
+    const fixture = makeApiFixture();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const firstSession = await renderRoute(fixture);
+    const secondSession = await renderRoute(fixture);
+    const first = within(firstSession.container);
+    const second = within(secondSession.container);
+    const firstSvg = firstSession.container.querySelector("svg")!;
+    mockMapRect(firstSvg);
+
+    await placePoint(
+      firstSvg,
+      first.getAllByRole("button", { name: /^Place$/ })[0]!,
+      180,
+      120,
+    );
+    const firstInputs = first.getAllByRole("textbox");
+    await act(async () => {
+      fireEvent.change(firstInputs[0]!, { target: { value: "North Door" } });
+      fireEvent.change(firstInputs[1]!, { target: { value: "12.5" } });
+      fireEvent.change(firstInputs[2]!, { target: { value: "7.3" } });
+      fireEvent.click(first.getByRole("button", { name: "Save Anchor 1" }));
+    });
+    await waitFor(() => {
+      expect(fixture.persisted.size).toBe(1);
+      expect(first.getByRole("button", { name: "Anchor 1 saved" })).toBeTruthy();
+    });
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      const inputs = second.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("North Door");
+      expect(second.getByText(/x: 777\.8,\s+y: 444\.4/)).toBeTruthy();
+    });
+
+    fixture.failNextAnchorLoads(2);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      expect(second.getByText("⚠ Failed to load anchors")).toBeTruthy();
+      const inputs = second.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("North Door");
+      expect((inputs[1] as HTMLInputElement).value).toBe("12.5");
+      expect((inputs[2] as HTMLInputElement).value).toBe("7.3");
+      expect(second.getByText(/x: 777\.8,\s+y: 444\.4/)).toBeTruthy();
+      expect(second.getByText("1/3 saved · scroll to zoom · drag to pan · 18%")).toBeTruthy();
+    });
   });
 });

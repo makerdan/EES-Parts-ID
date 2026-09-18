@@ -4,9 +4,15 @@ import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { assertTierLock, parsePlanTier } from "../lib/tier-lock-check.mjs";
+import {
+  assertTierLock,
+  parsePlanTier,
+  resolveTaskCompletionSelection,
+  selectExplicitValidation,
+  validateTaskCompletionEvidence,
+} from "../lib/tier-lock-check.mjs";
 import { baselineErrorsForPlan, validateCatalog } from "../lib/failure-baseline.mjs";
-import { DISTRIBUTION_FILES, verify as verifyDistribution } from "../publish-failure-gate.mjs";
+import { DISTRIBUTION_FILES, sync as syncDistribution, verify as verifyDistribution } from "../publish-failure-gate.mjs";
 import { getTierSteps } from "../validation-steps.mjs";
 
 let passed = 0;
@@ -34,6 +40,10 @@ mkdirSync(taskDir, { recursive: true });
 const nonce = `${process.pid}-${Date.now()}`;
 const planPath = join(taskDir, `failure-gate-contract-${nonce}.md`);
 const siblingPath = join(taskDir, `failure-gate-contract-sibling-${nonce}.md`);
+const stubPath = join(taskDir, `failure-gate-contract-stub-${nonce}.md`);
+const stubsOnlyPath = join(taskDir, `failure-gate-contract-stubs-only-${nonce}.md`);
+const scaffoldSlug = `failure-gate-contract-scaffold-${nonce}`;
+const scaffoldPath = join(taskDir, `${scaffoldSlug}.md`);
 const catalogPath = join(temp, "catalog.json");
 const record = {
   id: "BASE-CONTRACT-1",
@@ -72,6 +82,11 @@ standard
 function planWithoutBaseline() {
   return plan("None known at plan time. Treat every failure as a potential regression.");
 }
+function planForTier(tier) {
+  return planWithoutBaseline()
+    .replace("`test-standard`", `\`test-${tier}\``)
+    .replace("## Validation tier\nstandard", `## Validation tier\n${tier}`);
+}
 
 try {
   test("catalog accepts authoritative lifecycle records", () => assert.deepEqual(validateCatalog(catalog), []));
@@ -109,6 +124,38 @@ try {
     assert.equal(run("scripts/check-failure-gate.mjs", ["--fix-stub"], env).status, 0);
     assert.equal(readFileSync(siblingPath, "utf8"), before);
   });
+  test("fix-stub repairs only the task-scoped plan structure", () => {
+    writeFileSync(stubPath, "# Incomplete plan\n");
+    const stubEnv = { TASK_PLAN_FILE: stubPath };
+    assert.equal(run("scripts/check-failure-gate.mjs", ["--fix-stub"], stubEnv).status, 0);
+    const repaired = readFileSync(stubPath, "utf8");
+    assert.match(repaired, /## Pre-existing failures to ignore/);
+    assert.match(repaired, /## Validation/);
+    assert.match(repaired, /\*\*Command:\*\* `test-standard`/);
+  });
+  test("stubs-only reports incomplete existing validation without rewriting it", () => {
+    const content = "# Existing plan\n\n## Validation\n**Command:** `test-standard`\n";
+    writeFileSync(stubsOnlyPath, content);
+    const before = readFileSync(stubsOnlyPath, "utf8");
+    const stubsOnlyEnv = { TASK_PLAN_FILE: stubsOnlyPath };
+    assert.equal(run("scripts/check-failure-gate.mjs", ["--stubs-only"], stubsOnlyEnv).status, 0);
+    assert.equal(readFileSync(stubsOnlyPath, "utf8"), before);
+  });
+  test("new-plan scaffold creates the required task sections", () => {
+    const result = run("scripts/new-plan.mjs", [
+      scaffoldSlug,
+      "--why",
+      "Verify the Failure Gate scaffold contract.",
+      "--tier",
+      "fast",
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    const scaffold = readFileSync(scaffoldPath, "utf8");
+    assert.match(scaffold, /## Pre-existing failures to ignore/);
+    assert.match(scaffold, /\*\*Command:\*\* `test-fast`/);
+    assert.match(scaffold, /## Validation tier\nfast/);
+    assert.match(scaffold, /## Regression Guard/);
+  });
   test("invalid task plan paths are rejected", () => {
     assert.equal(run("scripts/check-failure-gate.mjs", [], { TASK_PLAN_FILE: join(temp, "outside.md") }).status, 2);
   });
@@ -136,16 +183,84 @@ try {
     assert.equal(run("scripts/check-regression-guard.mjs", [], env).status, 1);
     writeFileSync(planPath, planWithoutBaseline());
   });
+  test("explicit self-satisfying Regression Guard is accepted", () => {
+    const content = planWithoutBaseline().replace(
+      /\n## Regression Guard[\s\S]*$/,
+      "\n## Regression Guard\n**Self-satisfying** — this task is the integration verification and focused contract coverage.\n",
+    );
+    writeFileSync(planPath, content);
+    assert.equal(run("scripts/check-regression-guard.mjs", [], env).status, 0);
+    writeFileSync(planPath, planWithoutBaseline());
+  });
+  test("self-satisfying Regression Guard still rejects placeholder text", () => {
+    const content = planWithoutBaseline().replace(
+      /\n## Regression Guard[\s\S]*$/,
+      "\n## Regression Guard\n**Self-satisfying** — <describe the regression contract here>\n",
+    );
+    writeFileSync(planPath, content);
+    assert.equal(run("scripts/check-regression-guard.mjs", [], env).status, 1);
+    writeFileSync(planPath, planWithoutBaseline());
+  });
   test("no-plan tier use fails unless explicitly ad-hoc", () => {
     assert.equal(assertTierLock({ planFile: "", requestedTier: "standard" }).ok, false);
     assert.equal(assertTierLock({ planFile: "", requestedTier: "standard", allowNoPlan: true }).bypassed, true);
+    assert.equal(run("scripts/run-tier.mjs", ["standard"], { TASK_PLAN_FILE: "" }).status, 2);
   });
   test("tier mismatch is rejected before runner steps", () => {
     assert.equal(assertTierLock({ planFile: planPath, requestedTier: "heavy" }).ok, false);
+    assert.equal(run("scripts/run-tier.mjs", ["heavy"], { TASK_PLAN_FILE: planPath }).status, 2);
   });
   test("plan parser accepts the registered command", () => assert.equal(parsePlanTier(plan()).tier, "standard"));
+  for (const tier of ["fast", "standard", "standard-plus", "heavy"]) {
+    test(`completion selection chooses only test-${tier}`, () => {
+      writeFileSync(planPath, planForTier(tier));
+      assert.deepEqual(resolveTaskCompletionSelection(planPath).commandIds, [`test-${tier}`]);
+    });
+  }
+  test("completion selection rejects missing plan context before launch", () => {
+    assert.equal(resolveTaskCompletionSelection("").ok, false);
+  });
   test("conflicting tier declarations fail closed", () => {
     assert.equal(parsePlanTier(plan().replace("## Validation tier\nstandard", "## Validation tier\nheavy")).ok, false);
+  });
+  test("duplicate tier declarations fail closed", () => {
+    assert.equal(parsePlanTier(`${plan()}\n## Validation tier\nstandard\n`).ok, false);
+  });
+  test("only a terminal successful one-command run is completion evidence", () => {
+    writeFileSync(planPath, planForTier("standard-plus"));
+    const selection = resolveTaskCompletionSelection(planPath);
+    const passedRun = {
+      runId: "run-contract-pass",
+      status: "PASSED",
+      commands: [{ commandId: "test-standard-plus", status: "PASSED" }],
+    };
+    assert.deepEqual(validateTaskCompletionEvidence(selection, passedRun), {
+      ok: true,
+      runId: "run-contract-pass",
+      command: "test-standard-plus",
+      status: "PASSED",
+    });
+    for (const status of ["RUNNING", "FAILED", "STOPPED", "ERROR", "TIMED_OUT"]) {
+      assert.equal(validateTaskCompletionEvidence(selection, { ...passedRun, status }).ok, false);
+    }
+    assert.equal(validateTaskCompletionEvidence(selection, {
+      ...passedRun,
+      commands: [{ commandId: "test-heavy", status: "PASSED" }],
+    }).ok, false);
+    assert.equal(validateTaskCompletionEvidence(selection, {
+      ...passedRun,
+      commands: [...passedRun.commands, { commandId: "test-fast", status: "PASSED" }],
+    }).ok, false);
+  });
+  test("explicit ad-hoc selection cannot masquerade as task completion evidence", () => {
+    const selection = selectExplicitValidation("test-fast");
+    assert.equal(selection.commandIds.length, 1);
+    assert.equal(selection.completionEligible, false);
+    assert.equal(validateTaskCompletionEvidence(selection, {
+      runId: "run-adhoc",
+      status: "PASSED",
+      commands: [{ commandId: "test-fast", status: "PASSED" }],
+    }).ok, false);
   });
   test("task plan symlinks cannot escape scoped writes", () => {
     const outside = join(temp, "outside.md");
@@ -164,6 +279,10 @@ try {
     assert.ok(names.indexOf("plan-gate-fix") < names.indexOf("plan-gate-check"));
     assert.ok(names.indexOf("regression-guard-fix") < names.indexOf("regression-guard"));
   });
+  test("standard runner synchronizes the package before checking its contract", () => {
+    const names = getTierSteps("standard").map(([name]) => name);
+    assert.ok(names.indexOf("failure-gate-package-sync") < names.indexOf("failure-gate-contract"));
+  });
   test("maintenance reports findings without becoming a validation failure", () => {
     const expiredPath = join(temp, "expired.json");
     writeFileSync(expiredPath, JSON.stringify({ version: 1, records: [{ ...record, reviewDeadline: "2026-08-01" }] }));
@@ -179,6 +298,9 @@ try {
     const output = spawnSync("unzip", ["-Z1", "artifacts/failure-gate-skill.zip"], { encoding: "utf8" }).stdout;
     for (const file of ["SKILL.md", ...DISTRIBUTION_FILES]) assert.match(output, new RegExp(`^${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"));
   });
+  test("published package matches every current durable component", () => {
+    assert.equal(verifyDistribution(), true);
+  });
   test("distribution verification rejects stale support-file bytes", () => {
     const staging = join(temp, "stale-package");
     const staleArchive = join(temp, "stale.zip");
@@ -189,10 +311,15 @@ try {
     const zip = spawnSync("zip", ["-q", "-X", "-r", staleArchive, "."], { cwd: staging });
     assert.equal(zip.status, 0);
     assert.equal(verifyDistribution(staleArchive), false);
+    assert.equal(syncDistribution(staleArchive), true);
+    assert.equal(verifyDistribution(staleArchive), true);
   });
 } finally {
   rmSync(planPath, { force: true });
   rmSync(siblingPath, { force: true });
+  rmSync(stubPath, { force: true });
+  rmSync(stubsOnlyPath, { force: true });
+  rmSync(scaffoldPath, { force: true });
   rmSync(temp, { recursive: true, force: true });
 }
 

@@ -210,6 +210,7 @@ const initialUsers: Array<UserRow> = [
 let serverUsers: Array<UserRow> = [];
 let rejectedAction: { userId: string; action: string } | null = null;
 let partialDeleteUserId: string | null = null;
+let userListFailuresRemaining = 0;
 
 function cloneUsers(users: Array<UserRow>): Array<UserRow> {
   return users.map((user) => ({ ...user }));
@@ -230,6 +231,10 @@ const mockFetch = jest.fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>(
     const method = init?.method ?? "GET";
 
     if (url.endsWith("/admin/users") && method === "GET") {
+      if (userListFailuresRemaining > 0) {
+        userListFailuresRemaining -= 1;
+        return response({ error: "People list unavailable" }, 503);
+      }
       return response({ users: cloneUsers(serverUsers) });
     }
 
@@ -377,6 +382,7 @@ beforeEach(() => {
   serverUsers = cloneUsers(initialUsers);
   rejectedAction = null;
   partialDeleteUserId = null;
+  userListFailuresRemaining = 0;
   mockFetch.mockClear();
   global.fetch = mockFetch as unknown as typeof fetch;
 });
@@ -422,7 +428,7 @@ describe("UploadScreen People section — approve and refresh", () => {
     expect(
       (userRequests[0]?.[1]?.headers as Record<string, string>).Authorization,
     ).toBe(`Bearer ${ADMIN_TOKEN}`);
-    expect(showToast).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith("Approve completed.", "success");
 
     const refreshedCard = findUserCard(tree.root, "pending@example.com");
     expect(instText(refreshedCard)).toContain("approved");
@@ -498,6 +504,86 @@ describe("UploadScreen People section — rejected and delete actions", () => {
       "Partial Deletion",
       expect.stringContaining("Clerk API unavailable"),
     );
+  });
+});
+
+// =============================================================================
+// Refresh recovery and local filtering
+// =============================================================================
+
+describe("UploadScreen People section — refresh recovery", () => {
+  it("keeps the pre-action snapshot and offers retry when the action refresh fails", async () => {
+    const { tree, showToast } = await renderPeopleSection();
+    const pendingCard = findUserCard(tree.root, "pending@example.com");
+    const approveButton = findPressable(pendingCard, "✓ Approve");
+    userListFailuresRemaining = 1;
+
+    await act(async () => {
+      fireEvent.press(approveButton!);
+    });
+    await flushPromises();
+
+    // The POST applied on the server, but the failed GET must not make the
+    // stale local row look approved or replay the POST.
+    expect(instText(findUserCard(tree.root, "pending@example.com"))).toContain("pending");
+    expect(showToast).toHaveBeenCalledWith(
+      "Approve completed, but the People list could not be refreshed. Tap Retry to sync.",
+      "error",
+    );
+    expect(mockFetch.mock.calls.filter(([input]) =>
+      String(input).endsWith("/admin/users/clerk-pending/approve"),
+    )).toHaveLength(1);
+    expect(findPressable(tree.root, "Retry")).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.press(findPressable(tree.root, "Retry")!);
+    });
+    await flushPromises();
+
+    expect(instText(findUserCard(tree.root, "pending@example.com"))).toContain("approved");
+    expect(mockFetch.mock.calls.filter(([input]) =>
+      String(input).endsWith("/admin/users/clerk-pending/approve"),
+    )).toHaveLength(1);
+  });
+
+  it("filters users locally and explains when the filter has no matches", async () => {
+    const { tree } = await renderPeopleSection();
+    const filterInput = tree.root!
+      .queryAll(
+        (node: TestInstance) =>
+          ((node.type as string) === "rn-text-input" || (node.type as string) === "rn-textinput") &&
+          node.props.placeholder === "Filter by email or user ID",
+        { includeSelf: true },
+      )[0];
+    expect(filterInput).toBeDefined();
+
+    await act(async () => {
+      fireEvent.changeText(filterInput!, "pending@example.com");
+    });
+    expect(instText(tree.root!)).toContain("pending@example.com");
+    expect(instText(tree.root!)).not.toContain("member@example.com");
+
+    await act(async () => {
+      fireEvent.changeText(filterInput!, "does-not-exist");
+    });
+    expect(instText(tree.root!)).toContain("No users match “does-not-exist”.");
+  });
+});
+
+describe("UploadScreen People section — initial load errors", () => {
+  it("shows an explicit retry state when the first list request fails", async () => {
+    userListFailuresRemaining = 1;
+    const { tree } = await renderPeopleSection();
+
+    expect(instText(tree.root!)).toContain("Unable to load users");
+    expect(findPressable(tree.root, "Retry")).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.press(findPressable(tree.root, "Retry")!);
+    });
+    await flushPromises();
+
+    expect(findUserCard(tree.root, "pending@example.com")).toBeDefined();
   });
 });
 

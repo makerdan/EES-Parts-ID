@@ -7,6 +7,7 @@
  * Route: /admin-dashboard
  */
 import { Feather } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
 import { File as FsFile, Paths as FsPaths } from "expo-file-system";
 import { useRouter } from "expo-router";
 import * as Sharing from "expo-sharing";
@@ -61,6 +62,17 @@ type DashboardStats = {
     catalogJobsDone: number;
     contactMessages: number;
   };
+};
+
+type ExportNotice = {
+  kind: "downloaded" | "shared" | "saved" | "copied" | "failed";
+  message: string;
+  uri?: string;
+};
+
+type MapToolFailure = {
+  label: string;
+  url: string;
 };
 
 function StatBox({
@@ -192,7 +204,7 @@ export default function AdminDashboardScreen() {
   const warehouseMapUrl: string | null = process.env.EXPO_PUBLIC_DOMAIN
     ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/__mockup/warehouse-map`
     : null;
-  const { reportNetworkFailure } = useApiHealth();
+  const { checkStatus, readinessIssue, reportNetworkFailure } = useApiHealth();
   const router = useRouter();
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -200,6 +212,9 @@ export default function AdminDashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportNotice, setExportNotice] = useState<ExportNotice | null>(null);
+  const [mapToolFailure, setMapToolFailure] = useState<MapToolFailure | null>(null);
+  const [openingMapTool, setOpeningMapTool] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const statsGenerationRef = useRef(0);
   const exportGenerationRef = useRef(0);
@@ -218,6 +233,52 @@ export default function AdminDashboardScreen() {
     statsControllerRef.current?.abort();
   }, [adminToken]);
 
+  const handleMapTool = useCallback(async (label: string, url: string) => {
+    if (openingMapTool) return;
+    setOpeningMapTool(label);
+    setMapToolFailure(null);
+    try {
+      await Linking.openURL(url);
+    } catch {
+      if (!mountedRef.current) return;
+      setMapToolFailure({ label, url });
+      Alert.alert(
+        `Unable to open ${label}`,
+        "The tool could not be opened. Copy the URL or try again.",
+        [
+          {
+            text: "Copy URL",
+            onPress: () => {
+              Clipboard.setStringAsync(url).catch(() => {
+                Alert.alert("Copy failed", "The tool URL could not be copied.");
+              });
+            },
+          },
+          { text: "Retry", onPress: () => void handleMapTool(label, url) },
+          { text: "Cancel", style: "cancel" },
+        ],
+      );
+    } finally {
+      if (mountedRef.current) setOpeningMapTool(null);
+    }
+  }, [openingMapTool]);
+
+  const copyExportLocation = useCallback(async () => {
+    if (!exportNotice?.uri) return;
+    try {
+      await Clipboard.setStringAsync(exportNotice.uri);
+      if (mountedRef.current) {
+        setExportNotice({
+          kind: "copied",
+          message: "Export location copied to the clipboard.",
+          uri: exportNotice.uri,
+        });
+      }
+    } catch {
+      Alert.alert("Copy failed", "The export location could not be copied.");
+    }
+  }, [exportNotice]);
+
   const handleExport = useCallback(async () => {
     if (!stats) return;
     exportControllerRef.current?.abort();
@@ -225,6 +286,7 @@ export default function AdminDashboardScreen() {
     exportControllerRef.current = controller;
     const generation = ++exportGenerationRef.current;
     setExporting(true);
+    setExportNotice(null);
     try {
       const csv = serializeDashboardToCsv(stats);
       const date = new Date().toISOString().slice(0, 10);
@@ -240,6 +302,9 @@ export default function AdminDashboardScreen() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+         if (mountedRef.current && generation === exportGenerationRef.current) {
+           setExportNotice({ kind: "downloaded", message: `${filename} downloaded.` });
+         }
       } else {
         const file = new FsFile(FsPaths.cache, filename);
         await file.write(csv);
@@ -253,6 +318,13 @@ export default function AdminDashboardScreen() {
             UTI: "public.comma-separated-values-text",
           });
           if (controller.signal.aborted || !mountedRef.current) return;
+           setExportNotice({ kind: "shared", message: `${filename} is ready in the share sheet.` });
+         } else {
+           setExportNotice({
+             kind: "saved",
+             message: `${filename} was saved, but native sharing is unavailable.`,
+             uri: file.uri,
+           });
         }
       }
     } catch (err) {
@@ -261,6 +333,10 @@ export default function AdminDashboardScreen() {
         generation === exportGenerationRef.current &&
         !controller.signal.aborted
       ) {
+        setExportNotice({
+          kind: "failed",
+          message: `Export failed: ${err instanceof Error ? err.message : "Unknown error"}. Try again.`,
+        });
         Alert.alert("Export failed", err instanceof Error ? err.message : "Unknown error");
       }
     } finally {
@@ -271,7 +347,13 @@ export default function AdminDashboardScreen() {
   }, [stats]);
 
   const fetchStats = useCallback(async (isRefresh = false) => {
-    if (!adminToken || !API_BASE) return;
+    if (!adminToken) return;
+    if (!API_BASE) {
+      setError("Dashboard API is not configured.");
+      if (isRefresh) setRefreshing(false);
+      else setLoading(false);
+      return;
+    }
     statsControllerRef.current?.abort();
     const controller = new AbortController();
     statsControllerRef.current = controller;
@@ -301,6 +383,19 @@ export default function AdminDashboardScreen() {
     }
   }, [adminToken, reportNetworkFailure]);
 
+  let readinessMessage: string | null = null;
+  if (readinessIssue?.detail === "database_unreachable") {
+    readinessMessage = "The application database is temporarily unavailable.";
+  } else if (readinessIssue?.detail === "schema_unavailable") {
+    readinessMessage = "The application schema is temporarily unavailable.";
+  } else if (readinessIssue?.detail === "startup_not_ready") {
+    readinessMessage = readinessIssue.startupStatus === "pending"
+      ? "Application startup is still in progress."
+      : readinessIssue.startupStatus === "timed_out"
+        ? "Application startup timed out. Try again shortly."
+        : "Application startup did not complete. Try again shortly.";
+  }
+
   useEffect(() => {
     if (!isLoading && adminToken) {
       fetchStats();
@@ -326,7 +421,13 @@ export default function AdminDashboardScreen() {
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Feather name="arrow-left" size={20} color={colors.foreground} />
         </Pressable>
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>Admin Dashboard</Text>
@@ -335,6 +436,9 @@ export default function AdminDashboardScreen() {
           style={styles.exportBtn}
           hitSlop={8}
           disabled={!stats || exporting}
+           accessibilityRole="button"
+           accessibilityLabel="Export dashboard CSV"
+           accessibilityState={{ disabled: !stats || exporting, busy: exporting }}
         >
           <Feather
             name="download"
@@ -342,17 +446,47 @@ export default function AdminDashboardScreen() {
             color={!stats || exporting ? colors.mutedForeground : colors.primary}
           />
         </Pressable>
-        <Pressable onPress={() => fetchStats()} style={styles.refreshBtn} hitSlop={8} disabled={loading}>
-          <Feather name="refresh-cw" size={18} color={loading ? colors.mutedForeground : colors.primary} />
+        <Pressable
+          onPress={() => fetchStats()}
+          style={styles.refreshBtn}
+          hitSlop={8}
+          disabled={loading || refreshing}
+          accessibilityRole="button"
+          accessibilityLabel={refreshing ? "Refreshing dashboard" : "Refresh dashboard"}
+          accessibilityState={{ disabled: loading || refreshing, busy: loading || refreshing }}
+        >
+          <Feather
+            name="refresh-cw"
+            size={18}
+            color={loading || refreshing ? colors.mutedForeground : colors.primary}
+          />
         </Pressable>
       </View>
+
+      {readinessMessage ? (
+        <View
+          style={[styles.statusBanner, { backgroundColor: colors.muted, borderColor: colors.warning }]}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          <Text style={[styles.statusText, { color: colors.foreground }]}>{readinessMessage}</Text>
+          <Pressable
+            onPress={() => void checkStatus()}
+            style={[styles.statusAction, { backgroundColor: colors.primary }]}
+            accessibilityRole="button"
+            accessibilityLabel="Retry application readiness check"
+          >
+            <Text style={[styles.statusActionText, { color: colors.primaryForeground }]}>Retry status</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {loading && !stats ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={colors.primary} />
           <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading stats…</Text>
         </View>
-      ) : error ? (
+      ) : !stats && error ? (
         <View style={styles.centered}>
           <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>
           <Pressable onPress={() => fetchStats()} style={[styles.retryBtn, { backgroundColor: colors.primary }]}>
@@ -362,7 +496,7 @@ export default function AdminDashboardScreen() {
       ) : stats ? (
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={styles.content}
+           contentContainerStyle={[styles.content, { flexGrow: 1 }]}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -372,6 +506,63 @@ export default function AdminDashboardScreen() {
             />
           }
         >
+          {error ? (
+            <View
+              style={[styles.statusBanner, { backgroundColor: colors.muted, borderColor: colors.warning }]}
+              accessibilityRole="alert"
+              accessibilityLiveRegion="polite"
+            >
+              <Text style={[styles.statusText, { color: colors.foreground }]}>
+                Showing the last successful snapshot. Refresh failed: {error}
+              </Text>
+              <Pressable
+                onPress={() => fetchStats()}
+                style={[styles.statusAction, { backgroundColor: colors.primary }]}
+                accessibilityRole="button"
+                accessibilityLabel="Retry dashboard refresh"
+              >
+                <Text style={[styles.statusActionText, { color: colors.primaryForeground }]}>Retry refresh</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {exportNotice ? (
+            <View
+              style={[
+                styles.statusBanner,
+                {
+                  backgroundColor: exportNotice.kind === "failed" ? colors.muted : colors.card,
+                  borderColor: exportNotice.kind === "failed" ? colors.destructive : colors.border,
+                },
+              ]}
+              accessibilityRole={exportNotice.kind === "failed" ? "alert" : undefined}
+              accessibilityLiveRegion="polite"
+            >
+              <Text style={[styles.statusText, { color: colors.foreground }]}>{exportNotice.message}</Text>
+              {exportNotice.uri ? (
+                <Pressable
+                  onPress={() => void copyExportLocation()}
+                  style={[styles.statusAction, { backgroundColor: colors.primary }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Copy export location"
+                >
+                  <Text style={[styles.statusActionText, { color: colors.primaryForeground }]}>
+                    Copy location
+                  </Text>
+                </Pressable>
+              ) : null}
+              {exportNotice.kind === "failed" ? (
+                <Pressable
+                  onPress={() => void handleExport()}
+                  style={[styles.statusAction, { backgroundColor: colors.primary }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry dashboard export"
+                >
+                  <Text style={[styles.statusActionText, { color: colors.primaryForeground }]}>Retry export</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
 
           {/* Summary Cards */}
           <SectionHeader title="Summary" colors={colors} />
@@ -437,7 +628,7 @@ export default function AdminDashboardScreen() {
             <DailyBarChart data={stats.screenViews.dailyInWindow ?? []} colors={colors} />
           </View>
           <Text style={[styles.privacyDisclosure, { color: colors.mutedForeground }]}>
-            Reporting window: {formatReportingWindow(stats.window)}.{"\n"}
+            Aggregate counts only for the bounded reporting window: {formatReportingWindow(stats.window)}.{"\n"}
             Counts below {stats.privacy?.minimumCellCount ?? 5} events are suppressed.
             {stats.privacy?.uniqueVisitorsAvailable === false
               ? " Unique-visitor reporting is unavailable because server privacy key material is not configured."
@@ -464,14 +655,54 @@ export default function AdminDashboardScreen() {
           {(zoneEditorUrl !== null || warehouseMapUrl !== null) && (
             <>
               <SectionHeader title="Map Tools" colors={colors} />
+              {mapToolFailure ? (
+                <View
+                  style={[styles.statusBanner, { backgroundColor: colors.muted, borderColor: colors.destructive }]}
+                  accessibilityRole="alert"
+                  accessibilityLiveRegion="polite"
+                >
+                  <Text style={[styles.statusText, { color: colors.foreground }]}>
+                    Could not open {mapToolFailure.label}. Retry or copy the URL to open it elsewhere.
+                  </Text>
+                  <View style={styles.statusActions}>
+                    <Pressable
+                      onPress={() => void handleMapTool(mapToolFailure.label, mapToolFailure.url)}
+                      style={[styles.statusAction, { backgroundColor: colors.primary }]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Retry opening ${mapToolFailure.label}`}
+                    >
+                      <Text style={[styles.statusActionText, { color: colors.primaryForeground }]}>Retry</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        Clipboard.setStringAsync(mapToolFailure.url).catch(() => {
+                          Alert.alert("Copy failed", "The tool URL could not be copied.");
+                        });
+                      }}
+                      style={[styles.statusAction, { backgroundColor: colors.primary }]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Copy ${mapToolFailure.label} URL`}
+                    >
+                      <Text style={[styles.statusActionText, { color: colors.primaryForeground }]}>Copy URL</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
               {zoneEditorUrl !== null && (
                 <Pressable
-                  onPress={() => Linking.openURL(zoneEditorUrl!)}
+                  onPress={() => void handleMapTool("Zone Editor", zoneEditorUrl)}
+                  disabled={openingMapTool !== null}
                   style={({ pressed }) => [
                     styles.calibrationBtn,
-                    { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+                    {
+                      backgroundColor: colors.card,
+                      borderColor: colors.border,
+                      opacity: pressed || openingMapTool !== null ? 0.7 : 1,
+                    },
                   ]}
                   accessibilityLabel="Open Zone Editor"
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: openingMapTool !== null, busy: openingMapTool === "Zone Editor" }}
                 >
                   <Feather name="edit-2" size={16} color={colors.foreground} />
                   <Text style={[styles.calibrationBtnText, { color: colors.foreground }]}>
@@ -482,12 +713,19 @@ export default function AdminDashboardScreen() {
               )}
               {warehouseMapUrl !== null && (
                 <Pressable
-                  onPress={() => Linking.openURL(warehouseMapUrl!)}
+                  onPress={() => void handleMapTool("Warehouse Map", warehouseMapUrl)}
+                  disabled={openingMapTool !== null}
                   style={({ pressed }) => [
                     styles.calibrationBtn,
-                    { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+                    {
+                      backgroundColor: colors.card,
+                      borderColor: colors.border,
+                      opacity: pressed || openingMapTool !== null ? 0.7 : 1,
+                    },
                   ]}
                   accessibilityLabel="Open Warehouse Map"
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: openingMapTool !== null, busy: openingMapTool === "Warehouse Map" }}
                 >
                   <Feather name="map" size={16} color={colors.foreground} />
                   <Text style={[styles.calibrationBtnText, { color: colors.foreground }]}>
@@ -526,6 +764,11 @@ const styles = StyleSheet.create({
   errorText: { fontSize: 14, textAlign: "center", marginBottom: 16 },
   retryBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
   retryBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  statusBanner: { borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 12, gap: 8 },
+  statusText: { fontSize: 13, lineHeight: 18 },
+  statusActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  statusAction: { alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 7 },
+  statusActionText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   content: { padding: 16 },
   sectionHeader: {
     fontSize: 13,

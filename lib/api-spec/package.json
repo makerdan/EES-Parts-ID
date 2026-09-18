@@ -1,12 +1,19 @@
 {
   "name": "@workspace/api-spec",
+
+  "knip": {
+    "entry": ["src/**/*.ts"],
+    "project": ["src/**/*.ts"]
+  },
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "codegen": "pnpm run dependency:check && orval --config ./orval.config.ts && CODEGEN_ENSURE_SKIP=1 pnpm -w run typecheck:libs",
+    "typecheck": "tsc --build ./tsconfig.json",
+    "codegen": "node ../../scripts/serial-lock.mjs --resource codegen --priority 2 -- pnpm run codegen:locked",
+    "codegen:locked": "pnpm run dependency:check && orval --config ./orval.config.ts && CODEGEN_ENSURE_SKIP=1 pnpm -w run typecheck:libs",
     "codegen:ensure": "node ./scripts/ensure-codegen.mjs",
-    "codegen:check": "pnpm run codegen && git diff --exit-code -- ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated && pnpm run spec:check && pnpm run barrel:check && pnpm run dist:check",
-    "codegen:fix": "pnpm run codegen && if git status --porcelain -- ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated | grep -q .; then git add ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated && git commit -m 'chore: regenerate api clients [post-merge]'; fi && pnpm run spec:check",
+    "codegen:check": "pnpm run codegen && node ./scripts/check-generated-output.mjs && git diff --exit-code -- ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated && pnpm run spec:check && pnpm run barrel:check && pnpm run dist:check",
+    "codegen:fix": "pnpm run codegen && node ./scripts/check-generated-output.mjs --allow-untracked && if git status --porcelain -- ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated | grep -q .; then git add ../../lib/api-client-react/src/generated ../../lib/api-zod/src/generated && git commit -m 'chore: regenerate api clients [post-merge]'; fi && node ./scripts/check-generated-output.mjs && pnpm run spec:check",
     "dependency:check": "tsx src/check-dependency-floors.ts",
     "spec:check": "tsx src/check-route-drift.ts",
     "barrel:check": "tsx src/check-barrel.ts",
@@ -14,11 +21,13 @@
     "test": "jest"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "@types/jest": "^30.0.0",
     "jest": "^30.3.0",
     "orval": "8.22.0",
     "ts-jest": "^29.4.9",
     "tsx": "catalog:",
+    "typescript": "~5.9.2",
     "yaml": "^2.8.2"
   }
 }

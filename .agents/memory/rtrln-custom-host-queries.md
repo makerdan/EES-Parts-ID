@@ -8,3 +8,9 @@ The project's React Native mocks render `TextInput` as a custom host element, so
 **Why:** The mock tree preserves native props and nested children for inspection, but it does not expose the same accessibility/value semantics as a real React Native host.
 
 **How to apply:** For these suites, locate inputs with `root.queryAll(node => node.props.value === value)` and locate compound labels by recursively concatenating a text node's children before matching.
+
+After a conditional result view updates, reacquire the host input from `root` before firing another change event; a previously held `TestInstance` can be detached and silently ignore the event.
+
+**Why:** React 19 test-renderer may remount the custom host when result/error children appear, even though the production input remains visually in place.
+
+**How to apply:** Run the root query immediately before each post-result `fireEvent.changeText` or equivalent interaction.

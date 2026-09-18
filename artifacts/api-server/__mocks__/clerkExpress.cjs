@@ -19,14 +19,10 @@ function getAuth(req) {
   // signals "no user"). Otherwise fall back to the per-file test default so
   // that functional integration tests pass without having to authenticate every
   // individual request — set process.env.TEST_DEFAULT_AUTH_USER in beforeAll.
-  // Sessions in tests are treated as MFA-complete: requireAdminAuth checks the
-  // `amr` claim for a second factor (totp/phone_code/hw key) and 403s with
-  // MFA_REQUIRED otherwise. Real MFA cannot exist in the mock, so report totp.
-  const sessionClaims = { amr: ["totp"] };
   if (auth.startsWith("Bearer ")) {
-    return { userId: token || null, sessionClaims };
+    return { userId: token || null };
   }
-  return { userId: process.env.TEST_DEFAULT_AUTH_USER || null, sessionClaims };
+  return { userId: process.env.TEST_DEFAULT_AUTH_USER || null };
 }
 
 const clerkClient = {

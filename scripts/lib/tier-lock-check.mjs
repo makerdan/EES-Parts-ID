@@ -8,6 +8,7 @@ import { relative, resolve } from "node:path";
 export const TIER_NAMES = ["test-fast", "test-standard", "test-standard-plus", "test-heavy"];
 export const TIER_ORDER = TIER_NAMES;
 export const SHORT_TIERS = ["fast", "standard", "standard-plus", "heavy"];
+export const TERMINAL_VALIDATION_STATUSES = ["PASSED", "FAILED", "STOPPED", "ERROR", "TIMED_OUT"];
 const TASKS_ROOT = resolve(".local/tasks");
 
 export function normalizeTier(value) {
@@ -46,15 +47,20 @@ export function validatePlanPath(planFile) {
 }
 
 export function parsePlanTier(content) {
-  const validation = content.match(/^## Validation\b[^\n]*\n([\s\S]*?)(?=^## |^# |$)/m);
-  if (!validation) return { ok: false, error: "plan is missing ## Validation" };
-  const command = validation[1].match(/^\*\*Command:\*\*\s*`?([^\n`]+)`?/m);
-  const normalized = normalizeTier(command?.[1]);
+  const validations = [...content.matchAll(/^## Validation\s*$\n([\s\S]*?)(?=^## |^# |$)/gm)];
+  if (validations.length === 0) return { ok: false, error: "plan is missing ## Validation" };
+  if (validations.length !== 1) return { ok: false, error: "plan has conflicting ## Validation sections" };
+  const commands = [...validations[0][1].matchAll(/^\*\*Command:\*\*\s*`?([^\n`]+)`?\s*$/gm)];
+  if (commands.length !== 1) return { ok: false, error: "## Validation must contain exactly one **Command:** tier" };
+  const normalized = normalizeTier(commands[0][1]);
   if (!normalized) return { ok: false, error: "## Validation has no valid **Command:** tier" };
-  const legacy = content.match(/^## Validation tier\s*\n\s*(fast|standard|standard-plus|heavy)\s*$/m);
-  if (!legacy) return { ok: false, error: "plan is missing a valid ## Validation tier declaration" };
-  if (legacy[1] !== normalized) {
-    return { ok: false, error: `tier declarations conflict: ## Validation says test-${normalized}, ## Validation tier says ${legacy[1]}` };
+  const legacyDeclarations = [...content.matchAll(/^## Validation tier\s*$\n\s*([^\n]+)\s*$/gm)];
+  if (legacyDeclarations.length !== 1 || !SHORT_TIERS.includes(legacyDeclarations[0][1].trim())) {
+    return { ok: false, error: "plan must contain exactly one valid ## Validation tier declaration" };
+  }
+  const legacy = legacyDeclarations[0][1].trim();
+  if (legacy !== normalized) {
+    return { ok: false, error: `tier declarations conflict: ## Validation says test-${normalized}, ## Validation tier says ${legacy}` };
   }
   return { ok: true, tier: normalized, command: `test-${normalized}` };
 }
@@ -70,6 +76,57 @@ export function resolvePlanTier(planFile) {
   }
   const parsed = parsePlanTier(content);
   return parsed.ok ? { ...parsed, path: checked.path, content } : parsed;
+}
+
+export function resolveTaskCompletionSelection(planFile = process.env.TASK_PLAN_FILE) {
+  const plan = resolvePlanTier(planFile);
+  if (!plan.ok) return { ok: false, error: `COMPLETION-LOCK VIOLATION: ${plan.error}` };
+  return {
+    ok: true,
+    source: "task-plan",
+    completionEligible: true,
+    path: plan.path,
+    tier: plan.tier,
+    command: plan.command,
+    commandIds: [plan.command],
+  };
+}
+
+export function selectExplicitValidation(command) {
+  const tier = normalizeTier(command);
+  if (!tier) return { ok: false, error: `invalid registered validation command "${command ?? ""}"` };
+  return {
+    ok: true,
+    source: "explicit",
+    completionEligible: false,
+    tier,
+    command: tierCommand(tier),
+    commandIds: [tierCommand(tier)],
+  };
+}
+
+export function validateTaskCompletionEvidence(selection, run) {
+  if (!selection?.ok || selection.source !== "task-plan" || selection.completionEligible !== true) {
+    return { ok: false, error: "completion evidence requires a task-plan-locked selection" };
+  }
+  const runId = run?.runId ?? run?.id;
+  if (typeof runId !== "string" || runId.trim() === "") {
+    return { ok: false, error: "completion evidence is missing a validation run ID" };
+  }
+  if (!TERMINAL_VALIDATION_STATUSES.includes(run?.status)) {
+    return { ok: false, error: `validation run ${runId} is not terminal` };
+  }
+  if (run.status !== "PASSED") {
+    return { ok: false, error: `validation run ${runId} did not pass (status ${run.status})` };
+  }
+  if (!Array.isArray(run.commands) || run.commands.length !== 1) {
+    return { ok: false, error: `validation run ${runId} must contain exactly one command` };
+  }
+  const command = run.commands[0];
+  if (command?.commandId !== selection.command || command?.status !== "PASSED") {
+    return { ok: false, error: `validation run ${runId} does not prove ${selection.command} passed` };
+  }
+  return { ok: true, runId, command: selection.command, status: "PASSED" };
 }
 
 export function assertTierLock({ planFile = process.env.TASK_PLAN_FILE, requestedTier, allowNoPlan = false } = {}) {

@@ -27,12 +27,52 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, inventoryTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import fs from "node:fs";
+import path from "node:path";
 
 // ── Setup / teardown ──────────────────────────────────────────────────────────
 const ADMIN_SECRET = "jest-upload-test-secret";
 let adminToken: string;
 
 const UPLOAD_PREFIX = "JEST-UPLOAD-";
+
+describe("admin import authorization declarations", () => {
+  it("uses the approved-admin exception on every preview and commit route", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "../src/routes/adminUpload.ts"),
+      "utf8",
+    );
+    for (const route of [
+      "/upload/preview",
+      "/upload",
+      "/upload/orders/preview",
+      "/upload/orders",
+    ]) {
+      expect(source).toContain(`router.post("${route}", requireApprovedAdminAuth`);
+    }
+    expect(source).not.toContain('router.post("/upload/preview", requireAdminAuth');
+    expect(source).not.toContain('router.post("/upload", requireAdminAuth');
+    expect(source).not.toContain('router.post("/upload/orders/preview", requireAdminAuth');
+    expect(source).not.toContain('router.post("/upload/orders", requireAdminAuth');
+  });
+});
+
+describe("admin import routes without an MFA claim", () => {
+  it.each([
+    ["/api/admin/upload/preview", {}],
+    ["/api/admin/upload", {}],
+    ["/api/admin/upload/orders/preview", {}],
+    ["/api/admin/upload/orders", {}],
+  ])("lets an authenticated approved admin reach %s", async (route, body) => {
+    const res = await supertest(app)
+      .post(route)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send(body);
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).not.toBe("MFA_REQUIRED");
+  });
+});
 
 async function cleanupUploads() {
   await db

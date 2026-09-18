@@ -11,12 +11,15 @@
     "codegen:check": "pnpm --filter @workspace/api-spec run codegen:check",
     "maintain:validation-baseline": "node scripts/maintain-validation-baseline.mjs",
     "publish:failure-gate": "node scripts/publish-failure-gate.mjs",
-    "test-fast": "node scripts/serial-lock.mjs --resource validation --priority 100 -- node scripts/run-tier.mjs fast --allow-no-plan",
-    "test-standard": "node scripts/serial-lock.mjs --resource validation --priority 100 -- node scripts/run-tier.mjs standard --allow-no-plan",
-    "test-standard-plus": "node scripts/serial-lock.mjs --resource validation --priority 100 -- node scripts/run-tier.mjs standard-plus --allow-no-plan",
-    "test-heavy": "node scripts/serial-lock.mjs --resource validation --priority 100 -- node scripts/run-tier.mjs heavy --allow-no-plan",
+    "account-skills:sync": "node scripts/account-skills-sync.mjs",
+    "account-skill:status": "node scripts/account-skill-status.mjs",
+    "check:node-runtime": "node scripts/check-node-runtime.mjs",
+    "test-fast": "node scripts/serial-lock.mjs --resource validation --priority 1 -- node scripts/run-tier.mjs fast --allow-no-plan",
+    "test-standard": "SERIAL_LOCK_BUDGET_MS=300000 node scripts/serial-lock.mjs --resource validation --priority 2 -- node scripts/run-tier.mjs standard --allow-no-plan",
+    "test-standard-plus": "SERIAL_LOCK_BUDGET_MS=2700000 node scripts/serial-lock.mjs --resource validation --priority 2 -- node scripts/run-tier.mjs standard-plus --allow-no-plan",
+    "test-heavy": "SERIAL_LOCK_BUDGET_MS=2700000 node scripts/serial-lock.mjs --resource validation --priority 3 -- node scripts/run-tier.mjs heavy --allow-no-plan",
     "run-locked-tier": "node scripts/run-locked-tier.mjs",
-    "lint:libs": "eslint lib/ --ext .ts",
+    "lint:libs": "eslint lib/ --ext .ts && node scripts/check-dead-exports.mjs",
     "test": "bash scripts/test-all.sh",
     "audit": "pnpm audit",
     "audit:fix": "pnpm audit --fix"
@@ -24,7 +27,7 @@
   "private": true,
   "packageManager": "pnpm@10.26.1",
   "engines": {
-    "node": "24.13.0"
+    "node": ">=24.12.0 <25"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.60.1",
@@ -36,6 +39,10 @@
     "typescript": "~5.9.2"
   },
   "pnpm": {
+    "patchedDependencies": {
+      "image-size@2.0.2": "patches/image-size@2.0.2.patch",
+      "minimatch@3.1.5": "patches/minimatch@3.1.5.patch"
+    },
     "overrides": {
       "fast-uri": ">=4.1.3",
       "lodash": ">=4.18.0",
@@ -46,18 +53,19 @@
       "esbuild": ">=0.28.1",
       "form-data": ">=4.0.6",
       "body-parser@>=2.0.0 <2.3.0": ">=2.3.0",
-      "js-yaml@<3.15.1": "3.15.1",
-      "js-yaml@>=4.0.0 <4.3.1": "4.3.1",
+      "js-yaml@<3.15.2": "3.15.2",
+      "js-yaml@>=4.0.0 <4.3.2": "4.3.2",
+      "smol-toml": ">=1.7.1",
       "protobufjs@>=7.0.0 <7.6.5": ">=7.6.5 <8.0.0",
       "linkify-it": ">=5.0.1",
       "markdown-it": ">=14.2.0",
-      "postcss": ">=8.5.18",
+      "postcss": ">=8.5.26",
       "protobufjs@>=7.5.0 <7.6.5": ">=7.6.5 <8.0.0",
       "qs": ">=6.16.0",
       "shell-quote": ">=1.8.4",
       "tar": ">=7.5.21",
       "tmp": ">=0.2.6",
-      "undici": ">=7.28.0 <8.0.0",
+      "undici": ">=7.29.0 <8.0.0",
       "uuid": ">=11.1.1",
       "vite": ">=7.3.5",
       "ws": ">=8.21.0",
@@ -67,7 +75,7 @@
       "decode-uri-component": ">=0.5.0 <1.0.0",
       "@xmldom/xmldom@>=0.9.0 <0.9.12": ">=0.9.12 <1.0.0",
       "@xmldom/xmldom@>=0.7.0 <0.8.15": ">=0.8.15 <0.9.0",
-      "image-size": "file:./patches/image-size"
+      "image-size": "2.0.2"
     },
     "onlyBuiltDependencies": [
       "@pnpm/exe",
@@ -77,7 +85,13 @@
       "msw",
       "sharp",
       "unrs-resolver"
-    ]
+    ],
+    "auditConfig": {
+      "ignoreCves": [
+        "GHSA-w3rx-r6r6-pgpr",
+        "GHSA-5p2g-fcmc-qvqq"
+      ]
+    }
   },
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.1"

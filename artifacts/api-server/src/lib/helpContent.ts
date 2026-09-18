@@ -197,7 +197,7 @@ const ADMIN_HELP: Array<HelpRecord> = [
     title: "Measure dimensions with LiDAR",
     summary: "Use a LiDAR-capable iPhone or iPad to capture a part bounding box.",
     body: "The Measure workflow is available to administrators on LiDAR devices. Measurements can pre-fill an item's dimensions or become a Search size-range filter.",
-    prerequisites: ["A current administrator session with MFA", "An iPhone or iPad with LiDAR", "An item edit form or a Search workflow"],
+    prerequisites: ["A current approved-administrator session", "An iPhone or iPad with LiDAR", "An item edit form or a Search workflow"],
     steps: [
       "Open Measure from an item edit form or the admin-enabled measurement entry point.",
       "Scan the part and review the captured bounding-box values.",
@@ -216,7 +216,7 @@ const ADMIN_HELP: Array<HelpRecord> = [
     title: "Import inventory from a spreadsheet",
     summary: "Bulk-load vendor, catalog, and description data from CSV or XLSX.",
     body: "The admin import workflow parses spreadsheet rows, deduplicates inventory, and lets you choose how existing bin locations are handled.",
-    prerequisites: ["A current administrator session with MFA", "A CSV or XLSX inventory file"],
+    prerequisites: ["A current approved-administrator session", "A CSV or XLSX inventory file"],
     steps: [
       "Open the spreadsheet import tool in Admin.",
       "Upload the CSV or XLSX file and review the preview.",
@@ -235,7 +235,7 @@ const ADMIN_HELP: Array<HelpRecord> = [
     title: "Review extracted catalog changes",
     summary: "Upload a catalog PDF, review low-confidence extractions, and accept or discard changes.",
     body: "Catalog processing splits large PDFs, extracts parts, and flags uncertain results. Administrators can compare before and after descriptions and decide what to keep.",
-    prerequisites: ["A current administrator session with MFA", "A manufacturer catalog PDF"],
+    prerequisites: ["A current approved-administrator session", "A manufacturer catalog PDF"],
     steps: [
       "Upload the catalog PDF from Admin.",
       "Wait for extraction and open the review queue.",
@@ -254,7 +254,7 @@ const ADMIN_HELP: Array<HelpRecord> = [
     title: "Run inventory enrichment",
     summary: "Generate searchable keywords and expanded descriptions for unprocessed items.",
     body: "Admin enrichment fills missing searchable metadata in bulk so workers can find inventory using broader descriptions and attributes.",
-    prerequisites: ["A current administrator session with MFA", "Inventory items that need enrichment"],
+    prerequisites: ["A current approved-administrator session", "Inventory items that need enrichment"],
     steps: [
       "Open AI enrichment from Admin.",
       "Review the count of items eligible for processing.",
@@ -273,7 +273,7 @@ const ADMIN_HELP: Array<HelpRecord> = [
     title: "Process support messages",
     summary: "Read worker messages sent through Ref and mark resolved conversations.",
     body: "The admin inbox receives messages submitted through the existing Contact flow. Administrators can review the message and mark it resolved.",
-    prerequisites: ["A current administrator session with MFA", "A message submitted through Contact"],
+    prerequisites: ["A current approved-administrator session", "A message submitted through Contact"],
     steps: [
       "Open the admin inbox.",
       "Read the message and its subject.",
@@ -292,7 +292,7 @@ const ADMIN_HELP: Array<HelpRecord> = [
     title: "Maintain warehouse zones",
     summary: "Use the admin zone editor to draw, number, and correct warehouse zones.",
     body: "The zone editor changes the warehouse map's zone alignment and labels. Save only changes that match the current floor plan.",
-    prerequisites: ["A current administrator session with MFA", "A verified warehouse floor plan"],
+    prerequisites: ["A current approved-administrator session", "A verified warehouse floor plan"],
     steps: [
       "Open the zone editor from the Map admin tools.",
       "Draw or select the zone that needs attention.",

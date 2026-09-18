@@ -26,6 +26,7 @@ import "buffer";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQueryClient } from "@tanstack/react-query";
 import { Buffer } from "buffer";
+import * as Crypto from "expo-crypto";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
@@ -63,6 +64,8 @@ const POLL_MS = 2500;
 
 /** AsyncStorage key for persisting the active job ID across tab navigation. */
 const ACTIVE_JOB_KEY = "parts_id_catalog_active_job_v1";
+const ACTIVE_UPLOAD_KEY = "parts_id_catalog_upload_session_v1";
+const DURABLE_PART_SIZE = 5 * 1024 * 1024;
 
 /** Files above this threshold are split into chunks before uploading. */
 const CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
@@ -109,6 +112,16 @@ type FailedChunkInfo = {
   chunkIndex: number;
   totalChunks: number;
   parentJobId: string | null;
+};
+
+type DurableUploadManifest = {
+  sessionId: string;
+  totalBytes: number;
+  partSize: number;
+  partCount: number;
+  filename: string;
+  vendor: string;
+  fileSha256?: string;
 };
 
 /**
@@ -325,6 +338,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const chunkRetryCountsRef = useRef<Map<number, number>>(new Map());
 
   const [cancellingJob, setCancellingJob] = useState(false);
+  const durableSessionRef = useRef<DurableUploadManifest | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) { pollRef.current.abort(); pollRef.current = null; }
@@ -507,6 +521,46 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       });
       startPolling(storedJobId);
     }).catch(() => { /* ignore — non-critical */ });
+    AsyncStorage.getItem(ACTIVE_UPLOAD_KEY).then(async stored => {
+      if (!isMountedRef.current || !stored) return;
+      try {
+        const manifest = JSON.parse(stored) as DurableUploadManifest;
+        if (!manifest.sessionId || !manifest.totalBytes || !manifest.partSize) return;
+        durableSessionRef.current = manifest;
+        setFilename(current => current ?? manifest.filename);
+        setVendor(current => current || manifest.vendor);
+        const token = adminTokenRef.current;
+        if (!token) return;
+        const response = await fetch(`${API_BASE}/admin/catalog-pdf/upload-sessions/${manifest.sessionId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) return;
+        const status = await response.json() as {
+          status: string;
+          processingJobId?: string | null;
+          uploadedParts?: number;
+          partCount?: number;
+        };
+        if (status.status === "completed" && status.processingJobId) {
+          await AsyncStorage.setItem(ACTIVE_JOB_KEY, status.processingJobId);
+          setJobStatus({
+            jobId: status.processingJobId,
+            status: "pending",
+            totalPages: null,
+            processedPages: 0,
+            matchedParts: 0,
+            imagesMatched: 0,
+            errorMessage: null,
+          });
+          startPolling(status.processingJobId);
+        } else if (status.status === "open") {
+          setChunksTotal(status.partCount ?? manifest.partCount);
+          setChunksCompleted(status.uploadedParts ?? 0);
+        }
+      } catch {
+        // A stale local manifest is harmless; selecting a file will create a new one.
+      }
+    }).catch(() => { /* ignore — non-critical */ });
   }, [startPolling]);
 
   const handleCancelJob = useCallback(async () => {
@@ -572,6 +626,17 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         logPdfPick("handlePickFile: calling readPdfAsBytes");
         const bytes = await readPdfAsBytes(asset.uri, webFile, logPdfPick);
         logPdfPick("handlePickFile: readPdfAsBytes resolved", { byteLength: bytes.length });
+        const savedSession = durableSessionRef.current;
+        if (savedSession && savedSession.totalBytes !== bytes.length) {
+          await AsyncStorage.removeItem(ACTIVE_UPLOAD_KEY).catch(() => {});
+          durableSessionRef.current = null;
+          throw new Error("The selected file is different from the file attached to the resumable upload. Choose the original PDF or start over.");
+        }
+        if (savedSession?.fileSha256 && (await digestBytes(bytes)) !== savedSession.fileSha256) {
+          await AsyncStorage.removeItem(ACTIVE_UPLOAD_KEY).catch(() => {});
+          durableSessionRef.current = null;
+          throw new Error("The selected file is different from the file attached to the resumable upload. Choose the original PDF or start over.");
+        }
         setPdfBytes(bytes);
         logPdfPick("handlePickFile: setPdfBytes called", { byteLength: bytes.length });
         setFilename(asset.name ?? "catalog.pdf");
@@ -1091,6 +1156,272 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     );
   };
 
+  const digestBytes = async (bytes: Uint8Array): Promise<string> => {
+    const digestInput = bytes.slice();
+    const digest = new Uint8Array(await Crypto.digest(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      digestInput.buffer as ArrayBuffer,
+    ));
+    return Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("");
+  };
+
+  const durableStatus = async (sessionId: string): Promise<{
+    processingJobId: string | null;
+    status: string;
+    receivedParts: Array<{ partIndex: number }>;
+  } | null> => {
+    const token = adminTokenRef.current;
+    if (!token) return null;
+    const response = await fetch(`${API_BASE}/admin/catalog-pdf/upload-sessions/${sessionId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (response.status === 401) {
+      onSessionExpired();
+      return null;
+    }
+    if (!response.ok) return null;
+    return await response.json() as {
+      processingJobId: string | null;
+      status: string;
+      receivedParts: Array<{ partIndex: number }>;
+    };
+  };
+
+  const createDurableSession = async (bytes: Uint8Array): Promise<DurableUploadManifest> => {
+    const token = adminTokenRef.current;
+    if (!token) throw new Error("Your admin session has expired.");
+    let response: Response;
+    try {
+      const request = fetch(`${API_BASE}/admin/catalog-pdf/upload-sessions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          vendor: vendor.trim(),
+          filename: filename ?? "catalog.pdf",
+          totalBytes: bytes.length,
+          partSize: DURABLE_PART_SIZE,
+          fileSha256: await digestBytes(bytes),
+        }),
+      });
+      response = await Promise.race([
+        request,
+        new Promise<Response>((_, reject) => {
+          // Keep endpoint discovery short so a rolling deployment can use the
+          // legacy transport without holding the upload UI hostage. Once the
+          // session endpoint responds, all actual parts use the durable path.
+          const timer = setTimeout(() => reject(new Error("Durable upload endpoint timed out")), 50);
+          request.finally(() => clearTimeout(timer)).catch(() => {});
+        }),
+      ]);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      (error as Error & { code?: string }).code = "DURABLE_ENDPOINT_UNAVAILABLE";
+      throw error;
+    }
+    if (response.status === 401) {
+      onSessionExpired();
+      throw new Error("__session_expired__");
+    }
+    const data = await response.json().catch(() => ({})) as {
+      sessionId?: string;
+      partSize?: number;
+      partCount?: number;
+      filename?: string;
+      vendor?: string;
+      totalBytes?: number;
+      fileSha256?: string | null;
+      error?: string;
+    };
+    if (!response.ok || !data.sessionId || !data.partSize || !data.partCount) {
+      // A pre-session API returns the legacy job shape (jobId/status) with a
+      // successful response, so treat a response without session metadata as
+      // an older endpoint during rolling deploys.
+      const unavailable = response.status === 404 || response.status === 405
+        || (!data.sessionId && response.status >= 200 && response.status < 300);
+      const error = new Error(data.error ?? "Could not start the durable PDF upload.");
+      if (unavailable) (error as Error & { code?: string }).code = "DURABLE_ENDPOINT_UNAVAILABLE";
+      throw error;
+    }
+    return {
+      sessionId: data.sessionId,
+      totalBytes: data.totalBytes ?? bytes.length,
+      partSize: data.partSize,
+      partCount: data.partCount,
+      filename: data.filename ?? filename ?? "catalog.pdf",
+      vendor: data.vendor ?? vendor.trim(),
+      ...(data.fileSha256 ? { fileSha256: data.fileSha256 } : {}),
+    };
+  };
+
+  const sendDurablePart = async (
+    session: DurableUploadManifest,
+    partIndex: number,
+    bytes: Uint8Array,
+    onProgressBytes?: (loaded: number, total: number) => void,
+  ): Promise<void> => {
+    const token = adminTokenRef.current;
+    if (!token) throw new Error("__session_expired__");
+    const offset = partIndex * session.partSize;
+    const checksum = await digestBytes(bytes);
+    const endpoint = `${API_BASE}/admin/catalog-pdf/upload-sessions/${session.sessionId}/parts/${partIndex}`;
+
+    if (Platform.OS === "web") {
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        webXhrRef.current = xhr;
+        xhr.open("PUT", endpoint, true);
+        xhr.setRequestHeader("Content-Type", "application/octet-stream");
+        xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+        xhr.setRequestHeader("Content-Range", `bytes ${offset}-${offset + bytes.length - 1}/${session.totalBytes}`);
+        xhr.setRequestHeader("X-Part-SHA256", checksum);
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) onProgressBytes?.(event.loaded, event.total);
+        };
+        xhr.onload = () => {
+          webXhrRef.current = null;
+          if (xhr.status === 401) {
+            onSessionExpired();
+            reject(new Error("__session_expired__"));
+          } else if (xhr.status < 200 || xhr.status >= 300) {
+            let message = "Could not upload PDF part.";
+            try { message = (JSON.parse(xhr.responseText) as { error?: string }).error ?? message; } catch { /* keep generic */ }
+            reject(new Error(message));
+          } else {
+            resolve();
+          }
+        };
+        xhr.onerror = () => {
+          webXhrRef.current = null;
+          reject(new Error("__network__"));
+        };
+        xhr.onabort = () => {
+          webXhrRef.current = null;
+          reject(new Error("__abort__"));
+        };
+        xhr.send(bytes);
+      });
+      return;
+    }
+
+    const tempUri = `${FileSystem.cacheDirectory}catalog-part-${session.sessionId}-${partIndex}.bin`;
+    try {
+      await FileSystem.writeAsStringAsync(tempUri, Buffer.from(bytes).toString("base64"), {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const task = FileSystem.createUploadTask(endpoint, tempUri, {
+        uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+        httpMethod: "PUT",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Authorization": `Bearer ${token}`,
+          "Content-Range": `bytes ${offset}-${offset + bytes.length - 1}/${session.totalBytes}`,
+          "X-Part-SHA256": checksum,
+        },
+        sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
+      }, (data) => {
+        if (data.totalBytesExpectedToSend > 0) {
+          onProgressBytes?.(data.totalBytesSent, data.totalBytesExpectedToSend);
+        }
+      });
+      uploadTaskRef.current = task;
+      const result = await task.uploadAsync();
+      uploadTaskRef.current = null;
+      if (!result || result.status === 401) {
+        if (result?.status === 401) onSessionExpired();
+        throw new Error(result?.status === 401 ? "__session_expired__" : "Could not upload PDF part.");
+      }
+      if (result.status < 200 || result.status >= 300) throw new Error("Could not upload PDF part.");
+    } finally {
+      uploadTaskRef.current = null;
+      await FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
+    }
+  };
+
+  const handleDurableUpload = async (bytes: Uint8Array): Promise<void> => {
+    let session = durableSessionRef.current;
+    const digest = await digestBytes(bytes);
+    if (!session || session.totalBytes !== bytes.length || session.vendor !== vendor.trim()
+        || (session.fileSha256 !== undefined && session.fileSha256 !== digest)) {
+      if (session && session.totalBytes === bytes.length && session.vendor === vendor.trim()
+          && session.fileSha256 !== digest) {
+        await AsyncStorage.removeItem(ACTIVE_UPLOAD_KEY).catch(() => {});
+      }
+      try {
+        session = await createDurableSession(bytes);
+      } catch (err) {
+        // Keep a rolling deployment compatible: an older API instance does not
+        // know the session endpoint yet. Only endpoint/network discovery
+        // failures use the legacy transport; validation and storage errors do
+        // not silently downgrade.
+        const message = err instanceof Error ? err.message : String(err);
+        const code = err instanceof Error ? (err as Error & { code?: string }).code : undefined;
+        const endpointUnavailable = code === "DURABLE_ENDPOINT_UNAVAILABLE"
+          || /fetch failed|failed to fetch|network request failed/i.test(message);
+        if (endpointUnavailable) {
+          if (bytes.length > CHUNK_SIZE_THRESHOLD) await handleChunkedUpload(bytes);
+          else handleSingleUpload(bytesToBase64(bytes), 0);
+          return;
+        }
+        throw err;
+      }
+      durableSessionRef.current = session;
+      await AsyncStorage.setItem(ACTIVE_UPLOAD_KEY, JSON.stringify(session));
+    }
+    const currentStatus = await durableStatus(session.sessionId);
+    if (currentStatus?.status === "completed" && currentStatus.processingJobId) {
+      const jobId = currentStatus.processingJobId;
+      await AsyncStorage.setItem(ACTIVE_JOB_KEY, jobId);
+      setLoading(false);
+      setJobStatus({ jobId, status: "pending", totalPages: null, processedPages: 0, matchedParts: 0, imagesMatched: 0, errorMessage: null });
+      startPolling(jobId);
+      return;
+    }
+    if (currentStatus?.status === "cancelled" || currentStatus?.status === "expired" || currentStatus?.status === "failed") {
+      session = await createDurableSession(bytes);
+      durableSessionRef.current = session;
+      await AsyncStorage.setItem(ACTIVE_UPLOAD_KEY, JSON.stringify(session));
+    }
+    const received = new Set((currentStatus?.receivedParts ?? []).map(part => part.partIndex));
+    setChunksTotal(session.partCount);
+    setChunksCompleted(received.size);
+    for (let index = 0; index < session.partCount; index++) {
+      if (received.has(index)) continue;
+      if (!isMountedRef.current) return;
+      const start = index * session.partSize;
+      const part = bytes.slice(start, Math.min(bytes.length, start + session.partSize));
+      setChunkLabel(`Uploading part ${index + 1} of ${session.partCount}…`);
+      await sendDurablePart(session, index, part, (loaded, total) => {
+        setUploadBytePct(total > 0 ? Math.round((loaded / total) * 100) : null);
+      });
+      setChunksCompleted(index + 1);
+      resetUploadProgress();
+    }
+    const token = adminTokenRef.current;
+    if (!token) throw new Error("__session_expired__");
+    const response = await fetch(`${API_BASE}/admin/catalog-pdf/upload-sessions/${session.sessionId}/complete`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    });
+    if (response.status === 401) {
+      onSessionExpired();
+      throw new Error("__session_expired__");
+    }
+    const result = await response.json().catch(() => ({})) as { jobId?: string; error?: string };
+    if (!response.ok || !result.jobId) throw new Error(result.error ?? "Could not finalize the PDF upload.");
+    await AsyncStorage.removeItem(ACTIVE_UPLOAD_KEY).catch(() => {});
+    await AsyncStorage.setItem(ACTIVE_JOB_KEY, result.jobId);
+    durableSessionRef.current = null;
+    setLoading(false);
+    setChunkLabel(null);
+    setChunksCompleted(0);
+    setChunksTotal(0);
+    setJobStatus({ jobId: result.jobId, status: "pending", totalPages: null, processedPages: 0, matchedParts: 0, imagesMatched: 0, errorMessage: null });
+    startPolling(result.jobId);
+  };
+
   const handleStart = (attempt = 0) => {
     if (!pdfBytes || !vendor.trim() || !adminToken) return;
     if (pdfBytes.length === 0) {
@@ -1119,12 +1450,17 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setChunksTotal(0);
     resetUploadProgress();
 
-    if (pdfBytes.length > CHUNK_SIZE_THRESHOLD) {
-      void handleChunkedUpload(pdfBytes);
-    } else {
-      const base64 = bytesToBase64(pdfBytes);
-      handleSingleUpload(base64, attempt);
-    }
+    void handleDurableUpload(pdfBytes).catch((err: unknown) => {
+      if (!isMountedRef.current) return;
+      const message = err instanceof Error ? err.message : String(err);
+      setLoading(false);
+      setChunkLabel(null);
+      resetUploadProgress();
+      if (message === "__abort__") return;
+      if (message === "__session_expired__") return;
+      setError(message === "__network__" ? "Network error — check your connection and try again." : message);
+      setShowRetryBtn(true);
+    });
   };
 
   // Keep handleStartRef in sync so the poe_chain_exhausted Alert can call the
@@ -1139,6 +1475,14 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     if (webXhrRef.current) {
       webXhrRef.current.abort();
       webXhrRef.current = null;
+    }
+    const sessionId = durableSessionRef.current?.sessionId;
+    const token = adminTokenRef.current;
+    if (sessionId && token) {
+      void fetch(`${API_BASE}/admin/catalog-pdf/upload-sessions/${sessionId}/cancel`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
     }
   };
 

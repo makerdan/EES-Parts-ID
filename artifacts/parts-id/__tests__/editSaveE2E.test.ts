@@ -514,7 +514,7 @@ describe("editSaveE2E — invalidateAllCachesAfterSave edge cases", () => {
     expect(mockSetItem).not.toHaveBeenCalled();
   });
 
-  it("swallows AsyncStorage errors and still calls both invalidateQueries", async () => {
+  it("reports AsyncStorage errors and still calls both invalidateQueries", async () => {
     mockGetItem.mockRejectedValue(new Error("AsyncStorage unavailable"));
 
     const queryClient = makeQueryClient();
@@ -524,7 +524,7 @@ describe("editSaveE2E — invalidateAllCachesAfterSave edge cases", () => {
         asyncStorage: { getItem: mockGetItem, setItem: mockSetItem },
         itemId: 42,
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ ok: false, failures: [expect.any(Error)] });
 
     expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(2);
   });

@@ -238,6 +238,7 @@ jest.mock("@/utils/useTrackScreen", () => ({
 
 import React from "react";
 import { render, act, RenderResult } from "@testing-library/react-native";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { TestInstance } from "test-renderer";
 import SearchScreen from "../app/(tabs)/index";
 
@@ -290,10 +291,22 @@ function findPressableByLabel(root: NonNullable<RenderResult["root"]>, label: st
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
+async function renderSearchScreen() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const result = await render(
+    <QueryClientProvider client={queryClient}>
+      <SearchScreen />
+    </QueryClientProvider>,
+  );
+  return { queryClient, result };
+}
+
 describe("SearchScreen — search bar visibility by mode", () => {
   it("renders the search bar in the default search mode", async () => {
     let result!: RenderResult;
-    result = await render(<SearchScreen />);
+    ({ result } = await renderSearchScreen());
 
     expect(hasSearchBar(result.root!)).toBe(true);
 
@@ -302,7 +315,7 @@ describe("SearchScreen — search bar visibility by mode", () => {
 
   it("hides the search bar after switching to aisle mode", async () => {
     let result!: RenderResult;
-    result = await render(<SearchScreen />);
+    ({ result } = await renderSearchScreen());
 
     // Search bar must be present before the switch.
     expect(hasSearchBar(result.root!)).toBe(true);
@@ -323,7 +336,7 @@ describe("SearchScreen — search bar visibility by mode", () => {
 
   it("hides the search bar after switching to category mode", async () => {
     let result!: RenderResult;
-    result = await render(<SearchScreen />);
+    ({ result } = await renderSearchScreen());
 
     expect(hasSearchBar(result.root!)).toBe(true);
 
@@ -341,7 +354,7 @@ describe("SearchScreen — search bar visibility by mode", () => {
 
   it("restores the search bar when BrowseByAisle's onClose is invoked", async () => {
     let result!: RenderResult;
-    result = await render(<SearchScreen />);
+    ({ result } = await renderSearchScreen());
 
     // Switch to aisle mode — search bar disappears.
     const aisleBtn = findPressableByLabel(result.root!, "By Aisle");
@@ -372,7 +385,7 @@ describe("SearchScreen — search bar visibility by mode", () => {
 
   it("restores the search bar when BrowseByCategory's onClose is invoked", async () => {
     let result!: RenderResult;
-    result = await render(<SearchScreen />);
+    ({ result } = await renderSearchScreen());
 
     // Switch to category mode — search bar disappears.
     const categoryBtn = findPressableByLabel(result.root!, "By Category");

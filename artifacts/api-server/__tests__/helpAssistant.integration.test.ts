@@ -45,10 +45,14 @@ import { eq } from "drizzle-orm";
 
 import app from "../src/app";
 import { HELP_ASSISTANT_LIMITS } from "../src/lib/helpAssistant";
-import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
+import {
+  cleanupTestUser,
+  seedTestUser,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 
-const WORKER = "jest-help-assistant-worker";
-const ADMIN = "jest-help-assistant-admin";
+const WORKER = workerQualifiedUserId("jest-help-assistant-worker");
+const ADMIN = workerQualifiedUserId("jest-help-assistant-admin");
 
 beforeAll(async () => {
   await seedTestUser({ clerkUserId: WORKER, status: "approved", role: "user" });
@@ -155,7 +159,7 @@ describe("POST /api/help/ask — grounded worker answers", () => {
 });
 
 describe("POST /api/help/ask — privileged context boundary", () => {
-  it("includes admin records only for a current admin with MFA", async () => {
+  it("includes admin records only for a current approved admin", async () => {
     mockCreate.mockResolvedValueOnce({
       choices: [{ message: { content: "Open the spreadsheet import tool in Admin." } }],
     });
@@ -197,5 +201,33 @@ describe("POST /api/help/ask — privileged context boundary", () => {
     });
     expect(JSON.stringify(res.body)).not.toContain("provider secret");
     expect(JSON.stringify(res.body)).not.toContain("hidden prompt");
+  });
+
+  it("allows a failed question to be retried with prior conversation context", async () => {
+    mockCreate.mockRejectedValueOnce(new Error("temporary provider outage"));
+
+    await auth(supertest(app).post("/api/help/ask"), WORKER)
+      .send({ question: "How do I find a part with Search?" })
+      .expect(503);
+
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: "Open Search and enter the part description." } }],
+    });
+    const res = await auth(supertest(app).post("/api/help/ask"), WORKER)
+      .send({
+        question: "How do I find a part with Search?",
+        history: [{ q: "How do I open Search?", a: "Open the Search tab." }],
+      })
+      .expect(200);
+
+    expect(res.body.answer).toBe("Open Search and enter the part description.");
+    const retryRequest = mockCreate.mock.calls[mockCreate.mock.calls.length - 1]![0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(retryRequest.messages).toEqual(expect.arrayContaining([
+      { role: "user", content: "How do I open Search?" },
+      { role: "assistant", content: "Open the Search tab." },
+      { role: "user", content: "How do I find a part with Search?" },
+    ]));
   });
 });

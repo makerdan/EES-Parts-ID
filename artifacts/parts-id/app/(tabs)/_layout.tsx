@@ -2,7 +2,8 @@ import { Feather } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { Tabs } from "expo-router";
 import React from "react";
-import { Platform, StyleSheet, View } from "react-native";
+import { Platform, StyleSheet, useWindowDimensions, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useApp } from "@/contexts/AppContext";
 import { useColors, useIsDark } from "@/hooks/useColors";
@@ -14,6 +15,10 @@ export default function TabLayout() {
   const isDark = useIsDark();
   const isIOS = Platform.OS === "ios";
   const isWeb = Platform.OS === "web";
+  const { width, height } = useWindowDimensions();
+  const { bottom } = useSafeAreaInsets();
+  const shortLandscape = width > height && height < 500;
+  const tabBarHeight = isWeb ? 84 : (shortLandscape ? 52 + bottom : undefined);
 
   // Guard: render nothing while approvalStatus has not settled to "approved".
   // This closes the narrow window between setActive() resolving (isSignedIn=true)
@@ -35,7 +40,8 @@ export default function TabLayout() {
           borderTopWidth: 1,
           borderTopColor: colors.border,
           elevation: 0,
-          ...(isWeb ? { height: 84 } : {}),
+          ...(tabBarHeight !== undefined ? { height: tabBarHeight } : {}),
+          ...(shortLandscape ? { paddingTop: 2, paddingBottom: Math.max(bottom, 2) } : {}),
         },
         tabBarBackground: () =>
           isIOS ? (

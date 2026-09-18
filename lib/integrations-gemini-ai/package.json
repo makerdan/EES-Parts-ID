@@ -1,5 +1,13 @@
 {
   "name": "@workspace/integrations-gemini-ai",
+  "knip": {
+    "entry": [
+      "src/index.ts",
+      "src/batch/index.ts",
+      "src/image/index.ts"
+    ],
+    "project": ["src/**/*.{ts,tsx}"]
+  },
   "version": "0.0.0",
   "private": true,
   "serverOnly": true,

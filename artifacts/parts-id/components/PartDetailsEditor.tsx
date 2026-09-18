@@ -2,7 +2,12 @@ import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQueryClient } from "@tanstack/react-query";
 import type { InventoryItem, InventoryListResponse, SearchInventoryResponse } from "@workspace/api-client-react";
-import { useUpdateItemBins, useUpdateItemKeywords } from "@workspace/api-client-react";
+import {
+  updateItemBins,
+  updateItemKeywords,
+  useUpdateItemBins,
+  useUpdateItemKeywords,
+} from "@workspace/api-client-react";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
@@ -21,6 +26,7 @@ import {
   View,
 } from "react-native";
 
+import { ConfirmDialog, InfoDialog } from "@/components/ConfirmDialog";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
@@ -30,8 +36,20 @@ import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { useColors } from "@/hooks/useColors";
 import { API_BASE } from "@/utils/apiBase";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
-import { evictDeletedItemFromAllCaches, invalidateListCache, parseStoredQueryCache } from "@/utils/editItemCache";
-import { evictItemFromQueryCache,QUERY_CACHE_KEY } from "@/utils/searchHelpers";
+import {
+  evictDeletedItemFromAllCaches,
+  invalidateAllCachesAfterSave,
+  invalidateListCache,
+  INVENTORY_REFRESH_WARNING,
+} from "@/utils/editItemCache";
+import {
+  applySuccessfulInventoryFields,
+  inventorySaveErrorMessage,
+  type InventorySaveOp,
+  isAbortError,
+  resolveInventorySaveResults,
+  runInventoryWrite,
+} from "@/utils/inventoryWrite";
 
 interface CapturedPhoto {
   uri: string;
@@ -67,6 +85,8 @@ interface PartDetailsEditorProps {
    * evictDeletedItemFromAllCaches.
    */
   onItemDeleted?: (itemId: number) => void;
+  /** Called after any successful field save so the host can update its local index. */
+  onItemSaved?: (item: InventoryItem) => void;
 }
 
 /**
@@ -79,24 +99,49 @@ interface PartDetailsEditorProps {
  * On non-LiDAR iOS devices the "Estimate" (photo AI) path is shown instead.
  * Android and Web see neither — manual entry only.
  */
-export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onItemDeleted }: PartDetailsEditorProps) {
+export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onItemDeleted, onItemSaved }: PartDetailsEditorProps) {
   "use no memo";
   const colors = useColors();
   const queryClient = useQueryClient();
-  const updateBinsMutation = useUpdateItemBins();
-  const updateKeywordsMutation = useUpdateItemKeywords();
+  const writeControllersRef = useRef(new Set<AbortController>());
+  const mountedRef = useRef(true);
+  const saveInFlightRef = useRef(false);
+  const fetchWrite = useCallback(
+    (url: string, init: RequestInit) =>
+      runInventoryWrite(writeControllersRef.current, signal => fetch(url, { ...init, signal })),
+    [],
+  );
+  const updateBinsMutation = useUpdateItemBins({
+    mutation: {
+      mutationFn: ({ id, data }) =>
+        runInventoryWrite(writeControllersRef.current, signal => updateItemBins(id, data, { signal })),
+    },
+  });
+  const updateKeywordsMutation = useUpdateItemKeywords({
+    mutation: {
+      mutationFn: ({ id, data }) =>
+        runInventoryWrite(writeControllersRef.current, signal => updateItemKeywords(id, data, { signal })),
+    },
+  });
   const [description, setDescription] = useState(item?.description ?? "");
+  // The editor mounts once while its route item is still resolving. This
+  // zero is only the pre-item loading value; InventoryItem responses require
+  // both order fields once `item` is available.
+  const [op, setOp] = useState(String(item?.orderPurchase ?? 0));
+  const [oq, setOq] = useState(String(item?.orderQuantity ?? 0));
   const [bins, setBins] = useState<Array<string>>(item?.binLocations ?? []);
   const [newBin, setNewBin] = useState("");
   const [keywords, setKeywords] = useState<Array<string>>(item?.aiKeywords ?? []);
   const [newKeyword, setNewKeyword] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [refreshWarning, setRefreshWarning] = useState<string | null>(null);
   const [fieldSaveErrors, setFieldSaveErrors] = useState<{
     description?: string;
     bins?: string;
     keywords?: string;
     dimensions?: string;
+    opoq?: string;
     photo?: string;
     photo2?: string;
   }>({});
@@ -115,6 +160,65 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const [dimDiameter, setDimDiameter] = useState(fmtDim(existingDims?.diameter));
   const [measureOpen, setMeasureOpen] = useState(false);
   const [lidarAvailable, setLidarAvailable] = useState(false);
+  const pendingMeasureDimsRef = useRef<PartDimensions | null>(null);
+  const [discardDialogVisible, setDiscardDialogVisible] = useState(false);
+  const [saveInFlightDialogVisible, setSaveInFlightDialogVisible] = useState(false);
+  const savedDescriptionRef = useRef(item?.description ?? "");
+  // These refs share the same nullable-item loading boundary as the state
+  // above; all later reads use the required InventoryItem fields directly.
+  const savedOpRef = useRef(item?.orderPurchase ?? 0);
+  const savedOqRef = useRef(item?.orderQuantity ?? 0);
+  const savedBinsRef = useRef<Array<string>>(item?.binLocations ?? []);
+  const savedKeywordsRef = useRef<Array<string>>(item?.aiKeywords ?? []);
+  const savedDimsRef = useRef<PartDimensions>({
+    length: existingDims?.length ?? null,
+    width: existingDims?.width ?? null,
+    height: existingDims?.height ?? null,
+    diameter: existingDims?.diameter ?? null,
+  });
+  const savedExpandedDescRef = useRef(item?.expandedDescription ?? "");
+  const savedPhotoUriRef = useRef<string | null>(item?.imageUrl ?? null);
+  const savedPhotoUri2Ref = useRef<string | null>(item?.imageUrl2 ?? null);
+  const dimensionSaveInFlightRef = useRef(false);
+  const expandedDescSaveInFlightRef = useRef(false);
+  const allowCloseRef = useRef(false);
+  const hasChangesRef = useRef(false);
+  const pendingCloseRef = useRef<(() => void) | null>(null);
+
+  const requestClose = useCallback((exit: () => void = onClose) => {
+    if (allowCloseRef.current) {
+      allowCloseRef.current = false;
+      exit();
+      return;
+    }
+    if (
+      saveInFlightRef.current ||
+      dimensionSaveInFlightRef.current ||
+      expandedDescSaveInFlightRef.current
+    ) {
+      setSaveInFlightDialogVisible(true);
+      return;
+    }
+    if (!hasChangesRef.current) {
+      exit();
+      return;
+    }
+    pendingCloseRef.current = exit;
+    setDiscardDialogVisible(true);
+  }, [onClose]);
+
+  const keepEditing = useCallback(() => {
+    pendingCloseRef.current = null;
+    setDiscardDialogVisible(false);
+    setSaveInFlightDialogVisible(false);
+  }, []);
+
+  const discardChanges = useCallback(() => {
+    const exit = pendingCloseRef.current;
+    pendingCloseRef.current = null;
+    setDiscardDialogVisible(false);
+    if (exit) exit();
+  }, []);
 
   useEffect(() => {
     setLidarAvailable(isLiDARSupported());
@@ -132,6 +236,13 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
 
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
+  const reportItemSaved = useCallback((patch: Partial<InventoryItem>) => {
+    const current = itemRef.current;
+    if (!current || !onItemSaved) return;
+    const updatedItem = { ...current, ...patch };
+    itemRef.current = updatedItem;
+    onItemSaved(updatedItem);
+  }, [onItemSaved]);
 
   const [copiedBin, setCopiedBin] = useState<string | null>(null);
   const copyBinTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -149,9 +260,16 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    const controllers = writeControllersRef.current;
     return () => {
+      mountedRef.current = false;
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
       if (copyBinTimeoutRef.current) clearTimeout(copyBinTimeoutRef.current);
+      saveInFlightRef.current = false;
+      dimensionSaveInFlightRef.current = false;
+      expandedDescSaveInFlightRef.current = false;
     };
   }, []);
 
@@ -178,32 +296,93 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   }, []);
 
   useEffect(() => {
-    const current = itemRef.current;
+    const current = item;
     if (!current) return;
-    const dims = current?.dimensions;
-    setDescription(current.description ?? "");
-    setBins(current.binLocations ?? []);
-    setKeywords(current.aiKeywords ?? []);
-    setNewBin("");
-    setNewKeyword("");
-    setNewPhotoData(null);
-    setRemoveCurrentPhoto(false);
-    setNewPhotoData2(null);
-    setRemoveCurrentPhoto2(false);
-    setSaveStatus("idle");
-    setErrorMsg(null);
-    setFieldSaveErrors({});
-    setCopiedBin(null);
-    if (copyBinTimeoutRef.current) { clearTimeout(copyBinTimeoutRef.current); copyBinTimeoutRef.current = null; }
-    setDimLength(fmtDim(dims?.length));
-    setDimWidth(fmtDim(dims?.width));
-    setDimHeight(fmtDim(dims?.height));
-    setDimDiameter(fmtDim(dims?.diameter));
-    setExpandedDescText(current.expandedDescription ?? "");
-    setExpandedDescSaving("idle");
-    setExpandedDescError(null);
-    setCommittedFields(new Set());
-  }, [item?.id]);
+    itemRef.current = current;
+    const dims = current.dimensions;
+    const incomingDescription = current.description ?? "";
+    const incomingBins = current.binLocations ?? [];
+    const incomingKeywords = current.aiKeywords ?? [];
+    const incomingExpandedDescription = current.expandedDescription ?? "";
+    const incomingDims = {
+      length: dims?.length ?? null,
+      width: dims?.width ?? null,
+      height: dims?.height ?? null,
+      diameter: dims?.diameter ?? null,
+    };
+    const descriptionDirty = description.trim() !== savedDescriptionRef.current.trim();
+    const opDirty = Number(op.trim() || "0") !== savedOpRef.current;
+    const oqDirty = Number(oq.trim() || "0") !== savedOqRef.current;
+    const binsDirty = JSON.stringify(bins) !== JSON.stringify(savedBinsRef.current);
+    const keywordsDirty = JSON.stringify(keywords) !== JSON.stringify(savedKeywordsRef.current);
+    const dimensionsDirty = JSON.stringify({
+      length: parseDimField(dimLength),
+      width: parseDimField(dimWidth),
+      height: parseDimField(dimHeight),
+      diameter: parseDimField(dimDiameter),
+    }) !== JSON.stringify(savedDimsRef.current);
+    const expandedDescriptionDirty = expandedDescText.trim() !== savedExpandedDescRef.current.trim();
+    const photoDirty = newPhotoData !== null || removeCurrentPhoto;
+    const photo2Dirty = newPhotoData2 !== null || removeCurrentPhoto2;
+    const hadDirtyFields = descriptionDirty || opDirty || oqDirty || binsDirty || keywordsDirty ||
+      dimensionsDirty || expandedDescriptionDirty || photoDirty || photo2Dirty;
+
+    if (!descriptionDirty) {
+      savedDescriptionRef.current = incomingDescription;
+      setDescription(incomingDescription);
+    }
+    if (!opDirty) {
+      savedOpRef.current = current.orderPurchase;
+      setOp(String(current.orderPurchase));
+    }
+    if (!oqDirty) {
+      savedOqRef.current = current.orderQuantity;
+      setOq(String(current.orderQuantity));
+    }
+    if (!binsDirty) {
+      savedBinsRef.current = [...incomingBins];
+      setBins(incomingBins);
+    }
+    if (!keywordsDirty) {
+      savedKeywordsRef.current = [...incomingKeywords];
+      setKeywords(incomingKeywords);
+    }
+    if (!dimensionsDirty) {
+      savedDimsRef.current = incomingDims;
+      setDimLength(fmtDim(dims?.length));
+      setDimWidth(fmtDim(dims?.width));
+      setDimHeight(fmtDim(dims?.height));
+      setDimDiameter(fmtDim(dims?.diameter));
+    }
+    if (!expandedDescriptionDirty) {
+      savedExpandedDescRef.current = incomingExpandedDescription;
+      setExpandedDescText(incomingExpandedDescription);
+    }
+    if (!photoDirty) savedPhotoUriRef.current = current.imageUrl ?? null;
+    if (!photo2Dirty) savedPhotoUri2Ref.current = current.imageUrl2 ?? null;
+
+    if (!hadDirtyFields) {
+      setNewBin("");
+      setNewKeyword("");
+      setNewPhotoData(null);
+      setRemoveCurrentPhoto(false);
+      setNewPhotoData2(null);
+      setRemoveCurrentPhoto2(false);
+      setSaveStatus("idle");
+      setErrorMsg(null);
+      setRefreshWarning(null);
+      setFieldSaveErrors({});
+      setCommittedFields(new Set());
+      setCopiedBin(null);
+      if (copyBinTimeoutRef.current) { clearTimeout(copyBinTimeoutRef.current); copyBinTimeoutRef.current = null; }
+      setExpandedDescSaving("idle");
+      setExpandedDescError(null);
+    }
+  // This reconciliation intentionally runs only when the host supplies a new
+  // item snapshot; including local editor state would make every keystroke look
+  // like an external refresh.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item]);
 
   const addBin = () => {
     const trimmed = newBin.trim();
@@ -246,17 +425,10 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
 
   const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
     const current = itemRef.current;
+    if (!current || !adminToken || dimensionSaveInFlightRef.current) return;
+    pendingMeasureDimsRef.current = dims;
+    dimensionSaveInFlightRef.current = true;
     setMeasureOpen(false);
-
-    // Snapshot the current dimension display values synchronously before any
-    // state update. Functional setState updaters are deferred and may not
-    // execute until after the catch block runs, so they cannot be used for
-    // snapshotting. React state values read directly at callback entry time
-    // always reflect the current render, giving us reliable pre-confirm values.
-    const prevLength = dimLength;
-    const prevWidth = dimWidth;
-    const prevHeight = dimHeight;
-    const prevDiameter = dimDiameter;
 
     setDimLength(fmtDim(dims.length));
     setDimWidth(fmtDim(dims.width));
@@ -268,9 +440,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       const { dimensions: _dimensions, ...rest } = prev;
       return rest;
     });
-    if (!current || !adminToken) return;
+    setRefreshWarning(null);
     try {
-      const res = await fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
+      const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/dimensions`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -282,27 +454,50 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-    } catch {
-      // Restore pre-confirm values so the display matches what is actually
-      // persisted on the server — matching the rollback pattern of the main
-      // Save path.
-      setDimLength(prevLength);
-      setDimWidth(prevWidth);
-      setDimHeight(prevHeight);
-      setDimDiameter(prevDiameter);
-      setFieldSaveErrors(prev => ({ ...prev, dimensions: "Could not save dimensions" }));
+      pendingMeasureDimsRef.current = null;
+      savedDimsRef.current = {
+        length: dims.length ?? null,
+        width: dims.width ?? null,
+        height: dims.height ?? null,
+        diameter: dims.diameter ?? null,
+      };
+      reportItemSaved({ dimensions: dims });
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: current.id,
+        updatedItem: { ...current, dimensions: dims },
+      });
+      if (cacheResult && !cacheResult.ok && mountedRef.current) setRefreshWarning(INVENTORY_REFRESH_WARNING);
+    } catch (err) {
+      if (isAbortError(err) && !mountedRef.current) return;
+      if (mountedRef.current) {
+        setFieldSaveErrors(prev => ({
+          ...prev,
+          dimensions: inventorySaveErrorMessage(err, "Could not save dimensions", { preserveServerMessage: false }),
+        }));
+      }
+    } finally {
+      dimensionSaveInFlightRef.current = false;
     }
-  }, [adminToken, queryClient, dimLength, dimWidth, dimHeight, dimDiameter]);
+  }, [adminToken, queryClient, fetchWrite, reportItemSaved]);
+
+  const retryDimensionsSave = () => {
+    const pendingDims = pendingMeasureDimsRef.current;
+    if (pendingDims) void handleMeasureConfirm(pendingDims);
+    else void handleSave();
+  };
 
   const handleSaveExpandedDesc = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) return;
+    if (expandedDescSaveInFlightRef.current) return;
+    expandedDescSaveInFlightRef.current = true;
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
+    setRefreshWarning(null);
     try {
-      const res = await fetch(`${API_BASE}/inventory/${current.id}/expanded-description`, {
+      const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/expanded-description`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -315,45 +510,39 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
       const savedText = expandedDescText.trim() || null;
-      const listKeyPrefix = getListInventoryQueryKey()[0];
-      const patchExpandedSave = (i: InventoryItem): InventoryItem =>
-        i.id === current.id ? { ...i, expandedDescription: savedText } : i;
-      queryClient.setQueriesData<InventoryListResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-        (old) => old ? { ...old, items: old.items.map(patchExpandedSave) } : old,
-      );
-      queryClient.setQueriesData<SearchInventoryResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-        (old) => {
-          if (!old) return old;
-          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-            r.item.id === current.id ? { ...r, item: patchExpandedSave(r.item) } : r;
-          return {
-            ...old,
-            results: old.results.map(patchResult),
-            // exactOptionalPropertyTypes: only include the optional key when present
-            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-          };
-        },
-      );
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      savedExpandedDescRef.current = savedText ?? "";
+      reportItemSaved({ expandedDescription: savedText });
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: current.id,
+        updatedItem: { ...current, expandedDescription: savedText },
+      });
+      if (cacheResult && !cacheResult.ok && mountedRef.current) setRefreshWarning(INVENTORY_REFRESH_WARNING);
       setExpandedDescSaving("saved");
     } catch (err) {
-      setExpandedDescError(err instanceof Error ? err.message : "Save failed");
-      setExpandedDescSaving("error");
+      if (isAbortError(err) && !mountedRef.current) return;
+      if (mountedRef.current) {
+        setExpandedDescError(inventorySaveErrorMessage(err));
+        setExpandedDescSaving("error");
+      }
+    } finally {
+      expandedDescSaveInFlightRef.current = false;
     }
   };
 
   const handleClearExpandedDesc = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) return;
+    if (expandedDescSaveInFlightRef.current) return;
+    expandedDescSaveInFlightRef.current = true;
     const previousText = expandedDescText;
     setExpandedDescText("");
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
+    setRefreshWarning(null);
     try {
-      const res = await fetch(`${API_BASE}/inventory/${current.id}/expanded-description`, {
+      const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/expanded-description`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -365,34 +554,25 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      const listKeyPrefixClear = getListInventoryQueryKey()[0];
-      const patchExpandedClear = (i: InventoryItem): InventoryItem =>
-        i.id === current.id ? { ...i, expandedDescription: null } : i;
-      queryClient.setQueriesData<InventoryListResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefixClear },
-        (old) => old ? { ...old, items: old.items.map(patchExpandedClear) } : old,
-      );
-      queryClient.setQueriesData<SearchInventoryResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-        (old) => {
-          if (!old) return old;
-          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-            r.item.id === current.id ? { ...r, item: patchExpandedClear(r.item) } : r;
-          return {
-            ...old,
-            results: old.results.map(patchResult),
-            // exactOptionalPropertyTypes: only include the optional key when present
-            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-          };
-        },
-      );
-      await invalidateListCache({ queryClient });
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      savedExpandedDescRef.current = "";
+      reportItemSaved({ expandedDescription: null });
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: current.id,
+        updatedItem: { ...current, expandedDescription: null },
+      });
+      if (cacheResult && !cacheResult.ok && mountedRef.current) setRefreshWarning(INVENTORY_REFRESH_WARNING);
       setExpandedDescSaving("saved");
     } catch (err) {
+      if (isAbortError(err) && !mountedRef.current) return;
       setExpandedDescText(previousText);
-      setExpandedDescError(err instanceof Error ? err.message : "Clear failed");
-      setExpandedDescSaving("error");
+      if (mountedRef.current) {
+        setExpandedDescError(inventorySaveErrorMessage(err, "Could not clear expanded description"));
+        setExpandedDescSaving("error");
+      }
+    } finally {
+      expandedDescSaveInFlightRef.current = false;
     }
   };
 
@@ -409,7 +589,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           style: "destructive",
           onPress: async () => {
             try {
-              const res = await fetch(`${API_BASE}/inventory/${current.id}`, {
+              const res = await fetchWrite(`${API_BASE}/inventory/${current.id}`, {
                 method: "DELETE",
                 headers: { Authorization: `Bearer ${adminToken}` },
               });
@@ -429,7 +609,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               // Let the host screen prune the item from its offline Fuse.js
               // barcode index, which evictDeletedItemFromAllCaches does not touch.
               onItemDeleted?.(current.id);
-              onClose();
+              allowCloseRef.current = true;
+              requestClose();
             } catch {
               Alert.alert("Delete Failed", "Could not delete the part. Check your connection and try again.");
             }
@@ -437,9 +618,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         },
       ],
     );
-  }, [adminToken, queryClient, onClose, onItemDeleted]);
+  }, [adminToken, queryClient, onItemDeleted, fetchWrite, requestClose]);
 
-  const handleSave = async () => {
+  const saveInventory = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) {
       setErrorMsg("Admin session expired. Re-unlock and try again.");
@@ -462,13 +643,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
     );
 
-    type SaveOp = {
-      field: "description" | "bins" | "keywords" | "dimensions" | "photo" | "photo2";
-      promise: Promise<unknown>;
-      restoreFn: () => void;
-    };
-
-    const ops: Array<SaveOp> = [];
+    const ops: Array<InventorySaveOp> = [];
 
     // ?? "" handles newly-added items where description is null — null becomes ""
     // so a first-time description edit is correctly detected as a change.
@@ -476,13 +651,40 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       ops.push({
         field: "description",
         restoreFn: () => setDescription(current.description ?? ""),
-        promise: fetch(`${API_BASE}/inventory/${current.id}/description`, {
+        promise: fetchWrite(`${API_BASE}/inventory/${current.id}/description`, {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${adminToken}`,
           },
           body: JSON.stringify({ description: description.trim() }),
+        }).then(async (res) => {
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({})) as { error?: string };
+            throw new Error(data.error ?? `HTTP ${res.status}`);
+          }
+        }),
+      });
+    }
+
+    const parsedOp = Number(op.trim() || "0");
+    const parsedOq = Number(oq.trim() || "0");
+    if (![parsedOp, parsedOq].every((value) => Number.isSafeInteger(value) && value >= 0)) {
+      setFieldSaveErrors({ opoq: "OP and OQ must be non-negative whole numbers." });
+      setSaveStatus("error");
+      return;
+    }
+    if (parsedOp !== current.orderPurchase || parsedOq !== current.orderQuantity) {
+      ops.push({
+        field: "opoq",
+        restoreFn: () => {
+          setOp(String(current.orderPurchase));
+          setOq(String(current.orderQuantity));
+        },
+        promise: fetchWrite(`${API_BASE}/inventory/${current.id}/order`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+          body: JSON.stringify({ orderPurchase: parsedOp, orderQuantity: parsedOq }),
         }).then(async (res) => {
           if (!res.ok) {
             const data = await res.json().catch(() => ({})) as { error?: string };
@@ -548,14 +750,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     if (dimsChanged) {
       ops.push({
         field: "dimensions",
-        restoreFn: () => {
-          const savedDims = itemRef.current?.dimensions;
-          setDimLength(fmtDim(savedDims?.length));
-          setDimWidth(fmtDim(savedDims?.width));
-          setDimHeight(fmtDim(savedDims?.height));
-          setDimDiameter(fmtDim(savedDims?.diameter));
-        },
-        promise: fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
+        // Keep failed dimension values visible for the field-level retry.
+        restoreFn: () => undefined,
+        promise: fetchWrite(`${API_BASE}/inventory/${current.id}/dimensions`, {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
@@ -584,7 +781,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           const base64 = await FileSystem.readAsStringAsync(photoUri, {
             encoding: "base64",
           });
-          const res = await fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+          const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/photo`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
             body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg", slot: 1 }),
@@ -601,7 +798,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       ops.push({
         field: "photo",
         restoreFn: () => setRemoveCurrentPhoto(false),
-        promise: fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+            promise: fetchWrite(`${API_BASE}/inventory/${current.id}/photo`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
           body: JSON.stringify({ remove: true, slot: 1 }),
@@ -625,7 +822,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           const base64 = await FileSystem.readAsStringAsync(photoUri2, {
             encoding: "base64",
           });
-          const res = await fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+          const res = await fetchWrite(`${API_BASE}/inventory/${current.id}/photo`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
             body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg", slot: 2 }),
@@ -642,7 +839,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       ops.push({
         field: "photo2",
         restoreFn: () => setRemoveCurrentPhoto2(false),
-        promise: fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+            promise: fetchWrite(`${API_BASE}/inventory/${current.id}/photo`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
           body: JSON.stringify({ remove: true, slot: 2 }),
@@ -662,30 +859,15 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     }
 
     const results = await Promise.allSettled(ops.map((o) => o.promise));
-    const newFieldErrors: typeof fieldSaveErrors = {};
-    let anyFailed = false;
-
-    const succeededFields = new Set<string>();
-    results.forEach((result, i) => {
-      // results is built from ops.map, so index i always maps to an op.
-      const op = ops[i]!;
-      if (result.status === "rejected") {
-        anyFailed = true;
-        const msg =
-          result.reason instanceof Error ? result.reason.message : "Save failed";
-        newFieldErrors[op.field] = msg.includes("401")
-          ? "Session expired — re-unlock admin access"
-          : "Could not save — check connection";
-      } else {
-        succeededFields.add(op.field);
-      }
-    });
+    if (!mountedRef.current) return;
+    const resolution = resolveInventorySaveResults(ops, results);
+    const { anyFailed, fieldErrors: newFieldErrors, succeededFields } = resolution;
 
     if (anyFailed) {
       // onError: restore the full cache snapshot to roll back any optimistic
       // patches that TanStack mutations (bins, keywords) applied before they
-      // failed. This ensures the cache is in a clean state before we selectively
-      // re-apply the patches for fields that already committed to the server.
+      // failed. Restore rejected form fields to the server truth; the user can
+      // edit them again before retrying.
       for (const [key, data] of inventorySnapshot) {
         queryClient.setQueryData(key, data);
       }
@@ -696,40 +878,17 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
       // Re-apply patches for fields that SUCCEEDED so the list / search view
       // reflects what is now on the server, even though the overall save failed.
       // Only the failed fields need retry — succeeded fields are already committed.
+      let partialUpdatedItem: InventoryItem | null = null;
       if (succeededFields.size > 0) {
-        const patchItemPartial = (i: InventoryItem): InventoryItem => {
-          if (i.id !== current.id) return i;
-          return {
-            ...i,
-            ...(succeededFields.has("description") ? { description: description.trim() } : {}),
-            ...(succeededFields.has("bins") ? { binLocations: finalBins } : {}),
-            ...(succeededFields.has("keywords") ? { aiKeywords: finalKeywords } : {}),
-            ...(succeededFields.has("dimensions") ? { dimensions: newDims } : {}),
-            ...(succeededFields.has("photo") && capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
-            ...(succeededFields.has("photo2") && capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
-          };
-        };
-        queryClient.setQueriesData<InventoryListResponse>(
-          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-          (old) => {
-            if (!old) return old;
-            return { ...old, items: old.items.map(patchItemPartial) };
-          },
-        );
-        queryClient.setQueriesData<SearchInventoryResponse>(
-          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-          (old) => {
-            if (!old) return old;
-            const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-              r.item.id === current.id ? { ...r, item: patchItemPartial(r.item) } : r;
-            return {
-              ...old,
-              results: old.results.map(patchResult),
-              // exactOptionalPropertyTypes: only include the optional key when present
-              ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-            };
-          },
-        );
+        partialUpdatedItem = applySuccessfulInventoryFields(current, succeededFields, {
+          description: { description: description.trim() },
+          bins: { binLocations: finalBins },
+          keywords: { aiKeywords: finalKeywords },
+          dimensions: { dimensions: newDims },
+          opoq: { orderPurchase: parsedOp, orderQuantity: parsedOq },
+          ...(capturedImageUrl !== undefined ? { photo: { imageUrl: capturedImageUrl, thumbnailUrl: null } } : {}),
+          ...(capturedImageUrl2 !== undefined ? { photo2: { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } } : {}),
+        });
       }
 
       setCommittedFields(prev => {
@@ -737,109 +896,148 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         succeededFields.forEach(f => next.add(f));
         return next;
       });
+      if (succeededFields.has("description")) savedDescriptionRef.current = description.trim();
+      if (succeededFields.has("opoq")) {
+        savedOpRef.current = parsedOp;
+        savedOqRef.current = parsedOq;
+      }
+      if (succeededFields.has("bins")) savedBinsRef.current = [...finalBins];
+      if (succeededFields.has("keywords")) savedKeywordsRef.current = [...finalKeywords];
+      if (succeededFields.has("dimensions")) savedDimsRef.current = { ...newDims };
+      if (succeededFields.has("photo")) savedPhotoUriRef.current = capturedImageUrl ?? null;
+      if (succeededFields.has("photo2")) savedPhotoUri2Ref.current = capturedImageUrl2 ?? null;
+      if (succeededFields.has("description")) reportItemSaved({ description: description.trim() });
+      if (succeededFields.has("opoq")) reportItemSaved({ orderPurchase: parsedOp, orderQuantity: parsedOq });
+      if (succeededFields.has("bins")) reportItemSaved({ binLocations: finalBins });
+      if (succeededFields.has("keywords")) reportItemSaved({ aiKeywords: finalKeywords });
+      if (succeededFields.has("dimensions")) reportItemSaved({ dimensions: newDims });
+      if (succeededFields.has("photo") && capturedImageUrl !== undefined) {
+        reportItemSaved({ imageUrl: capturedImageUrl, thumbnailUrl: null });
+      }
+      if (succeededFields.has("photo2") && capturedImageUrl2 !== undefined) {
+        reportItemSaved({ imageUrl2: capturedImageUrl2, thumbnailUrl2: null });
+      }
+      if (partialUpdatedItem) {
+        const cacheResult = await invalidateAllCachesAfterSave({
+          queryClient,
+          asyncStorage: AsyncStorage,
+          itemId: current.id,
+          updatedItem: partialUpdatedItem,
+        });
+        if (cacheResult && !cacheResult.ok) setRefreshWarning(INVENTORY_REFRESH_WARNING);
+      }
 
-      const fieldLabel: Record<string, string> = {
-        description: "Description",
-        bins: "Bins",
-        keywords: "Keywords",
-        dimensions: "Dimensions",
-        photo: "Photo 1",
-        photo2: "Photo 2",
-      };
-      const savedLabels = [...succeededFields].map(f => fieldLabel[f] ?? f);
-      const failedLabels = Object.keys(newFieldErrors).map(f => fieldLabel[f] ?? f);
-      const parts: Array<string> = [];
-      if (savedLabels.length > 0) parts.push(`${savedLabels.join(", ")} saved`);
-      if (failedLabels.length > 0) parts.push(`${failedLabels.join(", ")} failed`);
-      setErrorMsg(parts.join(" · ") + " — check connection and retry");
+      setErrorMsg(resolution.message);
 
       setFieldSaveErrors(newFieldErrors);
       setSaveStatus("error");
     } else {
-      // Synchronously patch every changed field into both caches so the list /
-      // search view reflects the new values immediately, without waiting for the
-      // background invalidation refetch to complete.
-      const patchItem = (i: InventoryItem): InventoryItem => {
-        if (i.id !== current.id) return i;
-        return {
-          ...i,
-          description: description.trim(),
-          binLocations: finalBins,
-          aiKeywords: finalKeywords,
-          dimensions: dimsChanged ? newDims : (i.dimensions ?? null),
-          ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
-          ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
-        };
+      const updatedItem: InventoryItem = {
+        ...current,
+        description: description.trim(),
+        binLocations: finalBins,
+        aiKeywords: finalKeywords,
+        dimensions: dimsChanged ? newDims : (current.dimensions ?? null),
+        orderPurchase: parsedOp,
+        orderQuantity: parsedOq,
+        ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+        ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
       };
-      queryClient.setQueriesData<InventoryListResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-        (old) => {
-          if (!old) return old;
-          return { ...old, items: old.items.map(patchItem) };
-        },
-      );
-      queryClient.setQueriesData<SearchInventoryResponse>(
-        { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-        (old) => {
-          if (!old) return old;
-          const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-            r.item.id === current.id ? { ...r, item: patchItem(r.item) } : r;
-          return {
-            ...old,
-            results: old.results.map(patchResult),
-            // exactOptionalPropertyTypes: only include the optional key when present
-            ...(old.sizeUnknownResults !== undefined ? { sizeUnknownResults: old.sizeUnknownResults.map(patchResult) } : {}),
-          };
-        },
-      );
-
-      // Evict stale search result cache entries for this item from AsyncStorage
-      // so the next query returns fresh data rather than serving old field values.
-      try {
-        const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
-        if (raw) {
-          const cache = parseStoredQueryCache(raw);
-          if (cache) {
-            const { pruned, changed } = evictItemFromQueryCache(cache, current.id);
-            if (changed) await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
-          }
-        }
-      } catch {
-        // Non-fatal — worst case the search cache TTL will expire naturally
-      }
       setNewPhotoData(null);
       setNewPhotoData2(null);
       setRemoveCurrentPhoto(false);
       setRemoveCurrentPhoto2(false);
+      savedDescriptionRef.current = description.trim();
+      savedOpRef.current = parsedOp;
+      savedOqRef.current = parsedOq;
+      savedBinsRef.current = [...finalBins];
+      savedKeywordsRef.current = [...finalKeywords];
+      savedDimsRef.current = { ...newDims };
+      savedPhotoUriRef.current = capturedImageUrl ?? null;
+      savedPhotoUri2Ref.current = capturedImageUrl2 ?? null;
+      reportItemSaved({
+        description: description.trim(),
+        binLocations: finalBins,
+        aiKeywords: finalKeywords,
+        dimensions: newDims,
+        orderPurchase: parsedOp,
+        orderQuantity: parsedOq,
+        ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl, thumbnailUrl: null } : {}),
+        ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2, thumbnailUrl2: null } : {}),
+      });
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: current.id,
+        updatedItem,
+      });
+      if (cacheResult && !cacheResult.ok) setRefreshWarning(INVENTORY_REFRESH_WARNING);
+      await invalidateListCache({ queryClient }).catch(() => undefined);
       setSaveStatus("saved");
-      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = setTimeout(() => { closeTimerRef.current = null; onClose(); }, 500);
+      if (!cacheResult || cacheResult.ok) {
+        allowCloseRef.current = true;
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = setTimeout(() => {
+          closeTimerRef.current = null;
+          requestClose();
+        }, 500);
+      }
     }
 
-    // onSettled: always invalidate both affected query keys as a safety net,
-    // regardless of success or failure, so the server's state of truth is
-    // restored after any cache patches applied during this mutation.
-    await invalidateListCache({ queryClient });
-    await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+    // Failed server writes still refresh the query caches, but a refresh failure
+    // must not turn a committed field write into a false server-save failure.
+    if (anyFailed) {
+      await Promise.all([
+        invalidateListCache({ queryClient }).catch(() => undefined),
+        queryClient.invalidateQueries({ queryKey: ["searchInventory"] }).catch(() => undefined),
+      ]);
+    }
+  };
+
+  const handleSave = async () => {
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
+    try {
+      await saveInventory();
+    } finally {
+      saveInFlightRef.current = false;
+    }
+  };
+  const retryFieldSave = () => { void handleSave(); };
+  const retryExpandedDescription = () => {
+    if (!expandedDescText.trim() && itemRef.current?.expandedDescription) {
+      void handleClearExpandedDesc();
+    } else {
+      void handleSaveExpandedDesc();
+    }
   };
 
   if (!item) return null;
 
   const isSaving = saveStatus === "saving";
   const isSaved = saveStatus === "saved";
+  const isCloseBlocked =
+    isSaving ||
+    expandedDescSaving === "saving" ||
+    saveInFlightRef.current ||
+    dimensionSaveInFlightRef.current ||
+    expandedDescSaveInFlightRef.current;
 
   const hasChanges =
-    description.trim() !== (item.description ?? "").trim() ||
-    JSON.stringify(bins) !== JSON.stringify(item.binLocations ?? []) ||
-    JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []) ||
-    parseDimField(dimLength) !== (existingDims?.length ?? null) ||
-    parseDimField(dimWidth) !== (existingDims?.width ?? null) ||
-    parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
-    parseDimField(dimDiameter) !== (existingDims?.diameter ?? null) ||
-    newPhotoData !== null ||
-    (removeCurrentPhoto && !!item.imageUrl) ||
-    newPhotoData2 !== null ||
-    (removeCurrentPhoto2 && !!item.imageUrl2);
+    description.trim() !== savedDescriptionRef.current.trim() ||
+    Number(op.trim() || "0") !== savedOpRef.current ||
+    Number(oq.trim() || "0") !== savedOqRef.current ||
+    JSON.stringify(bins) !== JSON.stringify(savedBinsRef.current) ||
+    JSON.stringify(keywords) !== JSON.stringify(savedKeywordsRef.current) ||
+    parseDimField(dimLength) !== savedDimsRef.current.length ||
+    parseDimField(dimWidth) !== savedDimsRef.current.width ||
+    parseDimField(dimHeight) !== savedDimsRef.current.height ||
+    parseDimField(dimDiameter) !== savedDimsRef.current.diameter ||
+    expandedDescText.trim() !== savedExpandedDescRef.current.trim() ||
+    (newPhotoData?.uri ?? (removeCurrentPhoto ? null : item.imageUrl ?? null)) !== savedPhotoUriRef.current ||
+    (newPhotoData2?.uri ?? (removeCurrentPhoto2 ? null : item.imageUrl2 ?? null)) !== savedPhotoUri2Ref.current;
+
+  hasChangesRef.current = hasChanges;
 
   const currentPhotoUri = removeCurrentPhoto
     ? null
@@ -869,7 +1067,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
         visible
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={onClose}
+        onRequestClose={() => requestClose()}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -894,8 +1092,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               </Text>
             </View>
             <Pressable
-              onPress={onClose}
-              style={[styles.closeBtn, { backgroundColor: colors.muted }]}
+              onPress={() => requestClose()}
+              disabled={isCloseBlocked}
+              style={[styles.closeBtn, { backgroundColor: colors.muted, opacity: isCloseBlocked ? 0.45 : 1 }]}
               accessibilityLabel="Close editor"
               accessibilityRole="button"
             >
@@ -940,7 +1139,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                 } : {})}
               />
               {fieldSaveErrors.photo ? (
-                <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo}</Text>
+                <View style={styles.fieldErrorRow}>
+                  <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo}</Text>
+                  <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving photo">
+                    <Text style={[styles.retryText, { color: colors.destructive }]}>Retry</Text>
+                  </Pressable>
+                </View>
               ) : null}
               <PartPhotoPicker
                 slot={2}
@@ -956,7 +1160,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                 } : {})}
               />
               {fieldSaveErrors.photo2 ? (
-                <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo2}</Text>
+                <View style={styles.fieldErrorRow}>
+                  <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo2}</Text>
+                  <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving second photo">
+                    <Text style={[styles.retryText, { color: colors.destructive }]}>Retry</Text>
+                  </Pressable>
+                </View>
               ) : null}
             </View>
 
@@ -984,7 +1193,49 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               returnKeyType="default"
             />
             {fieldSaveErrors.description ? (
-              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.description}</Text>
+              <View style={styles.fieldErrorRow}>
+                <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.description}</Text>
+                <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving description">
+                  <Text style={[styles.retryText, { color: colors.destructive }]}>Retry</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {/* Inventory controls */}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 20 }}>
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>INVENTORY CONTROLS</Text>
+              {committedFields.has("opoq") ? (
+                <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
+              ) : null}
+            </View>
+            <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
+              OP and OQ are non-negative whole numbers.
+            </Text>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+              {([
+                ["OP", op, setOp],
+                ["OQ", oq, setOq],
+              ] as const).map(([label, value, setter]) => (
+                <View key={label} style={{ flex: 1 }}>
+                  <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>{label}</Text>
+                  <KeyboardDoneInput
+                    value={value}
+                    onChangeText={(v) => { setter(v.replace(/[^0-9]/g, "")); setSaveStatus("idle"); }}
+                    placeholder="0"
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="number-pad"
+                    style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.opoq ? colors.destructive : colors.border, color: colors.foreground }]}
+                  />
+                </View>
+              ))}
+            </View>
+            {fieldSaveErrors.opoq ? (
+              <View style={styles.fieldErrorRow}>
+                <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.opoq}</Text>
+                <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving OP and OQ">
+                  <Text style={[styles.retryText, { color: colors.destructive }]}>Retry</Text>
+                </Pressable>
+              </View>
             ) : null}
 
             {/* Expanded Description (admin enrichment — saved independently) */}
@@ -1027,7 +1278,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               </Pressable>
             </View>
             {expandedDescSaving === "error" && expandedDescError ? (
-              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{expandedDescError}</Text>
+              <View style={styles.fieldErrorRow}>
+                <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{expandedDescError}</Text>
+                <Pressable onPress={retryExpandedDescription} accessibilityRole="button" accessibilityLabel="Retry saving expanded description">
+                  <Text style={[styles.retryText, { color: colors.destructive }]}>Retry</Text>
+                </Pressable>
+              </View>
             ) : null}
             {expandedDescSaving === "saved" ? (
               <Text style={{ color: colors.success, fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 4 }}>✓ Saved</Text>
@@ -1106,7 +1362,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               ))}
             </View>
             {fieldSaveErrors.bins ? (
-              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.bins}</Text>
+              <View style={styles.fieldErrorRow}>
+                <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.bins}</Text>
+                <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving bins">
+                  <Text style={[styles.retryText, { color: colors.destructive }]}>Retry</Text>
+                </Pressable>
+              </View>
             ) : null}
             {bins.length === 0 && (
               <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
@@ -1178,7 +1439,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               ))}
             </View>
             {fieldSaveErrors.keywords ? (
-              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.keywords}</Text>
+              <View style={styles.fieldErrorRow}>
+                <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.keywords}</Text>
+                <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving keywords">
+                  <Text style={[styles.retryText, { color: colors.destructive }]}>Retry</Text>
+                </Pressable>
+              </View>
             ) : null}
             {keywords.length === 0 && (
               <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
@@ -1251,7 +1517,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Length</Text>
                 <KeyboardDoneInput
                   value={dimLength}
-                  onChangeText={v => { setDimLength(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={v => { pendingMeasureDimsRef.current = null; setDimLength(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                   placeholder="–"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
@@ -1262,7 +1528,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Width</Text>
                 <KeyboardDoneInput
                   value={dimWidth}
-                  onChangeText={v => { setDimWidth(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={v => { pendingMeasureDimsRef.current = null; setDimWidth(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                   placeholder="–"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
@@ -1273,7 +1539,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Height</Text>
                 <KeyboardDoneInput
                   value={dimHeight}
-                  onChangeText={v => { setDimHeight(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={v => { pendingMeasureDimsRef.current = null; setDimHeight(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                   placeholder="–"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
@@ -1284,7 +1550,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Diameter</Text>
                 <KeyboardDoneInput
                   value={dimDiameter}
-                  onChangeText={v => { setDimDiameter(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={v => { pendingMeasureDimsRef.current = null; setDimDiameter(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                   placeholder="–"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
@@ -1293,7 +1559,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               </View>
             </View>
             {fieldSaveErrors.dimensions ? (
-              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.dimensions}</Text>
+            <View style={styles.fieldErrorRow}>
+                <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.dimensions}</Text>
+                <Pressable onPress={retryDimensionsSave} accessibilityRole="button" accessibilityLabel="Retry saving dimensions">
+                  <Text style={[styles.retryText, { color: colors.destructive }]}>Retry</Text>
+                </Pressable>
+              </View>
             ) : null}
             {(dimLength || dimWidth || dimHeight || dimDiameter) ? (
               <Text style={[styles.dimSummary, { color: colors.primary }]}>
@@ -1309,12 +1580,20 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                 <Text style={[styles.errorText, { color: colors.destructive }]}>{errorMsg}</Text>
               </View>
             ) : null}
+            {refreshWarning ? (
+              <View style={[styles.errorBanner, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "66" }]}>
+                <Text style={[styles.errorText, { color: colors.warning }]}>{refreshWarning}</Text>
+              </View>
+            ) : null}
           </ScrollView>
 
           <View style={[styles.footer, { borderTopColor: colors.border }]}>
             {onShowOnMap && item ? (
               <Pressable
-                onPress={() => { onClose(); onShowOnMap(item); }}
+                onPress={() => requestClose(() => {
+                  onClose();
+                  onShowOnMap(item);
+                })}
                 style={[styles.mapBtn, { backgroundColor: colors.accentForeground + "18", borderColor: colors.accentForeground + "44" }]}
                 accessibilityLabel="Show this part on the map"
               >
@@ -1333,8 +1612,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
               </Pressable>
             ) : null}
             <Pressable
-              onPress={onClose}
-              style={[styles.cancelBtn, { borderColor: colors.border }]}
+              onPress={() => requestClose()}
+              disabled={isCloseBlocked}
+              style={[styles.cancelBtn, { borderColor: colors.border, opacity: isCloseBlocked ? 0.45 : 1 }]}
             >
               <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
             </Pressable>
@@ -1363,6 +1643,25 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           </DismissKeyboard>
         </KeyboardAvoidingView>
       </Modal>
+
+      <ConfirmDialog
+        visible={discardDialogVisible}
+        title="Discard changes?"
+        message="Your edits will be lost."
+        confirmLabel="Discard"
+        cancelLabel="Keep Editing"
+        destructive
+        onConfirm={discardChanges}
+        onCancel={keepEditing}
+      />
+
+      <InfoDialog
+        visible={saveInFlightDialogVisible}
+        title="Save in progress"
+        message="Please wait for the current save to finish before closing this editor."
+        dismissLabel="Keep Editing"
+        onDismiss={keepEditing}
+      />
 
       {/* MeasurePartScreen is rendered outside the main Modal so it can present
           its own full-screen Modal without nesting conflicts on iOS. */}
@@ -1478,6 +1777,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: "Inter_500Medium",
     marginTop: 4,
+  },
+  fieldErrorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  retryText: {
+    fontSize: 12,
+    fontFamily: "Inter_700Bold",
+    textDecorationLine: "underline",
   },
   addRow: { flexDirection: "row", gap: 8 },
   addInput: {

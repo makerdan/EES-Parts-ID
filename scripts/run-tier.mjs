@@ -44,10 +44,12 @@ if (lock.bypassed) console.log("[run-tier] explicit ad-hoc no-plan bypass enable
 
 const report = [];
 let failed = null;
+const executionStart = Date.now();
 for (const [name, command] of resolvedSteps) {
   console.log(`\n━━━ [run-tier] step: ${name} ━━━`);
   const start = Date.now();
-  const result = spawnSync("bash", ["-c", command], { stdio: "inherit", env: process.env });
+  const env = name === "test" ? { ...process.env, DATABASE_ENV: "test" } : process.env;
+  const result = spawnSync("bash", ["-c", command], { stdio: "inherit", env });
   const seconds = ((Date.now() - start) / 1000).toFixed(1);
   const ok = result.status === 0;
   report.push({ name, seconds, ok });
@@ -58,10 +60,12 @@ for (const [name, command] of resolvedSteps) {
 }
 
 const ran = new Set(report.map((entry) => entry.name));
+const executionSecs = ((Date.now() - executionStart) / 1000).toFixed(1);
 console.log(`\n━━━ [run-tier] ${lock.tier} tier report ━━━`);
 for (const entry of report) console.log(`  ${entry.ok ? "PASSED " : "FAILED "} ${entry.name}  (${entry.seconds}s)`);
 for (const [name] of resolvedSteps) if (!ran.has(name)) console.log(`  SKIPPED ${name}  (fail-fast: not run)`);
 console.log(`  queue-wait before start: ${waitSecs}s (${underLoad ? "concurrent load" : "solo"})`);
+console.log(`  tier execution after lock: ${executionSecs}s`);
 
 if (failed) {
   console.error(`\n[run-tier] FAILED at step "${failed.name}" (exit ${failed.code}) — tier ${lock.tier} did not pass.`);

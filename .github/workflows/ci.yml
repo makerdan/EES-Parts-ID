@@ -39,11 +39,13 @@ jobs:
           --health-retries 12
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/testdb
+      DATABASE_ENV: test
       CI: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up repository toolchain
@@ -61,6 +63,10 @@ jobs:
           echo "PostgreSQL did not become ready." >&2
           exit 1
 
+      - name: Enable PostgreSQL trigram extension
+        shell: bash
+        run: psql "$DATABASE_URL" --set=ON_ERROR_STOP=1 --command="CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
       - name: Prepare isolated PostgreSQL schema
         shell: bash
         run: pnpm --filter @workspace/db run push-force
@@ -68,6 +74,12 @@ jobs:
       - name: Run the canonical standard-plus validation tier
         shell: bash
         run: pnpm run test-standard-plus
+
+      - name: Report opt-in live Poe provider validation
+        if: ${{ always() && env.POE_LIVE_PROVIDER == '1' }}
+        continue-on-error: true
+        shell: bash
+        run: pnpm --filter @workspace/api-server run test:provider
 
       - name: Retain sanitized validation diagnostics
         if: always()
@@ -84,30 +96,37 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  native:
+    name: Native LiDAR validation
+    uses: ./.github/workflows/lidar-measure-tests.yml
+
   required:
     name: CI / required
     if: always()
-    needs: [validate]
+    needs: [validate, native]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
     steps:
-      - name: Fail closed unless portable validation passed
+      - name: Fail closed unless all required validation passed
         shell: bash
         env:
           VALIDATE_RESULT: ${{ needs.validate.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
         run: |
-          case "$VALIDATE_RESULT" in
-            success)
-              echo "Portable validation passed."
-              ;;
-            failure|cancelled|skipped|"")
-              echo "Portable validation result was '$VALIDATE_RESULT'; required validation cannot pass." >&2
-              exit 1
-              ;;
-            *)
-              echo "Unexpected portable validation result '$VALIDATE_RESULT'." >&2
-              exit 1
-              ;;
-          esac
+          for result in "$VALIDATE_RESULT" "$NATIVE_RESULT"; do
+            case "$result" in
+              success)
+                ;;
+              failure|cancelled|skipped|"")
+                echo "Required validation result was '$result'; required validation cannot pass." >&2
+                exit 1
+                ;;
+              *)
+                echo "Unexpected required validation result '$result'." >&2
+                exit 1
+                ;;
+            esac
+          done
+          echo "Portable and native validation passed."

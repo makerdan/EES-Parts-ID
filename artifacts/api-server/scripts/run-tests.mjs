@@ -15,7 +15,7 @@ import { spawnSync } from "child_process";
 import { copyFileSync, existsSync, readFileSync, unlinkSync } from "fs";
 import { glob } from "node:fs/promises";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -42,82 +42,169 @@ const jestBin = join(ROOT, "node_modules", ".bin", "jest");
  */
 const SUITE_FLOOR_RATIO = 0.85;
 
-const globbed = await Array.fromAsync(
-  glob("**/__tests__/**/*.test.ts", { cwd: ROOT, withFileTypes: false, exclude: ["node_modules/**"] })
-);
-const discoveredCount = globbed.length;
-const SUITE_FLOOR = Math.floor(discoveredCount * SUITE_FLOOR_RATIO);
-console.log(`Suite-count guard: discovered ${discoveredCount} test files → floor = ${SUITE_FLOOR} (${Math.round(SUITE_FLOOR_RATIO * 100)}%)`);
-
-
 const RESULTS_FILE = join(ROOT, "jest-results.json");
 
-if (existsSync(RESULTS_FILE)) {
-  unlinkSync(RESULTS_FILE);
-}
+const TEST_FILTER_FLAGS = new Set([
+  "--changedSince",
+  "--changedFilesWithAncestor",
+  "--findRelatedTests",
+  "--lastCommit",
+  "--onlyChanged",
+  "--runTestsByPath",
+  "--selectProjects",
+  "--testNamePattern",
+  "--testPathPattern",
+  "--testPathPatterns",
+  "-t",
+]);
 
-// pnpm ≥9 forwards a literal "--" separator into script argv; Jest would
-// treat it and everything after it as test-path patterns (matching nothing).
-// Strip it, and intercept any caller-supplied --outputFile: the guard below
-// must read Jest's JSON from RESULTS_FILE, so we run Jest with RESULTS_FILE
-// and copy the JSON to the caller's requested path afterwards.
-const forwarded = [];
-let callerOutputFile = null;
-for (const arg of process.argv.slice(2)) {
-  if (arg === "--") continue;
-  if (arg.startsWith("--outputFile=")) {
-    callerOutputFile = arg.slice("--outputFile=".length);
-    continue;
-  }
-  if (arg === "--json") continue; // already passed below
-  forwarded.push(arg);
-}
+// These options consume the following argument. Their values are not test
+// file patterns, so do not mistake them for focused-run selectors.
+const VALUE_FLAGS = new Set([
+  "--cacheDirectory",
+  "--config",
+  "--coverageDirectory",
+  "--coverageReporters",
+  "--globals",
+  "--maxWorkers",
+  "--moduleNameMapper",
+  "--outputFile",
+  "--preset",
+  "--projects",
+  "--resolver",
+  "--roots",
+  "--setupFiles",
+  "--setupFilesAfterEnv",
+  "--testEnvironment",
+  "--testMatch",
+  "--testPathIgnorePatterns",
+  "--transform",
+  "--watchPathIgnorePatterns",
+]);
 
-const result = spawnSync(
-  jestBin,
-  ["--json", `--outputFile=${RESULTS_FILE}`, ...forwarded],
-  { stdio: "inherit", cwd: ROOT }
-);
+/**
+ * Return whether Jest was asked to run a focused selection.
+ *
+ * Positional arguments are test path patterns. Jest's named selection flags
+ * are also focused, including test-name selection, because the full-tree
+ * suite floor is not meaningful when the caller intentionally narrows the
+ * run.
+ */
+export function hasExplicitTestFilter(args) {
+  let consumesValue = false;
 
-let exitCode = result.status ?? 1;
-
-if (!existsSync(RESULTS_FILE)) {
-  console.error(
-    "\nERROR: Suite-count guard: jest-results.json was not written — Jest may have crashed before producing output."
-  );
-  process.exit(1);
-}
-
-let data;
-try {
-  data = JSON.parse(readFileSync(RESULTS_FILE, "utf8"));
-} catch (err) {
-  console.error(`\nERROR: Suite-count guard: could not parse jest-results.json — ${err.message}`);
-  process.exit(1);
-} finally {
-  try {
-    if (callerOutputFile) {
-      copyFileSync(RESULTS_FILE, callerOutputFile);
+  for (const arg of args) {
+    if (consumesValue) {
+      consumesValue = false;
+      continue;
     }
-  } catch (err) {
-    console.error(`WARNING: could not copy results to ${callerOutputFile} — ${err.message}`);
+
+    if (VALUE_FLAGS.has(arg)) {
+      consumesValue = true;
+      continue;
+    }
+
+    if (TEST_FILTER_FLAGS.has(arg) || [...TEST_FILTER_FLAGS].some((flag) => arg.startsWith(`${flag}=`))) {
+      return true;
+    }
+
+    if (!arg.startsWith("-")) {
+      return true;
+    }
   }
-  try {
-    unlinkSync(RESULTS_FILE);
-  } catch {
-    // ignore
-  }
+
+  return false;
 }
 
-const { numPassedTestSuites = 0, numFailedTestSuites = 0, numPendingTestSuites = 0, numTotalTestSuites = 0 } = data;
-const ran = numPassedTestSuites + numFailedTestSuites + numPendingTestSuites;
+export function getSuiteFloor({ discoveredCount, focused }) {
+  if (focused) return null;
+  return Math.floor(discoveredCount * SUITE_FLOOR_RATIO);
+}
 
-if (ran < SUITE_FLOOR) {
-  console.error(`
+export function violatesSuiteFloor({ ran, suiteFloor }) {
+  return suiteFloor !== null && ran < suiteFloor;
+}
+
+async function main() {
+  // pnpm ≥9 forwards a literal "--" separator into script argv; Jest would
+  // treat it and everything after it as test-path patterns (matching nothing).
+  // Strip it, and intercept any caller-supplied --outputFile: the guard below
+  // must read Jest's JSON from RESULTS_FILE, so we run Jest with RESULTS_FILE
+  // and copy the JSON to the caller's requested path afterwards.
+  const forwarded = [];
+  let callerOutputFile = null;
+  for (const arg of process.argv.slice(2)) {
+    if (arg === "--") continue;
+    if (arg.startsWith("--outputFile=")) {
+      callerOutputFile = arg.slice("--outputFile=".length);
+      continue;
+    }
+    if (arg === "--json") continue; // already passed below
+    forwarded.push(arg);
+  }
+
+  const focused = hasExplicitTestFilter(forwarded);
+  let suiteFloor = null;
+  if (focused) {
+    console.log("Suite-count guard: focused run detected → full-run floor disabled");
+  } else {
+    const globbed = await Array.fromAsync(
+      glob("**/__tests__/**/*.test.ts", { cwd: ROOT, withFileTypes: false, exclude: ["node_modules/**"] })
+    );
+    const discoveredCount = globbed.length;
+    suiteFloor = getSuiteFloor({ discoveredCount, focused });
+    console.log(`Suite-count guard: discovered ${discoveredCount} test files → floor = ${suiteFloor} (${Math.round(SUITE_FLOOR_RATIO * 100)}%)`);
+  }
+
+  if (existsSync(RESULTS_FILE)) {
+    unlinkSync(RESULTS_FILE);
+  }
+
+  const result = spawnSync(
+    jestBin,
+    ["--json", `--outputFile=${RESULTS_FILE}`, ...forwarded],
+    { stdio: "inherit", cwd: ROOT }
+  );
+
+  let exitCode = result.status ?? 1;
+
+  if (!existsSync(RESULTS_FILE)) {
+    console.error(
+      "\nERROR: Suite-count guard: jest-results.json was not written — Jest may have crashed before producing output."
+    );
+    process.exit(1);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(readFileSync(RESULTS_FILE, "utf8"));
+  } catch (err) {
+    console.error(`\nERROR: Suite-count guard: could not parse jest-results.json — ${err.message}`);
+    process.exit(1);
+  } finally {
+    try {
+      if (callerOutputFile) {
+        copyFileSync(RESULTS_FILE, callerOutputFile);
+      }
+    } catch (err) {
+      console.error(`WARNING: could not copy results to ${callerOutputFile} — ${err.message}`);
+    }
+    try {
+      unlinkSync(RESULTS_FILE);
+    } catch {
+      // ignore
+    }
+  }
+
+  const { numPassedTestSuites = 0, numFailedTestSuites = 0, numPendingTestSuites = 0, numTotalTestSuites = 0 } = data;
+  const ran = numPassedTestSuites + numFailedTestSuites + numPendingTestSuites;
+
+  if (violatesSuiteFloor({ ran, suiteFloor })) {
+    console.error(`
 \x1b[31m╔══════════════════════════════════════════════════════════════╗
 ║              SUITE-COUNT GUARD FAILED                        ║
 ╚══════════════════════════════════════════════════════════════╝\x1b[0m
-  Expected at least \x1b[33m${SUITE_FLOOR}\x1b[0m suites to run.
+  Expected at least \x1b[33m${suiteFloor}\x1b[0m suites to run.
   Only \x1b[31m${ran}\x1b[0m ran out of \x1b[33m${numTotalTestSuites}\x1b[0m matched.
     passed : ${numPassedTestSuites}
     failed : ${numFailedTestSuites}
@@ -129,7 +216,12 @@ if (ran < SUITE_FLOOR) {
 
   Fix the underlying load error, then re-run the tests.
 `);
-  exitCode = 1;
+    exitCode = 1;
+  }
+
+  process.exit(exitCode);
 }
 
-process.exit(exitCode);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}

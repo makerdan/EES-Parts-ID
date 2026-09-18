@@ -5,8 +5,8 @@
  *   - query entry and execution with the protected-column metadata returned by
  *     the server,
  *   - native CSV/XLSX file creation and sharing, and
- *   - a rejected query after a successful query, proving stale rows disappear
- *     and no export request is attempted.
+ *   - empty, malformed, high-volume, and write-keyword responses, proving the
+ *     read-only boundary and recovery states remain visible.
  */
 
 // Required for act() to work correctly in the node test environment.
@@ -19,8 +19,24 @@ import type { TestInstance } from "test-renderer";
 
 // ── Clerk ─────────────────────────────────────────────────────────────────────
 
+const mockGetToken = jest.fn().mockResolvedValue("admin-query-token");
+const mockOpenUserProfile = jest.fn();
+const mockSignOut = jest.fn().mockResolvedValue(undefined);
+const mockAdminAuth = {
+  isLoaded: true,
+  isSignedIn: true,
+  userId: "admin-user",
+  getToken: mockGetToken,
+  signOut: mockSignOut,
+};
+const mockAdminClerk = {
+  openUserProfile: mockOpenUserProfile,
+  signOut: mockSignOut,
+};
+
 jest.mock("@clerk/expo", () => ({
-  useAuth: () => ({ userId: "admin-user" }),
+  useAuth: () => mockAdminAuth,
+  useClerk: () => mockAdminClerk,
 }));
 
 // ── Navigation and platform boundary mocks ────────────────────────────────────
@@ -40,6 +56,9 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 jest.mock("expo-document-picker", () => ({
   getDocumentAsync: jest.fn().mockResolvedValue({ canceled: true }),
 }));
+const mockDocumentPicker = jest.requireMock("expo-document-picker") as {
+  getDocumentAsync: jest.Mock;
+};
 
 type WrittenFile = { uri: string; bytes: number[] };
 const mockWrittenFiles: WrittenFile[] = [];
@@ -90,6 +109,68 @@ jest.mock("@workspace/api-client-react", () => ({
   setAuthTokenGetter: jest.fn(),
   setBaseUrl: jest.fn(),
 }));
+
+type MockInventoryResponse = {
+  data: {
+    items: Array<{
+      id: number;
+      vendor: string;
+      catalog: string;
+      description: string;
+      binLocations: string[];
+    }> | undefined;
+    total: number;
+    page: number;
+    limit: number;
+  } | undefined;
+  isLoading: boolean;
+  isFetching: boolean;
+  isError: boolean;
+};
+
+const mockUseListInventory = jest.requireMock("@workspace/api-client-react")
+  .useListInventory as jest.Mock;
+let mockInventoryResponses: Record<number, MockInventoryResponse>;
+let mockInventoryRefetchPages: number[];
+
+function makeInventoryItem(id: number, catalog: string) {
+  return {
+    id,
+    vendor: "ACME",
+    catalog,
+    description: `${catalog} description`,
+    binLocations: [],
+  };
+}
+
+mockUseListInventory.mockImplementation(({ page = 1 }: { page?: number } = {}) => {
+  const [, forceUpdate] = React.useState(0);
+  const response = mockInventoryResponses[page] ?? {
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  };
+  const refetch = jest.fn(async () => {
+    mockInventoryRefetchPages.push(page);
+    if (page === 2) {
+      mockInventoryResponses[page] = {
+        data: {
+          items: [makeInventoryItem(2, "SECOND-PART")],
+          total: 51,
+          page: 2,
+          limit: 1,
+        },
+        isLoading: false,
+        isFetching: false,
+        isError: false,
+      };
+    }
+    forceUpdate((value) => value + 1);
+    return { data: mockInventoryResponses[page]?.data };
+  });
+  return { ...response, refetch };
+});
 
 jest.mock("@/hooks/useColors", () =>
   require("./helpers/mapMocks").createUseColorsMock(),
@@ -227,6 +308,7 @@ const csvBytes = new TextEncoder().encode(
 const xlsxBytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x58, 0x4c, 0x53, 0x58]);
 
 const mockFetch = jest.fn();
+let mockFloorPlanContent = "<svg viewBox=\"0 0 10 10\"></svg>";
 let nextQueryResponse:
   | { ok: boolean; status: number; body: Record<string, unknown> }
   | undefined;
@@ -254,6 +336,16 @@ function responseForBlob(bytes: Uint8Array) {
 function installFetchMock(): void {
   mockFetch.mockImplementation(async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
+
+    if (url.startsWith("file://")) {
+      return {
+        ok: true,
+        status: 200,
+        text: jest.fn().mockResolvedValue(mockFloorPlanContent),
+        json: jest.fn(),
+        blob: jest.fn(),
+      };
+    }
 
     if (url.includes("/admin/query")) {
       const format = new URL(url).searchParams.get("format");
@@ -364,11 +456,57 @@ async function renderAdminWarehouse() {
   return activeTree;
 }
 
+async function renderAdminImport() {
+  useApp.mockReturnValue(makeAppMock());
+  activeTree = await render(React.createElement(
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require("../app/(tabs)/upload").default as React.ComponentType,
+  ));
+  await flushPromises();
+
+  const importCard = findPressable(activeTree.root!, "Data Import");
+  if (!importCard) throw new Error("The admin Data Import section card did not render");
+  await act(async () => { fireEvent.press(importCard); });
+  await flushPromises();
+
+  return activeTree;
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
+  expect(mockAdminAuth).toMatchObject({
+    isLoaded: true,
+    isSignedIn: true,
+    userId: "admin-user",
+  });
+  expect(mockAdminAuth.getToken).toEqual(expect.any(Function));
+  expect(mockAdminClerk.openUserProfile).toEqual(expect.any(Function));
+  expect(mockAdminClerk.signOut).toEqual(expect.any(Function));
   mockWrittenFiles.length = 0;
+  mockInventoryRefetchPages = [];
+  mockInventoryResponses = {
+    1: {
+      data: {
+        items: [makeInventoryItem(1, "FIRST-PART")],
+        total: 51,
+        page: 1,
+        limit: 1,
+      },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    },
+    2: {
+      data: undefined,
+      isLoading: false,
+      isFetching: false,
+      isError: true,
+    },
+  };
   nextQueryResponse = undefined;
+  mockFloorPlanContent = "<svg viewBox=\"0 0 10 10\"></svg>";
   installFetchMock();
+  mockDocumentPicker.getDocumentAsync.mockResolvedValue({ canceled: true });
   mockSharingAvailable.mockResolvedValue(true);
   mockShareAsync.mockResolvedValue(undefined);
   useApp.mockReturnValue(makeAppMock());
@@ -475,7 +613,7 @@ describe("UploadScreen — rendered admin query workflow", () => {
     );
   });
 
-  it("shows a rejected-query error without stale rows or an export attempt", async () => {
+  it("blocks write-keyword queries without sending a mutation request", async () => {
     const tree = await renderAdminWarehouse();
     const input = findQueryInput(tree.root!);
 
@@ -487,24 +625,161 @@ describe("UploadScreen — rendered admin query workflow", () => {
     expect(instText(tree.root!)).toContain("CONTACTOR-42");
 
     const rejectedSql = "DELETE FROM inventory";
-    nextQueryResponse = {
-      ok: false,
-      status: 400,
-      body: { error: "Only read-only SELECT queries are allowed." },
-    };
-    await act(async () => { fireEvent.changeText(input, rejectedSql); });
+    const rejectedInput = findQueryInput(tree.root!);
+    await act(async () => { fireEvent.changeText(rejectedInput, rejectedSql); });
+    await flushPromises();
     await act(async () => {
       fireEvent.press(findPressable(tree.root!, "▶ Run")!);
     });
     await flushPromises();
 
-    expect(instText(tree.root!)).toContain("Only read-only SELECT queries are allowed.");
+    expect(instText(tree.root!)).toContain("Write operations are blocked.");
     expect(instText(tree.root!)).not.toContain("CONTACTOR-42");
+    expect(mockFetch.mock.calls.filter(([url]) =>
+      String(url) === "http://localhost:3001/api/admin/query",
+    )).toHaveLength(1);
     expect(findPressable(tree.root!, "Download CSV")).toBeNull();
     expect(findPressable(tree.root!, "Download Excel")).toBeNull();
     expect(mockFetch.mock.calls.filter(([url]) =>
       String(url).includes("/admin/query?format="),
     )).toHaveLength(0);
     expect(mockShareAsync).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes a valid empty result from an error", async () => {
+    nextQueryResponse = {
+      ok: true,
+      status: 200,
+      body: { columns: ["id", "catalog"], rows: [], rowCount: 0 },
+    };
+    const tree = await renderAdminWarehouse();
+    const input = findQueryInput(tree.root!);
+
+    await act(async () => { fireEvent.changeText(input, validSql); });
+    await act(async () => { fireEvent.press(findPressable(tree.root!, "▶ Run")!); });
+    await flushPromises();
+
+    expect(instText(tree.root!)).toContain("No rows returned");
+    expect(instText(tree.root!)).not.toContain("Results could not be displayed");
+  });
+
+  it("shows a retryable display error for malformed result rows", async () => {
+    nextQueryResponse = {
+      ok: true,
+      status: 200,
+      body: { columns: ["id"], rows: [null], rowCount: 1 },
+    };
+    const tree = await renderAdminWarehouse();
+    const input = findQueryInput(tree.root!);
+
+    await act(async () => { fireEvent.changeText(input, validSql); });
+    await act(async () => { fireEvent.press(findPressable(tree.root!, "▶ Run")!); });
+    await flushPromises();
+
+    expect(instText(tree.root!)).toContain("Results could not be displayed. Retry the query.");
+    expect(findPressable(tree.root!, "Download CSV")).toBeNull();
+  });
+
+  it("keeps loaded inventory visible and retries only the failed page", async () => {
+    const tree = await renderAdminWarehouse();
+    expect(instText(tree.root!)).toContain("FIRST-PART");
+
+    const loadMore = findPressable(tree.root!, "Load More");
+    expect(loadMore).not.toBeNull();
+    await act(async () => { fireEvent.press(loadMore!); });
+    await flushPromises();
+
+    expect(instText(tree.root!)).toContain("FIRST-PART");
+    expect(instText(tree.root!)).toContain("Inventory page 2 unavailable");
+    expect(instText(tree.root!)).toContain("Retry page 2");
+    expect(instText(tree.root!)).not.toContain("No Inventory");
+
+    const retry = findPressable(tree.root!, "Retry page 2");
+    expect(retry).not.toBeNull();
+    expect(retry?.props.accessibilityLabel).toBe("Retry inventory page 2");
+    await act(async () => { fireEvent.press(retry!); });
+    await flushPromises();
+
+    expect(mockInventoryRefetchPages).toEqual([2]);
+    expect(instText(tree.root!)).toContain("FIRST-PART");
+    expect(instText(tree.root!)).toContain("SECOND-PART");
+    expect(instText(tree.root!)).not.toContain("Inventory page 2 unavailable");
+    expect(instText(tree.root!)).toContain("All inventory items loaded.");
+    expect(
+      tree.root!.queryAll(
+        (node: Inst) =>
+          (node.type as string) === "rn-pressable" &&
+          instText(node).includes("SECOND-PART"),
+        { includeSelf: true },
+      ),
+    ).toHaveLength(1);
+    expect(mockFetch.mock.calls.some(([url]) => String(url).includes("/inventory/upsert"))).toBe(false);
+  });
+
+  it("bounds high-volume result rendering while keeping export available", async () => {
+    nextQueryResponse = {
+      ok: true,
+      status: 200,
+      body: {
+        columns: ["id", "catalog"],
+        rows: Array.from({ length: 150 }, (_, index) => ({
+          id: index + 1,
+          catalog: `CAT-${String(index + 1).padStart(4, "0")}`,
+        })),
+        rowCount: 150,
+      },
+    };
+    const tree = await renderAdminWarehouse();
+    const input = findQueryInput(tree.root!);
+
+    await act(async () => { fireEvent.changeText(input, validSql); });
+    await act(async () => { fireEvent.press(findPressable(tree.root!, "▶ Run")!); });
+    await flushPromises();
+
+    expect(instText(tree.root!)).toContain("Showing the first 100 rows for responsiveness.");
+    expect(instText(tree.root!)).toContain("CAT-0100");
+    expect(instText(tree.root!)).not.toContain("CAT-0101");
+    expect(findPressable(tree.root!, "Download CSV")).not.toBeNull();
+  });
+
+  it("rejects a non-SVG floor-plan selection before any upload request", async () => {
+    mockDocumentPicker.getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [{ name: "warehouse.png", uri: "file://warehouse.png", mimeType: "image/png", size: 100 }],
+    });
+    const tree = await renderAdminImport();
+
+    await act(async () => {
+      fireEvent.press(findPressable(tree.root!, "Choose SVG File")!);
+    });
+    await flushPromises();
+
+    expect(instText(tree.root!)).toContain("Choose an SVG file with an .svg extension");
+    expect(findPressable(tree.root!, "Upload Floor Plan")).toBeNull();
+    expect(mockFetch.mock.calls.some(([url]) => String(url).includes("/admin/floor-plan"))).toBe(false);
+  });
+
+  it("keeps a selected SVG for retry when its content is malformed", async () => {
+    mockDocumentPicker.getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [{ name: "warehouse.svg", uri: "file://warehouse.svg", mimeType: "image/svg+xml", size: 100 }],
+    });
+    mockFloorPlanContent = "not an svg";
+    const tree = await renderAdminImport();
+
+    await act(async () => {
+      fireEvent.press(findPressable(tree.root!, "Choose SVG File")!);
+    });
+    await flushPromises();
+    expect(findPressable(tree.root!, "Upload Floor Plan")).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.press(findPressable(tree.root!, "Upload Floor Plan")!);
+    });
+    await flushPromises();
+
+    expect(instText(tree.root!)).toContain("does not contain a complete SVG document");
+    expect(findPressable(tree.root!, "Upload Floor Plan")).not.toBeNull();
+    expect(mockFetch.mock.calls.some(([url]) => String(url).includes("/admin/floor-plan"))).toBe(false);
   });
 });

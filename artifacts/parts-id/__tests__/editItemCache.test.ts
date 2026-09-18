@@ -16,9 +16,11 @@ import {
 } from "../utils/editItemCache";
 import type {
   AsyncStorageLike,
+  CacheCleanupResult,
   QueryClientLike,
   QueryClientLikeWithSetQueries,
 } from "../utils/editItemCache";
+import type { InventoryItem } from "@workspace/api-client-react";
 
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 
@@ -138,25 +140,25 @@ describe("invalidateSearchAndEvictItem", () => {
     expect(storage.setItem).not.toHaveBeenCalled();
   });
 
-  it("swallows AsyncStorage parse failures (non-fatal)", async () => {
+  it("reports parse failures without propagating", async () => {
     const qc = makeQueryClient();
     const storage = makeStorage({ [QUERY_CACHE_KEY]: "NOT_VALID_JSON{{{{" });
 
     await expect(
       invalidateSearchAndEvictItem({ queryClient: qc, asyncStorage: storage, itemId: 1 }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ failures: [], ok: true });
 
     expect(storage.setItem).not.toHaveBeenCalled();
   });
 
-  it("swallows AsyncStorage.getItem rejections (non-fatal)", async () => {
+  it("reports AsyncStorage.getItem rejections without propagating", async () => {
     const qc = makeQueryClient();
     const storage = makeStorage();
     (storage.getItem as jest.Mock).mockRejectedValue(new Error("disk full"));
 
     await expect(
       invalidateSearchAndEvictItem({ queryClient: qc, asyncStorage: storage, itemId: 1 }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ ok: false, failures: [expect.any(Error)] });
   });
 });
 
@@ -189,6 +191,28 @@ describe("invalidateAllCachesAfterSave", () => {
     );
     expect(hasSearch).toBe(true);
     expect(hasPredicate).toBe(true);
+  });
+
+  it("patches active caches and reports refresh failures after the item is committed", async () => {
+    const qc = makeQueryClientFull();
+    qc.invalidateQueries.mockImplementation(async (arg) => {
+      if (typeof arg === "object" && arg !== null && "predicate" in arg) {
+        throw new Error("list refresh unavailable");
+      }
+    });
+    const storage = makeStorage();
+    const updatedItem = { id: 7, description: "saved" } as InventoryItem;
+
+    const result: CacheCleanupResult = await invalidateAllCachesAfterSave({
+      queryClient: qc,
+      asyncStorage: storage,
+      itemId: updatedItem.id,
+      updatedItem,
+    });
+
+    expect(qc.setQueriesData).toHaveBeenCalledTimes(2);
+    expect(result.ok).toBe(false);
+    expect(result.failures).toHaveLength(1);
   });
 });
 

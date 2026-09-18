@@ -31,14 +31,15 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 }));
 
 // ── Deterministic object-storage fixture ──────────────────────────────────────
+const mockFixtureInstance = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
 const mockOldSvg =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400">' +
-  '<rect id="old-floor-plan" x="0" y="0" width="800" height="400"/></svg>';
+  `<rect id="old-floor-plan" x="0" y="0" width="800" height="400"/><!-- ${mockFixtureInstance} --></svg>`;
 const mockReplacementSvg =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="100 200 1200 600">' +
-  '<path id="replacement-floor-plan" d="M100 200H1300V800Z"/></svg>';
-const mockOldObjectPath = "/objects/jest-test/floor-plan/old.svg";
-const mockReplacementObjectPath = "/objects/jest-test/floor-plan/replacement.svg";
+  `<path id="replacement-floor-plan" d="M100 200H1300V800Z"/><!-- ${mockFixtureInstance} --></svg>`;
+const mockOldObjectPath = `/objects/jest-test/${mockFixtureInstance}/floor-plan/old.svg`;
+const mockReplacementObjectPath = `/objects/jest-test/${mockFixtureInstance}/floor-plan/replacement.svg`;
 let mockStoredSvg = mockOldSvg;
 
 const mockUploadFloorPlanSvg = jest.fn(async (svg: string) => {
@@ -75,12 +76,13 @@ import os from "node:os";
 import path from "node:path";
 
 import supertest from "supertest";
-import { db, floorPlanMetaTable, pool } from "@workspace/db";
+import { db, floorPlanMetaTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { createWebSvgScene } from "../../parts-id/utils/webSvgScene";
+import { setTestEnv } from "./helpers/testEnv";
 
 const OLD_HASH = crypto.createHash("sha256").update(mockOldSvg).digest("hex");
 const REPLACEMENT_HASH = crypto
@@ -94,6 +96,7 @@ const REPLACEMENT_TILE_PATH = path.join(
   `${REPLACEMENT_HASH}_0_0_0.png`,
 );
 const ADMIN_TOKEN = signAdminToken();
+let restoreTestEnv: (() => void) | undefined;
 
 async function deleteFixtureMetadata(): Promise<void> {
   await db
@@ -105,7 +108,9 @@ async function deleteFixtureMetadata(): Promise<void> {
 
 describe("floor-plan replacement → map rendering workflow", () => {
   beforeAll(async () => {
-    process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID = "jest-floor-plan-bucket";
+    restoreTestEnv = setTestEnv({
+      DEFAULT_OBJECT_STORAGE_BUCKET_ID: "jest-floor-plan-bucket",
+    });
     await deleteFixtureMetadata();
   }, 15_000);
 
@@ -113,8 +118,7 @@ describe("floor-plan replacement → map rendering workflow", () => {
     await deleteFixtureMetadata();
     await fs.rm(OLD_TILE_PATH, { force: true });
     await fs.rm(REPLACEMENT_TILE_PATH, { force: true });
-    delete process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
-    await pool.end();
+    restoreTestEnv?.();
   }, 15_000);
 
   beforeEach(async () => {

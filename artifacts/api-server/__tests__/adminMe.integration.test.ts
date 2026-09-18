@@ -32,19 +32,24 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
-jest.mock("openai", () =>
-  jest.fn().mockImplementation(() => ({
-    chat: { completions: { create: jest.fn() } },
-  })),
-);
+jest.mock("openai", () => {
+  const { createOpenAIMock } = jest.requireActual(
+    "./helpers/openaiMock",
+  ) as typeof import("./helpers/openaiMock");
+  return createOpenAIMock(jest);
+});
 
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { seedTestUser, cleanupTestUser } from "./helpers/testDb";
+import {
+  seedTestUser,
+  cleanupTestUser,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 
-const NONADMIN_USER_ID = "me-test-nonadmin-user";
-const PROMOTED_ADMIN_USER_ID = "me-test-promoted-admin";
+const NONADMIN_USER_ID = workerQualifiedUserId("me-test-nonadmin-user");
+const PROMOTED_ADMIN_USER_ID = workerQualifiedUserId("me-test-promoted-admin");
 
 afterAll(async () => {
   await cleanupTestUser(NONADMIN_USER_ID);

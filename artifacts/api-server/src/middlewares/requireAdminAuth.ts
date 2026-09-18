@@ -16,71 +16,24 @@ import { logger } from "../lib/logger";
  * The designated bootstrap admin (`ADMIN_CLERK_USER_ID`) is always treated as
  * an admin, matching the guarantee enforced in `requireAppAuth`.
  *
- * MFA enforcement:
- *   MFA is enforced by default. Admin users must have completed a second
- *   authentication factor (TOTP, phone code, or hardware key) as evidenced by
- *   the `amr` claim in their Clerk session token.
- *   Sessions that only contain password authentication (`pwd`) receive:
- *     403 { error: "MFA required for admin access", code: "MFA_REQUIRED" }
- *   To disable (not recommended): set SKIP_ADMIN_MFA=true in the API server's
- *   environment. The server will emit a startup warning when this flag is set.
- *   Admins enroll via the Clerk account portal (Settings → Security → Two-step
- *   verification), or in-app via the Clerk user profile component.
+ * An authenticated, approved administrator is admitted regardless of which
+ * second-factor claims (if any) are present on the Clerk session. MFA is a
+ * Clerk account-level setting outside this application's authorization
+ * boundary; this middleware only checks Clerk session validity, approval
+ * status, and admin role.
  *
  * 401 — no Clerk session
  * 403 — authenticated but not an admin
- * 403 { code: "MFA_REQUIRED" } — admin session lacks a completed MFA factor
  */
-
-/** Second-factor method values that satisfy the MFA requirement. */
-const MFA_FACTORS = new Set(["totp", "phone_code", "phishing_resistant_hw_key"]);
-
-/**
- * Returns true when the Clerk session attached to the request contains at least
- * one recognised second-factor entry in the `amr` claim.
- */
-function sessionHasMfa(req: Request): boolean {
-  const clerkAuth = getAuth(req);
-  const claims = clerkAuth?.sessionClaims as Record<string, unknown> | null | undefined;
-  const amr = claims?.["amr"];
-  if (!Array.isArray(amr)) return false;
-  return (amr as Array<unknown>).some((factor) => typeof factor === "string" && MFA_FACTORS.has(factor));
-}
-
-/**
- * Returns 403 { code: "MFA_REQUIRED" } if the session does not include a
- * second factor, unless SKIP_ADMIN_MFA=true explicitly disables enforcement.
- * Returns false when MFA is satisfied or enforcement is disabled (caller
- * should call next()).
- */
-function rejectIfMfaMissing(req: Request, res: Response): boolean {
-  // Production must always fail closed. The bypass exists only for local test
-  // and development environments and can never weaken a deployed admin route.
-  if (process.env.NODE_ENV !== "production" && process.env.SKIP_ADMIN_MFA === "true") return false;
-  if (sessionHasMfa(req)) return false;
-  res.status(403).json({
-    error: "MFA required for admin access",
-    code: "MFA_REQUIRED",
-  });
-  return true;
-}
 
 /**
  * Re-check admin access for routes that may include privileged content but
  * must remain usable by ordinary approved users. This deliberately does not
- * trust res.locals.appUser: role and status are read again from the database,
- * and the current Clerk session must still contain a recognized MFA factor.
+ * trust res.locals.appUser: role and status are read again from the database.
  */
 export async function hasCurrentAdminAccess(req: Request): Promise<boolean> {
   const userId = getAuth(req)?.userId;
-  if (!userId || (process.env.NODE_ENV === "production" && !sessionHasMfa(req))) return false;
-  if (process.env.NODE_ENV !== "production" && process.env.SKIP_ADMIN_MFA === "true") {
-    // Development/test bypass follows the same explicit opt-out as the
-    // admin-only middleware, but the database role is still revalidated.
-    if (process.env.ADMIN_CLERK_USER_ID === userId) return true;
-  } else if (!sessionHasMfa(req)) {
-    return false;
-  }
+  if (!userId) return false;
 
   if (process.env.ADMIN_CLERK_USER_ID === userId) return true;
 
@@ -93,26 +46,45 @@ export async function hasCurrentAdminAccess(req: Request): Promise<boolean> {
   return rows[0]?.role === "admin" && rows[0]?.status === "approved";
 }
 
-export function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
+/**
+ * Returns the Clerk identity that passed the app and admin guards.
+ *
+ * Routes use this instead of independently choosing between appUser and the
+ * Clerk session, so resource ownership always follows the approved app user.
+ */
+export function getAdminClerkUserId(req: Request, res: Response): string {
+  const appUser = res.locals.appUser as { clerkUserId?: string } | undefined;
+  return appUser?.clerkUserId ?? getAuth(req)?.userId ?? "unknown";
+}
+
+type AppUser = {
+  clerkUserId: string;
+  status?: string;
+  role?: string;
+};
+
+function logBootstrapAdminRequest(req: Request, res: Response, clerkUserId: string): void {
+  // Emit an audit-level warning for every request made under the bootstrap
+  // admin identity so these privileged actions are visible in deployment logs.
+  if (res.locals.isBootstrapAdmin) {
+    logger.warn({
+      bootstrapAdmin: true,
+      path: req.path,
+      method: req.method,
+      clerkUserId,
+      requestId: res.locals.requestId as string | undefined,
+    }, "Bootstrap admin request");
+  }
+}
+
+function requireApprovedAdmin(req: Request, res: Response, next: NextFunction): void {
   const appUser = res.locals.appUser as
-    | { clerkUserId: string; role?: string }
+    | AppUser
     | undefined;
 
   if (appUser) {
-    if (appUser.role === "admin") {
-      // Emit an audit-level warning for every request made under the bootstrap
-      // admin identity so these privileged actions are visible in deployment logs.
-      if (res.locals.isBootstrapAdmin) {
-        logger.warn({
-          bootstrapAdmin: true,
-          path: req.path,
-          method: req.method,
-          clerkUserId: appUser.clerkUserId,
-          requestId: res.locals.requestId as string | undefined,
-        }, "Bootstrap admin request");
-      }
-
-      if (rejectIfMfaMissing(req, res)) return;
+    if (appUser.status === "approved" && appUser.role === "admin") {
+      logBootstrapAdminRequest(req, res, appUser.clerkUserId);
       next();
     } else {
       res.status(403).json({ error: "Admin access required" });
@@ -132,7 +104,7 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
 
   const adminClerkUserId = process.env.ADMIN_CLERK_USER_ID;
   if (adminClerkUserId && userId === adminClerkUserId) {
-    if (rejectIfMfaMissing(req, res)) return;
+    logBootstrapAdminRequest(req, res, userId);
     next();
     return;
   }
@@ -140,13 +112,12 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
   (async () => {
     try {
       const rows = await db
-        .select({ role: usersTable.role })
+        .select({ role: usersTable.role, status: usersTable.status })
         .from(usersTable)
         .where(eq(usersTable.clerkUserId, userId))
         .limit(1);
 
-      if (rows[0]?.role === "admin") {
-        if (rejectIfMfaMissing(req, res)) return;
+      if (rows[0]?.role === "admin" && rows[0]?.status === "approved") {
         next();
       } else {
         res.status(403).json({ error: "Admin access required" });
@@ -155,4 +126,19 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
       res.status(500).json({ error: "Admin authorization check failed. Please try again." });
     }
   })();
+}
+
+/**
+ * Admin guard shared by every privileged route. Retained under two names
+ * (`requireApprovedAdminAuth` and `requireAdminAuth`) so route declarations
+ * keep signalling their intended audience even though both now enforce the
+ * same authenticated-approved-admin contract.
+ */
+export function requireApprovedAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  requireApprovedAdmin(req, res, next);
+}
+
+/** Admin guard for sensitive operations. */
+export function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  requireApprovedAdmin(req, res, next);
 }

@@ -2,38 +2,39 @@
  * One-off inventory import script.
  *
  * Usage (from workspace root):
- *   DATABASE_URL="$DATABASE_URL" pnpm --filter @workspace/api-server exec tsx src/seed/import-spreadsheet.ts
+ *   DATABASE_URL="$DATABASE_URL" pnpm --filter @workspace/api-server exec tsx src/seed/import-spreadsheet.ts /path/to/inventory.xlsx
  *
  * The import is idempotent — re-running it upserts on (vendor, catalog) without
  * creating duplicates. Vendor is normalized to UPPERCASE to match the existing
  * upsert-batch route semantics. Catalog is stored as-is (trimmed), consistent
  * with the unique index in lib/db/src/schema/inventory.ts.
  *
- * Execution results (2026-05-01):
- *   Total rows read:   7397
- *   Valid rows:        7397
- *   Errors:            0
- *   Final DB count:    7397
+ * The source spreadsheet is deliberately supplied outside the repository. Do
+ * not add inventory exports or uploaded spreadsheets to the working tree.
  */
-
-import { dirname,resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { db, pool } from "@workspace/db";
 import { inventoryFtsVector, inventoryTable } from "@workspace/db";
+import { assertDatabaseExecutionMode } from "@workspace/db/runtime-data-boundary";
 import { sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-const XLSX_PATH = resolve(__dirname, "../../../../attached_assets/Master_INC_Report_(04.29.2026)_-_For_PartsID_Database_1777605533561.xlsx");
+const XLSX_PATH = process.argv[2] ?? process.env.INVENTORY_XLSX_PATH;
 const BATCH_SIZE = 250;
+
+assertDatabaseExecutionMode("seed");
 
 interface SpreadsheetRow {
   [key: string]: string;
 }
 
 async function importSpreadsheet() {
+  if (!XLSX_PATH) {
+    throw new Error(
+      "Missing spreadsheet path. Pass an external .xlsx path as the first argument " +
+        "or set INVENTORY_XLSX_PATH; repository data files are not used as import sources.",
+    );
+  }
   console.log("Reading spreadsheet:", XLSX_PATH);
 
   const workbook = new ExcelJS.Workbook();

@@ -4,6 +4,8 @@ description: Why "Jest did not exit" warnings appear and how to find/fix the tim
 ---
 Any `Promise.race([work, timeoutPromise])` where the timeout's `setTimeout` is not cleared (or at least `.unref()`d) keeps the Node process alive for the full timeout after the race settles. In Jest this surfaces as "Jest did not exit one second after the test run has completed".
 
+The timeout branch must also reject independently of `AbortSignal`: a transport or test double can ignore abort and leave its promise pending forever. Swallow late request rejections after the deadline wins.
+
 **Why:** Two real leaks were found this way in api-server: the 15s Poe bot probe timeout in aiProvider and the module-level 25s/8s startup fallback timers in index.ts (fired on mere import by startup tests).
 
 **How to apply:**

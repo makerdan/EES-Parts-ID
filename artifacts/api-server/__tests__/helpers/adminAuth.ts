@@ -17,9 +17,23 @@
  *   - `setRevokedBefore()` is a no-op (token revocation no longer exists).
  */
 
-export const ADMIN_TEST_USER_ID = "jest-admin-user";
+export const ADMIN_TEST_USER_ID = `jest-admin-user-${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
 
+const originalAdminClerkUserId = process.env.ADMIN_CLERK_USER_ID;
 process.env.ADMIN_CLERK_USER_ID = ADMIN_TEST_USER_ID;
+
+// This helper is imported for its default bootstrap-admin identity by many
+// suites. Restore the process-global value when the importing suite finishes
+// so a later suite in the same worker cannot inherit this identity.
+if (typeof afterAll === "function") {
+  afterAll(() => {
+    if (originalAdminClerkUserId === undefined) {
+      delete process.env.ADMIN_CLERK_USER_ID;
+    } else {
+      process.env.ADMIN_CLERK_USER_ID = originalAdminClerkUserId;
+    }
+  });
+}
 
 /** Returns a Bearer value that authenticates as the bootstrap admin. */
 export function signAdminToken(_ts?: number, _secret?: string): string {

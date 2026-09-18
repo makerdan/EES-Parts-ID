@@ -32,25 +32,31 @@ import supertest from "supertest";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID, signAdminToken } from "./helpers/adminAuth";
 import {
-  seedFixtures,
   cleanupFixtures,
+  seedFixtures,
+  STANDARD_FIXTURE_CATALOGS,
   STANDARD_FIXTURES,
+  workerQualifiedUserId,
 } from "./helpers/testDb";
+import { setTestEnv } from "./helpers/testEnv";
 import { SearchInventoryResponse } from "@workspace/api-zod";
 
 // ── Test configuration ────────────────────────────────────────────────────────
 const ADMIN_SECRET = "jest-integration-test-secret";
 let adminToken: string;
+let restoreTestEnv: (() => void) | undefined;
 
 beforeAll(async () => {
-  process.env.TEST_DEFAULT_AUTH_USER = ADMIN_TEST_USER_ID;
+  restoreTestEnv = setTestEnv({
+    TEST_DEFAULT_AUTH_USER: ADMIN_TEST_USER_ID,
+  });
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
   await cleanupFixtures();
   await seedFixtures(STANDARD_FIXTURES);
 }, 30_000);
 
 afterAll(async () => {
-  delete process.env.TEST_DEFAULT_AUTH_USER;
+  restoreTestEnv?.();
   await cleanupFixtures();
 }, 30_000);
 
@@ -62,7 +68,7 @@ describe("POST /api/inventory/search", () => {
   it("returns 200 with matching results for a seeded catalog number", async () => {
     const res = await supertest(app)
       .post("/api/inventory/search")
-      .send({ keywords: "JEST-ITG-BR120" })
+      .send({ keywords: STANDARD_FIXTURE_CATALOGS.breaker })
       .expect(200);
 
     expect(res.body).toHaveProperty("results");
@@ -70,7 +76,8 @@ describe("POST /api/inventory/search", () => {
     expect(res.body.results.length).toBeGreaterThan(0);
 
     const match = res.body.results.find(
-      (r: { item: { catalog: string } }) => r.item.catalog === "JEST-ITG-BR120",
+      (r: { item: { catalog: string } }) =>
+        r.item.catalog === STANDARD_FIXTURE_CATALOGS.breaker,
     );
     expect(match).toBeDefined();
     expect(match.item.vendor).toBe("EATON");
@@ -89,7 +96,7 @@ describe("POST /api/inventory/search", () => {
   it("returns 200 with totalMatches and belowThreshold fields in the response", async () => {
     const res = await supertest(app)
       .post("/api/inventory/search")
-      .send({ keywords: "JEST-ITG-BR120" })
+      .send({ keywords: STANDARD_FIXTURE_CATALOGS.breaker })
       .expect(200);
 
     expect(res.body).toHaveProperty("totalMatches");
@@ -101,7 +108,10 @@ describe("POST /api/inventory/search", () => {
   it("returns 200 with empty results when confidenceThreshold is set to 100", async () => {
     const res = await supertest(app)
       .post("/api/inventory/search")
-      .send({ keywords: "JEST-ITG-BR120", confidenceThreshold: 100 })
+      .send({
+        keywords: STANDARD_FIXTURE_CATALOGS.breaker,
+        confidenceThreshold: 100,
+      })
       .expect(200);
 
     // Even exact matches score ≤ 1.0 (= 100%), so threshold = 100 filters them out
@@ -137,23 +147,26 @@ describe("POST /api/inventory/search", () => {
     // though the keyword query alone would surface it.
     const ivoryOnly = await supertest(app)
       .post("/api/inventory/search")
-      .send({ keywords: "JEST-ITG-HBL5262I" })
+      .send({ keywords: STANDARD_FIXTURE_CATALOGS.receptacle })
       .expect(200);
     expect(
       ivoryOnly.body.results.some(
         (r: { item: { catalog: string } }) =>
-          r.item.catalog === "JEST-ITG-HBL5262I",
+          r.item.catalog === STANDARD_FIXTURE_CATALOGS.receptacle,
       ),
     ).toBe(true);
 
     const filteredRed = await supertest(app)
       .post("/api/inventory/search")
-      .send({ keywords: "JEST-ITG-HBL5262I", colorChip: "Red" })
+      .send({
+        keywords: STANDARD_FIXTURE_CATALOGS.receptacle,
+        colorChip: "Red",
+      })
       .expect(200);
     expect(
       filteredRed.body.results.some(
         (r: { item: { catalog: string } }) =>
-          r.item.catalog === "JEST-ITG-HBL5262I",
+          r.item.catalog === STANDARD_FIXTURE_CATALOGS.receptacle,
       ),
     ).toBe(false);
   });
@@ -243,7 +256,7 @@ describe("POST /api/inventory/search", () => {
     // single needle whose ai_keywords contain the rare chip value "Orange".
     const { db, inventoryTable } = await import("@workspace/db");
     const { sql: sqlOp } = await import("drizzle-orm");
-    const PREFIX = "JEST-ITG-CAP-";
+    const PREFIX = `${workerQualifiedUserId("JEST-ITG-CAP")}-`;
     const NEEDLE = `${PREFIX}NEEDLE-ORANGE`;
 
     await db
@@ -315,7 +328,9 @@ describe("POST /api/inventory/search", () => {
     const { db, inventoryTable } = await import("@workspace/db");
     const { eq } = await import("drizzle-orm");
 
-    const NEEDLE_CATALOG = "JEST-ITG-EXPDESC-FTS-001";
+    const NEEDLE_CATALOG = workerQualifiedUserId(
+      "JEST-ITG-EXPDESC-FTS-001",
+    );
     // A multi-syllable nonsense word that will not appear in any other row and
     // will survive the English stemmer (treated as an unknown lexeme).
     const UNIQUE_TERM = "xylomachinated";
@@ -353,34 +368,41 @@ describe("POST /api/inventory/search", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("POST /api/inventory/search — size-range filters without keywords", () => {
+  const SIZE_CATALOGS = {
+    short: workerQualifiedUserId("JEST-ITG-DIM-SHORT"),
+    medium: workerQualifiedUserId("JEST-ITG-DIM-MED"),
+    long: workerQualifiedUserId("JEST-ITG-DIM-LONG"),
+    diameter: workerQualifiedUserId("JEST-ITG-DIM-DIA"),
+    noDimensions: workerQualifiedUserId("JEST-ITG-DIM-NODIM"),
+  } as const;
   const SIZE_FIXTURES = [
     {
       vendor: "JEST-VENDOR",
-      catalog: "JEST-ITG-DIM-SHORT",
+      catalog: SIZE_CATALOGS.short,
       description: "Short conduit fitting",
       dimensions: { length: 30 },
     },
     {
       vendor: "JEST-VENDOR",
-      catalog: "JEST-ITG-DIM-MED",
+      catalog: SIZE_CATALOGS.medium,
       description: "Medium conduit fitting",
       dimensions: { length: 60 },
     },
     {
       vendor: "JEST-VENDOR",
-      catalog: "JEST-ITG-DIM-LONG",
+      catalog: SIZE_CATALOGS.long,
       description: "Long conduit fitting",
       dimensions: { length: 120 },
     },
     {
       vendor: "JEST-VENDOR",
-      catalog: "JEST-ITG-DIM-DIA",
+      catalog: SIZE_CATALOGS.diameter,
       description: "Round conduit fitting",
       dimensions: { diameter: 25 },
     },
     {
       vendor: "JEST-VENDOR",
-      catalog: "JEST-ITG-DIM-NODIM",
+      catalog: SIZE_CATALOGS.noDimensions,
       description: "Conduit fitting no dimensions",
     },
   ];
@@ -400,10 +422,10 @@ describe("POST /api/inventory/search — size-range filters without keywords", (
     const catalogs = res.body.results.map(
       (r: { item: { catalog: string } }) => r.item.catalog,
     );
-    expect(catalogs).toContain("JEST-ITG-DIM-MED");
-    expect(catalogs).toContain("JEST-ITG-DIM-LONG");
-    expect(catalogs).not.toContain("JEST-ITG-DIM-SHORT");
-    expect(catalogs).not.toContain("JEST-ITG-DIM-NODIM");
+    expect(catalogs).toContain(SIZE_CATALOGS.medium);
+    expect(catalogs).toContain(SIZE_CATALOGS.long);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.short);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.noDimensions);
   });
 
   it("does not return early-empty when only maxLength is provided", async () => {
@@ -415,9 +437,9 @@ describe("POST /api/inventory/search — size-range filters without keywords", (
     const catalogs = res.body.results.map(
       (r: { item: { catalog: string } }) => r.item.catalog,
     );
-    expect(catalogs).toContain("JEST-ITG-DIM-SHORT");
-    expect(catalogs).not.toContain("JEST-ITG-DIM-LONG");
-    expect(catalogs).not.toContain("JEST-ITG-DIM-NODIM");
+    expect(catalogs).toContain(SIZE_CATALOGS.short);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.long);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.noDimensions);
   });
 
   it("returns results within the inclusive range when both minLength and maxLength are provided", async () => {
@@ -429,10 +451,10 @@ describe("POST /api/inventory/search — size-range filters without keywords", (
     const catalogs = res.body.results.map(
       (r: { item: { catalog: string } }) => r.item.catalog,
     );
-    expect(catalogs).toContain("JEST-ITG-DIM-MED");
-    expect(catalogs).not.toContain("JEST-ITG-DIM-SHORT");
-    expect(catalogs).not.toContain("JEST-ITG-DIM-LONG");
-    expect(catalogs).not.toContain("JEST-ITG-DIM-NODIM");
+    expect(catalogs).toContain(SIZE_CATALOGS.medium);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.short);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.long);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.noDimensions);
   });
 
   it("orders results by length ascending when no keywords are present", async () => {
@@ -462,7 +484,11 @@ describe("POST /api/inventory/search — size-range filters without keywords", (
     // length in [9000, 9999], so none may appear in the results.
     const fixtureCatalogs = res.body.results
       .map((r: { item: { catalog: string } }) => r.item.catalog)
-      .filter((c: string) => c.startsWith("JEST-ITG-"));
+      .filter((c: string) =>
+        Object.values(SIZE_CATALOGS).includes(
+          c as (typeof SIZE_CATALOGS)[keyof typeof SIZE_CATALOGS],
+        ),
+      );
     expect(fixtureCatalogs).toEqual([]);
   });
 
@@ -475,10 +501,10 @@ describe("POST /api/inventory/search — size-range filters without keywords", (
     const catalogs = res.body.results.map(
       (r: { item: { catalog: string } }) => r.item.catalog,
     );
-    expect(catalogs).toContain("JEST-ITG-DIM-DIA");
-    expect(catalogs).not.toContain("JEST-ITG-DIM-SHORT");
-    expect(catalogs).not.toContain("JEST-ITG-DIM-MED");
-    expect(catalogs).not.toContain("JEST-ITG-DIM-NODIM");
+    expect(catalogs).toContain(SIZE_CATALOGS.diameter);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.short);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.medium);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.noDimensions);
   });
 });
 
@@ -487,12 +513,17 @@ describe("POST /api/inventory/search — size-range filters without keywords", (
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("POST /api/inventory/upsert-batch", () => {
-  const NEW_CATALOG = "JEST-ITG-UPSERT-001";
+  const NEW_CATALOG = workerQualifiedUserId("JEST-ITG-UPSERT-001");
 
   // No default auth in this describe — tests either set their own token or
   // intentionally omit it to verify 401/403 behaviour.
-  beforeAll(() => { delete process.env.TEST_DEFAULT_AUTH_USER; });
-  afterAll(() => { process.env.TEST_DEFAULT_AUTH_USER = ADMIN_TEST_USER_ID; });
+  let restoreAuthDefault: (() => void) | undefined;
+  beforeAll(() => {
+    restoreAuthDefault = setTestEnv({ TEST_DEFAULT_AUTH_USER: undefined });
+  });
+  afterAll(() => {
+    restoreAuthDefault?.();
+  });
 
   afterEach(async () => {
     // Clean up any items created by upsert-batch tests
@@ -556,7 +587,9 @@ describe("POST /api/inventory/upsert-batch", () => {
   });
 
   it("handles two concurrent upserts of the same (vendor, catalog) without unique-constraint failure", async () => {
-    const CONCURRENT_CATALOG = "JEST-ITG-UPSERT-CONCURRENT-001";
+    const CONCURRENT_CATALOG = workerQualifiedUserId(
+      "JEST-ITG-UPSERT-CONCURRENT-001",
+    );
     const { db, inventoryTable } = await import("@workspace/db");
     const { and: andOp, sql: sqlOp } = await import("drizzle-orm");
     // Make sure the row does not pre-exist so both writers race on insert.
@@ -807,7 +840,7 @@ describe("PATCH /api/inventory/:id/bins", () => {
   }
 
   it("replaces the bin array on an existing item and returns the updated row", async () => {
-    const id = await seededItemId("JEST-ITG-BR120");
+    const id = await seededItemId(STANDARD_FIXTURE_CATALOGS.breaker);
     const res = await supertest(app)
       .patch(`/api/inventory/${id}/bins`)
       .set("Authorization", `Bearer ${adminToken}`)
@@ -819,7 +852,7 @@ describe("PATCH /api/inventory/:id/bins", () => {
   });
 
   it("trims, drops blanks, and de-duplicates case-insensitively", async () => {
-    const id = await seededItemId("JEST-ITG-BR120");
+    const id = await seededItemId(STANDARD_FIXTURE_CATALOGS.breaker);
     const res = await supertest(app)
       .patch(`/api/inventory/${id}/bins`)
       .set("Authorization", `Bearer ${adminToken}`)
@@ -829,7 +862,7 @@ describe("PATCH /api/inventory/:id/bins", () => {
   });
 
   it("accepts an empty array to clear all bins", async () => {
-    const id = await seededItemId("JEST-ITG-BR120");
+    const id = await seededItemId(STANDARD_FIXTURE_CATALOGS.breaker);
     const res = await supertest(app)
       .patch(`/api/inventory/${id}/bins`)
       .set("Authorization", `Bearer ${adminToken}`)
@@ -839,23 +872,22 @@ describe("PATCH /api/inventory/:id/bins", () => {
   });
 
   it("rejects requests without an admin token (401)", async () => {
-    const id = await seededItemId("JEST-ITG-BR120");
+    const id = await seededItemId(STANDARD_FIXTURE_CATALOGS.breaker);
     // seededItemId() uses the file-level default auth (search POST needs it),
     // then we clear the default so the actual PATCH goes out with no token.
-    const savedAuth = process.env.TEST_DEFAULT_AUTH_USER;
-    delete process.env.TEST_DEFAULT_AUTH_USER;
+    const restoreAuth = setTestEnv({ TEST_DEFAULT_AUTH_USER: undefined });
     try {
       await supertest(app)
         .patch(`/api/inventory/${id}/bins`)
         .send({ binLocations: ["Z-1"] })
         .expect(401);
     } finally {
-      if (savedAuth !== undefined) process.env.TEST_DEFAULT_AUTH_USER = savedAuth;
+      restoreAuth();
     }
   });
 
   it("rejects non-array binLocations (400)", async () => {
-    const id = await seededItemId("JEST-ITG-BR120");
+    const id = await seededItemId(STANDARD_FIXTURE_CATALOGS.breaker);
     await supertest(app)
       .patch(`/api/inventory/${id}/bins`)
       .set("Authorization", `Bearer ${adminToken}`)
@@ -864,7 +896,7 @@ describe("PATCH /api/inventory/:id/bins", () => {
   });
 
   it("rejects array containing non-string entries (400)", async () => {
-    const id = await seededItemId("JEST-ITG-BR120");
+    const id = await seededItemId(STANDARD_FIXTURE_CATALOGS.breaker);
     await supertest(app)
       .patch(`/api/inventory/${id}/bins`)
       .set("Authorization", `Bearer ${adminToken}`)
@@ -886,7 +918,7 @@ describe("PATCH /api/inventory/:id/bins", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("POST /api/inventory/search — includeNullDimensions toggle", () => {
-  const PREFIX = "JEST-ITG-NULLDIM-";
+  const PREFIX = `${workerQualifiedUserId("JEST-ITG-NULLDIM")}-`;
   const MEASURED_CATALOG = `${PREFIX}MEASURED`;
   const UNMEASURED_CATALOG = `${PREFIX}UNMEASURED`;
 
@@ -987,7 +1019,7 @@ describe("POST /api/inventory/search — includeNullDimensions toggle", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("POST /api/inventory/search — includeNullDimensions defaults to true", () => {
-  const PREFIX = "JEST-ITG-IND-DEFAULT-";
+  const PREFIX = `${workerQualifiedUserId("JEST-ITG-IND-DEFAULT")}-`;
   const MEASURED_CATALOG = `${PREFIX}MEASURED`;
   const UNMEASURED_CATALOG = `${PREFIX}UNMEASURED`;
 
@@ -1059,7 +1091,7 @@ describe("POST /api/inventory/search — includeNullDimensions defaults to true"
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("GET /api/inventory — binPrefix filter", () => {
-  const BIN_PREFIX = "JEST-ITG-BIN-";
+  const BIN_PREFIX = `${workerQualifiedUserId("JEST-ITG-BIN")}-`;
 
   const BIN_FIXTURES = [
     {
@@ -1162,8 +1194,8 @@ describe("GET /api/inventory — binPrefix filter", () => {
 describe("POST /api/inventory/search — Photo ID catalog ranking", () => {
   // Catalog numbers used only by this suite; cleaned up in afterAll via the
   // JEST-ITG- prefix registered in cleanupFixtures().
-  const TARGET_CATALOG = "JEST-ITG-CHB5";
-  const DECOY_PREFIX = "JEST-ITG-CHB5-DECOY-";
+  const TARGET_CATALOG = workerQualifiedUserId("JEST-ITG-CHB5");
+  const DECOY_PREFIX = `${TARGET_CATALOG}-DECOY-`;
 
   beforeAll(async () => {
     const { db, inventoryTable } = await import("@workspace/db");
@@ -1275,7 +1307,7 @@ describe("POST /api/inventory/search — OpenAPI contract", () => {
   it("response body parses cleanly against the generated SearchInventoryResponse zod schema", async () => {
     const res = await supertest(app)
       .post("/api/inventory/search")
-      .send({ keywords: "JEST-ITG-BR120" })
+      .send({ keywords: STANDARD_FIXTURE_CATALOGS.breaker })
       .expect(200);
 
     const parsed = SearchInventoryResponse.safeParse(res.body);
@@ -1289,7 +1321,11 @@ describe("POST /api/inventory/search — OpenAPI contract", () => {
   it("response body with sizeUnknownResults parses cleanly against the schema", async () => {
     const res = await supertest(app)
       .post("/api/inventory/search")
-      .send({ keywords: "JEST-ITG-BR120", minLength: 1, maxLength: 9999 })
+      .send({
+        keywords: STANDARD_FIXTURE_CATALOGS.breaker,
+        minLength: 1,
+        maxLength: 9999,
+      })
       .expect(200);
 
     const parsed = SearchInventoryResponse.safeParse(res.body);

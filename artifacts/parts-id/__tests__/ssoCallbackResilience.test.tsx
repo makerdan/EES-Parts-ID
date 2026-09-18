@@ -11,29 +11,19 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 
 // ── react-native — override Platform.OS to "web" so the useEffect actually runs
 jest.mock("react-native", () => {
-  const make = (tag: string) =>
-    function RNMock({ children, ...props }: Record<string, unknown>) {
-      const React = require("react");
-      return React.createElement(tag, props, children);
-    };
-  return {
-    View: make("rn-view"),
-    Text: make("Text"),
-    Pressable: make("rn-pressable"),
-    ActivityIndicator: make("rn-activity"),
+  const helpers = require("./helpers/mapMocks");
+  const rn = helpers.createReactNativeMock();
+  return helpers.createReactNativeMock({
     StyleSheet: {
-      create: (s: unknown) => s,
-      hairlineWidth: 0.5,
-      flatten: (s: unknown) => s,
-      absoluteFill: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
-      absoluteFillObject: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
+      ...(rn.StyleSheet as Record<string, unknown>),
+      absoluteFillObject: (rn.StyleSheet as Record<string, unknown>).absoluteFill,
     },
     Platform: {
       OS: "web",
       select: (opts: Record<string, unknown>) =>
         opts.web !== undefined ? opts.web : opts.default,
     },
-  };
+  });
 });
 
 // ── expo-router ─────────────────────────────────────────────────────────────

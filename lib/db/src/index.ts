@@ -1,15 +1,18 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 
+import { assertDatabaseExecutionMode } from "./runtimeDataBoundary";
 import * as schema from "./schema";
 
 const { Pool } = pg;
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?",
+    "DATABASE_URL must be set for the Replit PostgreSQL database.",
   );
 }
+
+assertDatabaseExecutionMode("application");
 
 // Keep the application pool at pg's intended default outside Jest. Test
 // workers share the development database with the running API service, so

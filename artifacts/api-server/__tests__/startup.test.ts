@@ -47,10 +47,24 @@ jest.mock("../src/lib/startServer", () => ({
 
 // ── aiProvider mock ───────────────────────────────────────────────────────────
 const mockInitProvider = jest.fn();
-const mockProbePoeBotsOnStartup = jest.fn();
+
+const mockProbeActivePoeModels = jest.fn();
 jest.mock("../src/lib/aiProvider", () => ({
   initProvider: mockInitProvider,
-  probePoeBotsOnStartup: mockProbePoeBotsOnStartup,
+  probeActivePoeModels: mockProbeActivePoeModels,
+}));
+
+// ── readiness mock ────────────────────────────────────────────────────────────
+const mockCheckRequiredSchema = jest.fn();
+const mockAppReadiness = {
+  reset: jest.fn(),
+  markReady: jest.fn(),
+  markTimedOut: jest.fn(),
+  markFailed: jest.fn(),
+};
+jest.mock("../src/lib/readiness", () => ({
+  appReadiness: mockAppReadiness,
+  checkRequiredSchema: mockCheckRequiredSchema,
 }));
 
 // ── @workspace/db mock (fluent-chain pattern from aiProvider.test.ts) ─────────
@@ -58,9 +72,12 @@ const mockReturning = jest.fn().mockResolvedValue([]);
 const mockUpdateWhere = jest.fn(() => ({ returning: mockReturning }));
 const mockSet = jest.fn(() => ({ where: mockUpdateWhere }));
 const mockUpdate = jest.fn(() => ({ set: mockSet }));
-const mockExecute = jest.fn().mockResolvedValue(undefined);
+const mockExecute = jest.fn().mockResolvedValue({ rows: [{ usable: true }] });
 const mockSelectWhere = jest.fn().mockResolvedValue([]);
-const mockSelectFrom = jest.fn(() => ({ where: mockSelectWhere }));
+const mockSelectFrom = jest.fn(() => ({
+  where: mockSelectWhere,
+  innerJoin: jest.fn(() => ({ where: mockSelectWhere })),
+}));
 const mockSelect = jest.fn(() => ({ from: mockSelectFrom }));
 
 jest.mock("@workspace/db", () => ({
@@ -75,14 +92,27 @@ jest.mock("@workspace/db", () => ({
     errorMessage: "err_col",
     finishedAt: "finished_col",
   },
+  catalogPdfUploadSessionTable: {
+    id: "upload_session_id_col",
+    status: "upload_session_status_col",
+    expiresAt: "upload_session_expires_col",
+    processingJobId: "upload_session_job_id_col",
+    vendor: "upload_session_vendor_col",
+  },
+  catalogPdfUploadPartTable: {
+    sessionId: "upload_part_session_id_col",
+    partIndex: "upload_part_index_col",
+  },
   warehouseZoneTable: { id: "id_col", sectionNum: "section_col" },
   adminPreferencesTable: { id: "id_col", aiProvider: "ai_provider_col" },
 }));
 
 // ── drizzle-orm mock ──────────────────────────────────────────────────────────
 jest.mock("drizzle-orm", () => ({
+  and: jest.fn(),
   eq: jest.fn(),
   inArray: jest.fn(),
+  lt: jest.fn(),
   sql: jest.fn(),
 }));
 
@@ -119,7 +149,11 @@ beforeEach(() => {
   jest.clearAllMocks();
   // Default: both helpers resolve immediately (overridden per-test as needed)
   mockInitProvider.mockResolvedValue(undefined);
-  mockProbePoeBotsOnStartup.mockResolvedValue(undefined);
+  mockProbeActivePoeModels.mockResolvedValue(undefined);
+  mockCheckRequiredSchema.mockResolvedValue(true);
+  mockStartServer.mockResolvedValue({
+    close: (callback: () => void) => callback(),
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,7 +180,10 @@ describe("server startup sequence (src/index.ts)", () => {
     // Gate on startServer itself so the assertion does not depend on
     // microtask-queue depth — we simply wait until the callback fires.
     const { promise: startGate, resolve: resolveStart } = makeGate();
-    mockStartServer.mockImplementationOnce(() => resolveStart());
+    mockStartServer.mockImplementationOnce(() => {
+      resolveStart();
+      return Promise.resolve({ close: (callback: () => void) => callback() });
+    });
 
     loadIndex();
     await startGate;
@@ -154,7 +191,13 @@ describe("server startup sequence (src/index.ts)", () => {
     expect(mockStartServer).toHaveBeenCalledTimes(1);
   });
 
-  it("does not call startServer() until initProvider() has resolved", async () => {
+  it("does not start explicit Poe probes during startup", async () => {
+    loadIndex();
+    await Promise.resolve();
+    expect(mockProbeActivePoeModels).not.toHaveBeenCalled();
+  });
+
+  it("opens the listener without waiting for optional provider initialization", async () => {
     // Hold initProvider() in a pending state that we control.
     const { promise: initGate, resolve: resolveInit } = makeGate();
     // A separate gate that fires the instant initProvider() is invoked.
@@ -170,21 +213,35 @@ describe("server startup sequence (src/index.ts)", () => {
     // Gate on startServer so the "has fired" assertion is not microtask-depth
     // sensitive even if index.ts gains extra awaits between the two calls.
     const { promise: startGate, resolve: resolveStart } = makeGate();
-    mockStartServer.mockImplementationOnce(() => resolveStart());
+    mockStartServer.mockImplementationOnce(() => {
+      resolveStart();
+      return Promise.resolve({ close: (callback: () => void) => callback() });
+    });
 
     loadIndex();
 
-    // Wait until initProvider() has actually been invoked, then verify
-    // startServer() has not yet been called — the chain is still suspended on
-    // initGate, so this assertion cannot be a false-pass regardless of how
-    // many intermediate awaits index.ts has before or after initProvider().
+    // The listener is intentionally independent from optional provider setup.
     await initCalledGate;
-    expect(mockStartServer).not.toHaveBeenCalled();
+    expect(mockStartServer).toHaveBeenCalledTimes(1);
 
     // Release the gate — wait until startServer actually fires rather than
     // relying on a fixed flush count.
     resolveInit();
     await startGate;
+    expect(mockStartServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks readiness failed when the required schema is unavailable", async () => {
+    const { promise: failedGate, resolve: resolveFailed } = makeGate();
+    mockCheckRequiredSchema.mockResolvedValueOnce(false);
+    mockAppReadiness.markFailed.mockImplementationOnce(resolveFailed);
+
+    loadIndex();
+    await failedGate;
+
+    expect(mockCheckRequiredSchema).toHaveBeenCalledTimes(1);
+    expect(mockAppReadiness.markFailed).toHaveBeenCalledTimes(1);
+    expect(mockAppReadiness.markReady).not.toHaveBeenCalled();
     expect(mockStartServer).toHaveBeenCalledTimes(1);
   });
 });

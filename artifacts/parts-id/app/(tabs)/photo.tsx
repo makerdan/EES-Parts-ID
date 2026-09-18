@@ -16,11 +16,13 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 
 import { BarcodeScanModal } from "@/components/BarcodeScanModal";
 import BarcodeScreen from "@/components/BarcodeScreen";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
@@ -45,6 +47,9 @@ export default function PhotoScreen() {
   "use no memo";
   useTrackScreen("Photo ID");
   const colors = useColors();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const bottomClearance = isLandscape ? 84 : 120;
   const { textFontScale, isAdmin, adminToken, setPinnedParts, setPendingMapFocus, setPendingMeasureSearch, showToast } = useApp();
   const [images, setImages] = useState<Array<{ uri: string; base64: string }>>([]);
   const [keywords, setKeywords] = useState("");
@@ -445,7 +450,12 @@ export default function PhotoScreen() {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
+      <KeyboardAwareScrollViewCompat
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomClearance }]}
+        bottomOffset={24}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>📸 Photo ID</Text>
@@ -839,7 +849,7 @@ export default function PhotoScreen() {
             </View>
           ) : null}
         </View>
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
       <BarcodeScanModal
         visible={barcodeScanVisible}
         onClose={() => setBarcodeScanVisible(false)}
@@ -880,6 +890,7 @@ export default function PhotoScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
+  scrollContent: { flexGrow: 1 },
   header: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1 },
   headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
   headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },

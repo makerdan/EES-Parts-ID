@@ -1,6 +1,8 @@
 import {
   computeAnchorTransform,
+  inverseAnchorPoint,
   matrixToSvgString,
+  normalizeAnchorPoints,
   type AnchorPoint,
   type AffineMatrix,
 } from "../mapAnchorTransform";
@@ -144,5 +146,30 @@ describe("matrixToSvgString", () => {
       f: -3.14159265,
     });
     expect(s).toBe("matrix(1.234568,0,0.5,2,100.1,-3.141593)");
+  });
+});
+
+describe("inverseAnchorPoint and normalizeAnchorPoints", () => {
+  it("inverse-maps a floor-plan point back to stored/world space", () => {
+    const matrix: AffineMatrix = { a: 2, b: 0, c: 0, d: 2, e: 10, f: -5 };
+    expect(inverseAnchorPoint(matrix, { x: 410, y: 345 })).toEqual({ x: 200, y: 175 });
+  });
+
+  it("returns identity points for no active calibration and rejects degenerate matrices", () => {
+    expect(inverseAnchorPoint(null, { x: 12, y: 34 })).toEqual({ x: 12, y: 34 });
+    expect(
+      inverseAnchorPoint({ a: 1, b: 2, c: 2, d: 4, e: 0, f: 0 }, { x: 12, y: 34 }),
+    ).toBeNull();
+  });
+
+  it("filters malformed public anchor records before solving", () => {
+    const anchors = normalizeAnchorPoints([
+      { id: 1, svgX: 0, svgY: 0, worldX: 0, worldY: 0 },
+      { id: 2, svgX: 100, svgY: 0, worldX: 100, worldY: 0 },
+      { id: 3, svgX: 0, svgY: 100, worldX: 0, worldY: 100 },
+      { id: 4, svgX: "bad", svgY: 0, worldX: 0, worldY: 0 },
+    ]);
+    expect(anchors).toHaveLength(3);
+    expect(computeAnchorTransform(anchors)).not.toBeNull();
   });
 });

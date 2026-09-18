@@ -4,7 +4,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, AppStateStatus } from "react-native";
 
 export type ApiStatus = "ok" | "degraded" | "error" | "unknown";
-export type BotProbeStatus = "ok" | "timeout" | "404" | "error";
+export type BotProbeStatus = "ok" | "timeout" | "404" | "error" | "budget_limited";
+export type ReadinessIssue =
+  | {
+      detail: "startup_not_ready";
+      startupStatus: "pending" | "timed_out" | "failed";
+    }
+  | {
+      detail: "database_unreachable" | "schema_unavailable";
+    };
 export type RestartState =
   | "idle"
   | "requesting"
@@ -19,9 +27,13 @@ export type RestartState =
 
 export interface ApiStatusResult {
   status: ApiStatus;
+  readinessIssue: ReadinessIssue | null;
+  checking: boolean;
+  lastCheckedAt: number | null;
   restarting: boolean;
   restartState: RestartState;
   triggerRestart: () => Promise<RestartState>;
+  dismissRestartNotice: () => void;
   checkStatus: () => Promise<void>;
   bots: Record<string, BotProbeStatus>;
   probeSingleBot: (botName: string) => Promise<void>;
@@ -36,6 +48,29 @@ interface UseApiStatusOptions {
   resumePollTimeoutMs?: number;
 }
 
+function parseReadinessIssue(raw: unknown): ReadinessIssue | null {
+  if (!raw || typeof raw !== "object") return null;
+  const payload = raw as Record<string, unknown>;
+  if (payload.status !== "error") return null;
+
+  if (payload.detail === "database_unreachable" || payload.detail === "schema_unavailable") {
+    return { detail: payload.detail };
+  }
+
+  if (payload.detail !== "startup_not_ready") return null;
+  if (
+    payload.startup_status !== "pending" &&
+    payload.startup_status !== "timed_out" &&
+    payload.startup_status !== "failed"
+  ) {
+    return null;
+  }
+  return {
+    detail: "startup_not_ready",
+    startupStatus: payload.startup_status,
+  };
+}
+
 export function useApiStatus({
   apiBase,
   adminToken,
@@ -44,6 +79,9 @@ export function useApiStatus({
   resumePollTimeoutMs = 5_000,
 }: UseApiStatusOptions): ApiStatusResult {
   const [status, setStatus] = useState<ApiStatus>("unknown");
+  const [readinessIssue, setReadinessIssue] = useState<ReadinessIssue | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [restarting, setRestarting] = useState(false);
   const [restartState, setRestartState] = useState<RestartState>("idle");
   const [bots, setBots] = useState<Record<string, BotProbeStatus>>({});
@@ -66,12 +104,20 @@ export function useApiStatus({
     const generation = generationRef.current;
     const controller = new AbortController();
     pollControllerRef.current = controller;
+    setChecking(true);
     const timeoutId = setTimeout(() => controller.abort(), 8_000);
     try {
       const res = await fetch(`${apiBase}/healthz`, { cache: "no-store", signal: controller.signal });
       if (!isMountedRef.current || generation !== generationRef.current) return;
       if (!res.ok) {
+        let issue: ReadinessIssue | null = null;
+        try {
+          issue = parseReadinessIssue(await res.json());
+        } catch {
+          // Keep non-readiness failures generic.
+        }
         setStatus("error");
+        setReadinessIssue(issue);
         setBots({});
         return;
       }
@@ -80,20 +126,28 @@ export function useApiStatus({
       if (!parsed.success) {
         console.warn("[useApiStatus] Unexpected healthz shape:", parsed.error.message);
         setStatus("error");
+        setReadinessIssue(null);
         setBots({});
         return;
       }
       setStatus(parsed.data.status);
+      setReadinessIssue(null);
       setBots(parsed.data.bots ?? {});
+      setRestartState("idle");
     } catch {
       if (isMountedRef.current && generation === generationRef.current) {
         setStatus("error");
+        setReadinessIssue(null);
         setBots({});
       }
     } finally {
       clearTimeout(timeoutId);
       if (pollControllerRef.current === controller) pollControllerRef.current = null;
       pollInFlightRef.current = false;
+      if (isMountedRef.current && generation === generationRef.current) {
+        setChecking(false);
+        setLastCheckedAt(Date.now());
+      }
     }
   }, [apiBase]);
 
@@ -120,6 +174,7 @@ export function useApiStatus({
   }, []);
 
   const cancelAllWork = useCallback(() => {
+    const wasRestarting = restartingRef.current;
     generationRef.current++;
     stopPolling();
     pollControllerRef.current?.abort();
@@ -139,7 +194,7 @@ export function useApiStatus({
     restartingRef.current = false;
     if (isMountedRef.current) {
       setRestarting(false);
-      setRestartState("idle");
+      if (wasRestarting) setRestartState("cancelled");
     }
   }, [stopPolling]);
 
@@ -149,7 +204,6 @@ export function useApiStatus({
       if (!adminToken) return;
       isFocusedRef.current = true;
       setStatus("unknown");
-      setRestartState("idle");
       startPolling();
       return () => {
         isFocusedRef.current = false;
@@ -165,8 +219,10 @@ export function useApiStatus({
       "change",
       (nextState: AppStateStatus) => {
         if (nextState === "active" && isFocusedRef.current && adminToken) {
-          setStatus("unknown");
-          startPolling();
+          if (!restartingRef.current) {
+            setStatus("unknown");
+            startPolling();
+          }
         }
         if (nextState !== "active") {
           // A backgrounded screen must not keep requests or recovery timers alive.
@@ -214,7 +270,10 @@ export function useApiStatus({
         },
       );
       if (!isMountedRef.current || generation !== generationRef.current) return;
-      if (!res.ok) return;
+      if (!res.ok) {
+        setBots((current) => ({ ...current, [botName]: "error" }));
+        return;
+      }
       const raw = await res.json();
       // The admin single-bot endpoint returns the refreshed bot summary
       // (`{ bots }`), not the full `/healthz` payload (`{ status, bots }`).
@@ -225,6 +284,9 @@ export function useApiStatus({
       }
     } catch {
       // Aborts caused by blur/unmount/token changes are intentionally ignored.
+      if (isMountedRef.current && generation === generationRef.current && !controller.signal.aborted) {
+        setBots((current) => ({ ...current, [botName]: "error" }));
+      }
     } finally {
       clearTimeout(timeoutId);
       probeControllersRef.current.delete(controller);
@@ -330,6 +392,8 @@ export function useApiStatus({
               restartTimerIdsRef.current = [];
               if (isMountedRef.current && generation === generationRef.current) {
                 setStatus(parsed.data.status);
+                setReadinessIssue(null);
+                setBots(parsed.data.bots ?? {});
                 setRestartState("recovered");
                 setRestarting(false);
                 finishRecovery("recovered");
@@ -343,6 +407,9 @@ export function useApiStatus({
         } finally {
           clearTimeout(timeoutId);
           if (recoveryControllerRef.current === controller) recoveryControllerRef.current = null;
+          if (isMountedRef.current && generation === generationRef.current) {
+            setLastCheckedAt(Date.now());
+          }
         }
         if (!isMountedRef.current || generation !== generationRef.current) {
           finishRecovery("cancelled");
@@ -356,6 +423,7 @@ export function useApiStatus({
           restartTimerIdsRef.current = [];
           if (isMountedRef.current && generation === generationRef.current) {
             setStatus("error");
+            setReadinessIssue(null);
             setRestartState("recovery_failed");
             setRestarting(false);
             finishRecovery("recovery_failed");
@@ -371,14 +439,24 @@ export function useApiStatus({
   const reportNetworkFailure = useCallback(() => {
     if (!isMountedRef.current) return;
     setStatus("error");
+    setReadinessIssue(null);
     setBots({});
+  }, []);
+
+  const dismissRestartNotice = useCallback(() => {
+    if (!isMountedRef.current) return;
+    setRestartState("idle");
   }, []);
 
   return {
     status,
+    readinessIssue,
+    checking,
+    lastCheckedAt,
     restarting,
     restartState,
     triggerRestart,
+    dismissRestartNotice,
     checkStatus: poll,
     bots,
     probeSingleBot,

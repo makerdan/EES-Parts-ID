@@ -79,6 +79,7 @@ jest.mock("../middlewares/requireAppAuth", () => ({
 
 jest.mock("../middlewares/requireAdminAuth", () => ({
   requireAdminAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
+  requireApprovedAdminAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 // ── Answer cache mock — invalidation fires-and-forgets; stub it out ───────────
@@ -93,7 +94,12 @@ jest.mock("../lib/objectStorage", () => ({
 
 // ── Image helpers mocks ────────────────────────────────────────────────────────
 jest.mock("../utils/aiHelpers", () => ({
-  estimateImageBytes: jest.fn().mockReturnValue(1024),
+  ...(
+    jest.requireActual("../../__tests__/helpers/aiHelpersMock") as typeof import("../../__tests__/helpers/aiHelpersMock")
+  ).createAiHelpersMock(
+    jest.requireActual("../utils/aiHelpers"),
+    { estimateImageBytes: 1024 },
+  ),
 }));
 
 jest.mock("../utils/imageResize", () => ({
@@ -108,30 +114,23 @@ import supertest from "supertest";
 import app from "../app";
 import { AddPartResponse, AddPartConflictResponse } from "@workspace/api-zod";
 import { estimateImageBytes } from "../utils/aiHelpers";
+import { makeInventoryItemFixture } from "./fixtures/inventoryResponseFixtures";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** A complete, well-formed inventory row that satisfies InventoryItemSchema. */
 function makeWellFormedRow(overrides: Record<string, unknown> = {}) {
-  return {
+  return makeInventoryItemFixture({
     id: 1,
-    vendor: "ACME",
     catalog: "X-001",
     description: "Test part",
     binLocations: [],
     aiKeywords: [],
     barcodes: [],
-    enrichedAt: null,
-    imageUrl: null,
-    thumbnailUrl: null,
-    imageUrl2: null,
-    thumbnailUrl2: null,
-    expandedDescription: null,
-    dimensions: null,
     createdAt: new Date("2025-01-01T00:00:00Z"),
     updatedAt: new Date("2025-01-01T00:00:00Z"),
     ...overrides,
-  };
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,6 +295,17 @@ describe("AddPartResponse schema — parse throws on malformed rows", () => {
 
     expect(() => AddPartResponse.parse({ item: row })).toThrow();
   });
+
+  it.each(["orderPurchase", "orderQuantity"])(
+    "throws when required order field %s is absent",
+    (field) => {
+      const row = makeWellFormedRow();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (row as any)[field];
+
+      expect(() => AddPartResponse.parse({ item: row })).toThrow();
+    },
+  );
 
   it("throws when the top-level item key is absent", () => {
     expect(() => AddPartResponse.parse({})).toThrow();

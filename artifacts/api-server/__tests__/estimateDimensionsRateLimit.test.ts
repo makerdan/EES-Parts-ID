@@ -54,7 +54,7 @@ jest.mock("../src/lib/aiProvider", () => ({
   getOpenAIModelForFeature: jest.fn(() => "test-model"),
   initProvider: jest.fn(),
   getProvider: jest.fn(() => "poe"),
-  probePoeBotsOnStartup: jest.fn(),
+  probeActivePoeModels: jest.fn(),
   getProbeSummary: jest.fn(() => ({})),
   setProvider: jest.fn(),
   getAiClient: jest.fn(() => ({ chat: { completions: { create: mockCreate } } })),

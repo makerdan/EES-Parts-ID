@@ -24,14 +24,19 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
+import { workerQualifiedUserId } from "./helpers/testDb";
+import { setTestEnv } from "./helpers/testEnv";
 
+const TEST_ADMIN_USER_ID = workerQualifiedUserId("jest-admin-user");
+let restoreTestEnv: (() => void) | undefined;
 beforeAll(() => {
-  process.env.ADMIN_CLERK_USER_ID = "jest-admin-user";
-  process.env.TEST_DEFAULT_AUTH_USER = "jest-admin-user";
+  restoreTestEnv = setTestEnv({
+    ADMIN_CLERK_USER_ID: TEST_ADMIN_USER_ID,
+    TEST_DEFAULT_AUTH_USER: TEST_ADMIN_USER_ID,
+  });
 });
 afterAll(async () => {
-  delete process.env.TEST_DEFAULT_AUTH_USER;
-  delete process.env.ADMIN_CLERK_USER_ID;
+  restoreTestEnv?.();
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────
