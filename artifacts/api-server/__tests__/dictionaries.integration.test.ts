@@ -1,8 +1,8 @@
 /**
  * Integration tests for GET /api/dictionaries/lookup.
  *
- * Exercises the real database (abbreviation, synonym, misspelling, slang tables).
- * Assumes the seed data shipped with the project is present (no fixture seeding needed).
+ * Exercises the real database (abbreviation, synonym, misspelling, slang tables)
+ * with idempotent fixtures, so the suite also runs against an empty test database.
  */
 
 // ── Mock OpenAI BEFORE app is imported ────────────────────────────────────────
@@ -24,18 +24,26 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { workerQualifiedUserId } from "./helpers/testDb";
+import {
+  cleanupDictionaryFixtures,
+  type DictionaryFixtures,
+  seedDictionaryFixtures,
+  workerQualifiedUserId,
+} from "./helpers/testDb";
 import { setTestEnv } from "./helpers/testEnv";
 
 const TEST_ADMIN_USER_ID = workerQualifiedUserId("jest-admin-user");
 let restoreTestEnv: (() => void) | undefined;
-beforeAll(() => {
+let dictionaryFixtures: DictionaryFixtures;
+beforeAll(async () => {
   restoreTestEnv = setTestEnv({
     ADMIN_CLERK_USER_ID: TEST_ADMIN_USER_ID,
     TEST_DEFAULT_AUTH_USER: TEST_ADMIN_USER_ID,
   });
+  dictionaryFixtures = await seedDictionaryFixtures();
 });
 afterAll(async () => {
+  await cleanupDictionaryFixtures();
   restoreTestEnv?.();
 }, 15_000);
 
@@ -63,7 +71,7 @@ describe("GET /api/dictionaries/lookup", () => {
 
   it("returns the correct response shape for any lookup", async () => {
     const res = await supertest(app)
-      .get("/api/dictionaries/lookup?term=ser")
+      .get(`/api/dictionaries/lookup?term=${encodeURIComponent(dictionaryFixtures.abbreviation)}`)
       .expect(200);
 
     expect(res.body).toHaveProperty("abbreviations");
@@ -77,10 +85,9 @@ describe("GET /api/dictionaries/lookup", () => {
     expect(Array.isArray(res.body.slangTerms)).toBe(true);
   });
 
-  it("expands the abbreviation 'ser' to service-entrance-related terms", async () => {
-    // 'ser' is seeded in the abbreviation_map table
+  it("expands the suite-owned abbreviation to service-entrance-related terms", async () => {
     const res = await supertest(app)
-      .get("/api/dictionaries/lookup?term=ser")
+      .get(`/api/dictionaries/lookup?term=${encodeURIComponent(dictionaryFixtures.abbreviation)}`)
       .expect(200);
 
     expect(res.body.abbreviations.length).toBeGreaterThan(0);
@@ -88,10 +95,9 @@ describe("GET /api/dictionaries/lookup", () => {
     expect(joined).toMatch(/service/);
   });
 
-  it("returns slang expansions for 'stab-in'", async () => {
-    // 'stab-in' is seeded in the electrical_slang_map table
+  it("returns slang expansions for the suite-owned slang term", async () => {
     const res = await supertest(app)
-      .get("/api/dictionaries/lookup?term=stab-in")
+      .get(`/api/dictionaries/lookup?term=${encodeURIComponent(dictionaryFixtures.slang)}`)
       .expect(200);
 
     expect(res.body.slangTerms.length).toBeGreaterThan(0);
@@ -99,19 +105,17 @@ describe("GET /api/dictionaries/lookup", () => {
     expect(joined).toMatch(/push|connector|backstab/);
   });
 
-  it("returns a misspelling correction for 'gcfi' → 'gfci'", async () => {
-    // 'gcfi' is seeded in the misspelling_map table
+  it("returns the suite-owned misspelling correction", async () => {
     const res = await supertest(app)
-      .get("/api/dictionaries/lookup?term=gcfi")
+      .get(`/api/dictionaries/lookup?term=${encodeURIComponent(dictionaryFixtures.misspelling)}`)
       .expect(200);
 
-    expect(res.body.correction).toBe("gfci");
+    expect(res.body.correction).toBe(dictionaryFixtures.correction);
   });
 
-  it("returns synonym expansions for 'afci'", async () => {
-    // 'afci' is seeded in the synonym_map table
+  it("returns the suite-owned synonym expansions", async () => {
     const res = await supertest(app)
-      .get("/api/dictionaries/lookup?term=afci")
+      .get(`/api/dictionaries/lookup?term=${encodeURIComponent(dictionaryFixtures.synonym)}`)
       .expect(200);
 
     expect(res.body.synonyms.length).toBeGreaterThan(0);
@@ -119,12 +123,12 @@ describe("GET /api/dictionaries/lookup", () => {
     expect(joined).toMatch(/arc fault/);
   });
 
-  it("is case-insensitive — 'SER' and 'ser' return the same abbreviations", async () => {
+  it("is case-insensitive for the suite-owned abbreviation", async () => {
     const lower = await supertest(app)
-      .get("/api/dictionaries/lookup?term=ser")
+      .get(`/api/dictionaries/lookup?term=${encodeURIComponent(dictionaryFixtures.abbreviation)}`)
       .expect(200);
     const upper = await supertest(app)
-      .get("/api/dictionaries/lookup?term=SER")
+      .get(`/api/dictionaries/lookup?term=${encodeURIComponent(dictionaryFixtures.abbreviation.toUpperCase())}`)
       .expect(200);
 
     expect(lower.body.abbreviations).toEqual(upper.body.abbreviations);

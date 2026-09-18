@@ -139,9 +139,9 @@ module.exports = {
   // globalSetup runs once before all projects — keeps DB preflight + schema
   // sync to a single execution regardless of how many projects are defined.
   globalSetup: "./jest.globalSetup.cjs",
-  // forceExit was removed: jest.integrationSetup.cjs now registers a global
-  // afterAll that closes the pg pool after every test file, so handles are
-  // cleaned up organically and Jest exits without the "Force exiting" warning.
+  // forceExit is unnecessary because the Jest-only pg pool allows process exit
+  // when idle. Per-suite teardown remains responsible for owned fixture cleanup;
+  // a global pool close would run before those suite hooks.
 
   // ── Coverage configuration ─────────────────────────────────────────────────
   // Scope coverage to production source only.  Excludes:

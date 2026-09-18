@@ -3,7 +3,16 @@
  * Inserts clearly-labelled fixture rows and removes them after the suite.
  */
 
-import { db, pool, inventoryTable, usersTable } from "@workspace/db";
+import {
+  abbreviationMapTable,
+  db,
+  electricalSlangMapTable,
+  inventoryTable,
+  misspellingMapTable,
+  pool,
+  synonymMapTable,
+  usersTable,
+} from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 
 const TEST_WORKER_INSTANCE = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
@@ -132,6 +141,96 @@ export async function cleanupFixtures() {
         sql`, `,
       )})`,
     );
+}
+
+/**
+ * Seed the dictionary rows asserted by dictionaries.integration.test.ts.
+ *
+ * Each insert is an idempotent upsert so the suite is deterministic on an
+ * empty test database without replacing canonical development seed values.
+ */
+export interface DictionaryFixtures {
+  abbreviation: string;
+  synonym: string;
+  misspelling: string;
+  correction: string;
+  slang: string;
+}
+
+export function dictionaryFixturesForWorker(
+  workerInstance = TEST_WORKER_INSTANCE,
+): DictionaryFixtures {
+  const suffix = workerInstance.toLowerCase();
+  return {
+    abbreviation: `jest-ser-${suffix}`,
+    synonym: `jest-afci-${suffix}`,
+    misspelling: `jest-gcfi-${suffix}`,
+    correction: `jest-gfci-${suffix}`,
+    slang: `jest-stab-in-${suffix}`,
+  };
+}
+
+export async function seedDictionaryFixtures(
+  workerInstance = TEST_WORKER_INSTANCE,
+): Promise<DictionaryFixtures> {
+  const fixtures = dictionaryFixturesForWorker(workerInstance);
+  // Some long-lived test databases retain the legacy dictionary-version
+  // triggers even though Drizzle no longer owns their support table. Keep that
+  // test-only compatibility state deterministic so owned fixture writes work
+  // on both fresh and previously provisioned databases.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS dictionary_version (
+      id integer PRIMARY KEY,
+      version integer NOT NULL DEFAULT 1,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db
+    .insert(abbreviationMapTable)
+    .values({
+      abbreviation: fixtures.abbreviation,
+      expansions: ["service entrance rated", "service entrance cable"],
+      category: "jest-fixture",
+    })
+    .onConflictDoNothing();
+  await db
+    .insert(synonymMapTable)
+    .values({
+      term: fixtures.synonym,
+      synonyms: ["arc fault circuit interrupter"],
+      category: "jest-fixture",
+    })
+    .onConflictDoNothing();
+  await db
+    .insert(misspellingMapTable)
+    .values({ misspelling: fixtures.misspelling, correction: fixtures.correction })
+    .onConflictDoNothing();
+  await db
+    .insert(electricalSlangMapTable)
+    .values({
+      slangTerm: fixtures.slang,
+      standardTerms: ["push-in connector", "backstab connector"],
+      category: "jest-fixture",
+      notes: "Owned by the dictionary integration suite when not already seeded.",
+    })
+    .onConflictDoNothing();
+  return fixtures;
+}
+
+export async function cleanupDictionaryFixtures(
+  workerInstance = TEST_WORKER_INSTANCE,
+): Promise<void> {
+  const fixtures = dictionaryFixturesForWorker(workerInstance);
+  await db
+    .delete(abbreviationMapTable)
+    .where(eq(abbreviationMapTable.abbreviation, fixtures.abbreviation));
+  await db.delete(synonymMapTable).where(eq(synonymMapTable.term, fixtures.synonym));
+  await db
+    .delete(misspellingMapTable)
+    .where(eq(misspellingMapTable.misspelling, fixtures.misspelling));
+  await db
+    .delete(electricalSlangMapTable)
+    .where(eq(electricalSlangMapTable.slangTerm, fixtures.slang));
 }
 
 /**

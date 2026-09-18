@@ -20,7 +20,7 @@ process.env.POE_API_KEY2 = "test-poe-key";
 process.env.AI_INTEGRATIONS_OPENAI_BASE_URL = "https://test.openai.example/v1";
 process.env.AI_INTEGRATIONS_OPENAI_API_KEY = "test-openai-key";
 
-afterAll(() => {
+function restoreTestEnvironment(): void {
   if (_origAdminPassword === undefined) delete process.env.ADMIN_PASSWORD;
   else process.env.ADMIN_PASSWORD = _origAdminPassword;
   if (_origAiProvider === undefined) delete process.env.AI_PROVIDER;
@@ -31,7 +31,7 @@ afterAll(() => {
   else process.env.AI_INTEGRATIONS_OPENAI_BASE_URL = _origOpenAIBaseUrl;
   if (_origOpenAIApiKey === undefined) delete process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
   else process.env.AI_INTEGRATIONS_OPENAI_API_KEY = _origOpenAIApiKey;
-});
+}
 
 // ── OpenAI constructor mock ───────────────────────────────────────────────────
 // aiProvider.ts calls `new OpenAI(...)` at module load time. We must intercept
@@ -102,9 +102,13 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Restore provider to "poe" so module state is clean for any subsequent suites
-  setProvider("poe");
-  await cleanupTestUser(NON_ADMIN_USER);
+  try {
+    // Restore provider while the suite's deterministic Poe key is still active.
+    setProvider("poe");
+    await cleanupTestUser(NON_ADMIN_USER);
+  } finally {
+    restoreTestEnvironment();
+  }
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────

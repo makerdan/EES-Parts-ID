@@ -46,12 +46,10 @@ import { signAdminToken } from "./helpers/adminAuth";
 import { getAllPoeModelNames } from "../src/lib/aiProvider";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
-const ADMIN_SECRET = "jest-admin-ai-status-secret";
 let adminToken: string;
 
 beforeAll(() => {
-  process.env.ADMIN_PASSWORD = ADMIN_SECRET;
-  adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
+  adminToken = signAdminToken();
 });
 
 beforeEach(() => {

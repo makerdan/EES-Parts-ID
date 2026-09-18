@@ -53,10 +53,12 @@ import {
   seedTestUser,
   workerQualifiedUserId,
 } from "../../__tests__/helpers/testDb";
+import { setTestEnv } from "../../__tests__/helpers/testEnv";
 
 // ── Worker-owned test Clerk user ids ──────────────────────────────────────────
 const PROMOTED_ADMIN = workerQualifiedUserId("jest-selfaction-promoted");
 const TARGET_USER = workerQualifiedUserId("jest-selfaction-target");
+let restoreTestEnv: (() => void) | undefined;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 /** Bearer header for the bootstrap admin. */
@@ -71,6 +73,9 @@ function promotedAdminBearer(): string {
 
 // ── Seed / teardown ───────────────────────────────────────────────────────────
 beforeAll(async () => {
+  restoreTestEnv = setTestEnv({
+    CLERK_SECRET_KEY: "jest-self-action-clerk-secret",
+  });
   // seedTestUser derives each email from the clerkUserId (collision-safe).
   await seedTestUser({ clerkUserId: PROMOTED_ADMIN, status: "approved", role: "admin" });
   await seedTestUser({ clerkUserId: TARGET_USER, status: "approved", role: "user" });
@@ -79,6 +84,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await cleanupTestUser(PROMOTED_ADMIN);
   await cleanupTestUser(TARGET_USER);
+  restoreTestEnv?.();
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────
