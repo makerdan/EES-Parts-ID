@@ -13,6 +13,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -542,6 +543,56 @@ await test("serial lock preserves FIFO order before the priority grace expires",
       `expected low then high before grace, got ${JSON.stringify(readFileSync(marker, "utf8"))}`,
     );
   } finally {
+    if (holder.child.exitCode === null) holder.child.kill("SIGKILL");
+    rmSync(queueDir, { recursive: true, force: true });
+  }
+});
+
+await test("serial lock removes a terminated waiter without disturbing the holder", async () => {
+  const resource = uniqueName("terminated-waiter");
+  const lockFile = join(testRoot, `${resource}.lock`);
+  const queueDir = queueDirFor(resource);
+  const marker = join(testRoot, `${resource}.marker`);
+  const holder = spawnLock(resource, lockFile, 1, [
+    process.execPath,
+    "-e",
+    SLEEP_CODE,
+    "350",
+  ]);
+  let waiter;
+  let later;
+  try {
+    await waitFor(() => existsSync(lockFile), "termination holder lock");
+    waiter = spawnLock(resource, lockFile, 1, [
+      process.execPath,
+      "-e",
+      MARK_CODE,
+      marker,
+      "terminated",
+    ]);
+    await waitFor(() => existsSync(join(queueDir, `${waiter.child.pid}.json`)), "terminated waiter queue entry");
+
+    waiter.child.kill("SIGTERM");
+    const waiterResult = await waiter.result;
+    assert(waiterResult.code === 1, `terminated waiter exited ${waiterResult.code}: ${waiterResult.output}`);
+    assert(!existsSync(join(queueDir, `${waiter.child.pid}.json`)), "terminated waiter queue entry remained");
+    assert(holder.child.exitCode === null, "terminating waiter disturbed the holder");
+
+    later = spawnLock(resource, lockFile, 1, [
+      process.execPath,
+      "-e",
+      MARK_CODE,
+      marker,
+      "later",
+    ]);
+    const [holderResult, laterResult] = await Promise.all([holder.result, later.result]);
+    assert(holderResult.code === 0, `holder exited ${holderResult.code}: ${holderResult.output}`);
+    assert(laterResult.code === 0, `later waiter exited ${laterResult.code}: ${laterResult.output}`);
+    assert(readFileSync(marker, "utf8").trim() === "later", "terminated waiter command ran or later waiter did not run");
+    assert(!existsSync(queueDir) || readdirSync(queueDir).length === 0, "abandoned queue state remained");
+  } finally {
+    if (waiter?.child.exitCode === null) waiter.child.kill("SIGKILL");
+    if (later?.child.exitCode === null) later.child.kill("SIGKILL");
     if (holder.child.exitCode === null) holder.child.kill("SIGKILL");
     rmSync(queueDir, { recursive: true, force: true });
   }

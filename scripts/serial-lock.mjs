@@ -149,10 +149,14 @@ function holderIsAlive(holderPid, startTicks) {
 }
 
 let queuedAt = 0;
+let queueFilePath = null;
+let queueTempFilePath = null;
 function enqueue() {
   mkdirSync(queueDir, { recursive: true });
   const queueFile = resolve(queueDir, `${process.pid}.json`);
   const queueTempFile = `${queueFile}.${processStartTicks(process.pid) ?? "unknown"}.tmp`;
+  queueFilePath = queueFile;
+  queueTempFilePath = queueTempFile;
   queuedAt = Date.now();
   const fd = openSync(queueTempFile, "wx");
   try {
@@ -164,7 +168,12 @@ function enqueue() {
 }
 
 function dequeue() {
-  try { unlinkSync(resolve(queueDir, `${process.pid}.json`)); } catch { /* already gone */ }
+  for (const path of [queueFilePath, queueTempFilePath]) {
+    if (!path) continue;
+    try { unlinkSync(path); } catch { /* already gone */ }
+  }
+  queueFilePath = null;
+  queueTempFilePath = null;
 }
 
 function precedenceWaiterExists() {
