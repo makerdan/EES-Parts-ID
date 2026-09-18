@@ -34,10 +34,16 @@ const mockAdminClerk = {
   signOut: mockSignOut,
 };
 
-jest.mock("@clerk/expo", () => ({
-  useAuth: () => mockAdminAuth,
-  useClerk: () => mockAdminClerk,
-}));
+jest.mock("@clerk/expo", () => {
+  const { createClerkExpoMock } = jest.requireActual("../__mocks__/clerk-expo");
+  return createClerkExpoMock({
+    useAuth: () => mockAdminAuth,
+    useClerk: () => mockAdminClerk,
+  });
+});
+
+const { assertUploadScreenClerkMock } = jest.requireActual("../__mocks__/clerk-expo");
+assertUploadScreenClerkMock(jest.requireMock("@clerk/expo"), "adminQueryWorkflow");
 
 // ── Navigation and platform boundary mocks ────────────────────────────────────
 

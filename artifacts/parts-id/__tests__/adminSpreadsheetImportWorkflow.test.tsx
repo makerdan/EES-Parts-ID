@@ -20,9 +20,18 @@ import * as SecureStore from "expo-secure-store";
 import { readSheet } from "read-excel-file/universal";
 
 let mockCurrentUserId: string | undefined = "admin-user";
-jest.mock("@clerk/expo", () => ({
-  useAuth: () => ({ userId: mockCurrentUserId }),
-}));
+jest.mock("@clerk/expo", () => {
+  const { createClerkExpoMock } = jest.requireActual("../__mocks__/clerk-expo");
+  return createClerkExpoMock({
+    useAuth: () => ({ userId: mockCurrentUserId }),
+  });
+});
+
+const { assertUploadScreenClerkMock } = jest.requireActual("../__mocks__/clerk-expo");
+assertUploadScreenClerkMock(
+  jest.requireMock("@clerk/expo"),
+  "adminSpreadsheetImportWorkflow",
+);
 
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), navigate: jest.fn() }),

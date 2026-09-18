@@ -43,6 +43,9 @@ jest.mock("@workspace/api-client-react", () => ({
   setBaseUrl: jest.fn(),
 }));
 
+const { assertUploadScreenClerkMock } = jest.requireActual("../__mocks__/clerk-expo");
+assertUploadScreenClerkMock(jest.requireMock("@clerk/expo"), "adminAiStatusE2E");
+
 jest.mock("@/contexts/ApiHealthContext", () =>
   jest.requireActual("../contexts/ApiHealthContext"),
 );
