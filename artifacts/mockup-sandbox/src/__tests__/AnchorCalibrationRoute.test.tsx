@@ -59,6 +59,7 @@ type FixtureOptions = {
   admin?: boolean;
   rejectSaves?: boolean;
   floorPlanResponses?: Array<Promise<Response>>;
+  anchorResponses?: Array<Promise<Response>>;
 };
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -86,6 +87,7 @@ function makeApiFixture(options: FixtureOptions = {}) {
   const rejectSaves = options.rejectSaves ?? false;
   let anchorLoadFailuresRemaining = 0;
   let floorPlanRequestCount = 0;
+  let anchorRequestCount = 0;
 
   const fetchMock = vi.fn((url: string, init?: RequestInit) => {
     calls.push([url, init]);
@@ -130,6 +132,9 @@ function makeApiFixture(options: FixtureOptions = {}) {
     }
 
     if (path === "/api/admin/map-anchors" && method === "GET") {
+      anchorRequestCount += 1;
+      const deferredResponse = options.anchorResponses?.[anchorRequestCount - 1];
+      if (deferredResponse) return deferredResponse;
       if (anchorLoadFailuresRemaining > 0) {
         anchorLoadFailuresRemaining -= 1;
         return Promise.resolve(
@@ -608,6 +613,123 @@ describe("web Anchor Calibration routed workflow", () => {
       pendingFloorPlan.reject(new Error("unmounted floor-plan response"));
     });
     expect(result.container.querySelector("#stale-calibration-floor-plan")).toBeNull();
+  });
+
+  it("keeps the newest anchor mapping when refresh responses settle out of order", async () => {
+    const initialAnchors = deferred<Response>();
+    const staleAnchors = deferred<Response>();
+    const latestAnchors = deferred<Response>();
+    const fixture = makeApiFixture({
+      anchorResponses: [
+        initialAnchors.promise,
+        staleAnchors.promise,
+        latestAnchors.promise,
+      ],
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+
+    const result = await renderRoute(fixture);
+    const container = result.container;
+    const initialAnchor: Anchor = {
+      id: 1,
+      name: "North Door",
+      svgX: 777.8,
+      svgY: 444.4,
+      worldX: 12.5,
+      worldY: 7.3,
+      updatedAt: "2026-09-02T00:00:00.000Z",
+    };
+    const latestAnchor: Anchor = {
+      ...initialAnchor,
+      name: "South Door",
+      svgX: 333.3,
+      svgY: 222.2,
+      worldX: -8.5,
+      worldY: 19.75,
+    };
+
+    await waitFor(() => {
+      expect(
+        fixture.calls.filter(
+          ([url, init]) =>
+            new URL(url).pathname === "/api/admin/map-anchors" &&
+            (init?.method ?? "GET") === "GET",
+        ),
+      ).toHaveLength(1);
+    });
+    await act(async () => {
+      initialAnchors.resolve(jsonResponse(200, { anchors: [initialAnchor] }));
+    });
+    await waitFor(() => {
+      const inputs = within(container).getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("North Door");
+      expect((inputs[1] as HTMLInputElement).value).toBe("12.5");
+      expect((inputs[2] as HTMLInputElement).value).toBe("7.3");
+      expect(within(container).getByText(/x: 777\.8,\s+y: 444\.4/)).toBeTruthy();
+      expect(
+        within(container).getByText("1/3 saved · scroll to zoom · drag to pan · 18%"),
+      ).toBeTruthy();
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      expect(
+        fixture.calls.filter(
+          ([url, init]) =>
+            new URL(url).pathname === "/api/admin/map-anchors" &&
+            (init?.method ?? "GET") === "GET",
+        ),
+      ).toHaveLength(3);
+    });
+
+    await act(async () => {
+      latestAnchors.resolve(jsonResponse(200, { anchors: [latestAnchor] }));
+    });
+    await waitFor(() => {
+      const inputs = within(container).getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("South Door");
+      expect((inputs[1] as HTMLInputElement).value).toBe("-8.5");
+      expect((inputs[2] as HTMLInputElement).value).toBe("19.75");
+      expect(within(container).getByText(/x: 333\.3,\s+y: 222\.2/)).toBeTruthy();
+      expect(
+        within(container).getByText("1/3 saved · scroll to zoom · drag to pan · 18%"),
+      ).toBeTruthy();
+    });
+
+    await act(async () => {
+      staleAnchors.resolve(jsonResponse(200, { anchors: [initialAnchor] }));
+    });
+    await waitFor(() => {
+      const inputs = within(container).getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("South Door");
+      expect((inputs[1] as HTMLInputElement).value).toBe("-8.5");
+      expect((inputs[2] as HTMLInputElement).value).toBe("19.75");
+      expect(within(container).getByText(/x: 333\.3,\s+y: 222\.2/)).toBeTruthy();
+      expect(
+        within(container).getByText("1/3 saved · scroll to zoom · drag to pan · 18%"),
+      ).toBeTruthy();
+    });
+
+    fixture.failNextAnchorLoads();
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      expect(within(container).getByText("⚠ Failed to load anchors")).toBeTruthy();
+      const inputs = within(container).getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("South Door");
+      expect((inputs[1] as HTMLInputElement).value).toBe("-8.5");
+      expect((inputs[2] as HTMLInputElement).value).toBe("19.75");
+      expect(within(container).getByText(/x: 333\.3,\s+y: 222\.2/)).toBeTruthy();
+      expect(
+        within(container).getByText("1/3 saved · scroll to zoom · drag to pan · 18%"),
+      ).toBeTruthy();
+    });
+
+    result.unmount();
   });
 
   it("keeps the last known mapping visible and shows the load error after refresh fails", async () => {
