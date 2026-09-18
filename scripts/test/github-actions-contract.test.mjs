@@ -346,6 +346,9 @@ function validateWorkflowContract(files, coverage) {
   if (!/retention-days:\s+7/.test(lidar) || !/LidarMeasureTests\.xcresult/.test(lidar)) {
     errors.push("lidar-measure-tests.yml: Apple test results are not retained with bounded retention");
   }
+  if (!/-workspace\s+ios\/EESPartsID\.xcworkspace/.test(lidar)) {
+    errors.push("lidar-measure-tests.yml: xcodebuild does not use the workspace generated from the Expo app name");
+  }
 
   const coverageRows = [...coverage.matchAll(/^\|\s*`?([^|`]+?)`?\s*\|/gm)].map((match) => match[1].trim());
   const expected = [...new Set(getTierSteps("standard-plus").map(([name]) => name))];

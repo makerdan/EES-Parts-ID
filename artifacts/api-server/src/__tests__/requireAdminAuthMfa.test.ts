@@ -90,16 +90,10 @@ function buildMocks(
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("requireAdminAuth / requireApprovedAdminAuth — MFA claims are irrelevant", () => {
-  const ORIGINAL_SKIP = process.env.SKIP_ADMIN_MFA;
   const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 
   afterEach(() => {
     // Restore env between tests.
-    if (ORIGINAL_SKIP === undefined) {
-      delete process.env.SKIP_ADMIN_MFA;
-    } else {
-      process.env.SKIP_ADMIN_MFA = ORIGINAL_SKIP;
-    }
     if (ORIGINAL_NODE_ENV === undefined) {
       delete process.env.NODE_ENV;
     } else {
@@ -125,18 +119,14 @@ describe("requireAdminAuth / requireApprovedAdminAuth — MFA claims are irrelev
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it("never returns the MFA_REQUIRED response shape, with or without SKIP_ADMIN_MFA set", () => {
-    for (const skip of [undefined, "true", "false"]) {
-      if (skip === undefined) delete process.env.SKIP_ADMIN_MFA;
-      else process.env.SKIP_ADMIN_MFA = skip;
-      mockSessionClaims = { amr: ["pwd"] };
+  it("never returns the retired MFA_REQUIRED response shape", () => {
+    mockSessionClaims = { amr: ["pwd"] };
 
-      const { req, res, next, status } = buildMocks("admin");
-      requireAdminAuth(req, res, next);
+    const { req, res, next, status } = buildMocks("admin");
+    requireAdminAuth(req, res, next);
 
-      expect(next).toHaveBeenCalledTimes(1);
-      expect(status).not.toHaveBeenCalledWith(403);
-    }
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(status).not.toHaveBeenCalledWith(403);
   });
 
   it("requireApprovedAdminAuth also admits an approved admin without an MFA claim", () => {
@@ -149,8 +139,7 @@ describe("requireAdminAuth / requireApprovedAdminAuth — MFA claims are irrelev
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it("SKIP_ADMIN_MFA has no effect on the outcome for a non-admin", () => {
-    process.env.SKIP_ADMIN_MFA = "true";
+  it("still rejects a non-admin regardless of MFA claims", () => {
     mockSessionClaims = { amr: ["pwd", "totp"] };
 
     const { req, res, next } = buildMocks("user", "approved");

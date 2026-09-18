@@ -46,6 +46,7 @@ const ROUTE_MOUNTS: Record<string, string> = {
   adminAiStatus: "/api/admin",
   adminDashboard: "/api/admin",
   adminQuery: "/api/admin",
+  adminSnapshots: "/api/admin",
   adminUpload: "/api/admin",
   ai: "/api/ai",
   auth: "/api/auth",

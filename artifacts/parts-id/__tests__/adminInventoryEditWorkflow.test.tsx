@@ -104,11 +104,19 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   },
 }));
 
-jest.mock("@/utils/editItemCache", () => ({
-  evictDeletedItemFromAllCaches: jest.fn().mockResolvedValue(undefined),
-  invalidateAllCachesAfterSave: (...args: unknown[]) => mockInvalidateAllCachesAfterSave(...args),
-  invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
-}));
+jest.mock("@/utils/editItemCache", () => {
+  const actual = jest.requireActual("@/utils/editItemCache") as {
+    invalidateAllCachesAfterSave: (...args: unknown[]) => Promise<unknown>;
+  };
+  return {
+    evictDeletedItemFromAllCaches: jest.fn().mockResolvedValue(undefined),
+    invalidateAllCachesAfterSave: (...args: unknown[]) => {
+      mockInvalidateAllCachesAfterSave(...args);
+      return actual.invalidateAllCachesAfterSave(...args);
+    },
+    invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
+  };
+});
 
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 

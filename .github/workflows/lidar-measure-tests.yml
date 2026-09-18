@@ -54,7 +54,7 @@ jobs:
           echo "Running native test command after CocoaPods outcome: ${{ steps.pods.outcome }}"
           xcodebuild test \
             -resultBundlePath /tmp/LidarMeasureTests.xcresult \
-            -workspace ios/PartsID.xcworkspace \
+            -workspace ios/EESPartsID.xcworkspace \
             -scheme lidar-measure-LidarMeasureTests \
             -destination 'platform=iOS Simulator,name=iPhone 16' \
             2>&1 | tee /tmp/LidarMeasureTests.log

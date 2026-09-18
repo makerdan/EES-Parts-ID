@@ -22,7 +22,6 @@ import { readVerifiedSnapshot } from "../lib/inventorySnapshotStorage";
 import { getAdminClerkUserId, requireApprovedAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
-router.use(requireApprovedAdminAuth);
 const CONFIRMATION_TTL_MS = 10 * 60 * 1000;
 
 function currentInventoryDigest(rows: ReadonlyArray<{ vendor: string; catalog: string; updatedAt?: Date | null }>): string {
@@ -72,7 +71,7 @@ function validateRestorableRows(rows: ReadonlyArray<Record<string, unknown>>): v
   }
 }
 
-router.get("/snapshots", async (_req, res) => {
+router.get("/snapshots", requireApprovedAdminAuth, async (_req, res) => {
   try {
     const snapshots = await listVerifiedInventorySnapshots();
     res.json(ListAdminInventorySnapshotsResponse.parse(
@@ -83,7 +82,7 @@ router.get("/snapshots", async (_req, res) => {
   }
 });
 
-router.get("/snapshots/health", async (_req, res) => {
+router.get("/snapshots/health", requireApprovedAdminAuth, async (_req, res) => {
   try {
     res.json(GetAdminInventorySnapshotHealthResponse.parse(inventorySnapshotHealth(await listVerifiedInventorySnapshots())));
   } catch {
@@ -91,7 +90,7 @@ router.get("/snapshots/health", async (_req, res) => {
   }
 });
 
-router.post("/snapshots/dry-run", async (req, res) => {
+router.post("/snapshots/dry-run", requireApprovedAdminAuth, async (req, res) => {
   try {
     const snapshot = (await listVerifiedInventorySnapshots()).find((item) => item.snapshotId === req.body?.snapshotId);
     if (!snapshot) return void res.status(404).json({ error: "Snapshot not found" });
@@ -125,7 +124,7 @@ router.post("/snapshots/dry-run", async (req, res) => {
   }
 });
 
-router.post("/snapshots/restore", async (req, res) => {
+router.post("/snapshots/restore", requireApprovedAdminAuth, async (req, res) => {
   const snapshotId = req.body?.snapshotId;
   const confirmationToken = req.body?.confirmationToken;
   const adminId = getAdminClerkUserId(req, res);
@@ -180,7 +179,7 @@ router.post("/snapshots/restore", async (req, res) => {
   }
 });
 
-router.post("/snapshots", async (_req, res) => {
+router.post("/snapshots", requireApprovedAdminAuth, async (_req, res) => {
   try {
     const result = await createInventorySnapshot("scheduled");
     res.status(201).json(CreateAdminInventorySnapshotResponse.parse({

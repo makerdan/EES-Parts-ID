@@ -6,6 +6,7 @@
  */
 import {
   accessSync,
+  chmodSync,
   existsSync,
   copyFileSync,
   constants,
@@ -13,7 +14,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -141,9 +141,25 @@ function findExecutable(name) {
 function createIsolatedValidationPath(omittedTool) {
   const isolatedPath = join(testRoot, `isolated-path-${omittedTool}`);
   mkdirSync(isolatedPath, { recursive: true });
+  const hostPath = process.env.PATH ?? "";
   for (const requirement of getValidationHostTools("fast")) {
     if (requirement.name === omittedTool) continue;
-    symlinkSync(findExecutable(requirement.name), join(isolatedPath, requirement.name));
+    const wrapperPath = join(isolatedPath, requirement.name);
+    const executable = findExecutable(requirement.name);
+    writeFileSync(
+      wrapperPath,
+      [
+        `#!${process.execPath}`,
+        "const { spawnSync } = require('node:child_process');",
+        `const result = spawnSync(${JSON.stringify(executable)}, process.argv.slice(2), {`,
+        "  stdio: 'inherit',",
+        `  env: { ...process.env, PATH: ${JSON.stringify(hostPath)} },`,
+        "});",
+        "process.exit(result.status ?? 1);",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(wrapperPath, 0o755);
   }
   return isolatedPath;
 }

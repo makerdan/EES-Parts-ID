@@ -31,6 +31,7 @@ const mockUpdateReturning = jest.fn();
 const mockUpdateWhere = jest.fn(() => ({ returning: mockUpdateReturning }));
 const mockUpdateSet = jest.fn(() => ({ where: mockUpdateWhere }));
 const mockUpdate = jest.fn(() => ({ set: mockUpdateSet }));
+const mockTransaction = jest.fn();
 
 // ── Select-chain mocks ────────────────────────────────────────────────────────
 // Supports two endings:
@@ -45,6 +46,7 @@ jest.mock("@workspace/db", () => ({
   db: {
     insert: mockInsert,
     select: mockSelect,
+    transaction: mockTransaction,
     update: mockUpdate,
     // Fire-and-forget ANALYZE call in upsert-batch; must exist or throws synchronously.
     execute: jest.fn().mockResolvedValue(undefined),
@@ -142,6 +144,16 @@ function makeWellFormedRow(overrides: Record<string, unknown> = {}) {
 // ─────────────────────────────────────────────────────────────────────────────
 beforeEach(() => {
   jest.clearAllMocks();
+
+  mockTransaction.mockImplementation(async (callback: (tx: {
+    insert: typeof mockInsert;
+    select: typeof mockSelect;
+    update: typeof mockUpdate;
+  }) => Promise<unknown>) => callback({
+    insert: mockInsert,
+    select: mockSelect,
+    update: mockUpdate,
+  }));
 
   // Restore insert chain (default: returning resolves to [{ isNew: false }])
   mockInsert.mockReturnValue({ values: mockInsertValues });

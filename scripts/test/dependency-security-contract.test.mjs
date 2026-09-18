@@ -66,9 +66,12 @@ assert.equal(packageJson.pnpm.overrides["smol-toml"], ">=1.7.1");
 
 const imageSizeSpecifier = ["image-size", "2.0.2"].join("@");
 const imageSizePatchPath = ["patches/image-size", "2.0.2.patch"].join("@");
+const minimatchSpecifier = ["minimatch", "3.1.5"].join("@");
+const minimatchPatchPath = ["patches/minimatch", "3.1.5.patch"].join("@");
 const expectedIgnoredAdvisories = ["GHSA-5p2g-fcmc-qvqq", "GHSA-w3rx-r6r6-pgpr"];
 assert.deepEqual(packageJson.pnpm.patchedDependencies, {
   [imageSizeSpecifier]: imageSizePatchPath,
+  [minimatchSpecifier]: minimatchPatchPath,
 });
 assert.deepEqual([...packageJson.pnpm.auditConfig.ignoreCves].sort(), expectedIgnoredAdvisories);
 assert.equal(packageJson.pnpm.auditConfig.ignoreCves.length, expectedIgnoredAdvisories.length);
@@ -78,11 +81,20 @@ assert.deepEqual(patchedEntries.get(imageSizeSpecifier), {
   hash: sha256(readFileSync(resolve(root, imageSizePatchPath))),
   path: imageSizePatchPath,
 });
-assert.equal(patchedEntries.size, 1, "the patched package must remain one-to-one with its tracked patch");
+assert.deepEqual(patchedEntries.get(minimatchSpecifier), {
+  hash: sha256(readFileSync(resolve(root, minimatchPatchPath))),
+  path: minimatchPatchPath,
+});
+assert.equal(patchedEntries.size, 2, "each approved patched package must remain one-to-one with its tracked patch");
 assert.match(
   lockfile,
   /image-size@2\.0\.2\(patch_hash=[0-9a-f]+\):/,
   "the lockfile must retain the patched image-size snapshot",
 );
+assert.match(
+  lockfile,
+  /minimatch@3\.1\.5\(patch_hash=[0-9a-f]+\):/,
+  "the lockfile must retain the patched minimatch snapshot",
+);
 
-console.log("Dependency security contract: safe resolutions and image-size exception are aligned");
+console.log("Dependency security contract: safe resolutions and approved patches are aligned");

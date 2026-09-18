@@ -102,6 +102,9 @@ patchedDependencies:
   image-size@2.0.2:
     hash: 0e0dacbcc59dd86b9e840f5fd4a87111b3c8742b17ab1c957fc8027bb303fa5b
     path: patches/image-size@2.0.2.patch
+  minimatch@3.1.5:
+    hash: eef45aef9a64b6f74da5678bdaf83fb9d0c49db63212a4423e1ae6a68c6b8ab1
+    path: patches/minimatch@3.1.5.patch
 
 importers:
 
@@ -11405,7 +11408,7 @@ snapshots:
       ignore: 5.3.2
       import-fresh: 3.3.1
       js-yaml: 4.3.2
-      minimatch: 3.1.5
+      minimatch: 3.1.5(patch_hash=eef45aef9a64b6f74da5678bdaf83fb9d0c49db63212a4423e1ae6a68c6b8ab1)
       strip-json-comments: 3.1.1
     transitivePeerDependencies:
       - supports-color
@@ -12016,7 +12019,7 @@ snapshots:
     dependencies:
       '@humanwhocodes/object-schema': 2.0.3
       debug: 4.4.3
-      minimatch: 3.1.5
+      minimatch: 3.1.5(patch_hash=eef45aef9a64b6f74da5678bdaf83fb9d0c49db63212a4423e1ae6a68c6b8ab1)
     transitivePeerDependencies:
       - supports-color
 
@@ -16599,7 +16602,7 @@ snapshots:
       hasown: 2.0.4
       is-core-module: 2.16.2
       is-glob: 4.0.3
-      minimatch: 3.1.5
+      minimatch: 3.1.5(patch_hash=eef45aef9a64b6f74da5678bdaf83fb9d0c49db63212a4423e1ae6a68c6b8ab1)
       object.fromentries: 2.0.8
       object.groupby: 1.0.3
       object.values: 1.2.1
@@ -16629,7 +16632,7 @@ snapshots:
       estraverse: 5.3.0
       hasown: 2.0.4
       jsx-ast-utils: 3.3.5
-      minimatch: 3.1.5
+      minimatch: 3.1.5(patch_hash=eef45aef9a64b6f74da5678bdaf83fb9d0c49db63212a4423e1ae6a68c6b8ab1)
       object.entries: 1.1.9
       object.fromentries: 2.0.8
       object.values: 1.2.1
@@ -16693,7 +16696,7 @@ snapshots:
       json-stable-stringify-without-jsonify: 1.0.1
       levn: 0.4.1
       lodash.merge: 4.6.2
-      minimatch: 3.1.5
+      minimatch: 3.1.5(patch_hash=eef45aef9a64b6f74da5678bdaf83fb9d0c49db63212a4423e1ae6a68c6b8ab1)
       natural-compare: 1.4.0
       optionator: 0.9.4
       strip-ansi: 6.0.1
@@ -17466,7 +17469,7 @@ snapshots:
       fs.realpath: 1.0.0
       inflight: 1.0.6
       inherits: 2.0.4
-      minimatch: 3.1.5
+      minimatch: 3.1.5(patch_hash=eef45aef9a64b6f74da5678bdaf83fb9d0c49db63212a4423e1ae6a68c6b8ab1)
       once: 1.4.0
       path-is-absolute: 1.0.1
 
@@ -19429,7 +19432,7 @@ snapshots:
     dependencies:
       brace-expansion: 5.0.9
 
-  minimatch@3.1.5:
+  minimatch@3.1.5(patch_hash=eef45aef9a64b6f74da5678bdaf83fb9d0c49db63212a4423e1ae6a68c6b8ab1):
     dependencies:
       brace-expansion: 5.0.9
 
@@ -21128,7 +21131,7 @@ snapshots:
     dependencies:
       '@istanbuljs/schema': 0.1.6
       glob: 7.2.3
-      minimatch: 3.1.5
+      minimatch: 3.1.5(patch_hash=eef45aef9a64b6f74da5678bdaf83fb9d0c49db63212a4423e1ae6a68c6b8ab1)
 
   test-renderer@1.2.0(@types/react@19.1.17)(react@19.1.0):
     dependencies:
