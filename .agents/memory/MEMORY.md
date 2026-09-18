@@ -56,14 +56,14 @@
 - [SVG load singleton retries](svg-load-singleton-retry.md) — a settled module-level load promise must be discarded when cache data is unusable on either platform, or later cold loads stay blank.
 - [SheetJS ArrayBuffer fixtures](sheetjs-array-buffer-fixtures.md) — type:"array" ODS fixtures return an ArrayBuffer; pass it directly instead of converting it as a number array.
 - [Support analytics privacy](support-analytics-privacy.md) — use keyed rotating grouping or disable unique visitors; disclose bounded UTC windows and suppression.
-- [Knip UI package boundaries](knip-ui-package-boundaries.md) — dynamically discovered components and CSS-only imports need explicit Knip configuration.
+- [Knip UI package boundaries](knip-ui-boundaries.md) — dynamically discovered components and CSS-only imports need explicit Knip configuration.
 - [Standard-tier database pool pressure](standard-db-pool-pressure.md) — concurrent validation can exhaust PostgreSQL clients; confirm affected API suites in isolation before assigning regression ownership.
 - [Mapped Jest context mocks](mapped-jest-context-mocks.md) — when a path is mapped to a manual mock, configure that exported mock instance; a separate local spy may not be consumed by the screen.
 - [Orval barrel append behavior](orval-barrel-append.md) — normalize managed barrel exports because newer Orval runs can append duplicates instead of replacing them.
 - [ESLint import sort order](eslint-import-sort-order.md) — use fix-dry-run output when simple-import-sort rejects valid but noncanonical package/specifier ordering.
 - [Patch published packages instead of vendoring build output](pnpm-patched-published-package.md) — repo-wide dist ignores can silently omit runtime files from directory overrides; patch a pinned registry tarball instead.
 - [GitHub Actions token PR creation policy](github-actions-token-pr-creation.md) — disabling workflow-token PR approval also blocks PR creation; publish a reviewable automation branch instead.
-- [Exact-tree GitHub snapshot transport](github-exact-tree-snapshot-transport.md) — when raw blob API uploads are blocked, use a temporary shallow clone and verify tree identity before pushing.
+- [Exact-tree GitHub snapshot transport](exact-tree-snapshot-transport.md) — when raw blob API uploads are blocked, use a temporary shallow clone and verify tree identity before pushing.
 - [DB fixture ownership watermarks](db-fixture-ownership-watermarks.md) — identify async DB fixtures with a DB-generated ID watermark, not an app-clock timestamp that can drift from the database clock.
 - [Runtime data boundary](runtime-data-boundary.md) — require explicit database modes, reject production in tooling, and delay database imports until startup validation runs.
 - [API auth before body parsing](api-auth-before-body-parsing.md) — method-aware public route matching and pre-parser auth prevent write-prefix leaks and unauthenticated upload buffering.
@@ -73,8 +73,8 @@
 - [Jest hoisted shared mock factories](jest-hoisted-shared-mock-factories.md) — load shared helpers inside hoisted mock callbacks and pass in jest.requireActual modules to avoid TDZ failures.
 - [Disabled query cache observers](disabled-query-cache-observers.md) — when a disabled query-backed screen must react to app-owned cache writes, subscribe to QueryCache and read the stable key directly.
 - [Task-plan heading parser](task-plan-heading-parser.md) — put detailed Validation before Validation tier so the locked runner parses the intended section.
-- [Replit active configuration read boundary](replit-active-config-read-boundary.md) — no documented runtime reader exists; `/run/replit/env` is environment-only and may contain secrets.
-- [Replit config validation drift](replit-config-validation-drift.md) — standard validation can stop before project checks when an unrelated working-tree `.replit` port table differs from its contract.
+- [Replit active configuration read boundary](replit-active-config-read-boundary.md) — no documented runtime reader exists; /run/replit/env is environment-only and may contain secrets.
+- [Replit config validation drift](replit-config-validation-drift.md) — standard validation can stop before project checks when an unrelated working-tree .replit port table differs from its contract.
 - [SearchScreen QueryClient test harness](searchscreen-queryclient-test-harness.md) — direct mounts need a provider; result assertions also need seeded active-cache data.
 - [API health restart recovery](api-health-restart-recovery.md) — preserve terminal restart outcomes through cleanup and refresh dependent health snapshots on recovery.
 - [Help user-scoped preferences](help-user-scoped-preferences.md) — isolate first-run dismissal per account and ignore stale async reads after account changes.
@@ -90,3 +90,4 @@
 - [Auth-scoped durable drafts](auth-scoped-durable-drafts.md) — tie readiness to the exact user, clear UI state on identity changes, and serialize saves with logout deletion.
 - [RNTL 14 async fireEvent](rntl14-async-fireevent.md) — every fireEvent call returns a promise with its own act scope; await each interaction before starting another lifecycle helper.
 - [OpenAPI integer Zod enforcement](openapi-integer-zod-enforcement.md) — generated Zod schemas may accept fractions for OpenAPI integer fields; enforce safe integers at write boundaries.
+- [Completion validation tier drift](completion-validation-tier-drift.md) — completion callbacks may run every registered tier; unrelated full-suite failures can reject a task whose declared tier passed.
