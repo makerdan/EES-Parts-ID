@@ -1,14 +1,14 @@
 # GitHub Actions validation coverage
 
 This matrix is the repository-owned routing contract. The Replit validation tiers
-remain the local authority; GitHub runs the portable `standard-plus` tier and the
-native LiDAR suite through the fail-closed `CI / required` aggregator. GitHub
-settings and live run status are not inferred from this file.
+remain the local authority; GitHub runs the portable `standard-plus` tier through
+the fail-closed `CI / required` aggregator. Native LiDAR validation is intentionally
+not run in CI. GitHub settings and live run status are not inferred from this file.
 
 The workflow contract discovers its inventory with `git ls-files` under
 `.github/workflows` and validates every tracked path with the shared permission,
 concurrency, timeout, immutable-action, and pull-request safety rules. Workflow-
-specific checks remain explicit for the named CI, native, audit, and README
+specific checks remain explicit for the named CI, audit, and README
 maintenance roles. Adding a tracked workflow therefore cannot bypass the shared
 checks; the contract also includes a negative fixture for an unsafe newly added
 workflow.

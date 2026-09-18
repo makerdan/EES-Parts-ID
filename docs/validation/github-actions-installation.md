@@ -95,11 +95,8 @@ values.
 
 - `.github/actions/setup-node-pnpm/action.yml` — reusable checkout, Node 24.13.0,
   pnpm 10.26.1, frozen install, and lockfile/OS/architecture/toolchain cache.
-- `.github/workflows/ci.yml` — portable standard-plus validation, the reusable
-  native LiDAR call, isolated PostgreSQL, diagnostics, and stable fail-closed
-  `CI / required` aggregator.
-- `.github/workflows/lidar-measure-tests.yml` — reusable bounded macOS native
-  test job with Apple result retention.
+- `.github/workflows/ci.yml` — portable standard-plus validation, isolated
+  PostgreSQL, diagnostics, and stable fail-closed `CI / required` aggregator.
 - `.github/workflows/scheduled-audit.yml` — read-only scheduled/manual audit.
 - `.github/workflows/sync-readme.yml` — schedule/manual-only maintenance writer.
 - `scripts/test/github-actions-contract.test.mjs` — deterministic workflow and
@@ -120,7 +117,7 @@ values.
 | Repository | `makerdan/EES-Parts-ID`, public, user-owned; authenticated connection has admin access | confirmed |
 | Default branch | repository API returned `main` | confirmed |
 | Default-branch revision | `a91289795b048e1fb6375fda78f5ff7cca65f83e` | confirmed; installed contract |
-| Required checks | strict required context is exactly `CI / required`, which now aggregates portable and native LiDAR results | configured; workflow contract updated without a GitHub-settings mutation |
+| Required checks | strict required context is exactly `CI / required`, which fails closed on portable validation; native LiDAR validation is intentionally excluded from CI | configured; workflow contract updated without a GitHub-settings mutation |
 | Pull-request protection | pull-request review rule exists with the prior zero-approval requirement | configured without inventing a new review requirement |
 | Administrator enforcement | `enforce_admins.enabled: true` | configured |
 | Force-push and deletion blocks | both `allow_force_pushes.enabled` and `allow_deletions.enabled` are `false` | configured |
