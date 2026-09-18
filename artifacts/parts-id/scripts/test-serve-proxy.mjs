@@ -12,6 +12,8 @@
  *   ✓ POST /api/data with JSON body → stub receives the full body unchanged.
  *   ✓ Authorization header is forwarded to the stub unchanged.
  *   ✓ Response headers from the stub reach the client.
+ *   ✓ Downstream disconnect → the upstream response socket closes.
+ *   ✓ Stalled upstream → bounded 504 JSON response and upstream cleanup.
  *   ✓ API server down → 502 JSON response, serve.js does not crash.
  *
  * Exit: 0 on all-pass, 1 on any failure.
@@ -282,7 +284,10 @@ async function main() {
   // ── 1. Stub API server ───────────────────────────────────────────────────
   /** Captured requests from the stub (for assertion in tests). */
   const captured = [];
-  let stalledRequestClosed = false;
+  let disconnectRequestReceived = false;
+  let disconnectResponseClosed = false;
+  let stalledRequestReceived = false;
+  let stalledResponseClosed = false;
   let stubServer;
   let child;
   let exitCode = 0;
@@ -301,7 +306,19 @@ async function main() {
           body: bodyStr,
         });
 
+        if (req.url === "/api/disconnect") {
+          disconnectRequestReceived = true;
+          res.on("close", () => {
+            disconnectResponseClosed = true;
+          });
+          return;
+        }
+
         if (req.url === "/api/stall") {
+          stalledRequestReceived = true;
+          res.on("close", () => {
+            stalledResponseClosed = true;
+          });
           return;
         }
 
@@ -333,6 +350,7 @@ async function main() {
         API_SERVER_PORT: String(stub.port),
         PARTS_ID_STATIC_ROOT: staticRoot,
         PARTS_ID_SERVER_MODE: "production",
+        API_PROXY_TIMEOUT_MS: "150",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -406,22 +424,44 @@ async function main() {
       );
     });
 
-    // 3e. Incomplete response → bounded request failure and socket cleanup
-    await test("incomplete proxied response → request times out and socket closes", async () => {
-      await assert.rejects(
-        via({
-          path: "/api/stall",
-          timeoutMs: 100,
-          onRequestClose: () => {
-            stalledRequestClosed = true;
-          },
-        }),
-        (error) => error.code === "ETIMEDOUT" && /\/api\/stall/.test(error.message),
-      );
-      await waitFor(() => stalledRequestClosed);
+    // 3e. Downstream disconnect → upstream response socket closes
+    await test("downstream disconnect aborts the owned upstream request", async () => {
+      let unexpectedResponse = false;
+      const downstream = http.request({
+        hostname: "127.0.0.1",
+        port: staticPort,
+        path: "/api/disconnect",
+      });
+      const downstreamClosed = new Promise((resolvePromise) => {
+        downstream.once("close", resolvePromise);
+        downstream.once("error", resolvePromise);
+      });
+      downstream.on("response", (res) => {
+        unexpectedResponse = true;
+        res.resume();
+      });
+      downstream.end();
+
+      await waitFor(() => disconnectRequestReceived);
+      downstream.destroy();
+      await downstreamClosed;
+      assert.equal(unexpectedResponse, false, "downstream request unexpectedly received a response");
+      await waitFor(() => disconnectResponseClosed);
     });
 
-    // 3f. Unexpected harness errors still clean up owned resources
+    // 3f. Incomplete response → bounded proxy failure and socket cleanup
+    await test("stalled upstream → bounded 504 JSON response and socket cleanup", async () => {
+      const res = await via({
+        path: "/api/stall",
+        timeoutMs: 2_000,
+      });
+      assert.equal(res.status, 504, `expected 504, got ${res.status}`);
+      assert.deepEqual(JSON.parse(res.body), { error: "API server timed out" });
+      await waitFor(() => stalledRequestReceived);
+      await waitFor(() => stalledResponseClosed);
+    });
+
+    // 3g. Unexpected harness errors still clean up owned resources
     await test("unexpected harness errors still clean up owned resources", async () => {
       let probeServer;
       let probeChild;
@@ -453,7 +493,7 @@ async function main() {
       );
     });
 
-    // 3g. API server down → 502 JSON, serve.js stays alive
+    // 3h. API server down → 502 JSON, serve.js stays alive
     await test("API server unavailable → 502 JSON response, serve.js stays alive", async () => {
       // Shut the stub down to simulate the API server being unreachable.
       await closeServer(stubServer);

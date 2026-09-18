@@ -152,6 +152,15 @@ const API_PORT = parseInt(
   process.env.API_SERVER_PORT || String(devPorts.NATIVE_API_DEV_PORT),
   10,
 );
+const API_PROXY_TIMEOUT_MS = parsePositiveInteger(
+  process.env.API_PROXY_TIMEOUT_MS,
+  30_000,
+);
+
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 try {
   preflightWebArtifact({ staticRoot: STATIC_ROOT, mode: SERVER_MODE });
@@ -174,16 +183,62 @@ function proxyToApiServer(pathname, search, req, res) {
     headers: { ...req.headers, host: `localhost:${API_PORT}` },
   };
 
+  let upstreamResponse;
+  let deadlineId;
+  let aborted = false;
+
+  const clearDeadline = () => {
+    if (deadlineId) {
+      clearTimeout(deadlineId);
+      deadlineId = undefined;
+    }
+  };
+
+  const sendError = (status, message) => {
+    if (res.headersSent || res.destroyed) return;
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: message }));
+  };
+
+  const abortUpstream = (error) => {
+    aborted = true;
+    req.unpipe(proxyReq);
+    upstreamResponse?.destroy(error);
+    proxyReq.destroy(error);
+  };
+
   const proxyReq = http.request(options, (proxyRes) => {
+    upstreamResponse = proxyRes;
     res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
     proxyRes.pipe(res, { end: true });
+    proxyRes.on("end", clearDeadline);
+    proxyRes.on("error", (err) => {
+      clearDeadline();
+      if (!res.headersSent && !res.destroyed) {
+        console.error(`[serve] API proxy response error (${target}):`, err.message);
+        sendError(502, "API server unavailable");
+      }
+    });
+  });
+
+  deadlineId = setTimeout(() => {
+    const error = new Error(`API proxy timed out after ${API_PROXY_TIMEOUT_MS} ms`);
+    console.error(`[serve] API proxy timeout (${target}):`, error.message);
+    abortUpstream(error);
+    sendError(504, "API server timed out");
+  }, API_PROXY_TIMEOUT_MS);
+
+  res.on("close", () => {
+    if (!res.writableEnded && !aborted) {
+      abortUpstream(new Error("downstream response closed"));
+    }
   });
 
   proxyReq.on("error", (err) => {
-    console.error(`[serve] API proxy error (${target}):`, err.message);
-    if (!res.headersSent) {
-      res.writeHead(502, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "API server unavailable" }));
+    clearDeadline();
+    if (!aborted) {
+      console.error(`[serve] API proxy error (${target}):`, err.message);
+      sendError(502, "API server unavailable");
     }
   });
 
