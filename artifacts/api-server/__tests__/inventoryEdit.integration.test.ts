@@ -634,7 +634,7 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
     expect(row?.pinnedKeywords).toEqual(newKeywords);
   });
 
-  it("returns saved keywords from repeated search and a fresh app instance", async () => {
+  it("bounds stalled dictionary initialization, retries cleanly, and returns saved keywords", async () => {
     const newKeywords = ["durable-search-keyword", "admin-edit-confirmation"];
     const findItem = (body: unknown) => {
       const results = (body as {
@@ -651,18 +651,51 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
     recoveryApp.use("/api", routes);
     const actualTransaction = db.transaction.bind(db);
     const dictionaryLoad = jest.spyOn(db, "transaction");
+    const dictionaryErrorLog = jest.spyOn(logger, "error");
+    let releaseStalledGeneration!: () => void;
+    const stalledGeneration = new Promise<unknown>(resolve => {
+      releaseStalledGeneration = () => resolve({});
+    });
     dictionaryLoad
       // The search limiter also uses a transaction. Let that unrelated
-      // transaction run before injecting the dictionary initialization fault.
+      // transaction run before injecting dictionary initialization faults.
       .mockImplementationOnce(callback => actualTransaction(callback))
+      // Keep the first dictionary generation pending past its deadline.
+      .mockImplementationOnce(() => stalledGeneration as never)
       .mockRejectedValueOnce(new Error("temporary dictionary connection unavailable"));
 
     try {
+      const startedAt = Date.now();
+      const stalledResponse = await supertest(recoveryApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(500);
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+      expect(stalledResponse.body).toEqual({ error: "Search failed" });
+      expect(JSON.stringify(stalledResponse.body)).not.toContain(item.catalog);
+
+      const diagnosticCall = dictionaryErrorLog.mock.calls.find(([fields]) => (
+        typeof fields === "object" &&
+        fields !== null &&
+        "event" in fields &&
+        fields.event === "inventory_dictionary_load_failed"
+      ));
+      expect(diagnosticCall?.[0]).toMatchObject({
+        errorCategory: "dictionary_database_failure",
+        attempts: 1,
+        errorName: "DictionaryLoadTimeoutError",
+        errorCode: "DICTIONARY_LOAD_TIMEOUT",
+      });
+      expect(JSON.stringify(diagnosticCall?.[0])).not.toContain(item.catalog);
+
+      // The timed-out generation is still unresolved while the next request
+      // starts. A newer generation must not be cleared by stale cleanup.
       await supertest(recoveryApp)
         .post("/api/inventory/search")
         .send({ keywords: item.catalog })
         .expect(200);
-      expect(dictionaryLoad).toHaveBeenCalledTimes(3);
+      expect(dictionaryLoad).toHaveBeenCalledTimes(4);
+      releaseStalledGeneration();
 
       const beforeSave = await supertest(app)
         .post("/api/inventory/search")
@@ -696,6 +729,8 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
         .expect(200);
       expect(findItem(freshAppSearch.body)?.aiKeywords).toEqual(newKeywords);
     } finally {
+      releaseStalledGeneration();
+      dictionaryErrorLog.mockRestore();
       dictionaryLoad.mockRestore();
     }
   });

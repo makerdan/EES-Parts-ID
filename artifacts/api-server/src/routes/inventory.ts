@@ -333,7 +333,21 @@ interface DictionaryCache {
 
 const DICTIONARY_LOAD_MAX_ATTEMPTS = 2;
 const DICTIONARY_RETRY_DELAY_MS = 25;
+// Keep database cancellation shorter than the loader deadline so a real
+// stalled statement has time to reject and let Drizzle roll back/release its
+// transaction client before the outer guard fires.
+const DICTIONARY_STATEMENT_TIMEOUT_MS = 1_500;
+const DICTIONARY_LOAD_DEADLINE_MS = 2_000;
 let _initPromise: Promise<DictionaryCache> | null = null;
+
+class DictionaryLoadTimeoutError extends Error {
+  readonly code = "DICTIONARY_LOAD_TIMEOUT";
+
+  constructor() {
+    super("Search dictionary initialization exceeded its deadline");
+    this.name = "DictionaryLoadTimeoutError";
+  }
+}
 
 function dictionaryErrorDetails(error: unknown): {
   errorName: string;
@@ -359,11 +373,31 @@ function waitForDictionaryRetry(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, DICTIONARY_RETRY_DELAY_MS));
 }
 
+function withDictionaryLoadDeadline<T>(operation: Promise<T>): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => reject(new DictionaryLoadTimeoutError()), DICTIONARY_LOAD_DEADLINE_MS);
+  });
+
+  return Promise.race([operation, deadline]).finally(() => {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+  });
+}
+
 async function readDictionaries(): Promise<DictionaryCache> {
   // Keep all five reads on one checked-out client. Promise.all previously
   // requested five clients at once, which could fail during concurrent Jest
   // workloads even though the configured pool budget was healthy.
   return db.transaction(async tx => {
+    // The outer deadline bounds mocked or otherwise non-settling operations;
+    // this transaction-local timeout is what cancels a real PostgreSQL query
+    // and lets Drizzle roll back and release the checked-out client.
+    await tx.execute(sql`select set_config(
+      'statement_timeout',
+      ${String(DICTIONARY_STATEMENT_TIMEOUT_MS)},
+      true
+    )`);
+
     // Keep the statements sequential as well: node-postgres queues queries on
     // a transaction client, and serial reads avoid leaving work in flight if
     // one dictionary query fails.
@@ -395,30 +429,36 @@ async function loadDictionaries(): Promise<DictionaryCache> {
   if (_initPromise) return _initPromise;
 
   const initPromise = (async () => {
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= DICTIONARY_LOAD_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        return await readDictionaries();
-      } catch (error) {
-        lastError = error;
-        if (attempt < DICTIONARY_LOAD_MAX_ATTEMPTS) {
-          await waitForDictionaryRetry();
-          continue;
+    let attempts = 0;
+    try {
+      return await withDictionaryLoadDeadline((async () => {
+        for (let attempt = 1; attempt <= DICTIONARY_LOAD_MAX_ATTEMPTS; attempt += 1) {
+          attempts = attempt;
+          try {
+            return await readDictionaries();
+          } catch (error) {
+            if (attempt < DICTIONARY_LOAD_MAX_ATTEMPTS) {
+              await waitForDictionaryRetry();
+              continue;
+            }
+            throw error;
+          }
         }
 
-        logger.error(
-          {
-            event: "inventory_dictionary_load_failed",
-            errorCategory: "dictionary_database_failure",
-            attempts: DICTIONARY_LOAD_MAX_ATTEMPTS,
-            ...dictionaryErrorDetails(error),
-          },
-          "Failed to load search dictionary tables; retry budget exhausted",
-        );
-      }
+        throw new Error("Search dictionary initialization failed");
+      })());
+    } catch (error) {
+      logger.error(
+        {
+          event: "inventory_dictionary_load_failed",
+          errorCategory: "dictionary_database_failure",
+          attempts: attempts || 1,
+          ...dictionaryErrorDetails(error),
+        },
+        "Failed to load search dictionary tables within retry/deadline budget",
+      );
+      throw error;
     }
-
-    throw lastError ?? new Error("Search dictionary initialization failed");
   })();
 
   _initPromise = initPromise;
