@@ -33,6 +33,8 @@ const actionPath = join(root, ".github", "actions", "setup-node-pnpm", "action.y
 const coveragePath = join(root, "docs", "validation", "github-actions-coverage.md");
 const protectionStatusPath = join(root, "docs", "validation", "github-protection-status.md");
 const installationPath = join(root, "docs", "validation", "github-actions-installation.md");
+const partsIdPackagePath = join(root, "artifacts", "parts-id", "package.json");
+const pnpmLockPath = join(root, "pnpm-lock.yaml");
 const fastContractChecks = new Map([
   ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
   ["api-spec-typecheck-contract", "node scripts/test/api-spec-typecheck-contract.test.mjs"],
@@ -348,6 +350,22 @@ function validateWorkflowContract(files, coverage) {
   }
   if (!/-workspace\s+ios\/EESPartsID\.xcworkspace/.test(lidar)) {
     errors.push("lidar-measure-tests.yml: xcodebuild does not use the workspace generated from the Expo app name");
+  }
+  if (!/DEVELOPER_DIR:\s+\/Applications\/Xcode_26\.0\.1\.app\/Contents\/Developer/.test(lidar)) {
+    errors.push("lidar-measure-tests.yml: native validation must select the pinned Xcode 26.0.1 toolchain");
+  }
+  if (!/test .* = "Xcode 26\.0\.1"/.test(lidar) || !/Swift version 6\\\.2/.test(lidar)) {
+    errors.push("lidar-measure-tests.yml: native validation must fail before dependency resolution when the pinned Xcode or Swift 6.2 toolchain is unavailable");
+  }
+  if (!/-scheme\s+lidar-measure-LidarMeasureTests/.test(lidar)) {
+    errors.push("lidar-measure-tests.yml: native validation must retain the LiDAR test scheme");
+  }
+  const partsIdPackage = JSON.parse(read(partsIdPackagePath));
+  if (partsIdPackage.dependencies?.["@clerk/expo"] !== "3.6.5") {
+    errors.push("parts-id: Clerk Expo must remain pinned to the release that resolves clerk-ios 1.2.7");
+  }
+  if (!/artifacts\/parts-id:[\s\S]*?'@clerk\/expo':\n\s+specifier: 3\.6\.5\n\s+version: 3\.6\.5\(/.test(read(pnpmLockPath))) {
+    errors.push("pnpm-lock.yaml: Parts ID Clerk Expo resolution must remain reproducibly pinned to 3.6.5");
   }
 
   const coverageRows = [...coverage.matchAll(/^\|\s*`?([^|`]+?)`?\s*\|/gm)].map((match) => match[1].trim());

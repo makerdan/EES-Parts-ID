@@ -15,6 +15,8 @@ jobs:
     name: Run LidarMeasureTests
     runs-on: macos-15
     timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.0.1.app/Contents/Developer
     permissions:
       contents: read
     steps:
@@ -25,6 +27,16 @@ jobs:
 
       - name: Set up repository toolchain
         uses: ./.github/actions/setup-node-pnpm
+
+      - name: Verify pinned Xcode and Swift toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x "$DEVELOPER_DIR/usr/bin/xcodebuild"
+          test -x "$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
+          test "$("$DEVELOPER_DIR/usr/bin/xcodebuild" -version | head -n 1)" = "Xcode 26.0.1"
+          "$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift" --version \
+            | grep -Eq 'Swift version 6\.2([.[:space:]]|$)'
 
       - name: Expo prebuild (generates ios/)
         working-directory: artifacts/parts-id
