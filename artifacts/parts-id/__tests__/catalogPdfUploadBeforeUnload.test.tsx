@@ -127,7 +127,7 @@ afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
 // ── Imports (after all jest.mock declarations) ────────────────────────────────
 
 import React from "react";
-import { render, act, RenderResult, fireEvent } from "@testing-library/react-native";
+import { render, act, RenderResult, fireEvent, waitFor } from "@testing-library/react-native";
 import { CatalogPdfUpload } from "../components/CatalogPdfUpload";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
