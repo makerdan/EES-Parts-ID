@@ -58,6 +58,7 @@ workflow.
 | dependency-security-contract | `CI / required` → `pnpm run test-standard-plus` | safe lockfile floors for audited packages and exact `image-size` patch/exception linkage | PR, merge queue, main push, manual | tracked contract test |
 | parts-id-dependency-contract | `CI / required` → `pnpm run test-standard-plus` | prevents Parts ID runtime packages from also being declared as development dependencies | PR, merge queue, main push, manual | tracked contract test |
 | dead-exports-contract | `CI / required` → `pnpm run test-standard-plus` | preserves Knip findings and failure status while identifying the library being checked | PR, merge queue, main push, manual | tracked contract test |
+| dead-code-policy-contract | `CI / required` → `pnpm run test-standard-plus` | requires every validation package to declare Knip coverage or a documented exclusion, including scripts entrypoints and generated helpers | PR, merge queue, main push, manual | tracked contract test |
 | test | `CI / required` → `pnpm run test-standard-plus` | all canonical Jest/Vitest suites; no separate test job | PR, merge queue, main push, manual | inferred from tier manifest |
 | serve-proxy-smoke | `CI / required` → `pnpm run test-standard-plus` | direct portable smoke coverage | PR, merge queue, main push, manual | inferred from tier manifest |
 | schema-check | `CI / required` → `pnpm run test-standard-plus` | isolated PostgreSQL service plus schema preparation | PR, merge queue, main push, manual | inferred from workflow |

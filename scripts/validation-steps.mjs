@@ -201,6 +201,7 @@ export const FAST = [
   ["dependency-security-contract", "node scripts/test/dependency-security-contract.test.mjs"],
   ["parts-id-dependency-contract", "node scripts/test/parts-id-dependency-contract.test.mjs"],
   ["dead-exports-contract", "node scripts/test/dead-exports-contract.test.mjs"],
+  ["dead-code-policy-contract", "node scripts/test/dead-code-policy-contract.test.mjs"],
   ["patched-dependencies-contract", "node scripts/test/patched-dependencies.test.mjs"],
   ["patched-dependencies", "node scripts/check-patched-dependencies.mjs"],
   ["replit-config-contract", "node scripts/test/replit-config-contract.test.mjs"],

@@ -48,6 +48,33 @@ try {
     output.indexOf(attribution) < output.indexOf(finding),
     "package attribution must precede the Knip report",
   );
+
+  writeFileSync(
+    join(fixture, "package.json"),
+    JSON.stringify({
+      name: "@contract/missing-dead-code-policy",
+      private: true,
+      type: "module",
+    }),
+  );
+  const missingPolicy = spawnSync(
+    process.execPath,
+    [runner, "--package-dir", fixture],
+    {
+      cwd: root,
+      encoding: "utf8",
+    },
+  );
+  const missingPolicyOutput = `${missingPolicy.stdout}\n${missingPolicy.stderr}`;
+  assert.equal(
+    missingPolicy.status,
+    1,
+    "a package without a dead-code policy must fail validation",
+  );
+  assert.match(
+    missingPolicyOutput,
+    /has no explicit dead-code policy in package\.json/,
+  );
 } finally {
   rmSync(fixture, { recursive: true, force: true });
 }

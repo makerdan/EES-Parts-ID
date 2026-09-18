@@ -3,6 +3,17 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "deadCodePolicy": {
+    "mode": "excluded",
+    "reason": "The scripts workspace contains command entrypoints and generated validation helpers, so its files are covered by registered validation commands instead of Knip's import graph.",
+    "coveredPaths": [
+      "src/**/*.ts",
+      "test/**/*.ts",
+      "lib/**/*.mjs",
+      "*.mjs",
+      "*.sh"
+    ]
+  },
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "clean-keywords": "tsx ./src/clean-keywords.ts",
