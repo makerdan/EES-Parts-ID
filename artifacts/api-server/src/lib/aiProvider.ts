@@ -734,15 +734,23 @@ async function runBoundedProbeRequest(
     throw err;
   }
   void transportSettled.then(releasePermit, releasePermit);
+  let responseSettled = false;
+  const trackedResponse = response.finally(() => {
+    responseSettled = true;
+  });
   try {
     await Promise.race([
-      response,
+      trackedResponse,
       aborted,
       timedOut,
     ]);
   } finally {
     if (timer) clearTimeout(timer);
     parentSignal?.removeEventListener("abort", abort);
+    if (responseSettled) {
+      await transportSettled;
+      releasePermit();
+    }
   }
 }
 

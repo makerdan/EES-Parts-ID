@@ -41,19 +41,30 @@ jest.mock("openai", () => {
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import { db } from "@workspace/db";
+import { resetPoeClient } from "@workspace/integrations-poe-server";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { getAllPoeModelNames } from "../src/lib/aiProvider";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 let adminToken: string;
+let originalPoeApiKey: string | undefined;
 
 beforeAll(() => {
+  originalPoeApiKey = process.env.POE_API_KEY2;
+  process.env.POE_API_KEY2 = "test-poe-key";
   adminToken = signAdminToken();
 });
 
 beforeEach(() => {
-  mockCreate.mockClear();
+  resetPoeClient();
+  mockCreate.mockReset().mockResolvedValue({ choices: [] });
+});
+
+afterAll(() => {
+  resetPoeClient();
+  if (originalPoeApiKey === undefined) delete process.env.POE_API_KEY2;
+  else process.env.POE_API_KEY2 = originalPoeApiKey;
 });
 
 
@@ -129,7 +140,6 @@ describe("POST /api/admin/ai-status/probe/:botName", () => {
   });
 
   it("returns 200 with a bots map for a known bot when probe succeeds", async () => {
-    mockCreate.mockResolvedValue({ choices: [] });
     const [firstBot] = getAllPoeModelNames();
 
     const res = await supertest(app)
@@ -171,7 +181,6 @@ describe("POST /api/admin/ai-status/probe/:botName", () => {
   });
 
   it("only calls the Poe API for the named bot (not all bots)", async () => {
-    mockCreate.mockResolvedValue({ choices: [] });
     const [firstBot] = getAllPoeModelNames();
 
     await supertest(app)
