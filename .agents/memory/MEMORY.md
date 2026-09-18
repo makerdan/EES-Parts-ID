@@ -95,3 +95,4 @@
 - [Public history release boundary](public-history-release-boundary.md) — fail closed on incomplete history scans; report existing historical findings without leaking paths or values until owner purge.
 - [Dead-export lint baseline](dead-export-lint-baseline.md) — root lint currently fails because check-dead-exports reports an unlisted `tsc` binary in package metadata.
 - [Shared API codegen ownership](codegen-shared-lock.md) — all destructive generators use one tokenized serial resource and cache the resolved toolchain graph.
+- [Parts ID web build domain](parts-id-web-build-domain.md) — regeneration must use a stable non-preview deployment domain because native validation rejects *.replit.dev.

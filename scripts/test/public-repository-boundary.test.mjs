@@ -41,10 +41,6 @@ const SAFE_EXAMPLE_VALUES = new Set([
   "postgres",
   "user",
 ]);
-const ALLOWED_GENERATED_EMAILS = new Set([
-  ["support@", "clerk.com"].join(""),
-  ["nicolas.charpentier079@", "gmail.com"].join(""),
-]);
 const PUBLIC_LAYOUT_COLUMNS = [
   "aisle_key",
   "section",
@@ -298,8 +294,7 @@ function contentFindingRecords(filePath, content) {
         domain.endsWith(".example") ||
         domain.endsWith(".test") ||
         domain.endsWith(".invalid");
-      const generatedBundle = /(?:^|\/)static-build\//i.test(filePath);
-      if (!reservedDomain && !(generatedBundle && ALLOWED_GENERATED_EMAILS.has(match[0]))) {
+      if (!reservedDomain) {
         add("non-synthetic email address");
       }
     }
@@ -639,6 +634,16 @@ function runSelfTests() {
     "generated output was not scanned",
   );
   assert(!generatedFindings.some((finding) => finding.includes("real-password")), "generated diagnostics exposed a matched value");
+
+  const generatedContact = ["maintainer@", ["vendor", "co"].join(".")].join("");
+  const generatedContactFindings = scanPaths(
+    ["artifacts/parts-id/static-build/contact.js"],
+    new Map([["artifacts/parts-id/static-build/contact.js", generatedContact]]),
+  );
+  assert(
+    generatedContactFindings.some((finding) => finding.includes("non-synthetic email")),
+    "generated bundle contact data was not rejected",
+  );
 
   const userDataFindings = scanPaths(
     ["fixtures/production-users.json"],

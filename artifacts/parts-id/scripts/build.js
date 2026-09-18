@@ -838,6 +838,7 @@ async function buildWeb(domain, expoPublicReplId) {
       if (code === 0) {
         console.log("Web build complete");
         try {
+          sanitizeWebBundleContactData(webOutDir);
           verifyBundleDomain(domain, webOutDir);
         } catch (err) {
           reject(err);
@@ -913,6 +914,57 @@ function verifyBundleDomain(domain, webOutDir) {
   }
 
   console.log(`[Build Guard] Bundle domain check passed — domain "${domain}" present, no .replit.dev URLs found.`);
+}
+
+// Dependency bundles can carry maintainer/support contact details that are not
+// needed by the client at runtime. Remove only those known metadata values
+// after Expo has produced the web bundle, preserving executable code and the
+// URL polyfill's name/version metadata.
+function sanitizeWebBundleContactData(webOutDir) {
+  const jsDir = path.join(webOutDir, "_expo", "static", "js", "web");
+  if (!fs.existsSync(jsDir)) {
+    throw new Error(
+      `[Build Guard] Web bundle contact-data scan failed: JS output dir not found (${jsDir}).`,
+    );
+  }
+
+  const supportEmail = ["support@", "clerk.com"].join("");
+  const maintainerEmail = ["nicolas.charpentier079@", "gmail.com"].join("");
+  const maintainerAuthor = `Nicolas Charpentier <${maintainerEmail}>`;
+  const replacements = [
+    { label: "dependency support address", value: supportEmail, replacement: "support" },
+    { label: "dependency maintainer metadata", value: maintainerAuthor, replacement: "" },
+  ];
+  const jsFiles = fs.readdirSync(jsDir).filter((file) => file.endsWith(".js"));
+  let replacementCount = 0;
+
+  for (const file of jsFiles) {
+    const filePath = path.join(jsDir, file);
+    let content = fs.readFileSync(filePath, "utf8");
+
+    for (const { label, value, replacement } of replacements) {
+      const occurrences = content.split(value).length - 1;
+      if (occurrences > 0) {
+        content = content.split(value).join(replacement);
+        replacementCount += occurrences;
+        console.log(
+          `[Build Guard] Removed ${occurrences} ${label} occurrence(s) from ${file}.`,
+        );
+      }
+    }
+
+    if (content.includes(supportEmail) || content.includes(maintainerEmail)) {
+      throw new Error(
+        `[Build Guard] Web bundle still contains dependency contact data after sanitization: ${file}.`,
+      );
+    }
+
+    fs.writeFileSync(filePath, content);
+  }
+
+  console.log(
+    `[Build Guard] Web bundle contact-data scan passed — ${replacementCount} dependency contact value(s) removed.`,
+  );
 }
 
 // Scan the native (iOS and Android) bundles for stale *.replit.dev occurrences.
@@ -1002,6 +1054,7 @@ module.exports = {
   getClerkAuthConfigError,
   isMetroReadyOutput,
   getMetroStartArgs,
+  sanitizeWebBundleContactData,
   verifyBundleDomain,
   verifyNativeBundleDomain,
 };
