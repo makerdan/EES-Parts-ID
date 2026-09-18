@@ -1,0 +1,1137 @@
+/**
+ * @jest-environment node
+ *
+ * Rendered regression coverage for the admin AI Status workflow.
+ *
+ * This mounts the real UploadScreen inside the real ApiHealthProvider. The
+ * screen's AI Status card owns the authenticated GET/full-probe requests, and
+ * the shared API-health hook owns the authenticated single-bot request.
+ */
+
+// Required for act() to work in the node test environment.
+// @ts-ignore
+global.IS_REACT_ACT_ENVIRONMENT = true;
+
+import React from "react";
+import { render, act, fireEvent } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
+
+// ── expo-router ────────────────────────────────────────────────────────────────
+// useApiStatus waits for the screen to be focused before it requests /healthz.
+// Capture that callback so this rendered test can enter the focused state without
+// replacing the production health provider or hook.
+let capturedFocusCallback: (() => (() => void) | void) | null = null;
+
+const mockRouterPush = jest.fn();
+
+jest.mock("expo-router", () => ({
+  useRouter: () => ({ push: mockRouterPush, replace: jest.fn(), navigate: jest.fn() }),
+  useFocusEffect: (callback: () => (() => void) | void) => {
+    capturedFocusCallback = callback;
+  },
+}));
+
+// ── App/API mocks ──────────────────────────────────────────────────────────────
+jest.mock("@workspace/api-client-react", () => ({
+  useListInventory: jest.fn(() => ({
+    data: null,
+    isLoading: false,
+    isError: false,
+    refetch: jest.fn(),
+  })),
+  setAuthTokenGetter: jest.fn(),
+  setBaseUrl: jest.fn(),
+}));
+
+jest.mock("@/contexts/ApiHealthContext", () =>
+  jest.requireActual("../contexts/ApiHealthContext"),
+);
+
+jest.mock("@react-native-async-storage/async-storage", () => ({
+  getItem: jest.fn().mockResolvedValue(null),
+  setItem: jest.fn().mockResolvedValue(undefined),
+  removeItem: jest.fn().mockResolvedValue(undefined),
+  multiRemove: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("expo-document-picker", () => ({
+  getDocumentAsync: jest.fn().mockResolvedValue({ canceled: true }),
+}));
+
+jest.mock("expo-file-system", () => ({
+  readAsStringAsync: jest.fn().mockResolvedValue(""),
+  File: class {
+    uri: string;
+    constructor(uri: string) { this.uri = uri; }
+    async text() { return ""; }
+    async arrayBuffer() { return new ArrayBuffer(0); }
+  },
+  Paths: { cache: "/tmp/cache" },
+}));
+
+jest.mock("expo-sharing", () => ({
+  isAvailableAsync: jest.fn().mockResolvedValue(false),
+  shareAsync: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("@expo/vector-icons", () => ({
+  Feather: () => null,
+  MaterialCommunityIcons: () => null,
+}));
+
+jest.mock("read-excel-file/universal", () => ({
+  readSheet: jest.fn().mockResolvedValue([]),
+}));
+
+jest.mock("@/hooks/useColors", () =>
+  require("./helpers/mapMocks").createUseColorsMock(),
+);
+
+jest.mock("@/utils/apiBase", () => ({
+  API_BASE: "http://localhost:3001/api",
+}));
+
+jest.mock("@/utils/useTrackScreen", () => ({
+  useTrackScreen: jest.fn(),
+}));
+
+jest.mock("@/utils/adminUserActions", () => ({
+  deleteAdminUser: jest.fn().mockResolvedValue(undefined),
+  fetchAdminUsers: jest.fn().mockResolvedValue(undefined),
+  handleUserAction: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("@/utils/expandDescHandlers", () => ({
+  applyDiscardAll: jest.fn(),
+  runSaveAll: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("@/utils/binSkipLogic", () => ({
+  activeReplacementCount: jest.fn().mockReturnValue(0),
+  preservedBinCount: jest.fn().mockReturnValue(0),
+  serializeToCsv: jest.fn().mockReturnValue(""),
+  toggleSkipAll: jest.fn((_rows: unknown, _value: unknown) => []),
+  toggleSkipRow: jest.fn((_rows: unknown, _index: unknown) => []),
+}));
+
+jest.mock("@/utils/exportCsv", () => ({
+  serializeInventoryToCsv: jest.fn().mockReturnValue(""),
+}));
+
+jest.mock("@/styles/shared", () => ({
+  secondaryBtnBase: {},
+}));
+
+// Child workflows are outside this test's boundary. Keeping them mounted as
+// null components still leaves UploadScreen itself and its status controls real.
+jest.mock("@/components/AddPartForm", () => ({ AddPartForm: () => null }));
+jest.mock("@/components/BarcodeAddPart", () => ({ BarcodeAddPart: () => null }));
+jest.mock("@/components/BinEditor", () => ({ BinEditor: () => null }));
+jest.mock("@/components/BulkShelfAssign", () => ({ BulkShelfAssign: () => null }));
+jest.mock("@/components/CatalogPdfUpload", () => ({ CatalogPdfUpload: () => null }));
+jest.mock("@/components/KeyboardDoneInput", () => ({
+  KeyboardDoneInput: ({ children }: { children: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children),
+}));
+jest.mock("@/components/MeasurePartScreen", () => ({ MeasurePartScreen: () => null }));
+jest.mock("@/components/ReferenceModal", () => ({ ReferenceModal: () => null }));
+jest.mock("@/components/ShelfCatalogEntry", () => ({ ShelfCatalogEntry: () => null }));
+jest.mock("@/components/UserAdminButtonRow", () => ({ UserAdminButtonRow: () => null }));
+
+// The jest config maps AppContext to this mock. The returned value is replaced
+// per test so the rendered screen always has an admin token.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { useApp } = require("@/contexts/AppContext") as { useApp: jest.Mock };
+
+// ── Fetch fixtures ─────────────────────────────────────────────────────────────
+const API_BASE = "http://localhost:3001/api";
+const ADMIN_TOKEN = "rendered-ai-status-admin-token";
+const FIRST_BOT = "Gemini-3.1-Pro";
+const SECOND_BOT = "GPT-5";
+
+type FetchCall = {
+  url: string;
+  init: RequestInit | undefined;
+};
+
+const mockFetch = jest.fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>();
+const fetchCalls: FetchCall[] = [];
+let statusResponses: Array<Response | Promise<Response>>;
+let fullProbeResponses: Array<Response | Promise<Response>>;
+let singleProbeResponses: Response[];
+let routeMutationResponses: Array<Response | Promise<Response>>;
+let providerResponses: Array<Response | Promise<Response>>;
+
+function jsonResponse(body: unknown, ok = true, status = 200): Response {
+  return {
+    ok,
+    status,
+    json: async () => body,
+  } as Response;
+}
+
+function aiRoutesStatusResponse(
+  fallbacks: string[] = [],
+  provider: "poe" | "openai" = "poe",
+  _legacyFreshness: "fresh" | "stale" | "unavailable" = "fresh",
+  models: Array<{
+    id: string;
+    name: string;
+    modalities: Array<string>;
+    capabilities: { text: boolean | null; vision: boolean | null; structuredOutput: boolean | null };
+  }> = [{
+    id: "fallback-bot",
+    name: "Fallback Bot",
+    modalities: ["text"],
+    capabilities: { text: true, vision: true, structuredOutput: true },
+  }],
+): Response {
+  return jsonResponse({
+    provider,
+    registry: {
+      source: "configured_registry",
+      version: "static-v1",
+      models,
+    },
+    bots: { [FIRST_BOT]: "ok" },
+    routes: [{ feature: "enrich", primary: "Primary Bot", fallbacks }],
+    verification: {
+      models: { [FIRST_BOT]: { status: "ok", verifiedAt: "2026-09-05T00:00:00.000Z" } },
+      lastOperation: null,
+    },
+    reference: { provider: "gemini", readOnly: true, note: "Read-only" },
+  });
+}
+
+function makeAppMock() {
+  return {
+    settings: {
+      textSize: "normal" as const,
+      defaultConfidenceThreshold: 50,
+      themeMode: "system" as const,
+      shelfViewEnabled: true,
+      scanSound: true,
+      dimensionUnit: "mm" as const,
+    },
+    updateSetting: jest.fn(),
+    logout: jest.fn(),
+    logoutAdmin: jest.fn(),
+    clearCache: jest.fn(),
+    isLoading: false,
+    isAdmin: true,
+    adminToken: ADMIN_TOKEN,
+    registerLogoutHandler: jest.fn(() => () => {}),
+    setPendingMapFocus: jest.fn(),
+    showToast: jest.fn(),
+    setPinnedParts: jest.fn(),
+    pendingMeasureSearch: null,
+    setPendingMeasureSearch: jest.fn(),
+    pendingInventorySearch: null,
+    setPendingInventorySearch: jest.fn(),
+    textFontScale: 1,
+    pinnedParts: [],
+    pendingLidarDims: null,
+    setPendingLidarDims: jest.fn(),
+    approvalStatus: "approved" as const,
+  };
+}
+
+function responseFor(url: string): Response | Promise<Response> {
+  if (url === `${API_BASE}/healthz`) {
+    return jsonResponse({
+      status: "ok",
+      bots: { [FIRST_BOT]: "ok" },
+    });
+  }
+  if (url === `${API_BASE}/admin/ai-status`) {
+    return statusResponses.shift() ?? jsonResponse({ bots: {} });
+  }
+  if (url === `${API_BASE}/admin/ai-provider`) {
+    return providerResponses.shift() ?? jsonResponse({ provider: "poe", persisted: true });
+  }
+  if (
+    url === `${API_BASE}/admin/ai-status/routes` ||
+    url === `${API_BASE}/admin/ai-status/routes/reset`
+  ) {
+    return routeMutationResponses.shift() ?? jsonResponse({ bots: {} });
+  }
+  if (url === `${API_BASE}/admin/ai-status/probe`) {
+    return fullProbeResponses.shift() ?? jsonResponse({ bots: {} });
+  }
+  if (url.startsWith(`${API_BASE}/admin/ai-status/probe/`)) {
+    return singleProbeResponses.shift() ?? jsonResponse({ bots: {} });
+  }
+  if (url === `${API_BASE}/inventory/enrich-summary`) {
+    return jsonResponse({ total: 0, enriched: 0, unenriched: 0 });
+  }
+  if (url.includes("/inventory/bulk-enrich/status")) {
+    return jsonResponse({
+      job: {
+        running: false,
+        stopRequested: false,
+        force: false,
+        startedAt: null,
+        processed: 0,
+        errors: 0,
+        total: null,
+        finishedAt: null,
+        lastError: null,
+        model: null,
+      },
+    });
+  }
+  if (url.includes("/inventory/enrich-measurements/status")) {
+    return jsonResponse({
+      job: {
+        running: false,
+        startedAt: null,
+        processed: 0,
+        updated: 0,
+        total: null,
+        finishedAt: null,
+        lastError: null,
+      },
+    });
+  }
+  return jsonResponse({ bots: {} });
+}
+
+// ── Imports after mocks ────────────────────────────────────────────────────────
+import { ApiHealthProvider } from "../contexts/ApiHealthContext";
+import UploadScreen from "../app/(tabs)/upload";
+
+// ── Render helpers ──────────────────────────────────────────────────────────────
+type Inst = TestInstance;
+
+function instText(node: Inst | string): string {
+  if (typeof node === "string") return node;
+  return (node.children ?? [])
+    .map((child) => instText(child as Inst | string))
+    .join("");
+}
+
+function findPressable(root: Inst, label: string): Inst | null {
+  return (
+    root
+      .queryAll(
+        (node: Inst) =>
+          (node.type as string) === "rn-pressable" && instText(node).includes(label),
+        { includeSelf: true },
+      )
+      .find(Boolean) ?? null
+  );
+}
+
+function findPressableByAccessibilityLabel(root: Inst, label: string): Inst | null {
+  return (
+    root
+      .queryAll(
+        (node: Inst) =>
+          (node.type as string) === "rn-pressable" &&
+          node.props.accessibilityLabel === label,
+        { includeSelf: true },
+      )
+      .find(Boolean) ?? null
+  );
+}
+
+function findLiveStatus(root: Inst): Inst | null {
+  return (
+    root
+      .queryAll(
+        (node: Inst) =>
+          node.props.testID === "admin-ai-control-announcement" &&
+          node.props.accessibilityLiveRegion === "polite",
+        { includeSelf: true },
+      )
+      .find(Boolean) ?? null
+  );
+}
+
+const flushPromises = () =>
+  act(async () => {
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+  });
+
+async function renderAdminUpload(app = makeAppMock()) {
+  useApp.mockReturnValue(app);
+  const tree = await render(
+    <ApiHealthProvider>
+      <UploadScreen />
+    </ApiHealthProvider>,
+  );
+
+  // The real health hook now starts its focused polling lifecycle.
+  const blur = capturedFocusCallback?.();
+  await flushPromises();
+  return { tree, blur };
+}
+
+function callsFor(path: string): FetchCall[] {
+  return fetchCalls.filter((call) => call.url === `${API_BASE}${path}`);
+}
+
+// ── Setup / teardown ───────────────────────────────────────────────────────────
+beforeEach(() => {
+  capturedFocusCallback = null;
+  fetchCalls.length = 0;
+  statusResponses = [
+    jsonResponse({
+      bots: {
+        [FIRST_BOT]: "ok",
+        [SECOND_BOT]: "timeout",
+      },
+    }),
+  ];
+  fullProbeResponses = [];
+  singleProbeResponses = [];
+  routeMutationResponses = [];
+  providerResponses = [];
+  mockFetch.mockReset();
+  mockFetch.mockImplementation((input, init) => {
+    const call = { url: String(input), init };
+    fetchCalls.push(call);
+    return Promise.resolve(responseFor(call.url));
+  });
+  global.fetch = mockFetch as unknown as typeof fetch;
+});
+
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
+let activeBlur: (() => void) | void;
+
+afterEach(async () => {
+  activeBlur?.();
+  activeBlur = undefined;
+  if (activeTree) {
+    await activeTree.unmount();
+    activeTree = null;
+  }
+  jest.clearAllMocks();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The complete rendered workflow
+// ─────────────────────────────────────────────────────────────────────────────
+describe("UploadScreen — rendered admin AI Status workflow", () => {
+  it("loads the initial status with GET and renders each returned bot result", async () => {
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const aiCard = findPressable(rendered.tree.root!, "Verify active models");
+    expect(aiCard).not.toBeNull();
+    expect(instText(rendered.tree.root!)).toContain(FIRST_BOT);
+    expect(instText(rendered.tree.root!)).toContain(SECOND_BOT);
+    expect(instText(rendered.tree.root!)).toContain("timeout");
+
+    const initialCalls = callsFor("/admin/ai-status");
+    expect(initialCalls).toHaveLength(1);
+    expect(initialCalls[0]?.init?.method).toBeUndefined();
+    expect((initialCalls[0]?.init?.headers as Record<string, string>)?.Authorization)
+      .toBe(`Bearer ${ADMIN_TOKEN}`);
+  });
+
+  it("enters AI & Enrichment, runs the full probe, and renders refreshed results", async () => {
+    fullProbeResponses.push(
+      jsonResponse({
+        bots: {
+          [FIRST_BOT]: "error",
+          [SECOND_BOT]: "ok",
+        },
+      }),
+    );
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("AI Status");
+    const probeButton = findPressable(rendered.tree.root!, "Verify active models");
+    expect(probeButton).not.toBeNull();
+
+    await act(async () => { fireEvent.press(probeButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("error");
+    expect(instText(rendered.tree.root!)).toContain("ok");
+    expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain(
+      "Live model verification completed",
+    );
+    expect(callsFor("/admin/ai-status/probe")).toHaveLength(1);
+    const probeCall = callsFor("/admin/ai-status/probe")[0]!;
+    expect(probeCall.init?.method).toBe("POST");
+    expect(probeCall.init?.headers).toEqual({
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+    });
+  });
+
+  it("uses the header bot control for a single-bot POST and renders its refreshed health result", async () => {
+    singleProbeResponses.push(
+      jsonResponse({
+        bots: {
+          [FIRST_BOT]: "ok",
+          [SECOND_BOT]: "ok",
+        },
+      }),
+    );
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const botChip = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      `${FIRST_BOT}: ok. Tap to re-probe.`,
+    );
+    expect(botChip).not.toBeNull();
+
+    await act(async () => { fireEvent.press(botChip!); });
+    await flushPromises();
+
+    const singleCalls = fetchCalls.filter((call) =>
+      call.url === `${API_BASE}/admin/ai-status/probe/${encodeURIComponent(FIRST_BOT)}`,
+    );
+    expect(singleCalls).toHaveLength(1);
+    expect(singleCalls[0]?.init?.method).toBe("POST");
+    expect(singleCalls[0]?.init?.headers).toEqual({
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+    });
+    expect(
+      findPressableByAccessibilityLabel(
+        rendered.tree.root!,
+        `${FIRST_BOT}: ok. Tap to re-probe.`,
+      ),
+    ).not.toBeNull();
+  });
+
+  it("shows a protected probe failure and preserves the last good bot results", async () => {
+    let resolvePendingProbe!: (response: Response) => void;
+    const pendingProbe = new Promise<Response>((resolve) => {
+      resolvePendingProbe = resolve;
+    });
+    fullProbeResponses.push(
+      pendingProbe,
+      jsonResponse({ error: "AI provider unavailable" }, false, 503),
+    );
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const probeButton = findPressable(rendered.tree.root!, "Verify active models");
+    expect(probeButton).not.toBeNull();
+    const priorResults = instText(rendered.tree.root!);
+    // Confirm the baseline before exercising the failing request. This keeps
+    // the preservation assertion meaningful rather than allowing an empty
+    // initial response to masquerade as preserved state.
+    expect(priorResults).toContain("timeout");
+
+    await act(async () => { fireEvent.press(probeButton!); });
+    await flushPromises();
+
+    // While the protected request is in flight, the last good data remains
+    // rendered. A loading/error transition must not clear it preemptively.
+    expect(instText(rendered.tree.root!)).toContain("timeout");
+
+    resolvePendingProbe(jsonResponse({ error: "Unknown bot name" }, false, 400));
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("HTTP 400");
+    expect(instText(rendered.tree.root!)).toContain(FIRST_BOT);
+
+    await act(async () => { fireEvent.press(probeButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("HTTP 503");
+    expect(callsFor("/admin/ai-status/probe")).toHaveLength(2);
+  });
+
+  it("aborts the bootstrap status request when the screen unmounts", async () => {
+    let resolveInitialStatus!: (response: Response) => void;
+    statusResponses = [
+      new Promise<Response>((resolve) => {
+        resolveInitialStatus = resolve;
+      }),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const initialCall = callsFor("/admin/ai-status")[0];
+    expect(initialCall?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(initialCall?.init?.signal?.aborted).toBe(false);
+
+    await rendered.tree.unmount();
+    activeTree = null;
+    activeBlur = undefined;
+
+    expect(initialCall?.init?.signal?.aborted).toBe(true);
+
+    resolveInitialStatus(
+      jsonResponse({ bots: { "late-bootstrap-bot": "ok" } }),
+    );
+    await flushPromises();
+  });
+
+  it("ignores a bootstrap response from the replaced admin token", async () => {
+    let resolveOldStatus!: (response: Response) => void;
+    statusResponses = [
+      new Promise<Response>((resolve) => {
+        resolveOldStatus = resolve;
+      }),
+      jsonResponse({ bots: { "new-token-bot": "ok" } }),
+    ];
+    const app = makeAppMock();
+    useApp.mockReturnValue(app);
+
+    const tree = await render(
+      <ApiHealthProvider>
+        <UploadScreen />
+      </ApiHealthProvider>,
+    );
+    activeTree = tree;
+    const blur = capturedFocusCallback?.();
+    activeBlur = blur;
+    await flushPromises();
+
+    app.adminToken = "new-admin-token";
+    await tree.rerender(
+      <ApiHealthProvider>
+        <UploadScreen />
+      </ApiHealthProvider>,
+    );
+    await flushPromises();
+
+    const initialCall = callsFor("/admin/ai-status")[0];
+    expect(initialCall?.init?.signal?.aborted).toBe(true);
+    expect(callsFor("/admin/ai-status")).toHaveLength(2);
+    expect(callsFor("/admin/ai-status")[1]?.init?.headers).toEqual({
+      Authorization: "Bearer new-admin-token",
+    });
+
+    const enrichmentCard = findPressable(tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+    expect(instText(tree.root!)).toContain("new-token-bot");
+
+    resolveOldStatus(jsonResponse({ bots: { "old-token-bot": "ok" } }));
+    await flushPromises();
+
+    expect(instText(tree.root!)).toContain("new-token-bot");
+    expect(instText(tree.root!)).not.toContain("old-token-bot");
+  });
+
+  it("aborts the manual full probe when the screen unmounts", async () => {
+    let resolvePendingProbe!: (response: Response) => void;
+    fullProbeResponses = [
+      new Promise<Response>((resolve) => {
+        resolvePendingProbe = resolve;
+      }),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const probeButton = findPressable(rendered.tree.root!, "Verify active models");
+    expect(probeButton).not.toBeNull();
+    await act(async () => { fireEvent.press(probeButton!); });
+    await flushPromises();
+
+    const probeCall = callsFor("/admin/ai-status/probe")[0];
+    expect(probeCall?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(probeCall?.init?.signal?.aborted).toBe(false);
+
+    await rendered.tree.unmount();
+    activeTree = null;
+    activeBlur = undefined;
+
+    expect(probeCall?.init?.signal?.aborted).toBe(true);
+
+    resolvePendingProbe(
+      jsonResponse({ bots: { "late-probe-bot": "error" } }),
+    );
+    await flushPromises();
+  });
+
+  it("aborts and ignores a fallback save when the screen unmounts", async () => {
+    let resolvePendingSave!: (response: Response) => void;
+    routeMutationResponses = [
+      new Promise<Response>((resolve) => {
+        resolvePendingSave = resolve;
+      }),
+    ];
+    statusResponses = [aiRoutesStatusResponse()];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const addFallbackButton = findPressable(rendered.tree.root!, "+ Add Fallback Bot");
+    expect(addFallbackButton).not.toBeNull();
+    await act(async () => { fireEvent.press(addFallbackButton!); });
+    await flushPromises();
+
+    const saveCall = callsFor("/admin/ai-status/routes")[0];
+    expect(saveCall?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(saveCall?.init?.signal?.aborted).toBe(false);
+
+    await rendered.tree.unmount();
+    activeTree = null;
+    activeBlur = undefined;
+
+    expect(saveCall?.init?.signal?.aborted).toBe(true);
+    resolvePendingSave(aiRoutesStatusResponse(["Fallback Bot"]));
+    await flushPromises();
+  });
+
+  it("ignores a fallback save response after the admin token is replaced", async () => {
+    let resolveOldSave!: (response: Response) => void;
+    routeMutationResponses = [
+      new Promise<Response>((resolve) => {
+        resolveOldSave = resolve;
+      }),
+    ];
+    statusResponses = [aiRoutesStatusResponse(), aiRoutesStatusResponse()];
+    const app = makeAppMock();
+
+    const rendered = await renderAdminUpload(app);
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const addFallbackButton = findPressable(rendered.tree.root!, "+ Add Fallback Bot");
+    expect(addFallbackButton).not.toBeNull();
+    await act(async () => { fireEvent.press(addFallbackButton!); });
+    await flushPromises();
+
+    const saveCall = callsFor("/admin/ai-status/routes")[0];
+    expect(saveCall?.init?.signal?.aborted).toBe(false);
+
+    app.adminToken = "new-admin-token";
+    await rendered.tree.rerender(
+      <ApiHealthProvider>
+        <UploadScreen />
+      </ApiHealthProvider>,
+    );
+    await flushPromises();
+
+    expect(saveCall?.init?.signal?.aborted).toBe(true);
+    resolveOldSave(aiRoutesStatusResponse(["Late Fallback Bot"]));
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).not.toContain("Late Fallback Bot");
+    expect(findPressable(rendered.tree.root!, "+ Add Fallback Bot")?.props.disabled).toBe(false);
+  });
+
+  it("aborts and ignores a fallback reset when the screen unmounts", async () => {
+    let resolvePendingReset!: (response: Response) => void;
+    routeMutationResponses = [
+      new Promise<Response>((resolve) => {
+        resolvePendingReset = resolve;
+      }),
+    ];
+    statusResponses = [aiRoutesStatusResponse(["Fallback Bot"])];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const resetButton = findPressable(rendered.tree.root!, "Reset fallbacks");
+    expect(resetButton).not.toBeNull();
+    await act(async () => { fireEvent.press(resetButton!); });
+    await flushPromises();
+
+    const resetCall = callsFor("/admin/ai-status/routes/reset")[0];
+    expect(resetCall?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(resetCall?.init?.signal?.aborted).toBe(false);
+
+    await rendered.tree.unmount();
+    activeTree = null;
+    activeBlur = undefined;
+
+    expect(resetCall?.init?.signal?.aborted).toBe(true);
+    resolvePendingReset(aiRoutesStatusResponse());
+    await flushPromises();
+  });
+
+  it("ignores a fallback reset response after the admin token is replaced", async () => {
+    let resolveOldReset!: (response: Response) => void;
+    routeMutationResponses = [
+      new Promise<Response>((resolve) => {
+        resolveOldReset = resolve;
+      }),
+    ];
+    statusResponses = [
+      aiRoutesStatusResponse(["Fallback Bot"]),
+      aiRoutesStatusResponse(["Fallback Bot"]),
+    ];
+    const app = makeAppMock();
+
+    const rendered = await renderAdminUpload(app);
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const resetButton = findPressable(rendered.tree.root!, "Reset fallbacks");
+    expect(resetButton).not.toBeNull();
+    await act(async () => { fireEvent.press(resetButton!); });
+    await flushPromises();
+
+    const resetCall = callsFor("/admin/ai-status/routes/reset")[0];
+    expect(resetCall?.init?.signal?.aborted).toBe(false);
+
+    app.adminToken = "new-admin-token";
+    await rendered.tree.rerender(
+      <ApiHealthProvider>
+        <UploadScreen />
+      </ApiHealthProvider>,
+    );
+    await flushPromises();
+
+    expect(resetCall?.init?.signal?.aborted).toBe(true);
+    resolveOldReset(jsonResponse({ error: "late-reset-error" }, false, 503));
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).not.toContain("late-reset-error");
+    expect(instText(rendered.tree.root!)).not.toContain("Fallback choices could not be reset");
+    expect(findPressable(rendered.tree.root!, "Reset fallbacks")?.props.disabled).toBe(false);
+  });
+
+  it("shows recovery guidance for a runtime-only provider switch and retries persistence", async () => {
+    statusResponses = [
+      aiRoutesStatusResponse(),
+      aiRoutesStatusResponse([], "openai"),
+      aiRoutesStatusResponse([], "openai"),
+    ];
+    providerResponses.push(
+      jsonResponse({ provider: "openai", persisted: false }),
+      jsonResponse({ provider: "openai", persisted: true }),
+    );
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    expect(enrichmentCard).not.toBeNull();
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const openAiButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Use OpenAI AI provider",
+    );
+    expect(openAiButton).not.toBeNull();
+    await act(async () => { fireEvent.press(openAiButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("could not be saved");
+    expect(instText(rendered.tree.root!)).toContain("may revert after the API restarts");
+    expect(instText(rendered.tree.root!)).toContain("Retry save");
+    expect(callsFor("/admin/ai-status/probe")).toHaveLength(0);
+    expect(callsFor("/admin/ai-provider")).toHaveLength(1);
+    expect(callsFor("/admin/ai-provider")[0]?.init?.method).toBe("POST");
+    expect(JSON.parse(String(callsFor("/admin/ai-provider")[0]?.init?.body))).toEqual({
+      provider: "openai",
+    });
+
+    const retryButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Retry saving AI provider",
+    );
+    expect(retryButton).not.toBeNull();
+    await act(async () => { fireEvent.press(retryButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("will survive an API restart");
+    expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain("AI provider openai saved");
+    expect(callsFor("/admin/ai-provider")).toHaveLength(2);
+    expect(callsFor("/admin/ai-status/probe")).toHaveLength(0);
+  });
+
+  it("reconciles the displayed provider from a fresh status snapshot after saving", async () => {
+    statusResponses = [
+      aiRoutesStatusResponse(),
+      aiRoutesStatusResponse([], "openai"),
+    ];
+    providerResponses = [
+      jsonResponse({ provider: "openai", persisted: true }),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const openAiButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Use OpenAI AI provider",
+    );
+    await act(async () => { fireEvent.press(openAiButton!); });
+    await flushPromises();
+
+    expect(callsFor("/admin/ai-provider")).toHaveLength(1);
+    expect(callsFor("/admin/ai-status")).toHaveLength(2);
+    expect(instText(rendered.tree.root!)).toContain("Active provider: openai");
+    expect(instText(rendered.tree.root!)).toContain("will survive an API restart");
+  });
+
+  it("keeps the previous provider visible when the provider save is rejected", async () => {
+    statusResponses = [aiRoutesStatusResponse()];
+    providerResponses = [
+      jsonResponse({ error: "OpenAI integration unavailable" }, false, 503),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const openAiButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Use OpenAI AI provider",
+    );
+    await act(async () => { fireEvent.press(openAiButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("Active provider: poe");
+    expect(instText(rendered.tree.root!)).toContain("OpenAI integration unavailable");
+    expect(callsFor("/admin/ai-status")).toHaveLength(1);
+  });
+
+  it("ignores a late provider save after the administrator token is replaced", async () => {
+    let resolvePendingSave!: (response: Response) => void;
+    providerResponses = [
+      new Promise<Response>((resolve) => {
+        resolvePendingSave = resolve;
+      }),
+    ];
+    statusResponses = [
+      aiRoutesStatusResponse(),
+      aiRoutesStatusResponse([], "openai"),
+    ];
+    const app = makeAppMock();
+
+    const rendered = await renderAdminUpload(app);
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const openAiButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Use OpenAI AI provider",
+    );
+    await act(async () => { fireEvent.press(openAiButton!); });
+    await flushPromises();
+
+    const saveCall = callsFor("/admin/ai-provider")[0];
+    expect(saveCall?.init?.signal?.aborted).toBe(false);
+
+    app.adminToken = "new-admin-token";
+    await rendered.tree.rerender(
+      <ApiHealthProvider>
+        <UploadScreen />
+      </ApiHealthProvider>,
+    );
+    await flushPromises();
+
+    expect(saveCall?.init?.signal?.aborted).toBe(true);
+    expect(instText(rendered.tree.root!)).toContain("Active provider: openai");
+
+    resolvePendingSave(jsonResponse({ provider: "openai", persisted: true }));
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).not.toContain("will survive an API restart");
+    expect(instText(rendered.tree.root!)).not.toContain("Provider choice saved");
+  });
+
+  it("aborts and ignores a provider save when the screen unmounts", async () => {
+    let resolvePendingSave!: (response: Response) => void;
+    providerResponses = [
+      new Promise<Response>((resolve) => {
+        resolvePendingSave = resolve;
+      }),
+    ];
+    statusResponses = [aiRoutesStatusResponse()];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const openAiButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Use OpenAI AI provider",
+    );
+    await act(async () => { fireEvent.press(openAiButton!); });
+    await flushPromises();
+
+    const saveCall = callsFor("/admin/ai-provider")[0];
+    expect(saveCall?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(saveCall?.init?.signal?.aborted).toBe(false);
+
+    await rendered.tree.unmount();
+    activeTree = null;
+    activeBlur = undefined;
+
+    expect(saveCall?.init?.signal?.aborted).toBe(true);
+    resolvePendingSave(jsonResponse({ provider: "openai", persisted: true }));
+    await flushPromises();
+  });
+
+  it("preserves the safe route order and explains a rejected fallback save", async () => {
+    statusResponses = [aiRoutesStatusResponse(["Fallback Bot"])];
+    routeMutationResponses = [
+      jsonResponse({ error: "Text Only is unavailable or lacks the capabilities required by identify" }, false, 400),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const removeButton = findPressableByAccessibilityLabel(
+      rendered.tree.root!,
+      "Remove Fallback Bot fallback",
+    );
+    expect(removeButton).not.toBeNull();
+    await act(async () => { fireEvent.press(removeButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("1. Fallback Bot");
+    expect(instText(rendered.tree.root!)).toContain("Text Only is unavailable");
+    expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain(
+      "Fallback route save rejected",
+    );
+  });
+
+  it("preserves the safe route order and explains a rejected fallback reset", async () => {
+    statusResponses = [aiRoutesStatusResponse(["Fallback Bot"])];
+    routeMutationResponses = [
+      jsonResponse({ error: "Fallback choices could not be reset; the previous routes remain active" }, false, 503),
+    ];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    const resetButton = findPressableByAccessibilityLabel(rendered.tree.root!, "Reset fallbacks");
+    expect(resetButton).not.toBeNull();
+    await act(async () => { fireEvent.press(resetButton!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("1. Fallback Bot");
+    expect(instText(rendered.tree.root!)).toContain("Fallback choices could not be reset");
+    expect(instText(findLiveStatus(rendered.tree.root!)!)).toContain(
+      "Fallback route reset rejected",
+    );
+  });
+
+  it("does not offer a fallback model whose required capability is unknown or false", async () => {
+    statusResponses = [aiRoutesStatusResponse(
+      [],
+      "poe",
+      "fresh",
+      [{
+        id: "text-only",
+        name: "Text Only",
+        modalities: ["text"],
+        capabilities: { text: true, vision: true, structuredOutput: false },
+      }],
+    )];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).not.toContain("+ Add Text Only");
+  });
+
+  it("shows static registry metadata independently from live probe results", async () => {
+    statusResponses = [aiRoutesStatusResponse(
+      [],
+      "poe",
+      "fresh",
+      [{
+        id: "incomplete-model",
+        name: "Incomplete Model",
+        modalities: ["text"],
+        capabilities: { text: true, vision: null, structuredOutput: true },
+      }],
+    )];
+
+    const rendered = await renderAdminUpload();
+    activeTree = rendered.tree;
+    activeBlur = rendered.blur;
+
+    const enrichmentCard = findPressable(rendered.tree.root!, "AI & Enrichment");
+    await act(async () => { fireEvent.press(enrichmentCard!); });
+    await flushPromises();
+
+    expect(instText(rendered.tree.root!)).toContain("Registry: static-v1");
+    expect(findPressableByAccessibilityLabel(rendered.tree.root!, "Reset fallbacks")?.props.disabled).toBe(false);
+  });
+});

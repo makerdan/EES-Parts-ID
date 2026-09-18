@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+
+jobs:
+  validate:
+    name: Portable validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16.4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d testdb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/testdb
+      DATABASE_ENV: test
+      CI: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up repository toolchain
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Wait for PostgreSQL readiness
+        shell: bash
+        run: |
+          for attempt in {1..30}; do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres -d testdb; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "PostgreSQL did not become ready." >&2
+          exit 1
+
+      - name: Enable PostgreSQL trigram extension
+        shell: bash
+        run: psql "$DATABASE_URL" --set=ON_ERROR_STOP=1 --command="CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
+      - name: Prepare isolated PostgreSQL schema
+        shell: bash
+        run: pnpm --filter @workspace/db run push-force
+
+      - name: Run the canonical standard-plus validation tier
+        shell: bash
+        run: pnpm run test-standard-plus
+
+      - name: Report opt-in live Poe provider validation
+        if: ${{ always() && env.POE_LIVE_PROVIDER == '1' }}
+        continue-on-error: true
+        shell: bash
+        run: pnpm --filter @workspace/api-server run test:provider
+
+      - name: Retain sanitized validation diagnostics
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/jest-run-manifest.json
+            /tmp/jest-results-*.json
+            /tmp/test-timeout-report-*.txt
+            artifacts/api-server/coverage
+            coverage
+          if-no-files-found: ignore
+          retention-days: 7
+
+  native:
+    name: Native LiDAR validation
+    uses: ./.github/workflows/lidar-measure-tests.yml
+
+  required:
+    name: CI / required
+    if: always()
+    needs: [validate, native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Fail closed unless all required validation passed
+        shell: bash
+        env:
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+        run: |
+          for result in "$VALIDATE_RESULT" "$NATIVE_RESULT"; do
+            case "$result" in
+              success)
+                ;;
+              failure|cancelled|skipped|"")
+                echo "Required validation result was '$result'; required validation cannot pass." >&2
+                exit 1
+                ;;
+              *)
+                echo "Unexpected required validation result '$result'." >&2
+                exit 1
+                ;;
+            esac
+          done
+          echo "Portable and native validation passed."

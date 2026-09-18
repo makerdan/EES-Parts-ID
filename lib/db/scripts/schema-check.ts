@@ -1,0 +1,347 @@
+#!/usr/bin/env tsx
+/**
+ * Drift check: verify every column defined in the Drizzle TypeScript schema
+ * has a corresponding DDL statement in the committed SQL migration files.
+ *
+ * Exits 0 when schema and migrations are in sync.
+ * Exits 1 when any table/column is missing from migrations, printing which
+ * items are absent so the developer knows what to generate.
+ *
+ * Strategy: use drizzle-orm's getTableColumns helper + Symbol.for("drizzle:Name")
+ * to enumerate all (table, column) pairs from the TypeScript schema, then scan
+ * the SQL migration files for matching DDL.  This avoids the drizzle-kit
+ * snapshot mechanism entirely, which is important because this project's meta
+ * snapshot pre-dates many manually-written migrations.
+ */
+import { getTableColumns } from "drizzle-orm";
+import { existsSync,readdirSync, readFileSync, statSync } from "fs";
+import { dirname,join } from "path";
+import { fileURLToPath } from "url";
+
+import {
+  collectMigrationColumns,
+  findMissingColumns,
+} from "./schema-migration-columns.ts";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DB_DIR = join(__dirname, "..");
+const MIGRATIONS_DIR = join(DB_DIR, "drizzle");
+
+// ---------------------------------------------------------------------------
+// 1. Load every table exported from the schema index.
+// ---------------------------------------------------------------------------
+const schemaModule = (await import("../src/schema/index.ts")) as Record<
+  string,
+  unknown
+>;
+
+// drizzle-orm tags table objects with this symbol.
+const DRIZZLE_NAME_SYMBOL = Symbol.for("drizzle:Name");
+
+interface ColumnEntry {
+  tableName: string;
+  columnName: string;
+}
+
+const tableNames: Array<string> = [];
+const columns: Array<ColumnEntry> = [];
+
+for (const value of Object.values(schemaModule)) {
+  if (value === null || typeof value !== "object") continue;
+  if (!(DRIZZLE_NAME_SYMBOL in value)) continue;
+
+  const tableName = (value as Record<symbol, unknown>)[
+    DRIZZLE_NAME_SYMBOL
+  ] as string;
+  if (!tableName || typeof tableName !== "string") continue;
+
+  tableNames.push(tableName);
+
+  // getTableColumns returns an object keyed by field name; the .name property
+  // is the actual SQL column name (snake_case).
+  const cols = getTableColumns(value as Parameters<typeof getTableColumns>[0]);
+  for (const col of Object.values(cols)) {
+    const colName = (col as { name: string }).name;
+    if (colName) {
+      columns.push({ tableName, columnName: colName });
+    }
+  }
+}
+
+if (tableNames.length === 0) {
+  console.error(
+    "ERROR: No drizzle tables found in schema — check the import path."
+  );
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// 2. Concatenate all committed SQL migration files.
+// ---------------------------------------------------------------------------
+let sqlFiles: Array<string>;
+try {
+  sqlFiles = readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+} catch {
+  console.error(
+    `ERROR: Cannot read migrations directory: ${MIGRATIONS_DIR}`
+  );
+  process.exit(1);
+}
+
+if (sqlFiles.length === 0) {
+  console.error(
+    "ERROR: No SQL migration files found in the drizzle/ directory."
+  );
+  process.exit(1);
+}
+
+const migrationColumns = new Map(
+  sqlFiles.map((fileName) => [
+    fileName,
+    collectMigrationColumns(readFileSync(join(MIGRATIONS_DIR, fileName), "utf-8")),
+  ]),
+);
+
+const migratedTables = new Set<string>();
+const migratedColumns = new Map<string, Set<string>>();
+for (const columnsForFile of migrationColumns.values()) {
+  for (const [tableName, columnNames] of columnsForFile) {
+    migratedTables.add(tableName);
+    const columnsForTable = migratedColumns.get(tableName) ?? new Set<string>();
+    for (const columnName of columnNames) {
+      columnsForTable.add(columnName);
+    }
+    migratedColumns.set(tableName, columnsForTable);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Check each table exists in migrations.
+// ---------------------------------------------------------------------------
+const missingTables: Array<string> = [];
+
+for (const tableName of tableNames) {
+  if (!migratedTables.has(tableName.toLowerCase())) {
+    missingTables.push(tableName);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Check each column exists in migrations (skip columns of missing tables).
+// ---------------------------------------------------------------------------
+const missingColumns = findMissingColumns(
+  columns.filter((entry) => !missingTables.includes(entry.tableName)),
+  migratedColumns,
+);
+
+// ---------------------------------------------------------------------------
+// 5. Barrel completeness check — every .ts file in src/schema/ must be
+//    re-exported from src/schema/index.ts.
+// ---------------------------------------------------------------------------
+const SCHEMA_DIR = join(DB_DIR, "src", "schema");
+const SCHEMA_INDEX = join(SCHEMA_DIR, "index.ts");
+
+const schemaFiles = readdirSync(SCHEMA_DIR)
+  .filter((f) => f.endsWith(".ts") && f !== "index.ts")
+  .map((f) => f.replace(/\.ts$/, ""));
+
+const indexSource = readFileSync(SCHEMA_INDEX, "utf-8");
+
+// Collect every specifier from lines of the form:  export * from "./specifier"
+const exportedSpecifiers = new Set<string>();
+for (const match of indexSource.matchAll(/export\s+\*\s+from\s+["']\.\/([^"']+)["']/g)) {
+  exportedSpecifiers.add(match[1]);
+}
+
+const missingFromBarrel = schemaFiles.filter((f) => !exportedSpecifiers.has(f));
+
+// ---------------------------------------------------------------------------
+// 6. Taxonomy reachability check — every .ts file under src/taxonomy/ must be
+//    reachable from src/index.ts.
+//
+//    Two shapes are supported:
+//      a) Flat file:  src/taxonomy.ts   — verify "./taxonomy" is exported from
+//                                         src/index.ts.
+//      b) Directory: src/taxonomy/      — verify every non-barrel .ts file is
+//                                         re-exported from src/taxonomy/index.ts,
+//                                         AND that src/index.ts exports "./taxonomy"
+//                                         or "./taxonomy/index".
+// ---------------------------------------------------------------------------
+const SRC_DIR = join(DB_DIR, "src");
+const TAXONOMY_DIR = join(SRC_DIR, "taxonomy");
+const TAXONOMY_FILE = join(SRC_DIR, "taxonomy.ts");
+const TOP_INDEX = join(SRC_DIR, "index.ts");
+const topIndexSource = readFileSync(TOP_INDEX, "utf-8");
+
+// Collect specifiers exported from the top-level src/index.ts.
+const topExportedSpecifiers = new Set<string>();
+for (const match of topIndexSource.matchAll(
+  /export\s+\*\s+from\s+["']\.\/([^"']+)["']/g,
+)) {
+  topExportedSpecifiers.add(match[1]);
+}
+
+const missingFromTaxonomy: Array<string> = [];
+let taxonomyTopLevelMissing = false;
+
+const taxonomyIsDir =
+  existsSync(TAXONOMY_DIR) && statSync(TAXONOMY_DIR).isDirectory();
+const taxonomyIsFile = !taxonomyIsDir && existsSync(TAXONOMY_FILE);
+
+if (taxonomyIsDir) {
+  // Check the directory barrel (index.ts) is reachable from src/index.ts.
+  const topExportsTaxonomy =
+    topExportedSpecifiers.has("taxonomy") ||
+    topExportedSpecifiers.has("taxonomy/index");
+  if (!topExportsTaxonomy) {
+    taxonomyTopLevelMissing = true;
+  }
+
+  // Check every non-barrel file inside taxonomy/ is re-exported from
+  // src/taxonomy/index.ts.
+  // Always enumerate sub-files — if the barrel itself is absent every sub-file
+  // is unreachable and must be reported as missing.
+  const taxonomyBarrel = join(TAXONOMY_DIR, "index.ts");
+  const taxonomySubFiles = readdirSync(TAXONOMY_DIR)
+    .filter((f) => f.endsWith(".ts") && f !== "index.ts")
+    .map((f) => f.replace(/\.ts$/, ""));
+
+  if (!existsSync(taxonomyBarrel)) {
+    // No barrel at all — every sub-file is invisible to callers.
+    for (const sub of taxonomySubFiles) {
+      missingFromTaxonomy.push(`taxonomy/${sub}.ts`);
+    }
+    // Also flag that the barrel itself is missing (top-level will be wrong too).
+    missingFromTaxonomy.push("taxonomy/index.ts (barrel missing)");
+  } else {
+    const taxonomyBarrelSource = readFileSync(taxonomyBarrel, "utf-8");
+    const taxonomyExportedSpecifiers = new Set<string>();
+    for (const match of taxonomyBarrelSource.matchAll(
+      /export\s+\*\s+from\s+["']\.\/([^"']+)["']/g,
+    )) {
+      taxonomyExportedSpecifiers.add(match[1]);
+    }
+
+    for (const sub of taxonomySubFiles) {
+      if (!taxonomyExportedSpecifiers.has(sub)) {
+        missingFromTaxonomy.push(`taxonomy/${sub}.ts`);
+      }
+    }
+  }
+} else if (taxonomyIsFile) {
+  // Flat file: just ensure src/index.ts re-exports it.
+  if (!topExportedSpecifiers.has("taxonomy")) {
+    taxonomyTopLevelMissing = true;
+  }
+} else {
+  // Neither shape exists — that is itself an error.
+  console.error(
+    "ERROR: Neither lib/db/src/taxonomy.ts nor lib/db/src/taxonomy/ found.",
+  );
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// 7. Report all failures together.
+// ---------------------------------------------------------------------------
+const migrationsFailed = missingTables.length > 0 || missingColumns.length > 0;
+const barrelFailed = missingFromBarrel.length > 0;
+const taxonomyFailed =
+  taxonomyTopLevelMissing || missingFromTaxonomy.length > 0;
+
+if (!migrationsFailed && !barrelFailed && !taxonomyFailed) {
+  console.log(
+    `OK  Schema and migrations are in sync (${tableNames.length} tables, ` +
+      `${columns.length} columns checked).`
+  );
+  console.log(
+    `OK  Barrel completeness: all ${schemaFiles.length} schema file(s) are ` +
+      `re-exported from schema/index.ts.`
+  );
+  console.log(
+    taxonomyIsDir
+      ? `OK  Taxonomy reachability: all taxonomy file(s) are re-exported ` +
+          `from taxonomy/index.ts and reachable from src/index.ts.`
+      : `OK  Taxonomy reachability: taxonomy.ts is exported from src/index.ts.`
+  );
+  process.exit(0);
+}
+
+if (migrationsFailed) {
+  console.error("");
+  console.error(
+    "FAIL  Drizzle schema has changes not present in committed migrations."
+  );
+  console.error("");
+
+  if (missingTables.length > 0) {
+    console.error("Tables defined in schema but missing from migrations:");
+    for (const t of missingTables) {
+      console.error(`  - ${t}`);
+    }
+    console.error("");
+  }
+
+  if (missingColumns.length > 0) {
+    console.error("Columns defined in schema but missing from migrations:");
+    for (const c of missingColumns) {
+      console.error(`  - ${c.tableName}.${c.columnName}`);
+    }
+    console.error("");
+  }
+
+  console.error(
+    "To fix: generate a migration for the missing changes and commit it:"
+  );
+  console.error("  pnpm --filter @workspace/db run generate");
+}
+
+if (barrelFailed) {
+  console.error("");
+  console.error(
+    "FAIL  The following schema file(s) are not re-exported from src/schema/index.ts:"
+  );
+  for (const f of missingFromBarrel) {
+    console.error(`  - ${f}.ts`);
+  }
+  console.error("");
+  console.error(
+    "To fix: add the missing export to lib/db/src/schema/index.ts, e.g.:"
+  );
+  for (const f of missingFromBarrel) {
+    console.error(`  export * from "./${f}";`);
+  }
+}
+
+if (taxonomyFailed) {
+  console.error("");
+  if (taxonomyTopLevelMissing) {
+    console.error(
+      "FAIL  src/index.ts does not export the taxonomy module."
+    );
+    console.error("");
+    console.error("To fix: add to lib/db/src/index.ts:");
+    console.error(`  export * from "./taxonomy";`);
+  }
+  if (missingFromTaxonomy.length > 0) {
+    console.error(
+      "FAIL  The following taxonomy file(s) are not re-exported from " +
+        "src/taxonomy/index.ts and will be invisible to callers:"
+    );
+    for (const f of missingFromTaxonomy) {
+      console.error(`  - ${f}`);
+    }
+    console.error("");
+    console.error(
+      "To fix: add the missing export to lib/db/src/taxonomy/index.ts, e.g.:"
+    );
+    for (const f of missingFromTaxonomy) {
+      const stem = f.replace(/^taxonomy\//, "").replace(/\.ts$/, "");
+      console.error(`  export * from "./${stem}";`);
+    }
+  }
+}
+
+process.exit(1);

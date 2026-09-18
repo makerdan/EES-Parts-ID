@@ -1,0 +1,2603 @@
+import { Feather } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import NetInfo from "@react-native-community/netinfo";
+import { useQueryClient } from "@tanstack/react-query";
+import type { InventoryItem, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
+import { useSearchInventory } from "@workspace/api-client-react";
+import { router,useFocusEffect } from "expo-router";
+import Fuse from "fuse.js";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  AppState,
+  type AppStateStatus,
+  FlatList,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
+
+import { AIZeroResultsCard,SearchedAsRow } from "@/components/AISearchFallback";
+import { BrowseByAisle } from "@/components/BrowseByAisle";
+import { BrowseByCategory } from "@/components/BrowseByCategory";
+import { ConfidenceSlider, FilterPanel, type FilterValues } from "@/components/FilterPanel";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import type { PartDimensions } from "@/components/MeasurePartScreen";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
+import { RecentSearchesPanel } from "@/components/RecentSearchesPanel";
+import { ReferenceModal } from "@/components/ReferenceModal";
+import { ResultCard } from "@/components/ResultCard";
+import { DEFAULT_SETTINGS, type DimensionUnit, type TextSize, type ThemeMode, useApp } from "@/contexts/AppContext";
+import { useColors } from "@/hooks/useColors";
+import { useMapPinHandlers } from "@/hooks/useMapPinHandlers";
+import { secondaryBtnBase } from "@/styles/shared";
+import { API_BASE } from "@/utils/apiBase";
+import { fetchWithAuth } from "@/utils/appAuth";
+import { FUSE_CACHE_KEY, FUSE_SOFT_STALE_MS, FUSE_SYNC_MAX_AGE_MS, getFuseCacheSyncedAt, parseFuseCacheItems, replaceBarcodeCacheWithServerItems } from "@/utils/offlineBarcode";
+import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
+import { retryAsync } from "@/utils/retryAsync";
+import type { QueryCache } from "@/utils/searchHelpers";
+import {
+  buildQueryKey,
+  buildSearchBody,
+  fetchInventoryPages,
+  formatRelativeAge,
+  formatStaleCacheWarning,
+  pruneExpired,
+  QUERY_CACHE_KEY,
+  resolveOfflineFallback,
+} from "@/utils/searchHelpers";
+import {
+  appendQueryHistory,
+  appendViewedHistory,
+  clearQueryHistory,
+  clearViewedHistory,
+  loadQueryHistory,
+  loadViewedHistory,
+  type ViewedEntry,
+} from "@/utils/searchHistory";
+import { searchResetEvent } from "@/utils/searchResetEvent";
+import { reportStorageError } from "@/utils/storageErrorReporter";
+import type { AIZeroResultsState } from "@/utils/translateQuery";
+import { runTranslateQuery } from "@/utils/translateQuery";
+import { useTrackScreen } from "@/utils/useTrackScreen";
+
+
+type QueryCacheEntry = { timestamp: number; results: Array<SearchResult> };
+
+function isValidQueryCache(value: unknown): value is QueryCache<SearchResult> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.values(value as Record<string, unknown>).every(
+    (entry) =>
+      typeof (entry as { timestamp?: unknown })?.timestamp === 'number' &&
+      Array.isArray((entry as { results?: unknown })?.results),
+  );
+}
+
+async function loadQueryCache(): Promise<QueryCache<SearchResult>> {
+  try {
+    const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!isValidQueryCache(parsed)) {
+      reportStorageError("Corrupt query cache detected — discarding", new Error("invalid shape"));
+      AsyncStorage.removeItem(QUERY_CACHE_KEY).catch(() => {});
+      return {};
+    }
+    return parsed;
+  } catch { return {}; }
+}
+
+async function saveQueryCache(cache: QueryCache<SearchResult>): Promise<void> {
+  // Bound the cache so a long session of unique searches can't grow it without
+  // limit. Evict by LRU (oldest timestamp first) before persisting.
+  const bounded = evictLRU(cache, QUERY_CACHE_MAX_ENTRIES);
+  try {
+    await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(bounded));
+  } catch (err) {
+    reportStorageError("Could not save offline search cache", err);
+  }
+}
+
+// Serialise every read→mutate→write sequence through a single promise chain so
+// two concurrent completions (e.g. onSuccess racing with runOfflineFallback)
+// cannot both read a stale snapshot and clobber each other's write.
+let _queryCacheWriteLock: Promise<void> = Promise.resolve();
+
+async function updateQueryCache(
+  mutate: (cache: QueryCache<SearchResult>) => QueryCache<SearchResult>,
+): Promise<void> {
+  const next = _queryCacheWriteLock.then(async () => {
+    const cache = await loadQueryCache();
+    await saveQueryCache(mutate(cache));
+  });
+  // The shared lock must never reject — swallow errors so subsequent writes are
+  // not permanently blocked by a single failed operation.
+  _queryCacheWriteLock = next.catch(() => {});
+  return next;
+}
+
+async function readNewestCacheTimestamp(): Promise<string> {
+  try {
+    const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
+    if (!raw) return "No cached data";
+    const parsed: unknown = JSON.parse(raw);
+    if (!isValidQueryCache(parsed)) return "No cached data";
+    const cache = parsed;
+    const entries = Object.values(cache);
+    if (entries.length === 0) return "No cached data";
+    const newest = entries.reduce(
+      (max: number, e: QueryCacheEntry) => (e.timestamp > max ? e.timestamp : max),
+      0,
+    );
+    return formatRelativeAge(newest);
+  } catch {
+    return "No cached data";
+  }
+}
+
+const INCLUDE_NULL_DIM_KEY = "@partsid/include_null_dimensions";
+const SEARCH_RESULTS_QUERY_KEY = ["searchInventory", "active"] as const;
+
+const DEFAULT_FILTERS: FilterValues = {
+  keywords: "",
+  catalog: "",
+  vendor: "",
+  color: "",
+  size: "",
+  material: "",
+  textNumbers: "",
+  confidenceThreshold: 50,
+  minLength: "",
+  maxLength: "",
+  minWidth: "",
+  maxWidth: "",
+  minHeight: "",
+  maxHeight: "",
+  minDiameter: "",
+  maxDiameter: "",
+  includeNullDimensions: true,
+  minWeight: "",
+  maxWeight: "",
+  // 16 required chip dimensions
+  category: "",
+  amperage: "",
+  colorChip: "",
+  manufacturer: "",
+  sizeChip: "",
+  rating: "",
+  wireType: "",
+  wireGauge: "",
+  conduitType: "",
+  conduitSize: "",
+  boxType: "",
+  boxGangCount: "",
+  mountingType: "",
+  environment: "",
+  voltage: "",
+  poleCount: "",
+};
+
+export default function SearchScreen() {
+  "use no memo";
+  useTrackScreen("Search");
+  const colors = useColors();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isLandscape = windowWidth > windowHeight;
+  // Keep the final row reachable above the tab bar, while avoiding a large
+  // dead zone on short landscape displays.
+  const bottomClearance = isLandscape ? 84 : 120;
+  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus, showToast, setPinnedParts, pendingMeasureSearch, setPendingMeasureSearch, pendingInventorySearch, setPendingInventorySearch } = useApp();
+  const queryClient = useQueryClient();
+  const [searchCacheVersion, setSearchCacheVersion] = useState(0);
+  useEffect(() => queryClient.getQueryCache().subscribe((event) => {
+    if ("query" in event && event.query.queryKey[0] === SEARCH_RESULTS_QUERY_KEY[0]) {
+      setSearchCacheVersion(version => version + 1);
+    }
+  }), [queryClient]);
+  type SearchMode = "search" | "aisle" | "category";
+  const [mode, setMode] = useState<SearchMode>("search");
+  const [activeCategorySlug, setActiveCategorySlug] = useState<string | null>(null);
+  const [activeCategoryLabel, setActiveCategoryLabel] = useState<string | null>(null);
+  const activeCategorySlugRef = useRef<string | null>(null);
+  useEffect(() => { activeCategorySlugRef.current = activeCategorySlug; }, [activeCategorySlug]);
+  const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
+  const hasLoadedIncludeNullDim = useRef(false);
+
+  // Restore the 'include unmeasured parts' toggle from the previous session.
+  useEffect(() => {
+    AsyncStorage.getItem(INCLUDE_NULL_DIM_KEY)
+      .then(stored => {
+        if (stored !== null) {
+          setFilters(prev => ({ ...prev, includeNullDimensions: stored === "1" }));
+        }
+        hasLoadedIncludeNullDim.current = true;
+      })
+      .catch(() => {
+        hasLoadedIncludeNullDim.current = true;
+      });
+  }, []);
+
+  // Persist the toggle whenever it changes (skip the initial render).
+  useEffect(() => {
+    if (!hasLoadedIncludeNullDim.current) return;
+    AsyncStorage.setItem(
+      INCLUDE_NULL_DIM_KEY,
+      filters.includeNullDimensions ? "1" : "0",
+    ).catch(err => {
+      reportStorageError("Could not save include-unmeasured-parts preference", err);
+    });
+  }, [filters.includeNullDimensions]);
+
+  const [filterHeaderHeight, setFilterHeaderHeight] = useState(120);
+  const filterHeightSettleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (filterHeightSettleTimer.current !== null) {
+        clearTimeout(filterHeightSettleTimer.current);
+      }
+    };
+  }, []);
+  const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
+  const [queryHistory, setQueryHistory] = useState<Array<string>>([]);
+  const [viewedHistory, setViewedHistory] = useState<Array<ViewedEntry>>([]);
+  const [measureItem, setMeasureItem] = useState<InventoryItem | null>(null);
+  // Banner shown when a dimension-filtered search returns 0 exact results
+  const [showSimilarSizeBanner, setShowSimilarSizeBanner] = useState(false);
+  // Tolerance selected in the similar-size banner (fraction, e.g. 0.10 = ±10%)
+  const [similarSizeTolerance, setSimilarSizeTolerance] = useState(0.10);
+
+  const { handleShowOnMap, handleVariantsToggle, handleVariantSelect } = useMapPinHandlers({
+    setPinnedParts,
+    setPendingMapFocus,
+    showToast,
+  });
+
+  const [offlineResults, setOfflineResults] = useState<Array<SearchResult> | null>(null);
+  // Web-only: set when the user triggers offline fallback but the Fuse index
+  // isn't available in the browser (no persistent storage).  Cleared on each
+  // new search or clear action.
+  const [offlineWebError, setOfflineWebError] = useState<string | null>(null);
+  // Local string state for the custom threshold TextInput in Settings
+  const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
+  const [isOffline, setIsOffline] = useState(false);
+  const [fuseSyncedAt, setFuseSyncedAt] = useState<number | null>(null);
+  const offlineCacheRef = useRef<{ type: 'exact' | 'fuse'; timestamp: number | null }>({ type: 'fuse', timestamp: null });
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);
+  const [cacheAge, setCacheAge] = useState<string | null>(null);
+  const [showReference, setShowReference] = useState(false);
+  const [dimensionCounts, setDimensionCounts] = useState<Record<string, Record<string, number>> | undefined>(undefined);
+  // Local Fuse index seeded from AsyncStorage cache
+  const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
+  const fuseItemsRef = useRef<Array<InventoryItem>>([]);
+  const [cachedCount, setCachedCount] = useState(0);
+  const [syncProgress, setSyncProgress] = useState<{ loaded: number; total: number } | null>(null);
+  const [syncError, setSyncError] = useState(false);
+  const [syncRetryPending, setSyncRetryPending] = useState(false);
+  const [syncErrorDismissed, setSyncErrorDismissed] = useState(false);
+  // F-039: visible banner when a search times out and falls back to stale cache
+  const [searchTimedOut, setSearchTimedOut] = useState(false);
+  // F-068: guard per-error-class toasts so each fires at most once per occurrence
+  const errorToastFiredRef = useRef({ searchTimeout: false, syncFailure: false, offlineFallback: false });
+  const syncRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncRetryAttemptRef = useRef(0);
+  // Concurrency guard: prevents a second syncAllInventory from starting while
+  // one is already in flight (e.g. user taps Refresh while a background retry
+  // is running), which would race on setSyncProgress and the Fuse index.
+  const isSyncingRef = useRef(false);
+  const syncControllerRef = useRef<AbortController | null>(null);
+  const pendingSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks whether the component is still mounted. The retry-timer callback
+  // checks this before touching any React state to avoid the
+  // "can't perform a state update on an unmounted component" warning.
+  const isMountedRef = useRef(true);
+  // Ref to the FlatList so the tab-press reset can scroll back to the top.
+  const flatListRef = useRef<FlatList<FlatListItem> | null>(null);
+  // Ref to the latest handleClear so the tab-press subscription (mounted once)
+  // always calls the up-to-date version without a stale closure.
+  const handleClearRef = useRef<() => void>(() => {});
+  // Track latest filters in a ref so the onError closure always reads current values
+  const filtersRef = useRef<FilterValues>(filters);
+  useEffect(() => { filtersRef.current = filters; }, [filters]);
+  // Timeout + abort tracking for slow-connection fallback
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchAbortedRef = useRef(false);
+  // Ref to the current searchMutation so the logout handler can call .reset()
+  // without going through a stale closure.
+  const searchMutationRef = useRef<{ reset: () => void } | null>(null);
+  // Ref to the latest settings so callbacks (notably the logout handler)
+  // always read the current default confidence threshold instead of the value
+  // captured the first time the effect ran.
+  const settingsRef = useRef(settings);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+  // Mirror fuseSyncedAt into a ref so the AppState foreground listener can
+  // read the current value without capturing a stale closure.
+  const fuseSyncedAtRef = useRef<number | null>(null);
+  useEffect(() => { fuseSyncedAtRef.current = fuseSyncedAt; }, [fuseSyncedAt]);
+
+  // AI natural-language translation state
+  const [aiTranslation, setAITranslation] = useState<{ terms: Array<string>; interpretation: string } | null>(null);
+  const [aiTranslationDismissed, setAITranslationDismissed] = useState(false);
+  const [aiZeroResults, setAIZeroResults] = useState<AIZeroResultsState | null>(null);
+  // Monotonically-increasing generation counter — incremented on each new
+  // search so stale translate-query responses are silently discarded.
+  const aiSearchGenRef = useRef(0);
+
+  // Reset the Settings-modal confidence text input to the current persisted value
+  // when the modal opens.  Syncing on every settings change would reset the field
+  // mid-keystroke (e.g. while the user types a custom value), causing a flicker.
+  useEffect(() => {
+    if (showLogoutModal) {
+      setConfThresholdInput(String(settings.defaultConfidenceThreshold));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showLogoutModal]);
+
+  // Apply the persisted default confidence threshold to the active search
+  // filters whenever it changes in Settings (and once after settings finish
+  // loading from AsyncStorage). This keeps the slider in sync so the user
+  // doesn't see stale values after editing the default.
+  useEffect(() => {
+    if (settingsLoading) return;
+    setFilters(f =>
+      f.confidenceThreshold === settings.defaultConfidenceThreshold
+        ? f
+        : { ...f, confidenceThreshold: settings.defaultConfidenceThreshold },
+    );
+  }, [settingsLoading, settings.defaultConfidenceThreshold]);
+
+  // Reset all in-memory search state on logout so the next login starts clean.
+  useEffect(() => {
+    return registerLogoutHandler(() => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = null;
+      }
+      // Cancel any pending sync retry so it doesn't fire auth-sensitive state
+      // updates after the user has logged out.
+      if (syncRetryTimerRef.current !== null) {
+        clearTimeout(syncRetryTimerRef.current);
+        syncRetryTimerRef.current = null;
+      }
+      setSyncRetryPending(false);
+      searchAbortedRef.current = false;
+      setMode("search");
+      setActiveCategorySlug(null);
+      setActiveCategoryLabel(null);
+      activeCategorySlugRef.current = null;
+      setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settingsRef.current.defaultConfidenceThreshold });
+      setOfflineResults(null);
+      setIsOffline(false);
+      setOfflineWebError(null);
+      setFuseSyncedAt(null);
+      setDimensionCounts(undefined);
+      setShowSimilarSizeBanner(false);
+      setSimilarSizeTolerance(0.10);
+      setAITranslation(null);
+      setAITranslationDismissed(false);
+      setAIZeroResults(null);
+      setSyncError(false);
+      setSyncErrorDismissed(false);
+      setSearchTimedOut(false);
+      queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, undefined);
+      errorToastFiredRef.current = { searchTimeout: false, syncFailure: false, offlineFallback: false };
+      aiSearchGenRef.current += 1;
+      searchMutationRef.current?.reset();
+    });
+  // `registerLogoutHandler` is the only reactive dep needed — it is a stable
+  // useCallback ref ([] deps) from AppContext. The state setters called inside
+  // the callback have stable identities (from useState/useRef), and mutable
+  // values (settingsRef, searchMutationRef, aiSearchGenRef) are read via refs
+  // on purpose to avoid re-registering the handler on every settings change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryClient, registerLogoutHandler]);
+
+  const buildFuseIndex = useCallback((items: Array<InventoryItem>) => {
+    if (!isMountedRef.current) return;
+    fuseItemsRef.current = items;
+    setCachedCount(items.length);
+    fuseRef.current = new Fuse(items, {
+      keys: [
+        { name: "catalog", weight: 0.35 },
+        { name: "description", weight: 0.30 },
+        { name: "vendor", weight: 0.10 },
+        { name: "aiKeywords", weight: 0.25 },
+      ],
+      threshold: 0.45,
+      ignoreLocation: true,
+      minMatchCharLength: 2,
+      findAllMatches: true,
+      includeScore: true,
+    });
+  }, []);
+
+  // Prune a deleted item from the in-memory Fuse.js index and its persisted
+  // AsyncStorage copy. evictDeletedItemFromAllCaches only clears the React Query
+  // and offline search caches — the Fuse barcode/keyword index is a separate
+  // structure held here, so an offline barcode/keyword search would otherwise
+  // still surface the deleted item until the next full sync.
+  const handleItemDeleted = useCallback((itemId: number) => {
+    const pruned = fuseItemsRef.current.filter(it => it.id !== itemId);
+    if (pruned.length === fuseItemsRef.current.length) return;
+    buildFuseIndex(pruned);
+    if (Platform.OS !== "web") {
+      AsyncStorage.setItem(
+        FUSE_CACHE_KEY,
+        JSON.stringify({ items: pruned, syncedAt: fuseSyncedAtRef.current }),
+      ).catch(err => {
+        reportStorageError("Could not save offline inventory cache", err);
+      });
+    }
+  }, [buildFuseIndex]);
+
+  const handleItemSaved = useCallback((updatedItem: InventoryItem) => {
+    const items = [...fuseItemsRef.current];
+    const index = items.findIndex(item => item.id === updatedItem.id);
+    if (index >= 0) {
+      items[index] = updatedItem;
+      buildFuseIndex(items);
+    }
+    setDetailsItem(current => current?.id === updatedItem.id ? updatedItem : current);
+  }, [buildFuseIndex]);
+
+  // Keep an open editor pointed at the newest host-side item without replacing
+  // values that the editor has already marked as locally dirty.
+  useEffect(() => {
+    if (!detailsItem) return;
+    const cachedSearch = queryClient.getQueryData<SearchInventoryResponse>(SEARCH_RESULTS_QUERY_KEY);
+    const refreshed = cachedSearch?.results?.find(result => result.item.id === detailsItem.id)?.item
+      ?? fuseItemsRef.current.find(candidate => candidate.id === detailsItem.id);
+    if (refreshed && refreshed !== detailsItem) setDetailsItem(refreshed);
+  }, [detailsItem, queryClient, searchCacheVersion, cachedCount]);
+
+  // A routed edit screen can update the durable Fuse cache while this screen
+  // stays mounted. Reload it whenever Search regains focus, but skip the first
+  // focus because the mount effect above already performs the initial load.
+  const hasFocusedSearchRef = useRef(false);
+  useFocusEffect(useCallback(() => {
+    if (!hasFocusedSearchRef.current) {
+      hasFocusedSearchRef.current = true;
+      return;
+    }
+    let active = true;
+    AsyncStorage.getItem(FUSE_CACHE_KEY).then(raw => {
+      if (!active) return;
+      const cachedSearch = queryClient.getQueryData<SearchInventoryResponse>(SEARCH_RESULTS_QUERY_KEY);
+      const searchItems = cachedSearch?.results?.map(result => result.item) ?? [];
+      const storedItems = raw ? parseFuseCacheItems(raw) ?? [] : [];
+      if (storedItems.length === 0 && searchItems.length === 0) return;
+      const merged = [...storedItems];
+      for (const item of searchItems) {
+        const index = merged.findIndex(candidate => candidate.id === item.id);
+        if (index >= 0) merged[index] = item;
+        else merged.push(item);
+      }
+      buildFuseIndex(merged);
+    }).catch(() => {
+      // The next full sync remains responsible for recovering an unreadable cache.
+    });
+    return () => {
+      active = false;
+    };
+  }, [buildFuseIndex, queryClient]));
+
+  // Auto-retry constants
+  const SYNC_RETRY_INITIAL_MS = 30_000;   // 30 s first retry
+  const SYNC_RETRY_MAX_MS     = 300_000;  // 5 min ceiling
+
+  // Fetch all inventory items in pages and build the Fuse cache
+  const syncAllInventory = useCallback(async (): Promise<boolean> => {
+    // Prevent concurrent syncs from racing on setSyncProgress and the Fuse index.
+    if (isSyncingRef.current) return false;
+    isSyncingRef.current = true;
+    const controller = new AbortController();
+    syncControllerRef.current = controller;
+
+    // Convenience guard: every state setter that runs after an `await` is
+    // wrapped in this helper so that a mid-flight unmount turns them into
+    // no-ops rather than triggering the "can't update an unmounted component"
+    // warning. Ref checks are synchronous and safe to call at any time.
+    const ifMounted = (fn: () => void) => { if (isMountedRef.current) fn(); };
+
+    // Cancel any pending auto-retry before starting a new attempt
+    if (syncRetryTimerRef.current !== null) {
+      clearTimeout(syncRetryTimerRef.current);
+      syncRetryTimerRef.current = null;
+    }
+    ifMounted(() => setSyncError(false));
+    ifMounted(() => setSyncRetryPending(false));
+    let success = false;
+    try {
+      const allItems = await fetchInventoryPages(
+        async (page, pageSize) => {
+          const data: { items: Array<InventoryItem>; total: number } = await retryAsync(async () => {
+            if (controller.signal.aborted) {
+              throw controller.signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+            }
+            const res = await fetchWithAuth(`${API_BASE}/inventory?page=${page}&limit=${pageSize}`, {
+              signal: controller.signal,
+            });
+            if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
+            return res.json();
+          }, { signal: controller.signal });
+          if (!Array.isArray(data?.items)) throw new Error("Sync failed: unexpected response shape");
+          return data;
+        },
+        500,
+        (loaded, total) => ifMounted(() => setSyncProgress({ loaded, total })),
+      );
+      if (controller.signal.aborted || !isMountedRef.current) return false;
+      buildFuseIndex(allItems);
+
+      // Prune cached search results whose items were deleted server-side.
+      // The full sync gives us the authoritative item set; any cached entry
+      // referencing an id no longer present is stale and must be removed so
+      // offline searches never surface deleted inventory.
+      const liveIds = new Set(allItems.map(item => item.id));
+      await updateQueryCache(cache => {
+        if (controller.signal.aborted || !isMountedRef.current) return cache;
+        let dirty = false;
+        const pruned: QueryCache<SearchResult> = {};
+        for (const [key, entry] of Object.entries(cache)) {
+          const kept = entry.results.filter(r => liveIds.has(r.item.id));
+          if (kept.length !== entry.results.length) dirty = true;
+          if (kept.length > 0) {
+            pruned[key] = { ...entry, results: kept };
+          } else {
+            dirty = true; // entry fully emptied — drop it
+          }
+        }
+        return dirty ? pruned : cache;
+      });
+
+      if (controller.signal.aborted || !isMountedRef.current) return false;
+      syncRetryAttemptRef.current = 0; // success — reset backoff counter
+      {
+        const syncedAt = Date.now();
+        if (Platform.OS !== "web") {
+          // Skip the write on web: localStorage has a ~5 MB quota and the full
+          // inventory JSON reliably exceeds it. The offline cache is for native
+          // only (warehouse workers with spotty connectivity). On web the data
+          // re-fetches from the server on next load.
+          //
+          // replaceBarcodeCacheWithServerItems writes both the item list and the
+          // sync timestamp in one call, and prunes any ghost entries for items
+          // that were deleted server-side since the last sync.
+          await replaceBarcodeCacheWithServerItems(allItems);
+        }
+        // Always update in-memory state so any active offline warning clears.
+        ifMounted(() => setFuseSyncedAt(syncedAt));
+      }
+      success = true;
+    } catch {
+      if (controller.signal.aborted || !isMountedRef.current) return false;
+      ifMounted(() => setSyncError(true));
+      // Schedule an automatic retry with exponential backoff (30 s → doubles → 5 min cap)
+      const delay = Math.min(
+        SYNC_RETRY_INITIAL_MS * Math.pow(2, syncRetryAttemptRef.current),
+        SYNC_RETRY_MAX_MS,
+      );
+      syncRetryAttemptRef.current += 1;
+      if (isMountedRef.current) {
+        setSyncRetryPending(true);
+        syncRetryTimerRef.current = setTimeout(() => {
+          syncRetryTimerRef.current = null;
+          if (isMountedRef.current) syncAllInventory();
+        }, delay);
+      }
+    } finally {
+      ifMounted(() => setSyncProgress(null));
+      isSyncingRef.current = false;
+      if (syncControllerRef.current === controller) syncControllerRef.current = null;
+    }
+    return success;
+  }, [buildFuseIndex]);
+
+  // Cancel pending auto-retry timer on unmount to prevent state updates
+  // after the component is destroyed (e.g. user logs out mid-countdown).
+  // Also cancel the slow-connection fallback timer (searchTimeoutRef) so its
+  // callback never calls setOfflineResults / setIsOffline on an unmounted
+  // component. Finally, flip isMountedRef so any in-flight async work that
+  // outlives the component (e.g. the retry callback) becomes a no-op.
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      if (syncRetryTimerRef.current !== null) {
+        clearTimeout(syncRetryTimerRef.current);
+        syncRetryTimerRef.current = null;
+      }
+      if (searchTimeoutRef.current !== null) {
+        clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = null;
+      }
+      if (pendingSearchTimerRef.current !== null) {
+        clearTimeout(pendingSearchTimerRef.current);
+        pendingSearchTimerRef.current = null;
+      }
+      syncControllerRef.current?.abort();
+      syncControllerRef.current = null;
+      isSyncingRef.current = false;
+      aiSearchGenRef.current += 1;
+    };
+  }, []);
+
+  // Auto-clear the dismissed state whenever the sync error resolves so the
+  // banner re-appears if a subsequent sync later fails again.
+  useEffect(() => {
+    if (!syncError) {
+      setSyncErrorDismissed(false);
+    }
+  }, [syncError]);
+
+  // F-068: fire a toast on the first occurrence of a sync failure; reset the
+  // guard when the error clears so a subsequent failure fires again.
+  useEffect(() => {
+    if (syncError && !errorToastFiredRef.current.syncFailure) {
+      errorToastFiredRef.current.syncFailure = true;
+      showToast("Background sync failed — offline data may be stale", "error");
+    }
+    if (!syncError) {
+      errorToastFiredRef.current.syncFailure = false;
+    }
+  // showToast is a stable useCallback ([] deps) from AppContext — safe to omit
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncError]);
+
+  // F-068: fire a toast on the first occurrence of an offline-fallback event.
+  useEffect(() => {
+    if (isOffline && !searchTimedOut && !errorToastFiredRef.current.offlineFallback) {
+      errorToastFiredRef.current.offlineFallback = true;
+      showToast("No connection — showing cached results", "info");
+    }
+    if (!isOffline) {
+      errorToastFiredRef.current.offlineFallback = false;
+    }
+  // showToast is stable; searchTimedOut is intentionally in deps to avoid
+  // double-firing when a timeout also triggers isOffline.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOffline, searchTimedOut]);
+
+  // Trigger a background sync when the app returns to foreground and the Fuse
+  // index is soft-stale (older than FUSE_SOFT_STALE_MS). This catches the
+  // common case where a worker leaves the app overnight and returns the next
+  // morning — rather than waiting for a manual tap, the index refreshes silently.
+  useEffect(() => {
+    const handleAppStateChange = (state: AppStateStatus) => {
+      if (state !== "active") return;
+      const syncedAt = fuseSyncedAtRef.current;
+      if (syncedAt == null) return;
+      if (Date.now() - syncedAt > FUSE_SOFT_STALE_MS) {
+        syncAllInventory();
+      }
+    };
+    const sub = AppState.addEventListener("change", handleAppStateChange);
+    return () => sub.remove();
+  // syncAllInventory is stable (useCallback with [] deps); FUSE_SOFT_STALE_MS is constant.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncAllInventory]);
+
+  // Seed local Fuse index from AsyncStorage on mount; sync from API if cache is
+  // empty or stale. A stale cache (older than FUSE_SYNC_MAX_AGE_MS) is served
+  // immediately for offline capability, then replaced in background with the
+  // authoritative server list — which prunes items deleted since the last sync.
+  useEffect(() => {
+    AsyncStorage.getItem(FUSE_CACHE_KEY)
+      .then(raw => {
+        if (!isMountedRef.current) return;
+        if (!raw) {
+          // Cache empty — fetch all inventory in background
+          syncAllInventory();
+          return;
+        }
+        // Parse both plain-array (legacy) and envelope ({ items, syncedAt }) formats.
+        const items = parseFuseCacheItems(raw);
+        if (!items) {
+          // Corrupt cache — clear it and re-sync
+          AsyncStorage.removeItem(FUSE_CACHE_KEY).catch(err => {
+            reportStorageError("Could not clear corrupt offline cache", err);
+          });
+          syncAllInventory();
+          return;
+        }
+        buildFuseIndex(items);
+
+        // Check cache age: if older than FUSE_SYNC_MAX_AGE_MS (or timestamp
+        // missing because the cache predates timestamp tracking), kick off a
+        // background full sync. The sync will replace the cache with the
+        // authoritative server list and record a fresh timestamp.
+        getFuseCacheSyncedAt().then(syncedAt => {
+          if (!isMountedRef.current) return;
+          setFuseSyncedAt(syncedAt);
+          const age = syncedAt == null ? Infinity : Date.now() - syncedAt;
+          if (age > FUSE_SYNC_MAX_AGE_MS) {
+            syncAllInventory();
+          }
+        }).catch(() => {
+          // If we can't read the timestamp, play it safe and re-sync
+          if (isMountedRef.current) syncAllInventory();
+        });
+      })
+      .catch((err) => {
+        if (!isMountedRef.current) return;
+        console.error('[index] load fuse cache', err);
+        syncAllInventory();
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load search and viewed-part history from AsyncStorage on mount.
+  useEffect(() => {
+    loadQueryHistory().then(setQueryHistory).catch(() => {});
+    loadViewedHistory().then(setViewedHistory).catch(() => {});
+  }, []);
+
+  const runFuseSearch = useCallback((kw: string): Array<SearchResult> => {
+    if (!fuseRef.current || !kw.trim()) return [];
+    return fuseRef.current
+      .search(kw.trim(), { limit: 30 })
+      .map((r) => ({
+        item: r.item,
+        confidence: Math.max(0, 1 - (r.score ?? 0.5)),
+        matchReason: "offline Fuse match",
+        seriesLabel: null,
+        variants: [],
+      }));
+  }, []);
+
+  // Shared offline fallback — used by onError and the slow-connection timeout
+  const runOfflineFallback = useCallback(() => {
+    const f = filtersRef.current;
+    const queryKey = buildQueryKey(f);
+    const kw = [f.keywords, f.catalog, f.vendor, f.category, f.voltage, f.amperage]
+      .filter(Boolean).join(" ");
+    // Serialise through the shared write lock so a concurrent onSuccess write
+    // cannot clobber the pruned snapshot we're about to read.
+    const next = _queryCacheWriteLock.then(async () => {
+      if (!isMountedRef.current) return;
+      const cache = await loadQueryCache();
+      if (!isMountedRef.current) return;
+      const pruned = pruneExpired(cache);
+      if (Object.keys(pruned).length !== Object.keys(cache).length) {
+        if (!isMountedRef.current) return;
+        await saveQueryCache(pruned);
+      }
+      const result = resolveOfflineFallback({
+        queryKey,
+        cache: pruned,
+        fuseSearch: runFuseSearch,
+        keywords: kw,
+      });
+      if (!isMountedRef.current) return;
+      offlineCacheRef.current = {
+        type: result.cacheType,
+        timestamp: result.cacheType === 'exact' ? (pruned[queryKey]?.timestamp ?? null) : null,
+      };
+      setIsOffline(true);
+      // On web the Fuse index is never persisted to disk, so it is null on
+      // first load before any successful search.  When offline + fuse path +
+      // no index is available, show a user-friendly error instead of an empty
+      // results list.  The exact-cache path still works normally on web.
+      if (Platform.OS === 'web' && result.cacheType === 'fuse' && fuseRef.current === null) {
+        setOfflineWebError("Offline search isn't available in the browser — connect to load results.");
+        setOfflineResults(null);
+      } else {
+        setOfflineWebError(null);
+        setOfflineResults(result.results);
+      }
+    });
+    _queryCacheWriteLock = next.catch(() => {});
+    next.catch(err => {
+      if (isMountedRef.current) reportStorageError("Could not run offline fallback", err);
+    });
+  }, [runFuseSearch]);
+
+  // Fire a non-blocking translate-query request and update AI state when it
+  // resolves. Uses the generation counter to discard stale (superseded) responses.
+  const translateQuery = useCallback(async (query: string, zeroResults: boolean, gen: number) => {
+    await runTranslateQuery(query, zeroResults, gen, {
+      apiBase: API_BASE,
+      getGen: () => aiSearchGenRef.current,
+      setAIZeroResults,
+      setAITranslation: (t) => setAITranslation(t),
+      setAITranslationDismissed,
+    });
+  // translateQuery depends only on stable API_BASE constant — safe to omit deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const searchMutation = useSearchInventory({
+    mutation: {
+      onSuccess: (data) => {
+        if (!isMountedRef.current) return;
+        if (searchAbortedRef.current) return; // timed out — discard late response
+        if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
+        queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, data);
+        setIsOffline(false);
+        setOfflineResults(null);
+        setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
+
+        // Show the "similar size" suggestion banner when the search returned
+        // zero results and at least one dimension filter was active.
+        const f = filtersRef.current;
+        const hasDimFilters =
+          f.minLength.trim() !== "" || f.maxLength.trim() !== "" ||
+          f.minWidth.trim() !== "" || f.maxWidth.trim() !== "" ||
+          f.minHeight.trim() !== "" || f.maxHeight.trim() !== "" ||
+          f.minDiameter.trim() !== "" || f.maxDiameter.trim() !== "";
+        const zeroResults = (data.results?.length ?? 0) === 0 && (data.sizeUnknownResults?.length ?? 0) === 0;
+        setShowSimilarSizeBanner(zeroResults && hasDimFilters);
+
+        // When search returns zero results and a keyword query exists, fire the
+        // zero-results AI enrichment. Dimension-only searches are excluded because
+        // the AI can't meaningfully identify a part from bounds alone.
+        if (zeroResults && !hasDimFilters) {
+          const kw = filtersRef.current.keywords.trim() || filtersRef.current.catalog.trim();
+          if (kw) {
+            setAIZeroResults({ loading: true, partName: "", partSpecs: [], catalogNumbers: [], substitutes: [], error: null });
+            translateQuery(kw, true, aiSearchGenRef.current);
+          }
+        }
+
+        // Cache all returned items for offline Fuse use
+        if (data.results?.length) {
+          const newItems = data.results.map(r => r.item);
+          // Merge into existing cache — deduplicate by id
+          const merged = [...fuseItemsRef.current];
+          for (const item of newItems) {
+            const idx = merged.findIndex(m => m.id === item.id);
+            if (idx >= 0) merged[idx] = item;
+            else merged.push(item);
+          }
+          buildFuseIndex(merged);
+          if (Platform.OS !== "web") {
+            AsyncStorage.setItem(
+              FUSE_CACHE_KEY,
+              JSON.stringify({ items: merged, syncedAt: fuseSyncedAtRef.current }),
+            ).catch(err => {
+              reportStorageError("Could not save offline inventory cache", err);
+            });
+          }
+        }
+
+        // Cache results keyed by query (with TTL pruning).
+        // Serialised through the shared write lock to prevent a concurrent
+        // runOfflineFallback from overwriting a stale snapshot.
+        const queryKey = buildQueryKey(filtersRef.current);
+        updateQueryCache(cache => {
+          if (!isMountedRef.current) return cache;
+          const pruned = pruneExpired(cache);
+          pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
+          return pruned;
+        }).catch(err => {
+          if (isMountedRef.current) reportStorageError("Could not save query cache after search", err);
+        });
+      },
+      onError: () => {
+        if (!isMountedRef.current) return;
+        if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
+        if (!searchAbortedRef.current) runOfflineFallback(); // timeout already ran fallback — skip
+      },
+    },
+  });
+  const mutateSearch = searchMutation.mutate;
+  const resetSearch = searchMutation.reset;
+  // Keep the ref pointing at the latest mutation so the logout handler can
+  // reset it without capturing a stale closure.
+  searchMutationRef.current = searchMutation;
+
+  // Consume a pending inventory search set by cross-tab navigation (e.g.
+  // "View in Inventory" after adding a part from the catalog review screen).
+  // Clears existing filters, applies vendor+catalog from the pending params,
+  // and fires a search immediately so the item is visible on arrival.
+  useFocusEffect(useCallback(() => {
+    if (!pendingInventorySearch) return;
+    setPendingInventorySearch(null);
+    setMode("search");
+    setActiveCategorySlug(null);
+    setActiveCategoryLabel(null);
+    activeCategorySlugRef.current = null;
+    const merged: FilterValues = {
+      ...DEFAULT_FILTERS,
+      confidenceThreshold: settingsRef.current.defaultConfidenceThreshold,
+      vendor: pendingInventorySearch.vendor ?? "",
+      catalog: pendingInventorySearch.catalog ?? "",
+    };
+    setFilters(merged);
+    pendingSearchTimerRef.current = setTimeout(() => {
+      pendingSearchTimerRef.current = null;
+      if (!isMountedRef.current) return;
+      const body = buildSearchBody(merged, null);
+      mutateSearch({ data: body });
+    }, 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingInventorySearch]));
+
+  // Consume a pending measure search set by the Photo tab's Measure flow.
+  // When the Photo tab resolves dimensions and navigates the user back here,
+  // this effect picks up the MeasureSearchParams object, applies the dimension
+  // bounds to the active filters, and fires a search automatically.
+  useFocusEffect(useCallback(() => {
+    if (!pendingMeasureSearch) return;
+    setPendingMeasureSearch(null);
+    const merged: FilterValues = {
+      ...filtersRef.current,
+      minLength:   pendingMeasureSearch.minLength   ?? "",
+      maxLength:   pendingMeasureSearch.maxLength   ?? "",
+      minWidth:    pendingMeasureSearch.minWidth    ?? "",
+      maxWidth:    pendingMeasureSearch.maxWidth    ?? "",
+      minHeight:   pendingMeasureSearch.minHeight   ?? "",
+      maxHeight:   pendingMeasureSearch.maxHeight   ?? "",
+      minDiameter: pendingMeasureSearch.minDiameter ?? "",
+      maxDiameter: pendingMeasureSearch.maxDiameter ?? "",
+    };
+    setFilters(merged);
+    pendingSearchTimerRef.current = setTimeout(() => {
+      pendingSearchTimerRef.current = null;
+      if (!isMountedRef.current) return;
+      const body = buildSearchBody(merged, activeCategorySlugRef.current);
+      mutateSearch({ data: body });
+    }, 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingMeasureSearch]));
+
+  const handleChange = useCallback((key: keyof FilterValues, value: string | number | boolean) => {
+    setFilters(f => ({ ...f, [key]: value }));
+    // Any manual filter edit dismisses the "similar size" suggestion banner
+    setShowSimilarSizeBanner(false);
+  }, []);
+
+  const SEARCH_TIMEOUT_MS = 8000;
+
+  const handleSearch = useCallback(async () => {
+    // Guard: do not fire a search when there is nothing to search for.
+    // This mirrors the canSearch computation below and also protects the
+    // onSubmitEditing path (keyboard Return), which bypasses the button's
+    // disabled prop.
+    const flt = filtersRef.current;
+    const hasSizeInput =
+      flt.minLength.trim() !== "" || flt.maxLength.trim() !== "" ||
+      flt.minWidth.trim() !== "" || flt.maxWidth.trim() !== "" ||
+      flt.minHeight.trim() !== "" || flt.maxHeight.trim() !== "" ||
+      flt.minDiameter.trim() !== "" || flt.maxDiameter.trim() !== "";
+    const hasAnyInput =
+      flt.keywords.trim() !== "" || flt.catalog.trim() !== "" ||
+      flt.vendor.trim() !== "" || flt.color.trim() !== "" ||
+      flt.size.trim() !== "" || flt.material.trim() !== "" ||
+      flt.textNumbers.trim() !== "" || hasSizeInput ||
+      activeCategorySlugRef.current != null;
+    if (!hasAnyInput) return;
+
+    // Check connectivity before firing the network request. When the device
+    // is definitely offline we skip the mutation and the 8-second wait
+    // entirely and go straight to the local Fuse fallback. This makes the
+    // UX instant for users on no connection.
+    let isCurrentlyConnected = true;
+    try {
+      const netState = await NetInfo.fetch();
+      isCurrentlyConnected = netState.isConnected !== false;
+    } catch {
+      // If NetInfo itself fails, assume connected and let the normal
+      // timeout + error-handler path deal with it.
+    }
+    if (!isMountedRef.current) return;
+
+    setSearchTimedOut(false); // F-039: clear stale timeout banner on new search
+    errorToastFiredRef.current.searchTimeout = false; // allow toast to fire again
+    setPinnedParts([]);
+    setOfflineResults(null);
+    setIsOffline(false);
+    setOfflineWebError(null);
+    setAITranslation(null);
+    setAITranslationDismissed(false);
+    setAIZeroResults(null);
+    searchAbortedRef.current = false;
+    queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, undefined);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+
+    if (!isCurrentlyConnected) {
+      runOfflineFallback();
+      return;
+    }
+
+    // Fire NL translation non-blocking in parallel with the primary search.
+    // Only when a keyword/catalog query is present (not dimension-only searches).
+    const _aiGen = ++aiSearchGenRef.current;
+    const _aiQuery = flt.keywords.trim() || flt.catalog.trim();
+    if (_aiQuery) translateQuery(_aiQuery, false, _aiGen);
+    const body = buildSearchBody(filtersRef.current, activeCategorySlugRef.current);
+    mutateSearch({ data: body });
+    // Record the keyword query in history (non-blocking)
+    const _kw = flt.keywords.trim();
+    if (_kw) {
+      appendQueryHistory(_kw).then(() => {
+        loadQueryHistory().then(history => {
+          if (isMountedRef.current) setQueryHistory(history);
+        }).catch(() => {});
+      }).catch(() => {});
+    }
+    // Fall back to offline if API hasn't responded within the timeout
+    searchTimeoutRef.current = setTimeout(() => {
+      searchTimeoutRef.current = null;
+      if (!isMountedRef.current) return;
+      searchAbortedRef.current = true; // onSuccess will discard any late response
+      resetSearch();                   // clear the loading spinner
+      // F-039: show a visible banner so stale data is never silently presented
+      setSearchTimedOut(true);
+      // F-068: fire a toast on the first timeout per search
+      if (!errorToastFiredRef.current.searchTimeout) {
+        errorToastFiredRef.current.searchTimeout = true;
+        showToast("Search timed out — showing cached results", "info");
+      }
+      runOfflineFallback();
+    }, SEARCH_TIMEOUT_MS);
+  }, [mutateSearch, queryClient, resetSearch, runOfflineFallback, setPinnedParts, showToast, translateQuery]);
+
+  const handleClear = useCallback(() => {
+    if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
+    searchAbortedRef.current = false;
+    setSearchTimedOut(false); // F-039
+    setMode("search");
+    setActiveCategorySlug(null);
+    setActiveCategoryLabel(null);
+    activeCategorySlugRef.current = null;
+    setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settingsRef.current.defaultConfidenceThreshold });
+    resetSearch();
+    setOfflineResults(null);
+    setIsOffline(false);
+    setOfflineWebError(null);
+    setDimensionCounts(undefined);
+    setShowSimilarSizeBanner(false);
+    setSimilarSizeTolerance(0.10);
+    setPinnedParts([]);
+    setAITranslation(null);
+    setAITranslationDismissed(false);
+    setAIZeroResults(null);
+    aiSearchGenRef.current += 1;
+  }, [resetSearch, setPinnedParts]);
+
+  // Keep handleClearRef pointing at the latest closure so the tab-press
+  // subscription effect (mounted once) never calls a stale version.
+  useEffect(() => { handleClearRef.current = handleClear; });
+
+  // Subscribe to the search-reset event emitted by _layout.tsx when the user
+  // taps the Search tab while it is already focused.
+  useEffect(() => {
+    return searchResetEvent.subscribe(() => {
+      handleClearRef.current();
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+    });
+  }, []);
+
+
+  // Re-run the last search with each dimension bound widened by the given tolerance fraction
+  const handleSimilarSizeSearch = useCallback(async (tolerance: number = similarSizeTolerance) => {
+    const f = filtersRef.current;
+    const expand = (val: string, factor: number): string => {
+      const n = parseFloat(val);
+      if (isNaN(n)) return val;
+      return String(Math.round(n * factor * 1000) / 1000);
+    };
+    const lo = 1 - tolerance;
+    const hi = 1 + tolerance;
+    const expanded: FilterValues = {
+      ...f,
+      minLength:   f.minLength.trim()   !== "" ? expand(f.minLength,   lo) : f.minLength,
+      maxLength:   f.maxLength.trim()   !== "" ? expand(f.maxLength,   hi) : f.maxLength,
+      minWidth:    f.minWidth.trim()    !== "" ? expand(f.minWidth,    lo) : f.minWidth,
+      maxWidth:    f.maxWidth.trim()    !== "" ? expand(f.maxWidth,    hi) : f.maxWidth,
+      minHeight:   f.minHeight.trim()   !== "" ? expand(f.minHeight,   lo) : f.minHeight,
+      maxHeight:   f.maxHeight.trim()   !== "" ? expand(f.maxHeight,   hi) : f.maxHeight,
+      minDiameter: f.minDiameter.trim() !== "" ? expand(f.minDiameter, lo) : f.minDiameter,
+      maxDiameter: f.maxDiameter.trim() !== "" ? expand(f.maxDiameter, hi) : f.maxDiameter,
+    };
+
+    // Check connectivity before firing the network request. When the device
+    // is definitely offline we skip the mutation and the 8-second wait
+    // entirely and go straight to the local Fuse fallback (mirrors handleSearch).
+    let isCurrentlyConnected = true;
+    try {
+      const netState = await NetInfo.fetch();
+      isCurrentlyConnected = netState.isConnected !== false;
+    } catch {
+      // If NetInfo itself fails, assume connected and let the normal
+      // timeout + error-handler path deal with it.
+    }
+    if (!isMountedRef.current) return;
+
+    setSearchTimedOut(false); // F-039
+    setShowSimilarSizeBanner(false);
+    setFilters(expanded);
+    setPinnedParts([]);
+    setOfflineResults(null);
+    setIsOffline(false);
+    setAIZeroResults(null);
+    aiSearchGenRef.current += 1;
+    searchAbortedRef.current = false;
+    queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, undefined);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (pendingSearchTimerRef.current) {
+      clearTimeout(pendingSearchTimerRef.current);
+      pendingSearchTimerRef.current = null;
+    }
+
+    if (!isCurrentlyConnected) {
+      // runOfflineFallback reads filtersRef.current, which the setFilters(expanded)
+      // above only updates after the next render. Sync the ref now so the offline
+      // fallback uses the widened tolerance bounds, not the stale pre-expanded ones.
+      filtersRef.current = expanded;
+      runOfflineFallback();
+      return;
+    }
+
+    const body = buildSearchBody(expanded, activeCategorySlugRef.current);
+    mutateSearch({ data: body });
+    searchTimeoutRef.current = setTimeout(() => {
+      searchTimeoutRef.current = null;
+      if (!isMountedRef.current) return;
+      searchAbortedRef.current = true;
+      resetSearch();
+      // F-039: show banner so stale data is never silently presented
+      setSearchTimedOut(true);
+      // F-068: toast on first timeout per search
+      if (!errorToastFiredRef.current.searchTimeout) {
+        errorToastFiredRef.current.searchTimeout = true;
+        showToast("Search timed out — showing cached results", "info");
+      }
+      runOfflineFallback();
+    }, SEARCH_TIMEOUT_MS);
+  }, [mutateSearch, queryClient, resetSearch, runOfflineFallback, setPinnedParts, showToast, similarSizeTolerance]);
+
+  const handleCategorySelect = useCallback(async (slug: string, label: string) => {
+    setMode("search");
+    setActiveCategorySlug(slug);
+    setActiveCategoryLabel(label);
+    activeCategorySlugRef.current = slug;
+
+    // Check connectivity before firing the network request. When the device
+    // is definitely offline we skip the mutation and the 8-second wait
+    // entirely and go straight to the local Fuse fallback (mirrors handleSearch).
+    let isCurrentlyConnected = true;
+    try {
+      const netState = await NetInfo.fetch();
+      isCurrentlyConnected = netState.isConnected !== false;
+    } catch {
+      // If NetInfo itself fails, assume connected and let the normal
+      // timeout + error-handler path deal with it.
+    }
+    if (!isMountedRef.current) return;
+
+    setSearchTimedOut(false); // F-039
+    setPinnedParts([]);
+    setOfflineResults(null);
+    setIsOffline(false);
+    setAITranslation(null);
+    setAITranslationDismissed(false);
+    setAIZeroResults(null);
+    aiSearchGenRef.current += 1;
+    searchAbortedRef.current = false;
+    queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, undefined);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (pendingSearchTimerRef.current) {
+      clearTimeout(pendingSearchTimerRef.current);
+      pendingSearchTimerRef.current = null;
+    }
+
+    if (!isCurrentlyConnected) {
+      runOfflineFallback();
+      return;
+    }
+
+    const body = buildSearchBody(filtersRef.current, slug);
+    mutateSearch({ data: body });
+    searchTimeoutRef.current = setTimeout(() => {
+      searchTimeoutRef.current = null;
+      if (!isMountedRef.current) return;
+      searchAbortedRef.current = true;
+      resetSearch();
+      // F-039: show banner so stale data is never silently presented
+      setSearchTimedOut(true);
+      // F-068: toast on first timeout per search
+      if (!errorToastFiredRef.current.searchTimeout) {
+        errorToastFiredRef.current.searchTimeout = true;
+        showToast("Search timed out — showing cached results", "info");
+      }
+      runOfflineFallback();
+    }, SEARCH_TIMEOUT_MS);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mutateSearch, queryClient, resetSearch, runOfflineFallback, setPinnedParts, showToast]);
+
+
+  const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
+    const item = measureItem;
+    setMeasureItem(null);
+    if (!item || !adminToken) return;
+    try {
+      const controller = new AbortController();
+      const res = await fetch(`${API_BASE}/inventory/${item.id}/dimensions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify(dims),
+        signal: controller.signal,
+      });
+      if (!isMountedRef.current) return;
+      if (!res.ok) throw new Error(`PATCH dimensions failed: ${res.status}`);
+      const updated = fuseItemsRef.current.map(it =>
+        it.id === item.id ? { ...it, dimensions: dims } : it,
+      );
+      buildFuseIndex(updated);
+      if (Platform.OS !== "web") {
+        AsyncStorage.setItem(
+          FUSE_CACHE_KEY,
+          JSON.stringify({ items: updated, syncedAt: fuseSyncedAtRef.current }),
+        ).catch(err => {
+          reportStorageError("Could not save offline inventory cache", err);
+        });
+      }
+      showToast("Dimensions saved.");
+    } catch {
+      if (!isMountedRef.current) return;
+      showToast("Could not save dimensions — please try again.");
+    }
+  }, [measureItem, adminToken, buildFuseIndex, showToast]);
+
+  // Stable per-item re-enrich callback. adminToken is captured; a new function
+  // is only allocated when the token changes (e.g. after login/logout).
+  const handleReenrichKeywords = useCallback(async (item: InventoryItem): Promise<InventoryItem> => {
+    const res = await fetch(`${API_BASE}/inventory/${item.id}/enrich`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+    });
+    if (!res.ok) throw new Error(`Re-enrich failed: ${res.status}`);
+    return res.json() as Promise<InventoryItem>;
+  }, [adminToken]);
+
+  const searchData = queryClient.getQueryData<SearchInventoryResponse>(SEARCH_RESULTS_QUERY_KEY);
+  const results: Array<SearchResult> = useMemo(
+    () => isOffline ? (offlineResults ?? []) : (searchData?.results ?? []),
+    [isOffline, offlineResults, searchData],
+  );
+  const sizeUnknownResults: Array<SearchResult> = useMemo(
+    () => isOffline ? [] : (searchData?.sizeUnknownResults ?? []),
+    [isOffline, searchData],
+  );
+  const belowThreshold = searchData?.belowThreshold ?? 0;
+  const hasResults = searchData !== undefined || (isOffline && offlineResults !== null);
+
+  // True when the user has entered at least one dimension bound.
+  // The search button must remain enabled in this state even if the keyword
+  // field is empty — the API runs a dedicated SQL scan using expression indexes
+  // when size-range filters are the only input.
+  const hasActiveSizeFilter =
+    filters.minLength.trim() !== "" ||
+    filters.maxLength.trim() !== "" ||
+    filters.minWidth.trim() !== "" ||
+    filters.maxWidth.trim() !== "" ||
+    filters.minHeight.trim() !== "" ||
+    filters.maxHeight.trim() !== "" ||
+    filters.minDiameter.trim() !== "" ||
+    filters.maxDiameter.trim() !== "";
+
+  // The search button is enabled when the user has provided any searchable
+  // input — text fields, a size-range bound, or a browsed category.
+  const canSearch =
+    filters.keywords.trim() !== "" ||
+    filters.catalog.trim() !== "" ||
+    filters.vendor.trim() !== "" ||
+    filters.color.trim() !== "" ||
+    filters.size.trim() !== "" ||
+    filters.material.trim() !== "" ||
+    filters.textNumbers.trim() !== "" ||
+    hasActiveSizeFilter ||
+    activeCategorySlug != null;
+
+  type FlatListItem =
+    | { kind: "result"; result: SearchResult; index: number }
+    | { kind: "sizeUnknownHeader"; count: number }
+    | { kind: "sizeUnknown"; result: SearchResult; index: number };
+
+  // Memoised so FlatList's data prop is a stable reference between renders
+  // when the underlying query results have not changed.
+  const flatListData = useMemo<Array<FlatListItem>>(() => [
+    ...results.map((result, index) => ({ kind: "result" as const, result, index })),
+    ...(sizeUnknownResults.length > 0
+      ? [
+          { kind: "sizeUnknownHeader" as const, count: sizeUnknownResults.length },
+          ...sizeUnknownResults.map((result, index) => ({ kind: "sizeUnknown" as const, result, index })),
+        ]
+      : []),
+  ], [results, sizeUnknownResults]);
+  const searchListHeader = useMemo(() => (
+    <View>
+      {/* Results header */}
+      {hasResults ? (
+        <View>
+          <View style={styles.resultsHeader}>
+            <Text style={[styles.resultsCount, { color: colors.foreground }]}>
+              {results.length + sizeUnknownResults.length} {isOffline ? "offline" : ""} match{results.length + sizeUnknownResults.length !== 1 ? "es" : ""} found
+            </Text>
+            {/* F-068: stale-age label when inventory is older than 24 hours */}
+            {fuseSyncedAt != null && Date.now() - fuseSyncedAt > FUSE_SOFT_STALE_MS ? (
+              <View style={[styles.staleAgeChip, { backgroundColor: colors.muted }]}>
+                <Feather name="clock" size={10} color={colors.mutedForeground} />
+                <Text style={[styles.staleAgeChipText, { color: colors.mutedForeground }]}>
+                  {`${Math.floor((Date.now() - fuseSyncedAt) / 3_600_000)}h old`}
+                </Text>
+              </View>
+            ) : null}
+            <Pressable
+              onPress={handleClear}
+              style={[styles.secondaryBtn, styles.newSearchBtn, { borderColor: colors.border }]}
+              accessibilityLabel="Start a new search"
+              accessibilityRole="button"
+            >
+              <Text style={[styles.newSearchText, { color: colors.primary }]}>New Search</Text>
+            </Pressable>
+          </View>
+          {/* Actionable "more matches below threshold" banner */}
+          {!isOffline && belowThreshold > 0 && (
+            <Pressable
+              onPress={() => {
+                const lower = Math.max(0, filters.confidenceThreshold - 20);
+                handleChange("confidenceThreshold", lower);
+                // Update the ref immediately so handleSearch reads the new
+                // threshold — don't rely on React state + useEffect propagation.
+                filtersRef.current = { ...filtersRef.current, confidenceThreshold: lower };
+                handleSearch();
+              }}
+              style={[styles.belowThresholdBanner, {
+                backgroundColor: colors.warning + "18",
+                borderColor: colors.warning + "55",
+              }]}
+            >
+              <Text style={[styles.belowThresholdBannerText, { color: colors.warning }]}>
+                {belowThreshold} more match{belowThreshold !== 1 ? "es" : ""} available at{" "}
+                {Math.max(0, filters.confidenceThreshold - 20)}% — tap to lower threshold
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      ) : null}
+
+      {/* Loading */}
+      {searchMutation.isPending ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>
+            Searching dictionaries…
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Error: server failed + no offline cache */}
+      {searchMutation.isError && !isOffline ? (
+        <View style={[styles.errorCard, { backgroundColor: colors.destructive + "11", borderColor: colors.destructive + "44" }]}>
+          <Text style={[styles.errorText, { color: colors.destructive }]}>
+            Search failed. Check your connection and try again.
+          </Text>
+        </View>
+      ) : null}
+      {offlineWebError !== null ? (
+        <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
+          <Text style={{ fontSize: 32, textAlign: "center", marginBottom: 8 }}>📡</Text>
+          <Text style={[styles.errorText, { color: colors.warning, textAlign: "center", fontFamily: "Inter_600SemiBold", marginBottom: 4 }]}>
+            Offline search unavailable
+          </Text>
+          <Text style={[styles.errorText, { color: colors.warning, textAlign: "center" }]}>
+            {offlineWebError}
+          </Text>
+        </View>
+      ) : isOffline && cachedCount === 0 ? (
+        <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
+          <Text style={{ fontSize: 32, textAlign: "center", marginBottom: 8 }}>📡</Text>
+          <Text style={[styles.errorText, { color: colors.warning, textAlign: "center", fontFamily: "Inter_600SemiBold", marginBottom: 4 }]}>
+            Offline search unavailable
+          </Text>
+          <Text style={[styles.errorText, { color: colors.warning, textAlign: "center" }]}>
+            Connect to the internet and search once to enable offline mode.
+          </Text>
+        </View>
+      ) : isOffline && offlineResults !== null && offlineResults.length === 0 ? (
+        <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
+          <Text style={[styles.errorText, { color: colors.warning }]}>
+            Offline — no cached items match your search. Connect to load more results.
+          </Text>
+        </View>
+      ) : isOffline && offlineResults !== null && offlineResults.length > 0 ? (
+        <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
+          <Text style={[styles.errorText, { color: colors.warning }]}>
+            📡 Offline — showing cached results.
+          </Text>
+        </View>
+      ) : null}
+      {isOffline && offlineResults !== null && offlineResults.length > 0 && (() => {
+        const srcTs = offlineCacheRef.current.type === 'exact'
+          ? offlineCacheRef.current.timestamp
+          : fuseSyncedAt;
+        if (srcTs != null && Date.now() - srcTs <= FUSE_SYNC_MAX_AGE_MS) return null;
+        return (
+          <View style={[styles.staleCacheNote, { backgroundColor: colors.warning + "15", borderColor: colors.warning + "44" }]}>
+            <Text style={[styles.staleCacheNoteText, { color: colors.warning }]}>
+              ⚠ {formatStaleCacheWarning(srcTs)}
+            </Text>
+          </View>
+        );
+      })()}
+
+      {/* Empty state */}
+      {hasResults && results.length === 0 && !isOffline ? (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyEmoji}>🔍</Text>
+          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Results Found</Text>
+          <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+            Try broader terms, check spelling, or lower the confidence threshold.
+          </Text>
+          {showSimilarSizeBanner ? (
+            <View style={[styles.similarSizeBanner, {
+              backgroundColor: colors.primary + "14",
+              borderColor: colors.primary + "55",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              gap: 10,
+            }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Text style={[styles.similarSizeBannerIcon, { color: colors.primary }]}>📐</Text>
+                <Text style={[styles.similarSizeBannerTitle, { color: colors.primary, flex: 1 }]}>
+                  No exact match — try nearby sizes?
+                </Text>
+              </View>
+              <Text style={[styles.similarSizeBannerHint, { color: colors.primary + "bb" }]}>
+                Pick a tolerance, then tap to search again
+              </Text>
+              <View style={styles.similarSizeToleranceRow}>
+                {([0.05, 0.10, 0.20] as const).map((tol) => {
+                  const label = `±${Math.round(tol * 100)}%`;
+                  const active = similarSizeTolerance === tol;
+                  return (
+                    <Pressable
+                      key={tol}
+                      onPress={() => {
+                        setSimilarSizeTolerance(tol);
+                        handleSimilarSizeSearch(tol);
+                      }}
+                      style={[
+                        styles.similarSizeToleranceChip,
+                        active
+                          ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                          : { backgroundColor: "transparent", borderColor: colors.primary + "88" },
+                      ]}
+                    >
+                      <Text style={[
+                        styles.similarSizeToleranceChipText,
+                        { color: active ? "#fff" : colors.primary },
+                      ]}>
+                        {label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
+          {belowThreshold > 0 ? (
+            <Pressable
+              onPress={() => {
+                const lower = Math.max(0, filters.confidenceThreshold - 20);
+                handleChange("confidenceThreshold", lower);
+                // Update the ref immediately so handleSearch reads the new
+                // threshold — don't rely on React state + useEffect propagation.
+                filtersRef.current = { ...filtersRef.current, confidenceThreshold: lower };
+                handleSearch();
+              }}
+              style={[styles.lowerThresholdBtn, {
+                backgroundColor: colors.warning + "18",
+                borderColor: colors.warning + "55",
+              }]}
+            >
+              <Text style={[styles.lowerThresholdBtnText, { color: colors.warning }]}>
+                {belowThreshold} match{belowThreshold !== 1 ? "es" : ""} at lower confidence —{"\n"}
+                Tap to search at {Math.max(0, filters.confidenceThreshold - 20)}%
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+
+      {/* AI Zero-Results Card — fires after primary search returns empty */}
+      {hasResults && results.length === 0 && !isOffline && aiZeroResults ? (
+        <View style={styles.aiCardWrapper}>
+          <AIZeroResultsCard
+            loading={aiZeroResults.loading}
+            partName={aiZeroResults.partName}
+            partSpecs={aiZeroResults.partSpecs}
+            catalogNumbers={aiZeroResults.catalogNumbers}
+            substitutes={aiZeroResults.substitutes}
+            error={aiZeroResults.error}
+            onShowOnMap={handleShowOnMap}
+            fontScale={textFontScale}
+          />
+        </View>
+      ) : null}
+
+      {/* Welcome state */}
+      {!hasResults && !searchMutation.isPending ? (
+        <View style={styles.welcomeContainer}>
+          <Text style={styles.welcomeEmoji}>⚡</Text>
+          <Text style={[styles.welcomeTitle, { color: colors.foreground }]}>
+            Search Electrical Parts
+          </Text>
+          <Text style={[styles.welcomeHint, { color: colors.mutedForeground }]}>
+            Search by keywords, catalog #, or vendor. Expand Advanced Filters below for 16-dimension chip filters. Handles abbreviations, synonyms, and misspellings automatically.
+          </Text>
+          {(queryHistory.length > 0 || viewedHistory.length > 0) && (
+            <RecentSearchesPanel
+              queryHistory={queryHistory}
+              viewedHistory={viewedHistory}
+              onSelectQuery={(q) => {
+                handleChange("keywords", q);
+                filtersRef.current = { ...filtersRef.current, keywords: q };
+                handleSearch();
+              }}
+              onSelectPart={(id) => {
+                const found = fuseItemsRef.current.find(it => it.id === id);
+                if (found) {
+                  setDetailsItem(found);
+                } else {
+                  handleChange("keywords", String(id));
+                  filtersRef.current = { ...filtersRef.current, keywords: String(id) };
+                  handleSearch();
+                }
+              }}
+              onClearQueries={() => {
+                clearQueryHistory().catch(() => {});
+                setQueryHistory([]);
+              }}
+              onClearViewed={() => {
+                clearViewedHistory().catch(() => {});
+                setViewedHistory([]);
+              }}
+            />
+          )}
+          <View style={[styles.tipCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.tipTitle, { color: colors.foreground }]}>💡 Quick Tips</Text>
+            {[
+              "Type '20a duplex white' for white 20A outlet",
+              "Type 'BR120' for Eaton BR 20A breaker",
+              "Type '3/4 emt' for 3/4\" EMT conduit fittings",
+              "Select chips to narrow by voltage, amperage, part type…",
+              "Use Photo ID tab to identify parts by camera",
+            ].map((tip, i) => (
+              <Text key={i} style={[styles.tipText, { color: colors.mutedForeground }]}>
+                • {tip}
+              </Text>
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </View>
+  ), [
+    colors.foreground,
+    colors.muted,
+    colors.mutedForeground,
+    colors.border,
+    colors.primary,
+    colors.warning,
+    colors.destructive,
+    colors.card,
+    hasResults,
+    results,
+    sizeUnknownResults,
+    isOffline,
+    fuseSyncedAt,
+    handleClear,
+    belowThreshold,
+    filters.confidenceThreshold,
+    handleChange,
+    handleSearch,
+    searchMutation.isPending,
+    searchMutation.isError,
+    offlineWebError,
+    cachedCount,
+    offlineResults,
+    showSimilarSizeBanner,
+    similarSizeTolerance,
+    handleSimilarSizeSearch,
+    aiZeroResults,
+    handleShowOnMap,
+    textFontScale,
+    queryHistory,
+    viewedHistory,
+  ]);
+
+  return (
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+      {/* Header */}
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.headerTitle, { color: colors.foreground, fontSize: Math.round(20 * textFontScale) }]}>⚡ Parts ID</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
+            {/* Sync progress — while fetching all inventory for offline cache */}
+            {syncProgress ? (
+              <View style={[styles.statusBadge, { backgroundColor: colors.muted }]}>
+                <ActivityIndicator size={10} color={colors.mutedForeground} style={{ marginRight: 4 }} />
+                <Text style={[styles.statusBadgeText, { color: colors.mutedForeground }]}>
+                  {`Syncing ${syncProgress.loaded} / ${syncProgress.total}`}
+                </Text>
+              </View>
+            ) : syncError ? (
+              <Pressable
+                onPress={() => syncAllInventory()}
+                style={[styles.statusBadge, { backgroundColor: colors.destructive + "18" }]}
+                accessibilityLabel={syncRetryPending ? "Sync failed, retrying in background" : "Sync failed, tap to retry"}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.statusBadgeText, { color: colors.destructive }]}>
+                  {syncRetryPending ? "⚠ Sync failed — retrying…" : "⚠ Sync failed — tap to retry"}
+                </Text>
+              </Pressable>
+            ) : cachedCount > 0 ? (
+              <Pressable
+                onPress={() => {
+                  syncAllInventory();
+                  NetInfo.fetch().then(state => { if (isMountedRef.current) setIsOffline(!state.isConnected); }).catch(() => {});
+                }}
+                style={[styles.statusBadge, { backgroundColor: colors.primary + "18" }]}
+              >
+                <Text style={[styles.statusBadgeText, { color: colors.primary }]}>
+                  {`✓ Ready · ${cachedCount} items`}
+                </Text>
+              </Pressable>
+            ) : null}
+            {/* Soft-stale indicator — subtle muted badge when the offline index
+                is 24–72 h old. Prompts the user to know a refresh is pending;
+                disappears once the sync completes (fuseSyncedAt updates). */}
+            {fuseSyncedAt != null && !syncProgress && !syncError &&
+              Date.now() - fuseSyncedAt > FUSE_SOFT_STALE_MS &&
+              Date.now() - fuseSyncedAt <= FUSE_SYNC_MAX_AGE_MS ? (
+              <View style={[styles.statusBadge, { backgroundColor: colors.muted }]}>
+                <Text style={[styles.statusBadgeText, { color: colors.mutedForeground }]}>
+                  {`⏱ ${Math.floor((Date.now() - fuseSyncedAt) / 3_600_000)}h old`}
+                </Text>
+              </View>
+            ) : null}
+            {isOffline ? (
+              <View style={[styles.offlineBadge, { backgroundColor: colors.warning + "22" }]}>
+                <Text style={[styles.offlineBadgeText, { color: colors.warning }]}>OFFLINE</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Pressable
+            onPress={() => setShowReference(true)}
+            style={[styles.headerBtn, styles.refBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+            accessibilityLabel="Quick Reference"
+            accessibilityRole="button"
+          >
+            <Text style={styles.refBtnIcon}>⚡</Text>
+            <Text style={[styles.logoutBtnLabel, { color: colors.mutedForeground }]}>Ref</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              setShowLogoutModal(true);
+              readNewestCacheTimestamp().then(setCacheAge);
+            }}
+            style={[styles.headerBtn, styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+            accessibilityLabel="Settings"
+            accessibilityRole="button"
+          >
+            <Feather name="settings" size={16} color={colors.mutedForeground} />
+            <Text style={[styles.logoutBtnLabel, { color: colors.mutedForeground }]}>Settings</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {/* Settings modal (logout + cache clear) */}
+      <Modal
+        visible={showLogoutModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { setShowLogoutModal(false); setCacheClearedMsg(null); setCacheAge(null); }}
+      >
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.logoutModal, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.logoutModalTitle, { color: colors.foreground }]}>Settings</Text>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              style={{ maxHeight: Math.min(480, Math.max(220, windowHeight - 72)) }}
+              contentContainerStyle={{ paddingBottom: 4 }}
+              keyboardShouldPersistTaps="handled"
+            >
+
+            {/* Clear cache row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Search cache</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Clears locally stored search results. Useful when inventory changes.
+                </Text>
+                {cacheAge ? (
+                  <Text style={[styles.settingsRowHint, { color: colors.mutedForeground, marginTop: 3 }]}>
+                    {cacheAge}
+                  </Text>
+                ) : null}
+                {cacheClearedMsg ? (
+                  <Text style={[styles.settingsRowSuccess, { color: colors.success }]}>{cacheClearedMsg}</Text>
+                ) : null}
+              </View>
+              <Pressable
+                onPress={async () => {
+                  await clearCache();
+                  // Reset in-memory Fuse pool so "Ready · N items" badge
+                  // drops to zero immediately without waiting for next load
+                  fuseRef.current = null;
+                  fuseItemsRef.current = [];
+                  setCachedCount(0);
+                  setOfflineResults(null);
+                  setCacheAge("No cached data");
+                  setCacheClearedMsg("✓ Cache cleared — resyncing…");
+                  syncAllInventory().then(ok => {
+                    setCacheClearedMsg(ok ? null : "Sync failed — tap to retry");
+                  }).catch(console.error);
+                }}
+                style={[styles.secondaryBtn, styles.clearCacheBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+              >
+                <Text style={[styles.clearCacheBtnText, { color: colors.foreground }]}>Clear</Text>
+              </Pressable>
+            </View>
+
+            {/* Shelf view row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Shelf view</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Show visual shelf planks when browsing by aisle.
+                </Text>
+              </View>
+              <Switch
+                value={settings.shelfViewEnabled}
+                onValueChange={v => updateSetting("shelfViewEnabled", v)}
+                trackColor={{ false: colors.border, true: colors.primary }}
+                thumbColor={settings.shelfViewEnabled ? colors.primaryForeground : colors.mutedForeground}
+              />
+            </View>
+
+            {/* Scan sound row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Scan sound</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Play a chime on each successful barcode assignment.
+                </Text>
+              </View>
+              <Switch
+                value={settings.scanSound}
+                onValueChange={v => updateSetting("scanSound", v)}
+                trackColor={{ false: colors.border, true: colors.primary }}
+                thumbColor={settings.scanSound ? colors.primaryForeground : colors.mutedForeground}
+              />
+            </View>
+
+            {/* Text size row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Text size</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Adjust how large result text appears.
+                </Text>
+              </View>
+              <View style={styles.textSizePicker}>
+                {(["small", "normal", "large"] as Array<TextSize>).map(sz => (
+                  <Pressable
+                    key={sz}
+                    onPress={() => updateSetting("textSize", sz)}
+                    style={[
+                      styles.secondaryBtn,
+                      styles.textSizeBtn,
+                      {
+                        backgroundColor: settings.textSize === sz ? colors.primary : colors.muted,
+                        borderColor: settings.textSize === sz ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[
+                      styles.textSizeBtnLabel,
+                      { color: settings.textSize === sz ? colors.primaryForeground : colors.foreground },
+                    ]}>
+                      {sz === "small" ? "S" : sz === "large" ? "L" : "M"}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            {/* Theme row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 8 }]}>
+              <View>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Theme</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Override the system appearance preference.
+                </Text>
+              </View>
+              <View style={styles.textSizePicker}>
+                {(["light", "dark", "system"] as Array<ThemeMode>).map(mode => (
+                  <Pressable
+                    key={mode}
+                    onPress={() => updateSetting("themeMode", mode)}
+                    style={[
+                      styles.secondaryBtn,
+                      styles.textSizeBtn,
+                      {
+                        width: "auto",
+                        paddingHorizontal: 16,
+                        backgroundColor: settings.themeMode === mode ? colors.primary : colors.muted,
+                        borderColor: settings.themeMode === mode ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[
+                      styles.textSizeBtnLabel,
+                      { color: settings.themeMode === mode ? colors.primaryForeground : colors.foreground },
+                    ]}>
+                      {mode === "light" ? "Light" : mode === "dark" ? "Dark" : "System"}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            {/* Measure unit row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Measure unit</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Unit used for dimension display across search cards, detail view, and the measure screen.
+                </Text>
+              </View>
+              <View style={styles.textSizePicker}>
+                {(["mm", "cm", "in"] as Array<DimensionUnit>).map(u => (
+                  <Pressable
+                    key={u}
+                    onPress={() => updateSetting("dimensionUnit", u)}
+                    style={[
+                      styles.secondaryBtn,
+                      styles.textSizeBtn,
+                      {
+                        backgroundColor: settings.dimensionUnit === u ? colors.primary : colors.muted,
+                        borderColor: settings.dimensionUnit === u ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[
+                      styles.textSizeBtnLabel,
+                      { color: settings.dimensionUnit === u ? colors.primaryForeground : colors.foreground },
+                    ]}>
+                      {u}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            {/* Default confidence threshold row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 4 }]}>
+              <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Default min confidence</Text>
+              <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                Sets the minimum confidence applied to searches.
+              </Text>
+              <ConfidenceSlider
+                value={settings.defaultConfidenceThreshold}
+                onChange={v => updateSetting("defaultConfidenceThreshold", v)}
+                colors={colors}
+                presets={[20, 40, 60, 80]}
+              />
+              {/* Custom value text input */}
+              <View style={styles.confCustomRow}>
+                <Text style={[styles.confCustomLabel, { color: colors.mutedForeground }]}>Custom</Text>
+                <KeyboardDoneInput
+                  value={confThresholdInput}
+                  onChangeText={setConfThresholdInput}
+                  onBlur={() => {
+                    const n = parseInt(confThresholdInput, 10);
+                    const clamped = isNaN(n) ? settings.defaultConfidenceThreshold : Math.max(1, Math.min(100, n));
+                    updateSetting("defaultConfidenceThreshold", clamped);
+                  }}
+                  onSubmitEditing={() => {
+                    const n = parseInt(confThresholdInput, 10);
+                    const clamped = isNaN(n) ? settings.defaultConfidenceThreshold : Math.max(1, Math.min(100, n));
+                    updateSetting("defaultConfidenceThreshold", clamped);
+                  }}
+                  keyboardType="number-pad"
+                  maxLength={3}
+                  style={[styles.confCustomInput, {
+                    backgroundColor: colors.muted,
+                    borderColor: colors.border,
+                    color: colors.foreground,
+                  }]}
+                  returnKeyType="done"
+                  selectTextOnFocus
+                />
+                <Text style={[styles.confCustomLabel, { color: colors.mutedForeground }]}>%</Text>
+              </View>
+            </View>
+
+            {/* Footer */}
+            <Text style={[styles.logoutModalHint, { color: colors.mutedForeground, marginTop: 16 }]}>
+              Changes are saved automatically.
+            </Text>
+
+            </ScrollView>
+
+            <View style={styles.logoutModalBtns}>
+              <Pressable
+                onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); setCacheAge(null); }}
+                style={[styles.logoutModalConfirm, { backgroundColor: colors.primary }]}
+              >
+                <Text style={[styles.logoutModalConfirmText, { color: colors.primaryForeground }]}>Done</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); setCacheAge(null); logout(); }}
+                style={[styles.secondaryBtn, styles.logoutModalCancel, { borderColor: colors.destructive + "66", backgroundColor: colors.destructive + "11" }]}
+              >
+                <Text style={[styles.logoutModalCancelText, { color: colors.destructive }]}>Sign Out</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  Alert.alert(
+                    "Delete Account",
+                    "This will permanently delete your account and all associated data. This cannot be undone.",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Delete Account",
+                        style: "destructive",
+                        onPress: () => {
+                          Alert.alert(
+                            "Are you sure?",
+                            "Your account will be permanently removed. You will be signed out immediately.",
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              {
+                                text: "Yes, delete my account",
+                                style: "destructive",
+                                onPress: async () => {
+                                  try {
+                                    const resp = await fetchWithAuth(`${API_BASE}/user/me`, { method: "DELETE" });
+                                    if (!resp.ok) {
+                                      const body = await resp.json().catch(() => ({})) as { error?: string };
+                                      Alert.alert("Error", body.error ?? `Failed to delete account (${resp.status})`);
+                                      return;
+                                    }
+                                    setShowLogoutModal(false);
+                                    setCacheClearedMsg(null);
+                                    setCacheAge(null);
+                                    logout();
+                                  } catch {
+                                    Alert.alert("Error", "Could not reach the server. Please check your connection and try again.");
+                                  }
+                                },
+                              },
+                            ],
+                          );
+                        },
+                      },
+                    ],
+                  );
+                }}
+                style={[styles.secondaryBtn, styles.logoutModalCancel, { borderColor: colors.destructive + "66", backgroundColor: colors.destructive + "11", marginTop: 4 }]}
+              >
+                <Text style={[styles.logoutModalCancelText, { color: colors.destructive }]}>Delete Account</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Offline banner */}
+      {isOffline ? (
+        <View style={[styles.offlineBanner, { backgroundColor: colors.warning + "15", borderBottomColor: colors.warning + "44" }]}>
+          <Text style={[styles.offlineBannerText, { color: colors.warning }]}>
+            Internet Offline—using local search
+          </Text>
+        </View>
+      ) : null}
+
+      {/* F-039: Search timeout banner — shown when the 8-second timeout fires */}
+      {searchTimedOut ? (
+        <View style={[styles.timeoutBanner, { backgroundColor: colors.warning + "15", borderBottomColor: colors.warning + "44" }]}>
+          <Text style={[styles.timeoutBannerText, { color: colors.warning, flex: 1 }]}>
+            Search timed out — showing cached results
+          </Text>
+          <Pressable
+            onPress={() => { setSearchTimedOut(false); handleSearch(); }}
+            hitSlop={8}
+            style={styles.timeoutBannerRetry}
+            accessibilityLabel="Retry search"
+            accessibilityRole="button"
+          >
+            <Text style={[styles.timeoutBannerRetryText, { color: colors.warning }]}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* Sync error banner — shown when background re-sync fails */}
+      {syncError && !syncErrorDismissed ? (
+        <View style={[styles.syncErrorBanner, { backgroundColor: colors.destructive + "14", borderBottomColor: colors.destructive + "44" }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.syncErrorBannerText, { color: colors.destructive }]}>
+              {syncRetryPending
+                ? "Offline data may be stale — retrying sync in background…"
+                : "Background sync failed — offline data may be stale. Pull down to retry."}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => setSyncErrorDismissed(true)}
+            hitSlop={8}
+            style={styles.syncErrorBannerDismiss}
+            accessibilityLabel="Dismiss sync error"
+          >
+            <Feather name="x" size={14} color={colors.destructive} />
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* ── Persistent search bar — hidden in aisle/category browse modes ── */}
+      {mode === "search" ? (
+        <>
+          <View style={[styles.searchBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.searchBarInputWrapper}>
+              <KeyboardDoneInput
+                value={filters.keywords}
+                onChangeText={v => handleChange("keywords", v.toUpperCase())}
+                placeholder="Search parts — keyword, catalog #, vendor…"
+                placeholderTextColor={colors.mutedForeground}
+                style={[styles.searchBarInput, {
+                  backgroundColor: colors.muted,
+                  borderColor: '#555',
+                  color: colors.foreground,
+                  paddingRight: filters.keywords ? 36 : 12,
+                }]}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                returnKeyType="search"
+                onSubmitEditing={handleSearch}
+                blurOnSubmit={false}
+                accessibilityLabel="Search parts by keyword, catalog number, or vendor"
+              />
+              {filters.keywords ? (
+                <Pressable
+                  onPress={() => handleChange("keywords", "")}
+                  style={styles.searchBarClearX}
+                  hitSlop={8}
+                >
+                  <Feather name="x-circle" size={16} color={colors.mutedForeground} />
+                </Pressable>
+              ) : null}
+            </View>
+            <View style={styles.searchBarButtons}>
+              <Pressable
+                onPress={handleSearch}
+                disabled={searchMutation.isPending || !canSearch}
+                style={[styles.searchBarSearchBtn, {
+                  backgroundColor: (searchMutation.isPending || !canSearch) ? colors.muted : colors.primary,
+                  borderWidth: 1,
+                  borderColor: (searchMutation.isPending || !canSearch) ? colors.border : '#000',
+                }]}
+                accessibilityLabel={searchMutation.isPending ? "Searching" : "Search"}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.searchBarSearchBtnText, { color: '#000' }]}>
+                  {searchMutation.isPending ? "…" : "🔍 Search"}
+                </Text>
+              </Pressable>
+              {(hasResults || filters.keywords || hasActiveSizeFilter) ? (
+                <Pressable
+                  onPress={handleClear}
+                  style={[styles.secondaryBtn, styles.searchBarClearBtn, { borderColor: colors.border }]}
+                  accessibilityLabel="Clear search"
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.searchBarClearBtnText, { color: colors.mutedForeground }]}>Clear</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+
+          {/* "Searched as:" chip row — shown when AI translated a plain-language query */}
+          {aiTranslation && !aiTranslationDismissed ? (
+            <SearchedAsRow
+              terms={aiTranslation.terms}
+              interpretation={aiTranslation.interpretation}
+              onDismiss={() => setAITranslationDismissed(true)}
+            />
+          ) : null}
+
+          {/* Soft-stale indicator — muted badge when Fuse index is 24 h+ old */}
+          {fuseSyncedAt != null && Date.now() - fuseSyncedAt > FUSE_SOFT_STALE_MS ? (
+            <View style={[styles.softStaleIndicator, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+              <Feather name="clock" size={11} color={colors.mutedForeground} />
+              <Text style={[styles.softStaleIndicatorText, { color: colors.mutedForeground }]}>
+                Offline data {Math.floor((Date.now() - fuseSyncedAt) / (60 * 60 * 1000))} hrs old — syncing…
+              </Text>
+            </View>
+          ) : null}
+        </>
+      ) : null}
+
+      {/* ── Results list + floating filter overlay ── */}
+      <View style={{ flex: 1 }}>
+      {mode === "aisle" ? (
+        <BrowseByAisle
+          inventory={fuseItemsRef.current}
+          isSyncing={syncProgress !== null}
+          shelfViewEnabled={settings.shelfViewEnabled}
+          fontScale={textFontScale}
+          onClose={() => setMode("search")}
+          isAdmin={isAdmin}
+          adminToken={adminToken}
+          onPartAdded={() => syncAllInventory()}
+          onRefresh={() => { syncAllInventory(); }}
+          onShowOnMap={handleShowOnMap}
+        />
+      ) : mode === "category" ? (
+        <BrowseByCategory
+          onSelectCategory={handleCategorySelect}
+          onClose={() => setMode("search")}
+          fontScale={textFontScale}
+          dimFilters={{
+            minWidth: filters.minWidth,
+            maxWidth: filters.maxWidth,
+            minHeight: filters.minHeight,
+            maxHeight: filters.maxHeight,
+            minDiameter: filters.minDiameter,
+            maxDiameter: filters.maxDiameter,
+          }}
+          onDimFilterChange={(key, value) => handleChange(key, value)}
+        />
+      ) : (
+      <>
+        <FlatList
+          ref={flatListRef}
+          data={flatListData}
+          extraData={searchData}
+          keyExtractor={item => item.kind === "sizeUnknownHeader" ? "__size-unknown-header__" : String(item.result.item.id) + (item.kind === "sizeUnknown" ? "-unknown" : "")}
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={8}
+          windowSize={10}
+          style={{ flex: 1 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={syncProgress !== null}
+              onRefresh={() => { syncAllInventory(); }}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
+        ListHeaderComponent={searchListHeader}
+        renderItem={({ item: listItem }) => {
+          if (listItem.kind === "sizeUnknownHeader") {
+            return (
+              <View style={[styles.sizeUnknownHeader, { backgroundColor: colors.warning + "14", borderColor: colors.warning + "44" }]}>
+                <Text style={[styles.sizeUnknownHeaderIcon, { color: colors.warning }]}>📏</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.sizeUnknownHeaderTitle, { color: colors.warning }]}>
+                    Size not measured ({listItem.count} {listItem.count === 1 ? "item" : "items"})
+                  </Text>
+                  <Text style={[styles.sizeUnknownHeaderHint, { color: colors.warning + "bb" }]}>
+                    These items match your search but have no dimension data on file.
+                  </Text>
+                </View>
+              </View>
+            );
+          }
+          const { result, index } = listItem;
+          return (
+            <View style={styles.resultItem}>
+              <ResultCard
+                result={result}
+                onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
+                onShowOnMap={handleShowOnMap}
+                onMeasure={isAdmin && listItem.kind === "sizeUnknown" ? setMeasureItem : undefined}
+                onVariantsToggle={handleVariantsToggle}
+                onVariantSelect={handleVariantSelect}
+                rank={index}
+                fontScale={textFontScale}
+                sizeUnknown={listItem.kind === "sizeUnknown"}
+                onReenrichKeywords={isAdmin && adminToken ? handleReenrichKeywords : undefined}
+                onOpen={(item) => {
+                  appendViewedHistory({
+                    id: item.id,
+                    catalog: item.catalog ?? "",
+                    name: item.description ?? item.catalog ?? "",
+                    vendor: item.vendor ?? "",
+                  }).then(() => {
+                    loadViewedHistory().then(setViewedHistory).catch(() => {});
+                  }).catch(() => {});
+                }}
+              />
+            </View>
+          );
+        }}
+        contentContainerStyle={[styles.listContent, { paddingTop: filterHeaderHeight + 8, paddingBottom: bottomClearance }]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+      />
+
+        {/* Floating filter overlay — stacked above results */}
+        <View
+          style={styles.filterOverlayWrapper}
+          pointerEvents="box-none"
+          onLayout={(e) => {
+            const h = e.nativeEvent.layout.height;
+            if (filterHeightSettleTimer.current !== null) {
+              clearTimeout(filterHeightSettleTimer.current);
+            }
+            filterHeightSettleTimer.current = setTimeout(() => {
+              filterHeightSettleTimer.current = null;
+              setFilterHeaderHeight(h);
+            }, 0);
+          }}
+        >
+          {!hasResults ? (
+            <View style={styles.modeToggleRow}>
+              <Text style={[styles.modeToggleLabel, { color: colors.foreground }]}>Browse:</Text>
+              {([
+                { key: "aisle" as SearchMode, label: "By Aisle", icon: "map-pin" as const },
+                { key: "category" as SearchMode, label: "By Category", icon: "tag" as const },
+              ]).map(m => (
+                <Pressable
+                  key={m.key}
+                  onPress={() => setMode(m.key)}
+                  style={[
+                    styles.modeToggleBtn,
+                    {
+                      backgroundColor: mode === m.key ? colors.primary + "22" : colors.card,
+                      borderColor: mode === m.key ? colors.primary + "88" : colors.border,
+                    },
+                  ]}
+                >
+                  <Feather name={m.icon} size={13} color={colors.foreground} />
+                  <Text style={[styles.modeToggleBtnText, { color: colors.foreground }]}>
+                    {m.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+          {activeCategorySlug && activeCategoryLabel ? (
+            <Pressable
+              onPress={handleClear}
+              style={[styles.activeCategoryBadge, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+            >
+              <Feather name="tag" size={12} color={colors.primary} />
+              <Text style={[styles.activeCategoryBadgeText, { color: colors.primary }]} numberOfLines={1}>
+                {activeCategoryLabel}
+              </Text>
+              <Feather name="x" size={12} color={colors.primary} />
+            </Pressable>
+          ) : null}
+          <View style={[styles.filterOverlay, { backgroundColor: colors.card }]} pointerEvents="box-none">
+            <FilterPanel
+              values={filters}
+              onChange={handleChange}
+              dimensionCounts={dimensionCounts}
+              onApply={hasResults ? handleSearch : undefined}
+            />
+          </View>
+        </View>
+      </>
+      )}
+      </View>
+
+
+      <PartDetailsEditor
+        item={detailsItem}
+        adminToken={adminToken}
+        onClose={() => setDetailsItem(null)}
+        onShowOnMap={handleShowOnMap}
+        onItemSaved={handleItemSaved}
+        onItemDeleted={handleItemDeleted}
+      />
+
+      <ReferenceModal open={showReference} onClose={() => setShowReference(false)} />
+
+      {isAdmin && adminToken ? (
+        <MeasurePartScreen
+          visible={measureItem !== null}
+          onClose={() => setMeasureItem(null)}
+          onConfirm={handleMeasureConfirm}
+          initialDims={null}
+          adminToken={adminToken}
+        />
+      ) : null}
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safeArea: { flex: 1 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
+  statusBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, flexDirection: "row", alignItems: "center" },
+  statusBadgeText: { fontSize: 11, fontFamily: "Inter_500Medium" },
+  offlineBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 },
+  offlineBadgeText: { fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
+  offlineBanner: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1 },
+  offlineBannerText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  timeoutBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    gap: 8,
+  },
+  timeoutBannerText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  timeoutBannerRetry: { paddingHorizontal: 8, paddingVertical: 2 },
+  timeoutBannerRetryText: { fontSize: 12, fontFamily: "Inter_700Bold" },
+  staleAgeChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  staleAgeChipText: { fontSize: 10, fontFamily: "Inter_500Medium" },
+  syncErrorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    gap: 8,
+  },
+  syncErrorBannerText: { fontSize: 12, fontFamily: "Inter_500Medium", lineHeight: 17 },
+  syncErrorBannerDismiss: { padding: 2 },
+  headerBtn: { height: 44, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  logoutBtn: { flexDirection: "column", gap: 2, paddingVertical: 4, paddingHorizontal: 10 },
+  addPartBtn: { width: 60, flexDirection: "column", gap: 2, paddingVertical: 4 },
+  logoutBtnLabel: { fontSize: 9, fontFamily: "Inter_500Medium", letterSpacing: 0.2 },
+  refBtn: { flexDirection: "column", gap: 2, paddingVertical: 4, paddingHorizontal: 10 },
+  refBtnIcon: { fontSize: 14 },
+  modalOverlay: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
+  logoutModal: { width: "100%", borderRadius: 14, borderWidth: 1, padding: 24 },
+  logoutModalTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
+  logoutModalHint: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20, marginBottom: 20 },
+  logoutModalBtns: { flexDirection: "row", gap: 10 },
+  logoutModalCancel: { flex: 1, paddingVertical: 12, alignItems: "center" },
+  logoutModalCancelText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  logoutModalConfirm: { flex: 1, borderRadius: 8, paddingVertical: 12, alignItems: "center" },
+  logoutModalConfirmText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  searchBar: {
+    margin: 12,
+    marginBottom: 6,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 8,
+  },
+  searchBarInputWrapper: {
+    position: "relative",
+    justifyContent: "center",
+  },
+  searchBarInput: {
+    borderWidth: 2,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+  },
+  searchBarClearX: {
+    position: "absolute",
+    right: 10,
+    padding: 2,
+  },
+  searchBarButtons: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  searchBarSearchBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  searchBarSearchBtnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
+  searchBarClearBtn: {
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  searchBarClearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium", textAlign: "center" },
+  filterOverlayWrapper: {
+    position: "absolute",
+    top: 0,
+    left: 12,
+    right: 12,
+    zIndex: 20,
+  },
+  filterOverlay: {
+    borderRadius: 12,
+    padding: 16,
+  },
+  modeToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 8,
+  },
+  modeToggleLabel: { fontSize: 12, fontFamily: "Inter_600SemiBold", textDecorationLine: "underline" },
+  modeToggleBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  modeToggleBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  activeCategoryBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 6,
+    maxWidth: "90%",
+  },
+  activeCategoryBadgeText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    flexShrink: 1,
+  },
+  resultsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  resultsCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  belowThresholdBanner: {
+    marginHorizontal: 16, marginBottom: 4, padding: 10,
+    borderRadius: 8, borderWidth: 1,
+  },
+  belowThresholdBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", textAlign: "center" },
+  lowerThresholdBtn: {
+    marginTop: 12, paddingHorizontal: 20, paddingVertical: 12,
+    borderRadius: 10, borderWidth: 1, alignItems: "center",
+  },
+  lowerThresholdBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", textAlign: "center", lineHeight: 22 },
+  secondaryBtn: { ...secondaryBtnBase },
+  newSearchBtn: { paddingHorizontal: 12, paddingVertical: 6 },
+  newSearchText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  loadingContainer: { alignItems: "center", padding: 40, gap: 12 },
+  loadingText: { fontSize: 14, fontFamily: "Inter_400Regular" },
+  errorCard: { margin: 16, padding: 16, borderRadius: 8, borderWidth: 1 },
+  errorText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  staleCacheNote: {
+    marginHorizontal: 16, marginBottom: 8, padding: 10,
+    borderRadius: 8, borderWidth: 1,
+  },
+  staleCacheNoteText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  softStaleIndicator: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    marginHorizontal: 16, marginTop: 4, marginBottom: 2,
+    paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: 6, borderWidth: 1,
+    alignSelf: "flex-start",
+  },
+  softStaleIndicatorText: { fontSize: 11, fontFamily: "Inter_400Regular" },
+  emptyContainer: { alignItems: "center", padding: 40 },
+  emptyEmoji: { fontSize: 48, marginBottom: 12 },
+  emptyTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
+  emptyHint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 8 },
+  similarSizeBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 12,
+    marginBottom: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    width: "100%",
+  },
+  similarSizeBannerIcon: { fontSize: 22 },
+  similarSizeBannerTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
+  similarSizeBannerHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 16 },
+  similarSizeToleranceRow: {
+    flexDirection: "row",
+    gap: 8,
+    width: "100%",
+  },
+  similarSizeToleranceChip: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  similarSizeToleranceChipText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+  },
+  welcomeContainer: { padding: 24, alignItems: "center" },
+  welcomeEmoji: { fontSize: 48, marginBottom: 12 },
+  welcomeTitle: { fontSize: 20, fontFamily: "Inter_700Bold", marginBottom: 8 },
+  welcomeHint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 20 },
+  tipCard: { width: "100%", padding: 16, borderRadius: 8, borderWidth: 1 },
+  tipTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 8 },
+  tipText: { fontSize: 13, fontFamily: "Inter_400Regular", marginBottom: 4, lineHeight: 18 },
+  resultItem: { paddingHorizontal: 12 },
+  sizeUnknownHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginHorizontal: 12,
+    marginTop: 8,
+    marginBottom: 4,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 10,
+  },
+  sizeUnknownHeaderIcon: { fontSize: 18, marginTop: 1 },
+  sizeUnknownHeaderTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
+  sizeUnknownHeaderHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 16 },
+  aiCardWrapper: { paddingHorizontal: 12, paddingBottom: 8 },
+  listContent: { paddingBottom: 0 },
+  settingsRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  settingsRowLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
+  settingsRowHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  settingsRowSuccess: { fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 4 },
+  confCustomRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
+  confCustomLabel: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  confCustomInput: {
+    borderWidth: 1, borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 7,
+    fontSize: 15, fontFamily: "Inter_700Bold",
+    textAlign: "center", width: 60,
+  },
+  clearCacheBtn: { paddingHorizontal: 14, paddingVertical: 8, alignSelf: "center" },
+  clearCacheBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  textSizePicker: { flexDirection: "row", gap: 6, alignSelf: "center" },
+  textSizeBtn: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
+  textSizeBtnLabel: { fontSize: 13, fontFamily: "Inter_700Bold" },
+});

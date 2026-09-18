@@ -1,0 +1,31 @@
+{
+  "name": "@workspace/integrations-openai-ai-server",
+  "knip": {
+    "entry": [
+      "src/index.ts",
+      "src/batch/index.ts",
+      "src/image/index.ts",
+      "src/audio/index.ts"
+    ],
+    "project": ["src/**/*.{ts,tsx}"],
+    "ignoreBinaries": ["ffmpeg"]
+  },
+  "version": "0.0.0",
+  "private": true,
+  "serverOnly": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./batch": "./src/batch/index.ts",
+    "./image": "./src/image/index.ts",
+    "./audio": "./src/audio/index.ts"
+  },
+  "dependencies": {
+    "openai": "^6.27.0",
+    "p-limit": "^7.3.0",
+    "p-retry": "^7.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

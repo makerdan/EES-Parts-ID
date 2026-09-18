@@ -1,0 +1,2099 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: inventory
+    description: Inventory management and search
+  - name: dictionaries
+    description: Dictionary lookups
+  - name: ai
+    description: AI identification and reference
+  - name: admin
+    description: Admin operations
+paths:
+  /livez:
+    get:
+      operationId: livenessCheck
+      tags: [health]
+      summary: Process liveness check
+      description: Reports whether the API process and HTTP listener are running without querying dependencies
+      responses:
+        "200":
+          description: Process is live
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivenessStatus"
+
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Application readiness check
+      description: Returns success only when required startup work, database connectivity, and required schema are ready. Optional AI degradation is diagnostic only.
+      responses:
+        "200":
+          description: Application is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+        "503":
+          description: Application is not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessFailure"
+
+  /inventory:
+    get:
+      operationId: listInventory
+      tags: [inventory]
+      summary: List inventory items (paginated)
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: binPrefix
+          in: query
+          schema:
+            type: string
+          description: Filter items to those stored in bins starting with this prefix
+      responses:
+        "200":
+          description: Paginated inventory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryListResponse"
+
+  /inventory/categories:
+    get:
+      operationId: listInventoryCategories
+      tags: [inventory]
+      summary: Get the taxonomy category tree with live item counts
+      responses:
+        "200":
+          description: Category tree with counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryTreeResponse"
+
+  /inventory/search:
+    post:
+      operationId: searchInventory
+      tags: [inventory]
+      summary: Search inventory with multi-strategy cascade
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchInventoryBody"
+      responses:
+        "200":
+          description: Search results with confidence scores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchInventoryResponse"
+
+  /inventory/upsert-batch:
+    post:
+      operationId: upsertInventoryBatch
+      tags: [inventory]
+      summary: Add or update inventory items (upsert by vendor+catalog)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertInventoryBody"
+      responses:
+        "200":
+          description: Upsert summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpsertInventoryResponse"
+
+  /inventory/enrich:
+    post:
+      operationId: enrichInventory
+      tags: [inventory]
+      summary: AI enrich inventory items with keywords (SSE streaming)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnrichInventoryBody"
+      responses:
+        "200":
+          description: SSE stream of enrichment progress
+          content:
+            text/event-stream: {}
+
+  /inventory/{id}/photo:
+    get:
+      operationId: getItemPhoto
+      tags: [inventory]
+      summary: Read a private part photo through the authenticated API
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: slot
+          in: query
+          required: true
+          schema:
+            type: integer
+            enum: [1, 2]
+        - name: variant
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [full, thumbnail]
+      responses:
+        "200":
+          description: Private image bytes
+          content:
+            image/jpeg: {}
+            image/png: {}
+        "401": { description: Authentication required }
+        "404": { description: Photo not found }
+    patch:
+      operationId: uploadItemPhoto
+      tags: [inventory]
+      summary: Upload or remove a part photo (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadPhotoBody"
+      responses:
+        "200":
+          description: Updated image URLs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadPhotoResponse"
+        "400":
+          description: Invalid request
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+
+  /inventory/{id}/bins:
+    patch:
+      operationId: updateItemBins
+      tags: [inventory]
+      summary: Replace the bin-locations array on a single inventory item (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBinsBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+
+  /inventory/{id}/order:
+    patch:
+      operationId: updateItemOrder
+      tags: [inventory]
+      summary: Update order purchase and quantity values (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateItemOrderBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "400": { description: Invalid non-negative integer values }
+        "401": { description: Admin token required }
+        "404": { description: Item not found }
+
+  /admin/upload/orders/preview:
+    post:
+      operationId: previewOrderUpload
+      tags: [admin]
+      summary: Preview OP/OQ-only inventory upload without writing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CsvUploadBody" }
+      responses:
+        "200": { description: Order upload classification and row details }
+        "400": { description: Invalid CSV or missing OP/OQ header }
+        "401": { description: Admin token required }
+
+  /admin/upload/orders:
+    post:
+      operationId: updateOrderUpload
+      tags: [admin]
+      summary: Apply OP/OQ-only inventory upload to known rows
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CsvUploadBody" }
+      responses:
+        "200": { description: Update and classification counts }
+        "400": { description: Invalid CSV or missing OP/OQ header }
+        "401": { description: Admin token required }
+
+  /inventory/estimate-dimensions:
+    post:
+      operationId: estimateDimensions
+      tags: [inventory]
+      summary: Estimate part dimensions from a photo using AI Vision (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EstimateDimensionsBody"
+      responses:
+        "200":
+          description: AI-estimated dimensions in mm (all fields may be null if not determinable)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EstimateDimensionsResponse"
+        "400":
+          description: Missing or invalid imageBase64
+        "401":
+          description: Admin token required
+        "413":
+          description: Image too large
+
+  /inventory/{id}/dimensions:
+    patch:
+      operationId: updateItemDimensions
+      tags: [inventory]
+      summary: Save / merge physical dimensions for an inventory item (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDimensionsBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "400":
+          description: Invalid dimension values
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+
+  /inventory/barcode/{code}:
+    get:
+      operationId: lookupByBarcode
+      tags: [inventory]
+      summary: Look up an inventory item by barcode value
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matched inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "404":
+          description: No item with that barcode
+
+  /inventory/{id}/barcodes:
+    patch:
+      operationId: updateItemBarcodes
+      tags: [inventory]
+      summary: Replace the barcodes array on a single inventory item (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBarcodesBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+
+  /inventory/{id}/size:
+    patch:
+      operationId: updateItemSize
+      tags: [inventory]
+      summary: Update the size label for a single inventory item (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSizeBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "400":
+          description: Invalid size value (e.g. exceeds 100 chars)
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+
+  /inventory/{id}/description:
+    patch:
+      operationId: updateItemDescription
+      tags: [inventory]
+      summary: Update the description for a single inventory item (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDescriptionBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+
+  /inventory/{id}/enrich:
+    patch:
+      operationId: reenrichItem
+      tags: [inventory]
+      summary: Force re-enrich a single inventory item with fresh AI keywords (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Updated inventory item with new AI keywords
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+        "500":
+          description: AI enrichment failed
+
+  /inventory/{id}/keywords:
+    patch:
+      operationId: updateItemKeywords
+      tags: [inventory]
+      summary: Manually update keywords for an inventory item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateKeywordsBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+
+  /dictionaries/lookup:
+    get:
+      operationId: lookupDictionary
+      tags: [dictionaries]
+      summary: Lookup a term across all dictionaries
+      parameters:
+        - name: term
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Dictionary lookup results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DictionaryLookupResponse"
+
+  /ai/identify:
+    post:
+      operationId: aiIdentifyPart
+      tags: [ai]
+      summary: Identify electrical part from images using AI vision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiIdentifyBody"
+      responses:
+        "200":
+          description: AI identification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiIdentifyResponse"
+
+  /reference/ask:
+    post:
+      operationId: askReference
+      tags: [ai]
+      summary: Ask a question about electrical terms (SSE streaming)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiReferenceBody"
+      responses:
+        "200":
+          description: SSE stream of answer chunks
+          content:
+            text/event-stream: {}
+
+  /warehouse-zones:
+    get:
+      operationId: listWarehouseZones
+      tags: [inventory]
+      summary: List all warehouse zone overlays
+      responses:
+        "200":
+          description: Public warehouse layout geometry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicWarehouseZoneListResponse"
+    post:
+      operationId: createWarehouseZone
+      tags: [inventory]
+      summary: Create a warehouse zone overlay (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWarehouseZoneBody"
+      responses:
+        "201":
+          description: Created zone
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseZoneResponse"
+        "401":
+          description: Admin token required
+
+  /warehouse-zones/anchors:
+    get:
+      operationId: listPublicMapAnchors
+      tags: [inventory]
+      summary: List public warehouse map calibration anchors
+      description: Returns only the SVG and world coordinates needed to align the public warehouse layout.
+      responses:
+        "200":
+          description: Public map anchor points
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicMapAnchorListResponse"
+
+  /warehouse-zones/{id}:
+    patch:
+      operationId: updateWarehouseZone
+      tags: [inventory]
+      summary: Update a warehouse zone overlay (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWarehouseZoneBody"
+      responses:
+        "200":
+          description: Updated zone
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseZoneResponse"
+        "401":
+          description: Admin token required
+        "404":
+          description: Zone not found
+    delete:
+      operationId: deleteWarehouseZone
+      tags: [inventory]
+      summary: Delete a warehouse zone overlay (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                required:
+                  - deleted
+        "401":
+          description: Admin token required
+        "404":
+          description: Zone not found
+
+  /warehouse-zones/alignment:
+    get:
+      operationId: getZoneAlignment
+      tags: [inventory]
+      summary: Get the global zone-layer alignment offset
+      description: Returns the global calibration offset (translate + uniform scale) applied uniformly to every zone overlay on the Map tab. Public read. Defaults to identity (0, 0, 1) when never calibrated.
+      responses:
+        "200":
+          description: Current zone-layer alignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZoneAlignment"
+    put:
+      operationId: updateZoneAlignment
+      tags: [inventory]
+      summary: Update the global zone-layer alignment offset (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ZoneAlignment"
+      responses:
+        "200":
+          description: Updated zone-layer alignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZoneAlignment"
+        "401":
+          description: Admin token required
+
+  /admin/audit-log:
+    get:
+      operationId: getAdminAuditLog
+      tags: [admin]
+      summary: List admin action audit log entries (admin)
+      description: Returns privileged admin actions (approve, ban, promote, demote) in reverse-chronological order with cursor-based pagination. Admin access required.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+          description: Maximum number of entries to return (default 50, max 200)
+        - name: before_id
+          in: query
+          schema:
+            type: integer
+          description: Cursor — return only rows with id strictly less than this value (use nextCursor from the previous page)
+      responses:
+        "200":
+          description: Paginated audit log entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAuditLogPage"
+        "400":
+          description: Invalid query parameters
+        "401":
+          description: Authentication required
+        "403":
+          description: Admin access required
+
+  /admin/restart:
+    post:
+      operationId: adminRestart
+      tags: [admin]
+      summary: Restart the API server process (admin)
+      responses:
+        "202":
+          description: Restart initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRestartResponse"
+        "401":
+          description: Admin token required
+
+  /admin/ai-status:
+    get:
+      operationId: getAdminAiStatus
+      tags: [admin]
+      summary: Get the configured Poe registry, explicit verification results, and effective AI routes
+      responses:
+        "200":
+          description: Protected AI routing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "401": { description: Admin token required }
+        "403": { description: Admin access required }
+
+  /admin/ai-status/catalogue/refresh:
+    post:
+      operationId: refreshAdminPoeCatalogue
+      tags: [admin]
+      deprecated: true
+      summary: "[Retired] Poe catalogue discovery is no longer supported"
+      responses:
+        "410": { description: Poe catalogue discovery is retired; use the configured registry }
+        "401": { description: Admin token required }
+
+  /admin/ai-status/probe:
+    post:
+      operationId: probeActiveAdminPoeModels
+      tags: [admin]
+      summary: Explicitly live-verify the bounded set of active Poe route models
+      responses:
+        "200":
+          description: Bounded live-verification results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "401": { description: Admin token required }
+        "403": { description: Admin access required }
+
+  /admin/ai-status/probe/{botName}:
+    post:
+      operationId: probeSingleAdminPoeModel
+      tags: [admin]
+      summary: Explicitly live-verify one active Poe route model
+      parameters:
+        - in: path
+          name: botName
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Updated live-verification results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "400": { description: Model is not in an active route chain }
+        "401": { description: Admin token required }
+        "403": { description: Admin access required }
+
+  /admin/ai-status/routes:
+    put:
+      operationId: updateAdminAiRoutes
+      tags: [admin]
+      summary: Save capability-safe Poe fallback choices
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAiRoutesUpdate"
+      responses:
+        "200":
+          description: Updated AI routing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "400": { description: Invalid or incompatible fallback choices }
+        "401": { description: Admin token required }
+        "503": { description: Could not persist fallback choices }
+
+  /admin/ai-status/routes/reset:
+    post:
+      operationId: resetAdminAiRoutes
+      tags: [admin]
+      summary: Reset Poe fallback choices to code defaults
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                feature:
+                  type: string
+                  enum: [enrich, identify, dimensions, catalog]
+      responses:
+        "200":
+          description: Reset AI routing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAiStatus"
+        "400": { description: Unknown feature }
+        "401": { description: Admin token required }
+        "503": { description: Could not persist reset }
+
+  /ai/reference:
+    post:
+      operationId: aiReference
+      tags: [ai]
+      deprecated: true
+      summary: "[Deprecated] Use /reference/ask instead"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiReferenceBody"
+      responses:
+        "308":
+          description: Redirect to /reference/ask
+
+  /user/me:
+    delete:
+      operationId: deleteUserMe
+      tags: [auth]
+      summary: Delete the authenticated user's own account
+      description: >
+        Deletes the caller's local DB row and Clerk identity.
+        Returns 204 on success. If the DB delete succeeds but Clerk deletion
+        fails, a 502 is returned with an error body so the caller knows the
+        Clerk identity is still live.
+      responses:
+        "204":
+          description: Account deleted successfully
+        "400":
+          description: Account cannot be deleted (e.g. bootstrap admin)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+        "401":
+          description: Authentication required
+        "404":
+          description: User record not found
+        "502":
+          description: DB deleted but Clerk deletion failed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+
+  /admin/snapshots:
+    get:
+      operationId: listAdminInventorySnapshots
+      tags: [admin]
+      summary: List verified private inventory snapshots
+      responses:
+        "200":
+          description: Snapshot metadata
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/InventorySnapshotSummary" }
+        "401": { description: Authentication required }
+        "403": { description: Approved admin required }
+    post:
+      operationId: createAdminInventorySnapshot
+      tags: [admin]
+      summary: Create a verified inventory snapshot
+      responses:
+        "201":
+          description: Snapshot created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InventorySnapshotSummary" }
+  /admin/snapshots/health:
+    get:
+      operationId: getAdminInventorySnapshotHealth
+      tags: [admin]
+      summary: Read inventory backup health
+      responses:
+        "200":
+          description: Backup health
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InventorySnapshotHealth" }
+  /admin/snapshots/dry-run:
+    post:
+      operationId: dryRunAdminInventorySnapshotRestore
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [snapshotId]
+              properties:
+                snapshotId: { type: string }
+      responses:
+        "200":
+          description: Restore comparison
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InventorySnapshotDryRun" }
+  /admin/snapshots/restore:
+    post:
+      operationId: restoreAdminInventorySnapshot
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [snapshotId, confirmationToken]
+              properties:
+                snapshotId: { type: string }
+                confirmationToken: { type: string, minLength: 10 }
+      responses:
+        "200": { description: Inventory restored }
+        "409": { description: Fresh dry-run confirmation required }
+
+components:
+  schemas:
+    InventorySnapshotSummary:
+      type: object
+      properties:
+        formatVersion: { type: integer }
+        snapshotId: { type: string }
+        createdAt: { type: string, format: date-time }
+        reason: { type: string }
+        rowCount: { type: integer, minimum: 0 }
+        contentSha256: { type: string }
+        previousValidSnapshotId: { type: [string, "null"] }
+        lastKnownGood: { type: boolean }
+        anomaly: { type: [string, "null"] }
+      required: [formatVersion, snapshotId, createdAt, reason, rowCount, contentSha256, lastKnownGood, anomaly]
+    InventorySnapshotHealth:
+      type: object
+      properties:
+        status: { type: string, enum: [healthy, degraded, critical] }
+        latestSnapshotAt: { type: [string, "null"], format: date-time }
+        latestRowCount: { type: [integer, "null"] }
+        lastKnownGoodSnapshotAt: { type: [string, "null"], format: date-time }
+        lastKnownGoodSnapshotId: { type: [string, "null"] }
+        emptyInventoryAnomaly: { type: boolean }
+        ageHours: { type: [number, "null"] }
+      required: [status, latestSnapshotAt, latestRowCount, lastKnownGoodSnapshotAt, lastKnownGoodSnapshotId, emptyInventoryAnomaly, ageHours]
+    InventorySnapshotDryRun:
+      type: object
+      properties:
+        snapshotId: { type: string }
+        inserts: { type: integer, minimum: 0 }
+        removes: { type: integer, minimum: 0 }
+        updates: { type: integer, minimum: 0 }
+        currentRowCount: { type: integer, minimum: 0 }
+        snapshotRowCount: { type: integer, minimum: 0 }
+        confirmationToken: { type: string }
+        confirmationExpiresAt: { type: string, format: date-time }
+        currentInventorySha256: { type: string }
+      required: [snapshotId, inserts, removes, updates, currentRowCount, snapshotRowCount, confirmationToken, confirmationExpiresAt, currentInventorySha256]
+    LivenessStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok]
+      required: [status]
+
+    ReadinessFailure:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [error]
+        detail:
+          type: string
+          enum: [startup_not_ready, database_unreachable, schema_unavailable]
+        startup_status:
+          type: string
+          enum: [pending, timed_out, failed]
+      required: [status, detail]
+
+    AdminAuditLogEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        adminClerkUserId:
+          type: string
+        targetClerkUserId:
+          type: string
+        action:
+          type: string
+          enum: [approve, ban, promote, demote]
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, adminClerkUserId, targetClerkUserId, action, createdAt]
+
+    AdminAuditLogPage:
+      type: object
+      description: A single page of audit log entries with a cursor for the next page.
+      properties:
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminAuditLogEntry"
+        nextCursor:
+          type: integer
+          nullable: true
+          description: Pass as before_id to fetch the next page. Null when there are no more rows.
+      required: [rows, nextCursor]
+
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+        db_latency_ms:
+          type: number
+          description: Time in milliseconds taken by the SELECT 1 probe
+        pool_idle:
+          type: integer
+          description: Number of idle connections in the pg pool
+        pool_total:
+          type: integer
+          description: Total connections in the pg pool
+        bots:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, timeout, "404", error]
+          description: Per-bot Poe reachability results from the startup probe
+      required:
+        - status
+
+    TaxonomyItemTypeNode:
+      type: object
+      properties:
+        slug: { type: string }
+        label: { type: string }
+        count: { type: integer }
+      required: [slug, label, count]
+
+    TaxonomySubcategoryNode:
+      type: object
+      properties:
+        slug: { type: string }
+        label: { type: string }
+        count: { type: integer }
+        itemTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxonomyItemTypeNode"
+      required: [slug, label, count, itemTypes]
+
+    TaxonomyCategoryNode:
+      type: object
+      properties:
+        slug: { type: string }
+        label: { type: string }
+        color: { type: string }
+        count: { type: integer }
+        subcategories:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxonomySubcategoryNode"
+      required: [slug, label, color, count, subcategories]
+
+    CategoryTreeResponse:
+      type: object
+      description: >
+        Full taxonomy tree. The last element in `categories` is always the
+        uncategorized catch-all node (slug: "uncategorized") with a single
+        sub-category "needs-review" containing item type "unclassified-items".
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxonomyCategoryNode"
+      required: [categories]
+
+    InventoryItem:
+      type: object
+      description: >
+        Inventory response rows always include orderPurchase, orderQuantity, and
+        the database-generated totalOpOq. All three fields are non-negative
+        integers; zero represents an item without an order value.
+      properties:
+        id:
+          type: integer
+        vendor:
+          type: string
+        catalog:
+          type: string
+        orderPurchase:
+          type: integer
+          minimum: 0
+        orderQuantity:
+          type: integer
+          minimum: 0
+        totalOpOq:
+          type: integer
+          minimum: 0
+        description:
+          type: string
+        binLocations:
+          type: array
+          items:
+            type: string
+          description: Bin locations where this part is stored (a part may live in multiple bins)
+        aiKeywords:
+          type: array
+          items:
+            type: string
+        barcodes:
+          type: array
+          items:
+            type: string
+          description: Barcode values associated with this part
+        enrichedAt:
+          type: string
+          format: date-time
+          nullable: true
+        imageUrl:
+          type: string
+          nullable: true
+          description: URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy
+        thumbnailUrl:
+          type: string
+          nullable: true
+          description: URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy
+        imageUrl2:
+          type: string
+          nullable: true
+          description: URL of the second full-size photo (Detail / Wire Frame slot), served via the API proxy
+        thumbnailUrl2:
+          type: string
+          nullable: true
+          description: URL of the second thumbnail photo (Detail / Wire Frame slot), served via the API proxy
+        expandedDescription:
+          type: string
+          nullable: true
+          description: AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)
+        size:
+          type: string
+          nullable: true
+          description: Human-readable size label manually entered by an admin (e.g. 1/2", 3/4", 4" x 2") — max 100 chars
+        dimensions:
+          type: object
+          nullable: true
+          description: Physical dimensions in millimetres (length, width, height, diameter)
+          properties:
+            length:
+              type: number
+              nullable: true
+            width:
+              type: number
+              nullable: true
+            height:
+              type: number
+              nullable: true
+            diameter:
+              type: number
+              nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - vendor
+        - catalog
+        - orderPurchase
+        - orderQuantity
+        - totalOpOq
+        - description
+        - binLocations
+        - aiKeywords
+        - barcodes
+        - createdAt
+        - updatedAt
+
+    InventoryListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryItem"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+      required:
+        - items
+        - total
+        - page
+        - limit
+
+    SearchInventoryBody:
+      type: object
+      properties:
+        keywords:
+          type: string
+        catalog:
+          type: string
+        vendor:
+          type: string
+        color:
+          type: string
+        size:
+          type: string
+        material:
+          type: string
+        textNumbers:
+          type: string
+        confidenceThreshold:
+          type: number
+          description: Minimum confidence percentage (0–100); default 50
+          minimum: 0
+          maximum: 100
+          default: 50
+        category:
+          type: string
+          description: Part category / type chip filter
+        amperage:
+          type: string
+          description: Current rating chip filter
+        colorChip:
+          type: string
+          description: Color quick-pick chip filter
+        manufacturer:
+          type: string
+          description: Major manufacturer chip filter
+        sizeChip:
+          type: string
+          description: Trade size quick-pick chip filter
+        rating:
+          type: string
+          description: NEMA / IP / UL rating chip filter
+        wireType:
+          type: string
+          description: Wire insulation type chip filter
+        wireGauge:
+          type: string
+          description: AWG gauge chip filter
+        conduitType:
+          type: string
+          description: Conduit material/type chip filter
+        conduitSize:
+          type: string
+          description: Conduit trade size chip filter
+        boxType:
+          type: string
+          description: Electrical box type chip filter
+        boxGangCount:
+          type: string
+          description: Box gang count chip filter
+        mountingType:
+          type: string
+          description: Mounting method chip filter
+        environment:
+          type: string
+          description: Installation environment chip filter
+        voltage:
+          type: string
+          description: Voltage rating chip filter
+        poleCount:
+          type: string
+          description: Pole count chip filter (breakers/switches)
+        categorySlug:
+          type: string
+          description: Taxonomy category/subcategory/item-type slug to pre-filter results
+        minLength:
+          type: number
+          description: Minimum part length in mm (size-range filter)
+        maxLength:
+          type: number
+          description: Maximum part length in mm (size-range filter)
+        minWidth:
+          type: number
+          description: Minimum part width in mm (size-range filter)
+        maxWidth:
+          type: number
+          description: Maximum part width in mm (size-range filter)
+        minHeight:
+          type: number
+          description: Minimum part height in mm (size-range filter)
+        maxHeight:
+          type: number
+          description: Maximum part height in mm (size-range filter)
+        minDiameter:
+          type: number
+          description: Minimum part diameter in mm (size-range filter)
+        maxDiameter:
+          type: number
+          description: Maximum part diameter in mm (size-range filter)
+        includeNullDimensions:
+          type: boolean
+          description: When true (default), items with no recorded dimensions are included in a separate sizeUnknownResults bucket when a size filter is active
+          default: true
+      required: []
+
+    SearchResult:
+      type: object
+      properties:
+        item:
+          $ref: "#/components/schemas/InventoryItem"
+        confidence:
+          type: number
+        matchReason:
+          type: string
+        seriesBase:
+          type: string
+          nullable: true
+        seriesLabel:
+          type: string
+          nullable: true
+        variants:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryItem"
+      required:
+        - item
+        - confidence
+        - matchReason
+        - variants
+
+    SearchInventoryResponse:
+      type: object
+      description: >
+        Response shape for POST /inventory/search.
+
+        `results` contains items that matched all filters; `sizeUnknownResults` is a
+        trailing group of items whose relevant dimension field is NULL and are therefore
+        excluded from size-range filtering but still shown under a "Size not measured"
+        section header in the UI.
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+        totalMatches:
+          type: integer
+        belowThreshold:
+          type: integer
+        dimensionCounts:
+          type: object
+          description: Per-chip-dimension live match counts (dimKey → optionLabel → count)
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: integer
+        sizeUnknownResults:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+          description: Items that have no data for the active size dimension(s); shown as a trailing "size unknown" group
+        sizeUnknownCount:
+          type: integer
+          description: Count of items excluded from the main results because the relevant dimension field is NULL
+      required:
+        - results
+        - totalMatches
+        - belowThreshold
+
+    UpdateDimensionsBody:
+      type: object
+      description: Partial-merge update for physical dimensions; omitted fields are preserved.
+      properties:
+        length:
+          type: number
+          nullable: true
+          description: Longest dimension in mm
+        width:
+          type: number
+          nullable: true
+          description: Width in mm
+        height:
+          type: number
+          nullable: true
+          description: Height in mm
+        diameter:
+          type: number
+          nullable: true
+          description: Diameter in mm (for round/cylindrical parts)
+
+    UploadPhotoBody:
+      type: object
+      properties:
+        imageBase64:
+          type: string
+          description: Base64-encoded JPEG or PNG image; required when remove is false or omitted
+        mimeType:
+          type: string
+          description: MIME type of the image (default image/jpeg)
+        remove:
+          type: boolean
+          description: Set to true to remove the current photo and clear both imageUrl and thumbnailUrl for the given slot
+        slot:
+          type: integer
+          enum: [1, 2]
+          description: Which photo slot to target (1 = Box / Label, 2 = Detail / Wire Frame). Defaults to 1.
+
+    UploadPhotoResponse:
+      type: object
+      properties:
+        imageUrl:
+          type: string
+          nullable: true
+          description: URL of the slot-1 full-size image after upload, or null after removal
+        thumbnailUrl:
+          type: string
+          nullable: true
+          description: URL of the slot-1 thumbnail image after upload, or null after removal
+        imageUrl2:
+          type: string
+          nullable: true
+          description: URL of the slot-2 full-size image after upload, or null after removal
+        thumbnailUrl2:
+          type: string
+          nullable: true
+          description: URL of the slot-2 thumbnail image after upload, or null after removal
+      required:
+        - imageUrl
+        - thumbnailUrl
+        - imageUrl2
+        - thumbnailUrl2
+
+    EstimateDimensionsBody:
+      type: object
+      required: [imageBase64]
+      properties:
+        imageBase64:
+          type: string
+          description: Base64-encoded JPEG or PNG photo of the part
+        mimeType:
+          type: string
+          description: MIME type of the image (default image/jpeg)
+
+    EstimateDimensionsResponse:
+      type: object
+      description: AI-estimated dimensions in millimetres; null for any field the model cannot estimate with confidence
+      properties:
+        length:
+          type: number
+          nullable: true
+        width:
+          type: number
+          nullable: true
+        height:
+          type: number
+          nullable: true
+        diameter:
+          type: number
+          nullable: true
+
+    UpsertInventoryBody:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              vendor:
+                type: string
+              catalog:
+                type: string
+              description:
+                type: string
+              binLocations:
+                type: array
+                items:
+                  type: string
+                description: Bin locations for this part (omit or pass empty array to clear)
+              barcodes:
+                type: array
+                items: { type: string }
+              orderPurchase:
+                type: integer
+                minimum: 0
+              orderQuantity:
+                type: integer
+                minimum: 0
+            required:
+              - vendor
+              - catalog
+      required:
+        - items
+
+    UpsertInventoryResponse:
+      type: object
+      properties:
+        inserted:
+          type: integer
+        updated:
+          type: integer
+        total:
+          type: integer
+      required:
+        - inserted
+        - updated
+        - total
+
+    EnrichInventoryBody:
+      type: object
+      properties:
+        ids:
+          type: array
+          items:
+            type: integer
+          description: Inventory IDs to enrich. If empty, enriches all un-enriched items.
+      required: []
+
+    UpdateBinsBody:
+      type: object
+      properties:
+        binLocations:
+          type: array
+          items:
+            type: string
+          description: Replacement bin-location list. Pass [] to clear all bins.
+      required:
+        - binLocations
+
+    UpdateBarcodesBody:
+      type: object
+      properties:
+        barcodes:
+          type: array
+          items:
+            type: string
+          description: Replacement barcode list. Pass [] to clear all barcodes.
+      required:
+        - barcodes
+
+    UpdateKeywordsBody:
+      type: object
+      properties:
+        keywords:
+          type: array
+          items:
+            type: string
+      required:
+        - keywords
+
+    UpdateSizeBody:
+      type: object
+      properties:
+        size:
+          type: string
+          nullable: true
+          description: Human-readable size label (max 100 chars). Pass null to clear.
+      required:
+        - size
+
+    UpdateDescriptionBody:
+      type: object
+      properties:
+        description:
+          type: string
+          description: Free-text description of the part
+      required:
+        - description
+
+    UpdateItemOrderBody:
+      type: object
+      properties:
+        orderPurchase:
+          type: integer
+          minimum: 0
+        orderQuantity:
+          type: integer
+          minimum: 0
+      required: [orderPurchase, orderQuantity]
+
+    CsvUploadBody:
+      type: object
+      properties:
+        csv: { type: string }
+      required: [csv]
+
+    DictionaryLookupResponse:
+      type: object
+      properties:
+        abbreviations:
+          type: array
+          items:
+            type: string
+        synonyms:
+          type: array
+          items:
+            type: string
+        correction:
+          type: string
+          nullable: true
+        vendorNames:
+          type: array
+          items:
+            type: string
+        slangTerms:
+          type: array
+          items:
+            type: string
+      required:
+        - abbreviations
+        - synonyms
+        - vendorNames
+        - slangTerms
+
+    AiIdentifyBody:
+      type: object
+      properties:
+        images:
+          type: array
+          items:
+            type: string
+            description: Base64-encoded image data (data URI)
+          maxItems: 2
+        keywords:
+          type: string
+        vendor:
+          type: string
+        color:
+          type: string
+        size:
+          type: string
+        material:
+          type: string
+        textNumbers:
+          type: string
+      required:
+        - images
+
+    AiIdentifyResponse:
+      type: object
+      properties:
+        partNumbers:
+          type: array
+          description: Exact catalog/part numbers read directly from the image or label
+          items:
+            type: string
+        searchTerms:
+          type: array
+          items:
+            type: string
+        synonyms:
+          type: array
+          items:
+            type: string
+        relatedTerms:
+          type: array
+          items:
+            type: string
+        manufacturerVerified:
+          type: boolean
+        detectedVendor:
+          type: string
+          nullable: true
+        summary:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+      required:
+        - partNumbers
+        - searchTerms
+        - synonyms
+        - relatedTerms
+        - manufacturerVerified
+        - summary
+        - results
+
+    PublicWarehouseZoneItem:
+      type: object
+      description: Non-sensitive geometry required to render a warehouse zone.
+      properties:
+        aisleId:
+          type: string
+        sectionNum:
+          type: integer
+          nullable: true
+        isInventory:
+          type: boolean
+        svgX:
+          type: number
+        svgY:
+          type: number
+        svgWidth:
+          type: number
+        svgHeight:
+          type: number
+        sortOrder:
+          type: integer
+      required:
+        - aisleId
+        - sectionNum
+        - isInventory
+        - svgX
+        - svgY
+        - svgWidth
+        - svgHeight
+        - sortOrder
+
+    PublicWarehouseZoneListResponse:
+      type: object
+      properties:
+        zones:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicWarehouseZoneItem"
+      required:
+        - zones
+
+    PublicMapAnchorItem:
+      type: object
+      description: Non-sensitive coordinates required to align warehouse zone geometry.
+      properties:
+        name:
+          type: string
+        svgX:
+          type: number
+        svgY:
+          type: number
+        worldX:
+          type: number
+        worldY:
+          type: number
+      required:
+        - name
+        - svgX
+        - svgY
+        - worldX
+        - worldY
+
+    PublicMapAnchorListResponse:
+      type: object
+      properties:
+        anchors:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicMapAnchorItem"
+      required:
+        - anchors
+
+    WarehouseZoneItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        aisleId:
+          type: string
+        sectionNum:
+          type: integer
+          nullable: true
+        isInventory:
+          type: boolean
+        svgX:
+          type: number
+        svgY:
+          type: number
+        svgWidth:
+          type: number
+        svgHeight:
+          type: number
+        sortOrder:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - aisleId
+        - sectionNum
+        - isInventory
+        - svgX
+        - svgY
+        - svgWidth
+        - svgHeight
+        - sortOrder
+        - createdAt
+        - updatedAt
+
+    WarehouseZoneListResponse:
+      type: object
+      properties:
+        zones:
+          type: array
+          items:
+            $ref: "#/components/schemas/WarehouseZoneItem"
+      required:
+        - zones
+
+    WarehouseZoneResponse:
+      type: object
+      properties:
+        zone:
+          $ref: "#/components/schemas/WarehouseZoneItem"
+      required:
+        - zone
+
+    CreateWarehouseZoneBody:
+      type: object
+      properties:
+        aisleId:
+          type: string
+          minLength: 1
+        sectionNum:
+          type: integer
+          nullable: true
+        isInventory:
+          type: boolean
+        svgX:
+          type: number
+        svgY:
+          type: number
+        svgWidth:
+          type: number
+        svgHeight:
+          type: number
+        sortOrder:
+          type: integer
+      required:
+        - aisleId
+        - svgX
+        - svgY
+        - svgWidth
+        - svgHeight
+
+    UpdateWarehouseZoneBody:
+      type: object
+      properties:
+        aisleId:
+          type: string
+          minLength: 1
+        sectionNum:
+          type: integer
+          nullable: true
+        isInventory:
+          type: boolean
+        svgX:
+          type: number
+        svgY:
+          type: number
+        svgWidth:
+          type: number
+        svgHeight:
+          type: number
+        sortOrder:
+          type: integer
+
+    ZoneAlignment:
+      type: object
+      description: Global zone-layer calibration offset applied uniformly to every zone overlay (translate in SVG units + uniform scale about the SVG origin).
+      properties:
+        translateX:
+          type: number
+          minimum: -10000
+          maximum: 10000
+        translateY:
+          type: number
+          minimum: -10000
+          maximum: 10000
+        scale:
+          type: number
+          minimum: 0.1
+          maximum: 5
+      required:
+        - translateX
+        - translateY
+        - scale
+
+    AdminRestartResponse:
+      type: object
+      properties:
+        restarting:
+          type: boolean
+      required:
+        - restarting
+
+    PoeModelCapabilities:
+      type: object
+      properties:
+        text: { type: boolean, nullable: true }
+        vision: { type: boolean, nullable: true }
+        structuredOutput: { type: boolean, nullable: true }
+      required: [text, vision, structuredOutput]
+
+    PoeRegistryModel:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        modalities:
+          type: array
+          items: { type: string }
+        capabilities:
+          $ref: "#/components/schemas/PoeModelCapabilities"
+      required: [id, name, modalities, capabilities]
+
+    PoeRegistry:
+      type: object
+      properties:
+        source:
+          type: string
+          enum: [configured_registry]
+        version: { type: string }
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/PoeRegistryModel"
+      required: [source, version, models]
+
+    PoeFeatureRoute:
+      type: object
+      properties:
+        feature:
+          type: string
+          enum: [enrich, identify, dimensions, catalog]
+        primary: { type: string }
+        fallbacks:
+          type: array
+          items: { type: string }
+        effective:
+          type: array
+          items: { type: string }
+      required: [feature, primary, fallbacks, effective]
+
+    AdminAiStatus:
+      type: object
+      properties:
+        provider: { type: string, enum: [poe, openai] }
+        registry:
+          $ref: "#/components/schemas/PoeRegistry"
+        bots:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, timeout, "404", error, budget_limited]
+        verification:
+          type: object
+          properties:
+            models:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, timeout, "404", error, budget_limited]
+                  verifiedAt: { type: string, format: date-time, nullable: true }
+                required: [status, verifiedAt]
+            lastOperation:
+              nullable: true
+              allOf:
+                - type: object
+                  properties:
+                    startedAt: { type: string, format: date-time }
+                    finishedAt: { type: string, format: date-time }
+                    requested: { type: integer, minimum: 0 }
+                    attempted: { type: integer, minimum: 0 }
+                    completed: { type: integer, minimum: 0 }
+                    budgetLimited: { type: boolean }
+                  required: [startedAt, finishedAt, requested, attempted, completed, budgetLimited]
+          required: [models, lastOperation]
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PoeFeatureRoute"
+        overrides:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+        reference:
+          type: object
+          properties:
+            provider: { type: string, enum: [gemini] }
+            readOnly: { type: boolean }
+            note: { type: string }
+          required: [provider, readOnly, note]
+      required: [provider, registry, bots, verification, routes, overrides, reference]
+
+    AdminAiRoutesUpdate:
+      type: object
+      properties:
+        feature:
+          type: string
+          enum: [enrich, identify, dimensions, catalog]
+        fallbacks:
+          type: array
+          maxItems: 5
+          items: { type: string, minLength: 1 }
+        routes:
+          type: object
+          additionalProperties:
+            type: array
+            maxItems: 5
+            items: { type: string, minLength: 1 }
+      description: Provide either one feature/fallbacks pair or a routes object.
+
+    AiReferenceBody:
+      type: object
+      properties:
+        question:
+          type: string
+        history:
+          type: array
+          description: Prior conversation turns for multi-turn follow-up questions
+          items:
+            type: object
+            properties:
+              q:
+                type: string
+              a:
+                type: string
+            required: [q, a]
+      required:
+        - question

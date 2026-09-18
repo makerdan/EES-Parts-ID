@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "EES Parts ID",
+    "slug": "eespartsid",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/images/icon.png",
+    "scheme": "eespartsid",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.eespartsid.app"
+    },
+    "android": {
+      "package": "com.eespartsid.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "favicon": "./assets/images/icon.png",
+      "name": "EES Parts ID",
+      "shortName": "EES Parts ID",
+      "themeColor": "#f59e0b",
+      "backgroundColor": "#ffffff",
+      "display": "standalone",
+      "orientation": "any",
+      "lang": "en"
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "origin": "https://replit.com/"
+        }
+      ],
+      "expo-font",
+      "expo-web-browser",
+      "expo-asset",
+      "expo-screen-orientation",
+      "expo-audio",
+      "@clerk/expo",
+      "./modules/lidar-measure/app.plugin.js"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

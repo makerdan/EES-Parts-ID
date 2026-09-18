@@ -1,0 +1,92 @@
+# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
+
+# compiled output
+dist/
+tmp/
+out-tsc/
+*.tsbuildinfo
+.expo/
+.expo-shared/
+
+# dependencies
+node_modules/
+
+# environment & secrets
+.env
+.env.*
+!.env.example
+
+# private data and local exports
+/attached_assets/
+/uploads/
+/upload/
+/storage/
+/backups/
+/backup/
+/dumps/
+/exports/
+*_export.csv
+*_export.json
+*_backup.csv
+*_backup.json
+*_dump.sql
+*_backup.sql
+*.sql.gz
+*.dump
+*.bak
+*.backup
+*.sqlite
+*.sqlite3
+*.db
+*.log
+*.zip
+!artifacts/failure-gate-skill.zip
+!artifacts/task-triage-skill.zip
+!scripts/port-authority-skills.zip
+
+# test coverage
+coverage/
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# misc
+/.sass-cache
+/connect.lock
+/libpeerconnection.log
+npm-debug.log
+yarn-error.log
+testem.log
+/typings
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Replit internals
+.cache/
+.local/
+
+# Account-managed skill projections are generated locally from the external
+# account source and must never become repository content.
+/.agents/skills/.account-projections/
+/.agents/skills/.account-projections.lock
+/.agents/skills/.account-projections.staging-*/
+/.agents/skills/.account-projections.backup-*/
+
+# Legacy NX/Angular artefacts (not used)
+.cursor/rules/nx-rules.mdc
+.github/instructions/nx.instructions.md

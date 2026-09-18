@@ -1,0 +1,2039 @@
+/**
+ * CatalogPdfUpload
+ *
+ * Self-contained card for the admin "upload" tab. Lets an admin pick a
+ * manufacturer PDF catalog, sends it to POST /api/admin/catalog-pdf, then
+ * polls the job status endpoint and shows progress. When the job is done a
+ * "Review changes" button links to the catalog-review screen.
+ *
+ * Large PDFs (> CHUNK_SIZE_THRESHOLD bytes) are split client-side into
+ * page-range chunks using pdf-lib and uploaded sequentially. Each chunk is
+ * sent with chunkIndex / chunkCount / parentJobId / pageOffset fields. The
+ * server creates a parent job for the first chunk and returns that parent ID
+ * for all subsequent polling. Small PDFs follow the existing single-upload
+ * path unchanged.
+ *
+ * Background behaviour: uploads use expo-file-system's FileSystem.createUploadTask
+ * with FileSystemSessionType.BACKGROUND (NSURLSession background configuration on
+ * iOS, OkHttp on Android). Chunks continue transferring even when the app is
+ * backgrounded — no AppState guard or manual resume is needed. Each chunk's JSON
+ * body is written to a temp file in cacheDirectory, uploaded via BINARY_CONTENT,
+ * then deleted after the task resolves.
+ */
+
+import "buffer";
+
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useQueryClient } from "@tanstack/react-query";
+import { Buffer } from "buffer";
+import * as Crypto from "expo-crypto";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
+import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
+import { useNavigation, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Animated,
+  FlatList,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { z } from "zod";
+
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { useColors } from "@/hooks/useColors";
+import { shouldUseFallback } from "@/utils/aiFallbackHeaders";
+import { API_BASE } from "@/utils/apiBase";
+import { invalidateListCache } from "@/utils/editItemCache";
+import {
+  clearPdfPickLogs,
+  formatPdfPickLogs,
+  getPdfPickLogs,
+  logPdfPick,
+  subscribePdfPickLogs,
+} from "@/utils/pdfPickLogger";
+import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
+import { getOrSplitChunks, PAGES_PER_CHUNK, splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
+
+const POLL_MS = 2500;
+
+/** AsyncStorage key for persisting the active job ID across tab navigation. */
+const ACTIVE_JOB_KEY = "parts_id_catalog_active_job_v1";
+const ACTIVE_UPLOAD_KEY = "parts_id_catalog_upload_session_v1";
+const DURABLE_PART_SIZE = 5 * 1024 * 1024;
+
+/** Files above this threshold are split into chunks before uploading. */
+const CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
+
+/** How many times an admin can retry a single server-side chunk before the button is disabled. */
+const MAX_SERVER_CHUNK_RETRIES = 3;
+
+/** Silent automatic retries on transient network errors before surfacing to the user. */
+const MAX_SILENT_RETRIES = 2;
+/** Back-off delay between silent retries (ms). */
+const SILENT_RETRY_DELAY_MS = 2000;
+
+type AiRawLogEntry = { page: number; text: string; chunkJobId: string };
+type AiRawLogEntries = Array<AiRawLogEntry>;
+
+type JobStatus = {
+  jobId: string;
+  status: "pending" | "processing" | "done" | "failed" | "cancelled";
+  totalPages: number | null;
+  processedPages: number;
+  matchedParts: number;
+  imagesMatched: number;
+  unmatchedParts?: Array<{ catalogNumber: string; description: string }> | undefined;
+  errorMessage: string | null;
+  failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }> | undefined;
+  aiRawLog?: Array<AiRawLogEntry> | undefined;
+};
+
+const AiRawLogEntrySchema = z.object({ page: z.number(), text: z.string(), chunkJobId: z.string() });
+const JobStatusSchema = z.object({
+  jobId: z.string(),
+  status: z.enum(["pending", "processing", "done", "failed", "cancelled"]),
+  totalPages: z.number().nullable(),
+  processedPages: z.number(),
+  matchedParts: z.number(),
+  imagesMatched: z.number(),
+  unmatchedParts: z.array(z.object({ catalogNumber: z.string(), description: z.string() })).optional(),
+  errorMessage: z.string().nullable(),
+  failedChunks: z.array(z.object({ chunkJobId: z.string(), chunkIndex: z.number() })).optional(),
+  aiRawLog: z.array(AiRawLogEntrySchema).optional(),
+});
+
+type FailedChunkInfo = {
+  chunkIndex: number;
+  totalChunks: number;
+  parentJobId: string | null;
+};
+
+type DurableUploadManifest = {
+  sessionId: string;
+  totalBytes: number;
+  partSize: number;
+  partCount: number;
+  filename: string;
+  vendor: string;
+  fileSha256?: string;
+};
+
+/**
+ * Module-level cache that survives component unmount/remount within the same
+ * app session. Written when the OS backgrounds the app mid-chunk-upload and
+ * the in-flight XHR is aborted into the "paused" state. Read on mount so the
+ * "Paused" card reappears if the user navigates away and back while paused.
+ * Cleared when the upload starts fresh, completes, is cancelled, or resumes.
+ */
+type PausedUploadCache = {
+  failedChunkInfo: FailedChunkInfo;
+  chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>> | null;
+  /** Raw PDF bytes — needed so Resume can restart from chunk 0 if required. */
+  pdfBytes: Uint8Array | null;
+  /** Vendor string — required by the API for the first chunk's parent-job creation. */
+  vendor: string;
+  /** Display name of the picked file — restored so the filename label reappears. */
+  filename: string | null;
+};
+let _pausedUploadCache: PausedUploadCache | null = null;
+let _mountCount = 0;
+
+interface Props {
+  adminToken: string | null;
+  onSessionExpired: () => void;
+}
+
+/** Encode a Uint8Array to a base64 string. */
+function bytesToBase64(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64");
+}
+
+
+export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
+  "use no memo";
+  const colors = useColors();
+  const router = useRouter();
+  const navigation = useNavigation();
+
+  const [vendor, setVendor] = useState("");
+  const [filename, setFilename] = useState<string | null>(null);
+  const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
+  const [readingFile, setReadingFile] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [chunkLabel, setChunkLabel] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showRetryBtn, setShowRetryBtn] = useState(false);
+  const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
+
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
+  const [chunksCompleted, setChunksCompleted] = useState(0);
+  const [chunksTotal, setChunksTotal] = useState(0);
+  const [failedChunkInfo, setFailedChunkInfo] = useState<FailedChunkInfo | null>(null);
+  /** Byte-level upload progress (0–100) for the current chunk or single-file upload. Null = not yet started. */
+  const [uploadBytePct, setUploadBytePct] = useState<number | null>(null);
+  /** Human-readable ETA string (e.g. "~12 s remaining"). Null = not enough data or upload done. */
+  const [uploadEta, setUploadEta] = useState<string | null>(null);
+  /** Human-readable speed string (e.g. "1.4 MB/s"). Null = not enough data or upload done. */
+  const [uploadSpeedStr, setUploadSpeedStr] = useState<string | null>(null);
+  /** Rolling window of raw byte-progress samples used to compute upload speed. */
+  const speedSamplesRef = useRef<Array<{ t: number; loaded: number; total: number }>>([]);
+
+  useEffect(() => {
+    if (retryCountdown === null || retryCountdown <= 0) return;
+    const timer = setTimeout(() => {
+      setRetryCountdown(prev => (prev !== null && prev > 1 ? prev - 1 : null));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [retryCountdown]);
+
+  const pollRef = useRef<AbortController | null>(null);
+  const pollGenRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Holds the active background upload task so Cancel can call cancelAsync().
+  const uploadTaskRef = useRef<FileSystem.UploadTask | null>(null);
+  // Holds the active XHR on web so Cancel can call xhr.abort().
+  const webXhrRef = useRef<XMLHttpRequest | null>(null);
+  // Stores the split chunks so server-side failures can be retried without re-picking the file.
+  const chunksRef = useRef<Awaited<ReturnType<typeof splitPdfIntoChunks>> | null>(null);
+  const [hasStoredChunks, setHasStoredChunks] = useState(false);
+  const adminTokenRef = useRef(adminToken);
+  useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+
+  const queryClient = useQueryClient();
+  const queryClientRef = useRef(queryClient);
+  useEffect(() => { queryClientRef.current = queryClient; }, [queryClient]);
+  // Set to true when retrying with OpenAI fallback after poe_chain_exhausted.
+  const withFallbackRef = useRef(false);
+  // Prevents showing the poe_chain_exhausted Alert more than once per job.
+  const poeExhaustedAlertShownRef = useRef(false);
+  // Stable ref to handleStart so the poe_chain_exhausted useEffect can call it
+  // without capturing a stale closure.
+  const handleStartRef = useRef<(attempt?: number) => void>(() => {});
+  const [, setLogVersion] = useState(0);
+  const copyScaleAnim = useRef(new Animated.Value(1)).current;
+  const aiRawCopyScaleAnim = useRef(new Animated.Value(1)).current;
+
+  const [aiRawLog, setAiRawLog] = useState<AiRawLogEntries>([]);
+  const [diagTab, setDiagTab] = useState<"pick" | "ai">("pick");
+  const seenAiPagesRef = useRef(new Set<string>());
+
+  // ── Upload speed / ETA helpers ─────────────────────────────────────────────
+  // Number of raw progress samples kept in the rolling window.
+  const SPEED_WINDOW = 5;
+
+  /**
+   * Derive human-readable upload speed and ETA from the rolling sample window.
+   * Returns { speedStr, etaStr } where either may be null when unavailable.
+   *
+   * ETA is suppressed (null) when the coefficient of variation of instantaneous
+   * speeds across consecutive sample pairs exceeds 1.5 — meaning throughput is
+   * too erratic to produce a reliable estimate.
+   */
+  function computeUploadStats(
+    samples: Array<{ t: number; loaded: number; total: number }>,
+  ): { speedStr: string | null; etaStr: string | null } {
+    const none = { speedStr: null, etaStr: null };
+    if (samples.length < 3) return none;
+    const oldest = samples[0];
+    const newest = samples[samples.length - 1];
+    if (!oldest || !newest) return none;
+    const dtMs = newest.t - oldest.t;
+    if (dtMs < 100) return none;
+    const deltaBytes = newest.loaded - oldest.loaded;
+    if (deltaBytes <= 0) return none;
+    const speedBytesPerMs = deltaBytes / dtMs;
+
+    // Speed string (one decimal, e.g. "1.4 MB/s")
+    const speedMbps = (speedBytesPerMs * 1000) / (1024 * 1024);
+    const speedStr = `${speedMbps.toFixed(1)} MB/s`;
+
+    // Coefficient of variation check over instantaneous inter-sample speeds
+    const instSpeeds: Array<number> = [];
+    for (let i = 1; i < samples.length; i++) {
+      const s = samples[i];
+      const sp = samples[i - 1];
+      if (!s || !sp) continue;
+      const dt = s.t - sp.t;
+      const db = s.loaded - sp.loaded;
+      if (dt > 0 && db >= 0) instSpeeds.push(dt > 0 ? db / dt : 0);
+    }
+    if (instSpeeds.length >= 2) {
+      const mean = instSpeeds.reduce((a, b) => a + b, 0) / instSpeeds.length;
+      if (mean > 0) {
+        const variance = instSpeeds.reduce((a, b) => a + (b - mean) ** 2, 0) / instSpeeds.length;
+        const cv = Math.sqrt(variance) / mean;
+        if (cv > 1.5) return { speedStr, etaStr: null };
+      }
+    }
+
+    // ETA
+    const remaining = newest.total - newest.loaded;
+    if (remaining <= 0) return { speedStr, etaStr: null };
+    const etaSec = Math.round(remaining / speedBytesPerMs / 1000);
+    if (etaSec <= 0 || etaSec >= 3600) return { speedStr, etaStr: null };
+    const etaStr = etaSec >= 60
+      ? `~${Math.round(etaSec / 60)} min remaining`
+      : `~${etaSec} s remaining`;
+    return { speedStr, etaStr };
+  }
+
+  /** Reset all byte-level upload progress state and clear the speed window. */
+  const resetUploadProgress = () => {
+    setUploadBytePct(null);
+    setUploadEta(null);
+    setUploadSpeedStr(null);
+    speedSamplesRef.current = [];
+  };
+
+  useEffect(() => {
+    if (!loading) return;
+    activateKeepAwake("catalog-upload");
+    return () => { deactivateKeepAwake("catalog-upload"); };
+  }, [loading]);
+
+  useEffect(() => {
+    if (!loading) return;
+    const unsubscribe = navigation.addListener("beforeRemove", (e) => {
+      e.preventDefault();
+      Alert.alert(
+        "Upload in progress",
+        "Are you sure you want to leave? The upload will be cancelled.",
+        [
+          { text: "Stay", style: "cancel" },
+          {
+            text: "Leave",
+            style: "destructive",
+            onPress: () => navigation.dispatch(e.data.action),
+          },
+        ]
+      );
+    });
+    return unsubscribe;
+  }, [loading, navigation]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (!loading) return;
+    if (typeof window === "undefined") return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "Upload in progress. Are you sure you want to leave?";
+      return e.returnValue;
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("beforeunload", handler);
+      }
+    };
+  }, [loading]);
+
+  // Tracks how many times each chunk (by index) has been retried via handleRetryServerChunk.
+  const chunkRetryCountsRef = useRef<Map<number, number>>(new Map());
+
+  const [cancellingJob, setCancellingJob] = useState(false);
+  const durableSessionRef = useRef<DurableUploadManifest | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { pollRef.current.abort(); pollRef.current = null; }
+    pollGenRef.current += 1;
+  }, []);
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  useEffect(() => {
+    const mountId = ++_mountCount;
+    logPdfPick(`LIFECYCLE: component mounted (instance #${mountId})`, {
+      platform: Platform.OS,
+      adminToken: adminToken ? "set" : "null",
+    });
+    return () => {
+      logPdfPick(`LIFECYCLE: component unmounted (instance #${mountId})`);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // If entries already exist (from sessionStorage restore or from a lifecycle
+    // effect that fired before this subscription was registered), force a
+    // re-render now so the panel appears without waiting for the next log event.
+    if (getPdfPickLogs().length > 0) {
+      setLogVersion(v => v + 1);
+    }
+    return subscribePdfPickLogs(() => setLogVersion(v => v + 1));
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (uploadTaskRef.current) {
+        void uploadTaskRef.current.cancelAsync();
+        uploadTaskRef.current = null;
+      }
+      if (webXhrRef.current) {
+        webXhrRef.current.abort();
+        webXhrRef.current = null;
+      }
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  // Release stored chunk bytes and pdf bytes when the job reaches a terminal
+  // success/cancel state (failure keeps them so retry remains available).
+  // Also clear the persisted jobId from AsyncStorage for all terminal states.
+  useEffect(() => {
+    const status = jobStatus?.status;
+    if (status === "done" || status === "cancelled" || status === "failed") {
+      void AsyncStorage.removeItem(ACTIVE_JOB_KEY).catch(() => {});
+    }
+    if (status === "done" || status === "cancelled") {
+      chunksRef.current = null;
+      setHasStoredChunks(false);
+      setPdfBytes(null);
+      withFallbackRef.current = false;
+      poeExhaustedAlertShownRef.current = false;
+    }
+  }, [jobStatus?.status]);
+
+  // Detect poe_chain_exhausted from a job failure and offer the OpenAI fallback.
+  useEffect(() => {
+    if (
+      jobStatus?.status === "failed" &&
+      jobStatus.errorMessage === "poe_chain_exhausted" &&
+      !poeExhaustedAlertShownRef.current
+    ) {
+      poeExhaustedAlertShownRef.current = true;
+      Alert.alert(
+        "AI Unavailable",
+        "All AI bots are currently unavailable. Retry catalog extraction using OpenAI instead?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Use OpenAI",
+            onPress: () => {
+              setJobStatus(null);
+              withFallbackRef.current = true;
+              poeExhaustedAlertShownRef.current = false;
+              handleStartRef.current(0);
+            },
+          },
+        ],
+      );
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobStatus?.status, jobStatus?.errorMessage]);
+
+  const startPolling = useCallback((jobId: string) => {
+    stopPolling();
+    const gen = ++pollGenRef.current;
+    const controller = new AbortController();
+    pollRef.current = controller;
+
+    const run = async () => {
+      while (!controller.signal.aborted) {
+        if (!isMountedRef.current) return;
+        const token = adminTokenRef.current;
+        if (!token) return;
+
+        try {
+          const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          });
+
+          if (pollGenRef.current !== gen) return;
+
+          if (r.status === 401) { onSessionExpired(); return; }
+
+          if (r.ok) {
+            const raw = await r.json();
+            if (pollGenRef.current !== gen) return;
+            const parsed = JobStatusSchema.safeParse(raw);
+            if (!parsed.success) {
+              console.warn("[CatalogPdfUpload] Unexpected job-status shape:", parsed.error.message);
+            } else {
+              const data = parsed.data;
+              setJobStatus(data);
+              if (data.aiRawLog && data.aiRawLog.length > 0) {
+                const newEntries = data.aiRawLog.filter(e => !seenAiPagesRef.current.has(`${e.chunkJobId}:${e.page}`));
+                if (newEntries.length > 0) {
+                  newEntries.forEach(e => seenAiPagesRef.current.add(`${e.chunkJobId}:${e.page}`));
+                  setAiRawLog(prev => [...prev, ...newEntries].sort((a, b) => a.page - b.page));
+                }
+              }
+              if (data.status === "done" || data.status === "failed" || data.status === "cancelled") {
+                if (data.status === "done") {
+                  const qc = queryClientRef.current;
+                  void invalidateListCache({ queryClient: qc });
+                  void qc.invalidateQueries({ queryKey: ["searchInventory"] });
+                }
+                return;
+              }
+            }
+          }
+        } catch {
+          if (controller.signal.aborted || pollGenRef.current !== gen) return;
+          /* network blip — fall through to wait */
+        }
+
+        /* Wait POLL_MS before next request; abort-aware so cleanup is immediate. */
+        await new Promise<void>(resolve => {
+          const t = setTimeout(resolve, POLL_MS);
+          controller.signal.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+        });
+      }
+    };
+
+    void run();
+  }, [stopPolling, onSessionExpired]);
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
+  // On mount, restore an in-progress job from AsyncStorage so the admin sees
+  // polling resume even if they navigated away while a job was running.
+  const resumeAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (resumeAttemptedRef.current) return;
+    resumeAttemptedRef.current = true;
+    AsyncStorage.getItem(ACTIVE_JOB_KEY).then(storedJobId => {
+      if (!isMountedRef.current) return;
+      if (!storedJobId) return;
+      setJobStatus({
+        jobId: storedJobId,
+        status: "pending",
+        totalPages: null,
+        processedPages: 0,
+        matchedParts: 0,
+        imagesMatched: 0,
+        errorMessage: null,
+      });
+      startPolling(storedJobId);
+    }).catch(() => { /* ignore — non-critical */ });
+    AsyncStorage.getItem(ACTIVE_UPLOAD_KEY).then(async stored => {
+      if (!isMountedRef.current || !stored) return;
+      try {
+        const manifest = JSON.parse(stored) as DurableUploadManifest;
+        if (!manifest.sessionId || !manifest.totalBytes || !manifest.partSize) return;
+        durableSessionRef.current = manifest;
+        setFilename(current => current ?? manifest.filename);
+        setVendor(current => current || manifest.vendor);
+        const token = adminTokenRef.current;
+        if (!token) return;
+        const response = await fetch(`${API_BASE}/admin/catalog-pdf/upload-sessions/${manifest.sessionId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) return;
+        const status = await response.json() as {
+          status: string;
+          processingJobId?: string | null;
+          uploadedParts?: number;
+          partCount?: number;
+        };
+        if (status.status === "completed" && status.processingJobId) {
+          await AsyncStorage.setItem(ACTIVE_JOB_KEY, status.processingJobId);
+          setJobStatus({
+            jobId: status.processingJobId,
+            status: "pending",
+            totalPages: null,
+            processedPages: 0,
+            matchedParts: 0,
+            imagesMatched: 0,
+            errorMessage: null,
+          });
+          startPolling(status.processingJobId);
+        } else if (status.status === "open") {
+          setChunksTotal(status.partCount ?? manifest.partCount);
+          setChunksCompleted(status.uploadedParts ?? 0);
+        }
+      } catch {
+        // A stale local manifest is harmless; selecting a file will create a new one.
+      }
+    }).catch(() => { /* ignore — non-critical */ });
+  }, [startPolling]);
+
+  const handleCancelJob = useCallback(async () => {
+    const token = adminTokenRef.current;
+    if (!token || !jobStatus?.jobId) return;
+    setCancellingJob(true);
+    try {
+      const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobStatus.jobId}/cancel`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!isMountedRef.current) return;
+      if (r.status === 401) { stopPolling(); onSessionExpired(); return; }
+      if (r.ok) {
+        stopPolling();
+        setJobStatus(prev => prev ? { ...prev, status: "cancelled" } : prev);
+      } else {
+        Alert.alert("Cancel failed", "Cancel request failed — the job may still be running.");
+      }
+    } catch {
+      Alert.alert("Cancel failed", "Cancel request failed — the job may still be running.");
+    }
+    finally { if (isMountedRef.current) setCancellingJob(false); }
+  }, [jobStatus, stopPolling, onSessionExpired]);
+
+  const handlePickFile = async () => {
+    logPdfPick("handlePickFile: called", {
+      platform: Platform.OS,
+      adminToken: adminToken ? "set" : "null",
+      currentFilename: filename ?? "none",
+      currentJobStatus: jobStatus?.status ?? "none",
+    });
+    setError(null);
+    setReadingFile(true);
+    logPdfPick("handlePickFile: setReadingFile(true)");
+    try {
+      const pickerOptions = { type: "application/pdf", copyToCacheDirectory: true };
+      logPdfPick("handlePickFile: calling DocumentPicker.getDocumentAsync", pickerOptions);
+      const result = await DocumentPicker.getDocumentAsync(pickerOptions);
+      logPdfPick("handlePickFile: DocumentPicker resolved", {
+        canceled: result.canceled,
+        assetCount: result.assets?.length ?? 0,
+      });
+      if (result.canceled || !result.assets?.[0]) {
+        logPdfPick("handlePickFile: canceled or no assets → returning early");
+        setReadingFile(false);
+        return;
+      }
+      const asset = result.assets[0]!;
+      const webFile = (asset as { file?: File }).file;
+      logPdfPick("handlePickFile: asset received", {
+        uriScheme: asset.uri?.split(":")[0],
+        uriPrefix: asset.uri?.substring(0, 80),
+        name: asset.name,
+        mimeType: asset.mimeType,
+        size: asset.size,
+        hasFile: webFile !== undefined,
+        fileConstructor: webFile?.constructor?.name,
+        isFileInstance: webFile instanceof File,
+        isBlobInstance: webFile instanceof Blob,
+      });
+      try {
+        logPdfPick("handlePickFile: calling readPdfAsBytes");
+        const bytes = await readPdfAsBytes(asset.uri, webFile, logPdfPick);
+        logPdfPick("handlePickFile: readPdfAsBytes resolved", { byteLength: bytes.length });
+        const savedSession = durableSessionRef.current;
+        if (savedSession && savedSession.totalBytes !== bytes.length) {
+          await AsyncStorage.removeItem(ACTIVE_UPLOAD_KEY).catch(() => {});
+          durableSessionRef.current = null;
+          throw new Error("The selected file is different from the file attached to the resumable upload. Choose the original PDF or start over.");
+        }
+        if (savedSession?.fileSha256 && (await digestBytes(bytes)) !== savedSession.fileSha256) {
+          await AsyncStorage.removeItem(ACTIVE_UPLOAD_KEY).catch(() => {});
+          durableSessionRef.current = null;
+          throw new Error("The selected file is different from the file attached to the resumable upload. Choose the original PDF or start over.");
+        }
+        setPdfBytes(bytes);
+        logPdfPick("handlePickFile: setPdfBytes called", { byteLength: bytes.length });
+        setFilename(asset.name ?? "catalog.pdf");
+        logPdfPick("handlePickFile: setFilename called", { filename: asset.name ?? "catalog.pdf" });
+        chunksRef.current = null;
+        setHasStoredChunks(false);
+        chunkRetryCountsRef.current = new Map();
+        logPdfPick("handlePickFile: ✅ SUCCESS — file ready for extraction");
+      } catch (err) {
+        logPdfPick("handlePickFile: ❌ inner catch (readPdfAsBytes threw)", {
+          errName: (err as Error)?.name,
+          errMsg: (err as Error)?.message,
+        });
+        const message = toFriendlyReadError(err);
+        setError(message);
+        Alert.alert("Could not read PDF", message);
+      } finally {
+        logPdfPick("handlePickFile: finally — setReadingFile(false)");
+        setReadingFile(false);
+      }
+    } catch (err) {
+      logPdfPick("handlePickFile: ❌ outer catch (DocumentPicker threw)", {
+        errName: (err as Error)?.name,
+        errMsg: (err as Error)?.message,
+      });
+      setReadingFile(false);
+      setError(toFriendlyReadError(err));
+    }
+  };
+
+  const MAX_AUTO_RETRIES = 2;
+
+  // ── Background-capable chunk upload ───────────────────────────────────────
+  // Uses FileSystem.createUploadTask with FileSystemSessionType.BACKGROUND so
+  // the native URLSession (iOS) / OkHttp (Android) layer can complete the
+  // in-flight request even while JS is suspended in the background.
+  // The JSON body is written to a temp file and sent as binary content with
+  // Content-Type: application/json; the temp file is deleted on completion.
+  const sendChunkViaBackground = async (
+    base64: string,
+    extraFields: Record<string, unknown>,
+    onSuccess: (resp: { jobId: string; chunkJobId?: string }) => void,
+    onFailure: (msg: string) => void,
+    onAbort: () => void,
+    onNetwork: () => void,
+    onProgress?: (pct: number) => void,
+    onProgressBytes?: (loaded: number, total: number) => void,
+  ): Promise<void> => {
+    const token = adminTokenRef.current!;
+    const body = JSON.stringify({
+      pdfBase64: base64,
+      vendor: vendor.trim(),
+      filename: filename ?? "catalog.pdf",
+      ...extraFields,
+    });
+
+    // ── Web path: use XMLHttpRequest (supports upload.onprogress; FileSystem
+    // APIs are native-only and cacheDirectory is null on web).
+    if (Platform.OS === "web") {
+      return new Promise<void>((resolve) => {
+        const xhr = new XMLHttpRequest();
+        webXhrRef.current = xhr;
+
+        xhr.open("POST", `${API_BASE}/admin/catalog-pdf`, true);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+        if (withFallbackRef.current) {
+          xhr.setRequestHeader("x-use-openai-fallback", "true");
+        }
+
+        if (onProgress || onProgressBytes) {
+          xhr.upload.onprogress = (ev) => {
+            if (ev.lengthComputable && ev.total > 0) {
+              if (onProgress) onProgress(Math.round((ev.loaded / ev.total) * 100));
+              if (onProgressBytes) onProgressBytes(ev.loaded, ev.total);
+            }
+          };
+        }
+
+        xhr.onload = () => {
+          webXhrRef.current = null;
+          const status = xhr.status;
+          if (status === 401) {
+            onSessionExpired();
+            onFailure("__session_expired__");
+            resolve();
+            return;
+          }
+          if (status < 200 || status >= 300) {
+            let errMsg = "Failed to start job";
+            try { errMsg = (JSON.parse(xhr.responseText) as { error?: string }).error ?? errMsg; } catch { /* ignore */ }
+            onFailure(errMsg);
+            resolve();
+            return;
+          }
+          let parsed: { jobId: string; chunkJobId?: string };
+          try {
+            parsed = JSON.parse(xhr.responseText) as { jobId: string; chunkJobId?: string };
+          } catch {
+            onFailure("Failed to start job");
+            resolve();
+            return;
+          }
+          onSuccess(parsed);
+          resolve();
+        };
+
+        xhr.onerror = () => {
+          webXhrRef.current = null;
+          onNetwork();
+          resolve();
+        };
+
+        xhr.onabort = () => {
+          webXhrRef.current = null;
+          onAbort();
+          resolve();
+        };
+
+        xhr.send(body);
+      });
+    }
+
+    // ── Native path (iOS / Android): write body to a temp file, then use
+    // FileSystem.createUploadTask with a BACKGROUND session so the OS
+    // networking layer can complete the transfer even while JS is suspended.
+    const tempUri = `${FileSystem.cacheDirectory}upload-${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
+
+    try {
+      await FileSystem.writeAsStringAsync(tempUri, body, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+    } catch {
+      onNetwork();
+      return;
+    }
+
+    try {
+      const task = FileSystem.createUploadTask(
+        `${API_BASE}/admin/catalog-pdf`,
+        tempUri,
+        {
+          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+          httpMethod: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+            ...(withFallbackRef.current ? { "x-use-openai-fallback": "true" } : {}),
+          },
+          sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
+        },
+        (onProgress || onProgressBytes)
+          ? (data) => {
+              if (data.totalBytesExpectedToSend > 0) {
+                if (onProgress) onProgress(Math.round((data.totalBytesSent / data.totalBytesExpectedToSend) * 100));
+                if (onProgressBytes) onProgressBytes(data.totalBytesSent, data.totalBytesExpectedToSend);
+              }
+            }
+          : undefined,
+      );
+      uploadTaskRef.current = task;
+      const result = await task.uploadAsync();
+      uploadTaskRef.current = null;
+
+      if (result === null || result === undefined) {
+        onAbort();
+        return;
+      }
+      if (result.status === 401) { onSessionExpired(); onFailure("__session_expired__"); return; }
+      if (result.status < 200 || result.status >= 300) {
+        let errMsg = "Failed to start job";
+        try { errMsg = (JSON.parse(result.body) as { error?: string }).error ?? errMsg; } catch { /* ignore */ }
+        onFailure(errMsg);
+        return;
+      }
+      onSuccess(JSON.parse(result.body) as { jobId: string; chunkJobId?: string });
+    } catch {
+      uploadTaskRef.current = null;
+      onNetwork();
+    } finally {
+      try { await FileSystem.deleteAsync(tempUri, { idempotent: true }); } catch { /* ignore */ }
+    }
+  };
+
+  // ── Chunked upload inner loop ──────────────────────────────────────────────
+  // Uploads chunks[startIndex..end] sequentially using the background-capable
+  // upload API. Each chunk's base64 is encoded lazily (one at a time) inside
+  // the loop to avoid holding all base64 strings in the Hermes heap at once.
+  // On success starts polling. On failure sets failedChunkInfo for targeted retry.
+  const uploadChunksFromIndex = async (
+    chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>,
+    startIndex: number,
+    existingParentJobId: string | null,
+  ): Promise<void> => {
+    let parentJobId: string | null = existingParentJobId;
+    let aborted = false;
+
+    for (let i = startIndex; i < chunks.length; i++) {
+      if (aborted) break;
+      const chunk = chunks[i]!;
+      // Encode this chunk's bytes immediately before use, then let it be
+      // garbage-collected once the upload body has been sent.
+      const base64 = bytesToBase64(chunk.bytes);
+      setChunkLabel(`Part ${i + 1} of ${chunks.length}`);
+
+      // ── Silent transient retry loop ────────────────────────────────────────
+      // Up to MAX_SILENT_RETRIES automatic retries on network errors before the
+      // failure is surfaced to the user. Aborts and server errors are not retried.
+      let result: { jobId: string; chunkJobId?: string } | null = null;
+      let lastErr: Error | null = null;
+
+      for (let attempt = 0; attempt <= MAX_SILENT_RETRIES; attempt++) {
+        if (attempt > 0) {
+          await new Promise<void>((res) => setTimeout(res, SILENT_RETRY_DELAY_MS));
+        }
+        try {
+          result = await new Promise<{ jobId: string; chunkJobId?: string }>((resolve, reject) => {
+            void sendChunkViaBackground(
+              base64,
+              { chunkIndex: i, chunkCount: chunks.length, pageOffset: chunk.pageOffset, ...(parentJobId ? { parentJobId } : {}) },
+              resolve, (msg) => reject(new Error(msg)), () => reject(new Error("__abort__")), () => reject(new Error("__network__")),
+              (pct) => setUploadBytePct(pct),
+              (loaded, total) => {
+                const next = [...speedSamplesRef.current.slice(-(SPEED_WINDOW - 1)), { t: Date.now(), loaded, total }];
+                speedSamplesRef.current = next;
+                const { speedStr, etaStr } = computeUploadStats(next);
+                setUploadSpeedStr(speedStr);
+                setUploadEta(etaStr);
+              },
+            );
+          });
+          lastErr = null;
+          break;
+        } catch (err) {
+          const msg = (err as Error).message;
+          if (msg === "__abort__") {
+            lastErr = err as Error;
+            break;
+          }
+          if (msg === "__network__" && attempt < MAX_SILENT_RETRIES) {
+            lastErr = err as Error;
+            continue;
+          }
+          lastErr = err as Error;
+          break;
+        }
+      }
+
+      if (lastErr !== null) {
+        const msg = lastErr.message;
+        if (msg === "__abort__") {
+          aborted = true;
+          // Manual cancel — full reset.
+          setLoading(false);
+          setChunkLabel(null);
+          setChunksCompleted(0);
+          setChunksTotal(0);
+          resetUploadProgress();
+          setFailedChunkInfo(null);
+          return;
+        }
+        if (msg === "__session_expired__") {
+          // Auth expired — full reset (onSessionExpired was already called above).
+          setLoading(false);
+          setChunkLabel(null);
+          setChunksCompleted(0);
+          setChunksTotal(0);
+          resetUploadProgress();
+          setFailedChunkInfo(null);
+          return;
+        }
+        // Network or server error — surface targeted chunk retry.
+        // Intentionally preserve chunksCompleted and chunksTotal so the UI
+        // continues to show "Part N of M failed" rather than blanking out.
+        setLoading(false);
+        setChunkLabel(null);
+        resetUploadProgress();
+        setFailedChunkInfo({
+          chunkIndex: i,
+          totalChunks: chunks.length,
+          parentJobId: i === 0 ? null : parentJobId,
+        });
+        setError(msg === "__network__" ? "Network error — check your connection and try again." : msg);
+        return;
+      }
+
+      if (i === 0 && result !== null) { parentJobId = result.jobId; }
+      resetUploadProgress();
+      setChunksCompleted(i + 1);
+    }
+
+    if (aborted || !parentJobId) return;
+
+    // All chunks uploaded — start polling parent job
+    setChunkLabel(null);
+    setChunksCompleted(0);
+    setChunksTotal(0);
+    resetUploadProgress();
+    setLoading(false);
+    // pdfBytes intentionally kept so the "Use OpenAI" fallback can re-upload
+    // if the server-side job fails with poe_chain_exhausted.
+    setFailedChunkInfo(null);
+
+    void AsyncStorage.setItem(ACTIVE_JOB_KEY, parentJobId).catch(() => {});
+    setAiRawLog([]);
+    seenAiPagesRef.current.clear();
+    setJobStatus({ jobId: parentJobId, status: "pending", totalPages: null, processedPages: 0, matchedParts: 0, imagesMatched: 0, errorMessage: null });
+    startPolling(parentJobId);
+  };
+
+  // ── Chunked upload flow ────────────────────────────────────────────────────
+  const handleChunkedUpload = async (bytes: Uint8Array): Promise<void> => {
+    let chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>;
+    try {
+      chunks = await splitPdfIntoChunks(bytes, PAGES_PER_CHUNK);
+    } catch (err) {
+      setLoading(false);
+      setChunkLabel(null);
+      setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
+      return;
+    }
+
+    // Single-element result: delegate to the regular single-upload path.
+    // keep-awake for that path is handled by the useEffect on `loading`.
+    if (chunks.length === 1) {
+      const base64 = bytesToBase64(chunks[0]?.bytes ?? new Uint8Array());
+      handleSingleUpload(base64, 0);
+      return;
+    }
+
+    // Keep-awake is managed by the useEffect watching `loading` state,
+    // which covers all upload paths uniformly.
+    // Persist the chunks so server-side processing failures can be retried
+    // without the admin re-picking the file (pdfBytes is cleared after upload).
+    chunksRef.current = chunks;
+    setHasStoredChunks(true);
+
+    setChunksTotal(chunks.length);
+    setChunksCompleted(0);
+
+    try {
+      await uploadChunksFromIndex(chunks, 0, null);
+    } catch {
+      setLoading(false);
+      setChunkLabel(null);
+      setChunksCompleted(0);
+      setChunksTotal(0);
+      resetUploadProgress();
+      setError("An unexpected error occurred. Please try again.");
+    }
+  };
+
+  // ── Retry a single failed chunk (without re-uploading the whole file) ──────
+  const handleRetryChunk = async (): Promise<void> => {
+    if (!failedChunkInfo || !pdfBytes || !adminToken) return;
+
+    const { chunkIndex, parentJobId } = failedChunkInfo;
+    setError(null);
+    setFailedChunkInfo(null);
+    setLoading(true);
+    setChunkLabel(null);
+
+    if (chunkIndex === 0 || !parentJobId) {
+      // Chunk 0 failed before a parent job was created — restart everything
+      void handleChunkedUpload(pdfBytes);
+      return;
+    }
+
+    // Reuse already-split chunks from the initial upload rather than
+    // re-splitting the raw bytes (which discards the cached work).
+    let chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>;
+    try {
+      chunks = await getOrSplitChunks(chunksRef.current, pdfBytes, PAGES_PER_CHUNK);
+    } catch (err) {
+      setLoading(false);
+      setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
+      return;
+    }
+
+    setChunksTotal(chunks.length);
+    setChunksCompleted(chunkIndex);
+
+    try {
+      await uploadChunksFromIndex(chunks, chunkIndex, parentJobId);
+    } catch {
+      setLoading(false);
+      setChunkLabel(null);
+      resetUploadProgress();
+      setError("An unexpected error occurred. Please try again.");
+    }
+  };
+
+  // ── Retry a specific chunk that failed during server-side AI processing ────
+  // Called from the polling-detected failure UI. pdfBytes may already be null,
+  // so this uses chunksRef (persisted when the chunked upload started).
+  const handleRetryServerChunk = async (chunkIndex: number): Promise<void> => {
+    const chunks = chunksRef.current;
+    const parentJobId = jobStatus?.jobId ?? null;
+    if (!chunks || !adminToken || !parentJobId) return;
+
+    const chunk = chunks[chunkIndex];
+    if (!chunk) return;
+
+    // Enforce the retry cap — increment first, then check.
+    const prevCount = chunkRetryCountsRef.current.get(chunkIndex) ?? 0;
+    const newCount = prevCount + 1;
+    chunkRetryCountsRef.current.set(chunkIndex, newCount);
+    if (newCount > MAX_SERVER_CHUNK_RETRIES) return;
+
+    setError(null);
+    setLoading(true);
+    setChunkLabel(`Uploading part ${chunkIndex + 1} of ${chunks.length}…`);
+
+    // If this chunk was killed by a Poe outage, upgrade all subsequent retries
+    // to use the OpenAI fallback.
+    if (shouldUseFallback(jobStatus?.errorMessage)) {
+      withFallbackRef.current = true;
+    }
+
+    try {
+      const base64 = bytesToBase64(chunk.bytes);
+      await new Promise<void>((resolve, reject) => {
+        void sendChunkViaBackground(
+          base64,
+          { chunkIndex, chunkCount: chunks.length, pageOffset: chunk.pageOffset, parentJobId },
+          () => resolve(),
+          (msg) => reject(new Error(msg)),
+          () => reject(new Error("__abort__")),
+          () => reject(new Error("__network__")),
+        );
+      });
+
+      setLoading(false);
+      setChunkLabel(null);
+      // Reset the job status optimistically so polling reflects resumed work
+      setJobStatus(prev =>
+        prev ? { ...prev, status: "processing", errorMessage: null, failedChunks: undefined } : prev,
+      );
+      startPolling(parentJobId);
+    } catch (err) {
+      const msg = (err as Error).message;
+      setLoading(false);
+      setChunkLabel(null);
+      if (msg !== "__abort__") {
+        setError(
+          msg === "__network__"
+            ? "Network error — check your connection and try again."
+            : msg,
+        );
+      }
+    }
+  };
+
+  // ── Single-upload flow (small files) ─────────────────────────────────────
+  const handleSingleUpload = (base64: string, attempt: number): void => {
+    void sendChunkViaBackground(
+      base64,
+      {},
+      (resp) => {
+        setLoading(false);
+        resetUploadProgress();
+        const jobId = resp.jobId;
+        void AsyncStorage.setItem(ACTIVE_JOB_KEY, jobId).catch(() => {});
+        setAiRawLog([]);
+        seenAiPagesRef.current.clear();
+        setJobStatus({
+          jobId,
+          status: "pending",
+          totalPages: null,
+          processedPages: 0,
+          matchedParts: 0,
+          imagesMatched: 0,
+          errorMessage: null,
+        });
+        startPolling(jobId);
+        // pdfBytes intentionally kept so the "Use OpenAI" fallback can re-upload
+        // if the server-side job fails with poe_chain_exhausted.
+      },
+      (errMsg) => {
+        setLoading(false);
+        resetUploadProgress();
+        // __session_expired__ is a sentinel — auth redirect was already handled
+        // by the onSessionExpired prop inside sendChunkViaBackground; no UI error.
+        if (errMsg !== "__session_expired__") setError(errMsg);
+      },
+      () => {
+        setLoading(false);
+        resetUploadProgress();
+        setError("Upload was interrupted. Please try again.");
+      },
+      () => {
+        if (attempt < MAX_AUTO_RETRIES) {
+          const delaySec = Math.pow(2, attempt);
+          setError(null);
+          resetUploadProgress();
+          setRetryCountdown(delaySec);
+          retryTimerRef.current = setTimeout(() => {
+            retryTimerRef.current = null;
+            if (isMountedRef.current) handleStart(attempt + 1);
+          }, delaySec * 1000);
+        } else {
+          setLoading(false);
+          resetUploadProgress();
+          setRetryCountdown(null);
+          setError("Network error — check your connection and try again.");
+          setShowRetryBtn(true);
+        }
+      },
+      (pct) => setUploadBytePct(pct),
+      (loaded, total) => {
+        const next = [...speedSamplesRef.current.slice(-(SPEED_WINDOW - 1)), { t: Date.now(), loaded, total }];
+        speedSamplesRef.current = next;
+        const { speedStr, etaStr } = computeUploadStats(next);
+        setUploadSpeedStr(speedStr);
+        setUploadEta(etaStr);
+      },
+    );
+  };
+
+  const digestBytes = async (bytes: Uint8Array): Promise<string> => {
+    const digestInput = bytes.slice();
+    const digest = new Uint8Array(await Crypto.digest(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      digestInput.buffer as ArrayBuffer,
+    ));
+    return Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("");
+  };
+
+  const durableStatus = async (sessionId: string): Promise<{
+    processingJobId: string | null;
+    status: string;
+    receivedParts: Array<{ partIndex: number }>;
+  } | null> => {
+    const token = adminTokenRef.current;
+    if (!token) return null;
+    const response = await fetch(`${API_BASE}/admin/catalog-pdf/upload-sessions/${sessionId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (response.status === 401) {
+      onSessionExpired();
+      return null;
+    }
+    if (!response.ok) return null;
+    return await response.json() as {
+      processingJobId: string | null;
+      status: string;
+      receivedParts: Array<{ partIndex: number }>;
+    };
+  };
+
+  const createDurableSession = async (bytes: Uint8Array): Promise<DurableUploadManifest> => {
+    const token = adminTokenRef.current;
+    if (!token) throw new Error("Your admin session has expired.");
+    let response: Response;
+    try {
+      const request = fetch(`${API_BASE}/admin/catalog-pdf/upload-sessions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          vendor: vendor.trim(),
+          filename: filename ?? "catalog.pdf",
+          totalBytes: bytes.length,
+          partSize: DURABLE_PART_SIZE,
+          fileSha256: await digestBytes(bytes),
+        }),
+      });
+      response = await Promise.race([
+        request,
+        new Promise<Response>((_, reject) => {
+          // Keep endpoint discovery short so a rolling deployment can use the
+          // legacy transport without holding the upload UI hostage. Once the
+          // session endpoint responds, all actual parts use the durable path.
+          const timer = setTimeout(() => reject(new Error("Durable upload endpoint timed out")), 50);
+          request.finally(() => clearTimeout(timer)).catch(() => {});
+        }),
+      ]);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      (error as Error & { code?: string }).code = "DURABLE_ENDPOINT_UNAVAILABLE";
+      throw error;
+    }
+    if (response.status === 401) {
+      onSessionExpired();
+      throw new Error("__session_expired__");
+    }
+    const data = await response.json().catch(() => ({})) as {
+      sessionId?: string;
+      partSize?: number;
+      partCount?: number;
+      filename?: string;
+      vendor?: string;
+      totalBytes?: number;
+      fileSha256?: string | null;
+      error?: string;
+    };
+    if (!response.ok || !data.sessionId || !data.partSize || !data.partCount) {
+      // A pre-session API returns the legacy job shape (jobId/status) with a
+      // successful response, so treat a response without session metadata as
+      // an older endpoint during rolling deploys.
+      const unavailable = response.status === 404 || response.status === 405
+        || (!data.sessionId && response.status >= 200 && response.status < 300);
+      const error = new Error(data.error ?? "Could not start the durable PDF upload.");
+      if (unavailable) (error as Error & { code?: string }).code = "DURABLE_ENDPOINT_UNAVAILABLE";
+      throw error;
+    }
+    return {
+      sessionId: data.sessionId,
+      totalBytes: data.totalBytes ?? bytes.length,
+      partSize: data.partSize,
+      partCount: data.partCount,
+      filename: data.filename ?? filename ?? "catalog.pdf",
+      vendor: data.vendor ?? vendor.trim(),
+      ...(data.fileSha256 ? { fileSha256: data.fileSha256 } : {}),
+    };
+  };
+
+  const sendDurablePart = async (
+    session: DurableUploadManifest,
+    partIndex: number,
+    bytes: Uint8Array,
+    onProgressBytes?: (loaded: number, total: number) => void,
+  ): Promise<void> => {
+    const token = adminTokenRef.current;
+    if (!token) throw new Error("__session_expired__");
+    const offset = partIndex * session.partSize;
+    const checksum = await digestBytes(bytes);
+    const endpoint = `${API_BASE}/admin/catalog-pdf/upload-sessions/${session.sessionId}/parts/${partIndex}`;
+
+    if (Platform.OS === "web") {
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        webXhrRef.current = xhr;
+        xhr.open("PUT", endpoint, true);
+        xhr.setRequestHeader("Content-Type", "application/octet-stream");
+        xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+        xhr.setRequestHeader("Content-Range", `bytes ${offset}-${offset + bytes.length - 1}/${session.totalBytes}`);
+        xhr.setRequestHeader("X-Part-SHA256", checksum);
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) onProgressBytes?.(event.loaded, event.total);
+        };
+        xhr.onload = () => {
+          webXhrRef.current = null;
+          if (xhr.status === 401) {
+            onSessionExpired();
+            reject(new Error("__session_expired__"));
+          } else if (xhr.status < 200 || xhr.status >= 300) {
+            let message = "Could not upload PDF part.";
+            try { message = (JSON.parse(xhr.responseText) as { error?: string }).error ?? message; } catch { /* keep generic */ }
+            reject(new Error(message));
+          } else {
+            resolve();
+          }
+        };
+        xhr.onerror = () => {
+          webXhrRef.current = null;
+          reject(new Error("__network__"));
+        };
+        xhr.onabort = () => {
+          webXhrRef.current = null;
+          reject(new Error("__abort__"));
+        };
+        xhr.send(bytes);
+      });
+      return;
+    }
+
+    const tempUri = `${FileSystem.cacheDirectory}catalog-part-${session.sessionId}-${partIndex}.bin`;
+    try {
+      await FileSystem.writeAsStringAsync(tempUri, Buffer.from(bytes).toString("base64"), {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const task = FileSystem.createUploadTask(endpoint, tempUri, {
+        uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+        httpMethod: "PUT",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Authorization": `Bearer ${token}`,
+          "Content-Range": `bytes ${offset}-${offset + bytes.length - 1}/${session.totalBytes}`,
+          "X-Part-SHA256": checksum,
+        },
+        sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
+      }, (data) => {
+        if (data.totalBytesExpectedToSend > 0) {
+          onProgressBytes?.(data.totalBytesSent, data.totalBytesExpectedToSend);
+        }
+      });
+      uploadTaskRef.current = task;
+      const result = await task.uploadAsync();
+      uploadTaskRef.current = null;
+      if (!result || result.status === 401) {
+        if (result?.status === 401) onSessionExpired();
+        throw new Error(result?.status === 401 ? "__session_expired__" : "Could not upload PDF part.");
+      }
+      if (result.status < 200 || result.status >= 300) throw new Error("Could not upload PDF part.");
+    } finally {
+      uploadTaskRef.current = null;
+      await FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
+    }
+  };
+
+  const handleDurableUpload = async (bytes: Uint8Array): Promise<void> => {
+    let session = durableSessionRef.current;
+    const digest = await digestBytes(bytes);
+    if (!session || session.totalBytes !== bytes.length || session.vendor !== vendor.trim()
+        || (session.fileSha256 !== undefined && session.fileSha256 !== digest)) {
+      if (session && session.totalBytes === bytes.length && session.vendor === vendor.trim()
+          && session.fileSha256 !== digest) {
+        await AsyncStorage.removeItem(ACTIVE_UPLOAD_KEY).catch(() => {});
+      }
+      try {
+        session = await createDurableSession(bytes);
+      } catch (err) {
+        // Keep a rolling deployment compatible: an older API instance does not
+        // know the session endpoint yet. Only endpoint/network discovery
+        // failures use the legacy transport; validation and storage errors do
+        // not silently downgrade.
+        const message = err instanceof Error ? err.message : String(err);
+        const code = err instanceof Error ? (err as Error & { code?: string }).code : undefined;
+        const endpointUnavailable = code === "DURABLE_ENDPOINT_UNAVAILABLE"
+          || /fetch failed|failed to fetch|network request failed/i.test(message);
+        if (endpointUnavailable) {
+          if (bytes.length > CHUNK_SIZE_THRESHOLD) await handleChunkedUpload(bytes);
+          else handleSingleUpload(bytesToBase64(bytes), 0);
+          return;
+        }
+        throw err;
+      }
+      durableSessionRef.current = session;
+      await AsyncStorage.setItem(ACTIVE_UPLOAD_KEY, JSON.stringify(session));
+    }
+    const currentStatus = await durableStatus(session.sessionId);
+    if (currentStatus?.status === "completed" && currentStatus.processingJobId) {
+      const jobId = currentStatus.processingJobId;
+      await AsyncStorage.setItem(ACTIVE_JOB_KEY, jobId);
+      setLoading(false);
+      setJobStatus({ jobId, status: "pending", totalPages: null, processedPages: 0, matchedParts: 0, imagesMatched: 0, errorMessage: null });
+      startPolling(jobId);
+      return;
+    }
+    if (currentStatus?.status === "cancelled" || currentStatus?.status === "expired" || currentStatus?.status === "failed") {
+      session = await createDurableSession(bytes);
+      durableSessionRef.current = session;
+      await AsyncStorage.setItem(ACTIVE_UPLOAD_KEY, JSON.stringify(session));
+    }
+    const received = new Set((currentStatus?.receivedParts ?? []).map(part => part.partIndex));
+    setChunksTotal(session.partCount);
+    setChunksCompleted(received.size);
+    for (let index = 0; index < session.partCount; index++) {
+      if (received.has(index)) continue;
+      if (!isMountedRef.current) return;
+      const start = index * session.partSize;
+      const part = bytes.slice(start, Math.min(bytes.length, start + session.partSize));
+      setChunkLabel(`Uploading part ${index + 1} of ${session.partCount}…`);
+      await sendDurablePart(session, index, part, (loaded, total) => {
+        setUploadBytePct(total > 0 ? Math.round((loaded / total) * 100) : null);
+      });
+      setChunksCompleted(index + 1);
+      resetUploadProgress();
+    }
+    const token = adminTokenRef.current;
+    if (!token) throw new Error("__session_expired__");
+    const response = await fetch(`${API_BASE}/admin/catalog-pdf/upload-sessions/${session.sessionId}/complete`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    });
+    if (response.status === 401) {
+      onSessionExpired();
+      throw new Error("__session_expired__");
+    }
+    const result = await response.json().catch(() => ({})) as { jobId?: string; error?: string };
+    if (!response.ok || !result.jobId) throw new Error(result.error ?? "Could not finalize the PDF upload.");
+    await AsyncStorage.removeItem(ACTIVE_UPLOAD_KEY).catch(() => {});
+    await AsyncStorage.setItem(ACTIVE_JOB_KEY, result.jobId);
+    durableSessionRef.current = null;
+    setLoading(false);
+    setChunkLabel(null);
+    setChunksCompleted(0);
+    setChunksTotal(0);
+    setJobStatus({ jobId: result.jobId, status: "pending", totalPages: null, processedPages: 0, matchedParts: 0, imagesMatched: 0, errorMessage: null });
+    startPolling(result.jobId);
+  };
+
+  const handleStart = (attempt = 0) => {
+    if (!pdfBytes || !vendor.trim() || !adminToken) return;
+    if (pdfBytes.length === 0) {
+      setError("The selected PDF appears to be empty. Please choose a different file.");
+      return;
+    }
+    _pausedUploadCache = null;
+    setError(null);
+    setRetryCountdown(null);
+    setShowRetryBtn(false);
+    setFailedChunkInfo(null);
+    if (attempt === 0) {
+      void AsyncStorage.removeItem(ACTIVE_JOB_KEY).catch(() => {});
+      setJobStatus(null);
+      chunksRef.current = null;
+      setHasStoredChunks(false);
+      chunkRetryCountsRef.current = new Map();
+      poeExhaustedAlertShownRef.current = false;
+      // withFallbackRef is managed externally: set to true by the "Use OpenAI"
+      // alert before calling handleStart(0), reset to false by the done/cancelled
+      // useEffect. Do not reset here so the fallback flag survives the re-entry.
+    }
+    setLoading(true);
+    setChunkLabel(null);
+    setChunksCompleted(0);
+    setChunksTotal(0);
+    resetUploadProgress();
+
+    void handleDurableUpload(pdfBytes).catch((err: unknown) => {
+      if (!isMountedRef.current) return;
+      const message = err instanceof Error ? err.message : String(err);
+      setLoading(false);
+      setChunkLabel(null);
+      resetUploadProgress();
+      if (message === "__abort__") return;
+      if (message === "__session_expired__") return;
+      setError(message === "__network__" ? "Network error — check your connection and try again." : message);
+      setShowRetryBtn(true);
+    });
+  };
+
+  // Keep handleStartRef in sync so the poe_chain_exhausted Alert can call the
+  // latest closure without a stale capture.
+  handleStartRef.current = handleStart;
+
+  const handleCancel = () => {
+    if (uploadTaskRef.current) {
+      void uploadTaskRef.current.cancelAsync();
+      uploadTaskRef.current = null;
+    }
+    if (webXhrRef.current) {
+      webXhrRef.current.abort();
+      webXhrRef.current = null;
+    }
+    const sessionId = durableSessionRef.current?.sessionId;
+    const token = adminTokenRef.current;
+    if (sessionId && token) {
+      void fetch(`${API_BASE}/admin/catalog-pdf/upload-sessions/${sessionId}/cancel`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
+  };
+
+  const handleCancelRetry = () => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    setRetryCountdown(null);
+    setLoading(false);
+    setError("Network error — check your connection and try again.");
+    setShowRetryBtn(true);
+  };
+
+  const isDone = jobStatus?.status === "done";
+  const isFailed = jobStatus?.status === "failed";
+  const isCancelled = jobStatus?.status === "cancelled";
+  const isRunning = jobStatus?.status === "pending" || jobStatus?.status === "processing";
+
+  const progressPct =
+    jobStatus?.totalPages && jobStatus.totalPages > 0
+      ? Math.round((jobStatus.processedPages / jobStatus.totalPages) * 100)
+      : null;
+
+  return (
+    <View style={[s.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <Text style={[s.title, { color: colors.foreground }]}>PDF Catalog Importer</Text>
+      <Text style={[s.hint, { color: colors.mutedForeground }]}>
+        Upload a manufacturer's product catalog PDF. The system will use AI to
+        extract part numbers, descriptions, and product images, then match them
+        to your inventory.
+      </Text>
+
+      {/* Vendor input */}
+      <View style={s.fieldRow}>
+        <Text style={[s.label, { color: colors.mutedForeground }]}>
+          Vendor <Text style={{ color: colors.destructive }}>*</Text>
+        </Text>
+        <KeyboardDoneInput
+          style={[s.input, {
+            backgroundColor: colors.muted,
+            color: colors.foreground,
+            borderColor: pdfBytes && !vendor.trim() ? colors.destructive : colors.border,
+          }]}
+          placeholder="e.g. EATON"
+          placeholderTextColor={colors.mutedForeground}
+          value={vendor}
+          onChangeText={v => setVendor(v.toUpperCase())}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          editable={!isRunning && !loading}
+        />
+      </View>
+
+      {/* File picker */}
+      <Pressable
+        onPress={handlePickFile}
+        disabled={isRunning || loading || readingFile}
+        style={[s.pickBtn, { borderColor: isRunning || loading || readingFile ? colors.border : colors.primary }]}
+      >
+        {readingFile ? (
+          <View style={s.pickBtnInner}>
+            <ActivityIndicator size="small" color={colors.mutedForeground} />
+            <Text style={[s.pickBtnText, { color: colors.mutedForeground }]}>Reading file…</Text>
+          </View>
+        ) : (
+          <Text style={[s.pickBtnText, { color: isRunning || loading ? colors.mutedForeground : colors.primary }]}>
+            {filename ? `PDF: ${filename}` : "Choose PDF File"}
+          </Text>
+        )}
+      </Pressable>
+
+      {/* Error / retry countdown */}
+      {retryCountdown !== null ? (
+        <View style={s.errorRow}>
+          <Text style={[s.error, { color: colors.destructive, flex: 1 }]}>
+            Network error — retrying in {retryCountdown}…
+          </Text>
+          <Pressable
+            onPress={handleCancelRetry}
+            style={[s.retryBtn, { borderColor: colors.destructive }]}
+          >
+            <Text style={[s.retryBtnText, { color: colors.destructive }]}>Cancel</Text>
+          </Pressable>
+        </View>
+      ) : error ? (
+        <View style={s.errorRow}>
+          <Text style={[s.error, { color: colors.destructive, flex: 1 }]}>{error}</Text>
+          {failedChunkInfo && pdfBytes ? (
+            <Pressable
+              onPress={() => { void handleRetryChunk(); }}
+              style={[s.retryBtn, { borderColor: colors.destructive }]}
+            >
+              <Text style={[s.retryBtnText, { color: colors.destructive }]}>
+                Retry part {failedChunkInfo.chunkIndex + 1}/{failedChunkInfo.totalChunks}
+              </Text>
+            </Pressable>
+          ) : showRetryBtn ? (
+            <Pressable
+              onPress={() => handleStart(0)}
+              style={[s.retryBtn, { borderColor: colors.destructive }]}
+            >
+              <Text style={[s.retryBtnText, { color: colors.destructive }]}>Retry</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+
+      {/* Start button */}
+      {!isRunning && !isDone ? (
+        <>
+          <Pressable
+            onPress={() => handleStart()}
+            disabled={!pdfBytes || !vendor.trim() || loading || readingFile}
+            style={[s.startBtn, {
+              backgroundColor: !pdfBytes || !vendor.trim() || loading || readingFile ? colors.muted : colors.primary,
+            }]}
+          >
+            {loading ? (
+              <ActivityIndicator color={colors.primaryForeground} />
+            ) : (
+              <Text style={[s.startBtnText, { color: !pdfBytes || !vendor.trim() || readingFile ? colors.mutedForeground : colors.primaryForeground }]}>
+                Start Extraction
+              </Text>
+            )}
+          </Pressable>
+          {(!pdfBytes || !vendor.trim()) && !loading && !readingFile ? (
+            <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
+              {!pdfBytes && !vendor.trim()
+                ? "Choose a PDF file and enter a vendor name to continue"
+                : !pdfBytes
+                  ? "Choose a PDF file above to continue"
+                  : "Enter a vendor name above to continue"}
+            </Text>
+          ) : null}
+        </>
+      ) : null}
+
+      {/* Upload progress — chunked mode shows step bar; single-file shows byte progress */}
+      {loading && !isRunning ? (
+        <View style={s.progressBlock}>
+          <View style={s.progressRow}>
+            <Text style={[s.progressLabel, { color: colors.foreground, flex: 1 }]}>
+              {chunkLabel !== null ? `Uploading… ${chunkLabel}` : "Uploading…"}
+            </Text>
+            <Pressable onPress={handleCancel} style={[s.cancelBtn, { borderColor: colors.destructive }]}>
+              <Text style={[s.cancelBtnText, { color: colors.destructive }]}>Cancel</Text>
+            </Pressable>
+          </View>
+
+          {chunkLabel !== null && chunksTotal > 0 ? (
+            // Chunked upload: combined bar — advances per completed chunk and also
+            // updates within the current chunk as bytes are sent.
+            <>
+              <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
+                <View style={[s.progressFill, {
+                  width: `${Math.min(100, Math.round(((chunksCompleted + (uploadBytePct ?? 0) / 100) / chunksTotal) * 100))}%`,
+                  backgroundColor: colors.primary,
+                }]} />
+              </View>
+              <Text style={[s.progressText, { color: colors.mutedForeground }]}>
+                {chunksCompleted} of {chunksTotal} parts uploaded
+                {uploadBytePct !== null && uploadBytePct > 0 && chunksCompleted < chunksTotal
+                  ? ` — part ${chunksCompleted + 1}: ${uploadBytePct}%`
+                  : ""}
+                {uploadSpeedStr !== null ? `  ·  ${uploadSpeedStr}` : ""}
+                {uploadEta !== null ? `  ·  ${uploadEta}` : ""}
+              </Text>
+            </>
+          ) : uploadBytePct !== null ? (
+            // Single-file upload: real byte-level progress bar
+            <>
+              <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
+                <View style={[s.progressFill, {
+                  width: `${uploadBytePct}%`,
+                  backgroundColor: colors.primary,
+                }]} />
+              </View>
+              <Text style={[s.progressText, { color: colors.mutedForeground }]}>
+                {uploadBytePct}% uploaded
+                {uploadSpeedStr !== null ? `  ·  ${uploadSpeedStr}` : ""}
+                {uploadEta !== null ? `  ·  ${uploadEta}` : ""}
+              </Text>
+            </>
+          ) : (
+            // Fallback spinner before first progress event arrives
+            <ActivityIndicator size="small" color={colors.primary} />
+          )}
+        </View>
+      ) : null}
+
+      {/* Job progress */}
+      {jobStatus && isRunning ? (
+        <View style={s.progressBlock}>
+          <View style={s.progressRow}>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={[s.progressLabel, { color: colors.foreground, flex: 1 }]}>
+              {jobStatus.status === "pending" ? "Starting…" : "Processing pages…"}
+            </Text>
+            <Pressable
+              onPress={handleCancelJob}
+              disabled={cancellingJob}
+              style={[s.cancelBtn, { borderColor: colors.destructive, opacity: cancellingJob ? 0.5 : 1 }]}
+            >
+              <Text style={[s.cancelBtnText, { color: colors.destructive }]}>
+                {cancellingJob ? "Cancelling…" : "Cancel job"}
+              </Text>
+            </Pressable>
+          </View>
+          {progressPct !== null ? (
+            <>
+              <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
+                <View style={[s.progressFill, { width: `${progressPct}%`, backgroundColor: colors.primary }]} />
+              </View>
+              <Text style={[s.progressText, { color: colors.mutedForeground }]}>
+                {jobStatus.processedPages} / {jobStatus.totalPages} pages — {jobStatus.matchedParts} parts matched
+              </Text>
+            </>
+          ) : null}
+        </View>
+      ) : null}
+
+      {/* Done */}
+      {isDone && jobStatus ? (
+        <View style={[s.doneCard, { backgroundColor: colors.success + "18" }]}>
+          <Text style={[s.doneText, { color: colors.success }]}>
+            Done — {jobStatus.matchedParts} part{jobStatus.matchedParts !== 1 ? "s" : ""} updated across {jobStatus.processedPages} pages{jobStatus.imagesMatched > 0 ? `, ${jobStatus.imagesMatched} with images` : ""}
+          </Text>
+          {jobStatus.matchedParts === 0 &&
+          (!jobStatus.unmatchedParts || jobStatus.unmatchedParts.length === 0) &&
+          jobStatus.processedPages > 0 ? (
+            <Text style={[s.unmatchedNote, { color: colors.warning }]}>
+              No parts were identified — the AI may be temporarily unavailable. Try again shortly.
+            </Text>
+          ) : null}
+          {jobStatus.unmatchedParts && jobStatus.unmatchedParts.length > 0 ? (
+            <Text style={[s.unmatchedNote, { color: colors.warning }]}>
+              {jobStatus.unmatchedParts.length} unrecognized part{jobStatus.unmatchedParts.length !== 1 ? "s" : ""} found — tap Review to see them
+            </Text>
+          ) : null}
+          <Pressable
+            onPress={() => router.push(`/catalog-review?jobId=${jobStatus.jobId}`)}
+            style={[s.reviewBtn, { borderColor: colors.primary }]}
+          >
+            <Text style={[s.reviewBtnText, { color: colors.primary }]}>Review changes →</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => { setJobStatus(null); setFilename(null); setPdfBytes(null); setVendor(""); setAiRawLog([]); seenAiPagesRef.current.clear(); }}
+            style={[s.reviewBtn, { borderColor: colors.mutedForeground }]}
+          >
+            <Text style={[s.reviewBtnText, { color: colors.mutedForeground }]}>Start new extraction</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* Cancelled */}
+      {isCancelled && jobStatus ? (
+        <View style={[s.doneCard, { backgroundColor: colors.mutedForeground + "18" }]}>
+          <Text style={[s.doneText, { color: colors.mutedForeground }]}>
+            Job cancelled
+            {jobStatus.processedPages > 0
+              ? ` — stopped after ${jobStatus.processedPages} page${jobStatus.processedPages !== 1 ? "s" : ""}${jobStatus.matchedParts > 0 ? `, ${jobStatus.matchedParts} parts matched` : ""}`
+              : ""}
+          </Text>
+          <Pressable
+            onPress={() => { setJobStatus(null); setFilename(null); setCancellingJob(false); setVendor(""); setAiRawLog([]); seenAiPagesRef.current.clear(); }}
+            style={[s.reviewBtn, { borderColor: colors.mutedForeground }]}
+          >
+            <Text style={[s.reviewBtnText, { color: colors.mutedForeground }]}>Start new job</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* Failed */}
+      {isFailed && jobStatus ? (
+        <View style={[s.doneCard, { backgroundColor: colors.destructive + "18" }]}>
+          <Text style={[s.doneText, { color: colors.destructive }]}>
+            {jobStatus.errorMessage === "poe_chain_exhausted"
+              ? "All AI bots are currently unavailable"
+              : `Job failed: ${jobStatus.errorMessage ?? "Unknown error"}`}
+          </Text>
+          {hasStoredChunks && jobStatus.failedChunks && jobStatus.failedChunks.length > 0 ? (
+            jobStatus.failedChunks.map((fc) => {
+              const retryCount = chunkRetryCountsRef.current.get(fc.chunkIndex) ?? 0;
+              const exhausted = retryCount >= MAX_SERVER_CHUNK_RETRIES;
+              const totalChunks = chunksRef.current?.length;
+              return (
+                <View key={fc.chunkJobId} style={{ gap: 6 }}>
+                  <Pressable
+                    onPress={() => { if (!exhausted) { void handleRetryServerChunk(fc.chunkIndex); } }}
+                    disabled={exhausted}
+                    style={[s.reviewBtn, {
+                      borderColor: exhausted ? colors.mutedForeground : colors.primary,
+                      opacity: exhausted ? 0.5 : 1,
+                    }]}
+                  >
+                    <Text style={[s.reviewBtnText, { color: exhausted ? colors.mutedForeground : colors.primary }]}>
+                      Retry failed part {fc.chunkIndex + 1}{totalChunks ? `/${totalChunks}` : ""}
+                      {retryCount > 0 && !exhausted ? ` (attempt ${retryCount + 1}/${MAX_SERVER_CHUNK_RETRIES})` : ""}
+                    </Text>
+                  </Pressable>
+                  {exhausted ? (
+                    <Text style={[s.hint, { color: colors.mutedForeground }]}>
+                      Part {fc.chunkIndex + 1} has failed {MAX_SERVER_CHUNK_RETRIES} times — consider cancelling and re-uploading a smaller file.
+                    </Text>
+                  ) : null}
+                </View>
+              );
+            })
+          ) : (
+            <Pressable
+              onPress={() => { setJobStatus(null); setFilename(null); chunksRef.current = null; setHasStoredChunks(false); setVendor(""); setAiRawLog([]); seenAiPagesRef.current.clear(); }}
+              style={[s.reviewBtn, { borderColor: colors.destructive }]}
+            >
+              <Text style={[s.reviewBtnText, { color: colors.destructive }]}>Try again</Text>
+            </Pressable>
+          )}
+        </View>
+      ) : null}
+
+      {/* ── Diagnostic Log Panel (Pick Log + AI Raw tabs) ────────────── */}
+      {(getPdfPickLogs().length > 0 || aiRawLog.length > 0) ? (
+        <View style={[s.logPanel, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+          {/* Tab bar */}
+          <View style={s.logTabBar}>
+            <Pressable
+              onPress={() => setDiagTab("pick")}
+              style={[s.logTab, diagTab === "pick" && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+            >
+              <Text style={[s.logTabText, { color: diagTab === "pick" ? colors.primary : colors.mutedForeground }]}>
+                Pick Log{getPdfPickLogs().length > 0 ? ` · ${getPdfPickLogs().length}` : ""}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setDiagTab("ai")}
+              style={[s.logTab, diagTab === "ai" && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+            >
+              <Text style={[s.logTabText, { color: diagTab === "ai" ? colors.primary : colors.mutedForeground }]}>
+                AI Raw{aiRawLog.length > 0 ? ` · ${aiRawLog.length}` : ""}
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* ── Pick Log tab ── */}
+          {diagTab === "pick" ? (
+            <>
+              <View style={s.logPanelHeader}>
+                <Text style={[s.logPanelTitle, { color: colors.foreground }]}>
+                  📋 {getPdfPickLogs().length} entries
+                </Text>
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  <Animated.View style={{ transform: [{ scale: copyScaleAnim }] }}>
+                    <Pressable
+                      onPress={() => {
+                        const text = formatPdfPickLogs();
+                        if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+                          void navigator.clipboard.writeText(text);
+                        }
+                        Alert.alert("Copied", `${getPdfPickLogs().length} entries copied to clipboard.`);
+                      }}
+                      onPressIn={() => {
+                        Animated.spring(copyScaleAnim, {
+                          toValue: 0.85,
+                          useNativeDriver: true,
+                          tension: 300,
+                          friction: 10,
+                        }).start();
+                      }}
+                      onPressOut={() => {
+                        Animated.spring(copyScaleAnim, {
+                          toValue: 1,
+                          useNativeDriver: true,
+                          tension: 300,
+                          friction: 10,
+                        }).start();
+                      }}
+                      style={[s.logPanelBtn, { borderColor: colors.border }]}
+                    >
+                      <Text style={[s.logPanelBtnText, { color: colors.foreground }]}>Copy</Text>
+                    </Pressable>
+                  </Animated.View>
+                  <Pressable
+                    onPress={() => clearPdfPickLogs()}
+                    style={[s.logPanelBtn, { borderColor: colors.destructive }]}
+                  >
+                    <Text style={[s.logPanelBtnText, { color: colors.destructive }]}>Clear</Text>
+                  </Pressable>
+                </View>
+              </View>
+              <FlatList
+                style={{ maxHeight: 300 }}
+                nestedScrollEnabled
+                data={getPdfPickLogs()}
+                keyExtractor={entry => String(entry.seq)}
+                renderItem={({ item: entry }) => (
+                  <View style={s.logEntry}>
+                    <Text style={[s.logEntryTime, { color: colors.primary }]}>
+                      {`+${entry.relMs}ms`.padStart(8)}
+                    </Text>
+                    <Text
+                      style={[s.logEntryMsg, { color: colors.mutedForeground }]}
+                      selectable
+                    >
+                      {entry.msg}
+                      {entry.data !== undefined ? `\n    ${JSON.stringify(entry.data)}` : ""}
+                    </Text>
+                  </View>
+                )}
+              />
+            </>
+          ) : (
+            /* ── AI Raw tab ── */
+            <>
+              <View style={s.logPanelHeader}>
+                <Text style={[s.logPanelTitle, { color: colors.foreground }]}>
+                  🤖 {aiRawLog.length} page{aiRawLog.length !== 1 ? "s" : ""}
+                </Text>
+                <Animated.View style={{ transform: [{ scale: aiRawCopyScaleAnim }] }}>
+                  <Pressable
+                    onPress={() => {
+                      const text = aiRawLog
+                        .map(e => `=== Page ${e.page} ===\n${e.text}`)
+                        .join("\n\n");
+                      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+                        void navigator.clipboard.writeText(text);
+                      }
+                      Alert.alert("Copied", `AI raw text for ${aiRawLog.length} page(s) copied to clipboard.`);
+                    }}
+                    onPressIn={() => {
+                      Animated.spring(aiRawCopyScaleAnim, {
+                        toValue: 0.85,
+                        useNativeDriver: true,
+                        tension: 300,
+                        friction: 10,
+                      }).start();
+                    }}
+                    onPressOut={() => {
+                      Animated.spring(aiRawCopyScaleAnim, {
+                        toValue: 1,
+                        useNativeDriver: true,
+                        tension: 300,
+                        friction: 10,
+                      }).start();
+                    }}
+                    style={[s.logPanelBtn, { borderColor: colors.border }]}
+                  >
+                    <Text style={[s.logPanelBtnText, { color: colors.foreground }]}>Copy all</Text>
+                  </Pressable>
+                </Animated.View>
+                <Pressable
+                  onPress={() => { setAiRawLog([]); seenAiPagesRef.current.clear(); }}
+                  style={[s.logPanelBtn, { borderColor: colors.border }]}
+                >
+                  <Text style={[s.logPanelBtnText, { color: colors.foreground }]}>Clear</Text>
+                </Pressable>
+              </View>
+              {aiRawLog.length === 0 ? (
+                <Text style={[s.logEntryMsg, { color: colors.mutedForeground, paddingVertical: 4 }]}>
+                  No AI responses captured yet.
+                </Text>
+              ) : (
+                <FlatList
+                  style={{ maxHeight: 300 }}
+                  nestedScrollEnabled
+                  data={aiRawLog}
+                  keyExtractor={entry => `${entry.chunkJobId}:${entry.page}`}
+                  renderItem={({ item: entry }) => (
+                    <View style={s.aiRawEntry}>
+                      <Text style={[s.aiRawPageLabel, { color: colors.primary }]}>
+                        Page {entry.page}
+                      </Text>
+                      <Text
+                        style={[s.aiRawText, { color: colors.mutedForeground, borderColor: colors.border }]}
+                        selectable
+                      >
+                        {entry.text}
+                      </Text>
+                    </View>
+                  )}
+                />
+              )}
+            </>
+          )}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  card: { borderRadius: 12, padding: 16, borderWidth: 1, marginBottom: 14, gap: 10 },
+  title: { fontSize: 16, fontFamily: "Inter_700Bold" },
+  hint: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
+  fieldRow: { gap: 4 },
+  label: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  input: {
+    borderRadius: 8, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 10,
+    fontSize: 14, fontFamily: "Inter_400Regular",
+  },
+  pickBtn: {
+    borderWidth: 2, borderRadius: 8, paddingVertical: 12, alignItems: "center",
+  },
+  pickBtnInner: { flexDirection: "row", alignItems: "center", gap: 8 },
+  pickBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  errorRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  error: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  retryBtn: { borderWidth: 1, borderRadius: 6, paddingVertical: 6, paddingHorizontal: 12 },
+  retryBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  startBtn: { borderRadius: 8, paddingVertical: 13, alignItems: "center" },
+  startBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  fieldHint: { fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 17 },
+  progressBlock: { gap: 8 },
+  progressRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  progressLabel: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  progressBar: { height: 8, borderRadius: 4, overflow: "hidden" },
+  progressFill: { height: "100%", borderRadius: 4 },
+  progressText: { fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center" },
+  doneCard: { borderRadius: 10, padding: 14, gap: 10 },
+  doneText: { fontSize: 14, fontFamily: "Inter_600SemiBold", lineHeight: 20 },
+  unmatchedNote: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
+  reviewBtn: { borderWidth: 1, borderRadius: 8, paddingVertical: 9, paddingHorizontal: 14, alignSelf: "flex-start" },
+  reviewBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  cancelBtn: { borderWidth: 1, borderRadius: 6, paddingVertical: 5, paddingHorizontal: 12 },
+  cancelBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+
+  // ── Diagnostic log panel ────────────────────────────────────────────────
+  logPanel: {
+    borderWidth: 1, borderRadius: 8, padding: 8, marginTop: 4, gap: 4,
+  },
+  logTabBar: {
+    flexDirection: "row", gap: 0, marginBottom: 4, borderBottomWidth: 1,
+  },
+  logTab: {
+    paddingHorizontal: 10, paddingVertical: 5, marginBottom: -1,
+  },
+  logTabText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  logPanelHeader: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4,
+  },
+  logPanelTitle: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  logPanelBtn: {
+    borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
+  },
+  logPanelBtnText: { fontSize: 11, fontFamily: "Inter_500Medium" },
+  logEntry: { flexDirection: "row", gap: 4, flexWrap: "wrap", paddingVertical: 1 },
+  logEntryTime: { fontSize: 10, fontFamily: "Inter_400Regular", opacity: 0.7, minWidth: 60 },
+  logEntryMsg: { fontSize: 10, fontFamily: "Inter_400Regular", flex: 1, flexWrap: "wrap" },
+  aiRawEntry: { marginBottom: 10 },
+  aiRawPageLabel: { fontSize: 10, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
+  aiRawText: {
+    fontSize: 10, fontFamily: "Inter_400Regular", lineHeight: 14,
+    borderWidth: 1, borderRadius: 4, padding: 6,
+  },
+});

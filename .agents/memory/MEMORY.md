@@ -1,0 +1,97 @@
+- [Public repository boundary scans](public-repository-boundary-scans.md) — scan tracked source while excluding the guard’s own negative controls and generated bundles; history listings need an explicit output buffer.
+- [SVG viewBox origin normalization](svg-viewbox-origin-normalization.md) — sharp rasterizes relative to SVG viewBox origin; rewrite to "0 0 W H" before tiling so tiles and zone overlay share the same coordinate frame.
+- [ts-jest inline tsconfig paths](ts-jest-paths.md) — inline tsconfig object in jest.config.js does NOT inherit from tsconfig.json; must re-declare all paths explicitly.
+- [Metro silent HTTP 500 in production build](metro-oom-build.md) — React Compiler Babel worker crash (NOT OOM) causes silent Metro HTTP 500; fix with "use no memo" on large components.
+- [StyleSheet.create spread restriction](stylesheet-spread.md) — Metro Babel parser rejects spread operator inside StyleSheet.create(); use explicit properties instead.
+- [Stable mock refs for useEffect deps in RN tests](stable-mock-refs.md) — useCameraPermissions and similar hooks must return stable object/function refs in mocks, or useEffect fires after every state update and resets phase.
+- [react-test-renderer@19 toJSON vs root API](rtr19-root-api.md) — toJSON() can silently drop conditional children in React 19; use renderer.root.findAll() (instance tree) instead, wrapped in act().
+- [tsx + Node.js v24 ESM extension resolution](tsx-node24-esm-extensions.md) — tsx@4.21.0 on Node.js v24 requires explicit .ts extensions in ESM packages; bare ./foo no longer auto-resolves to ./foo.ts.
+- [expo-file-system v19 legacy subpath](expo-fs-legacy.md) — expo-file-system@19 moved cacheDirectory/downloadAsync/getInfoAsync/makeDirectoryAsync/deleteAsync/readDirectoryAsync to expo-file-system/legacy; bare import only has new streaming API.
+- [RN tile prefetch coordinate space](tile-prefetch-coords.md) — when prefetching the next zoom level, always re-derive tile range from raw viewport transform using nextN grid size; never scale current-level indices up (grid coordinate spaces are incompatible).
+- [Reanimated 4 worklets Babel plugin required for web](reanimated4-worklets-babel-plugin.md) — missing react-native-worklets/plugin causes web-only "Invalid hook call" crash; babel-preset-expo does NOT include it automatically.
+- [reanimated mock __esModule + RN render-path strategy](reanimated-mock-esmodule.md) — three traps when mounting WarehouseMapView (or similar) past the containerW=0 early return in tests.
+- [Poe Bot API Protocol](poe-bot-api-protocol.md) — Poe uses its own SSE protocol (not OpenAI chat/completions); OpenAI SDK with poe.com baseURL was always 404.
+- [pdfjs-dist v5 Node.js legacy build](pdfjs-legacy-node.md) — pdfjs-dist v5+ uses DOMMatrix (browser-only); in Node.js use `import("pdfjs-dist/legacy/build/pdf.mjs")` not `import("pdfjs-dist")`.
+- [FlatList ListHeaderComponent inline function remounts children](flatlist-header-inline-fn.md) — passing an inline arrow function to ListHeaderComponent causes complete remount of all children on every parent re-render; pass a JSX element instead.
+- [Jest SVG require throws before Asset.loadAsync](jest-svg-require.md) — require("*.svg") in a Jest/ts-jest project without a moduleNameMapper throws a SyntaxError synchronously, silently bypassing the Asset.loadAsync call entirely; fix by mapping \.svg$ to a stub that returns 1.
+- [jest.clearAllMocks clears ALL mock implementations including non-obvious ones](jest-clearmocks-implementations.md) — clearAllMocks resets getIfValid, Asset.loadAsync, and similar mocks to return undefined; inner beforeEach in nested describe blocks must restore every mock the cold/async path depends on.
+- [panBounds 4th-param svgRenderH](panbounds-svgrenderh.md) — mapViewport.panBounds() takes explicit svgRenderH as 4th arg (not derived internally from SVG_ASPECT); all call sites must pass it.
+- [Jest mockReset needs default Promise after reset](jest-mockreset-promise-default.md) — mockReset() leaves a mock returning undefined; any mock used in a Promise chain needs mockResolvedValue(null) as a default after each reset, or .then() crashes.
+- [Jest canonical mock factories](jest-canonical-mock-factory.md) — explicit mock factories should load a shared manual mock with requireActual and an absolute path to avoid recursive Jest resolution.
+- [Concurrent effects consume fetchWithAuth mocks out of order](concurrent-effects-mock-order.md) — WarehouseMapView has a server-hash polling effect (line 1452) that fires on mount alongside the SVG load effect; stub it first or the SVG-load mock sequence gets misaligned.
+- [exports['.'] types condition for workspace libs](exports-types-condition.md) — moduleResolution:bundler reads exports['.'] before root types; libs must embed a "types" condition in the exports object pointing to stable dist/.
+- [api-zod codegen race in repo typecheck](api-zod-codegen-race.md) — a wall of TS6053 "not found" under lib/api-zod/src/generated is a codegen-ordering race, not a real error; check files exist and re-run.
+- [Clerk role-based admin (parts-id)](clerk-admin-role-migration.md) — admin is Clerk role via GET /admin/me; context `adminToken` now holds the Clerk token and `logoutAdmin` re-verifies admin; gate on isAdmin boolean.
+- [Codegen drift in post-merge script](codegen-drift-post-merge.md) — task agents regenerate lib/api-zod + lib/api-client-react but can't commit; fix by running codegen on main and committing once the git lock clears.
+- [api-server lazy AI client init](api-server-lazy-ai-client.md) — module-level buildClient() in aiProvider.ts crashes server before port binds if POE_API_KEY2 missing; _client must be lazily initialized in getAiClient(), not at module load.
+- [pnpm @babel/core override must be capped below 8](babel-core-override-cap.md) — Expo/Metro requires Babel ^7; a `>=7.x` override without `<8.0.0` resolves to Babel 8 and breaks web bundling with "Requires Babel ^7.0.0-0".
+- [Clerk getToken unstable reference on web](clerk-gettoken-unstable-web.md) — getToken from useAuth() gets a new ref on token refresh; putting it in useCallback deps causes an infinite re-render/re-mount loop manifesting as screen flashing + request storm.
+- [Stuck task in AWAITING_INPUT with no question](awaiting-input-stuck-task.md) — agent crash at state-transition moment; fix is clicking "Update from main" in the Replit UI (cannot be automated).
+- [Silent task failure recovery](silent-task-failure-recovery.md) — FAILED/ERROR with no error message; distinct from AWAITING_INPUT; fix is Retry/re-run in the Replit UI (cannot be automated).
+- [api-zod codegen dev-boot clean race](codegen-dev-boot-race.md) — dev predev must use locked idempotent codegen:ensure, not raw orval clean, or concurrent api-server boot dies with ERR_MODULE_NOT_FOUND.
+- [Clerk signals useSignIn lacks authenticateWithRedirect](clerk-signals-useSignIn-no-authredirect.md) — @clerk/react 6.11.3 useSignIn() returns a future resource w/o authenticateWithRedirect; use useClerk().client.signIn for web OAuth redirect.
+- [drizzle generate broken — hand-write SQL migrations](drizzle-generate-broken-handwrite-migrations.md) — lib/db generate fails (partial meta); add columns via hand-written drizzle/NNNN.sql + push; schema:check scans quoted column names in .sql.
+- [pipefail echo|grep -q flake](pipefail-echo-grep-flake.md) — `echo "$VAR" | grep -q` under pipefail fails spuriously via SIGPIPE under load; grep the file directly in bash test suites.
+- [@types/react version split](types-react-version-split.md) — keep one @types/react line workspace-wide (catalog ~19.1.x); a split breaks mockup typecheck with "two unrelated types" ref errors after any install.
+- [pdfjs Jest moduleNameMapper stub](pdfjs-jest-modulemapper.md) — map pdfjs-dist/legacy/build/pdf.mjs to a CJS stub in jest.config; per-file virtual jest.mock intermittently parses the real import.meta ESM in full runs.
+- [catalog-pdf loop termination](catalog-pdf-loop-outlives-test.md) — loops check cancel every page and are awaitable via awaitJobTermination(jobId); tests must await it before mock assertions (tag-filtering obsolete).
+- [React 19 + TS 5.9 class-JSX compat shim](react19-ts59-class-jsx-compat.md) — ambient declare module (script-mode .d.ts) replaces rn-svg/expo-camera/expo-blur types; class components → ComponentType; module augmentation of submodule interfaces breaks extends chain in TS 5.9.
+- [closePool must tolerate mocked @workspace/db](closepool-mocked-db.md) — global afterAll teardown runs in mocked-db suites where pool is undefined; guard for missing pool, not just a module-local flag.
+- [Validation workflow wiring](validation-workflow-wiring.md) — setValidationCommand auto-creates isValidation workflow AND wires it into the Project gate; removeWorkflow also unwires it.
+- [drizzle push under validation load](drizzle-push-validation-load.md) — jest globalSetup drizzle-kit push can exceed 30s under concurrent post-merge validation; use 120s timeout, DB is fine.
+- [reverseVendorMap row-order flake](vendor-map-row-order-flake.md) — vendorNameResolutionMap conflict-winner tests rely on physical DB row order and flake when vendor rows are touched; unrelated to most changes.
+- [Uncancelled Promise.race timeout timers](uncancelled-race-timeout-timers.md) — un-cleared setTimeout in a race keeps Jest workers alive ("Jest did not exit"); clearTimeout in finally + unref fallback timers.
+- [Shared-DB fixture prefix wipe](shared-db-fixture-prefix-wipe.md) — parallel Jest suites on one shared DB must never blanket-delete by fixture prefix; delete only rows the current worker seeded.
+- [expo-file-system source typecheck leak](expo-fs-src-typecheck.md) — package main points at src/*.ts, so strict tsc flags error inside node_modules; alias subpath to build/*.d.ts via tsconfig paths.
+- [Stale tsbuildinfo empty dist](stale-tsbuildinfo-empty-dist.md) — TS2306 "dist/index.d.ts is not a module" means tsbuildinfo lied; rm the lib's tsconfig.tsbuildinfo and rebuild.
+- [RTLRN migration patterns](rtlrn-migration-patterns.md) — key rules: await render(); root=undefined when component returns null; SVG Text mock must use "Text" not "svg-text"; never render() inside jest.isolateModules(); use await act(async) for onPress calls.
+- [RTLRN custom-host queries](rtrln-custom-host-queries.md) — project RN mocks expose TextInput values as host props; nested labels may need root-tree text traversal instead of display-value/exact-text queries.
+- [Async RN render and unmount](rntl-async-render-unmount.md) — current React 19 RN tests require awaited render/unmount and async act around route transitions.
+- [vendor_map heap-order tests](vendor-map-heap-order-tests.md) — vendor suites depend on physical page order; winners must sit on later pages than rivals (fillfactor 50 + padded re-insert); serialize shared-DB jest runs.
+- [ts-ignore leaks into inferred return type](ts-ignore-worklet-return-leak.md) — @ts-ignore silences its line but the property still enters the object's inferred type and errors at the use site; cast the value instead.
+- [parts-id e2e via Clerk approval gate](parts-id-e2e-clerk-approval.md) — fresh sign-ins land users.status='pending' (403 + pending screen); approve the row via SQL before the tester runs; throwaway users via Clerk backend API.
+- [pnpm lockfile drift on main](pnpm-lockfile-drift.md) — RESOLVED; dep changes surgical again. If drift recurs: revert lockfile, re-link, reconcile via lockfile-only install in isolated commit.
+- [Replit pnpm launcher runtime](replit-pnpm-launcher-runtime.md) — the packaged pnpm executable may run under an older Node patch than the active node on PATH; validate the child runtime directly.
+- [API test database mode](api-test-database-env.md) — direct API-server test runs require explicit DATABASE_ENV=test before the suite can start.
+- [SVG load singleton retries](svg-load-singleton-retry.md) — a settled module-level load promise must be discarded when cache data is unusable on either platform, or later cold loads stay blank.
+- [SheetJS ArrayBuffer fixtures](sheetjs-array-buffer-fixtures.md) — type:"array" ODS fixtures return an ArrayBuffer; pass it directly instead of converting it as a number array.
+- [Support analytics privacy](support-analytics-privacy.md) — use keyed rotating grouping or disable unique visitors; disclose bounded UTC windows and suppression.
+- [Knip UI package boundaries](knip-ui-package-boundaries.md) — dynamically discovered components and CSS-only imports need explicit Knip configuration.
+- [Standard-tier database pool pressure](standard-db-pool-pressure.md) — concurrent validation can exhaust PostgreSQL clients; confirm affected API suites in isolation before assigning regression ownership.
+- [Mapped Jest context mocks](mapped-jest-context-mocks.md) — when a path is mapped to a manual mock, configure that exported mock instance; a separate local spy may not be consumed by the screen.
+- [Orval barrel append behavior](orval-barrel-append.md) — normalize managed barrel exports because newer Orval runs can append duplicates instead of replacing them.
+- [ESLint import sort order](eslint-import-sort-order.md) — use fix-dry-run output when simple-import-sort rejects valid but noncanonical package/specifier ordering.
+- [Patch published packages instead of vendoring build output](pnpm-patched-published-package.md) — repo-wide dist ignores can silently omit runtime files from directory overrides; patch a pinned registry tarball instead.
+- [GitHub Actions token PR creation policy](github-actions-token-pr-creation.md) — disabling workflow-token PR approval also blocks PR creation; publish a reviewable automation branch instead.
+- [Exact-tree GitHub snapshot transport](github-exact-tree-snapshot-transport.md) — when raw blob API uploads are blocked, use a temporary shallow clone and verify tree identity before pushing.
+- [DB fixture ownership watermarks](db-fixture-ownership-watermarks.md) — identify async DB fixtures with a DB-generated ID watermark, not an app-clock timestamp that can drift from the database clock.
+- [Runtime data boundary](runtime-data-boundary.md) — require explicit database modes, reject production in tooling, and delay database imports until startup validation runs.
+- [API auth before body parsing](api-auth-before-body-parsing.md) — method-aware public route matching and pre-parser auth prevent write-prefix leaks and unauthenticated upload buffering.
+- [Drizzle SQL static helpers in Jest mocks](drizzle-sql-static-mocks.md) — startup tests may expose only the sql tag; shared probes must account for incomplete SQL helper mocks.
+- [Contract assertion normalization](contract-assertion-normalization.md) — static prose contracts should be checked semantically rather than by physical line wrapping.
+- [Schema-validated .replit replacement](dot-replit-schema-replacement.md) — write complete TOML to a temp file and use the validator/replacer instead of patching .replit directly.
+- [Jest hoisted shared mock factories](jest-hoisted-shared-mock-factories.md) — load shared helpers inside hoisted mock callbacks and pass in jest.requireActual modules to avoid TDZ failures.
+- [Disabled query cache observers](disabled-query-cache-observers.md) — when a disabled query-backed screen must react to app-owned cache writes, subscribe to QueryCache and read the stable key directly.
+- [Task-plan heading parser](task-plan-heading-parser.md) — put detailed Validation before Validation tier so the locked runner parses the intended section.
+- [Replit active configuration read boundary](replit-active-config-read-boundary.md) — no documented runtime reader exists; `/run/replit/env` is environment-only and may contain secrets.
+- [Replit config validation drift](replit-config-validation-drift.md) — standard validation can stop before project checks when an unrelated working-tree `.replit` port table differs from its contract.
+- [SearchScreen QueryClient test harness](searchscreen-queryclient-harness.md) — direct mounts need a provider; result assertions also need seeded active-cache data.
+- [API health restart recovery](api-health-restart-recovery.md) — preserve terminal restart outcomes through cleanup and refresh dependent health snapshots on recovery.
+- [Help assistant async lifecycles](help-assistant-async-lifecycles.md) — content refresh and assistant requests need independent cancellation and stale-result ownership.
+- [Help user-scoped preferences](help-user-scoped-preferences.md) — isolate first-run dismissal per account and ignore stale async reads after account changes.
+- [Permission-denied fixtures](permission-denied-fixtures.md) — use same-user mode restrictions and unreadable-aware snapshots; sandbox UID changes may be blocked.
+- [Account skill projection recovery](account-skill-recovery.md) — validate preserved backups against their own manifest and bytes because canonical source revisions may advance.
+- [Provider probe deadlines and permits](provider-probe-deadlines-permits.md) — response deadlines may expire before transports settle; retain concurrency permits until transport settlement.
+- [Serial lock kernel guard](serial-lock-kernel-guard.md) — stale-holder reclaim needs an OS-backed critical section; lease-file unlinking has a replacement race.
+- [Serial-lock disappearance tests](serial-lock-disappearance-tests.md) — isolate temporary flock shims in PATH; otherwise spawn lookup can fall through to the host utility after the shim vanishes.
+- [Validation runtime controls](validation-runtime-controls.md) — timeout and watchdog paths must own process trees and reject missing or stale result evidence before declaring success.
+- [Failure Gate package synchronization](failure-gate-package-sync.md) — refresh the tracked validation archive after changing tier membership or packaged support files.
+- [Parts ID focused test runner](parts-id-focused-test-runner.md) — invoke Jest directly for one suite; the package wrapper requires the full suite-count floor.
+- [Standard-tier baseline failures](standard-tier-baseline-failures.md) — classify unrelated full-tier test failures with focused reruns before changing scoped validation work.
+- [Auth-scoped durable drafts](auth-scoped-durable-drafts.md) — tie readiness to the exact user, clear UI state on identity changes, and serialize saves with logout deletion.
+- [RNTL 14 async fireEvent](rntl14-async-fireevent.md) — every fireEvent call returns a promise with its own act scope; await each interaction before starting another lifecycle helper.
+- [OpenAPI integer Zod enforcement](openapi-integer-zod-enforcement.md) — generated Zod schemas may accept fractions for OpenAPI integer fields; enforce safe integers at write boundaries.
+- [Completion validation tier drift](completion-validation-tier-drift.md) — completion callbacks may run every registered tier; unrelated full-suite failures can reject a task whose declared tier passed.
+- [Public history release boundary](public-history-release-boundary.md) — fail closed on incomplete history scans; report existing historical findings without leaking paths or values until owner purge.
+- [Dead-export lint baseline](dead-export-lint-baseline.md) — root lint currently fails because check-dead-exports reports an unlisted `tsc` binary in package metadata.
+- [Shared API codegen ownership](codegen-shared-lock.md) — all destructive generators use one tokenized serial resource and cache the resolved toolchain graph.

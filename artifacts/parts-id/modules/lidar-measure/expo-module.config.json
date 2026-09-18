@@ -1,0 +1,7 @@
+{
+  "platforms": ["ios"],
+  "ios": {
+    "modules": ["LidarMeasureModule", "LidarDepthViewModule"]
+  },
+  "plugin": "./plugin/index.js"
+}

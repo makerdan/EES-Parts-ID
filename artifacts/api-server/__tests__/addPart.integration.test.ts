@@ -1,0 +1,483 @@
+/**
+ * Integration tests for POST /api/inventory/add-part.
+ *
+ * Covers: 201 success, 409 duplicate detection, 400 missing-field validation,
+ * and 401 unauthenticated access.
+ *
+ * Uses a real PostgreSQL database (DATABASE_URL env var).
+ * OpenAI integration is mocked to avoid requiring a live API key.
+ */
+
+// ── Mock OpenAI BEFORE app is imported ────────────────────────────────────────
+jest.mock("@workspace/integrations-openai-ai-server", () => ({
+  openai: {
+    chat: { completions: { create: jest.fn() } },
+    audio: { transcriptions: { create: jest.fn() } },
+  },
+  generateImageBuffer: jest.fn(),
+  editImages: jest.fn(),
+  batchProcess: jest.fn(),
+  batchProcessWithSSE: jest.fn(),
+  isRateLimitError: jest.fn(() => false),
+}));
+
+jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
+  batchProcess: jest.fn(),
+  batchProcessWithSSE: jest.fn(),
+  isRateLimitError: jest.fn(() => false),
+}));
+
+// ── Imports ───────────────────────────────────────────────────────────────────
+import supertest from "supertest";
+import app from "../src/app";
+import { signAdminToken } from "./helpers/adminAuth";
+import { db, inventoryTable } from "@workspace/db";
+import { sql } from "drizzle-orm";
+
+// ── Setup / teardown ──────────────────────────────────────────────────────────
+const ADMIN_SECRET = "jest-addpart-test-secret";
+let adminToken: string;
+
+const CATALOG_PREFIX = "JEST-ADDPART-";
+
+async function cleanupAddPartRows() {
+  await db
+    .delete(inventoryTable)
+    .where(sql`${inventoryTable.catalog} LIKE ${"JEST-ADDPART-%"}`);
+}
+
+beforeAll(async () => {
+  adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
+  await cleanupAddPartRows();
+}, 30_000);
+
+afterAll(async () => {
+  await cleanupAddPartRows();
+  // NOTE: do NOT call cleanupFixtures() here — it deletes JEST-ITG-% rows
+  // that belong to inventory.integration.test.ts and would cause flakiness
+  // when jest runs test files in parallel.
+}, 30_000);
+
+afterEach(async () => {
+  await cleanupAddPartRows();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/inventory/add-part
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/inventory/add-part", () => {
+  // ── Auth ──────────────────────────────────────────────────────────────────
+
+  it("returns 401 when no Authorization header is provided", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .send({ vendor: "JEST-VENDOR", catalog: `${CATALOG_PREFIX}AUTH-001` })
+      .expect(401);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 403 when an invalid (unknown) token is provided", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", "Bearer invalid-token-xyz")
+      .send({ vendor: "JEST-VENDOR", catalog: `${CATALOG_PREFIX}AUTH-002` })
+      .expect(403);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  // ── Validation ────────────────────────────────────────────────────────────
+
+  it("returns 400 when vendor is missing", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ catalog: `${CATALOG_PREFIX}VAL-001` })
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/vendor.*catalog|catalog.*vendor|required/i);
+  });
+
+  it("returns 400 when catalog is missing", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR" })
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/vendor.*catalog|catalog.*vendor|required/i);
+  });
+
+  it("returns 400 when vendor is an empty string", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "   ", catalog: `${CATALOG_PREFIX}VAL-003` })
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 400 when catalog is an empty string", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog: "   " })
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  // ── Success ───────────────────────────────────────────────────────────────
+
+  it("returns 201 and the created item when valid vendor and catalog are provided", async () => {
+    const catalog = `${CATALOG_PREFIX}SUCCESS-001`;
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog })
+      .expect(201);
+
+    expect(res.body).toHaveProperty("item");
+    expect(res.body.item.vendor).toBe("JEST-VENDOR");
+    expect(res.body.item.catalog).toBe(catalog);
+    expect(typeof res.body.item.id).toBe("number");
+  });
+
+  it("uppercases the vendor field on insert", async () => {
+    const catalog = `${CATALOG_PREFIX}CASE-001`;
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "jest-vendor", catalog })
+      .expect(201);
+
+    expect(res.body.item.vendor).toBe("JEST-VENDOR");
+  });
+
+  it("stores the binLocation when one is provided", async () => {
+    const catalog = `${CATALOG_PREFIX}BIN-001`;
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, binLocation: "A-42" })
+      .expect(201);
+
+    expect(res.body.item.binLocations).toEqual(["A-42"]);
+  });
+
+  it("stores an empty binLocations array when binLocation is omitted", async () => {
+    const catalog = `${CATALOG_PREFIX}BIN-002`;
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog })
+      .expect(201);
+
+    expect(res.body.item.binLocations).toEqual([]);
+  });
+
+  it("persists the new row to the database", async () => {
+    const catalog = `${CATALOG_PREFIX}DB-001`;
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog })
+      .expect(201);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${catalog}`);
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.vendor).toBe("JEST-VENDOR");
+  });
+
+  // ── Duplicate detection ───────────────────────────────────────────────────
+
+  it("returns 409 when the same vendor+catalog combination already exists", async () => {
+    const catalog = `${CATALOG_PREFIX}DUP-001`;
+
+    // First insert — must succeed.
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog })
+      .expect(201);
+
+    // Second insert — must conflict.
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog })
+      .expect(409);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/already exists/i);
+  });
+
+  it("409 response includes the vendor and catalog in the error message", async () => {
+    const catalog = `${CATALOG_PREFIX}DUP-002`;
+
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog })
+      .expect(201);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog })
+      .expect(409);
+
+    expect(res.body.error).toContain("JEST-VENDOR");
+    expect(res.body.error).toContain(catalog);
+  });
+
+  it("does not insert a duplicate row on a 409 conflict", async () => {
+    const catalog = `${CATALOG_PREFIX}DUP-003`;
+
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog })
+      .expect(201);
+
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog })
+      .expect(409);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${catalog}`);
+    expect(rows.length).toBe(1);
+  });
+
+  it("vendor comparison for duplicate detection is case-insensitive (lowercased input still conflicts)", async () => {
+    const catalog = `${CATALOG_PREFIX}DUP-004`;
+
+    // Insert with uppercase vendor.
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog })
+      .expect(201);
+
+    // Re-insert with lowercase vendor — should still be a duplicate because
+    // the endpoint uppercases vendor before the conflict check.
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "jest-vendor", catalog })
+      .expect(409);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("allows a different catalog for the same vendor without conflict", async () => {
+    const catalog1 = `${CATALOG_PREFIX}NODUPS-001`;
+    const catalog2 = `${CATALOG_PREFIX}NODUPS-002`;
+
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog: catalog1 })
+      .expect(201);
+
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog: catalog2 })
+      .expect(201);
+  });
+
+  it("allows the same catalog for a different vendor without conflict", async () => {
+    const catalog = `${CATALOG_PREFIX}NODUPS-003`;
+
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR-A", catalog })
+      .expect(201);
+
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR-B", catalog })
+      .expect(201);
+  });
+
+  // ── Description field ─────────────────────────────────────────────────────
+
+  it("persists the description in the returned item when provided", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-001`;
+    const description = "15A single-pole breaker, 120/240V";
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description })
+      .expect(201);
+
+    expect(res.body.item.description).toBe(description);
+  });
+
+  it("persists the description in the database when provided", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-002`;
+    const description = "3/4\" EMT connector, steel";
+
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description })
+      .expect(201);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${catalog}`);
+
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.description).toBe(description);
+  });
+
+  it("stores an empty description when description is omitted", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-003`;
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog })
+      .expect(201);
+
+    expect(res.body.item.description).toBe("");
+  });
+
+  it("trims leading/trailing whitespace from description before saving", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-004`;
+    const description = "  20A duplex receptacle  ";
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description })
+      .expect(201);
+
+    expect(res.body.item.description).toBe("20A duplex receptacle");
+  });
+
+  it("returns 409 with description present when a duplicate catalog+vendor already exists", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-DUP-001`;
+
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description: "original description" })
+      .expect(201);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description: "duplicate attempt" })
+      .expect(409);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/already exists/i);
+  });
+
+  it("returns 400 when description exceeds 500 characters", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-LONG-001`;
+    const longDescription = "x".repeat(501);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description: longDescription })
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/500/);
+  });
+
+  it("accepts a description of exactly 500 characters", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-LONG-002`;
+    const exactDescription = "y".repeat(500);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description: exactDescription })
+      .expect(201);
+
+    expect(res.body.item.description).toBe(exactDescription);
+  });
+
+  it("returns 400 when vendor is missing even if description is provided", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ catalog: `${CATALOG_PREFIX}DESC-VAL-001`, description: "some description" })
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/vendor.*catalog|catalog.*vendor|required/i);
+  });
+
+  // ── Unrecognized-part edit-flow: description round-trip ───────────────────
+  // These tests simulate an admin editing an unrecognized part's description
+  // before confirming the add, and verify the description survives the full
+  // round-trip: POST body → 201 response → GET /api/inventory list.
+
+  it("description entered in the edit form is returned in the 201 response", async () => {
+    const catalog = `${CATALOG_PREFIX}EDIT-001`;
+    const description = "1/2\" conduit coupling, PVC schedule 40";
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description })
+      .expect(201);
+
+    expect(res.body.item.description).toBe(description);
+  });
+
+  it("description entered in the edit form appears when the item is fetched from GET /api/inventory", async () => {
+    const catalog = `${CATALOG_PREFIX}EDIT-002`;
+    const description = "10A toggle switch, SPST, 120V";
+
+    const postRes = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description })
+      .expect(201);
+
+    const insertedId: number = postRes.body.item.id;
+
+    // The GET endpoint is paginated (max 500 per page). Walk pages until the
+    // newly-inserted item is found or we exhaust the result set.
+    type ListItem = { id: number; description: string };
+    let found: ListItem | undefined;
+    let page = 1;
+    while (!found) {
+      const getRes = await supertest(app)
+        .get(`/api/inventory?limit=500&page=${page}`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+      const items = getRes.body.items as ListItem[];
+      found = items.find(item => item.id === insertedId);
+      if (items.length < 500) break;
+      page++;
+    }
+
+    expect(found).toBeDefined();
+    expect(found!.description).toBe(description);
+  });
+});

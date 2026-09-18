@@ -1,0 +1,22 @@
+{
+  "name": "@workspace/integrations-openai-ai-react",
+  "knip": {
+    "entry": ["src/index.ts", "src/audio/index.ts"],
+    "project": ["src/**/*.{ts,tsx}"],
+    "ignore": ["src/audio/audio-playback-worklet.js"]
+  },
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./audio": "./src/audio/index.ts"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "react": "catalog:"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  }
+}

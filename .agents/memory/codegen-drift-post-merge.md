@@ -1,0 +1,31 @@
+---
+name: Codegen drift in post-merge script
+description: Post-merge now auto-commits generated file drift; manual cleanup is no longer needed.
+---
+
+## The rule
+After any task merge that touches `lib/api-spec/openapi.yaml` or that runs `pnpm --filter @workspace/api-spec run codegen`, the generated files in `lib/api-zod/src/generated/` and `lib/api-client-react/src/generated/` may be ahead of what's committed on main.
+
+**Why:** Task agents regenerate files in their isolated environment but only their own changes get merged. The codegen output is deterministic, so the fix is always running codegen on main and committing the result.
+
+**How post-merge handles it (current behaviour):**
+The post-merge script calls `pnpm --filter @workspace/api-spec run codegen:fix` instead of `codegen:check`. `codegen:fix`:
+1. Runs `pnpm run codegen` (orval + typecheck:libs).
+2. Checks `git diff --quiet` on the two generated dirs.
+3. If changes exist, stages and commits them with the message `chore: regenerate api clients [post-merge]`.
+4. Runs `spec:check` after.
+5. Exits 0 whether or not a commit was made.
+
+Manual cleanup is no longer needed — post-merge handles it automatically.
+
+**CI/PR gate is unchanged:** `codegen:check` (used by the CI workflow, not post-merge) still asserts `git diff --exit-code` and blocks PRs that commit stale stubs.
+
+**Note:** Concurrent merges can still produce transient drift on main, but post-merge will commit the fix as part of the second merge's run.
+
+## Two failure shapes a task agent will hit (both environment, not your code)
+1. **`codegen:check` diff = prettier-vs-raw formatting.** The `afterAllFilesWrite` hook (`lib/api-spec/post-codegen.mjs` + `prettier: true`) reformats orval output (double quotes, multiline). If main committed the RAW orval output (single quotes, `{[key:string]:...}` on one line), fresh codegen reformats it and `git diff --exit-code` fails on files you never touched. You cannot fix this — you can't change the committed index. Regenerating only changes your working tree, not the index the check diffs against.
+2. **`... could not be found`/`is not a module` typecheck errors under `lib/api-*/src/generated` or `dist`.** These are the codegen RACE: validations run in parallel and `codegen:check` runs orval which *cleans the output folder* mid-run, so a concurrent `parts-id-typecheck`/`tsc --build` reads the folder while it's empty. The same typecheck passes in isolation.
+
+**How to apply:** If your task did NOT intentionally change the OpenAPI spec or generated files, and these are the only failures, they are environment-blocked — verify your real changes typecheck in isolation, then mark complete with a skip_validation_reason. Do NOT keep regenerating; it won't help and adds noise to your diff.
+
+When a task intentionally changes the OpenAPI spec, stage the regenerated client files before running `codegen:check`; that check compares the regenerated output with the index, while post-merge will commit the staged generated changes with the task.

@@ -1,0 +1,175 @@
+/**
+ * Unit tests for AisleSummarySheet.
+ *
+ * Verifies that:
+ *  - The sheet title reads "Aisle {N}" derived from zone.aisleNum (NOT from any
+ *    removed `label` field on WarehouseZone).
+ *  - The component renders null when zone is null and shows an empty state when
+ *    no inventory matches the zone's aisle.
+ *  - The "Browse this aisle" CTA fires onBrowse(zone) and onClose().
+ */
+
+// Required for act() to work correctly in the node test environment.
+// @ts-ignore
+global.IS_REACT_ACT_ENVIRONMENT = true;
+
+import React from "react";
+import { render, act } from "@testing-library/react-native";
+import type { RenderResult } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
+
+// ─── react-native ─────────────────────────────────────────────────────────────
+
+jest.mock("react-native", () => {
+  const React = require("react");
+  return require("./helpers/mapMocks").createReactNativeMock({
+    Modal: function Modal({
+      children,
+      visible,
+      onRequestClose,
+    }: {
+      children?: React.ReactNode;
+      visible: boolean;
+      onRequestClose?: () => void;
+    }) {
+      if (!visible) return null;
+      return React.createElement("rn-modal", { onRequestClose }, children);
+    },
+  });
+});
+
+// ─── @/hooks/useColors ────────────────────────────────────────────────────────
+
+jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
+
+// ─── Subject under test ───────────────────────────────────────────────────────
+
+import { AisleSummarySheet } from "@/components/AisleSummarySheet";
+import type { InventoryItem } from "@workspace/api-client-react";
+import type { WarehouseZone } from "@/lib/aisleHierarchy";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+type Inst = TestInstance;
+
+function allText(root: Inst): string[] {
+  const out: string[] = [];
+  function walk(node: Inst) {
+    if ((node.type as string) === "Text") {
+      const children = (node.props as { children?: unknown }).children;
+      if (typeof children === "string") out.push(children);
+      if (Array.isArray(children)) {
+        out.push(children.filter((c): c is string => typeof c === "string").join(""));
+      }
+    }
+    node.children.forEach((c: TestInstance | string) => { if (typeof c !== "string") walk(c as Inst); });
+  }
+  walk(root);
+  return out;
+}
+
+function makeItem(id: number, binLocations: string[]): InventoryItem {
+  return {
+    id,
+    vendor: "Test",
+    catalog: `CAT-${id}`,
+    description: `Item ${id}`,
+    binLocations,
+    aiKeywords: [],
+    enrichedAt: null,
+  } as unknown as InventoryItem;
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe("AisleSummarySheet", () => {
+  const onClose = jest.fn();
+  const onBrowse = jest.fn();
+
+  beforeEach(() => {
+    onClose.mockReset();
+    onBrowse.mockReset();
+  });
+
+  it("renders null when zone is null", async () => {
+    const result = await render(
+      <AisleSummarySheet zone={null} inventory={[]} onClose={onClose} onBrowse={onBrowse} />,
+    );
+    expect(result.toJSON()).toBeNull();
+  });
+
+  it("shows a friendly empty-inventory sheet when no items match the zone's aisle", async () => {
+    const zone: WarehouseZone = { aisleNum: 5 };
+    const inventory = [makeItem(1, ["03-01-001"]), makeItem(2, ["07-02-100"])];
+    const result = await render(
+      <AisleSummarySheet zone={zone} inventory={inventory} onClose={onClose} onBrowse={onBrowse} />,
+    );
+    const texts = allText(result.root!);
+    expect(texts).toContain("Aisle 5");
+    expect(texts).toContain("No inventory in this aisle");
+    expect(texts).toContain("Sync your inventory to see parts stored here.");
+
+    const closeButton = result.root!.queryAll(
+      (n: TestInstance) => (n.type as string) === "rn-pressable",
+      { includeSelf: true },
+    ).find(button => allText(button).includes("Close"));
+    expect(closeButton).toBeDefined();
+  });
+
+  it("renders the title as 'Aisle {aisleNum}' — not from a label field", async () => {
+    const zone: WarehouseZone = { aisleNum: 18 };
+    const inventory = [makeItem(1, ["18-02-001"]), makeItem(2, ["18-04-200"])];
+    const result = await render(
+      <AisleSummarySheet zone={zone} inventory={inventory} onClose={onClose} onBrowse={onBrowse} />,
+    );
+    const texts = allText(result.root!);
+    expect(texts).toContain("Aisle 18");
+    expect(texts.some(t => t.toLowerCase().includes("label"))).toBe(false);
+  });
+
+  it("uses aisleNum to build the title for any aisle number", async () => {
+    const zone: WarehouseZone = { aisleNum: 7 };
+    const inventory = [makeItem(10, ["07-01-050"])];
+    const result = await render(
+      <AisleSummarySheet zone={zone} inventory={inventory} onClose={onClose} onBrowse={onBrowse} />,
+    );
+    const texts = allText(result.root!);
+    expect(texts).toContain("Aisle 7");
+  });
+
+  it("shows the section hint when sectionNumbers is provided", async () => {
+    const zone: WarehouseZone = { aisleNum: 3, sectionNumbers: [1, 2] };
+    const inventory = [makeItem(1, ["03-01-001"]), makeItem(2, ["03-02-100"])];
+    const result = await render(
+      <AisleSummarySheet zone={zone} inventory={inventory} onClose={onClose} onBrowse={onBrowse} />,
+    );
+    const texts = allText(result.root!);
+    expect(texts.some(t => t.includes("Section"))).toBe(true);
+  });
+
+  it("calls onBrowse(zone) and onClose() when the CTA is pressed", async () => {
+    const zone: WarehouseZone = { aisleNum: 9 };
+    const inventory = [makeItem(5, ["09-01-001"])];
+    const result = await render(
+      <AisleSummarySheet zone={zone} inventory={inventory} onClose={onClose} onBrowse={onBrowse} />,
+    );
+    function hasTextBrowse(c: unknown): boolean {
+      if (!c) return false;
+      if (typeof c === "string") return c.includes("Browse");
+      if (Array.isArray(c)) return c.some(hasTextBrowse);
+      if (typeof c === "object" && c !== null && "props" in c) {
+        return hasTextBrowse((c as { props?: { children?: unknown } }).props?.children);
+      }
+      return false;
+    }
+    const allPressables = result.root!.queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true });
+    const cta = allPressables.find(n => hasTextBrowse((n.props as { children?: unknown }).children));
+    expect(cta).toBeDefined();
+    act(() => {
+      (cta!.props as { onPress?: () => void }).onPress?.();
+    });
+    expect(onBrowse).toHaveBeenCalledTimes(1);
+    expect(onBrowse).toHaveBeenCalledWith(zone);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});

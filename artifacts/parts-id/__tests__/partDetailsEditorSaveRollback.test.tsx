@@ -1,0 +1,643 @@
+/**
+ * Verifies the snapshot/rollback behaviour added to PartDetailsEditor.handleSave:
+ *
+ *   A. On mutation failure, queryClient.invalidateQueries is called for both
+ *      the `inventory` and `searchInventory` query keys so any partial optimistic
+ *      cache patches left by individual mutations are overwritten with fresh
+ *      server data (the onError rollback + onSettled safety-net).
+ *
+ *   B. On mutation success, queryClient.invalidateQueries is still called for
+ *      both keys (onSettled safety-net always fires).
+ *
+ *   C. The onMutate snapshot is taken — getQueriesData is called once for
+ *      `inventory` and once for `searchInventory` before the ops run.
+ */
+
+// Required for act() to work correctly in the node test environment.
+// @ts-ignore — global augmentation for test environment only
+global.IS_REACT_ACT_ENVIRONMENT = true;
+
+import React from "react";
+import { render, act, fireEvent } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
+import { Alert } from "react-native";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
+import type { InventoryItem } from "@workspace/api-client-react";
+
+// ─── Stable spies exposed to tests ───────────────────────────────────────────
+
+const mockInvalidateQueries   = jest.fn().mockResolvedValue(undefined);
+const mockGetQueriesData      = jest.fn().mockReturnValue([]);
+const mockSetQueryData        = jest.fn();
+const mockSetQueriesData      = jest.fn();
+const mockInvalidateListCache = jest.fn().mockResolvedValue(undefined);
+
+// Mutable reference – tests can swap mutateAsync to reject for failure cases.
+const mockBinsMutateAsync     = jest.fn().mockResolvedValue(undefined);
+
+// ─── Module mocks ─────────────────────────────────────────────────────────────
+
+jest.mock("@/components/PartPhotoPicker", () => ({
+  PartPhotoPicker: () => null,
+}));
+
+jest.mock("react-native", () => {
+  const R = require("react") as typeof React;
+  return require("./helpers/mapMocks").createReactNativeMock({
+    Modal: (props: Record<string, unknown>) =>
+      R.createElement("rn-modal", props, props.children as React.ReactNode),
+  });
+});
+
+let capturedConfirmDialogProps: {
+  visible: boolean;
+  confirmLabel: string;
+  cancelLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+} = {
+  visible: false,
+  confirmLabel: "",
+  cancelLabel: "",
+  onConfirm: jest.fn(),
+  onCancel: jest.fn(),
+};
+let capturedInfoDialogProps: {
+  visible: boolean;
+  title: string;
+  message: string;
+  dismissLabel: string;
+  onDismiss: () => void;
+} = {
+  visible: false,
+  title: "",
+  message: "",
+  dismissLabel: "",
+  onDismiss: jest.fn(),
+};
+
+jest.mock("@/components/ConfirmDialog", () => {
+  return {
+    ConfirmDialog: (props: typeof capturedConfirmDialogProps) => {
+      capturedConfirmDialogProps = props;
+      return null;
+    },
+    InfoDialog: (props: typeof capturedInfoDialogProps) => {
+      capturedInfoDialogProps = props;
+      return null;
+    },
+  };
+});
+
+jest.mock("@workspace/api-client-react", () => ({
+  useUpdateItemBins:        jest.fn(() => ({ mutateAsync: (...a: unknown[]) => mockBinsMutateAsync(...a) })),
+  useUpdateItemKeywords:    jest.fn(() => ({ mutateAsync: jest.fn().mockResolvedValue(undefined) })),
+  getListInventoryQueryKey: jest.fn(() => ["inventory"]),
+}));
+
+jest.mock("@tanstack/react-query", () => ({
+  useQueryClient: jest.fn(() => ({
+    getQueriesData: (...a: unknown[]) => mockGetQueriesData(...a),
+    setQueryData:   (...a: unknown[]) => mockSetQueryData(...a),
+    setQueriesData: (...a: unknown[]) => mockSetQueriesData(...a),
+    invalidateQueries: (...a: unknown[]) => mockInvalidateQueries(...a),
+  })),
+}));
+
+jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
+
+jest.mock("@/components/DismissKeyboard", () => ({
+  DismissKeyboard: ({ children }: { children: React.ReactNode }) =>
+    children as React.ReactElement,
+}));
+
+jest.mock("@/components/MeasurePartScreen", () => ({
+  MeasurePartScreen: () => null,
+}));
+
+jest.mock("@/utils/editItemCache", () => {
+  const actual = jest.requireActual("../utils/editItemCache") as typeof import("../utils/editItemCache");
+  return {
+    ...actual,
+    invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
+  };
+});
+
+jest.mock("@expo/vector-icons", () => ({
+  Feather: () => null,
+}));
+
+jest.mock("@/utils/apiBase", () => ({
+  API_BASE:   "http://localhost:8080/api",
+  API_ORIGIN: "http://localhost:8080",
+}));
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+type Inst = TestInstance;
+
+function instText(node: Inst | string): string {
+  if (typeof node === "string") return node;
+  return (node.children ?? []).map((c: Inst | string) => instText(c as Inst | string)).join("");
+}
+
+function findPressable(root: Inst, label: string): Inst | null {
+  return (
+    root
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => instText(n).includes(label)) ?? null
+  );
+}
+
+function findPressableByA11yLabel(root: Inst, label: string): Inst | null {
+  return (
+    root
+      .queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
+      .find((n: Inst) => n.props.accessibilityLabel === label) ?? null
+  );
+}
+
+function findMainModal(root: Inst): Inst {
+  const modal = root.queryAll(
+    (n: TestInstance) => typeof n.props.onRequestClose === "function",
+    { includeSelf: true },
+  )[0];
+  if (!modal) throw new Error("Expected the editor modal");
+  return modal;
+}
+
+async function renderEditor(ui: React.ReactElement) {
+  const result = await render(ui);
+  return result;
+}
+
+function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
+  return {
+    id: 42,
+    catalog: "PART-X",
+    description: "Original description",
+    vendor: "ACME",
+    orderPurchase: 0,
+    orderQuantity: 0,
+    binLocations: ["AISLE-01"],
+    aiKeywords: [],
+    imageUrl: null,
+    ...overrides,
+  } as unknown as InventoryItem;
+}
+
+// ─── Per-test teardown ────────────────────────────────────────────────────────
+
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
+
+afterEach(async () => {
+  if (activeTree) {
+    await activeTree.unmount();
+    activeTree = null;
+  }
+  jest.clearAllMocks();
+  // Restore defaults after clearAllMocks wipes them.
+  mockInvalidateQueries.mockResolvedValue(undefined);
+  mockGetQueriesData.mockReturnValue([]);
+  mockBinsMutateAsync.mockResolvedValue(undefined);
+  mockInvalidateListCache.mockResolvedValue(undefined);
+  capturedConfirmDialogProps = {
+    visible: false,
+    confirmLabel: "",
+    cancelLabel: "",
+    onConfirm: jest.fn(),
+    onCancel: jest.fn(),
+  };
+  capturedInfoDialogProps = {
+    visible: false,
+    title: "",
+    message: "",
+    dismissLabel: "",
+    onDismiss: jest.fn(),
+  };
+});
+
+// Helper: make Alert.alert immediately call the destructive "Remove" callback.
+function autoConfirmAlert() {
+  (Alert.alert as jest.Mock).mockImplementation(
+    (
+      _title: string,
+      _msg: string,
+      buttons?: Array<{ style?: string; onPress?: () => void }>,
+    ) => {
+      const destructive = buttons?.find(b => b.style === "destructive");
+      destructive?.onPress?.();
+    },
+  );
+}
+
+// =============================================================================
+// A. Mutation failure → invalidateQueries called for both keys (rollback)
+// =============================================================================
+
+describe("PartDetailsEditor – handleSave rollback on mutation failure", () => {
+  it("calls invalidateQueries for inventory and searchInventory when the bins mutation rejects", async () => {
+    mockBinsMutateAsync.mockRejectedValue(new Error("network error"));
+    autoConfirmAlert();
+
+    const item = makeItem({ binLocations: ["AISLE-01"] });
+    const result = await renderEditor(
+      <PartDetailsEditor
+        item={item}
+        adminToken="test-token"
+        onClose={jest.fn()}
+      />
+    );
+    activeTree = result;
+
+    // Remove the existing bin via Alert auto-confirm so bins state ≠ item.binLocations.
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
+    expect(removeBinBtn).not.toBeNull();
+    await act(async () => { fireEvent.press(removeBinBtn!); });
+
+    // Now bins state is [] but item.binLocations is ["AISLE-01"] → hasChanges = true.
+    const saveBtn = findPressable(result.root!, "Save Details");
+    expect(saveBtn).not.toBeNull();
+
+    await act(async () => { fireEvent.press(saveBtn!); });
+
+    // onSettled must fire even on failure — both query keys must be invalidated.
+    const invalidateCalls = mockInvalidateQueries.mock.calls.map(
+      ([arg]: [{ queryKey: unknown[] }]) => arg.queryKey,
+    );
+    expect(invalidateCalls).toContainEqual(["searchInventory"]);
+
+    // invalidateListCache is the invalidation path for the inventory key.
+    expect(mockInvalidateListCache).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores cache snapshots (setQueryData) for both keys on failure", async () => {
+    mockBinsMutateAsync.mockRejectedValue(new Error("network error"));
+    // Return non-empty snapshots so we can assert they are restored.
+    const fakeInvSnapshot: Array<[unknown[], unknown]> = [
+      [["inventory", { page: 1 }], { items: [{ id: 42, description: "Old" }] }],
+    ];
+    const fakeSearchSnapshot: Array<[unknown[], unknown]> = [
+      [["searchInventory", "widget"], { results: [], sizeUnknownResults: [] }],
+    ];
+    mockGetQueriesData
+      .mockReturnValueOnce(fakeInvSnapshot)   // inventory snapshot
+      .mockReturnValueOnce(fakeSearchSnapshot); // searchInventory snapshot
+    autoConfirmAlert();
+
+    const item = makeItem({ binLocations: ["AISLE-01"] });
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = result;
+
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
+    await act(async () => { fireEvent.press(removeBinBtn!); });
+
+    const saveBtn = findPressable(result.root!, "Save Details");
+    await act(async () => { fireEvent.press(saveBtn!); });
+
+    // setQueryData must have been called to restore each snapshot entry.
+    const setQueryDataCalls = mockSetQueryData.mock.calls as Array<[unknown, unknown]>;
+    const restoredKeys = setQueryDataCalls.map(([key]) => key);
+    expect(restoredKeys).toContainEqual(["inventory", { page: 1 }]);
+    expect(restoredKeys).toContainEqual(["searchInventory", "widget"]);
+  });
+
+  it("takes a cache snapshot BEFORE invoking mutateAsync (preserves true pre-mutation state)", async () => {
+    // Track the global call order across both mocks.
+    const callLog: Array<"getQueriesData" | "mutateAsync"> = [];
+    mockGetQueriesData.mockImplementation(() => {
+      callLog.push("getQueriesData");
+      return [];
+    });
+    mockBinsMutateAsync.mockImplementation(async () => {
+      callLog.push("mutateAsync");
+      throw new Error("fail");
+    });
+    autoConfirmAlert();
+
+    const item = makeItem({ binLocations: ["AISLE-01"] });
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = result;
+
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
+    await act(async () => { fireEvent.press(removeBinBtn!); });
+
+    const saveBtn = findPressable(result.root!, "Save Details");
+    await act(async () => { fireEvent.press(saveBtn!); });
+
+    // getQueriesData must have been called for inventory and searchInventory.
+    expect(callLog.filter(e => e === "getQueriesData").length).toBeGreaterThanOrEqual(2);
+    expect(callLog).toContain("mutateAsync");
+
+    // All getQueriesData calls must appear BEFORE mutateAsync in the call log.
+    const firstMutateIdx = callLog.indexOf("mutateAsync");
+    const lastSnapshotIdx = callLog.lastIndexOf("getQueriesData");
+    expect(lastSnapshotIdx).toBeLessThan(firstMutateIdx);
+  });
+});
+
+describe("PartDetailsEditor – guarded close paths", () => {
+  it("routes the header close through a discard / keep-editing confirmation", async () => {
+    const onClose = jest.fn();
+    const item = makeItem();
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={onClose} />,
+    );
+    activeTree = result;
+
+    autoConfirmAlert();
+    const removeBinButton = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
+    expect(removeBinButton).not.toBeNull();
+    await act(async () => { fireEvent.press(removeBinButton!); });
+
+    const closeButton = findPressableByA11yLabel(result.root!, "Close editor");
+    expect(closeButton).not.toBeNull();
+    await act(async () => { fireEvent.press(closeButton!); });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(capturedConfirmDialogProps.visible).toBe(true);
+    expect(capturedConfirmDialogProps.confirmLabel).toBe("Discard");
+    expect(capturedConfirmDialogProps.cancelLabel).toBe("Keep Editing");
+
+    await act(async () => {
+      capturedConfirmDialogProps.onCancel();
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(findPressableByA11yLabel(result.root!, "Remove bin AISLE-01")).toBeNull();
+  });
+
+  it("guards the system request-close path with the same confirmation", async () => {
+    const onClose = jest.fn();
+    const result = await renderEditor(
+      <PartDetailsEditor item={makeItem()} adminToken="test-token" onClose={onClose} />,
+    );
+    activeTree = result;
+
+    autoConfirmAlert();
+    const removeBinButton = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
+    await act(async () => { fireEvent.press(removeBinButton!); });
+
+    await act(async () => { findMainModal(result.root!).props.onRequestClose(); });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(capturedConfirmDialogProps.visible).toBe(true);
+
+    await act(async () => {
+      capturedConfirmDialogProps.onConfirm();
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not dismiss while a save is in flight and explains how to continue", async () => {
+    const onClose = jest.fn();
+    autoConfirmAlert();
+    mockBinsMutateAsync.mockImplementation(() => new Promise<void>(() => undefined));
+    const result = await renderEditor(
+      <PartDetailsEditor item={makeItem()} adminToken="test-token" onClose={onClose} />,
+    );
+    activeTree = result;
+
+    await act(async () => {
+      fireEvent.press(findPressableByA11yLabel(result.root!, "Remove bin AISLE-01")!);
+    });
+    await act(async () => {
+      fireEvent.press(findPressable(result.root!, "Save Details")!);
+    });
+    await act(async () => { findMainModal(result.root!).props.onRequestClose(); });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(capturedInfoDialogProps.visible).toBe(true);
+    expect(capturedInfoDialogProps.title).toBe("Save in progress");
+    expect(capturedInfoDialogProps.dismissLabel).toBe("Keep Editing");
+  });
+});
+
+// =============================================================================
+// C. Partial failure: selective rollback — succeeded fields stay in cache
+// =============================================================================
+
+describe("PartDetailsEditor – selective cache rollback on partial failure", () => {
+  it("calls setQueriesData to re-apply patches for succeeded fields when some ops fail", async () => {
+    // Mock fetch: description PATCH succeeds, dimensions PATCH fails.
+    // Policy: only failed fields are rolled back; succeeded fields remain visible
+    // in the cache so the user sees what the server committed.
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn((url: string, opts?: RequestInit) => {
+      const method = (opts?.method ?? "GET").toUpperCase();
+      if (method === "PATCH" && String(url).includes("/description")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({}) } as Response);
+      }
+      if (method === "PATCH" && String(url).includes("/dimensions")) {
+        return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: "DB error" }) } as Response);
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) } as Response);
+    }) as jest.Mock;
+
+    const item = makeItem({ description: "Original" });
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = result;
+
+    // Find description input by its placeholder (works regardless of type string).
+    const descInput = result.root!.queryAll(
+      (n: TestInstance) => n.props?.placeholder === "Brief description of the part…",
+      { includeSelf: true },
+    )[0];
+    expect(descInput).toBeDefined();
+    await act(async () => { fireEvent.changeText(descInput!, "New description"); });
+
+    // Find first dimension TextInput (numeric keyboard) and change it.
+    const dimInput = result.root!.queryAll(
+      (n: TestInstance) => n.props?.keyboardType === "numeric" && typeof n.props?.onChangeText === "function",
+      { includeSelf: true },
+    )[0];
+    expect(dimInput).toBeDefined();
+    await act(async () => { fireEvent.changeText(dimInput!, "5"); });
+
+    // Press Save.
+    const saveBtn = findPressable(result.root!, "Save Details");
+    expect(saveBtn).not.toBeNull();
+    await act(async () => { fireEvent.press(saveBtn!); });
+
+    // setQueriesData MUST be called in the failure path — description succeeded
+    // so its patch must be re-applied after the full-snapshot restore.
+    expect(mockSetQueriesData).toHaveBeenCalled();
+  });
+
+  it("does NOT call setQueriesData in the failure path when all ops fail (no succeeded fields to preserve)", async () => {
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(() => {
+      return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: "DB error" }) } as Response);
+    }) as jest.Mock;
+
+    mockBinsMutateAsync.mockRejectedValue(new Error("Bins mutation failed"));
+    autoConfirmAlert();
+
+    const item = makeItem({ binLocations: ["AISLE-01"] });
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = result;
+
+    // Only remove the bin (triggers bins mutation) — no description change,
+    // so no fetch PATCH is attempted. Bins mutation rejects → only op is bins
+    // → no succeeded fields → setQueriesData should NOT be called.
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
+    await act(async () => { fireEvent.press(removeBinBtn!); });
+
+    mockSetQueriesData.mockClear();
+
+    const saveBtn = findPressable(result.root!, "Save Details");
+    await act(async () => { fireEvent.press(saveBtn!); });
+
+    // All ops failed — setQueriesData should NOT be called in the failure path
+    // (no succeeded fields to re-apply).
+    expect(mockSetQueriesData).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// D. Stale existingDims — background refetch must not cause spurious PATCH
+// =============================================================================
+
+describe("PartDetailsEditor – stale existingDims bug (itemRef fix)", () => {
+  /**
+   * Regression: if handleSave uses `existingDims` from its render-time closure
+   * instead of `itemRef.current?.dimensions`, a background refetch that arrives
+   * AFTER the handler was created but BEFORE the user taps Save can leave
+   * `existingDims` stale.  In that window, if the user also typed a dim value
+   * that now matches the freshly-fetched server dims, the stale closure
+   * compares against the OLD server value and fires a spurious PATCH.
+   *
+   * We simulate this by:
+   *  1. Mounting with null dims, then having the user type "12" into dimLength.
+   *  2. Capturing the save-button's onPress from that render (which closes over
+   *     existingDims = null — the old server value).
+   *  3. Simulating a background refetch via result.rerender() so that
+   *     itemRef.current.dimensions becomes { length: 12 } (server caught up).
+   *  4. Calling the stale handler.
+   *
+   * With the OLD code (existingDims closure): oldDims = null, newDims = {length:12}
+   * → dimsChanged = true → spurious PATCH.
+   * With the FIX (itemRef.current?.dimensions): oldDims = {length:12}, newDims =
+   * {length:12} → dimsChanged = false → no PATCH.
+   */
+  it("does NOT dispatch a spurious dimensions PATCH when a stale-closure handler runs after itemRef catches up to the server dims", async () => {
+    const fetchSpy = jest.fn(() =>
+      Promise.resolve({ ok: true, status: 200, json: async () => ({}) } as Response)
+    );
+    (global as unknown as { fetch: jest.Mock }).fetch = fetchSpy;
+
+    // Step 1: mount with no server dims; dim inputs initialise as "".
+    const item = makeItem({ description: "Original" });
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = result;
+
+    // Step 2a: user types "12" into the first numeric dim input.
+    const dimInput = result.root!.queryAll(
+      (n: TestInstance) => n.props?.keyboardType === "numeric" && typeof n.props?.onChangeText === "function",
+      { includeSelf: true },
+    )[0];
+    expect(dimInput).toBeDefined();
+    await act(async () => { fireEvent.changeText(dimInput!, "12"); });
+
+    // Step 2b: change description so there is always at least one op queued —
+    // without this handleSave returns early before reaching the dims check.
+    const descInput = result.root!.queryAll(
+      (n: TestInstance) => n.props?.placeholder === "Brief description of the part…",
+      { includeSelf: true },
+    )[0];
+    await act(async () => { fireEvent.changeText(descInput!, "Updated description"); });
+
+    // Step 2c: capture the stale save handler NOW (closure has existingDims = null).
+    const saveBtn = findPressable(result.root!, "Save Details");
+    expect(saveBtn).not.toBeNull();
+    const staleSaveHandler = saveBtn!.props.onPress as () => void;
+
+    // Step 3: simulate a background refetch — item prop gets dims = {length:12}.
+    // This commits a new render so itemRef.current.dimensions becomes {length:12}.
+    // existingDims in the STALE handler closure is still null.
+    const updatedItem = makeItem({
+      description: "Original",
+      dimensions: { length: 12, width: null, height: null, diameter: null },
+    });
+    await act(async () => {
+      result.rerender(
+        <PartDetailsEditor item={updatedItem} adminToken="test-token" onClose={jest.fn()} />
+      );
+    });
+
+    // Step 4: call the stale handler (pre-refetch closure).
+    await act(async () => { staleSaveHandler(); });
+
+    // With the fix, oldDims = itemRef.current?.dimensions = {length:12} which
+    // matches newDims = {length:12} → dimsChanged = false → no PATCH for dims.
+    const dimsPatchCalls = (fetchSpy.mock.calls as unknown as Array<[string, RequestInit]>).filter(
+      ([url, opts]) =>
+        (opts?.method ?? "GET").toUpperCase() === "PATCH" &&
+        String(url).includes("/dimensions"),
+    );
+    expect(dimsPatchCalls).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// B. Mutation success → invalidateQueries still called (onSettled safety-net)
+// =============================================================================
+
+describe("PartDetailsEditor – handleSave onSettled invalidation on success", () => {
+  it("calls invalidateQueries for searchInventory and invalidateListCache after a successful save", async () => {
+    mockBinsMutateAsync.mockResolvedValue(undefined);
+    autoConfirmAlert();
+
+    const item = makeItem({ binLocations: ["AISLE-01"] });
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />
+    );
+    activeTree = result;
+
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
+    await act(async () => { fireEvent.press(removeBinBtn!); });
+
+    const saveBtn = findPressable(result.root!, "Save Details");
+    await act(async () => { fireEvent.press(saveBtn!); });
+
+    expect(mockInvalidateListCache).toHaveBeenCalledTimes(1);
+    const invalidateCalls = mockInvalidateQueries.mock.calls.map(
+      ([arg]: [{ queryKey: unknown[] }]) => arg.queryKey,
+    );
+    expect(invalidateCalls).toContainEqual(["searchInventory"]);
+  });
+});
+
+describe("PartDetailsEditor – synchronous save re-entry guard", () => {
+  it("does not dispatch a second request set when Save is activated twice in one tick", async () => {
+    let resolveSave!: () => void;
+    mockBinsMutateAsync.mockImplementation(
+      () => new Promise<void>(resolve => { resolveSave = resolve; }),
+    );
+    autoConfirmAlert();
+
+    const item = makeItem({ binLocations: ["AISLE-01"] });
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
+    );
+    activeTree = result;
+
+    const removeBinBtn = findPressableByA11yLabel(result.root!, "Remove bin AISLE-01");
+    await act(async () => { fireEvent.press(removeBinBtn!); });
+    const saveBtn = findPressable(result.root!, "Save Details");
+
+    await act(async () => {
+      const firstSave = saveBtn!.props.onPress() as Promise<void>;
+      const secondSave = saveBtn!.props.onPress() as Promise<void>;
+      expect(mockBinsMutateAsync).toHaveBeenCalledTimes(1);
+      resolveSave();
+      await Promise.all([firstSave, secondSave]);
+    });
+  });
+});

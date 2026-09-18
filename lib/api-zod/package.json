@@ -1,0 +1,21 @@
+{
+  "name": "@workspace/api-zod",
+  "knip": {
+    "entry": ["src/index.ts"],
+    "project": ["src/**/*.ts"],
+    "ignore": ["src/generated/**"]
+  },
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "dependencies": {
+    "zod": "catalog:"
+  }
+}

@@ -1,0 +1,1337 @@
+/**
+ * Tests for check-route-drift-helpers.ts
+ *
+ * Unit tests cover the three core AST extraction helpers:
+ *   - objectLiteralKeys
+ *   - collectResJsonLiterals
+ *   - collectReqBodyFieldAccesses (called collectReqBodyTypeFields in the task)
+ *
+ * Integration tests verify that analyzeFile reports a violation for a synthetic
+ * route file with an undeclared field, and passes a route file with correct fields.
+ */
+
+import * as ts from "typescript";
+import * as os from "os";
+import * as path from "path";
+import * as fs from "fs";
+import {
+  objectLiteralKeys,
+  collectResJsonLiterals,
+  collectReqBodyFieldAccesses,
+  analyzeFile,
+  collectRegisteredRoutes,
+  collectUnguardedJsonCalls,
+  checkSpecRouteCoverage,
+  checkHandcraftedZodTypes,
+  regexLiteralToOpenApiPath,
+  type OpenApiSpec,
+} from "../check-route-drift-helpers";
+import { checkDependencyFloors } from "../check-dependency-floors";
+
+// ── Parsing helpers ───────────────────────────────────────────────────────────
+
+function parse(src: string): ts.SourceFile {
+  return ts.createSourceFile(
+    "test.ts",
+    src,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TS,
+  );
+}
+
+/** Find the first ObjectLiteralExpression in a parsed source file. */
+function firstObjectLiteral(
+  sf: ts.SourceFile,
+): ts.ObjectLiteralExpression | undefined {
+  let found: ts.ObjectLiteralExpression | undefined;
+  function walk(node: ts.Node) {
+    if (found) return;
+    if (ts.isObjectLiteralExpression(node)) {
+      found = node;
+      return;
+    }
+    ts.forEachChild(node, walk);
+  }
+  walk(sf);
+  return found;
+}
+
+// ── objectLiteralKeys ─────────────────────────────────────────────────────────
+
+describe("objectLiteralKeys", () => {
+  it("extracts identifier keys from a plain object literal", () => {
+    const sf = parse("const x = { foo: 1, bar: 2 };");
+    const lit = firstObjectLiteral(sf)!;
+    expect(objectLiteralKeys(lit)).toEqual(["foo", "bar"]);
+  });
+
+  it("extracts string-literal keys", () => {
+    const sf = parse('const x = { "hello-world": 1, normal: 2 };');
+    const lit = firstObjectLiteral(sf)!;
+    expect(objectLiteralKeys(lit)).toEqual(["hello-world", "normal"]);
+  });
+
+  it("extracts shorthand property keys", () => {
+    const sf = parse("const baz = 3; const x = { baz };");
+    // The second object literal is { baz }
+    let count = 0;
+    let target: ts.ObjectLiteralExpression | undefined;
+    function walk(node: ts.Node) {
+      if (ts.isObjectLiteralExpression(node)) {
+        count++;
+        target = node;
+      }
+      ts.forEachChild(node, walk);
+    }
+    walk(sf);
+    expect(objectLiteralKeys(target!)).toEqual(["baz"]);
+  });
+
+  it("skips spread elements", () => {
+    const sf = parse("const x = { ...other, kept: 1 };");
+    const lit = firstObjectLiteral(sf)!;
+    expect(objectLiteralKeys(lit)).toEqual(["kept"]);
+  });
+
+  it("returns an empty array for an empty object literal", () => {
+    const sf = parse("const x = {};");
+    const lit = firstObjectLiteral(sf)!;
+    expect(objectLiteralKeys(lit)).toEqual([]);
+  });
+});
+
+// ── collectResJsonLiterals ─────────────────────────────────────────────────────
+
+describe("collectResJsonLiterals", () => {
+  it("finds a simple res.json({}) call", () => {
+    const sf = parse("res.json({ id: 1, name: 'Alice' });");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(1);
+    expect(objectLiteralKeys(hits[0].literal)).toEqual(["id", "name"]);
+    expect(hits[0].isErrorResponse).toBe(false);
+    expect(hits[0].hasSpread).toBe(false);
+  });
+
+  it("finds res.status(200).json({}) and marks it as not an error response", () => {
+    const sf = parse("res.status(200).json({ ok: true });");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].isErrorResponse).toBe(false);
+  });
+
+  it("marks res.status(400).json({}) as an error response", () => {
+    const sf = parse("res.status(400).json({ error: 'Bad request' });");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].isErrorResponse).toBe(true);
+  });
+
+  it("marks res.status(500).json({}) as an error response", () => {
+    const sf = parse("res.status(500).json({ message: 'fail' });");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].isErrorResponse).toBe(true);
+  });
+
+  it("detects spread elements and sets hasSpread", () => {
+    const sf = parse("res.json({ ...base, extra: 1 });");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].hasSpread).toBe(true);
+    // spread key is excluded, explicit key is kept
+    expect(objectLiteralKeys(hits[0].literal)).toEqual(["extra"]);
+  });
+
+  it("finds multiple res.json calls in the same file", () => {
+    const sf = parse(`
+      res.json({ a: 1 });
+      res.status(201).json({ b: 2 });
+    `);
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(2);
+  });
+
+  it("ignores non-res .json() calls", () => {
+    const sf = parse("other.json({ secret: 1 });");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(0);
+  });
+
+  it("finds deeply nested res.json inside an arrow function handler", () => {
+    const sf = parse(`
+      router.get("/path", (req, res) => {
+        res.status(201).json({ created: true });
+      });
+    `);
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(1);
+    expect(objectLiteralKeys(hits[0].literal)).toEqual(["created"]);
+  });
+
+  it("does not pick up a variable passed to res.json (non-literal)", () => {
+    const sf = parse("res.json(someVariable);");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(0);
+  });
+
+  it("skips res.status(variable).json({}) — dynamic status code is ambiguous, not a false-positive success", () => {
+    const sf = parse("res.status(code).json({ ghost: true });");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(0);
+  });
+
+  it("skips res.status(statusCode).json({}) where statusCode is an identifier", () => {
+    const sf = parse(`
+      const statusCode = computeStatus();
+      res.status(statusCode).json({ undeclared: 1 });
+    `);
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(0);
+  });
+
+  it("still collects plain res.json({}) (no .status() call at all) as a non-error response", () => {
+    const sf = parse("res.json({ id: 1 });");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].isErrorResponse).toBe(false);
+  });
+
+  it("still collects res.status(200).json({}) as a non-error response", () => {
+    const sf = parse("res.status(200).json({ id: 1 });");
+    const hits = collectResJsonLiterals(sf);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].isErrorResponse).toBe(false);
+  });
+});
+
+// ── collectReqBodyFieldAccesses ───────────────────────────────────────────────
+
+describe("collectReqBodyFieldAccesses", () => {
+  it("extracts fields from req.body as { field: T } type assertion", () => {
+    const sf = parse(
+      "const data = req.body as { username: string; password: string };",
+    );
+    const groups = collectReqBodyFieldAccesses(sf);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toEqual(expect.arrayContaining(["username", "password"]));
+  });
+
+  it("extracts fields from destructuring: const { field } = req.body", () => {
+    const sf = parse("const { email, role } = req.body;");
+    const groups = collectReqBodyFieldAccesses(sf);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toEqual(expect.arrayContaining(["email", "role"]));
+  });
+
+  it("extracts the property name from aliased destructuring: const { a: b } = req.body", () => {
+    const sf = parse("const { original: alias } = req.body;");
+    const groups = collectReqBodyFieldAccesses(sf);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toEqual(["original"]);
+  });
+
+  it("extracts field from req.body.field direct access", () => {
+    const sf = parse("const val = req.body.fieldName;");
+    const groups = collectReqBodyFieldAccesses(sf);
+    const flat = groups.flat();
+    expect(flat).toContain("fieldName");
+  });
+
+  it("handles destructuring when req.body is cast: const { x } = req.body as { x: number }", () => {
+    const sf = parse("const { x } = req.body as { x: number };");
+    const groups = collectReqBodyFieldAccesses(sf);
+    // Two groups: one from the as-expression, one from the destructuring
+    const flat = groups.flat();
+    expect(flat).toContain("x");
+  });
+
+  it("returns empty array when req.body is not accessed", () => {
+    const sf = parse("const data = other.body.field;");
+    const groups = collectReqBodyFieldAccesses(sf);
+    expect(groups).toHaveLength(0);
+  });
+
+  it("does not pick up req.params or req.query", () => {
+    const sf = parse("const id = req.params.id; const q = req.query.search;");
+    const groups = collectReqBodyFieldAccesses(sf);
+    expect(groups).toHaveLength(0);
+  });
+});
+
+// ── analyzeFile integration tests ─────────────────────────────────────────────
+
+describe("analyzeFile (integration)", () => {
+  let tmpDir: string;
+
+  beforeAll(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-check-test-"));
+  });
+
+  afterAll(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeRoute(filename: string, content: string): string {
+    const fp = path.join(tmpDir, filename);
+    fs.writeFileSync(fp, content, "utf-8");
+    return fp;
+  }
+
+  const specOps = new Map([
+    [
+      "GET /items",
+      {
+        requestFields: new Set<string>(),
+        responseFields: new Set(["id", "name", "status"]),
+      },
+    ],
+    [
+      "POST /items",
+      {
+        requestFields: new Set(["name", "quantity"]),
+        responseFields: new Set(["id", "name"]),
+      },
+    ],
+  ]);
+
+  it("returns no violations when the route uses only declared response fields", () => {
+    const fp = writeRoute(
+      "good-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", (req, res) => {
+        res.json({ id: 1, name: "Widget", status: "active" });
+      });
+      export default router;
+    `,
+    );
+
+    const violations = analyzeFile(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("reports a violation when the route uses an undeclared response field", () => {
+    const fp = writeRoute(
+      "bad-response-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", (req, res) => {
+        res.json({ id: 1, name: "Widget", undeclaredField: true });
+      });
+      export default router;
+    `,
+    );
+
+    const violations = analyzeFile(fp, "", specOps);
+    expect(violations.length).toBeGreaterThan(0);
+    const v = violations[0];
+    expect(v.kind).toBe("response");
+    expect(v.undeclaredFields).toContain("undeclaredField");
+    expect(v.specPath).toBe("/items");
+    expect(v.method).toBe("GET");
+  });
+
+  it("skips error (4xx) response literals even if they contain undeclared fields", () => {
+    const fp = writeRoute(
+      "error-response-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", (req, res) => {
+        res.status(200).json({ id: 1, name: "ok" });
+        res.status(404).json({ undeclaredField: "not found" });
+      });
+      export default router;
+    `,
+    );
+
+    const violations = analyzeFile(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("reports a violation when the route accesses an undeclared req.body field", () => {
+    const fp = writeRoute(
+      "bad-request-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.post("/items", (req, res) => {
+        const { name, quantity, undeclaredBodyField } = req.body;
+        res.json({ id: 1, name });
+      });
+      export default router;
+    `,
+    );
+
+    const violations = analyzeFile(fp, "", specOps);
+    expect(violations.some((v) => v.kind === "requestBody")).toBe(true);
+    const reqViolation = violations.find((v) => v.kind === "requestBody")!;
+    expect(reqViolation.undeclaredFields).toContain("undeclaredBodyField");
+  });
+
+  it("returns no violations for a route not declared in the spec (internal route)", () => {
+    const fp = writeRoute(
+      "internal-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/admin/internal", (req, res) => {
+        res.json({ secret: "data", adminOnly: true });
+      });
+      export default router;
+    `,
+    );
+
+    const violations = analyzeFile(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("returns empty array for a non-existent file path", () => {
+    const violations = analyzeFile(
+      path.join(tmpDir, "does-not-exist.ts"),
+      "",
+      specOps,
+    );
+    expect(violations).toHaveLength(0);
+  });
+
+  it("does not produce a false-positive violation when status code is a variable (res.status(code).json({}))", () => {
+    const fp = writeRoute(
+      "dynamic-status-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", (req, res) => {
+        const code = computeStatus();
+        res.status(code).json({ undeclaredField: "value" });
+      });
+      export default router;
+    `,
+    );
+
+    const violations = analyzeFile(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("applies a non-empty prefix when matching spec routes", () => {
+    // specOps only knows about "GET /items". Mount the same route under "/v2"
+    // so it doesn't match unless the prefix is prepended correctly.
+    const prefixedSpecOps = new Map([
+      [
+        "GET /v2/items",
+        {
+          requestFields: new Set<string>(),
+          responseFields: new Set(["id", "name"]),
+        },
+      ],
+    ]);
+
+    const goodFp = writeRoute(
+      "prefixed-good-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", (req, res) => {
+        res.json({ id: 1, name: "Widget" });
+      });
+      export default router;
+    `,
+    );
+
+    const badFp = writeRoute(
+      "prefixed-bad-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", (req, res) => {
+        res.json({ id: 1, name: "Widget", ghost: true });
+      });
+      export default router;
+    `,
+    );
+
+    // With correct "/v2" prefix both files match GET /v2/items in the spec.
+    expect(analyzeFile(goodFp, "/v2", prefixedSpecOps)).toHaveLength(0);
+    const violations = analyzeFile(badFp, "/v2", prefixedSpecOps);
+    expect(violations.some((v) => v.undeclaredFields.includes("ghost"))).toBe(true);
+
+    // With wrong prefix (empty) neither file matches any spec route — no violations.
+    expect(analyzeFile(badFp, "", prefixedSpecOps)).toHaveLength(0);
+  });
+});
+
+// ── regexLiteralToOpenApiPath ─────────────────────────────────────────────────
+
+describe("regexLiteralToOpenApiPath", () => {
+  it("converts a simple anchored regex with one capture group", () => {
+    expect(regexLiteralToOpenApiPath("/^\\/barcode\\/(.+)$/")).toBe(
+      "/barcode/{param}",
+    );
+  });
+
+  it("handles the real inventory barcode regex text verbatim", () => {
+    // Matches the literal source text produced by the TypeScript AST for
+    // router.get(/^\/barcode\/(.+)$/, ...)
+    expect(regexLiteralToOpenApiPath("/^\\/barcode\\/(.+)$/")).toBe(
+      "/barcode/{param}",
+    );
+  });
+
+  it("returns null for a non-path regex (no leading slash segment)", () => {
+    expect(regexLiteralToOpenApiPath("/^\\d+$/")).toBeNull();
+  });
+
+  it("returns null when residual metacharacters remain after substitution", () => {
+    // /^\/items\/?$/ contains a literal `?` after substitution
+    expect(regexLiteralToOpenApiPath("/^\\/items\\/?$/")).toBeNull();
+  });
+
+  it("handles regex flags (e.g. /i) without error", () => {
+    const result = regexLiteralToOpenApiPath("/^\\/foo\\/(.+)$/i");
+    expect(result).toBe("/foo/{param}");
+  });
+
+  it("returns null for an empty or invalid regex literal text", () => {
+    expect(regexLiteralToOpenApiPath("not-a-regex")).toBeNull();
+  });
+});
+
+// ── collectUnguardedJsonCalls ─────────────────────────────────────────────────
+
+describe("collectUnguardedJsonCalls", () => {
+  let tmpDir: string;
+
+  beforeAll(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "unguarded-test-"));
+  });
+
+  afterAll(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeRoute(filename: string, content: string): string {
+    const fp = path.join(tmpDir, filename);
+    fs.writeFileSync(fp, content, "utf-8");
+    return fp;
+  }
+
+  const specOps = new Map([
+    [
+      "GET /items",
+      {
+        requestFields: new Set<string>(),
+        responseFields: new Set(["id", "name"]),
+      },
+    ],
+    [
+      "POST /items",
+      {
+        requestFields: new Set(["name"]),
+        responseFields: new Set(["id", "name"]),
+      },
+    ],
+  ]);
+
+  it("returns no violation when the response is a Zod .parse() result (guarded)", () => {
+    const fp = writeRoute(
+      "guarded-route.ts",
+      `
+      import { Router } from "express";
+      import { ItemSchema } from "@workspace/api-zod";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const item = await db.getItem();
+        res.json(ItemSchema.parse(item));
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("returns a violation when the response is an unguarded variable", () => {
+    const fp = writeRoute(
+      "unguarded-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const item = await db.getItem();
+        res.json(item);
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(1);
+    const v = violations[0];
+    expect(v.kind).toBe("unguardedResponse");
+    expect(v.method).toBe("GET");
+    expect(v.specPath).toBe("/items");
+    expect(v.line).toBeGreaterThan(0);
+  });
+
+  it("does not flag an object literal (already handled by field-drift check)", () => {
+    const fp = writeRoute(
+      "literal-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        res.json({ id: 1, name: "Widget" });
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("does not flag an error-path res.status(4xx).json(variable)", () => {
+    const fp = writeRoute(
+      "error-path-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const err = getError();
+        res.status(404).json(err);
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("does not flag a route not in the spec (internal route)", () => {
+    const fp = writeRoute(
+      "internal-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/internal/status", async (req, res) => {
+        const job = getJob();
+        res.json(job);
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("does not flag res.status(variable).json(variable) — dynamic status code is skipped", () => {
+    const fp = writeRoute(
+      "dynamic-status-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const code = computeCode();
+        const data = getData();
+        res.status(code).json(data);
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("suppresses a violation when spec:ignore-unguarded comment is on the same line", () => {
+    const fp = writeRoute(
+      "suppressed-route.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const item = getItem();
+        res.json(item); // spec:ignore-unguarded — primitive job-status object
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("returns no violation when a variable was assigned from a .parse() call (indirect guard)", () => {
+    const fp = writeRoute(
+      "indirect-guarded-route.ts",
+      `
+      import { Router } from "express";
+      import { ItemSchema } from "@workspace/api-zod";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const raw = await db.getItem();
+        const data = ItemSchema.parse(raw);
+        res.json(data);
+      });
+      export default router;
+    `,
+    );
+
+    const violations = collectUnguardedJsonCalls(fp, "", specOps);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("returns no violation for a non-existent file", () => {
+    const violations = collectUnguardedJsonCalls(
+      path.join(tmpDir, "does-not-exist.ts"),
+      "",
+      specOps,
+    );
+    expect(violations).toHaveLength(0);
+  });
+
+  it("applies the prefix when matching spec routes", () => {
+    const prefixedSpecOps = new Map([
+      [
+        "GET /v2/items",
+        {
+          requestFields: new Set<string>(),
+          responseFields: new Set(["id"]),
+        },
+      ],
+    ]);
+
+    const fp = writeRoute(
+      "prefixed-unguarded.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", async (req, res) => {
+        const item = await db.getItem();
+        res.json(item);
+      });
+      export default router;
+    `,
+    );
+
+    // With matching prefix → violation reported
+    const withPrefix = collectUnguardedJsonCalls(fp, "/v2", prefixedSpecOps);
+    expect(withPrefix).toHaveLength(1);
+    expect(withPrefix[0].specPath).toBe("/v2/items");
+
+    // With wrong prefix → route not in spec → no violation
+    const noMatch = collectUnguardedJsonCalls(fp, "", prefixedSpecOps);
+    expect(noMatch).toHaveLength(0);
+  });
+});
+
+// ── collectRegisteredRoutes ───────────────────────────────────────────────────
+
+describe("collectRegisteredRoutes", () => {
+  let tmpDir: string;
+
+  beforeAll(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "reg-routes-test-"));
+  });
+
+  afterAll(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeFile(name: string, content: string): string {
+    const fp = path.join(tmpDir, name);
+    fs.writeFileSync(fp, content, "utf-8");
+    return fp;
+  }
+
+  it("returns all METHOD /path strings from a route file with no prefix", () => {
+    const fp = writeFile(
+      "routes-no-prefix.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/items", (req, res) => res.json({}));
+      router.post("/items", (req, res) => res.json({}));
+      router.patch("/items/:id", (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const routes = collectRegisteredRoutes(fp, "");
+    expect(routes.has("GET /items")).toBe(true);
+    expect(routes.has("POST /items")).toBe(true);
+    expect(routes.has("PATCH /items/{id}")).toBe(true);
+  });
+
+  it("applies prefix to all collected routes", () => {
+    const fp = writeFile(
+      "routes-with-prefix.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/search", (req, res) => res.json({}));
+      router.delete("/:id", (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const routes = collectRegisteredRoutes(fp, "/inventory");
+    expect(routes.has("GET /inventory/search")).toBe(true);
+    expect(routes.has("DELETE /inventory/{id}")).toBe(true);
+  });
+
+  it("returns an empty set for a non-existent file", () => {
+    const routes = collectRegisteredRoutes(
+      path.join(tmpDir, "does-not-exist.ts"),
+      "",
+    );
+    expect(routes.size).toBe(0);
+  });
+
+  it("recognises a regex-literal route and converts it to an OpenAPI path", () => {
+    // Regression: router.get(/^\/barcode\/(.+)$/, ...) was previously skipped,
+    // causing a false-positive missingHandler violation for /inventory/barcode/{code}.
+    const fp = writeFile(
+      "routes-regex.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get(/^\\/barcode\\/(.+)$/, async (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const routes = collectRegisteredRoutes(fp, "/inventory");
+    // The regex converts to /barcode/{param}; with prefix it becomes /inventory/barcode/{param}
+    expect(routes.has("GET /inventory/barcode/{param}")).toBe(true);
+  });
+});
+
+// ── checkHandcraftedZodTypes ──────────────────────────────────────────────────
+
+function makeMinimalSpec(
+  schemas: Record<string, {
+    properties: Record<string, { type: string }>;
+    required?: string[];
+  }>,
+): OpenApiSpec {
+  return {
+    paths: {},
+    components: { schemas: schemas as never },
+  };
+}
+
+describe("checkHandcraftedZodTypes", () => {
+  it("returns no violations when Zod types match spec types", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: {
+          id: { type: "integer" },
+          name: { type: "string" },
+          active: { type: "boolean" },
+          weight: { type: "number" },
+        },
+        required: ["id", "name"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        id: z.number(),
+        name: z.string(),
+        active: z.boolean(),
+        weight: z.number(),
+      });
+    `;
+
+    const violations = checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts");
+    expect(violations).toHaveLength(0);
+  });
+
+  it("reports a violation when Zod uses z.string() for a spec integer field", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { id: { type: "integer" } },
+        required: ["id"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        id: z.string(),
+      });
+    `;
+
+    const violations = checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts");
+    expect(violations).toHaveLength(1);
+    const v = violations[0];
+    expect(v.kind).toBe("typeMismatch");
+    expect(v.undeclaredFields).toContain("id");
+    expect(v.note).toMatch(/spec declares type "integer"/);
+    expect(v.note).toMatch(/z\.string\(\)/);
+    expect(v.method).toBe("WidgetSchema");
+  });
+
+  it("reports a violation when Zod uses z.string() for a spec boolean field", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { active: { type: "boolean" } },
+        required: [],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        active: z.string(),
+      });
+    `;
+
+    const violations = checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts");
+    expect(violations).toHaveLength(1);
+    expect(violations[0].kind).toBe("typeMismatch");
+    expect(violations[0].undeclaredFields).toContain("active");
+  });
+
+  it("reports a violation when a required spec field is marked optional in Zod", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        name: z.string().optional(),
+      });
+    `;
+
+    const violations = checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts");
+    expect(violations).toHaveLength(1);
+    const v = violations[0];
+    expect(v.kind).toBe("typeMismatch");
+    expect(v.undeclaredFields).toContain("name");
+    expect(v.note).toMatch(/required in spec/);
+    expect(v.note).toMatch(/optional\/nullish/);
+  });
+
+  it("reports a violation when a required spec field is marked nullish in Zod", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { count: { type: "integer" } },
+        required: ["count"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        count: z.number().nullish(),
+      });
+    `;
+
+    const violations = checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts");
+    expect(violations).toHaveLength(1);
+    expect(violations[0].note).toMatch(/required in spec/);
+  });
+
+  it("accepts z.number() for spec integer and spec number fields", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: {
+          count: { type: "integer" },
+          ratio: { type: "number" },
+        },
+        required: [],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        count: z.number(),
+        ratio: z.number(),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+
+  it("accepts z.coerce.date() for spec string fields (date-time coercion)", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { createdAt: { type: "string" } },
+        required: ["createdAt"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        createdAt: z.coerce.date(),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+
+  it("accepts z.coerce.date().nullish() for optional spec string fields", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { enrichedAt: { type: "string" } },
+        required: [],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        enrichedAt: z.coerce.date().nullish(),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+
+  it("skips array fields (out of scope for first pass)", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { id: { type: "integer" } },
+        required: [],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        tags: z.array(z.string()),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+
+  it("skips fields not found in any spec schema", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { id: { type: "integer" } },
+        required: [],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        customField: z.string(),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+
+  it("skips generated-schema source (empty source → no violations)", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { id: { type: "integer" } },
+        required: ["id"],
+      },
+    });
+
+    // Generated schemas would not be passed to this function at all;
+    // simulated here by passing empty source text.
+    const violations = checkHandcraftedZodTypes(spec, "", "generated/widget.ts");
+    expect(violations).toHaveLength(0);
+  });
+
+  it("skips fields with z.enum() (complex types deferred)", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { status: { type: "string" } },
+        required: [],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        status: z.enum(["active", "inactive"]),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+
+  it("reports both type mismatch and required violation in the same note when both occur", () => {
+    const spec = makeMinimalSpec({
+      Widget: {
+        properties: { id: { type: "integer" } },
+        required: ["id"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const WidgetSchema = z.object({
+        id: z.string().optional(),
+      });
+    `;
+
+    const violations = checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts");
+    expect(violations).toHaveLength(1);
+    const v = violations[0];
+    expect(v.note).toMatch(/spec declares type "integer"/);
+    expect(v.note).toMatch(/required in spec/);
+  });
+
+  it("accepts z.number().int().nonnegative() for spec integer fields", () => {
+    const spec = makeMinimalSpec({
+      BatchPreview: {
+        properties: { total: { type: "integer" } },
+        required: ["total"],
+      },
+    });
+
+    const source = `
+      import { z } from "zod";
+      const BatchPreviewSchema = z.object({
+        total: z.number().int().nonnegative(),
+      });
+    `;
+
+    expect(checkHandcraftedZodTypes(spec, source, "inventoryRoutes.ts")).toHaveLength(0);
+  });
+});
+
+// ── checkDependencyFloors ─────────────────────────────────────────────────────
+
+describe("checkDependencyFloors", () => {
+  const manifests = {
+    "lib/api-spec": { devDependencies: { orval: "^8.22.0" } },
+    "artifacts/api-server": { dependencies: { "pdfjs-dist": "^6.2.108" } },
+  };
+
+  const safeLockfile = {
+    importers: {
+      "lib/api-spec": {
+        devDependencies: { orval: { specifier: "^8.22.0", version: "8.22.0" } },
+      },
+      "artifacts/api-server": {
+        dependencies: {
+          "pdfjs-dist": { specifier: "^6.2.108", version: "6.2.108" },
+        },
+      },
+    },
+    packages: {
+      "orval@8.22.0": {},
+      "pdfjs-dist@6.2.108": {},
+      "fast-uri@4.1.3": {},
+      "brace-expansion@5.0.9": {},
+      "qs@6.16.0": {},
+      "js-yaml@3.15.1": {},
+      "js-yaml@4.3.1": {},
+    },
+  };
+
+  it("accepts the patched direct and transitive dependency floors", () => {
+    expect(checkDependencyFloors(safeLockfile, manifests)).toEqual([]);
+  });
+
+  it("reports a lowered manifest and every vulnerable lockfile resolution", () => {
+    const unsafe = {
+      ...safeLockfile,
+      importers: {
+        ...safeLockfile.importers,
+        "lib/api-spec": {
+          devDependencies: { orval: { specifier: "^8.5.2", version: "8.5.3" } },
+        },
+      },
+      packages: {
+        ...safeLockfile.packages,
+        "orval@8.5.3": {},
+        "fast-uri@4.1.2": {},
+        "brace-expansion@5.0.8": {},
+        "qs@6.15.3": {},
+        "js-yaml@3.15.0": {},
+        "js-yaml@4.3.0": {},
+      },
+    };
+
+    const failures = checkDependencyFloors(unsafe, {
+      ...manifests,
+      "lib/api-spec": { devDependencies: { orval: "^8.5.2" } },
+    });
+    expect(failures.map((failure) => failure.dependency)).toEqual(
+      expect.arrayContaining([
+        "orval",
+        "fast-uri",
+        "brace-expansion",
+        "qs",
+        "js-yaml",
+      ]),
+    );
+  });
+});
+
+// ── checkSpecRouteCoverage ────────────────────────────────────────────────────
+
+describe("checkSpecRouteCoverage", () => {
+  let tmpDir: string;
+
+  beforeAll(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-coverage-test-"));
+  });
+
+  afterAll(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeHandler(name: string, content: string): string {
+    const fp = path.join(tmpDir, name);
+    fs.writeFileSync(fp, content, "utf-8");
+    return fp;
+  }
+
+  it("returns no violations when every spec path has a matching handler", () => {
+    writeHandler(
+      "handler-full.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/widgets", (req, res) => res.json({}));
+      router.post("/widgets", (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const specOps = new Map([
+      [
+        "GET /widgets",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+      [
+        "POST /widgets",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+    ]);
+
+    const prefixMap = new Map([["handler-full.ts", ""]]);
+    const violations = checkSpecRouteCoverage(specOps, prefixMap, tmpDir);
+    expect(violations).toHaveLength(0);
+  });
+
+  it("returns a missingHandler violation when a spec path has no handler", () => {
+    writeHandler(
+      "handler-partial.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/gadgets", (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const specOps = new Map([
+      [
+        "GET /gadgets",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+      [
+        "DELETE /gadgets/{id}",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+    ]);
+
+    const prefixMap = new Map([["handler-partial.ts", ""]]);
+    const violations = checkSpecRouteCoverage(specOps, prefixMap, tmpDir);
+    expect(violations).toHaveLength(1);
+    const v = violations[0];
+    expect(v.kind).toBe("missingHandler");
+    expect(v.method).toBe("DELETE");
+    expect(v.specPath).toBe("/gadgets/{id}");
+    expect(v.file).toBe("(spec)");
+    expect(v.undeclaredFields).toHaveLength(0);
+  });
+
+  it("returns violations for all unmatched spec paths", () => {
+    const specOps = new Map([
+      [
+        "GET /orphan-a",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+      [
+        "POST /orphan-b",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+    ]);
+
+    // Empty prefix map — no handler files at all
+    const violations = checkSpecRouteCoverage(specOps, new Map(), tmpDir);
+    expect(violations).toHaveLength(2);
+    expect(violations.every((v) => v.kind === "missingHandler")).toBe(true);
+  });
+
+  it("returns no violations when the spec is empty", () => {
+    writeHandler(
+      "handler-any.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/anything", (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const violations = checkSpecRouteCoverage(
+      new Map(),
+      new Map([["handler-any.ts", ""]]),
+      tmpDir,
+    );
+    expect(violations).toHaveLength(0);
+  });
+
+  it("matches spec paths correctly when the prefix map uses a non-empty prefix", () => {
+    writeHandler(
+      "handler-prefixed.ts",
+      `
+      import { Router } from "express";
+      const router = Router();
+      router.get("/search", (req, res) => res.json({}));
+      export default router;
+    `,
+    );
+
+    const specOps = new Map([
+      [
+        "GET /inventory/search",
+        { requestFields: new Set<string>(), responseFields: new Set<string>() },
+      ],
+    ]);
+
+    // Correct prefix — handler covers the spec path
+    const noViolations = checkSpecRouteCoverage(
+      specOps,
+      new Map([["handler-prefixed.ts", "/inventory"]]),
+      tmpDir,
+    );
+    expect(noViolations).toHaveLength(0);
+
+    // Wrong prefix — handler does NOT cover the spec path
+    const withViolation = checkSpecRouteCoverage(
+      specOps,
+      new Map([["handler-prefixed.ts", "/wrong"]]),
+      tmpDir,
+    );
+    expect(withViolation).toHaveLength(1);
+    expect(withViolation[0].kind).toBe("missingHandler");
+  });
+});

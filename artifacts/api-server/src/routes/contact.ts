@@ -1,0 +1,98 @@
+import { db } from "@workspace/db";
+import { contactMessagesTable } from "@workspace/db";
+import { desc, eq } from "drizzle-orm";
+import { Router } from "express";
+
+import { logger } from "../lib/logger";
+import { contactLimiter } from "../lib/rateLimiter";
+import { requireAdminAuth } from "../middlewares/requireAdminAuth";
+
+const router = Router();
+const MAX_SUBJECT_LENGTH = 200;
+const MAX_BODY_LENGTH = 5_000;
+
+// POST /contact — submit a message (no auth required)
+router.post("/", async (req, res) => {
+  const ip = req.ip ?? "unknown";
+  const limitResult = await contactLimiter.check(ip);
+  if (!limitResult.allowed) {
+    return void res.status(429).json({
+      error: "Too many requests. Please try again later.",
+      retryAfterMs: limitResult.retryAfterMs,
+    });
+  }
+  try {
+    const { subject, body, senderToken } = req.body as {
+      subject?: string;
+      body?: string;
+      senderToken?: string;
+    };
+
+    if (typeof subject !== "string" || !subject.trim()) {
+      return void res.status(400).json({ error: "subject is required" });
+    }
+    if (typeof body !== "string" || !body.trim()) {
+      return void res.status(400).json({ error: "body is required" });
+    }
+    if (subject.trim().length > MAX_SUBJECT_LENGTH) {
+      return void res.status(400).json({
+        error: `subject must be ${MAX_SUBJECT_LENGTH} characters or fewer`,
+      });
+    }
+    if (body.trim().length > MAX_BODY_LENGTH) {
+      return void res.status(400).json({
+        error: `body must be ${MAX_BODY_LENGTH} characters or fewer`,
+      });
+    }
+    const token = (typeof senderToken === "string" ? senderToken.trim() : "") || "anonymous";
+
+    const [row] = await db
+      .insert(contactMessagesTable)
+      .values({ senderToken: token, subject: subject.trim(), body: body.trim() })
+      .returning({ id: contactMessagesTable.id });
+
+    return void res.status(201).json({ id: row!.id });
+  } catch (err) {
+    logger.error({ err }, "contact.post failed");
+    return void res.status(500).json({ error: "Failed to submit message" });
+  }
+});
+
+// GET /contact — list all messages, newest first (admin only)
+router.get("/", requireAdminAuth, async (_req, res) => {
+  try {
+    const rows = await db
+      .select()
+      .from(contactMessagesTable)
+      .orderBy(desc(contactMessagesTable.createdAt));
+    return void res.json(rows);
+  } catch (err) {
+    logger.error({ err }, "contact.list failed");
+    return void res.status(500).json({ error: "Failed to load messages" });
+  }
+});
+
+// PATCH /contact/:id/read — mark a message read (admin only)
+router.patch("/:id/read", requireAdminAuth, async (req, res) => {
+  try {
+    const id = parseInt(String(req.params["id"] ?? ""), 10);
+    if (isNaN(id)) {
+      return void res.status(400).json({ error: "Invalid message ID" });
+    }
+    const [row] = await db
+      .update(contactMessagesTable)
+      .set({ readAt: new Date() })
+      .where(eq(contactMessagesTable.id, id))
+      .returning({ id: contactMessagesTable.id });
+
+    if (!row) {
+      return void res.status(404).json({ error: "Message not found" });
+    }
+    return void res.json({ id: row.id });
+  } catch (err) {
+    logger.error({ err }, "contact.markRead failed");
+    return void res.status(500).json({ error: "Failed to mark message read" });
+  }
+});
+
+export default router;

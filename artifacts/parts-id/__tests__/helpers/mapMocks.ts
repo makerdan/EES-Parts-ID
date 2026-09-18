@@ -1,0 +1,229 @@
+import * as path from "path";
+
+/**
+ * Shared Jest mock factories for native modules used across Map/Zone tests.
+ *
+ * Usage in a test file (jest.mock factories are hoisted, so reference via require()):
+ *
+ *   jest.mock("react-native-reanimated",      () => require("./helpers/mapMocks").createReanimatedMock());
+ *   jest.mock("react-native-svg",             () => require("./helpers/mapMocks").createSvgMock());
+ *   jest.mock("expo-asset",                   () => require("./helpers/mapMocks").createExpoAssetMock());
+ *   jest.mock("@expo/vector-icons",           () => require("./helpers/mapMocks").createVectorIconsMock());
+ *   jest.mock("@/hooks/useColors",            () => require("./helpers/mapMocks").createUseColorsMock());
+ *   jest.mock("@/utils/floorPlanCache",       () => require("./helpers/mapMocks").createFloorPlanCacheMock());
+ *   jest.mock("@/utils/mapViewport",          () => require("./helpers/mapMocks").createMapViewportMock());
+ *   jest.mock("react-native",                 () => require("./helpers/mapMocks").createReactNativeMock());
+ */
+
+/**
+ * react-native — the canonical artifact-wide mock from __mocks__.
+ *
+ * Keeping this behind a factory lets suites that need an explicit jest.mock()
+ * call use the same maintained API surface as suites that rely on
+ * moduleNameMapper.  Do not recreate partial React Native objects inline.
+ */
+export function createReactNativeMock(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const actual = jest.requireActual(
+    path.resolve(__dirname, "../../__mocks__/react-native.js"),
+  ) as Record<string, unknown>;
+  return { ...actual, ...overrides };
+}
+
+/** react-native-reanimated — full version with Easing and both default and named exports. */
+export function createReanimatedMock(): object {
+  const React = require("react");
+  const passThrough = (v: unknown) => v;
+  const AnimatedView = ({ children, ...rest }: Record<string, unknown>) =>
+    React.createElement("rn-reanimated-view", rest, children);
+  const createAnimatedComponent = (Component: unknown) => Component;
+  return {
+    __esModule: true,
+    default: {
+      View: AnimatedView,
+      ScrollView: ({ children }: { children: unknown }) =>
+        React.createElement("rn-animated-scroll", {}, children),
+      createAnimatedComponent,
+    },
+    Animated: { View: AnimatedView, createAnimatedComponent },
+    useSharedValue:      (initial: unknown) => ({ value: initial }),
+    useAnimatedProps:    (_fn: () => unknown) => ({}),
+    useAnimatedStyle:    (_fn: () => unknown) => ({}),
+    useAnimatedReaction: () => {},
+    runOnJS:             (fn: (...args: unknown[]) => unknown) => fn,
+    cancelAnimation:     () => {},
+    withSpring:          passThrough,
+    withTiming:          passThrough,
+    withRepeat:          passThrough,
+    Easing: { bezier: () => 0, inOut: passThrough, ease: 0, linear: 0 },
+    createAnimatedComponent,
+  };
+}
+
+/** react-native-svg — full tag-forwarding version. */
+export function createSvgMock(): object {
+  const React = require("react");
+  const noop = () => null;
+  const make = (tag: string) =>
+    ({ children, ...rest }: Record<string, unknown>) =>
+      React.createElement(tag, rest, children);
+  return {
+    default:  make("svg-svg"),
+    Svg:      make("svg-svg"),
+    Rect:     make("svg-rect"),
+    G:        make("svg-g"),
+    // Use "Text" (not "svg-text") so test-renderer@1.x, which enforces
+    // textComponentTypes:['Text','RCTText'], doesn't throw when SVG Text
+    // elements render string children.
+    Text:     make("Text"),
+    // NOTE: elements that WarehouseMapView actually renders must FORWARD their
+    // tag (via make()), never return noop.  A noop stub renders nothing, so the
+    // component's floor plan / pins / zone shapes silently vanish in tests while
+    // the test still passes.  The createSvgMock() smoke test in
+    // mapMocks.smoke.test.ts enforces this for every element the component uses.
+    SvgUri:   make("svg-uri"),
+    SvgXml:   make("svg-xml"),
+    Path:     make("svg-path"),
+    Ellipse:  make("svg-ellipse"),
+    Circle:   make("svg-circle"),
+    Defs:     make("defs"),
+    ClipPath: make("clip-path"),
+    Use:      make("svg-use"),
+    Symbol:   make("svg-symbol"),
+  };
+}
+
+/** expo-asset — standard stub for MapScreen-level tests. */
+export function createExpoAssetMock(): object {
+  return {
+    Asset: {
+      fromModule: () => ({ downloadAsync: async () => {}, localUri: "" }),
+      loadAsync:  async () => [{ hash: "test", localUri: "", uri: "" }],
+    },
+  };
+}
+
+/** @expo/vector-icons */
+export function createVectorIconsMock(): object {
+  return { Feather: () => null, MaterialCommunityIcons: () => null };
+}
+
+/**
+ * @/hooks/useColors — mock factory that derives its palette from the real
+ * constants/colors.ts via jest.requireActual so it can never drift.
+ *
+ * Previously this returned a hardcoded copy of the light palette.  If a new
+ * color key was added to constants/colors.ts, the shared mock would silently
+ * return `undefined` for that key in every test that calls it.  By spreading
+ * the real `colors.light` palette (plus the scheme-independent `radius`, exactly
+ * as the real useColors() hook does), any added/removed key is reflected
+ * automatically and a drift causes a test failure rather than a silent pass.
+ */
+export function createUseColorsMock(): object {
+  const colors = jest.requireActual<{
+    default: {
+      light: Record<string, unknown>;
+      dark: Record<string, unknown>;
+      radius: number;
+    };
+  }>("@/constants/colors").default;
+  return {
+    useColors:  () => ({ ...colors.light, radius: colors.radius }),
+    useIsDark:  () => false,
+  };
+}
+
+/** @/utils/floorPlanCache */
+export function createFloorPlanCacheMock(): object {
+  return {
+    getCachedData:        jest.fn().mockReturnValue(null),
+    getCachedHash:        jest.fn().mockReturnValue(null),
+    getIfValid:           jest.fn().mockReturnValue(null),
+    hasCachedData:        jest.fn().mockReturnValue(false),
+    initPersistRead:      jest.fn().mockReturnValue(Promise.resolve()),
+    resetForServerUpdate: jest.fn(),
+    setCached:            jest.fn(),
+    setFallbackEmpty:     jest.fn(),
+    _resetForTests:       jest.fn(),
+  };
+}
+
+/**
+ * @/utils/mapViewport — mock factory that derives numeric constants from the
+ * real source module via jest.requireActual so they can never drift.
+ *
+ * Earlier tests hardcoded stale values (SVG_VIEWBOX_W: 3592.55, MIN_SCALE: 0.5)
+ * that no longer matched the source.  By importing the actual constants here,
+ * any future change to mapViewport.ts is reflected automatically and a drift
+ * causes a test failure rather than a silent wrong-value pass.
+ */
+export function createMapViewportMock(): object {
+  const actual = jest.requireActual<{
+    SVG_VIEWBOX_W: number;
+    SVG_VIEWBOX_H: number;
+    SVG_ASPECT:    number;
+    MIN_SCALE:     number;
+    MAX_SCALE:     number;
+    FIT_PADDING:   number;
+    ZOOM_STOPS:    ReadonlyArray<{ z: number; scale: number; label: string }>;
+  }>("@/utils/mapViewport");
+  return {
+    SVG_VIEWBOX_W:       actual.SVG_VIEWBOX_W,
+    SVG_VIEWBOX_H:       actual.SVG_VIEWBOX_H,
+    SVG_ASPECT:          actual.SVG_ASPECT,
+    MIN_SCALE:           actual.MIN_SCALE,
+    MAX_SCALE:           actual.MAX_SCALE,
+    FIT_PADDING:         actual.FIT_PADDING,
+    ZOOM_STOPS:          actual.ZOOM_STOPS,
+    panBounds:           jest.fn().mockReturnValue({ maxX: 0, maxY: 0 }),
+    clampScale:          jest.fn().mockImplementation((s: number) => Math.max(actual.MIN_SCALE, Math.min(actual.MAX_SCALE, s))),
+    parseContentViewBox: jest.fn().mockReturnValue(null),
+    fitContentViewport:  jest.fn().mockReturnValue({ scale: 1, tx: 0, ty: 0 }),
+    computeFitTarget:    jest.fn().mockReturnValue({ scale: actual.ZOOM_STOPS[0]!.scale, tx: 0, ty: 0 }),
+    makeTileViewBox:     jest.fn().mockReturnValue("0 0 100 100"),
+    computeFocusPan:     jest.fn().mockReturnValue({ tx: 0, ty: 0 }),
+    runFocusAisleEffect: jest.fn().mockReturnValue(null),
+    tileGridSize:        jest.fn().mockReturnValue(1),
+    zoomStopForScale:    jest.fn().mockReturnValue(0),
+    visibleTileRange:    jest.fn().mockReturnValue({ c0: 0, c1: 0, r0: 0, r1: 0 }),
+  };
+}
+
+/**
+ * react-native-reanimated — withTiming exposed as jest.fn() for animation-spy tests.
+ * Identical to createReanimatedMock() but replaces withTiming with a spy so
+ * tests can assert it was called with the correct target value and config.
+ */
+export function createReanimatedMockWithTimingSpy(): object {
+  const mock = createReanimatedMock() as Record<string, unknown>;
+  mock["withTiming"] = jest.fn((v: unknown) => v);
+  return mock;
+}
+
+/**
+ * react-native-reanimated — useAnimatedProps / useAnimatedStyle invoke their
+ * callback.  Used for web render-path tests where the worklet must actually run
+ * so that (a) any runtime error in the callback body fails the test
+ * immediately and (b) the return value flows through to the rendered element.
+ */
+export function createReanimatedMockWithPropsCallback(): object {
+  const mock = createReanimatedMock() as Record<string, unknown>;
+  mock["useAnimatedStyle"] = (cb: () => unknown) =>
+    (typeof cb === "function" ? cb() ?? {} : {});
+  mock["useAnimatedProps"] = (cb: () => unknown) =>
+    (typeof cb === "function" ? cb() ?? {} : {});
+  return mock;
+}
+
+/**
+ * react-native-reanimated — cancelAnimation and withTiming both exposed as
+ * jest.fn() for cleanup-spy tests that assert animations are stopped on unmount
+ * or prop transition.
+ */
+export function createReanimatedMockWithCancelSpy(): object {
+  const mock = createReanimatedMock() as Record<string, unknown>;
+  mock["withTiming"]      = jest.fn((v: unknown) => v);
+  mock["cancelAnimation"] = jest.fn();
+  return mock;
+}

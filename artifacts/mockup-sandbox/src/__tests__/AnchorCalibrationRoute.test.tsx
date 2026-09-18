@@ -1,0 +1,665 @@
+/**
+ * Routed regression coverage for the web Anchor Calibration admin tool.
+ *
+ * This intentionally mounts App rather than AnchorCalibration directly so the
+ * test covers the Clerk-backed AdminGate and the real /anchor-calibration route.
+ */
+
+import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+
+const authState = {
+  isLoaded: true,
+  isSignedIn: true,
+};
+
+const redirectToSignIn = vi.fn();
+const signOut = vi.fn();
+const clerkState = { redirectToSignIn, signOut };
+
+vi.mock("@clerk/react", () => ({
+  ClerkProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SignIn: () => null,
+  SignUp: () => null,
+  useAuth: () => authState,
+  useClerk: () => clerkState,
+}));
+
+vi.mock("../auth/clerkConfig", () => ({
+  basePath: "",
+  clerkAppearance: {},
+  clerkLocalization: {},
+  clerkProxyUrl: undefined,
+  clerkPubKey: "pk_test_anchor_calibration",
+  stripBase: (path: string) => path,
+}));
+
+import App from "../App";
+
+type Anchor = {
+  id: number;
+  name: string;
+  svgX: number;
+  svgY: number;
+  worldX: number;
+  worldY: number;
+  updatedAt: string;
+};
+
+type FixtureOptions = {
+  admin?: boolean;
+  rejectSaves?: boolean;
+  floorPlanResponses?: Array<Promise<Response>>;
+};
+
+function jsonResponse(status: number, body: unknown): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(""),
+  } as unknown as Response;
+}
+
+function textResponse(status: number, body: string): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.reject(new Error("not JSON")),
+    text: () => Promise.resolve(body),
+  } as unknown as Response;
+}
+
+function makeApiFixture(options: FixtureOptions = {}) {
+  const persisted = new Map<number, Anchor>();
+  const calls: Array<[string, RequestInit | undefined]> = [];
+  const admin = options.admin ?? true;
+  const rejectSaves = options.rejectSaves ?? false;
+  let anchorLoadFailuresRemaining = 0;
+  let floorPlanRequestCount = 0;
+
+  const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+    calls.push([url, init]);
+    const path = new URL(url).pathname;
+    const method = init?.method ?? "GET";
+
+    if (path === "/api/admin/me") {
+      return Promise.resolve(jsonResponse(200, { isAdmin: admin }));
+    }
+
+    if (path === "/api/floor-plan/svg") {
+      floorPlanRequestCount += 1;
+      const deferredResponse = options.floorPlanResponses?.[floorPlanRequestCount - 1];
+      if (deferredResponse) return deferredResponse;
+      return Promise.resolve(
+        textResponse(
+          200,
+          `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="anchor-route-floor-plan-${floorPlanRequestCount}" width="1000" height="800" /></svg>`,
+        ),
+      );
+    }
+
+    if (path === "/api/warehouse-zones" && method === "GET") {
+      return Promise.resolve(
+        jsonResponse(200, {
+          zones: [
+            { id: 7, svgX: 100, svgY: 120, svgWidth: 180, svgHeight: 90 },
+            { id: 8, svgX: 400, svgY: 320, svgWidth: 220, svgHeight: 100 },
+          ],
+        }),
+      );
+    }
+
+    if (path === "/api/warehouse-zones/alignment" && method === "GET") {
+      return Promise.resolve(
+        jsonResponse(200, {
+          translateX: 18,
+          translateY: -7,
+          scale: 1.25,
+        }),
+      );
+    }
+
+    if (path === "/api/admin/map-anchors" && method === "GET") {
+      if (anchorLoadFailuresRemaining > 0) {
+        anchorLoadFailuresRemaining -= 1;
+        return Promise.resolve(
+          jsonResponse(503, { error: "Calibration temporarily unavailable" }),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse(200, {
+          anchors: [...persisted.values()].sort((a, b) => a.id - b.id),
+        }),
+      );
+    }
+
+    const slotMatch = path.match(/^\/api\/admin\/map-anchors\/([1-3])$/);
+    if (slotMatch && method === "PUT") {
+      if (rejectSaves) {
+        return Promise.resolve(
+          jsonResponse(422, { error: "Calibration rejected by server" }),
+        );
+      }
+
+      const slot = Number(slotMatch[1]);
+      const body = JSON.parse(String(init?.body)) as Omit<Anchor, "id" | "updatedAt">;
+      const anchor: Anchor = {
+        id: slot,
+        ...body,
+        updatedAt: "2026-09-02T00:00:00.000Z",
+      };
+      persisted.set(slot, anchor);
+      return Promise.resolve(jsonResponse(200, { anchor }));
+    }
+
+    if (slotMatch && method === "DELETE") {
+      persisted.delete(Number(slotMatch[1]));
+      return Promise.resolve(jsonResponse(200, { deleted: true }));
+    }
+
+    return Promise.resolve(jsonResponse(404, { error: "Unhandled test request" }));
+  });
+
+  return {
+    persisted,
+    calls,
+    fetchMock,
+    failNextAnchorLoads(count = 1) {
+      anchorLoadFailuresRemaining += count;
+    },
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function setCalibrationRoute() {
+  window.history.replaceState({}, "", "/anchor-calibration");
+}
+
+function resetRoute() {
+  window.history.replaceState({}, "", "/");
+}
+
+function mockMapRect(svg: SVGSVGElement) {
+  vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+    left: 0,
+    top: 0,
+    right: 800,
+    bottom: 600,
+    width: 800,
+    height: 600,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  } as DOMRect);
+}
+
+async function renderRoute(fixture?: ReturnType<typeof makeApiFixture>) {
+  const floorPlanCallsBeforeRender =
+    fixture?.calls.filter(
+      ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+    ).length ?? 0;
+  let result!: ReturnType<typeof render>;
+  await act(async () => {
+    result = render(<App />);
+  });
+  await waitFor(() => {
+    expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+    if (fixture) {
+      expect(
+        fixture.calls.filter(
+          ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+        ),
+      ).toHaveLength(floorPlanCallsBeforeRender + 1);
+    }
+    expect(
+      result.container.querySelector(
+        `#anchor-route-floor-plan-${floorPlanCallsBeforeRender + 1}`,
+      ),
+    ).not.toBeNull();
+    expect(
+      result.container.querySelectorAll('rect[fill="rgba(0,112,255,0.06)"]'),
+    ).toHaveLength(2);
+    expect(
+      result.container.querySelector('g[transform="translate(18,-7) scale(1.25)"]'),
+    ).not.toBeNull();
+  });
+  return result;
+}
+
+async function placePoint(
+  svg: SVGSVGElement,
+  placeButton: HTMLElement,
+  screenX: number,
+  screenY: number,
+) {
+  await act(async () => {
+    fireEvent.click(placeButton);
+  });
+  await act(async () => {
+    fireEvent.mouseDown(svg, { button: 0, clientX: screenX, clientY: screenY });
+    fireEvent.mouseUp(svg, { clientX: screenX, clientY: screenY });
+  });
+}
+
+async function fillSlot(
+  slot: number,
+  name: string,
+  worldX: string,
+  worldY: string,
+) {
+  const inputs = screen.getAllByRole("textbox");
+  await act(async () => {
+    fireEvent.change(inputs[slot * 3]!, { target: { value: name } });
+    fireEvent.change(inputs[slot * 3 + 1]!, { target: { value: worldX } });
+    fireEvent.change(inputs[slot * 3 + 2]!, { target: { value: worldY } });
+  });
+}
+
+describe("web Anchor Calibration routed workflow", () => {
+  beforeEach(() => {
+    authState.isLoaded = true;
+    authState.isSignedIn = true;
+    redirectToSignIn.mockReset();
+    signOut.mockReset();
+    setCalibrationRoute();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    resetRoute();
+  });
+
+  it("loads, places, saves, reloads, and clears persisted calibration anchors", async () => {
+    const fixture = makeApiFixture();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const { container } = await renderRoute(fixture);
+    const svg = container.querySelector("svg")!;
+    mockMapRect(svg);
+
+    const points = [
+      { x: 180, y: 120, name: "North Door", worldX: "12.5", worldY: "7.3" },
+      { x: 260, y: 180, name: "Rack B", worldX: "50", worldY: "25" },
+      { x: 340, y: 240, name: "Packing Bench", worldX: "-4", worldY: "31.25" },
+    ];
+
+    for (const [slot, point] of points.entries()) {
+      const placeButtons = screen.getAllByRole("button", { name: /^Place$/ });
+      await placePoint(svg, placeButtons[0]!, point.x, point.y);
+      await fillSlot(slot, point.name, point.worldX, point.worldY);
+
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", { name: `Save Anchor ${slot + 1}` }),
+        );
+      });
+      await waitFor(() => {
+        expect(screen.getByText(new RegExp(`Anchor ${slot + 1} saved\\.`))).toBeTruthy();
+      });
+    }
+
+    expect(fixture.persisted.size).toBe(3);
+    for (const [slot, point] of points.entries()) {
+      const anchor = fixture.persisted.get(slot + 1)!;
+      expect(anchor.name).toBe(point.name);
+      expect(anchor.worldX).toBe(Number(point.worldX));
+      expect(anchor.worldY).toBe(Number(point.worldY));
+      expect(anchor.svgX).toBeCloseTo((point.x - 40) / 0.18, 2);
+      expect(anchor.svgY).toBeCloseTo((point.y - 40) / 0.18, 2);
+    }
+
+    const protectedCalls = fixture.calls.filter(([url]) => {
+      const path = new URL(url).pathname;
+      return (
+        path.includes("/admin/map-anchors") ||
+        path === "/api/warehouse-zones/alignment"
+      );
+    });
+    expect(protectedCalls.length).toBeGreaterThan(0);
+    expect(
+      protectedCalls.every(([, init]) => init?.credentials === "include"),
+    ).toBe(true);
+
+    const firstPut = fixture.calls.find(
+      ([url, init]) =>
+        new URL(url).pathname === "/api/admin/map-anchors/1" &&
+        init?.method === "PUT",
+    );
+    expect(firstPut).toBeTruthy();
+    expect(JSON.parse(String(firstPut![1]?.body))).toMatchObject({
+      name: "North Door",
+      worldX: 12.5,
+      worldY: 7.3,
+      svgX: expect.closeTo((180 - 40) / 0.18, 2),
+      svgY: expect.closeTo((120 - 40) / 0.18, 2),
+    });
+
+    cleanup();
+    const { container: reloadedContainer } = await renderRoute(fixture);
+
+    await waitFor(() => {
+      const inputs = screen.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("North Door");
+      expect((inputs[1] as HTMLInputElement).value).toBe("12.5");
+      expect((inputs[2] as HTMLInputElement).value).toBe("7.3");
+      expect((inputs[3] as HTMLInputElement).value).toBe("Rack B");
+      expect((inputs[6] as HTMLInputElement).value).toBe("Packing Bench");
+    });
+    expect(screen.getByText("3/3 saved · scroll to zoom · drag to pan · 18%")).toBeTruthy();
+    expect(
+      reloadedContainer.querySelector('g[transform="translate(18,-7) scale(1.25)"]'),
+    ).toBeTruthy();
+
+    const clearButtons = screen.getAllByRole("button", { name: "Clear" });
+    await act(async () => {
+      fireEvent.click(clearButtons[2]!);
+    });
+    await waitFor(() => {
+      expect(fixture.persisted.size).toBe(2);
+      expect(screen.getAllByText("Not placed").length).toBe(1);
+    });
+    expect(
+      fixture.calls.some(
+        ([url, init]) =>
+          new URL(url).pathname === "/api/admin/map-anchors/3" &&
+          init?.method === "DELETE" &&
+          init.credentials === "include",
+      ),
+    ).toBe(true);
+  });
+
+  it("shows rejected saves without mutating data and blocks non-admins before protected loads", async () => {
+    const rejectedFixture = makeApiFixture({ rejectSaves: true });
+    vi.stubGlobal("fetch", rejectedFixture.fetchMock);
+
+    const { container } = await renderRoute(rejectedFixture);
+    const svg = container.querySelector("svg")!;
+    mockMapRect(svg);
+    await placePoint(
+      svg,
+      screen.getAllByRole("button", { name: /^Place$/ })[0]!,
+      220,
+      160,
+    );
+    await fillSlot(0, "Rejected Anchor", "9", "11");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save Anchor 1" }));
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/Calibration rejected by server/)).toBeTruthy();
+    });
+    expect(rejectedFixture.persisted.size).toBe(0);
+    expect(
+      rejectedFixture.calls.some(
+        ([url, init]) =>
+          new URL(url).pathname === "/api/admin/map-anchors/1" &&
+          init?.method === "PUT" &&
+          init.credentials === "include",
+      ),
+    ).toBe(true);
+
+    cleanup();
+    authState.isSignedIn = true;
+    const deniedFixture = makeApiFixture({ admin: false });
+    vi.stubGlobal("fetch", deniedFixture.fetchMock);
+    setCalibrationRoute();
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Admins only")).toBeTruthy();
+    });
+    expect(
+      deniedFixture.calls.every(
+        ([url]) => new URL(url).pathname === "/api/admin/me",
+      ),
+    ).toBe(true);
+    expect(
+      deniedFixture.calls.some(([url]) =>
+        new URL(url).pathname.includes("/api/admin/map-anchors"),
+      ),
+    ).toBe(false);
+    expect(
+      deniedFixture.calls.some(([url]) =>
+        new URL(url).pathname.includes("/api/warehouse-zones"),
+      ),
+    ).toBe(false);
+  });
+
+  it("refreshes another open session after shared anchors are saved and cleared", async () => {
+    const fixture = makeApiFixture();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const firstSession = await renderRoute(fixture);
+    const secondSession = await renderRoute(fixture);
+    const first = within(firstSession.container);
+    const second = within(secondSession.container);
+    const firstSvg = firstSession.container.querySelector("svg")!;
+    mockMapRect(firstSvg);
+
+    await placePoint(
+      firstSvg,
+      first.getAllByRole("button", { name: /^Place$/ })[0]!,
+      180,
+      120,
+    );
+    const firstInputs = first.getAllByRole("textbox");
+    await act(async () => {
+      fireEvent.change(firstInputs[0]!, { target: { value: "North Door" } });
+      fireEvent.change(firstInputs[1]!, { target: { value: "12.5" } });
+      fireEvent.change(firstInputs[2]!, { target: { value: "7.3" } });
+      fireEvent.click(first.getByRole("button", { name: "Save Anchor 1" }));
+    });
+    await waitFor(() => {
+      expect(fixture.persisted.size).toBe(1);
+      expect(first.getByRole("button", { name: "Anchor 1 saved" })).toBeTruthy();
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      const inputs = second.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("North Door");
+      expect((inputs[1] as HTMLInputElement).value).toBe("12.5");
+      expect((inputs[2] as HTMLInputElement).value).toBe("7.3");
+      expect(second.getByText(/x: 777\.8,\s+y: 444\.4/)).toBeTruthy();
+      expect(second.getByText("1/3 saved · scroll to zoom · drag to pan · 18%")).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.click(first.getByRole("button", { name: "Clear" }));
+    });
+    await waitFor(() => {
+      expect(fixture.persisted.size).toBe(0);
+      expect(first.queryByRole("button", { name: "Clear" })).toBeNull();
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      const inputs = second.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("");
+      expect((inputs[1] as HTMLInputElement).value).toBe("");
+      expect((inputs[2] as HTMLInputElement).value).toBe("");
+      expect(second.getAllByText("Not placed")).toHaveLength(3);
+      expect(second.getByText("0/3 saved · scroll to zoom · drag to pan · 18%")).toBeTruthy();
+    });
+  });
+
+  it("keeps the latest floor plan when an older mounted session settles later", async () => {
+    const olderFloorPlan = deferred<Response>();
+    const latestFloorPlan = deferred<Response>();
+    const fixture = makeApiFixture({
+      floorPlanResponses: [olderFloorPlan.promise, latestFloorPlan.promise],
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+
+    const result = render(<App key="older-calibration-session" />);
+
+    await waitFor(() => {
+      expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+      expect(
+        fixture.calls.filter(
+          ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+        ),
+      ).toHaveLength(1);
+    });
+
+    result.rerender(<App key="latest-calibration-session" />);
+    await waitFor(() => {
+      expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+      expect(
+        fixture.calls.filter(
+          ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+        ),
+      ).toHaveLength(2);
+    });
+
+    await act(async () => {
+      latestFloorPlan.resolve(
+        textResponse(
+          200,
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="latest-calibration-floor-plan" width="1000" height="800" /></svg>',
+        ),
+      );
+    });
+    await waitFor(() => {
+      expect(result.container.querySelector("#latest-calibration-floor-plan")).not.toBeNull();
+    });
+
+    await act(async () => {
+      olderFloorPlan.resolve(
+        textResponse(
+          200,
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800"><rect id="stale-calibration-floor-plan" width="1000" height="800" /></svg>',
+        ),
+      );
+    });
+    await waitFor(() => {
+      expect(result.container.querySelector("#latest-calibration-floor-plan")).not.toBeNull();
+      expect(result.container.querySelector("#stale-calibration-floor-plan")).toBeNull();
+    });
+
+    const floorPlanCalls = fixture.calls.filter(
+      ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+    );
+    result.unmount();
+    expect(
+      floorPlanCalls.every(([, init]) => (init?.signal as AbortSignal | undefined)?.aborted),
+    ).toBe(true);
+  });
+
+  it("aborts and ignores a rejected floor-plan response after the calibration route unmounts", async () => {
+    const pendingFloorPlan = deferred<Response>();
+    const fixture = makeApiFixture({
+      floorPlanResponses: [pendingFloorPlan.promise],
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+
+    const result = render(<App />);
+    await waitFor(() => {
+      expect(within(result.container).getByText("Admin — Anchor Calibration")).toBeTruthy();
+      expect(
+        fixture.calls.some(
+          ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+        ),
+      ).toBe(true);
+    });
+
+    const floorPlanCall = fixture.calls.find(
+      ([url]) => new URL(url).pathname === "/api/floor-plan/svg",
+    );
+    const signal = floorPlanCall?.[1]?.signal as AbortSignal | undefined;
+    expect(signal).toBeDefined();
+
+    result.unmount();
+    expect(signal?.aborted).toBe(true);
+
+    await act(async () => {
+      pendingFloorPlan.reject(new Error("unmounted floor-plan response"));
+    });
+    expect(result.container.querySelector("#stale-calibration-floor-plan")).toBeNull();
+  });
+
+  it("keeps the last known mapping visible and shows the load error after refresh fails", async () => {
+    const fixture = makeApiFixture();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const firstSession = await renderRoute(fixture);
+    const secondSession = await renderRoute(fixture);
+    const first = within(firstSession.container);
+    const second = within(secondSession.container);
+    const firstSvg = firstSession.container.querySelector("svg")!;
+    mockMapRect(firstSvg);
+
+    await placePoint(
+      firstSvg,
+      first.getAllByRole("button", { name: /^Place$/ })[0]!,
+      180,
+      120,
+    );
+    const firstInputs = first.getAllByRole("textbox");
+    await act(async () => {
+      fireEvent.change(firstInputs[0]!, { target: { value: "North Door" } });
+      fireEvent.change(firstInputs[1]!, { target: { value: "12.5" } });
+      fireEvent.change(firstInputs[2]!, { target: { value: "7.3" } });
+      fireEvent.click(first.getByRole("button", { name: "Save Anchor 1" }));
+    });
+    await waitFor(() => {
+      expect(fixture.persisted.size).toBe(1);
+      expect(first.getByRole("button", { name: "Anchor 1 saved" })).toBeTruthy();
+    });
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      const inputs = second.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("North Door");
+      expect(second.getByText(/x: 777\.8,\s+y: 444\.4/)).toBeTruthy();
+    });
+
+    fixture.failNextAnchorLoads(2);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      expect(second.getByText("⚠ Failed to load anchors")).toBeTruthy();
+      const inputs = second.getAllByRole("textbox");
+      expect((inputs[0] as HTMLInputElement).value).toBe("North Door");
+      expect((inputs[1] as HTMLInputElement).value).toBe("12.5");
+      expect((inputs[2] as HTMLInputElement).value).toBe("7.3");
+      expect(second.getByText(/x: 777\.8,\s+y: 444\.4/)).toBeTruthy();
+      expect(second.getByText("1/3 saved · scroll to zoom · drag to pan · 18%")).toBeTruthy();
+    });
+  });
+});

@@ -1,0 +1,968 @@
+/**
+ * @jest-environment node
+ *
+ * Contract tests for MeasurePartScreen.
+ *
+ * Uses result.root!.queryAll() (instance tree API) rather than toJSON() because
+ * toJSON() in react-test-renderer@19 can silently drop conditional children
+ * that haven't been flushed through act() yet.
+ *
+ * Exercises:
+ *   - isLiDARCapableDevice() — exported pure function
+ *   - Phase transition: preview → lidar_scanning → confirm (happy path)
+ *   - Phase transition: preview → lidar_scanning → preview (error path)
+ *   - Manual entry shortcut (goManual)
+ *   - onConfirm callback with parsed dimensions
+ */
+
+// Required for act() to work correctly in the node test environment.
+// Without this flag React 19 logs "not configured to support act()" warnings
+// for every state update that occurs inside act() boundaries.
+// @ts-ignore — global augmentation for test environment only
+global.IS_REACT_ACT_ENVIRONMENT = true;
+
+import React from "react";
+import { render, act, fireEvent } from "@testing-library/react-native";
+import type { TestInstance } from "test-renderer";
+
+// ─── Module mocks ─────────────────────────────────────────────────────────────
+
+// Transitive mocks for AppContext (expo-secure-store ships as ESM and cannot be
+// transformed by Jest; the remaining mocks silence its other imports).
+jest.mock("@workspace/api-client-react", () => ({
+  setAuthTokenGetter: jest.fn(),
+}));
+
+jest.mock("../utils/logoutRegistry", () => {
+  const actual = jest.requireActual<typeof import("../utils/logoutRegistry")>("../utils/logoutRegistry");
+  return {
+    ...actual,
+    LogoutRegistry: class {
+      register() { return () => {}; }
+      fire() {}
+    },
+  };
+});
+
+jest.mock("../utils/sessionStorage", () => ({
+  SEARCH_CACHE_KEYS: [],
+  SESSION_KEY: "parts_id_session",
+  ADMIN_TOKEN_KEY: "parts_id_admin_token",
+  clearSessionStorage: jest.fn(() => Promise.resolve()),
+}));
+
+jest.mock("@/constants/colors", () => ({
+  __esModule: true,
+  default: {
+    light: { background: "#fff", foreground: "#000", card: "#fff", border: "#ccc", primary: "#3b82f6", primaryForeground: "#fff", muted: "#f1f5f9", mutedForeground: "#64748b", destructive: "#ef4444", success: "#22c55e", warning: "#f59e0b" },
+    dark:  { background: "#000", foreground: "#fff", card: "#111", border: "#333", primary: "#3b82f6", primaryForeground: "#fff", muted: "#1e293b", mutedForeground: "#94a3b8", destructive: "#ef4444", success: "#22c55e", warning: "#f59e0b" },
+    radius: 8,
+  },
+}));
+
+// Mock AppContext so MeasurePartScreen can call useApp() without an AppProvider.
+// The component only reads settings.dimensionUnit and calls updateSetting.
+jest.mock("@/contexts/AppContext", () => ({
+  useApp: jest.fn(() => ({
+    settings: { dimensionUnit: "mm" },
+    updateSetting: jest.fn(),
+  })),
+}));
+
+jest.mock("lidar-measure", () => ({
+  isLiDARSupported: jest.fn().mockReturnValue(false),
+  measureObject: jest.fn().mockRejectedValue(
+    new Error("LiDAR not available in test environment")
+  ),
+  cancelMeasure: jest.fn(),
+  NativeLidarDepthView: null,
+}));
+
+// Both `permission` and `requestPermission` must be stable references across
+// renders.  If either is a new object/function per render, the component's
+// useEffect (deps: [visible, initialDims, permission, requestPermission])
+// re-fires after every state update and resets phase back to "preview",
+// cancelling any phase transition we want to test.
+jest.mock("expo-camera", () => {
+  const React = require("react");
+  const permission = { granted: true };
+  const requestPermission = jest.fn().mockResolvedValue({ granted: true });
+  // Stable mock for takePictureAsync — exposed via __mockTakePictureAsync so
+  // tests that exercise the AI photo-estimate path can configure it per call.
+  const mockTakePictureAsync = jest.fn();
+  return {
+    // forwardRef so cameraRef.current is populated with the imperative handle
+    // that exposes takePictureAsync.  Plain function components don't forward
+    // refs, which would leave cameraRef.current null and cause handleCapture to
+    // return early before reaching the fetch call we want to assert on.
+    CameraView: React.forwardRef(function CameraView(
+      _props: Record<string, unknown>,
+      ref: React.Ref<{ takePictureAsync: jest.Mock }>
+    ) {
+      React.useImperativeHandle(ref, () => ({ takePictureAsync: mockTakePictureAsync }));
+      return null;
+    }),
+    useCameraPermissions: jest.fn(() => [permission, requestPermission]),
+    __mockTakePictureAsync: mockTakePictureAsync,
+  };
+});
+
+jest.mock("expo-device", () => ({ modelName: null }));
+
+jest.mock("@expo/vector-icons", () => ({
+  Feather: function Feather() { return null; },
+}));
+
+jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
+
+// ─── Typed handles to mocks ───────────────────────────────────────────────────
+
+import { isLiDARSupported, measureObject } from "lidar-measure";
+const mockIsLiDARSupported = isLiDARSupported as jest.Mock;
+const mockMeasureObject = measureObject as jest.Mock;
+
+// Typed handle to the expo-device mock object so tests can set modelName to
+// control isLiDARCapableDevice() return value (lidarAvailable in component).
+const expoDevice = require("expo-device") as { modelName: string | null };
+
+import { Alert, AppState } from "react-native";
+const mockAlert = Alert.alert as jest.Mock;
+const mockAppStateAddListener = AppState.addEventListener as jest.Mock;
+
+// ─── Component under test ─────────────────────────────────────────────────────
+
+import {
+  MeasurePartScreen,
+  isLiDARCapableDevice,
+  type PartDimensions,
+} from "../components/MeasurePartScreen";
+
+// ─── Instance-tree helpers ────────────────────────────────────────────────────
+
+type TestInst = TestInstance;
+
+/** Recursively concatenate all string leaf nodes. */
+function instText(node: TestInst | string): string {
+  if (typeof node === "string") return node;
+  return node.children.map((c: TestInst | string) => instText(c as TestInst | string)).join("");
+}
+
+/** Find all host instances of the given tag (e.g. "rn-pressable"). */
+function findByTag(root: TestInst, tag: string): TestInst[] {
+  return root.queryAll((n: TestInst) => n.type === tag, { includeSelf: true });
+}
+
+/** Find the first "rn-pressable" instance whose text content includes `text`. */
+function findPressable(root: TestInst, text: string): TestInst | null {
+  return findByTag(root, "rn-pressable").find((n: TestInst) => instText(n).includes(text)) ?? null;
+}
+
+/** True if any node in the tree contains `text`. */
+function hasText(root: TestInst, text: string): boolean {
+  return instText(root).includes(text);
+}
+
+/** Collect all non-empty `value` props from rn-text-input nodes in the tree. */
+function findInputValues(root: TestInst): string[] {
+  return root
+    .queryAll((n: TestInst) => (n.type as string) === "rn-text-input", { includeSelf: true })
+    .map((n: TestInst) => String(n.props.value ?? ""))
+    .filter(Boolean);
+}
+
+// ─── Per-test cleanup state ───────────────────────────────────────────────────
+
+/**
+ * Track the active renderer and any pending measureObject reject so afterEach
+ * can tear them down.  Unresolved promises and un-removed AppState listeners
+ * are the two sources of open-handle warnings / hangs in Jest.
+ */
+let activeTree: Awaited<ReturnType<typeof render>> | null = null;
+let rejectPendingMeasure: ((e: Error) => void) | null = null;
+
+// ─── Render helper (wraps in act so effects flush before assertions) ──────────
+
+async function renderComponent(ui: React.ReactElement) {
+  const result = await render(ui);
+  activeTree = result;
+  return result;
+}
+
+// Press a button by label, wrapped in act so resulting state updates flush.
+async function press(root: TestInst, label: string) {
+  const btn = findPressable(root, label);
+  if (!btn) throw new Error(`Button "${label}" not found`);
+  await act(async () => {
+    fireEvent.press(btn);
+  });
+}
+
+// Flush any resolved promises (one microtask tick).
+const flushPromises = () => act(async () => { await Promise.resolve(); });
+
+const DEFAULT_PROPS = {
+  visible: true,
+  onClose: jest.fn(),
+  onConfirm: jest.fn(),
+  initialDims: null,
+  adminToken: "test-token",
+};
+
+afterEach(async () => {
+  // Settle any pending measureObject promise so its microtask chain doesn't
+  // linger after the test ends (open-handle source #1).
+  if (rejectPendingMeasure) {
+    rejectPendingMeasure(new Error("test cleanup"));
+    rejectPendingMeasure = null;
+  }
+  // Unmount the renderer tree so the component's cleanup effects run and the
+  // AppState subscription is removed (open-handle source #2).
+  if (activeTree) {
+    await activeTree.unmount();
+    activeTree = null;
+  }
+  jest.clearAllMocks();
+  // Reset expo-device modelName so isLiDARCapableDevice() returns true by
+  // default (null → unknown/simulator → assume capable) and mutations from
+  // the isLiDARCapableDevice() describe block don't bleed into later tests.
+  expoDevice.modelName = null;
+});
+
+// ─── isLiDARCapableDevice ─────────────────────────────────────────────────────
+
+describe("isLiDARCapableDevice()", () => {
+  let ExpoDevice: { modelName: string | null };
+  beforeEach(() => { ExpoDevice = require("expo-device"); });
+
+  it("returns true when modelName is null (unknown / simulator)", () => {
+    ExpoDevice.modelName = null;
+    expect(isLiDARCapableDevice()).toBe(true);
+  });
+
+  it("returns true for iPhone 12 Pro", () => {
+    ExpoDevice.modelName = "iPhone 12 Pro";
+    expect(isLiDARCapableDevice()).toBe(true);
+  });
+
+  it("returns true for iPhone 15 Pro Max", () => {
+    ExpoDevice.modelName = "iPhone 15 Pro Max";
+    expect(isLiDARCapableDevice()).toBe(true);
+  });
+
+  it("returns true for iPad Pro", () => {
+    ExpoDevice.modelName = "iPad Pro (12.9-inch) (4th generation)";
+    expect(isLiDARCapableDevice()).toBe(true);
+  });
+
+  it("returns false for iPhone 11 (no LiDAR)", () => {
+    ExpoDevice.modelName = "iPhone 11";
+    expect(isLiDARCapableDevice()).toBe(false);
+  });
+
+  it("returns false for iPhone SE (3rd generation)", () => {
+    ExpoDevice.modelName = "iPhone SE (3rd generation)";
+    expect(isLiDARCapableDevice()).toBe(false);
+  });
+
+  it("returns false for iPad Air", () => {
+    ExpoDevice.modelName = "iPad Air (5th generation)";
+    expect(isLiDARCapableDevice()).toBe(false);
+  });
+});
+
+// ─── Preview phase ────────────────────────────────────────────────────────────
+
+describe("MeasurePartScreen – preview phase", () => {
+  it("renders null when visible=false", async () => {
+    expoDevice.modelName = "iPhone 11";
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} visible={false} />
+    );
+    expect(result.toJSON()).toBeNull();
+  });
+
+  it('shows "Measure Part" in the header', async () => {
+    expoDevice.modelName = "iPhone 11";
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
+  });
+
+  it("shows LiDAR scan button when lidar is available", async () => {
+    // expoDevice.modelName is null (reset by afterEach) → isLiDARCapableDevice() = true
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(findPressable(result.root!, "Scan with LiDAR")).not.toBeNull();
+  });
+
+  it("does not show LiDAR scan button when lidar is unavailable", async () => {
+    expoDevice.modelName = "iPhone 11";
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(findPressable(result.root!, "Scan with LiDAR")).toBeNull();
+  });
+
+  it('shows "Enter manually instead" link always', async () => {
+    expoDevice.modelName = "iPhone 11";
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(hasText(result.root!, "Enter manually instead")).toBe(true);
+  });
+
+  it("shows LiDAR unsupported message when lidar is unavailable", async () => {
+    expoDevice.modelName = "iPhone 11";
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(hasText(result.root!, "LiDAR measurement requires a LiDAR-capable device")).toBe(true);
+  });
+
+  it("does not show LiDAR unsupported message when lidar is available", async () => {
+    // expoDevice.modelName is null → isLiDARCapableDevice() = true
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(hasText(result.root!, "LiDAR measurement requires a LiDAR-capable device")).toBe(false);
+  });
+});
+
+// ─── Manual entry shortcut ────────────────────────────────────────────────────
+
+describe("MeasurePartScreen – manual entry shortcut", () => {
+  it('transitions to confirm phase when "Enter manually instead" is pressed', async () => {
+    expoDevice.modelName = "iPhone 11";
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Enter manually instead");
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+  });
+});
+
+// ─── Phase: lidar_scanning → confirm (success) ───────────────────────────────
+
+describe("MeasurePartScreen – lidar_scanning → confirm (happy path)", () => {
+  it('shows "LiDAR Scanning…" header immediately after pressing Scan', async () => {
+    // expoDevice.modelName is null → isLiDARCapableDevice() = true
+    let resolveScanning!: (v: { length: number; width: number; height: number }) => void;
+    mockMeasureObject.mockReturnValue(
+      new Promise((res, rej) => { resolveScanning = res; rejectPendingMeasure = rej; })
+    );
+
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(findPressable(result.root!, "Scan with LiDAR")).not.toBeNull();
+
+    await press(result.root!, "Scan with LiDAR");
+    expect(hasText(result.root!, "LiDAR Scanning")).toBe(true);
+
+    resolveScanning({ length: 200, width: 100, height: 50 });
+    rejectPendingMeasure = null;
+    await flushPromises();
+  });
+
+  it('transitions to "Review Dimensions" after measureObject resolves', async () => {
+    mockMeasureObject.mockResolvedValue({ length: 200, width: 100, height: 50 });
+
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
+    await flushPromises();
+
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+  });
+
+  it("populates dimension fields with values from measureObject", async () => {
+    mockMeasureObject.mockResolvedValue({ length: 200, width: 100, height: 50 });
+
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
+    await flushPromises();
+
+    expect(hasText(result.root!, "200 × 100 × 50 mm")).toBe(true);
+  });
+
+  it("calls measureObject with the 4-second timeout constant", async () => {
+    mockMeasureObject.mockResolvedValue({ length: 100, width: 80, height: 60 });
+
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
+    await flushPromises();
+
+    expect(mockMeasureObject).toHaveBeenCalledWith(4);
+  });
+});
+
+// ─── Phase: lidar_scanning → preview (error) ─────────────────────────────────
+
+describe("MeasurePartScreen – lidar_scanning → preview (error path)", () => {
+  it("returns to preview phase when measureObject rejects", async () => {
+    mockMeasureObject.mockRejectedValue(new Error("ERR_NO_MESH"));
+
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
+    await flushPromises();
+
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
+  });
+
+  it("shows the error message from the native module via Alert", async () => {
+    mockMeasureObject.mockRejectedValue(new Error("ERR_NO_MESH"));
+
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
+    await flushPromises();
+
+    expect(mockAlert).toHaveBeenCalledWith(
+      "LiDAR scan failed",
+      expect.stringContaining("ERR_NO_MESH")
+    );
+  });
+
+  it("uses a generic fallback message when the rejection is not an Error", async () => {
+    mockMeasureObject.mockRejectedValue("non-error string rejection");
+
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
+    await flushPromises();
+
+    expect(mockAlert).toHaveBeenCalledWith(
+      "LiDAR scan failed",
+      expect.stringContaining("LiDAR scan failed")
+    );
+  });
+});
+
+// ─── Phase: lidar_scanning → preview (AppState background interrupt) ─────────
+
+describe("MeasurePartScreen – lidar_scanning → preview (background interrupt)", () => {
+  /**
+   * Helper: start a scan that stays pending, then fire the AppState listener
+   * with the given nextState, then assert the phase resets to preview.
+   */
+  async function runInterruptTest(nextState: "background" | "inactive") {
+    // expoDevice.modelName is null → isLiDARCapableDevice() = true
+    // Never resolves during the test — we want the scan to still be in-flight.
+    // Capture the reject so afterEach can settle it and prevent an open handle.
+    mockMeasureObject.mockReturnValue(
+      new Promise((_, rej) => { rejectPendingMeasure = rej; })
+    );
+
+    const result = await renderComponent(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(result.root!, "Scan with LiDAR");
+
+    // The component must now be in lidar_scanning phase and have registered
+    // an AppState listener.  Grab the change-handler from the mock.
+    expect(mockAppStateAddListener).toHaveBeenCalledWith("change", expect.any(Function));
+    const changeHandler: (s: string) => void =
+      mockAppStateAddListener.mock.calls[mockAppStateAddListener.mock.calls.length - 1][1];
+
+    // Simulate the app moving to background / inactive while scanning.
+    await act(async () => {
+      changeHandler(nextState);
+    });
+
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
+  }
+
+  it("resets to preview when app moves to background mid-scan", async () => {
+    await runInterruptTest("background");
+  });
+
+  it("resets to preview when app becomes inactive mid-scan", async () => {
+    await runInterruptTest("inactive");
+  });
+});
+
+// ─── onConfirm callback ───────────────────────────────────────────────────────
+
+describe("MeasurePartScreen – onConfirm callback", () => {
+  it("fires onConfirm with parsed dimensions after a successful LiDAR scan", async () => {
+    const onConfirm = jest.fn();
+    mockMeasureObject.mockResolvedValue({ length: 200, width: 100, height: 50 });
+
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} onConfirm={onConfirm} />
+    );
+    await press(result.root!, "Scan with LiDAR");
+    await flushPromises();
+    await press(result.root!, "Save Dimensions");
+
+    expect(onConfirm).toHaveBeenCalledWith<[PartDimensions]>({
+      length: 200,
+      width: 100,
+      height: 50,
+      diameter: null,
+    });
+  });
+
+  it("fires onConfirm with null values when fields are empty (manual entry)", async () => {
+    const onConfirm = jest.fn();
+    expoDevice.modelName = "iPhone 11";
+
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} onConfirm={onConfirm} />
+    );
+    await press(result.root!, "Enter manually instead");
+    await press(result.root!, "Save Dimensions");
+
+    expect(onConfirm).toHaveBeenCalledWith<[PartDimensions]>({
+      length: null,
+      width: null,
+      height: null,
+      diameter: null,
+    });
+  });
+});
+
+// ─── AI photo-estimate endpoint routing ───────────────────────────────────────
+//
+// Verifies that handleCapture (initial capture) and handleCaptureOnConfirm
+// (re-estimate from the confirm screen) both pick the correct API endpoint and
+// Authorization header based on whether adminToken is present.
+//
+// Non-admin path  → /estimate-dimensions/search, no Authorization header
+// Admin path      → /estimate-dimensions,        Authorization: Bearer <token>
+
+describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
+  // Grab the stable takePictureAsync mock exposed by the expo-camera module mock.
+  // This reference is valid for the lifetime of the test suite because jest.mock
+  // is hoisted and the factory only runs once.
+  const expoCamera = require("expo-camera") as {
+    __mockTakePictureAsync: jest.Mock;
+  };
+
+  let mockFetch: jest.SpyInstance;
+
+  beforeEach(() => {
+    // Use a non-LiDAR device so the Capture & Estimate button is shown instead.
+    expoDevice.modelName = "iPhone 11";
+
+    // The camera ref must be non-null for handleCapture to proceed; the
+    // forwardRef CameraView mock handles that via useImperativeHandle.
+    expoCamera.__mockTakePictureAsync.mockResolvedValue({
+      base64: "fake-base64-data",
+      uri: "file://fake-uri",
+    });
+
+    mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
+    } as Response);
+  });
+
+  afterEach(() => {
+    mockFetch.mockRestore();
+  });
+
+  // ── Initial capture (preview → estimating) ────────────────────────────────
+
+  it("initial capture: non-admin fetches /estimate-dimensions/search without Authorization", async () => {
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
+    );
+
+    await press(result.root!, "Capture & Estimate");
+    await flushPromises();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/estimate-dimensions\/search$/);
+    expect(
+      (init.headers as Record<string, string>)["Authorization"]
+    ).toBeUndefined();
+  });
+
+  it("initial capture: admin fetches /estimate-dimensions with Authorization header", async () => {
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
+    );
+
+    await press(result.root!, "Capture & Estimate");
+    await flushPromises();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/estimate-dimensions$/);
+    expect(url).not.toMatch(/\/estimate-dimensions\/search/);
+    expect(
+      (init.headers as Record<string, string>)["Authorization"]
+    ).toBe("Bearer admin-token-xyz");
+  });
+
+  // ── Re-estimate from confirm screen ──────────────────────────────────────
+
+  it("re-estimate from confirm: non-admin fetches /estimate-dimensions/search without Authorization", async () => {
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
+    );
+
+    // Reach the confirm screen via manual-entry shortcut.
+    await press(result.root!, "Enter manually instead");
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+
+    await press(result.root!, "Photo Estimate");
+    await flushPromises();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/estimate-dimensions\/search$/);
+    expect(
+      (init.headers as Record<string, string>)["Authorization"]
+    ).toBeUndefined();
+  });
+
+  it("re-estimate from confirm: admin fetches /estimate-dimensions with Authorization header", async () => {
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
+    );
+
+    // Reach the confirm screen via manual-entry shortcut.
+    await press(result.root!, "Enter manually instead");
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+
+    await press(result.root!, "Photo Estimate");
+    await flushPromises();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/estimate-dimensions$/);
+    expect(url).not.toMatch(/\/estimate-dimensions\/search/);
+    expect(
+      (init.headers as Record<string, string>)["Authorization"]
+    ).toBe("Bearer admin-token-xyz");
+  });
+});
+
+// ─── AI photo-estimate error handling ─────────────────────────────────────────
+//
+// Verifies that handleCapture (initial capture) and handleCaptureOnConfirm
+// (re-estimate from the confirm screen) surface errors correctly instead of
+// leaving the screen silently stuck in the "estimating" phase.
+//
+// handleCapture errors  → Alert shown + phase returns to "preview"
+// handleCaptureOnConfirm errors → inline confirmEstimateError shown
+
+describe("MeasurePartScreen – AI photo-estimate error handling", () => {
+  const expoCamera = require("expo-camera") as {
+    __mockTakePictureAsync: jest.Mock;
+  };
+
+  let mockFetch: jest.SpyInstance;
+
+  beforeEach(() => {
+    // Use a non-LiDAR device so the Capture & Estimate button is shown instead.
+    expoDevice.modelName = "iPhone 11";
+
+    expoCamera.__mockTakePictureAsync.mockResolvedValue({
+      base64: "fake-base64-data",
+      uri: "file://fake-uri",
+    });
+  });
+
+  afterEach(() => {
+    mockFetch?.mockRestore();
+  });
+
+  // ── handleCapture: non-OK HTTP response ───────────────────────────────────
+
+  it("initial capture (non-admin): non-OK 500 shows Alert and returns to preview", async () => {
+    mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: "Internal Server Error" }),
+    } as Response);
+
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
+    );
+
+    await press(result.root!, "Capture & Estimate");
+    await flushPromises();
+
+    expect(mockAlert).toHaveBeenCalledWith(
+      "Estimation failed",
+      expect.stringContaining("Internal Server Error")
+    );
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
+  });
+
+  it("initial capture (admin): non-OK 500 shows Alert and returns to preview", async () => {
+    mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({}),
+    } as Response);
+
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
+    );
+
+    await press(result.root!, "Capture & Estimate");
+    await flushPromises();
+
+    expect(mockAlert).toHaveBeenCalledWith(
+      "Estimation failed",
+      expect.stringContaining("Server error 500")
+    );
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
+  });
+
+  // ── handleCapture: network failure (fetch rejection) ──────────────────────
+
+  it("initial capture (non-admin): network error shows Alert and returns to preview", async () => {
+    mockFetch = jest
+      .spyOn(global, "fetch")
+      .mockRejectedValue(new Error("Network request failed"));
+
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
+    );
+
+    await press(result.root!, "Capture & Estimate");
+    await flushPromises();
+
+    expect(mockAlert).toHaveBeenCalledWith(
+      "Estimation failed",
+      expect.stringContaining("Network request failed")
+    );
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
+  });
+
+  it("initial capture (admin): network error shows Alert and returns to preview", async () => {
+    mockFetch = jest
+      .spyOn(global, "fetch")
+      .mockRejectedValue(new Error("Network request failed"));
+
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
+    );
+
+    await press(result.root!, "Capture & Estimate");
+    await flushPromises();
+
+    expect(mockAlert).toHaveBeenCalledWith(
+      "Estimation failed",
+      expect.stringContaining("Network request failed")
+    );
+    expect(hasText(result.root!, "Measure Part")).toBe(true);
+  });
+
+  // ── handleCaptureOnConfirm: non-OK HTTP response → inline error ───────────
+
+  it("re-estimate (non-admin): non-OK 500 shows inline error on confirm screen", async () => {
+    // First call (reaching confirm via initial capture) succeeds; second call fails.
+    mockFetch = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ error: "Re-estimate server error" }),
+      } as Response);
+
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
+    );
+
+    // Reach confirm screen via the initial capture path.
+    await press(result.root!, "Capture & Estimate");
+    await flushPromises();
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+
+    // Trigger re-estimation which will fail.
+    await press(result.root!, "Photo Estimate");
+    await flushPromises();
+
+    expect(hasText(result.root!, "Re-estimate server error")).toBe(true);
+    // Screen stays on confirm, not preview.
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+  });
+
+  it("re-estimate (admin): non-OK 500 shows inline error on confirm screen", async () => {
+    mockFetch = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({}),
+      } as Response);
+
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
+    );
+
+    await press(result.root!, "Capture & Estimate");
+    await flushPromises();
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+
+    await press(result.root!, "Photo Estimate");
+    await flushPromises();
+
+    expect(hasText(result.root!, "Server error 500")).toBe(true);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+  });
+
+  // ── handleCaptureOnConfirm: network failure → inline error ────────────────
+
+  it("re-estimate (non-admin): network error shows inline error on confirm screen", async () => {
+    mockFetch = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
+      } as Response)
+      .mockRejectedValueOnce(new Error("Network request failed"));
+
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
+    );
+
+    await press(result.root!, "Capture & Estimate");
+    await flushPromises();
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+
+    await press(result.root!, "Photo Estimate");
+    await flushPromises();
+
+    expect(hasText(result.root!, "Network request failed")).toBe(true);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+  });
+
+  it("re-estimate (admin): network error shows inline error on confirm screen", async () => {
+    mockFetch = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
+      } as Response)
+      .mockRejectedValueOnce(new Error("Network request failed"));
+
+    const result = await renderComponent(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
+    );
+
+    await press(result.root!, "Capture & Estimate");
+    await flushPromises();
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+
+    await press(result.root!, "Photo Estimate");
+    await flushPromises();
+
+    expect(hasText(result.root!, "Network request failed")).toBe(true);
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+  });
+});
+
+// ─── initialItem dimension seeding ───────────────────────────────────────────
+//
+// When the admin bridge "Measure Now" flow opens MeasurePartScreen it passes
+// the InventoryItem as `initialItem` (not `initialDims`).  The component seeds
+// the dimension input fields from initialItem.dimensions when no explicit
+// initialDims is provided.  These tests verify that seeding path end-to-end.
+
+describe("MeasurePartScreen – initialItem dimension seeding", () => {
+  it("seeds the dimension fields from initialItem.dimensions when initialDims is null", async () => {
+    expoDevice.modelName = "iPhone 11";
+
+    const seedItem = {
+      id: 99,
+      catalog: "WIDGET-X",
+      description: "Seeded from item",
+      binLocations: [],
+      dimensions: { length: 200, width: 100, height: 50, diameter: null },
+    };
+
+    const result = await renderComponent(
+      <MeasurePartScreen
+        {...DEFAULT_PROPS}
+        initialDims={null}
+        initialItem={seedItem as any}
+      />
+    );
+
+    await press(result.root!, "Enter manually instead");
+
+    expect(hasText(result.root!, "200")).toBe(true);
+    expect(hasText(result.root!, "100")).toBe(true);
+    expect(hasText(result.root!, "50")).toBe(true);
+  });
+
+  it("seeds the diameter field when initialItem.dimensions contains only a diameter", async () => {
+    expoDevice.modelName = "iPhone 11";
+
+    const seedItem = {
+      id: 100,
+      catalog: "PIPE-D",
+      description: "Pipe with diameter",
+      binLocations: [],
+      dimensions: { length: null, width: null, height: null, diameter: 38 },
+    };
+
+    const result = await renderComponent(
+      <MeasurePartScreen
+        {...DEFAULT_PROPS}
+        initialDims={null}
+        initialItem={seedItem as any}
+      />
+    );
+
+    await press(result.root!, "Enter manually instead");
+
+    // diameter-only: L/W/H are empty so the dimPreview text node is absent;
+    // check the TextInput value prop directly instead.
+    expect(findInputValues(result.root!)).toContain("38");
+  });
+
+  it("prefers explicit initialDims over initialItem.dimensions when both are provided", async () => {
+    expoDevice.modelName = "iPhone 11";
+
+    const seedItem = {
+      id: 101,
+      catalog: "OVERRIDE-TEST",
+      description: "Should be overridden",
+      binLocations: [],
+      dimensions: { length: 999, width: 888, height: 777, diameter: null },
+    };
+
+    const result = await renderComponent(
+      <MeasurePartScreen
+        {...DEFAULT_PROPS}
+        initialDims={{ length: 200, width: 100, height: 50, diameter: null }}
+        initialItem={seedItem as any}
+      />
+    );
+
+    await press(result.root!, "Enter manually instead");
+
+    expect(hasText(result.root!, "200")).toBe(true);
+    expect(hasText(result.root!, "100")).toBe(true);
+    expect(hasText(result.root!, "50")).toBe(true);
+    expect(hasText(result.root!, "999")).toBe(false);
+  });
+
+  it("leaves fields empty when both initialDims and initialItem.dimensions are null", async () => {
+    expoDevice.modelName = "iPhone 11";
+
+    const seedItem = {
+      id: 102,
+      catalog: "EMPTY-DIMS",
+      description: "No dims",
+      binLocations: [],
+      dimensions: null,
+    };
+
+    const result = await renderComponent(
+      <MeasurePartScreen
+        {...DEFAULT_PROPS}
+        initialDims={null}
+        initialItem={seedItem as any}
+      />
+    );
+
+    await press(result.root!, "Enter manually instead");
+
+    expect(hasText(result.root!, "Review Dimensions")).toBe(true);
+    expect(hasText(result.root!, "200")).toBe(false);
+  });
+});

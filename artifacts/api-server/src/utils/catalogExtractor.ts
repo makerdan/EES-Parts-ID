@@ -1,0 +1,216 @@
+/**
+ * AI utility: calls GPT-4o to extract catalog entries from a single PDF page.
+ * Accepts the page's text content and/or rendered/embedded page images.
+ * Returns structured JSON with one entry per part found on the page.
+ *
+ * Two image-slot strategy per part:
+ *   Rendered-page path (pdftoppm): page.images = [one large page PNG]
+ *     → imageRegion / imageRegion2 are normalised bounding boxes to crop from that PNG.
+ *   Embedded-image path (pdfjs-dist): page.images = [img0, img1, img2, ...]
+ *     → imageIndex / imageIndex2 are 0-based indices into that array.
+ */
+
+import {
+  type AiCatalogEntry,
+  AiCatalogEntrySchema,
+  AiCatalogResponseSchema,
+} from "@workspace/api-zod";
+import { classifyPoeError, poeErrorMessage } from "@workspace/integrations-poe-server";
+
+import { getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
+import { PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
+import { MAX_REQUEST_BYTES_GEMINI_3_1_PRO } from "../lib/poeModelLimits";
+import { extractJsonValueFromText } from "./aiHelpers";
+
+export interface ImageRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface CatalogEntry {
+  catalogNumber: string;
+  description: string;
+  confidence: number;
+  hasPartImage: boolean;
+  /** Primary image crop region on the rendered page (0–1 normalised), or null */
+  imageRegion: ImageRegion | null;
+  /** Secondary image crop region on the rendered page (0–1 normalised), or null */
+  imageRegion2: ImageRegion | null;
+  /** Primary image: 0-based index into pageImages[] for embedded-image pages, or -1 */
+  imageIndex: number;
+  /** Secondary image: 0-based index into pageImages[] for embedded-image pages, or -1 */
+  imageIndex2: number;
+}
+
+/** Thrown when the AI call fails for any reason other than chain exhaustion. */
+export class CatalogAiError extends Error {
+  readonly code: string;
+  readonly originalMessage: string;
+  constructor(code: string, originalMessage: string) {
+    super(code);
+    this.name = "CatalogAiError";
+    this.code = code;
+    this.originalMessage = originalMessage;
+  }
+}
+
+const SYSTEM_PROMPT = `You are an expert electrical supply catalog parser.
+Given the text and/or images from a single page of a manufacturer's product catalog, extract all parts listed on the page.
+For each part return a JSON object with these 8 fields:
+  - catalogNumber: the manufacturer catalog/part number (exact string, no spaces around hyphens)
+  - description: short product description (max 200 chars)
+  - confidence: how confident you are this is a real part number (0.0–1.0)
+  - hasPartImage: boolean — true ONLY if a clearly visible product photograph or illustration appears for this specific part. Set false for text/table-only pages or when uncertain.
+
+For the image fields, choose the right set based on what you see:
+
+IF the image(s) you received show a FULL CATALOG PAGE LAYOUT (one large image with text, tables, and multiple products laid out together):
+  - imageRegion: tight normalised bounding box { "x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0 } (0.0–1.0 fractions of page width/height) for the PRIMARY product image for this part. The area (width × height) must be between 0.02 and 0.85. Set null if not found or not confident.
+  - imageRegion2: same format for a SECONDARY image of this same part (second angle, package/box shot, wiring diagram, etc.) directly adjacent or associated with it in the layout. Set null if no second image exists.
+  - imageIndex: -1
+  - imageIndex2: -1
+
+IF the image(s) you received are SEPARATE INDIVIDUAL PRODUCT IMAGES (not a full catalog page — each image is a standalone product photo or illustration):
+  - imageIndex: 0-based index of the PRIMARY image for this part among the provided images. Set -1 if none match.
+  - imageIndex2: 0-based index of the SECONDARY image for this part (second view, box shot). Set -1 if none.
+  - imageRegion: null
+  - imageRegion2: null
+
+Return ONLY a JSON array of objects with exactly those 8 fields. No markdown, no explanation.
+If no parts are found, return an empty array [].`;
+
+function parseRegion(val: unknown): ImageRegion | null {
+  if (!val || typeof val !== "object") return null;
+  const r = val as Record<string, unknown>;
+  if (
+    typeof r["x"] !== "number" ||
+    typeof r["y"] !== "number" ||
+    typeof r["width"] !== "number" ||
+    typeof r["height"] !== "number"
+  ) return null;
+  return {
+    x: Math.max(0, Math.min(1, r["x"] as number)),
+    y: Math.max(0, Math.min(1, r["y"] as number)),
+    width: Math.max(0, Math.min(1, r["width"] as number)),
+    height: Math.max(0, Math.min(1, r["height"] as number)),
+  };
+}
+
+export interface ExtractCatalogPageResult {
+  entries: Array<CatalogEntry>;
+  rawText: string;
+}
+
+export async function extractCatalogPage(
+  pageText: string,
+  pageImages: Array<Buffer>,
+  vendor: string,
+  useOpenAiFallback = false,
+): Promise<ExtractCatalogPageResult> {
+  if (!pageText.trim() && pageImages.length === 0) return { entries: [], rawText: "" };
+
+  // Enforce Gemini's 20 MB total inline request cap before building the
+  // content array.  Gemini's limit covers all images + prompt text combined;
+  // the prompt text is small (~3 KB) so summing image buffer sizes gives a
+  // safe and accurate upper bound.  Failing fast here avoids a silent provider
+  // rejection that would otherwise surface as an empty or garbled response.
+  const imagesToSend = pageImages.slice(0, 4);
+  const totalImageBytes = imagesToSend.reduce((sum, buf) => sum + buf.length, 0);
+  if (totalImageBytes > MAX_REQUEST_BYTES_GEMINI_3_1_PRO) {
+    const mb = (totalImageBytes / (1024 * 1024)).toFixed(1);
+    const limitMb = (MAX_REQUEST_BYTES_GEMINI_3_1_PRO / (1024 * 1024)).toFixed(0);
+    throw new CatalogAiError(
+      "ai_payload_too_large",
+      `Image payload too large (${mb} MB, limit ${limitMb} MB). Please use fewer or smaller page images.`,
+    );
+  }
+
+  const userContent: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [];
+
+  if (pageText.trim()) {
+    userContent.push({
+      type: "text",
+      text: `Vendor: ${vendor}\nPage text:\n${pageText.slice(0, 3000)}`,
+    });
+  }
+
+  // Include up to 4 images from the page (rendered page image or embedded images)
+  for (const imgBuf of imagesToSend) {
+    userContent.push({
+      type: "image_url",
+      image_url: { url: `data:image/png;base64,${imgBuf.toString("base64")}` },
+    });
+  }
+
+  if (userContent.length === 0) return { entries: [], rawText: "" };
+
+  try {
+    const response = useOpenAiFallback
+      ? await getOpenAIFallbackClient().chat.completions.create({
+          model: getOpenAIModelForFeature("catalog"),
+          max_completion_tokens: 2048,
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: userContent },
+          ],
+        })
+      : await tryPoeBotChain("catalog", (client, model) =>
+          client.chat.completions.create({
+            model,
+            max_completion_tokens: 2048,
+            messages: [
+              { role: "system", content: SYSTEM_PROMPT },
+              { role: "user", content: userContent },
+            ],
+          }),
+        );
+
+    const raw = response.choices[0]?.message?.content ?? "";
+    const parsedResult = AiCatalogResponseSchema.safeParse(
+      extractJsonValueFromText(raw),
+    );
+    if (!parsedResult.success) return { entries: [], rawText: raw };
+
+    const entries = parsedResult.data
+      .map((value) => AiCatalogEntrySchema.safeParse(value))
+      .filter((result): result is { success: true; data: AiCatalogEntry } => result.success)
+      .map(({ data: entry }) => {
+        const hasPartImage = !!entry["hasPartImage"];
+        const imageRegion = hasPartImage ? parseRegion(entry["imageRegion"]) : null;
+        const imageRegion2 = hasPartImage ? parseRegion(entry["imageRegion2"]) : null;
+        const imageIndex = typeof entry["imageIndex"] === "number" ? Math.round(entry["imageIndex"]) : -1;
+        const imageIndex2 = typeof entry["imageIndex2"] === "number" ? Math.round(entry["imageIndex2"]) : -1;
+        return {
+          catalogNumber: (entry["catalogNumber"] as string).trim(),
+          description: (entry["description"] as string).trim().slice(0, 200),
+          confidence: Math.max(0, Math.min(1, entry["confidence"] as number)),
+          hasPartImage,
+          imageRegion,
+          imageRegion2,
+          imageIndex,
+          imageIndex2,
+        };
+      });
+    return { entries, rawText: raw };
+  } catch (err) {
+    if (err instanceof PoeBotChainExhaustedError) {
+      throw err;
+    }
+    // Detect payload-too-large responses (HTTP 413 / provider-specific messages)
+    const errMsg =
+      poeErrorMessage(err) ??
+      (classifyPoeError(err) === "upstream"
+        ? "Poe provider is temporarily unavailable."
+        : "AI provider request failed.");
+    const isPayloadTooLarge =
+      errMsg.includes("413") ||
+      errMsg.toLowerCase().includes("too large") ||
+      errMsg.toLowerCase().includes("payload") ||
+      (err as { status?: number }).status === 413;
+    const code = isPayloadTooLarge ? "ai_payload_too_large" : "ai_error";
+    console.error(`[catalog-extract] AI error (${code}, kind=${classifyPoeError(err)})`);
+    throw new CatalogAiError(code, errMsg);
+  }
+}
