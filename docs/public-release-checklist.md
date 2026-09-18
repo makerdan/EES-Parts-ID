@@ -6,21 +6,29 @@ check.
 
 ## Repository and history
 
-- [ ] `git status --short` is clean and `git ls-files` contains no user upload,
+- [x] `git status --short` is clean and `git ls-files` contains no user upload,
       database export/backup, private object, operational log, or real secret.
-- [ ] Run `node scripts/test/public-repository-boundary.test.mjs`; its synthetic
+- [x] Run `node scripts/test/public-repository-boundary.test.mjs`; its synthetic
       public-source/layout fixtures pass and its secret, export, upload, and
       user-data controls fail closed.
-- [ ] The reachable-history scan reports no private paths. If it reports any,
+- [x] The reachable-history scan reports no private paths. If it reports any,
       stop and complete an owner-approved history purge before launch; do not
       claim that deleting the current-tree copy removed historical data.
-- [ ] The history scan proves the checkout is complete (not shallow, partial, or
+- [x] The history scan proves the checkout is complete (not shallow, partial, or
       replace-ref based) and scans every bounded reachable text blob for
       credential and private-data classes before making a release claim.
 - [ ] Review every new `data/public/` geometry/label change as intentionally
       public and confirm it uses the approved directory, CSV schema, columns,
       and value types with no database IDs, timestamps, inventory, user, or
       operational data.
+
+**2026-09-18 evidence:** A fresh non-shallow clone of the public GitHub
+repository contained eight public heads and no tags. The complete scan reported
+zero historical private-path categories across 7,490 reachable blobs. Six
+changed heads were rewritten atomically with exact leases; the two clean heads
+and all clean tip trees remained unchanged. Protected-branch administrator
+enforcement, required validation, force-push blocking, and deletion blocking
+were restored and re-read after the rewrite.
 
 ## Runtime boundaries
 

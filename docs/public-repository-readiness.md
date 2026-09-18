@@ -1,10 +1,11 @@
 # Public repository readiness
 
-**Assessment date:** 2026-09-04
-**Scope:** current tracked tree and reachable Git history
+**Assessment date:** 2026-09-18
+**Scope:** every public GitHub head and its reachable history in a fresh,
+non-shallow clone
 **Current-tree status:** boundary guard passes. **Repository visibility status:**
-the repository is public, but release readiness remains blocked because private
-historical objects remain reachable from Git history.
+the owner-approved history rewrite is complete, and the fresh public-GitHub
+scan reports no reachable private-path categories.
 
 ## Intentionally public
 
@@ -22,12 +23,11 @@ messages, catalog uploads, or object-storage payloads.
 
 ## Removed from the current tree
 
-- The tracked `attached_assets/` directory, including spreadsheets, PDFs,
-  screenshots, pasted diagnostics, and uploaded images/text.
-- `exports/react-render-audit.zip`, an operational/export archive.
-- `warehouse_zones_backup_2026-07-05.csv`, a database-shaped zone backup. Its
-  geometry was retained in `data/public/warehouse-zones.csv` after removing
-  database IDs and timestamps.
+- Tracked user-upload directories, including spreadsheets, PDFs, screenshots,
+  pasted diagnostics, and uploaded images/text.
+- Operational/export archives.
+- A database-shaped zone backup. Its geometry was retained in
+  `data/public/warehouse-zones.csv` after removing database IDs and timestamps.
 - The importer’s dependency on a committed spreadsheet; imports now require an
   explicitly supplied external path.
 - A real Clerk administrator user identifier from `.replit`.
@@ -35,28 +35,24 @@ messages, catalog uploads, or object-storage payloads.
 Raw database backups are not an acceptable public distribution format. Public
 layout data must remain source-oriented and reviewable.
 
-## Reachable-history findings
+## Reachable-history rewrite evidence
 
-The 2026-09-04 history scan found 100 private paths that are no longer in the
-current tree:
+On 2026-09-18, the owner-approved rewrite removed 100 distinct rejected paths
+from the complete public GitHub ref graph. Six changed heads were replaced in
+one atomic, force-with-lease transaction; the other two public heads already
+had clean, independent histories and remained unchanged.
 
-- Historical `attached_assets/...` paths, including uploaded reports,
-  catalog documents, screenshots, and diagnostic logs.
-- A historical `inventory_export.csv` containing inventory rows and bin
-  locations.
-- Historical warehouse-zone backup and export archive paths.
+A fresh clone after publication verified all eight public heads and no tags.
+The checkout was non-shallow and non-partial, no replace refs were active, and
+the boundary scanner reported zero historical private-path categories while
+scanning 7,490 reachable blobs. All clean branch tip trees remained
+byte-identical through the rewrite.
 
-These objects remain recoverable from reachable commits. Before changing
-repository visibility, the repository owner must perform an approved
-history-rewrite/purge procedure and verify the result with a fresh
-full-history scan. Existing clones, forks, caches, and downloaded artifacts
-must be considered separately.
-
-The credential-shaped history matches reviewed during this assessment were
-documented placeholders or fake test values; no verified live credential was
-found in the current tree. If the owner’s full secret scan finds any live
-credential in history, rotate it before or while purging the history. Do not
-paste credentials into issues, commits, or chat.
+The remaining protected-content matches are documented synthetic placeholder
+or test values; no verified live credential was found. Existing clones, forks,
+caches, and downloaded artifacts remain separate distribution boundaries and
+must not be treated as rewritten automatically. Do not paste credentials or
+private historical paths into issues, commits, or chat.
 
 ## Ongoing boundary check
 
@@ -107,7 +103,7 @@ interpretation of each state.
 
 ## Owner checklist before release
 
-- [ ] Complete and verify the reachable-history purge for the findings above.
+- [x] Complete and verify the reachable-history purge for the findings above.
 - [ ] Run a provider secret scanner over every rewritten ref and rotate any
       live credential it reports.
 - [ ] Confirm warehouse geometry and public labels are safe to disclose.
