@@ -1231,7 +1231,7 @@ chmod +x "$MOCK_BIN_DIR29/pnpm"
 REAL_NODE29=$(command -v node)
 cat > "$MOCK_BIN_DIR29/node" << MOCKEOF
 #!/bin/bash
-if [[ "\$*" == *"publish-failure-gate.mjs --check"* ]]; then
+if [[ "\$*" == *"publish-failure-gate.mjs --sync"* ]]; then
   exit 0
 fi
 if [[ "\${1:-}" == "scripts/serial-lock.mjs" ]]; then
@@ -1299,7 +1299,7 @@ chmod +x "$MOCK_BIN_DIR30/pnpm"
 REAL_NODE30=$(command -v node)
 cat > "$MOCK_BIN_DIR30/node" << MOCKEOF
 #!/bin/bash
-if [[ "\$*" == *"publish-failure-gate.mjs --check"* ]]; then
+if [[ "\$*" == *"publish-failure-gate.mjs --sync"* ]]; then
   exit 0
 fi
 if [[ "\${1:-}" == "scripts/serial-lock.mjs" ]]; then

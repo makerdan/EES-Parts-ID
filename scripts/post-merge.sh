@@ -395,12 +395,18 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # prevents the first health-check pass from catching the server mid-reload.
   wait_for_codegen_settle
 
-  # The Failure Gate distribution is tracked output. Verify that it contains
-  # the same canonical skill and durable support files before syncing main.
-  node scripts/publish-failure-gate.mjs --check || {
-    echo "[post-merge] ERROR: Failure Gate package is stale. Run 'pnpm run publish:failure-gate' and commit artifacts/failure-gate-skill.zip."
+  # The Failure Gate distribution is tracked output. Refresh it when merged
+  # validation tooling changes, then commit only the generated archive so the
+  # next merge starts from a clean and self-consistent repository.
+  node scripts/publish-failure-gate.mjs --sync || {
+    echo "[post-merge] ERROR: Failure Gate package could not be refreshed."
     exit 1
   }
+  if [[ -n "$(git status --porcelain -- artifacts/failure-gate-skill.zip)" ]]; then
+    git add artifacts/failure-gate-skill.zip
+    git commit -m "chore: refresh Failure Gate package [post-merge]"
+    echo "[post-merge] Failure Gate package refreshed and committed."
+  fi
 
   # Enforce the protected snapshot-PR synchronization boundary. The helper is
   # intentionally a safe no-op; routine post-merge recovery must never publish
