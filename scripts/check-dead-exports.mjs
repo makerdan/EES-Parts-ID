@@ -77,6 +77,9 @@ for (const packageDir of packageDirs) {
     continue;
   }
 
+  console.log(
+    `dead-exports — checking ${manifest.name ?? packageDir}`,
+  );
   const result = spawnSync(
     knip,
     ["--directory", packageDir, "--no-config-hints"],
