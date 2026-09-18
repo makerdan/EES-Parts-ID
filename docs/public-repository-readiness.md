@@ -89,14 +89,16 @@ the public repository matches the workspace. The helper never pushes directly
 to the protected default branch.
 
 The helper's read-only `--verify` mode returns status `0` with
-`VERIFIED_SYNCHRONIZATION` only when the expected Git tree matches both the
-selected repository's current `HEAD^{tree}` and an approved `review/` or
-`snapshot/` ref (including an approved pull-request head). Re-read the current
-tree after any workspace change; a valid older tree is stale input and cannot
-produce verification evidence. Missing, stale, unsupported, or mismatched refs
-return status `3` with `VERIFICATION_FAILURE`. See the [public release
-checklist](public-release-checklist.md) for the command and the required
-interpretation of each state.
+`VERIFIED_SYNCHRONIZATION` only when one supplied immutable commit revision's
+tree matches both the selected repository's `HEAD` before and after the
+verification and an approved `review/` or `snapshot/` ref (including an
+approved pull-request head). The release wrapper must coordinate workspace
+changes so that revision remains checked out for the complete call; a branch
+switch, rebase, or other `HEAD` change during verification returns status `3`
+with `VERIFICATION_FAILURE` rather than producing evidence for another
+revision. Missing, stale, unsupported, or mismatched refs also return status
+`3`. See the [public release checklist](public-release-checklist.md) for the
+command and the required interpretation of each state.
 
 ## Release documents
 

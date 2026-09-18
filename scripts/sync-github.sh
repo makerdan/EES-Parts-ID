@@ -21,7 +21,7 @@ usage() {
 Usage:
   scripts/sync-github.sh
   scripts/sync-github.sh --sync
-  scripts/sync-github.sh --verify --expected-tree TREE --approved-ref REF [--repo PATH]
+  scripts/sync-github.sh --verify --expected-revision REVISION --approved-ref REF [--repo PATH]
 
 Direct synchronization is unsupported. Verification is read-only and accepts
 only refs under refs/heads/review/, refs/heads/snapshot/, matching remote
@@ -43,7 +43,7 @@ fi
 
 shift
 repo="."
-expected_tree=""
+expected_revision=""
 approved_ref=""
 
 while [[ $# -gt 0 ]]; do
@@ -56,12 +56,12 @@ while [[ $# -gt 0 ]]; do
       repo="$2"
       shift 2
       ;;
-    --expected-tree)
+    --expected-revision)
       [[ $# -ge 2 ]] || {
         usage >&2
         exit "$USAGE_STATUS"
       }
-      expected_tree="$2"
+      expected_revision="$2"
       shift 2
       ;;
     --approved-ref)
@@ -79,7 +79,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$expected_tree" ]] || {
+[[ -n "$expected_revision" ]] || {
   usage >&2
   exit "$USAGE_STATUS"
 }
@@ -88,8 +88,8 @@ done
   exit "$USAGE_STATUS"
 }
 
-if [[ ! "$expected_tree" =~ ^[0-9a-fA-F]{40,64}$ ]]; then
-  verification_failure "expected tree must be a Git tree object ID"
+if [[ ! "$expected_revision" =~ ^[0-9a-fA-F]{40,64}$ ]]; then
+  verification_failure "expected revision must be a full Git commit object ID"
 fi
 
 case "$approved_ref" in
@@ -102,18 +102,18 @@ case "$approved_ref" in
     ;;
 esac
 
-if ! expected_type="$(git -C "$repo" cat-file -t "$expected_tree" 2>/dev/null)"; then
-  verification_failure "expected tree does not exist in the repository"
+if ! expected_revision_resolved="$(git -C "$repo" rev-parse --verify "${expected_revision}^{commit}" 2>/dev/null)"; then
+  verification_failure "expected revision does not resolve to a commit in the repository"
 fi
-[[ "$expected_type" == "tree" ]] || {
-  verification_failure "expected object is not a tree"
-}
+if ! expected_tree="$(git -C "$repo" rev-parse --verify "${expected_revision_resolved}^{tree}" 2>/dev/null)"; then
+  verification_failure "expected revision has no readable tree"
+fi
 
-if ! current_tree="$(git -C "$repo" rev-parse --verify "HEAD^{tree}" 2>/dev/null)"; then
-  verification_failure "selected repository has no readable current workspace tree"
+if ! initial_revision="$(git -C "$repo" rev-parse --verify "HEAD^{commit}" 2>/dev/null)"; then
+  verification_failure "selected repository has no readable current workspace revision"
 fi
-if [[ "${expected_tree,,}" != "$current_tree" ]]; then
-  verification_failure "expected tree is stale for the selected repository workspace; re-read HEAD^{tree} before verifying"
+if [[ "${expected_revision_resolved,,}" != "${initial_revision,,}" ]]; then
+  verification_failure "expected revision is stale for the selected repository workspace; re-read HEAD before verifying"
 fi
 
 if ! approved_commit="$(git -C "$repo" rev-parse --verify "${approved_ref}^{commit}" 2>/dev/null)"; then
@@ -127,5 +127,12 @@ if [[ "$expected_tree" != "$approved_tree" && "${expected_tree,,}" != "$approved
   verification_failure "expected tree $expected_tree does not match $approved_ref tree $approved_tree"
 fi
 
-printf '[github-sync] VERIFIED_SYNCHRONIZATION: %s matches approved tree %s (read-only; no push performed).\n' \
-  "$approved_ref" "$approved_tree"
+if ! final_revision="$(git -C "$repo" rev-parse --verify "HEAD^{commit}" 2>/dev/null)"; then
+  verification_failure "selected repository lost its current workspace revision during verification"
+fi
+if [[ "${expected_revision_resolved,,}" != "${final_revision,,}" ]]; then
+  verification_failure "selected repository revision changed during verification; repeat with a coordinated immutable revision"
+fi
+
+printf '[github-sync] VERIFIED_SYNCHRONIZATION: revision %s matches %s tree %s (read-only; no push performed).\n' \
+  "$expected_revision_resolved" "$approved_ref" "$approved_tree"

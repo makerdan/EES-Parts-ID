@@ -79,25 +79,28 @@ or `--sync` is an intentional policy refusal and must exit with status `2`;
 pull-request process instead.
 
 Read-only verification is the only successful helper state. After the approved
-snapshot or review ref is available locally, provide the exact expected tree:
+snapshot or review ref is available locally, provide the exact immutable
+revision:
 
 ```bash
-expected_tree="$(git rev-parse HEAD^{tree})"
+expected_revision="$(git rev-parse --verify HEAD^{commit})"
 bash scripts/sync-github.sh --verify \
-  --expected-tree "$expected_tree" \
+  --expected-revision "$expected_revision" \
   --approved-ref refs/heads/snapshot/<approved-name>
 ```
 
-Read `HEAD^{tree}` immediately before verification and re-read it after any
-workspace change. The helper binds evidence to the selected repository's
-current workspace tree, so a valid older tree is stale input even when it
-still matches the approved ref. Status `0` with
-`VERIFIED_SYNCHRONIZATION` proves that the current workspace tree matches the
-approved ref's tree and that no push was performed. Missing refs, unsupported
-approval refs, invalid trees, stale expected trees, and approved-ref tree
-mismatches exit with status `3` and `VERIFICATION_FAILURE`. Any other
-invocation error is a usage failure; none of these states authorizes a direct
-push or a protected-branch bypass.
+The release wrapper must keep the selected repository at that immutable
+revision for the complete verification call: do not switch branches, update
+`HEAD`, rebase, or rewrite the checkout concurrently. The helper derives the
+expected tree from the commit, checks `HEAD` before reading the approved ref,
+and checks it again before reporting success. A workspace revision change
+during verification therefore returns status `3` with
+`VERIFICATION_FAILURE`; it cannot produce evidence for a different revision.
+Status `0` with `VERIFIED_SYNCHRONIZATION` proves that the supplied revision's
+tree matches the approved ref's tree and that no push was performed. Missing,
+unsupported, invalid, stale, changed-during-verification, and mismatched refs
+return status `3`. Any other invocation error is a usage failure; none of
+these states authorizes a direct push or a protected-branch bypass.
 
 ## Incident response for an accidental commit
 

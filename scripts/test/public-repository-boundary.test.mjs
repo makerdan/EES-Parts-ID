@@ -7,7 +7,7 @@
  * history rewrite; this check must not imply that such a rewrite happened.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -85,10 +85,11 @@ function gitIn(directory, args) {
   }).trim();
 }
 
-function runSyncHelper(args) {
+function runSyncHelper(args, env = {}) {
   const result = spawnSync("bash", [join(ROOT, "scripts/sync-github.sh"), ...args], {
     cwd: ROOT,
     encoding: "utf8",
+    env: { ...process.env, ...env },
   });
   return {
     status: result.status,
@@ -503,15 +504,15 @@ function assertSyncHelperFailsClosed() {
     gitIn(repository, ["add", "README.md"]);
     gitIn(repository, ["commit", "--quiet", "-m", "approved snapshot"]);
     const approvedCommit = gitIn(repository, ["rev-parse", "HEAD"]);
-    const approvedTree = gitIn(repository, ["rev-parse", "HEAD^{tree}"]);
+    const currentBranch = gitIn(repository, ["branch", "--show-current"]);
     gitIn(repository, ["update-ref", "refs/heads/snapshot/approved", approvedCommit]);
 
     const verified = runSyncHelper([
       "--verify",
       "--repo",
       repository,
-      "--expected-tree",
-      approvedTree,
+      "--expected-revision",
+      approvedCommit,
       "--approved-ref",
       "refs/heads/snapshot/approved",
     ]);
@@ -521,13 +522,13 @@ function assertSyncHelperFailsClosed() {
     writeFileSync(join(repository, "README.md"), "different workspace tree\n");
     gitIn(repository, ["add", "README.md"]);
     gitIn(repository, ["commit", "--quiet", "-m", "different workspace tree"]);
-    const mismatchedTree = gitIn(repository, ["rev-parse", "HEAD^{tree}"]);
+    const mismatchedRevision = gitIn(repository, ["rev-parse", "HEAD"]);
     const mismatch = runSyncHelper([
       "--verify",
       "--repo",
       repository,
-      "--expected-tree",
-      mismatchedTree,
+      "--expected-revision",
+      mismatchedRevision,
       "--approved-ref",
       "refs/heads/snapshot/approved",
     ]);
@@ -535,26 +536,76 @@ function assertSyncHelperFailsClosed() {
     assert(mismatch.output.includes("VERIFICATION_FAILURE"), "tree mismatch was not labeled");
     assert(!mismatch.output.includes("VERIFIED_SYNCHRONIZATION"), "tree mismatch was reported as verified");
 
-    const staleExpectedTree = runSyncHelper([
+    const staleExpectedRevision = runSyncHelper([
       "--verify",
       "--repo",
       repository,
-      "--expected-tree",
-      approvedTree,
+      "--expected-revision",
+      approvedCommit,
       "--approved-ref",
       "refs/heads/snapshot/approved",
     ]);
-    assert(staleExpectedTree.status === 3, "stale expected tree did not return verification-failure status");
-    assert(staleExpectedTree.output.includes("expected tree is stale"), "stale expected tree was not classified");
-    assert(staleExpectedTree.output.includes("selected repository workspace"), "stale tree diagnostic did not identify the workspace");
-    assert(!staleExpectedTree.output.includes("VERIFIED_SYNCHRONIZATION"), "stale expected tree was reported as verified");
+    assert(staleExpectedRevision.status === 3, "stale expected revision did not return verification-failure status");
+    assert(staleExpectedRevision.output.includes("expected revision is stale"), "stale expected revision was not classified");
+    assert(staleExpectedRevision.output.includes("selected repository workspace"), "stale revision diagnostic did not identify the workspace");
+    assert(!staleExpectedRevision.output.includes("VERIFIED_SYNCHRONIZATION"), "stale expected revision was reported as verified");
+
+    gitIn(repository, ["update-ref", `refs/heads/${currentBranch}`, approvedCommit]);
+    const raceCommit = mismatchedRevision;
+    const shimDirectory = mkdtempSync(join(tmpdir(), "github-sync-git-shim-"));
+    const markerPath = join(shimDirectory, "race-triggered");
+    const gitShim = join(shimDirectory, "git");
+    const realGit = execFileSync("bash", ["-lc", "command -v git"], { encoding: "utf8" }).trim();
+    writeFileSync(
+      gitShim,
+      `#!/usr/bin/env bash
+set -euo pipefail
+"${realGit}" "$@"
+status=$?
+if [[ "\${SYNC_RACE_REPO:-}" == "${repository}" &&
+      "\${SYNC_RACE_COMMIT:-}" == "${raceCommit}" &&
+      "\${SYNC_RACE_MARKER:-}" == "${markerPath}" &&
+      ! -e "${markerPath}" &&
+      "\${1:-}" == "-C" &&
+      "\${2:-}" == "${repository}" &&
+      "\${3:-}" == "rev-parse" &&
+      "\${4:-}" == "--verify" &&
+      "\${5:-}" == "HEAD^{commit}" ]]; then
+  touch "${markerPath}"
+  "${realGit}" -C "${repository}" update-ref "refs/heads/${currentBranch}" "${raceCommit}"
+fi
+exit "$status"
+`,
+    );
+    chmodSync(gitShim, 0o755);
+    const raced = runSyncHelper(
+      [
+        "--verify",
+        "--repo",
+        repository,
+        "--expected-revision",
+        approvedCommit,
+        "--approved-ref",
+        "refs/heads/snapshot/approved",
+      ],
+      {
+        PATH: `${shimDirectory}:${process.env.PATH ?? ""}`,
+        SYNC_RACE_REPO: repository,
+        SYNC_RACE_COMMIT: raceCommit,
+        SYNC_RACE_MARKER: markerPath,
+      },
+    );
+    assert(raced.status === 3, "workspace revision race did not return verification-failure status");
+    assert(raced.output.includes("revision changed during verification"), "workspace revision race was not classified");
+    assert(!raced.output.includes("VERIFIED_SYNCHRONIZATION"), "workspace revision race was reported as verified");
+    rmSync(shimDirectory, { recursive: true, force: true });
 
     const unsupportedRef = runSyncHelper([
       "--verify",
       "--repo",
       repository,
-      "--expected-tree",
-      approvedTree,
+      "--expected-revision",
+      approvedCommit,
       "--approved-ref",
       "refs/heads/main",
     ]);
