@@ -93,4 +93,5 @@
 - [OpenAPI integer Zod enforcement](openapi-integer-zod-enforcement.md) — generated Zod schemas may accept fractions for OpenAPI integer fields; enforce safe integers at write boundaries.
 - [Completion validation tier drift](completion-validation-tier-drift.md) — completion callbacks may run every registered tier; unrelated full-suite failures can reject a task whose declared tier passed.
 - [Public history release boundary](public-history-release-boundary.md) — fail closed on incomplete history scans; report existing historical findings without leaking paths or values until owner purge.
+- [Dead-export lint baseline](dead-export-lint-baseline.md) — root lint currently fails because check-dead-exports reports an unlisted `tsc` binary in package metadata.
 - [Shared API codegen ownership](codegen-shared-lock.md) — all destructive generators use one tokenized serial resource and cache the resolved toolchain graph.

@@ -6,9 +6,10 @@
  * reported as remediation findings because removing them requires an owner-led
  * history rewrite; this check must not imply that such a rewrite happened.
  */
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { getTierSteps } from "../validation-steps.mjs";
 
@@ -78,6 +79,25 @@ function gitOptional(args) {
   } catch {
     return "";
   }
+}
+
+function gitIn(directory, args) {
+  return execFileSync("git", args, {
+    cwd: directory,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  }).trim();
+}
+
+function runSyncHelper(args) {
+  const result = spawnSync("bash", [join(ROOT, "scripts/sync-github.sh"), ...args], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  return {
+    status: result.status,
+    output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
+  };
 }
 
 function assert(condition, message) {
@@ -422,6 +442,7 @@ function assertReleaseDocumentation() {
   const security = readFileSync(join(ROOT, SECURITY_POLICY_PATH), "utf8");
   const classification = readFileSync(join(ROOT, DATA_CLASSIFICATION_PATH), "utf8");
   const checklist = readFileSync(join(ROOT, RELEASE_CHECKLIST_PATH), "utf8");
+  const readiness = readFileSync(join(ROOT, "docs/public-repository-readiness.md"), "utf8");
   const protectionStatus = readFileSync(join(ROOT, PROTECTION_STATUS_PATH), "utf8");
   const coverage = readFileSync(join(ROOT, "docs/validation/github-actions-coverage.md"), "utf8");
   const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
@@ -448,6 +469,10 @@ function assertReleaseDocumentation() {
   ]) {
     assert(checklist.includes(phrase), `release checklist is missing "${phrase}"`);
   }
+  for (const phrase of ["POLICY_REFUSAL", "VERIFIED_SYNCHRONIZATION", "VERIFICATION_FAILURE", "--verify"]) {
+    assert(checklist.includes(phrase), `release checklist is missing sync state "${phrase}"`);
+    assert(readiness.includes(phrase), `repository readiness is missing sync state "${phrase}"`);
+  }
 
   const statusValues = [...protectionStatus.matchAll(/`(verified|owner-action-required|unverified)`/g)].map((match) => match[1]);
   assert(statusValues.includes("verified"), "protection status does not distinguish verified controls");
@@ -463,6 +488,72 @@ function assertReleaseDocumentation() {
   assert(boundaryStep?.[1] === "node scripts/test/public-repository-boundary.test.mjs", "boundary guard is not registered in test-fast");
   assert(coverage.includes("| public-repository-boundary | `CI / required` → `pnpm run test-standard-plus`"), "boundary guard is not mapped to the existing GitHub validation path");
   assert((ci.match(/pnpm run test-standard-plus/g) ?? []).length === 1, "CI duplicates or omits the canonical validation tier");
+}
+
+function assertSyncHelperFailsClosed() {
+  const legacyNoOp = runSyncHelper([]);
+  assert(legacyNoOp.status === 2, "legacy no-argument helper call did not return policy-refusal status");
+  assert(legacyNoOp.output.includes("POLICY_REFUSAL"), "legacy no-argument refusal was not labeled");
+
+  const directSync = runSyncHelper(["--sync"]);
+  assert(directSync.status === 2, "direct GitHub synchronization did not return policy-refusal status");
+  assert(directSync.output.includes("POLICY_REFUSAL"), "direct synchronization refusal was not labeled");
+
+  const repository = mkdtempSync(join(tmpdir(), "github-sync-contract-"));
+  try {
+    gitIn(repository, ["init", "--quiet"]);
+    gitIn(repository, ["config", "user.email", "contract@example.com"]);
+    gitIn(repository, ["config", "user.name", "Boundary Contract"]);
+    writeFileSync(join(repository, "README.md"), "approved snapshot\n");
+    gitIn(repository, ["add", "README.md"]);
+    gitIn(repository, ["commit", "--quiet", "-m", "approved snapshot"]);
+    const approvedCommit = gitIn(repository, ["rev-parse", "HEAD"]);
+    const approvedTree = gitIn(repository, ["rev-parse", "HEAD^{tree}"]);
+    gitIn(repository, ["update-ref", "refs/heads/snapshot/approved", approvedCommit]);
+
+    const verified = runSyncHelper([
+      "--verify",
+      "--repo",
+      repository,
+      "--expected-tree",
+      approvedTree,
+      "--approved-ref",
+      "refs/heads/snapshot/approved",
+    ]);
+    assert(verified.status === 0, "exact approved snapshot tree did not verify");
+    assert(verified.output.includes("VERIFIED_SYNCHRONIZATION"), "verified synchronization was not labeled");
+
+    writeFileSync(join(repository, "README.md"), "different workspace tree\n");
+    gitIn(repository, ["add", "README.md"]);
+    gitIn(repository, ["commit", "--quiet", "-m", "different workspace tree"]);
+    const mismatchedTree = gitIn(repository, ["rev-parse", "HEAD^{tree}"]);
+    const mismatch = runSyncHelper([
+      "--verify",
+      "--repo",
+      repository,
+      "--expected-tree",
+      mismatchedTree,
+      "--approved-ref",
+      "refs/heads/snapshot/approved",
+    ]);
+    assert(mismatch.status === 3, "mismatched tree did not return verification-failure status");
+    assert(mismatch.output.includes("VERIFICATION_FAILURE"), "tree mismatch was not labeled");
+    assert(!mismatch.output.includes("VERIFIED_SYNCHRONIZATION"), "tree mismatch was reported as verified");
+
+    const unsupportedRef = runSyncHelper([
+      "--verify",
+      "--repo",
+      repository,
+      "--expected-tree",
+      approvedTree,
+      "--approved-ref",
+      "refs/heads/main",
+    ]);
+    assert(unsupportedRef.status === 3, "unsupported approval ref did not fail verification");
+    assert(unsupportedRef.output.includes("VERIFICATION_FAILURE"), "unsupported approval ref was not labeled");
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
 }
 
 export function scanPaths(paths, contents = new Map()) {
@@ -486,6 +577,7 @@ export function scanHistoryMetadata() {
 
 function runSelfTests() {
   assertReleaseDocumentation();
+  assertSyncHelperFailsClosed();
 
   const synthetic = new Map([
     [

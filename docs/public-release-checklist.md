@@ -51,6 +51,30 @@ check.
 - [ ] Re-run this checklist after any change to repository visibility,
       branch rules, Actions policy, or the required validation workflow.
 
+
+## Synchronization helper states
+
+The local helper does not push to GitHub. A direct invocation with no arguments
+or `--sync` is an intentional policy refusal and must exit with status `2`;
+`POLICY_REFUSAL` is not synchronization evidence. Use the protected snapshot
+pull-request process instead.
+
+Read-only verification is the only successful helper state. After the approved
+snapshot or review ref is available locally, provide the exact expected tree:
+
+```bash
+expected_tree="$(git rev-parse HEAD^{tree})"
+bash scripts/sync-github.sh --verify \
+  --expected-tree "$expected_tree" \
+  --approved-ref refs/heads/snapshot/<approved-name>
+```
+
+Status `0` with `VERIFIED_SYNCHRONIZATION` proves that the approved ref's tree
+matches the expected tree and that no push was performed. Missing refs,
+unsupported approval refs, invalid trees, and tree mismatches exit with status
+`3` and `VERIFICATION_FAILURE`. Any other invocation error is a usage failure;
+none of these states authorizes a direct push or a protected-branch bypass.
+
 ## Incident response for an accidental commit
 
 1. Stop the release or merge and avoid copying the value into issues, logs, or

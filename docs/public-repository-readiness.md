@@ -76,6 +76,21 @@ approved public layout CSV schema and value types. Any historical findings are
 reported for owner remediation rather than silently treated as purged; raw
 historical paths and matched values are never printed.
 
+
+## GitHub synchronization boundary
+
+`scripts/sync-github.sh` fails closed. Its default invocation and explicit
+`--sync` request return status `2` with `POLICY_REFUSAL`; they do not claim that
+the public repository matches the workspace. The helper never pushes directly
+to the protected default branch.
+
+The helper's read-only `--verify` mode returns status `0` with
+`VERIFIED_SYNCHRONIZATION` only when an exact expected Git tree matches an
+approved `review/` or `snapshot/` ref (including an approved pull-request
+head). Missing, stale, unsupported, or mismatched refs return status `3` with
+`VERIFICATION_FAILURE`. See the [public release checklist](public-release-checklist.md)
+for the command and the required interpretation of each state.
+
 ## Release documents
 
 - [Security policy](../SECURITY.md) — responsible disclosure, supported
