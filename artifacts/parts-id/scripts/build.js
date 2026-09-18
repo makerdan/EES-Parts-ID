@@ -1,4 +1,5 @@
 const fs = require("fs");
+const crypto = require("crypto");
 const path = require("path");
 const { spawn } = require("child_process");
 const { Readable } = require("stream");
@@ -839,6 +840,7 @@ async function buildWeb(domain, expoPublicReplId) {
         console.log("Web build complete");
         try {
           sanitizeWebBundleContactData(webOutDir);
+          verifyWebBundleContentHashes(webOutDir);
           verifyBundleDomain(domain, webOutDir);
         } catch (err) {
           reject(err);
@@ -967,6 +969,42 @@ function sanitizeWebBundleContactData(webOutDir) {
   );
 }
 
+function verifyWebBundleContentHashes(webOutDir) {
+  const jsDir = path.join(webOutDir, "_expo", "static", "js", "web");
+  if (!fs.existsSync(jsDir)) {
+    throw new Error(
+      `[Build Guard] Web bundle hash scan failed: JS output dir not found (${jsDir}).`,
+    );
+  }
+
+  const mismatches = [];
+  for (const file of fs.readdirSync(jsDir).filter((name) => name.endsWith(".js"))) {
+    const match = file.match(/^(.*-)([0-9a-f]{32})(\.js)$/);
+    if (!match) continue;
+
+    const content = fs.readFileSync(path.join(jsDir, file));
+    const actualHash = crypto.createHash("md5").update(content).digest("hex");
+    if (actualHash !== match[2]) {
+      mismatches.push({
+        file,
+        expected: match[2],
+        actual: actualHash,
+      });
+    }
+  }
+
+  if (mismatches.length > 0) {
+    const lines = mismatches
+      .map((mismatch) => `  ${mismatch.file}: expected ${mismatch.expected}, found ${mismatch.actual}`)
+      .join("\n");
+    throw new Error(
+      `[Build Guard] Web bundle content-hash mismatch — final bytes do not match filenames.\n${lines}`,
+    );
+  }
+
+  console.log("[Build Guard] Web bundle content-hash check passed.");
+}
+
 // Scan the native (iOS and Android) bundles for stale *.replit.dev occurrences.
 // Called after downloadBundlesAndManifests() (and after updateBundleUrls(), if
 // assets were present) so the bundles are fully written to disk. Throws with a
@@ -1055,6 +1093,7 @@ module.exports = {
   isMetroReadyOutput,
   getMetroStartArgs,
   sanitizeWebBundleContactData,
+  verifyWebBundleContentHashes,
   verifyBundleDomain,
   verifyNativeBundleDomain,
 };
