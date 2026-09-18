@@ -259,16 +259,29 @@ try {
 const hungPreflightFixtureDir = mkdtempSync(join(tmpdir(), "test-all-preflight-contract-"));
 const fakeBinDir = join(hungPreflightFixtureDir, "bin");
 const fakePnpm = join(fakeBinDir, "pnpm");
+const fakeNode = join(fakeBinDir, "node");
 const preflightPidFile = join(hungPreflightFixtureDir, "preflight-pids.txt");
 mkdirSync(fakeBinDir, { recursive: true });
 writeFileSync(
   fakePnpm,
   [
     "#!/usr/bin/env bash",
-    "echo \"$$\" > \"$TEST_ALL_PREFLIGHT_PID_FILE\"",
-    "sleep 60 &",
-    "echo \"$!\" >> \"$TEST_ALL_PREFLIGHT_PID_FILE\"",
-    "wait",
+    "exit 0",
+    "",
+  ].join("\n"),
+  { mode: 0o755 },
+);
+writeFileSync(
+  fakeNode,
+  [
+    "#!/usr/bin/env bash",
+    'if [[ "${1:-}" == "scripts/test/api-suite-floor-contract.test.mjs" ]]; then',
+    '  echo "$$" > "$TEST_ALL_PREFLIGHT_PID_FILE"',
+    "  sleep 60 &",
+    '  echo "$!" >> "$TEST_ALL_PREFLIGHT_PID_FILE"',
+    "  wait",
+    "fi",
+    'exec "$TEST_ALL_REAL_NODE" "$@"',
     "",
   ].join("\n"),
   { mode: 0o755 },
@@ -285,6 +298,7 @@ try {
       PATH: `${fakeBinDir}:${process.env.PATH}`,
       SERIAL_LOCK_HELD_RESOURCES: "shared-test-results",
       TEST_ALL_PREFLIGHT_PID_FILE: preflightPidFile,
+      TEST_ALL_REAL_NODE: process.execPath,
       TEST_ALL_TOTAL_BUDGET_SECONDS: "1",
       TEST_ALL_WATCHDOG_GRACE_SECONDS: "1",
     },
@@ -301,7 +315,7 @@ try {
   );
   assert.match(
     `${hungPreflight.stdout}\n${hungPreflight.stderr}`,
-    /outer wall-clock cap expired during codegen:ensure preflight/,
+    /outer wall-clock cap expired during API suite-floor preflight/,
     "hung preflight must identify setup ownership in its timeout diagnostic",
   );
 
