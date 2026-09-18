@@ -320,7 +320,7 @@ function safeEnrichmentErrorMessage(err: unknown): string {
 }
 
 // ── Module-level dictionary cache ─────────────────────────────────────────────
-// These tables are static lookup data that never changes at runtime.  Loading
+// These tables are static lookup data that never changes at runtime. Loading
 // them once and reusing the result avoids 5 DB round-trips on every /search call.
 interface DictionaryCache {
   correctionMap: Map<string, string>;
@@ -331,26 +331,53 @@ interface DictionaryCache {
   reverseVendorMap: Map<string, string>;
 }
 
+const DICTIONARY_LOAD_MAX_ATTEMPTS = 2;
+const DICTIONARY_RETRY_DELAY_MS = 25;
 let _initPromise: Promise<DictionaryCache> | null = null;
 
-async function loadDictionaries(): Promise<DictionaryCache> {
-  if (_initPromise) return _initPromise;
+function dictionaryErrorDetails(error: unknown): {
+  errorName: string;
+  errorMessage: string;
+  errorCode?: string;
+} {
+  const candidate = error as { code?: unknown; message?: unknown; name?: unknown } | null;
+  const message = typeof candidate?.message === "string"
+    ? candidate.message
+    : String(error);
+  const code = typeof candidate?.code === "string" ? candidate.code : undefined;
 
-  _initPromise = (async () => {
-    const [misspellings, abbreviations, vendors, synonyms, slang] = await Promise.all([
-      db.select().from(misspellingMapTable),
-      db.select().from(abbreviationMapTable),
-      db.select().from(vendorMapTable),
-      db.select().from(synonymMapTable),
-      db.select().from(electricalSlangMapTable),
-    ]);
+  return {
+    errorName: typeof candidate?.name === "string" ? candidate.name : "UnknownError",
+    // Database errors can include query details. Keep diagnostics useful but
+    // bounded and never attach request or inventory data to this log entry.
+    errorMessage: message.slice(0, 240),
+    ...(code ? { errorCode: code.slice(0, 64) } : {}),
+  };
+}
+
+function waitForDictionaryRetry(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, DICTIONARY_RETRY_DELAY_MS));
+}
+
+async function readDictionaries(): Promise<DictionaryCache> {
+  // Keep all five reads on one checked-out client. Promise.all previously
+  // requested five clients at once, which could fail during concurrent Jest
+  // workloads even though the configured pool budget was healthy.
+  return db.transaction(async tx => {
+    // Keep the statements sequential as well: node-postgres queues queries on
+    // a transaction client, and serial reads avoid leaving work in flight if
+    // one dictionary query fails.
+    const misspellings = await tx.select().from(misspellingMapTable);
+    const abbreviations = await tx.select().from(abbreviationMapTable);
+    const vendors = await tx.select().from(vendorMapTable);
+    const synonyms = await tx.select().from(synonymMapTable);
+    const slang = await tx.select().from(electricalSlangMapTable);
 
     const correctionMap = new Map(misspellings.map(m => [m.misspelling, m.correction]));
     const abbrevMap = new Map(abbreviations.map(a => [a.abbreviation, a.expansions]));
     const vendorMapData = new Map(vendors.map(v => [v.code, v.names]));
     const synonymMapLookup = new Map(synonyms.map(s => [s.term, s.synonyms]));
     const slangMap = new Map(slang.map(s => [s.slangTerm, s.standardTerms]));
-
     const reverseVendorMap = buildReverseVendorMap(vendors);
 
     return {
@@ -361,15 +388,48 @@ async function loadDictionaries(): Promise<DictionaryCache> {
       slangMap,
       reverseVendorMap,
     };
+  });
+}
+
+async function loadDictionaries(): Promise<DictionaryCache> {
+  if (_initPromise) return _initPromise;
+
+  const initPromise = (async () => {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= DICTIONARY_LOAD_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        return await readDictionaries();
+      } catch (error) {
+        lastError = error;
+        if (attempt < DICTIONARY_LOAD_MAX_ATTEMPTS) {
+          await waitForDictionaryRetry();
+          continue;
+        }
+
+        logger.error(
+          {
+            event: "inventory_dictionary_load_failed",
+            errorCategory: "dictionary_database_failure",
+            attempts: DICTIONARY_LOAD_MAX_ATTEMPTS,
+            ...dictionaryErrorDetails(error),
+          },
+          "Failed to load search dictionary tables; retry budget exhausted",
+        );
+      }
+    }
+
+    throw lastError ?? new Error("Search dictionary initialization failed");
   })();
 
-  // On failure, clear the promise so the next caller can retry.
-  _initPromise.catch(() => {
-    logger.error("Failed to load search dictionary tables; will retry on next request");
-    _initPromise = null;
+  _initPromise = initPromise;
+  // Clear only this failed generation. A later request may retry, while
+  // concurrent callers that joined the failed generation receive the same
+  // bounded failure.
+  initPromise.catch(() => {
+    if (_initPromise === initPromise) _initPromise = null;
   });
 
-  return _initPromise;
+  return initPromise;
 }
 
 // ── GET /inventory ────────────────────────────────────────────────────────────

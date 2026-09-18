@@ -64,6 +64,7 @@ import { eq } from "drizzle-orm";
 import express from "express";
 import supertest from "supertest";
 import app from "../src/app";
+import { logger } from "../src/lib/logger";
 import routes from "../src/routes";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import {
@@ -576,6 +577,45 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
       .where(eq(inventoryTable.id, item.id));
   });
 
+  it("keeps persistent dictionary failures bounded and does not leak inventory data", async () => {
+    const failureApp = express();
+    failureApp.use(express.json());
+    failureApp.use("/api", routes);
+    const actualTransaction = db.transaction.bind(db);
+    const dictionaryLoad = jest.spyOn(db, "transaction");
+    const dictionaryErrorLog = jest.spyOn(logger, "error");
+    dictionaryLoad
+      // The search limiter transaction is unrelated to dictionary loading.
+      .mockImplementationOnce(callback => actualTransaction(callback))
+      .mockRejectedValue(new Error("persistent dictionary database failure"));
+
+    try {
+      const response = await supertest(failureApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(500);
+
+      expect(response.body).toEqual({ error: "Search failed" });
+      expect(JSON.stringify(response.body)).not.toContain(item.catalog);
+      expect(dictionaryLoad).toHaveBeenCalledTimes(3);
+
+      const diagnosticCall = dictionaryErrorLog.mock.calls.find(([fields]) => (
+        typeof fields === "object" &&
+        fields !== null &&
+        "event" in fields &&
+        fields.event === "inventory_dictionary_load_failed"
+      ));
+      expect(diagnosticCall?.[0]).toMatchObject({
+        errorCategory: "dictionary_database_failure",
+        attempts: 2,
+        errorMessage: "persistent dictionary database failure",
+      });
+    } finally {
+      dictionaryErrorLog.mockRestore();
+      dictionaryLoad.mockRestore();
+    }
+  });
+
   it("replaces aiKeywords + pinnedKeywords and commits to DB", async () => {
     const newKeywords = ["breaker", "20a", "panel"];
 
@@ -603,37 +643,61 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
       return results?.find((result) => result.item?.id === item.id)?.item;
     };
 
-    const beforeSave = await supertest(app)
-      .post("/api/inventory/search")
-      .send({ keywords: item.catalog })
-      .expect(200);
-    expect(findItem(beforeSave.body)?.aiKeywords).toEqual(item.aiKeywords);
+    // The first dictionary transaction can lose a connection during the full
+    // API workload. The loader must recover in the same request so this
+    // persistence contract is not coupled to incidental pool timing.
+    const recoveryApp = express();
+    recoveryApp.use(express.json());
+    recoveryApp.use("/api", routes);
+    const actualTransaction = db.transaction.bind(db);
+    const dictionaryLoad = jest.spyOn(db, "transaction");
+    dictionaryLoad
+      // The search limiter also uses a transaction. Let that unrelated
+      // transaction run before injecting the dictionary initialization fault.
+      .mockImplementationOnce(callback => actualTransaction(callback))
+      .mockRejectedValueOnce(new Error("temporary dictionary connection unavailable"));
 
-    await withAuth(
-      supertest(app)
-        .patch(`/api/inventory/${item.id}/keywords`)
-        .send({ keywords: newKeywords }),
-      ADMIN_TOKEN,
-    ).expect(200);
+    try {
+      await supertest(recoveryApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(200);
+      expect(dictionaryLoad).toHaveBeenCalledTimes(3);
 
-    const committedRow = await fetchRow(item.id);
-    expect(committedRow?.aiKeywords).toEqual(newKeywords);
-    expect(committedRow?.pinnedKeywords).toEqual(newKeywords);
+      const beforeSave = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(200);
+      expect(findItem(beforeSave.body)?.aiKeywords).toEqual(item.aiKeywords);
 
-    const repeatedSearch = await supertest(app)
-      .post("/api/inventory/search")
-      .send({ keywords: item.catalog })
-      .expect(200);
-    expect(findItem(repeatedSearch.body)?.aiKeywords).toEqual(newKeywords);
+      await withAuth(
+        supertest(app)
+          .patch(`/api/inventory/${item.id}/keywords`)
+          .send({ keywords: newKeywords }),
+        ADMIN_TOKEN,
+      ).expect(200);
 
-    const freshApp = express();
-    freshApp.use(express.json());
-    freshApp.use("/api", routes);
-    const freshAppSearch = await supertest(freshApp)
-      .post("/api/inventory/search")
-      .send({ keywords: item.catalog })
-      .expect(200);
-    expect(findItem(freshAppSearch.body)?.aiKeywords).toEqual(newKeywords);
+      const committedRow = await fetchRow(item.id);
+      expect(committedRow?.aiKeywords).toEqual(newKeywords);
+      expect(committedRow?.pinnedKeywords).toEqual(newKeywords);
+
+      const repeatedSearch = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(200);
+      expect(findItem(repeatedSearch.body)?.aiKeywords).toEqual(newKeywords);
+
+      const freshApp = express();
+      freshApp.use(express.json());
+      freshApp.use("/api", routes);
+      const freshAppSearch = await supertest(freshApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(200);
+      expect(findItem(freshAppSearch.body)?.aiKeywords).toEqual(newKeywords);
+    } finally {
+      dictionaryLoad.mockRestore();
+    }
   });
 
   it("accepts an empty keywords array (clears keywords)", async () => {
