@@ -297,6 +297,11 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
 
     const addedHandler = beforeunloadCalls[0]![1];
 
+    await waitFor(() => {
+      expect(mockXhr.send).toHaveBeenCalled();
+      expect(mockXhr.onload).not.toBeNull();
+    });
+
     mockXhr.status = 200;
     mockXhr.responseText = JSON.stringify({ jobId: "job-1", status: "processing" });
     await act(async () => { mockXhr.fireEvent("load"); });
