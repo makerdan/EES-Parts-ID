@@ -139,13 +139,20 @@ function findExecutable(name) {
   throw new Error(`could not resolve required host utility "${name}"`);
 }
 
-function createIsolatedValidationPath(omittedTool) {
-  const isolatedPath = join(testRoot, `isolated-path-${omittedTool}`);
+function createIsolatedValidationPath({ omittedTool = null, failingTool = null } = {}) {
+  const isolatedPath = join(
+    testRoot,
+    `isolated-path-${omittedTool ?? "complete"}-${failingTool ?? "healthy"}`,
+  );
   mkdirSync(isolatedPath, { recursive: true });
   const hostPath = process.env.PATH ?? "";
   for (const requirement of getValidationHostTools("fast")) {
     if (requirement.name === omittedTool) continue;
     const wrapperPath = join(isolatedPath, requirement.name);
+    if (requirement.name === failingTool) {
+      writeFileSync(wrapperPath, "#!/bin/sh\nexit 42\n", { mode: 0o755 });
+      continue;
+    }
     const executable = findExecutable(requirement.name);
     writeFileSync(
       wrapperPath,
@@ -359,7 +366,7 @@ await test("validation preflight reports one missing host tool before queueing",
   const lockFile = join(testRoot, `${resource}-single-preflight.lock`);
   const queueDir = join(testRoot, "queues", "validation-single-preflight");
   const marker = join(testRoot, `${resource}-single-preflight.marker`);
-  const isolatedPath = createIsolatedValidationPath("git");
+  const isolatedPath = createIsolatedValidationPath({ omittedTool: "git" });
   const result = await runProcess(
     process.execPath,
     lockArgs(resource, lockFile, 1, [
@@ -396,6 +403,50 @@ await test("validation preflight reports one missing host tool before queueing",
   assert(!existsSync(marker), "validation child ran despite failed single-tool preflight");
   assert(!existsSync(lockFile), "single-tool validation preflight created a lock file");
   assert(!existsSync(queueDir), "single-tool validation preflight created a queue entry");
+});
+
+await test("validation preflight reports one broken host-tool probe before queueing", async () => {
+  const resource = "validation";
+  const lockFile = join(testRoot, `${resource}-broken-preflight.lock`);
+  const queueDir = join(testRoot, "queues", "validation-broken-preflight");
+  const marker = join(testRoot, `${resource}-broken-preflight.marker`);
+  const isolatedPath = createIsolatedValidationPath({ failingTool: "git" });
+  const result = await runProcess(
+    process.execPath,
+    lockArgs(resource, lockFile, 1, [
+      process.execPath,
+      "-e",
+      MARK_CODE,
+      marker,
+      "should-not-run",
+    ]),
+    lockEnv(lockFile, {
+      PATH: isolatedPath,
+      SERIAL_LOCK_QUEUE_DIR: queueDir,
+      VALIDATION_TIER: "fast",
+    }),
+  );
+  assert(result.code === 2, `broken-tool validation preflight exited ${result.code}: ${result.output}`);
+  assert(
+    result.output.includes("[validation-preflight] ERROR: 1 required host tool(s) are unavailable for fast validation."),
+    `missing broken-tool count diagnostic: ${result.output}`,
+  );
+  assert(
+    result.output.includes(
+      "[validation-preflight] - git: public repository boundary and history checks; " +
+      "setup source: the host Git package; probe: probe exited 42.",
+    ),
+    `missing broken-tool capability/setup/probe diagnostic: ${result.output}`,
+  );
+  for (const tool of ["node", "pnpm", "bash", "flock"]) {
+    assert(
+      !result.output.includes(`[validation-preflight] - ${tool}:`),
+      `unexpected broken-tool diagnostic for ${tool}: ${result.output}`,
+    );
+  }
+  assert(!existsSync(marker), "validation child ran despite failed broken-tool preflight");
+  assert(!existsSync(lockFile), "broken-tool preflight created a lock file");
+  assert(!existsSync(queueDir), "broken-tool preflight created a queue entry");
 });
 
 await test("standard-plus preflight includes post-merge host tools", async () => {
