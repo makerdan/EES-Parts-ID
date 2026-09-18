@@ -123,13 +123,23 @@ function withAuth(req: supertest.Test, token?: string): supertest.Test {
   return token ? req.set("Authorization", `Bearer ${token}`) : req;
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>(resolvePromise => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 /**
  * Load the inventory routes and their database module in a private Jest
  * registry. This is the process-restart equivalent for the module-level
  * dictionary cache: every call starts with a new route module and an empty
  * cache generation while retaining the real test database.
  */
-async function loadFreshInventoryRoutes(): Promise<{
+async function loadFreshInventoryRoutes(options?: {
+  searchLimiter?: { check: jest.Mock };
+}): Promise<{
   routes: typeof routes;
   db: typeof db;
   logger: typeof logger;
@@ -144,6 +154,12 @@ async function loadFreshInventoryRoutes(): Promise<{
       freshDb = actual.db;
       return actual;
     });
+    if (options?.searchLimiter) {
+      jest.doMock("../src/lib/rateLimiter", () => {
+        const actual = jest.requireActual("../src/lib/rateLimiter") as typeof import("../src/lib/rateLimiter");
+        return { ...actual, inventorySearchLimiter: options.searchLimiter };
+      });
+    }
 
     freshRoutes = (await import("../src/routes")).default;
     freshLogger = (await import("../src/lib/logger")).logger;
@@ -833,6 +849,117 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
     } finally {
       dictionaryErrorLog.mockRestore();
       dictionaryLoad.mockRestore();
+    }
+  });
+
+  it("shares fresh dictionary initialization across concurrent searches and fails safely", async () => {
+    const newKeywords = ["concurrent-restart-keyword", "shared-dictionary-confirmation"];
+    const searchCount = 4;
+    const findItem = (body: unknown) => {
+      const results = (body as {
+        results?: Array<{ item?: { id?: number; aiKeywords?: string[] } }>;
+      }).results;
+      return results?.find((result) => result.item?.id === item.id)?.item;
+    };
+
+    await withAuth(
+      supertest(app)
+        .patch(`/api/inventory/${item.id}/keywords`)
+        .send({ keywords: newKeywords }),
+      ADMIN_TOKEN,
+    ).expect(200);
+
+    const allSearchesArrived = createDeferred<void>();
+    const releaseSearches = createDeferred<void>();
+    let searchArrivals = 0;
+    const searchLimiter = {
+      check: jest.fn(async () => {
+        searchArrivals += 1;
+        if (searchArrivals === searchCount) allSearchesArrived.resolve();
+        await releaseSearches.promise;
+        return { allowed: true };
+      }),
+    };
+    const generation = await loadFreshInventoryRoutes({ searchLimiter });
+    const generationApp = express();
+    generationApp.use(express.json());
+    generationApp.use("/api", generation.routes);
+
+    const dictionaryStarted = createDeferred<void>();
+    const releaseDictionary = createDeferred<void>();
+    const actualTransaction = generation.db.transaction.bind(generation.db);
+    const dictionaryLoad = jest.spyOn(generation.db, "transaction").mockImplementation(callback =>
+      actualTransaction(async tx => {
+        dictionaryStarted.resolve();
+        await releaseDictionary.promise;
+        return callback(tx);
+      }) as never,
+    );
+
+    try {
+      const responsesPromise = Promise.all(Array.from({ length: searchCount }, () =>
+        supertest(generationApp)
+          .post("/api/inventory/search")
+          .send({ keywords: item.catalog }),
+      ));
+
+      // Hold every request before the route can initialize its dictionary so
+      // all requests enter the same fresh generation together.
+      await allSearchesArrived.promise;
+      releaseSearches.resolve();
+      await dictionaryStarted.promise;
+      releaseDictionary.resolve();
+
+      const responses = await responsesPromise;
+      expect(responses).toHaveLength(searchCount);
+      for (const response of responses) {
+        expect(response.status).toBe(200);
+        expect(findItem(response.body)?.aiKeywords).toEqual(newKeywords);
+      }
+      expect(dictionaryLoad).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseSearches.resolve();
+      releaseDictionary.resolve();
+      dictionaryLoad.mockRestore();
+    }
+
+    const failureSearchesArrived = createDeferred<void>();
+    let failureSearchArrivals = 0;
+    const failureSearchLimiter = {
+      check: jest.fn(async () => {
+        failureSearchArrivals += 1;
+        if (failureSearchArrivals === searchCount) failureSearchesArrived.resolve();
+        return { allowed: true };
+      }),
+    };
+    const failedGeneration = await loadFreshInventoryRoutes({ searchLimiter: failureSearchLimiter });
+    const failureApp = express();
+    failureApp.use(express.json());
+    failureApp.use("/api", failedGeneration.routes);
+    const failedDictionaryLoad = jest
+      .spyOn(failedGeneration.db, "transaction")
+      .mockRejectedValue(new Error("forced concurrent dictionary failure"));
+
+    try {
+      const responsesPromise = Promise.all(Array.from({ length: searchCount }, () =>
+        supertest(failureApp)
+          .post("/api/inventory/search")
+          .send({ keywords: item.catalog }),
+      ));
+
+      await failureSearchesArrived.promise;
+      const responses = await responsesPromise;
+      expect(responses).toHaveLength(searchCount);
+      for (const response of responses) {
+        expect(response.status).toBe(500);
+        expect(response.body).toEqual({ error: "Search failed" });
+        expect(JSON.stringify(response.body)).not.toContain(item.catalog);
+      }
+      // The shared failed generation retries once, rather than starting one
+      // dictionary transaction per concurrent request.
+      expect(failedDictionaryLoad).toHaveBeenCalledTimes(2);
+    } finally {
+      failedDictionaryLoad.mockRestore();
     }
   });
 
