@@ -27,6 +27,11 @@ assert.equal(
   "tsc --build ./tsconfig.json",
   "api-spec must expose its explicit typecheck boundary",
 );
+assert.equal(
+  apiSpecPackage.devDependencies.typescript,
+  "~5.9.2",
+  "api-spec must declare the TypeScript binary used by its typecheck script",
+);
 assert.deepEqual(
   apiSpecTsconfig.include,
   ["src"],

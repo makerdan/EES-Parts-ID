@@ -27,6 +27,7 @@
     "orval": "8.22.0",
     "ts-jest": "^29.4.9",
     "tsx": "catalog:",
+    "typescript": "~5.9.2",
     "yaml": "^2.8.2"
   }
 }

@@ -252,7 +252,7 @@ importers:
         version: 3.1.0
       ts-jest:
         specifier: ^29.4.9
-        version: 29.4.9(@babel/core@7.29.7)(@jest/transform@30.3.0)(@jest/types@30.3.0)(babel-jest@30.3.0(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.3.0)(jest@30.3.0(esbuild-register@3.6.0(esbuild@0.28.1)))(typescript@5.9.3)
+        version: 29.4.9(@babel/core@7.29.7)(@jest/transform@30.3.0)(@jest/types@30.3.0)(babel-jest@30.3.0(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.3.0)(jest@30.3.0(@types/node@25.9.4)(esbuild-register@3.6.0(esbuild@0.28.1)))(typescript@5.9.3)
       tsx:
         specifier: 'catalog:'
         version: 4.21.0
@@ -742,10 +742,13 @@ importers:
         version: 8.22.0(prettier@3.8.1)(typescript@5.9.3)
       ts-jest:
         specifier: ^29.4.9
-        version: 29.4.9(@babel/core@7.29.7)(@jest/transform@30.3.0)(@jest/types@30.3.0)(babel-jest@30.3.0(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.3.0)(jest@30.3.0(esbuild-register@3.6.0(esbuild@0.28.1)))(typescript@5.9.3)
+        version: 29.4.9(@babel/core@7.29.7)(@jest/transform@30.3.0)(@jest/types@30.3.0)(babel-jest@30.3.0(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.3.0)(jest@30.3.0(@types/node@25.9.4)(esbuild-register@3.6.0(esbuild@0.28.1)))(typescript@5.9.3)
       tsx:
         specifier: 'catalog:'
         version: 4.21.0
+      typescript:
+        specifier: ~5.9.2
+        version: 5.9.3
       yaml:
         specifier: '>=2.8.3'
         version: 2.9.0
@@ -21209,7 +21212,7 @@ snapshots:
 
   ts-interface-checker@0.1.13: {}
 
-  ts-jest@29.4.9(@babel/core@7.29.7)(@jest/transform@30.3.0)(@jest/types@30.3.0)(babel-jest@30.3.0(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.3.0)(jest@30.3.0(esbuild-register@3.6.0(esbuild@0.28.1)))(typescript@5.9.3):
+  ts-jest@29.4.9(@babel/core@7.29.7)(@jest/transform@30.3.0)(@jest/types@30.3.0)(babel-jest@30.3.0(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.3.0)(jest@30.3.0(@types/node@25.9.4)(esbuild-register@3.6.0(esbuild@0.28.1)))(typescript@5.9.3):
     dependencies:
       bs-logger: 0.2.6
       fast-json-stable-stringify: 2.1.0
