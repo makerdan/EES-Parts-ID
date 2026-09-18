@@ -127,7 +127,7 @@ afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
 // ── Imports (after all jest.mock declarations) ────────────────────────────────
 
 import React from "react";
-import { render, act, RenderResult, fireEvent } from "@testing-library/react-native";
+import { render, act, RenderResult, fireEvent, waitFor } from "@testing-library/react-native";
 import { CatalogPdfUpload } from "../components/CatalogPdfUpload";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -185,6 +185,7 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
   let mockAddEventListener: jest.Mock;
   let mockRemoveEventListener: jest.Mock;
   let activeTree: RenderResult | null = null;
+  let originalFetch: typeof global.fetch;
 
   beforeEach(() => {
     const { Platform } = require("react-native") as { Platform: { OS: string } };
@@ -215,6 +216,8 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
       addEventListener: mockAddEventListener,
       removeEventListener: mockRemoveEventListener,
     };
+    originalFetch = global.fetch;
+    global.fetch = jest.fn().mockRejectedValue(new TypeError("Failed to fetch"));
   });
 
   afterEach(async () => {
@@ -228,12 +231,12 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
     const { Platform } = require("react-native") as { Platform: { OS: string } };
     (Platform as { OS: string }).OS = originalPlatformOS;
     delete (global as unknown as { XMLHttpRequest?: jest.Mock }).XMLHttpRequest;
+    global.fetch = originalFetch;
   });
 
-  it("attaches a beforeunload handler when loading becomes true on web", async () => {
+  async function startWebUpload(): Promise<{ result: RenderResult; handler: unknown }> {
     const pdfBytes = makePdfBytes();
     const file = makeFile(pdfBytes);
-
     mockGetDocumentAsync.mockResolvedValueOnce({
       canceled: false,
       assets: [{ uri: "blob:http://localhost/catalog.pdf", name: "catalog.pdf", file }],
@@ -245,67 +248,55 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
     );
     activeTree = result;
 
-    const pickBtn = findPressable(result.root!, "Choose PDF File");
-    await act(async () => { fireEvent.press(pickBtn!); });
-    await flushPromises();
-
-    expect(capturedOnChangeText).not.toBeNull();
+    await fireEvent.press(findPressable(result.root!, "Choose PDF File")!);
+    await waitFor(() => expect(capturedOnChangeText).not.toBeNull());
     await act(async () => { capturedOnChangeText!("ACME"); });
+    await fireEvent.press(findPressable(result.root!, "Start Extraction")!);
 
-    mockXhr.responseText = JSON.stringify({ jobId: "job-1", status: "processing" });
-
-    const startBtn = findPressable(result.root!, "Start Extraction");
-    await act(async () => { fireEvent.press(startBtn!); });
-    await flushPromises();
-
-    const beforeunloadCalls = (mockAddEventListener.mock.calls as [string, unknown][]).filter(
+    await waitFor(() => {
+      expect(mockAddEventListener).toHaveBeenCalledWith("beforeunload", expect.any(Function));
+    });
+    const call = (mockAddEventListener.mock.calls as [string, unknown][]).find(
       ([event]) => event === "beforeunload",
     );
-    expect(beforeunloadCalls.length).toBeGreaterThan(0);
+    return { result, handler: call![1] };
+  }
+
+  async function expectMatchingHandlerRemoved(handler: unknown): Promise<void> {
+    await waitFor(() => {
+      expect(mockRemoveEventListener).toHaveBeenCalledWith("beforeunload", handler);
+    });
+  }
+
+  it("attaches a beforeunload handler when loading becomes true on web", async () => {
+    await startWebUpload();
   });
 
   it("removes the beforeunload handler when loading becomes false after upload completes", async () => {
-    const pdfBytes = makePdfBytes();
-    const file = makeFile(pdfBytes);
-
-    mockGetDocumentAsync.mockResolvedValueOnce({
-      canceled: false,
-      assets: [{ uri: "blob:http://localhost/catalog.pdf", name: "catalog.pdf", file }],
-    });
-    mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
-
-    const result = await render(
-      <CatalogPdfUpload adminToken="admin-tok" onSessionExpired={jest.fn()} />,
-    );
-    activeTree = result;
-
-    const pickBtn = findPressable(result.root!, "Choose PDF File");
-    await act(async () => { fireEvent.press(pickBtn!); });
-    await flushPromises();
-
-    expect(capturedOnChangeText).not.toBeNull();
-    await act(async () => { capturedOnChangeText!("ACME"); });
-
-    const startBtn = findPressable(result.root!, "Start Extraction");
-    await act(async () => { fireEvent.press(startBtn!); });
-    await flushPromises();
-
-    const beforeunloadCalls = (mockAddEventListener.mock.calls as [string, unknown][]).filter(
-      ([event]) => event === "beforeunload",
-    );
-    expect(beforeunloadCalls.length).toBeGreaterThan(0);
-
-    const addedHandler = beforeunloadCalls[0]![1];
+    const { handler } = await startWebUpload();
 
     mockXhr.status = 200;
     mockXhr.responseText = JSON.stringify({ jobId: "job-1", status: "processing" });
     await act(async () => { mockXhr.fireEvent("load"); });
-    await flushPromises();
+    await expectMatchingHandlerRemoved(handler);
+  });
 
-    const removeCalls = (mockRemoveEventListener.mock.calls as [string, unknown][]).filter(
-      ([event, handler]) => event === "beforeunload" && handler === addedHandler,
-    );
-    expect(removeCalls.length).toBeGreaterThan(0);
+  it("removes the matching beforeunload handler when the upload fails", async () => {
+    const { handler } = await startWebUpload();
+
+    mockXhr.status = 500;
+    mockXhr.responseText = JSON.stringify({ error: "Upload rejected" });
+    await act(async () => { mockXhr.fireEvent("load"); });
+    await expectMatchingHandlerRemoved(handler);
+  });
+
+  it("removes the matching beforeunload handler when the upload is cancelled", async () => {
+    const { result, handler } = await startWebUpload();
+
+    await fireEvent.press(findPressable(result.root!, "Cancel")!);
+    expect(mockXhr.abort).toHaveBeenCalledTimes(1);
+    await act(async () => { mockXhr.fireEvent("abort"); });
+    await expectMatchingHandlerRemoved(handler);
   });
 
   it("does not attach a beforeunload handler on native (Platform.OS = 'ios')", async () => {
