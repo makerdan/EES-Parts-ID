@@ -38,9 +38,9 @@ end-to-end script. The Planner should record the evidence, affected
 boundaries, proposed change, and validation plan for a later implementation
 task.
 
-Authentication and administrator-authorization checking are out of scope here.
-Do not expand this routine into an access-control review; route-access work
-belongs in a separate task.
+MFA, authentication, and administrator-authorization checking are explicitly
+out of scope here. Do not expand this routine into an MFA or access-control
+review; that work belongs in a separate task.
 
 Compose the resulting plan with:
 
