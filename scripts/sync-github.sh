@@ -134,5 +134,12 @@ if [[ "${expected_revision_resolved,,}" != "${final_revision,,}" ]]; then
   verification_failure "selected repository revision changed during verification; repeat with a coordinated immutable revision"
 fi
 
+if ! final_approved_commit="$(git -C "$repo" rev-parse --verify "${approved_ref}^{commit}" 2>/dev/null)"; then
+  verification_failure "approved ref became unreadable during verification: $approved_ref"
+fi
+if [[ "${approved_commit,,}" != "${final_approved_commit,,}" ]]; then
+  verification_failure "approved ref changed during verification; repeat with a coordinated immutable ref"
+fi
+
 printf '[github-sync] VERIFIED_SYNCHRONIZATION: revision %s matches %s tree %s (read-only; no push performed).\n' \
   "$expected_revision_resolved" "$approved_ref" "$approved_tree"

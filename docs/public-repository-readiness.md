@@ -92,13 +92,13 @@ The helper's read-only `--verify` mode returns status `0` with
 `VERIFIED_SYNCHRONIZATION` only when one supplied immutable commit revision's
 tree matches both the selected repository's `HEAD` before and after the
 verification and an approved `review/` or `snapshot/` ref (including an
-approved pull-request head). The release wrapper must coordinate workspace
-changes so that revision remains checked out for the complete call; a branch
-switch, rebase, or other `HEAD` change during verification returns status `3`
-with `VERIFICATION_FAILURE` rather than producing evidence for another
-revision. Missing, stale, unsupported, or mismatched refs also return status
-`3`. See the [public release checklist](public-release-checklist.md) for the
-command and the required interpretation of each state.
+approved pull-request head). The release wrapper must keep both the workspace
+revision and the approved ref stable for the complete call; a branch switch,
+rebase, other `HEAD` change, or approved-ref movement during verification
+returns status `3` with `VERIFICATION_FAILURE` rather than producing evidence
+for another revision or approval. Missing, stale, unsupported, or mismatched
+refs also return status `3`. See the [public release checklist](public-release-checklist.md)
+for the command and the required interpretation of each state.
 
 ## Release documents
 

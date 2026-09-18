@@ -89,18 +89,19 @@ bash scripts/sync-github.sh --verify \
   --approved-ref refs/heads/snapshot/<approved-name>
 ```
 
-The release wrapper must keep the selected repository at that immutable
-revision for the complete verification call: do not switch branches, update
-`HEAD`, rebase, or rewrite the checkout concurrently. The helper derives the
-expected tree from the commit, checks `HEAD` before reading the approved ref,
-and checks it again before reporting success. A workspace revision change
-during verification therefore returns status `3` with
-`VERIFICATION_FAILURE`; it cannot produce evidence for a different revision.
-Status `0` with `VERIFIED_SYNCHRONIZATION` proves that the supplied revision's
-tree matches the approved ref's tree and that no push was performed. Missing,
-unsupported, invalid, stale, changed-during-verification, and mismatched refs
-return status `3`. Any other invocation error is a usage failure; none of
-these states authorizes a direct push or a protected-branch bypass.
+The release wrapper must keep both inputs stable for the complete verification
+call: do not switch branches, update `HEAD`, rebase, rewrite the checkout, or
+move the approved ref concurrently. The helper derives the expected tree from
+the commit, checks `HEAD` before reading the approved ref, and checks both the
+workspace revision and approved-ref commit again before reporting success. A
+workspace revision or approved-ref change during verification therefore returns
+status `3` with `VERIFICATION_FAILURE`; it cannot produce evidence for a
+different revision or approval. Status `0` with
+`VERIFIED_SYNCHRONIZATION` proves that the supplied revision's tree matches the
+approved ref's tree and that no push was performed. Missing, unsupported,
+invalid, stale, changed-during-verification, and mismatched refs return status
+`3`. Any other invocation error is a usage failure; none of these states
+authorizes a direct push or a protected-branch bypass.
 
 ## Incident response for an accidental commit
 

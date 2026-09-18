@@ -600,6 +600,61 @@ exit "$status"
     assert(!raced.output.includes("VERIFIED_SYNCHRONIZATION"), "workspace revision race was reported as verified");
     rmSync(shimDirectory, { recursive: true, force: true });
 
+    gitIn(repository, ["update-ref", `refs/heads/${currentBranch}`, approvedCommit]);
+    gitIn(repository, ["update-ref", "refs/heads/snapshot/approved", approvedCommit]);
+    const approvedRefShimDirectory = mkdtempSync(join(tmpdir(), "github-sync-approved-ref-shim-"));
+    const approvedRefMarkerPath = join(approvedRefShimDirectory, "race-triggered");
+    const approvedRefGitShim = join(approvedRefShimDirectory, "git");
+    writeFileSync(
+      approvedRefGitShim,
+      `#!/usr/bin/env bash
+set -euo pipefail
+"${realGit}" "$@"
+status=$?
+if [[ "\${SYNC_APPROVED_REF_RACE_REPO:-}" == "${repository}" &&
+      "\${SYNC_APPROVED_REF_RACE_COMMIT:-}" == "${raceCommit}" &&
+      "\${SYNC_APPROVED_REF_RACE_MARKER:-}" == "${approvedRefMarkerPath}" &&
+      ! -e "${approvedRefMarkerPath}" &&
+      "\${1:-}" == "-C" &&
+      "\${2:-}" == "${repository}" &&
+      "\${3:-}" == "rev-parse" &&
+      "\${4:-}" == "--verify" &&
+      "\${5:-}" == "refs/heads/snapshot/approved^{commit}" ]]; then
+  touch "${approvedRefMarkerPath}"
+  "${realGit}" -C "${repository}" update-ref "refs/heads/snapshot/approved" "${raceCommit}"
+fi
+exit "$status"
+`,
+    );
+    chmodSync(approvedRefGitShim, 0o755);
+    const approvedRefRace = runSyncHelper(
+      [
+        "--verify",
+        "--repo",
+        repository,
+        "--expected-revision",
+        approvedCommit,
+        "--approved-ref",
+        "refs/heads/snapshot/approved",
+      ],
+      {
+        PATH: `${approvedRefShimDirectory}:${process.env.PATH ?? ""}`,
+        SYNC_APPROVED_REF_RACE_REPO: repository,
+        SYNC_APPROVED_REF_RACE_COMMIT: raceCommit,
+        SYNC_APPROVED_REF_RACE_MARKER: approvedRefMarkerPath,
+      },
+    );
+    assert(approvedRefRace.status === 3, "approved ref race did not return verification-failure status");
+    assert(approvedRefRace.output.includes("approved ref changed during verification"), "approved ref race was not classified");
+    assert(!approvedRefRace.output.includes("VERIFIED_SYNCHRONIZATION"), "approved ref race was reported as verified");
+    assert(existsSync(approvedRefMarkerPath), "approved ref race was not injected");
+    assert(gitIn(repository, ["rev-parse", "HEAD"]) === approvedCommit, "approved ref race changed the workspace revision");
+    assert(
+      gitIn(repository, ["rev-parse", "refs/heads/snapshot/approved"]) === raceCommit,
+      "approved ref race did not move the approved ref",
+    );
+    rmSync(approvedRefShimDirectory, { recursive: true, force: true });
+
     const unsupportedRef = runSyncHelper([
       "--verify",
       "--repo",
