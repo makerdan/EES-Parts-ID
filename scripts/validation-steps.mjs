@@ -187,6 +187,10 @@ export const FAST = [
   ["regression-guard-fix", "node scripts/check-regression-guard.mjs --fix-stub"],
   ["regression-guard", "node scripts/check-regression-guard.mjs"],
   ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
+  [
+    "protected-map-timeout-contract",
+    "node scripts/test/protected-map-timeout-contract.test.mjs",
+  ],
   ["github-actions-contract", "node scripts/test/github-actions-contract.test.mjs"],
   ["validation-runtime-contract", "node scripts/test/validation-runtime-contract.test.mjs"],
   ["api-route-authorization-contract", "node scripts/test/api-route-authorization-contract.test.mjs"],

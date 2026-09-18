@@ -98,3 +98,4 @@
 - [Protected GitHub history rewrites](protected-github-history-rewrites.md) — protected force rewrites may require both force-push permission and admin bypass; restore rules with a fail-safe trap.
 - [GitHub pull refs survive branch rewrites](github-pull-refs-history.md) — normal clones omit read-only refs/pull; mirror scans can reveal provider-retained history that only GitHub can remove.
 - [Expo static web serializer artifacts](expo-static-web-serializer-artifacts.md) — detect web export artifacts by their static/js/web filename path when serializer platform metadata is unreliable.
+- [Node -e fixture arguments](node-e-fixtures.md) — inline Node child fixtures receive their first argument at process.argv[1], without a placeholder script filename.

@@ -111,6 +111,10 @@ for (const name of validationWorkflowNames) {
   assert.equal(workflows.get(name)?.tasks?.[0]?.args, `pnpm run ${name}`);
 }
 assert(
+  getTierSteps("fast").some(([name]) => name === "protected-map-timeout-contract"),
+  "fast validation must run the protected-map timeout contract",
+);
+assert(
   getTierSteps("heavy").some(([name]) => name === "protected-map-concurrency"),
   "heavy validation must retain the protected-map concurrency smoke step",
 );
