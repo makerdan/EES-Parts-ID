@@ -6,6 +6,7 @@
  */
 import assert from "node:assert/strict";
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -148,6 +149,7 @@ assert.doesNotMatch(
 
 const timeoutReportScript = resolve(root, "scripts/test-timeout-report.mjs");
 const timeoutFixtureDir = mkdtempSync(join(tmpdir(), "timeout-report-contract-"));
+const testAllScript = resolve(root, "scripts/test-all.sh");
 
 function runTimeoutReport({ file, testName, duration }) {
   const resultPath = join(timeoutFixtureDir, `${file.replaceAll("/", "_")}.json`);
@@ -252,6 +254,75 @@ try {
   );
 } finally {
   rmSync(timeoutFixtureDir, { recursive: true, force: true });
+}
+
+const hungPreflightFixtureDir = mkdtempSync(join(tmpdir(), "test-all-preflight-contract-"));
+const fakeBinDir = join(hungPreflightFixtureDir, "bin");
+const fakePnpm = join(fakeBinDir, "pnpm");
+const preflightPidFile = join(hungPreflightFixtureDir, "preflight-pids.txt");
+mkdirSync(fakeBinDir, { recursive: true });
+writeFileSync(
+  fakePnpm,
+  [
+    "#!/usr/bin/env bash",
+    "echo \"$$\" > \"$TEST_ALL_PREFLIGHT_PID_FILE\"",
+    "sleep 60 &",
+    "echo \"$!\" >> \"$TEST_ALL_PREFLIGHT_PID_FILE\"",
+    "wait",
+    "",
+  ].join("\n"),
+  { mode: 0o755 },
+);
+
+try {
+  const startedAt = Date.now();
+  const hungPreflight = spawnSync("bash", [testAllScript], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 5_000,
+    env: {
+      ...process.env,
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      SERIAL_LOCK_HELD_RESOURCES: "shared-test-results",
+      TEST_ALL_PREFLIGHT_PID_FILE: preflightPidFile,
+      TEST_ALL_TOTAL_BUDGET_SECONDS: "1",
+      TEST_ALL_WATCHDOG_GRACE_SECONDS: "1",
+    },
+  });
+  const elapsedMs = Date.now() - startedAt;
+  assert.equal(
+    hungPreflight.status,
+    124,
+    `hung preflight should return timeout status; output:\n${hungPreflight.stdout}\n${hungPreflight.stderr}`,
+  );
+  assert(
+    elapsedMs < 5_000,
+    `hung preflight exceeded the bounded test window (${elapsedMs}ms)`,
+  );
+  assert.match(
+    `${hungPreflight.stdout}\n${hungPreflight.stderr}`,
+    /outer wall-clock cap expired during codegen:ensure preflight/,
+    "hung preflight must identify setup ownership in its timeout diagnostic",
+  );
+
+  const pids = readFileSync(preflightPidFile, "utf8")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(Number);
+  assert.equal(pids.length, 2, "hung preflight fixture must record its process and child");
+  for (const pid of pids) {
+    let alive = false;
+    try {
+      process.kill(pid, 0);
+      alive = true;
+    } catch (error) {
+      assert.equal(error.code, "ESRCH", `unexpected PID probe error for ${pid}`);
+    }
+    assert.equal(alive, false, `timed-out preflight left process ${pid} alive`);
+  }
+} finally {
+  rmSync(hungPreflightFixtureDir, { recursive: true, force: true });
 }
 
 console.log("Validation runtime contract: test database mode and Node declarations are aligned");
