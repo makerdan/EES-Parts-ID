@@ -226,6 +226,42 @@ check_sibling_services() {
 }
 
 # ---------------------------------------------------------------------------
+# run_github_sync — invoke the protected synchronization helper without
+# suppressing its result. Routine post-merge recovery expects the helper's
+# policy refusal because direct synchronization is forbidden; verification
+# failures and unexpected helper failures must remain visible and stop the
+# flow. No branch here performs a write or bypasses the snapshot-PR boundary.
+# ---------------------------------------------------------------------------
+run_github_sync() {
+  local sync_script="${1:-$SCRIPT_DIR/sync-github.sh}"
+  local sync_output sync_exit=0
+
+  sync_output=$(bash "$sync_script" 2>&1) || sync_exit=$?
+  if [[ -n "$sync_output" ]]; then
+    printf '%s\n' "$sync_output" | sed 's/^/[post-merge][github-sync] /'
+  fi
+
+  case "$sync_exit" in
+    0)
+      echo "[post-merge] GitHub synchronization verification completed."
+      return 0
+      ;;
+    2)
+      echo "[post-merge] WARNING: GitHub synchronization refused by protected-branch policy; no synchronization evidence was produced. Use the protected snapshot PR flow."
+      return 0
+      ;;
+    3)
+      echo "[post-merge] ERROR: GitHub synchronization verification failed; no synchronization evidence was produced. Use the protected snapshot PR flow."
+      return 1
+      ;;
+    *)
+      echo "[post-merge] ERROR: GitHub sync helper failed with exit ${sync_exit}; no synchronization evidence was produced."
+      return 1
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Main — only runs when the script is executed directly, not sourced.
 # This guard allows test scripts to source and unit-test the functions above.
 # ---------------------------------------------------------------------------
@@ -369,7 +405,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # Enforce the protected snapshot-PR synchronization boundary. The helper is
   # intentionally a safe no-op; routine post-merge recovery must never publish
   # local Git history or push directly to protected GitHub main.
-  bash "$(dirname "$0")/sync-github.sh" || true
+  run_github_sync || exit 1
 
   # First health check pass.
   if check_api_health "initial"; then

@@ -1799,6 +1799,55 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 44: post-merge reports protected GitHub sync outcomes
+#
+# The helper's status codes are part of the safety boundary. A routine policy
+# refusal is expected and must be reported without blocking API recovery; a
+# verification failure must be visible and must stop post-merge rather than
+# being mistaken for successful synchronization.
+# ---------------------------------------------------------------------------
+GITHUB_SYNC_MOCK_DIR=$(mktemp -d)
+GITHUB_SYNC_REFUSAL="$GITHUB_SYNC_MOCK_DIR/refusal.sh"
+GITHUB_SYNC_FAILURE="$GITHUB_SYNC_MOCK_DIR/failure.sh"
+
+cat > "$GITHUB_SYNC_REFUSAL" <<'MOCKEOF'
+#!/bin/bash
+echo "[github-sync] POLICY_REFUSAL: direct synchronization is disabled." >&2
+exit 2
+MOCKEOF
+chmod +x "$GITHUB_SYNC_REFUSAL"
+
+cat > "$GITHUB_SYNC_FAILURE" <<'MOCKEOF'
+#!/bin/bash
+echo "[github-sync] VERIFICATION_FAILURE: approved tree does not match." >&2
+exit 3
+MOCKEOF
+chmod +x "$GITHUB_SYNC_FAILURE"
+
+GITHUB_REFUSAL_OUTPUT=$(run_github_sync "$GITHUB_SYNC_REFUSAL" 2>&1)
+GITHUB_REFUSAL_EXIT=$?
+assert_exit "github-sync-report — policy refusal does not abort recovery" 0 "$GITHUB_REFUSAL_EXIT"
+assert_contains "github-sync-report — policy refusal is surfaced" "POLICY_REFUSAL" "$GITHUB_REFUSAL_OUTPUT"
+assert_contains "github-sync-report — refusal explains missing evidence" "no synchronization evidence was produced" "$GITHUB_REFUSAL_OUTPUT"
+if [[ "$GITHUB_REFUSAL_OUTPUT" != *"verification completed"* ]]; then
+  pass "github-sync-report — refusal is not reported as successful synchronization"
+else
+  fail "github-sync-report — refusal was reported as successful synchronization"
+fi
+
+GITHUB_FAILURE_OUTPUT=$(run_github_sync "$GITHUB_SYNC_FAILURE" 2>&1)
+GITHUB_FAILURE_EXIT=$?
+assert_exit "github-sync-report — verification failure aborts recovery" 1 "$GITHUB_FAILURE_EXIT"
+assert_contains "github-sync-report — verification failure is surfaced" "VERIFICATION_FAILURE" "$GITHUB_FAILURE_OUTPUT"
+assert_contains "github-sync-report — failure requires protected snapshot flow" "protected snapshot PR flow" "$GITHUB_FAILURE_OUTPUT"
+if [[ "$GITHUB_FAILURE_OUTPUT" != *"verification completed"* ]]; then
+  pass "github-sync-report — verification failure is not reported as successful synchronization"
+else
+  fail "github-sync-report — verification failure was reported as successful synchronization"
+fi
+rm -rf "$GITHUB_SYNC_MOCK_DIR"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
