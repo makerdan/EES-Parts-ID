@@ -105,6 +105,7 @@ WATCHDOG_PID=$!
 
 # Clean up the watchdog whenever we exit normally.
 cleanup_runtime() {
+  process_tree_signal "$WATCHDOG_PID" TERM
   kill "$WATCHDOG_PID" 2>/dev/null || true
   rm -rf "$RUNTIME_DIR"
 }
@@ -117,10 +118,8 @@ run_owned() {
   local child_pid=$!
   printf '%s\n' "$child_pid" > "$CURRENT_PID_FILE"
 
-  set +e
-  wait "$child_pid"
-  local exit_code=$?
-  set -e
+  local exit_code=0
+  wait "$child_pid" || exit_code=$?
 
   rm -f "$CURRENT_PID_FILE"
   if [[ -f "$TIMEOUT_MARKER" ]]; then
@@ -157,7 +156,7 @@ if [ "$preflight_exit_code" -ne 0 ]; then
   if [ "$preflight_exit_code" -eq 124 ]; then
     exit 124
   fi
-  echo "[test-all] ERROR: API suite-floor contract failed."
+  echo "[test-all] ERROR: API suite-floor preflight failed (exit code ${preflight_exit_code})."
   exit 1
 fi
 

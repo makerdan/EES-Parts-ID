@@ -6,6 +6,7 @@
  */
 import assert from "node:assert/strict";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -337,6 +338,87 @@ try {
   }
 } finally {
   rmSync(hungPreflightFixtureDir, { recursive: true, force: true });
+}
+
+const failedPreflightFixtureDir = mkdtempSync(
+  join(tmpdir(), "test-all-preflight-failure-contract-"),
+);
+const failedPreflightBinDir = join(failedPreflightFixtureDir, "bin");
+const failedPreflightPnpm = join(failedPreflightBinDir, "pnpm");
+const failedPreflightNode = join(failedPreflightBinDir, "node");
+const suiteStartedFile = join(failedPreflightFixtureDir, "suite-started");
+mkdirSync(failedPreflightBinDir, { recursive: true });
+writeFileSync(
+  failedPreflightPnpm,
+  [
+    "#!/usr/bin/env bash",
+    'if [[ " $* " == *" run test "* || " $* " == *" exec vitest "* ]]; then',
+    '  printf "suite\\n" >> "$TEST_ALL_SUITE_STARTED_FILE"',
+    "fi",
+    "exit 0",
+    "",
+  ].join("\n"),
+  { mode: 0o755 },
+);
+writeFileSync(
+  failedPreflightNode,
+  [
+    "#!/usr/bin/env bash",
+    'if [[ "${1:-}" == "scripts/test/api-suite-floor-contract.test.mjs" ]]; then',
+    '  echo "synthetic API suite-floor failure" >&2',
+    "  exit 7",
+    "fi",
+    'exec "$TEST_ALL_REAL_NODE" "$@"',
+    "",
+  ].join("\n"),
+  { mode: 0o755 },
+);
+
+try {
+  const startedAt = Date.now();
+  const failedPreflight = spawnSync("bash", [testAllScript], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 5_000,
+    env: {
+      ...process.env,
+      PATH: `${failedPreflightBinDir}:${process.env.PATH}`,
+      SERIAL_LOCK_HELD_RESOURCES: "shared-test-results",
+      TEST_ALL_REAL_NODE: process.execPath,
+      TEST_ALL_SUITE_STARTED_FILE: suiteStartedFile,
+      TEST_ALL_TOTAL_BUDGET_SECONDS: "10",
+      TEST_ALL_WATCHDOG_GRACE_SECONDS: "1",
+    },
+  });
+  const elapsedMs = Date.now() - startedAt;
+  const output = `${failedPreflight.stdout}\n${failedPreflight.stderr}`;
+
+  assert.equal(
+    failedPreflight.status,
+    1,
+    `failed preflight should return ordinary failure status; output:\n${output}`,
+  );
+  assert(
+    elapsedMs < 5_000,
+    `failed preflight exceeded the bounded test window (${elapsedMs}ms)`,
+  );
+  assert.match(
+    output,
+    /API suite-floor preflight failed \(exit code 7\)/,
+    "ordinary preflight failures must identify the API suite-floor phase and exit code",
+  );
+  assert.doesNotMatch(
+    output,
+    /outer wall-clock cap expired during API suite-floor preflight/,
+    "a non-timeout preflight failure must not use the timeout diagnostic",
+  );
+  assert.equal(
+    existsSync(suiteStartedFile),
+    false,
+    "package suites must not start after an API suite-floor preflight failure",
+  );
+} finally {
+  rmSync(failedPreflightFixtureDir, { recursive: true, force: true });
 }
 
 console.log("Validation runtime contract: test database mode and Node declarations are aligned");

@@ -14,3 +14,23 @@ Smoke harnesses that own HTTP servers must track their sockets and bound shutdow
 **Why:** A stalled proxy fixture kept the stub server open after the client request timed out, so graceful close alone was not enough to guarantee cleanup.
 
 **How to apply:** Add an absolute request deadline, destroy the request on timeout, and force-close tracked sockets from an outer cleanup path with its own deadline.
+
+Shell helpers that wait for owned child processes must capture `wait` failures without
+temporarily enabling `errexit`; otherwise a nonzero child can terminate the caller
+before the phase-specific status classifier runs.
+
+**Why:** A preflight child exiting with an ordinary failure code bypassed its
+caller’s diagnostic branch when the helper restored `set -e` before returning.
+
+**How to apply:** Use a conditional `wait ... || exit_code=$?` and leave errexit
+ownership with the caller, which can then distinguish ordinary failures from timeouts.
+
+Watchdog cleanup must terminate the watchdog’s descendant timer processes, not
+only the background subshell, because descendants can keep captured stdout or
+stderr open after the harness has already classified a failure.
+
+**Why:** An ordinary preflight failure returned promptly but its long-lived
+watchdog sleep kept the parent’s output pipe open until the watchdog budget expired.
+
+**How to apply:** Reuse the harness process-tree terminator from the normal exit
+trap before removing runtime state.
