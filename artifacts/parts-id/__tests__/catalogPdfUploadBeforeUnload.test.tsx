@@ -302,10 +302,9 @@ describe("CatalogPdfUpload — beforeunload guard on web", () => {
     await act(async () => { mockXhr.fireEvent("load"); });
     await flushPromises();
 
-    const removeCalls = (mockRemoveEventListener.mock.calls as [string, unknown][]).filter(
-      ([event, handler]) => event === "beforeunload" && handler === addedHandler,
-    );
-    expect(removeCalls.length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(mockRemoveEventListener).toHaveBeenCalledWith("beforeunload", addedHandler);
+    });
   });
 
   it("does not attach a beforeunload handler on native (Platform.OS = 'ios')", async () => {
