@@ -670,7 +670,7 @@ importers:
         specifier: ~29.7.0
         version: 29.7.0
       react:
-        specifier: 'catalog:'
+        specifier: 19.1.0
         version: 19.1.0
       react-dom:
         specifier: 'catalog:'
