@@ -10,7 +10,7 @@ import nodeAssert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { getTierSteps } from "../validation-steps.mjs";
@@ -20,8 +20,10 @@ import {
   buildGitHubSecurityControlReport,
   buildGitHubValidationEvidenceBundle,
   collectGitHubValidationEvidence,
+  evaluateGitHubValidationEvidence,
   evaluateGitHubProtectionFreshness,
   inspectOptionalRuntimeSkillMirror,
+  MAX_PAGINATION_FAILURES,
 } from "../lib/github-validation-evidence.mjs";
 
 const root = join(fileURLToPath(new URL("../..", import.meta.url)));
@@ -30,11 +32,45 @@ const canonicalSkillPath = join(canonicalSkillDir, "SKILL.md");
 const runtimeSkillDir = join(root, ".local", "custom_skills", "install-github-actions");
 const workflowDir = join(root, ".github", "workflows");
 const actionPath = join(root, ".github", "actions", "setup-node-pnpm", "action.yml");
+const inventoryChipTextSqlPath = join(root, "lib", "db", "drizzle", "inventory_chip_text.sql");
 const coveragePath = join(root, "docs", "validation", "github-actions-coverage.md");
+const parityReportPath = join(root, "docs", "validation", "ci-validation-parity.md");
+const replitConfigPath = join(root, ".replit");
+const postMergeScriptPath = join(root, "scripts", "post-merge.sh");
 const protectionStatusPath = join(root, "docs", "validation", "github-protection-status.md");
 const installationPath = join(root, "docs", "validation", "github-actions-installation.md");
+const workflowRoleManifest = Object.freeze({
+  ciAggregator: {
+    path: "ci.yml",
+    required: true,
+    requiredStatuses: ["CI / required"],
+  },
+  reusableNative: {
+    path: "lidar-measure-tests.yml",
+    required: false,
+    requiredStatuses: [],
+  },
+  scheduledAudit: {
+    path: "scheduled-audit.yml",
+    required: true,
+    requiredStatuses: [],
+  },
+  readmeMaintenanceWriter: {
+    path: "sync-readme.yml",
+    required: true,
+    requiredStatuses: [],
+  },
+});
 const fastContractChecks = new Map([
+  ["audio-playback-worklet-contract", "node scripts/test/audio-playback-worklet-contract.test.mjs"],
   ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
+  ["api-fixture-ownership-contract", "node scripts/test/api-fixture-ownership-contract.test.mjs"],
+  ["ci-validation-parity-contract", "node scripts/test/ci-validation-parity-contract.test.mjs"],
+  [
+    "ci-validation-parity-revision-contract",
+    "node scripts/test/ci-validation-parity-revision-contract.test.mjs",
+  ],
+  ["protected-map-timeout-contract", "node scripts/test/protected-map-timeout-contract.test.mjs"],
   ["api-spec-typecheck-contract", "node scripts/test/api-spec-typecheck-contract.test.mjs"],
   ["github-actions-contract", "node scripts/test/github-actions-contract.test.mjs"],
   ["api-route-authorization-contract", "node scripts/test/api-route-authorization-contract.test.mjs"],
@@ -42,10 +78,16 @@ const fastContractChecks = new Map([
   ["poe-setup-targeted-correction-contract", "node skill-previews/poe-setup/targeted-correction-contract.test.mjs"],
   ["skill-mirror-sync-contract", "node scripts/test/skill-mirror-sync-contract.test.mjs"],
   ["dependency-security-contract", "node scripts/test/dependency-security-contract.test.mjs"],
+  ["parts-id-dependency-contract", "node scripts/test/parts-id-dependency-contract.test.mjs"],
+  ["browser-bundle-contract", "node scripts/test/browser-bundle-dependency-contract.test.mjs"],
+  ["browser-bundle-dependency-contract", "node scripts/check-browser-bundles.mjs"],
+  ["dead-exports-contract", "node scripts/test/dead-exports-contract.test.mjs"],
+  ["dead-code-policy-contract", "node scripts/test/dead-code-policy-contract.test.mjs"],
   ["patched-dependencies-contract", "node scripts/test/patched-dependencies.test.mjs"],
   ["port-authority-contract", "node scripts/test-port-authority.mjs"],
   ["replit-config-contract", "node scripts/test/replit-config-contract.test.mjs"],
   ["validation-runtime-contract", "node scripts/test/validation-runtime-contract.test.mjs"],
+  ["validation-parity-contract", "node scripts/test/validation-parity-contract.test.mjs"],
 ]);
 const protectionReportBuilders = new Set([
   "buildGitHubCapabilityReport",
@@ -202,11 +244,102 @@ function actionReferences(text) {
   return [...text.matchAll(/^\s+uses:\s+([^\s#]+)\s*$/gm)].map((match) => match[1]);
 }
 
+function requiredStatusNames(text) {
+  return jobBlocks(text)
+    .flatMap((block) => [...block.text.matchAll(/^\s+name:\s+(.+?)\s*$/gm)].map((match) => match[1].trim()))
+    .filter((name) => /\brequired\b|\bmerge gate\b/i.test(name));
+}
+
+function validateWorkflowRoleManifest(files) {
+  const errors = [];
+  const rolesByPath = new Map();
+
+  for (const [role, contract] of Object.entries(workflowRoleManifest)) {
+    if (rolesByPath.has(contract.path)) {
+      errors.push(`workflow role manifest maps ${contract.path} to multiple roles`);
+    }
+    rolesByPath.set(contract.path, role);
+
+    if (!files[contract.path]) {
+      if (contract.required) {
+        errors.push(`workflow role ${role} is missing its required path ${contract.path}`);
+      }
+      continue;
+    }
+
+    if (role === "reusableNative") {
+      const text = files[contract.path];
+      if (!/^  workflow_call:/m.test(text)) {
+        errors.push(`${contract.path}: reusable-native role must expose workflow_call`);
+      }
+      if (/^\s{2}(pull_request|merge_group|push|workflow_dispatch):/m.test(text)) {
+        errors.push(`${contract.path}: reusable-native role must not bypass the CI aggregator`);
+      }
+    }
+  }
+
+  for (const name of Object.keys(files)) {
+    if (!rolesByPath.has(name)) {
+      errors.push(`${name}: workflow is not assigned to a declared role`);
+    }
+  }
+
+  const statusOccurrences = new Map();
+  for (const [name, text] of Object.entries(files)) {
+    const role = rolesByPath.get(name);
+    for (const status of requiredStatusNames(text)) {
+      const occurrences = statusOccurrences.get(status) ?? [];
+      occurrences.push({ name, role });
+      statusOccurrences.set(status, occurrences);
+
+      if (!role) {
+        errors.push(`${name}: unclassified workflow introduces required-looking status ${status}`);
+      } else if (role !== "ciAggregator") {
+        errors.push(`${name}: non-aggregator role ${role} introduces required-looking status ${status}`);
+      } else if (!workflowRoleManifest.ciAggregator.requiredStatuses.includes(status)) {
+        errors.push(`${name}: aggregator introduces undeclared required-looking status ${status}`);
+      }
+    }
+  }
+
+  for (const status of workflowRoleManifest.ciAggregator.requiredStatuses) {
+    const occurrences = statusOccurrences.get(status) ?? [];
+    if (!occurrences.some(({ role }) => role === "ciAggregator")) {
+      errors.push(`workflow role ciAggregator is missing required status ${status}`);
+    }
+  }
+
+  for (const [status, occurrences] of statusOccurrences) {
+    if (occurrences.length > 1) {
+      errors.push(
+        `required-looking status ${status} is declared by multiple workflow jobs: ${
+          occurrences.map(({ name }) => name).join(", ")
+        }`,
+      );
+    }
+  }
+
+  return errors;
+}
+
 function validateWorkflowContract(files, coverage) {
   const errors = [];
-  const ci = files["ci.yml"];
-  const audit = files["scheduled-audit.yml"];
-  const readme = files["sync-readme.yml"];
+  const ci = files[workflowRoleManifest.ciAggregator.path];
+  const audit = files[workflowRoleManifest.scheduledAudit.path];
+  const readme = files[workflowRoleManifest.readmeMaintenanceWriter.path];
+  assertRegularFile(inventoryChipTextSqlPath, "inventory_chip_text provisioning SQL");
+
+  const inventoryChipTextSql = read(inventoryChipTextSqlPath);
+  nodeAssert.match(
+    inventoryChipTextSql,
+    /CREATE OR REPLACE FUNCTION public\.inventory_chip_text\s*\(\s*vendor text,\s*catalog text,\s*description text,\s*ai_keywords text\[\]\s*\)/s,
+    "inventory_chip_text provisioning SQL has the wrong argument contract",
+  );
+  nodeAssert.match(
+    inventoryChipTextSql,
+    /RETURNS text[\s\S]*LANGUAGE sql[\s\S]*IMMUTABLE/,
+    "inventory_chip_text provisioning SQL must define an immutable SQL function",
+  );
 
   for (const [name, text] of Object.entries(files)) {
     if (!/^permissions:\s*$/m.test(text)) errors.push(`${name}: missing top-level permissions`);
@@ -249,7 +382,10 @@ function validateWorkflowContract(files, coverage) {
     errors.push("setup-node-pnpm: local composite action cannot perform the initial checkout");
   }
 
-  for (const [name, text] of Object.entries({ "ci.yml": ci, "scheduled-audit.yml": audit })) {
+  for (const role of ["ciAggregator", "reusableNative", "scheduledAudit"]) {
+    const name = workflowRoleManifest[role].path;
+    const text = files[name];
+    if (!text) continue;
     const checkoutIndex = text.indexOf("uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683");
     const setupIndex = text.indexOf("uses: ./.github/actions/setup-node-pnpm");
     if (checkoutIndex < 0 || setupIndex < 0 || checkoutIndex > setupIndex) {
@@ -287,9 +423,6 @@ function validateWorkflowContract(files, coverage) {
   const validate = ciJobs.find((block) => block.name === "validate");
   const required = ciJobs.find((block) => block.name === "required");
   if (!validate) errors.push("ci.yml: missing validate job");
-  if (ciJobs.some((block) => block.name === "native") || /lidar-measure-tests/.test(ci)) {
-    errors.push("ci.yml: native LiDAR validation must remain excluded from CI");
-  }
   if (!required) errors.push("ci.yml: missing stable required job");
   if (validate && !/uses:\s+\.\.\/?\.github\/actions\/setup-node-pnpm|uses:\s+\.\/\.github\/actions\/setup-node-pnpm/.test(validate.text)) {
     errors.push("ci.yml/validate: does not use the repository setup component");
@@ -301,21 +434,43 @@ function validateWorkflowContract(files, coverage) {
     const readinessIndex = validate.text.indexOf("name: Wait for PostgreSQL readiness");
     const trigramIndex = validate.text.indexOf("name: Enable PostgreSQL trigram extension");
     const schemaPreparationIndex = validate.text.indexOf("name: Prepare isolated PostgreSQL schema");
+    const functionProvisionIndex = validate.text.indexOf("name: Provision inventory_chip_text function");
+    const functionVerificationIndex = validate.text.indexOf("name: Verify inventory_chip_text function");
+    const canonicalValidationIndex = validate.text.indexOf("name: Run the canonical standard-plus validation tier");
     const trigramCommands = validate.text.match(
       /run:\s+psql "\$DATABASE_URL" --set=ON_ERROR_STOP=1 --command="CREATE EXTENSION IF NOT EXISTS pg_trgm;"/g,
+    ) ?? [];
+    const functionProvisionCommands = validate.text.match(
+      /run:\s+psql "\$DATABASE_URL" --set=ON_ERROR_STOP=1 --file=lib\/db\/drizzle\/inventory_chip_text\.sql/g,
     ) ?? [];
 
     if (trigramCommands.length !== 1) {
       errors.push("ci.yml/validate: must enable pg_trgm exactly once with fail-closed psql");
     }
+    if (functionProvisionCommands.length !== 1) {
+      errors.push(
+        "ci.yml/validate: inventory_chip_text must be provisioned exactly once with fail-closed psql",
+      );
+    }
+    if (!/to_regprocedure\('inventory_chip_text\(text,text,text,text\[\]\)'\)/.test(validate.text)) {
+      errors.push("ci.yml/validate: inventory_chip_text signature verification is missing");
+    }
     if (
       readinessIndex < 0
       || trigramIndex < 0
       || schemaPreparationIndex < 0
+      || functionProvisionIndex < 0
+      || functionVerificationIndex < 0
+      || canonicalValidationIndex < 0
       || readinessIndex > trigramIndex
       || trigramIndex > schemaPreparationIndex
+      || schemaPreparationIndex > functionProvisionIndex
+      || functionProvisionIndex > functionVerificationIndex
+      || functionVerificationIndex > canonicalValidationIndex
     ) {
-      errors.push("ci.yml/validate: pg_trgm initialization must run after readiness and before schema preparation");
+      errors.push(
+        "ci.yml/validate: database prerequisites, inventory_chip_text provisioning, and verification must precede canonical validation",
+      );
     }
   }
   if (validate && !/run:\s+pnpm run test-standard-plus/.test(validate.text)) {
@@ -346,6 +501,110 @@ function validateWorkflowContract(files, coverage) {
   if (!/pnpm run test-standard-plus/.test(coverage)) errors.push("coverage: portable owner command is undocumented");
 
   return errors;
+}
+
+function validatePostMergeParityContract() {
+  const report = read(parityReportPath);
+  const replitConfig = read(replitConfigPath);
+  const configuredHook = replitConfig.match(
+    /\[postMerge\][\s\S]*?\npath\s*=\s*"([^"]+)"/,
+  )?.[1];
+  nodeAssert.ok(configuredHook, "Replit post-merge hook path must be configured");
+
+  const hookSource = read(join(root, configuredHook));
+  nodeAssert.equal(
+    configuredHook,
+    "scripts/post-merge.sh",
+    "the parity contract must inspect the configured post-merge hook",
+  );
+  nodeAssert.equal(
+    resolve(join(root, configuredHook)),
+    resolve(postMergeScriptPath),
+    "the configured post-merge hook must resolve to the inspected script",
+  );
+
+  const rows = report
+    .split(/\r?\n/)
+    .filter((line) => /^\|\s*`?post-merge-health-test`?\s*\|/.test(line));
+  nodeAssert.equal(rows.length, 1, "parity report must contain exactly one post-merge-health-test row");
+
+  const [row] = rows;
+  const cells = row.split("|").slice(1, -1).map((cell) => cell.trim());
+  nodeAssert.equal(cells.at(-1), "inferred", "post-merge parity confidence must remain inferred");
+  nodeAssert.match(
+    row,
+    /contract coverage/i,
+    "post-merge parity row must identify contract coverage",
+  );
+  nodeAssert.match(
+    row,
+    /does not execute the `\.replit`-configured `postMerge` hook/i,
+    "post-merge parity row must exclude live .replit hook execution",
+  );
+  nodeAssert.match(
+    row,
+    /live service-health behavior/i,
+    "post-merge parity row must exclude live service-health behavior",
+  );
+  nodeAssert.doesNotMatch(
+    row,
+    /\|\s*direct(?:\s+composite)?\s*\|/i,
+    "post-merge parity row must not classify platform-owned behavior as direct parity",
+  );
+
+  const hookEvidenceHeading = "## Platform-owned post-merge hook evidence";
+  const hookEvidenceStart = report.indexOf(hookEvidenceHeading);
+  nodeAssert.ok(
+    hookEvidenceStart >= 0,
+    `parity report must contain "${hookEvidenceHeading}"`,
+  );
+  const hookEvidence = report.slice(hookEvidenceStart);
+  nodeAssert.match(
+    hookEvidence,
+    new RegExp(`configured hook:\\s*\\\`${configuredHook.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\\``),
+    "hook evidence must identify the configured hook path",
+  );
+  nodeAssert.match(
+    hookEvidence,
+    /(?:not executed by portable CI|portable CI does not execute)/i,
+    "hook evidence must explicitly separate live hook execution from portable CI",
+  );
+
+  // These are the platform-owned actions performed by the configured hook.
+  // Keep the source fingerprints here so adding a new hook responsibility
+  // requires a corresponding parity row instead of silently overstating CI.
+  const responsibilities = [
+    ["dependency-install", /pnpm install --frozen-lockfile/, "dependency installation"],
+    ["schema-sync", /pnpm --filter db push --force/, "database schema synchronization"],
+    ["fts-verification", /run verify-fts|verify-fts/, "full-text-search verification"],
+    ["codegen", /api-spec run codegen:fix/, "API client code generation"],
+    ["failure-gate-refresh", /publish-failure-gate\.mjs --sync/, "Failure Gate package refresh"],
+    ["protected-sync", /run_github_sync/, "protected GitHub synchronization"],
+    ["api-health", /check_api_health/, "live API health probing"],
+    ["sibling-services", /check_sibling_services/, "sibling service probing"],
+    ["viewbox-sync", /run_viewbox_sync_check/, "SVG viewBox verification"],
+    ["restart-recovery", /free-ports\.mjs|post-restart/, "API restart and recovery"],
+  ];
+  const documentedResponsibilityIds = new Set(
+    [...hookEvidence.matchAll(/^\|\s*`([^`]+)`\s*\|/gm)].map(([, id]) => id),
+  );
+  for (const [id, sourcePattern, label] of responsibilities) {
+    if (!sourcePattern.test(hookSource)) continue;
+    nodeAssert.ok(
+      documentedResponsibilityIds.has(id),
+      `platform-owned post-merge responsibility "${label}" (${id}) is missing from parity evidence`,
+    );
+  }
+  nodeAssert.match(
+    hookEvidence,
+    /hook-specific/i,
+    "hook evidence must classify live responsibilities as hook-specific",
+  );
+  nodeAssert.match(
+    hookEvidence,
+    /unavailable/i,
+    "hook evidence must label unexecuted live responsibilities unavailable",
+  );
 }
 
 function evaluateRequiredGateResult(validate) {
@@ -478,7 +737,28 @@ function validateCapabilityAndSecurityEvidence() {
   const reportContext = {
     repository: "makerdan/EES-Parts-ID",
     revisionSha: "abcdef0123456789abcdef0123456789abcdef01",
-    policy: { requiredChecks: ["CI / required"], strict: true },
+    policy: {
+      requiredChecks: ["CI / required"],
+      strict: true,
+      branchProtection: {
+        requiredPullRequestReviews: true,
+        requiredConversationResolution: true,
+        enforceAdmins: true,
+        allowForcePushes: false,
+        allowDeletions: false,
+      },
+      actions: {
+        defaultWorkflowPermissions: "read",
+        canApprovePullRequestReviews: false,
+        shaPinningRequired: true,
+      },
+      selectedActions: {
+        githubOwnedAllowed: true,
+        patterns: ["pnpm/action-setup@*"],
+        policy: "selected",
+        verifiedAllowed: false,
+      },
+    },
     permissions: { actions: "read", contents: "read" },
   };
   const reportSnapshot = buildGitHubProtectionSnapshot({
@@ -666,14 +946,188 @@ async function validateRevisionEvidenceAndFreshness() {
   nodeAssert.equal(collected.runs[0].jobs[0].failureEvidence.detail, "line 1\nline 2");
   nodeAssert.deepEqual(calls.map(([kind]) => kind), ["runs", "jobs", "detail"]);
   nodeAssert.equal(calls[0][1].headSha, revision);
+  nodeAssert.equal(calls[0][1].page, 1);
   nodeAssert.equal(calls[0][1].perPage, 100);
   nodeAssert.equal(calls[2][1].maxChars, 2000);
   nodeAssert.doesNotMatch(JSON.stringify(collected), /dispatch|cancel|rerun|workflow_mutation/i);
 
+  const paginatedCalls = [];
+  const secondPageRun = {
+    id: 202,
+    head_sha: revision,
+    workflow_name: "CI",
+    run_attempt: 1,
+  };
+  const paginated = await collectGitHubValidationEvidence({
+    repository: "makerdan/EES-Parts-ID",
+    revisionSha: revision,
+    listWorkflowRuns: async (request) => {
+      paginatedCalls.push(["runs", request]);
+      return request.page === 1
+        ? {
+            total_count: 101,
+            workflow_runs: Array.from({ length: 100 }, (_, index) => ({
+              id: 300 + index,
+              head_sha: otherRevision,
+            })),
+          }
+        : { total_count: 101, workflow_runs: [secondPageRun] };
+    },
+    listJobs: async (request) => {
+      paginatedCalls.push(["jobs", request]);
+      return request.page === 1
+        ? { total_count: 101, jobs: Array.from({ length: 100 }, (_, index) => ({ id: 400 + index, conclusion: "success" })) }
+        : { total_count: 101, jobs: [{ id: 500, name: "failed later job", conclusion: "failure" }] };
+    },
+  });
+  nodeAssert.equal(paginated.complete, true);
+  nodeAssert.equal(paginated.truncated, false);
+  nodeAssert.equal(paginated.runs.length, 1);
+  nodeAssert.equal(paginated.runs[0].run.id, secondPageRun.id);
+  nodeAssert.equal(paginated.runs[0].jobs[100].id, 500);
+  nodeAssert.equal(paginated.runs[0].jobs[100].conclusion, "failure");
+  nodeAssert.deepEqual(
+    paginatedCalls.map(([kind, request]) => [kind, request.page]),
+    [["runs", 1], ["runs", 2], ["jobs", 1], ["jobs", 2]],
+  );
+
+  const truncatedCollection = await collectGitHubValidationEvidence({
+    repository: "makerdan/EES-Parts-ID",
+    revisionSha: revision,
+    listWorkflowRuns: async (request) => {
+      if (request.page === 1) return { workflow_runs: Array.from({ length: 100 }, () => ({ head_sha: otherRevision })) };
+      throw new Error("provider unavailable");
+    },
+  });
+  nodeAssert.equal(truncatedCollection.complete, false);
+  nodeAssert.equal(truncatedCollection.truncated, true);
+  nodeAssert.equal(truncatedCollection.pagination.reason, "workflow-runs-pagination-failed");
+  nodeAssert.equal(truncatedCollection.pagination.stage, "workflow-runs");
+  nodeAssert.equal(truncatedCollection.pagination.failedPage, 2);
+  nodeAssert.equal(evaluateGitHubValidationEvidence(truncatedCollection).status, "unknown");
+  nodeAssert.equal(evaluateGitHubValidationEvidence(truncatedCollection).verified, false);
+
+  const completeEarlierRun = {
+    id: 900,
+    head_sha: revision,
+    workflow_name: "CI",
+    run_attempt: 1,
+  };
+  const partialJobsRun = {
+    id: 901,
+    head_sha: revision,
+    workflow_name: "CI",
+    run_attempt: 3,
+  };
+  const completeLaterRun = {
+    id: 902,
+    head_sha: revision,
+    workflow_name: "CI",
+    run_attempt: 1,
+  };
+  const partialJobsCollection = await collectGitHubValidationEvidence({
+    repository: "makerdan/EES-Parts-ID",
+    revisionSha: revision,
+    listWorkflowRuns: async () => [completeEarlierRun, partialJobsRun, completeLaterRun],
+    listJobs: async (request) => {
+      if (request.runId === completeEarlierRun.id || request.runId === completeLaterRun.id) {
+        return [{ id: request.runId, conclusion: "success" }];
+      }
+      if (request.page === 1) {
+        return {
+          total_count: 101,
+          jobs: Array.from({ length: 100 }, (_, index) => ({
+            id: 1000 + index,
+            conclusion: "success",
+          })),
+        };
+      }
+      throw new Error("jobs page unavailable");
+    },
+  });
+  nodeAssert.equal(partialJobsCollection.complete, false);
+  nodeAssert.equal(partialJobsCollection.truncated, true);
+  nodeAssert.equal(partialJobsCollection.runs.length, 3);
+  nodeAssert.equal(partialJobsCollection.runs[0].run.id, completeEarlierRun.id);
+  nodeAssert.equal(partialJobsCollection.runs[0].complete, true);
+  nodeAssert.equal(partialJobsCollection.runs[1].run.id, partialJobsRun.id);
+  nodeAssert.equal(partialJobsCollection.runs[1].run.attempt, partialJobsRun.run_attempt);
+  nodeAssert.equal(partialJobsCollection.runs[1].complete, false);
+  nodeAssert.equal(partialJobsCollection.runs[1].truncated, true);
+  nodeAssert.equal(partialJobsCollection.runs[1].jobs.length, 100);
+  nodeAssert.equal(partialJobsCollection.runs[1].jobs[0].id, 1000);
+  nodeAssert.equal(partialJobsCollection.runs[2].run.id, completeLaterRun.id);
+  nodeAssert.equal(partialJobsCollection.runs[2].complete, true);
+  nodeAssert.equal(partialJobsCollection.pagination.reason, "jobs-pagination-failed");
+  nodeAssert.equal(partialJobsCollection.pagination.stage, "jobs");
+  nodeAssert.equal(partialJobsCollection.pagination.failedPage, 2);
+  nodeAssert.equal(partialJobsCollection.pagination.runId, partialJobsRun.id);
+  nodeAssert.equal(partialJobsCollection.pagination.runAttempt, partialJobsRun.run_attempt);
+  nodeAssert.equal(partialJobsCollection.pagination.failures.length, 1);
+  nodeAssert.deepEqual(partialJobsCollection.pagination.failures[0], {
+    reason: "jobs-pagination-failed",
+    stage: "jobs",
+    failedPage: 2,
+    runId: partialJobsRun.id,
+    runAttempt: partialJobsRun.run_attempt,
+  });
+  nodeAssert.equal(evaluateGitHubValidationEvidence(partialJobsCollection).verified, false);
+
+  nodeAssert.equal(evaluateGitHubValidationEvidence({
+    complete: true,
+    truncated: false,
+  }).status, "verified");
+  nodeAssert.equal(evaluateGitHubValidationEvidence({
+    complete: true,
+    truncated: true,
+  }).status, "unknown");
+
+  const manyPartialRuns = Array.from({ length: MAX_PAGINATION_FAILURES + 2 }, (_, index) => ({
+    id: 1000 + index,
+    head_sha: revision,
+    workflow_name: "CI",
+    run_attempt: index + 1,
+  }));
+  const boundedDiagnostics = await collectGitHubValidationEvidence({
+    repository: "makerdan/EES-Parts-ID",
+    revisionSha: revision,
+    listWorkflowRuns: async () => manyPartialRuns,
+    listJobs: async (request) => request.page === 1
+      ? {
+          total_count: 101,
+          jobs: Array.from({ length: 100 }, (_, index) => ({ id: index, conclusion: "success" })),
+        }
+      : Promise.reject(new Error("jobs page unavailable")),
+  });
+  nodeAssert.equal(boundedDiagnostics.complete, false);
+  nodeAssert.equal(boundedDiagnostics.pagination.failures.length, MAX_PAGINATION_FAILURES);
+  nodeAssert.equal(boundedDiagnostics.runs.length, manyPartialRuns.length);
+
   const context = {
     repository: "makerdan/EES-Parts-ID",
     revisionSha: revision,
-    policy: { requiredChecks: ["CI / required"], strict: true },
+    policy: {
+      requiredChecks: ["CI / required"],
+      strict: true,
+      branchProtection: {
+        requiredPullRequestReviews: true,
+        requiredConversationResolution: true,
+        enforceAdmins: true,
+        allowForcePushes: false,
+        allowDeletions: false,
+      },
+      actions: {
+        defaultWorkflowPermissions: "read",
+        canApprovePullRequestReviews: false,
+        shaPinningRequired: true,
+      },
+      selectedActions: {
+        githubOwnedAllowed: true,
+        patterns: ["pnpm/action-setup@*"],
+        policy: "selected",
+        verifiedAllowed: false,
+      },
+    },
     permissions: { actions: "read", contents: "read" },
   };
   const snapshot = buildGitHubProtectionSnapshot({
@@ -725,7 +1179,67 @@ async function validateRevisionEvidenceAndFreshness() {
   });
   const contextChanges = [
     ["repository", { repository: "another-owner/EES-Parts-ID" }, "repository evidence changed"],
-    ["policy", { policy: { requiredChecks: ["other-check"], strict: true } }, "policy evidence changed"],
+    ["required check", { policy: { ...context.policy, requiredChecks: ["other-check"] } }, "policy evidence changed"],
+    [
+      "required pull-request reviews",
+      { policy: { ...context.policy, branchProtection: { ...context.policy.branchProtection, requiredPullRequestReviews: false } } },
+      "policy evidence changed",
+    ],
+    [
+      "conversation resolution",
+      { policy: { ...context.policy, branchProtection: { ...context.policy.branchProtection, requiredConversationResolution: false } } },
+      "policy evidence changed",
+    ],
+    [
+      "administrator enforcement",
+      { policy: { ...context.policy, branchProtection: { ...context.policy.branchProtection, enforceAdmins: false } } },
+      "policy evidence changed",
+    ],
+    [
+      "force-push block",
+      { policy: { ...context.policy, branchProtection: { ...context.policy.branchProtection, allowForcePushes: true } } },
+      "policy evidence changed",
+    ],
+    [
+      "branch-deletion block",
+      { policy: { ...context.policy, branchProtection: { ...context.policy.branchProtection, allowDeletions: true } } },
+      "policy evidence changed",
+    ],
+    [
+      "default workflow token",
+      { policy: { ...context.policy, actions: { ...context.policy.actions, defaultWorkflowPermissions: "write" } } },
+      "policy evidence changed",
+    ],
+    [
+      "workflow-token PR approval",
+      { policy: { ...context.policy, actions: { ...context.policy.actions, canApprovePullRequestReviews: true } } },
+      "policy evidence changed",
+    ],
+    [
+      "Actions SHA pinning",
+      { policy: { ...context.policy, actions: { ...context.policy.actions, shaPinningRequired: false } } },
+      "policy evidence changed",
+    ],
+    [
+      "selected-actions policy",
+      { policy: { ...context.policy, selectedActions: { ...context.policy.selectedActions, policy: "all" } } },
+      "policy evidence changed",
+    ],
+    [
+      "GitHub-owned Actions allowlist",
+      { policy: { ...context.policy, selectedActions: { ...context.policy.selectedActions, githubOwnedAllowed: false } } },
+      "policy evidence changed",
+    ],
+    [
+      "verified marketplace Actions allowlist",
+      { policy: { ...context.policy, selectedActions: { ...context.policy.selectedActions, verifiedAllowed: true } } },
+      "policy evidence changed",
+    ],
+    [
+      "selected Actions pattern allowlist",
+      { policy: { ...context.policy, selectedActions: { ...context.policy.selectedActions, patterns: ["actions/checkout@*"] } } },
+      "policy evidence changed",
+    ],
     ["permissions", { permissions: { actions: "read", contents: "write" } }, "permissions evidence changed"],
     ["revisionSha", { revisionSha: otherRevision }, "revisionSha evidence changed"],
   ];
@@ -760,6 +1274,7 @@ validateFastContractRegistration();
 validateProtectionReportFreshnessContract();
 validateCapabilityAndSecurityEvidence();
 await validateRevisionEvidenceAndFreshness();
+validatePostMergeParityContract();
 
 const protectionStatus = read(protectionStatusPath);
 const installation = read(installationPath);
@@ -769,6 +1284,8 @@ nodeAssert.match(installation, /report consumers must pass both the snapshot and
 
 const workflowNames = trackedWorkflowNames();
 const files = Object.fromEntries(workflowNames.map((name) => [name, workflow(name)]));
+const roleErrors = validateWorkflowRoleManifest(files);
+assert(roleErrors.length === 0, roleErrors.join("\n"));
 validatePortableRequiredGateContract(files);
 const errors = validateWorkflowContract(files, read(coveragePath));
 assert(errors.length === 0, errors.join("\n"));
@@ -786,6 +1303,37 @@ assert(
 assert(
   unsafeErrors.some((error) => error.includes("newly-added-unsafe.yml: write permissions")),
   "negative control did not inspect a newly added workflow for unsafe permissions",
+);
+
+const competingRequiredWorkflow = { ...files, "newly-added-required.yml": files["ci.yml"] };
+const competingRequiredErrors = validateWorkflowRoleManifest(competingRequiredWorkflow);
+assert(
+  competingRequiredErrors.some((error) => error.includes("newly-added-required.yml: workflow is not assigned to a declared role")),
+  "negative control allowed an unclassified required workflow to remain outside the role manifest",
+);
+assert(
+  competingRequiredErrors.some((error) => error.includes("unclassified workflow introduces required-looking status CI / required")),
+  "negative control allowed an unclassified workflow to introduce a competing required-looking status",
+);
+assert(
+  competingRequiredErrors.some((error) => error.includes("required-looking status CI / required is declared by multiple workflow jobs")),
+  "negative control did not detect the competing required-looking status",
+);
+
+const renamedAggregator = { ...files, "renamed-ci.yml": files["ci.yml"] };
+delete renamedAggregator["ci.yml"];
+const renamedAggregatorErrors = validateWorkflowRoleManifest(renamedAggregator);
+assert(
+  renamedAggregatorErrors.some((error) => error.includes("renamed-ci.yml: workflow is not assigned to a declared role")),
+  "negative control allowed a renamed aggregator to remain outside the role manifest",
+);
+assert(
+  renamedAggregatorErrors.some((error) => error.includes("workflow role ciAggregator is missing its required path ci.yml")),
+  "negative control allowed the required aggregator role to be replaced silently",
+);
+assert(
+  renamedAggregatorErrors.some((error) => error.includes("unclassified workflow introduces required-looking status CI / required")),
+  "negative control allowed an unclassified workflow to introduce a competing required-looking status",
 );
 
 console.log(`GitHub Actions contract: ${workflowNames.length} workflows, ${getTierSteps("standard-plus").length} validation surfaces, and immutable action pins verified.`);

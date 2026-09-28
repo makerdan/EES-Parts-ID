@@ -64,6 +64,15 @@ export function getClerkProxyHost(req: {
   return firstHop || req.headers.host?.trim() || undefined;
 }
 
+function getClerkProxyProtocol(req: {
+  headers: IncomingHttpHeaders;
+}): "https" | undefined {
+  const forwarded = req.headers["x-forwarded-proto"];
+  const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  const firstHop = raw?.split(",")[0]?.trim().toLowerCase();
+  return firstHop === "https" ? "https" : undefined;
+}
+
 export function clerkProxyMiddleware(): RequestHandler {
   // Only run proxy in production — Clerk proxying doesn't work for dev instances
   if (process.env.NODE_ENV !== "production") {
@@ -85,7 +94,10 @@ export function clerkProxyMiddleware(): RequestHandler {
       path.replace(new RegExp(`^${CLERK_PROXY_PATH}`), ""),
     on: {
       proxyReq: (proxyReq, req) => {
-        const protocol = req.headers["x-forwarded-proto"] || "https";
+        // Public Clerk proxy URLs must always use HTTPS. Honor only an
+        // explicitly forwarded HTTPS first hop; reject all other schemes and
+        // malformed comma-delimited values by falling back to HTTPS.
+        const protocol = getClerkProxyProtocol(req) ?? "https";
         const host = getClerkProxyHost(req) || "";
         const proxyUrl = `${protocol}://${host}${CLERK_PROXY_PATH}`;
 

@@ -81,10 +81,6 @@ jest.mock("expo-camera", () => ({
   useCameraPermissions: jest.fn(() => [{ granted: false }, jest.fn()]),
 }));
 
-jest.mock("lidar-measure", () => ({
-  isLiDARSupported: jest.fn(() => false),
-}));
-
 jest.mock("@workspace/api-client-react", () => ({
   useUpdateItemBins:        jest.fn(() => ({ mutateAsync: jest.fn().mockResolvedValue(undefined) })),
   useUpdateItemBarcodes:    jest.fn(() => ({ mutateAsync: jest.fn().mockResolvedValue(undefined) })),
@@ -219,8 +215,6 @@ function makeAppContext(overrides: Record<string, unknown> = {}) {
     isLoading:           true,   // keeps shouldRedirectNonAdmin guard silent
     isAdmin:             true,
     adminToken:          "test-admin-token",
-    pendingLidarDims:    null,
-    setPendingLidarDims: jest.fn(),
     settings:            {},
     logout:              jest.fn(),
     ...overrides,

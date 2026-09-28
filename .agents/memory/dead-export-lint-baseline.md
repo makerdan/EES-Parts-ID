@@ -1,14 +1,19 @@
 ---
-name: Dead-export lint baseline
-description: The repository-wide lint baseline currently fails on an unlisted tsc binary.
+name: Dead-export lint binary declarations
+description: Library Knip checks require each package to declare binaries used by its scripts.
 ---
 
-The root `lint:libs` check currently reports `Unlisted binaries (1) tsc package.json`
-and exits nonzero even on a clean `main` checkout.
+The API-spec library's `typecheck` and code-generation scripts use `tsc`, so
+`typescript` must remain in that package's `devDependencies`. Knip then resolves
+the binary locally and the root `lint:libs` check remains strict about real
+unlisted binaries, dependencies, exports, and unresolved imports.
 
-**Why:** This is a repository baseline failure, not a package or source regression;
-task validation can reach the dead-export check after all preceding checks pass.
+**Why:** Knip evaluates each library from its own package directory rather than
+silently inheriting the workspace root's tool dependencies. A missing local
+declaration produces an `Unlisted binaries (1) tsc package.json` failure even
+when the source and artifact lint commands are otherwise clean.
 
-**How to apply:** When a task's validation stops at this message, confirm the
-working tree is clean and classify it as pre-existing rather than changing
-unrelated package metadata.
+**How to apply:** When adding or changing a library script that invokes a CLI,
+declare that CLI in the same package's dependencies or devDependencies and
+keep the dead-export runner strict; do not blanket-ignore Knip dependency
+findings.

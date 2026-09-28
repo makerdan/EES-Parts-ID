@@ -107,7 +107,7 @@ jest.mock("../utils/aiHelpers", () => ({
 
 // ── Imports ────────────────────────────────────────────────────────────────────
 import supertest from "supertest";
-import { uploadCatalogImage } from "../lib/objectStorage";
+import { deletePrivateObjects, uploadCatalogImage } from "../lib/objectStorage";
 import { resizeImages } from "../utils/imageResize";
 import { estimateImageBytes } from "../utils/aiHelpers";
 import app from "../app";
@@ -155,6 +155,7 @@ beforeEach(() => {
   });
   (estimateImageBytes as jest.Mock).mockReturnValue(1024); // 1 KB — well within limit
   (uploadCatalogImage as jest.Mock).mockResolvedValue("https://gcs.example.com/img.jpg");
+  (deletePrivateObjects as jest.Mock).mockResolvedValue(undefined);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -290,6 +291,28 @@ describe("PATCH /api/inventory/42/photo — not found", () => {
 });
 
 describe("PATCH /api/inventory/42/photo — server errors", () => {
+  const full = "/objects/uploads/private/catalog-images/new-full.jpg";
+  const thumb = "/objects/uploads/private/catalog-images/new-thumb.jpg";
+
+  it("deletes the full image when the thumbnail upload fails", async () => {
+    (uploadCatalogImage as jest.Mock).mockResolvedValueOnce(full).mockRejectedValueOnce(new Error("thumbnail failed"));
+    const res = await supertest(app).patch("/api/inventory/42/photo")
+      .send({ imageBase64: SMALL_BASE64, slot: 1 });
+    expect(res.status).toBe(500);
+    expect(deletePrivateObjects).toHaveBeenCalledWith([full]);
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each(["throws", "empty"] as const)("deletes both uploads when the database update %s", async outcome => {
+    (uploadCatalogImage as jest.Mock).mockResolvedValueOnce(full).mockResolvedValueOnce(thumb);
+    if (outcome === "throws") mockUpdateReturning.mockRejectedValueOnce(new Error("database failed"));
+    else mockUpdateReturning.mockResolvedValueOnce([]);
+    const res = await supertest(app).patch("/api/inventory/42/photo")
+      .send({ imageBase64: SMALL_BASE64, slot: 2 });
+    expect(res.status).toBe(outcome === "empty" ? 404 : 500);
+    expect(deletePrivateObjects).toHaveBeenCalledWith([full, thumb]);
+  });
+
   it("returns 500 when uploadCatalogImage throws", async () => {
     (uploadCatalogImage as jest.Mock).mockRejectedValue(new Error("GCS unavailable"));
 

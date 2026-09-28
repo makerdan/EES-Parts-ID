@@ -64,19 +64,27 @@ jest.mock("../src/lib/answerCache", () => ({
 
 const _origLogLevel = process.env.LOG_LEVEL;
 process.env.LOG_LEVEL = "silent";
+const _origReferenceGeminiTimeout = process.env.REFERENCE_GEMINI_TIMEOUT_MS;
+process.env.REFERENCE_GEMINI_TIMEOUT_MS = "50";
 
 afterAll(() => {
   if (_origLogLevel === undefined) delete process.env.LOG_LEVEL;
   else process.env.LOG_LEVEL = _origLogLevel;
+  if (_origReferenceGeminiTimeout === undefined) {
+    delete process.env.REFERENCE_GEMINI_TIMEOUT_MS;
+  } else {
+    process.env.REFERENCE_GEMINI_TIMEOUT_MS = _origReferenceGeminiTimeout;
+  }
 });
 
 import supertest from "supertest";
+import * as http from "node:http";
 import app from "../src/app";
 import { db } from "@workspace/db";
 import { quickLookupCacheTable } from "@workspace/db";
 import { referenceLogTable } from "@workspace/db";
 import { usersTable } from "@workspace/db";
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { workerQualifiedUserId } from "./helpers/testDb";
 import { setTestEnv } from "./helpers/testEnv";
 
@@ -190,6 +198,19 @@ describe("POST /api/reference/ask", () => {
     expect(res.body).toHaveProperty("error");
   });
 
+  it.each([
+    ["a number", 42],
+    ["an object", { text: "what is THWN-2?" }],
+  ])("returns 400 when question is %s", async (_description, question) => {
+    const res = await supertest(app)
+      .post("/api/reference/ask?stream=false")
+      .send({ question })
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(mockGenerateContent).not.toHaveBeenCalled();
+  });
+
   it("error before headers: returns 500 JSON, never starts a stream", async () => {
     // getCachedAnswer runs before any SSE frame is written; a failure here
     // must surface as a clean 500 JSON response, not a partial stream.
@@ -260,6 +281,115 @@ describe("POST /api/reference/ask", () => {
     expect(res.headers["content-type"]).toMatch(/application\/json/);
     expect(res.body).toEqual({ answer: "Answer text." });
   });
+
+  it(
+    "returns a bounded 504 and aborts a provider call that never settles",
+    async () => {
+      let providerSignal: AbortSignal | undefined;
+      let settleProvider: ((value: { text: string }) => void) | undefined;
+      mockGenerateContent.mockImplementationOnce(
+        (request: { config: { abortSignal: AbortSignal } }) => {
+          providerSignal = request.config.abortSignal;
+          return new Promise<{ text: string }>((resolve) => {
+            settleProvider = resolve;
+          });
+        },
+      );
+
+      const response = await supertest(app)
+        .post("/api/reference/ask?stream=false")
+        .send({ question: "what is THWN-2?" })
+        .expect(504);
+
+      expect(response.body).toHaveProperty("error");
+      expect(providerSignal?.aborted).toBe(true);
+
+      // A transport that ignores abort may settle later. Its answer must not
+      // write to the cache after the request has already timed out.
+      settleProvider?.({ text: "late answer" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(mockSetCachedAnswer).not.toHaveBeenCalled();
+    },
+    10_000,
+  );
+
+  it(
+    "aborts a stalled SSE provider when the client disconnects and ignores late completion",
+    async () => {
+      let providerSignal: AbortSignal | undefined;
+      let settleProvider: ((value: { text: string }) => void) | undefined;
+      let markProviderStarted!: () => void;
+      const providerStarted = new Promise<void>((resolve) => {
+        markProviderStarted = resolve;
+      });
+      mockGenerateContent.mockImplementationOnce(
+        (request: { config: { abortSignal: AbortSignal } }) => {
+          providerSignal = request.config.abortSignal;
+          markProviderStarted();
+          return new Promise<{ text: string }>((resolve) => {
+            settleProvider = resolve;
+          });
+        },
+      );
+
+      const server = app.listen(0, "127.0.0.1");
+      try {
+        await new Promise<void>((resolve, reject) => {
+          server.once("listening", resolve);
+          server.once("error", reject);
+        });
+        const address = server.address();
+        if (!address || typeof address === "string") {
+          throw new Error("Could not determine test server port");
+        }
+
+        const clientRequest = http.request({
+          host: "127.0.0.1",
+          port: address.port,
+          path: "/api/reference/ask",
+          method: "POST",
+          headers: { "content-type": "application/json" },
+        });
+        clientRequest.on("error", () => {
+          // Destroying the client request is the disconnect being tested.
+        });
+        clientRequest.end(JSON.stringify({ question: "what is THWN-2?" }));
+        await providerStarted;
+
+        clientRequest.destroy();
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error("Provider signal was not aborted after disconnect")),
+            2_000,
+          );
+          if (providerSignal?.aborted) {
+            clearTimeout(timer);
+            resolve();
+            return;
+          }
+          providerSignal?.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timer);
+              resolve();
+            },
+            { once: true },
+          );
+        });
+
+        settleProvider?.({ text: "late answer" });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(mockSetCachedAnswer).not.toHaveBeenCalled();
+      } finally {
+        if (server.listening) {
+          await new Promise<void>((resolve, reject) => {
+            server.close((error) => (error ? reject(error) : resolve()));
+          });
+        }
+      }
+    },
+    10_000,
+  );
 });
 
 // ── Admin-only knowledge scoping (POST /api/reference/ask) ─────────────────────
@@ -453,6 +583,16 @@ describe("GET /api/reference/ask-log", () => {
           : `${SEARCH_BENCHMARK_PREFIX}-${index} answer`,
       matchedItemCount: index % 4,
     }));
+
+    // A crashed run can leave rows behind for this process/worker identity.
+    // Remove only this benchmark's namespace before seeding so stale rows
+    // cannot change selectivity estimates or the route response totals.
+    await db.delete(referenceLogTable).where(
+      or(
+        ilike(referenceLogTable.question, `${SEARCH_BENCHMARK_PREFIX}-%`),
+        ilike(referenceLogTable.answer, `${SEARCH_BENCHMARK_PREFIX}-%`),
+      ),
+    );
     const insertedRows = await db.insert(referenceLogTable).values(benchmarkRows).returning({ id: referenceLogTable.id });
 
     try {
@@ -479,27 +619,38 @@ describe("GET /api/reference/ask-log", () => {
       expect(questionElapsed).toBeLessThan(SEARCH_LATENCY_TARGET_MS);
       expect(answerElapsed).toBeLessThan(SEARCH_LATENCY_TARGET_MS);
 
-      const explainResult = await db.transaction(async (tx) => {
+      const explainResults = await db.transaction(async (tx) => {
         // A small test database may prefer a sequential scan on cost alone.
-        // Force the planner to consider the indexes so this check verifies
-        // that both trigram indexes remain available for the route predicate.
+        // Force the planner to use an index for each branch independently.
+        // Checking the branches separately avoids a BitmapOr plan choosing
+        // only one index based on unrelated table statistics.
         await tx.execute(sql`SET LOCAL enable_seqscan = off`);
-        return tx.execute(sql`
+        const questionPlan = await tx.execute(sql`
           EXPLAIN (FORMAT TEXT)
           SELECT ${referenceLogTable.id}
           FROM ${referenceLogTable}
           WHERE ${referenceLogTable.question} ILIKE ${`%${SEARCH_BENCHMARK_QUESTION_TERM}%`}
-             OR ${referenceLogTable.answer} ILIKE ${`%${SEARCH_BENCHMARK_ANSWER_TERM}%`}
         `);
+        const answerPlan = await tx.execute(sql`
+          EXPLAIN (FORMAT TEXT)
+          SELECT ${referenceLogTable.id}
+          FROM ${referenceLogTable}
+          WHERE ${referenceLogTable.answer} ILIKE ${`%${SEARCH_BENCHMARK_ANSWER_TERM}%`}
+        `);
+        return { questionPlan, answerPlan };
       });
-      const planText = explainResult.rows
+
+      const questionPlanText = explainResults.questionPlan.rows
+        .map((row) => String((row as Record<string, unknown>)["QUERY PLAN"] ?? ""))
+        .join("\n");
+      const answerPlanText = explainResults.answerPlan.rows
         .map((row) => String((row as Record<string, unknown>)["QUERY PLAN"] ?? ""))
         .join("\n");
 
-      expect(planText).toMatch(
+      expect(questionPlanText).toMatch(
         /(?:Bitmap Index Scan on|Index Scan using)\s+reference_log_question_trgm_idx\b/,
       );
-      expect(planText).toMatch(
+      expect(answerPlanText).toMatch(
         /(?:Bitmap Index Scan on|Index Scan using)\s+reference_log_answer_trgm_idx\b/,
       );
     } finally {
@@ -675,6 +826,19 @@ describe("POST /api/reference/quick-lookups/:label", () => {
       .send({})
       .expect(400);
     expect(res.body).toHaveProperty("error");
+  });
+
+  it.each([
+    ["a number", 42],
+    ["an object", { text: "What is this?" }],
+  ])("returns 400 when question is %s", async (_description, question) => {
+    const res = await supertest(app)
+      .post(`/api/reference/quick-lookups/${TEST_LABEL}`)
+      .send({ question })
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(mockGenerateContent).not.toHaveBeenCalled();
   });
 
   it("calls AI, returns answer, and writes to DB cache", async () => {

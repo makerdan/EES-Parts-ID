@@ -17,8 +17,7 @@ import {
 } from "@workspace/api-zod";
 import { classifyPoeError, poeErrorMessage } from "@workspace/integrations-poe-server";
 
-import { getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
-import { PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
+import { callOpenAIFallbackWithBoundary, PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
 import { MAX_REQUEST_BYTES_GEMINI_3_1_PRO } from "../lib/poeModelLimits";
 import { extractJsonValueFromText } from "./aiHelpers";
 
@@ -148,14 +147,16 @@ export async function extractCatalogPage(
 
   try {
     const response = useOpenAiFallback
-      ? await getOpenAIFallbackClient().chat.completions.create({
-          model: getOpenAIModelForFeature("catalog"),
-          max_completion_tokens: 2048,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: userContent },
-          ],
-        })
+      ? await callOpenAIFallbackWithBoundary("catalog", (client, model, signal) =>
+          client.chat.completions.create({
+            model,
+            max_completion_tokens: 2048,
+            messages: [
+              { role: "system", content: SYSTEM_PROMPT },
+              { role: "user", content: userContent },
+            ],
+          }, { signal }),
+        )
       : await tryPoeBotChain("catalog", (client, model) =>
           client.chat.completions.create({
             model,

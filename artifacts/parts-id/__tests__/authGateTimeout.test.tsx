@@ -32,9 +32,14 @@ const mockUseAuth = jest.fn(() => ({
   isLoaded: false, // not loaded → triggers 15s timer
   getToken: jest.fn(),
 }));
-jest.mock("@clerk/expo", () => ({
-  useAuth: () => mockUseAuth(),
-}));
+jest.mock("@clerk/expo", () => {
+  const {
+    assertClerkMockContract,
+    createClerkExpoMock,
+  } = jest.requireActual("../__mocks__/clerk-expo");
+  const clerkMock = createClerkExpoMock({ useAuth: () => mockUseAuth() });
+  return assertClerkMockContract(clerkMock, ["useAuth"], "authGateTimeout");
+});
 
 // ── @/contexts/AppContext ────────────────────────────────────────────────────
 const mockRecheckApprovalStatus = jest.fn(() => Promise.resolve());

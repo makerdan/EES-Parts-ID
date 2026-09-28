@@ -1,14 +1,19 @@
 const React = require("react");
 
+const UPLOAD_SCREEN_CLERK_HOOKS = ["useAuth", "useClerk"];
+const mockGetToken = jest.fn(() => Promise.resolve(null));
+const mockSignOut = jest.fn(() => Promise.resolve());
+const mockStartSSOFlow = jest.fn(() => Promise.resolve({}));
+
 const mockUseAuth = jest.fn(() => ({
   isSignedIn: false,
   userId: null,
-  getToken: jest.fn(() => Promise.resolve(null)),
-  signOut: jest.fn(() => Promise.resolve()),
+  getToken: mockGetToken,
+  signOut: mockSignOut,
 }));
 
 const mockUseClerk = jest.fn(() => ({
-  signOut: jest.fn(() => Promise.resolve()),
+  signOut: mockSignOut,
 }));
 
 const mockUseSignIn = jest.fn(() => ({
@@ -49,6 +54,10 @@ const mockUseUser = jest.fn(() => ({
   isLoaded: true,
 }));
 
+const mockUseSSO = jest.fn(() => ({
+  startSSOFlow: mockStartSSOFlow,
+}));
+
 function ClerkProvider({ children }) {
   return React.createElement(React.Fragment, null, children);
 }
@@ -57,13 +66,58 @@ function ClerkLoaded({ children }) {
   return React.createElement(React.Fragment, null, children);
 }
 
+function assertClerkMockContract(
+  clerkMock,
+  requiredHooks,
+  harnessName = "Clerk test",
+  contractName = "Clerk",
+) {
+  const missingHooks = requiredHooks.filter(
+    (hookName) => typeof clerkMock?.[hookName] !== "function",
+  );
+
+  if (missingHooks.length > 0) {
+    throw new Error(
+      `[${harnessName}] ${contractName} mock contract is incomplete. ` +
+        `Missing hook(s): ${missingHooks.join(", ")}. ` +
+        "Use createClerkExpoMock(...) or provide every hook the mounted tree uses.",
+    );
+  }
+
+  return clerkMock;
+}
+
+function assertUploadScreenClerkMock(clerkMock, harnessName = "UploadScreen test") {
+  return assertClerkMockContract(
+    clerkMock,
+    UPLOAD_SCREEN_CLERK_HOOKS,
+    harnessName,
+    "UploadScreen Clerk",
+  );
+}
+
+function createClerkExpoMock(overrides = {}) {
+  return assertClerkMockContract(
+    {
+      useAuth: mockUseAuth,
+      useClerk: mockUseClerk,
+      useSignIn: mockUseSignIn,
+      useSignUp: mockUseSignUp,
+      useUser: mockUseUser,
+      useSSO: mockUseSSO,
+      ClerkProvider,
+      ClerkLoaded,
+      tokenCache: null,
+      ...overrides,
+    },
+    UPLOAD_SCREEN_CLERK_HOOKS,
+    "createClerkExpoMock",
+  );
+}
+
 module.exports = {
-  useAuth: mockUseAuth,
-  useClerk: mockUseClerk,
-  useSignIn: mockUseSignIn,
-  useSignUp: mockUseSignUp,
-  useUser: mockUseUser,
-  ClerkProvider,
-  ClerkLoaded,
-  tokenCache: null,
+  ...createClerkExpoMock(),
+  assertClerkMockContract,
+  assertUploadScreenClerkMock,
+  createClerkExpoMock,
 };

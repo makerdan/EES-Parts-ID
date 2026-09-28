@@ -5,6 +5,59 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface UserHistoryViewedEntry {
+  /** @minimum 1 */
+  id: number;
+  catalog: string;
+  name: string;
+  vendor: string;
+  timestamp: string;
+}
+
+export type UserHistoryScanEntryAdminAction = typeof UserHistoryScanEntryAdminAction[keyof typeof UserHistoryScanEntryAdminAction];
+
+
+export const UserHistoryScanEntryAdminAction = {
+  linked: 'linked',
+  created: 'created',
+} as const;
+
+export interface UserHistoryScanEntry {
+  /** @minLength 1 */
+  barcode: string;
+  found: boolean;
+  /** @minimum 1 */
+  itemId?: number;
+  catalog?: string;
+  vendor?: string;
+  timestamp: string;
+  adminAction?: UserHistoryScanEntryAdminAction;
+}
+
+export interface UserHistory {
+  /**
+     * @maxItems 10
+     * @items.minLength 1
+     */
+  queryHistory: string[];
+  /** @maxItems 10 */
+  viewedHistory: UserHistoryViewedEntry[];
+  /** @maxItems 50 */
+  scanHistory: UserHistoryScanEntry[];
+}
+
+export interface UserHistoryPatch {
+  /**
+     * @maxItems 10
+     * @items.minLength 1
+     */
+  queryHistory?: string[];
+  /** @maxItems 10 */
+  viewedHistory?: UserHistoryViewedEntry[];
+  /** @maxItems 50 */
+  scanHistory?: UserHistoryScanEntry[];
+}
+
 export interface InventorySnapshotSummary {
   formatVersion: number;
   snapshotId: string;
@@ -18,6 +71,72 @@ export interface InventorySnapshotSummary {
   lastKnownGood: boolean;
   /** @nullable */
   anomaly: string | null;
+}
+
+export type ManualInventoryBackupStatusStatus = typeof ManualInventoryBackupStatusStatus[keyof typeof ManualInventoryBackupStatusStatus];
+
+
+export const ManualInventoryBackupStatusStatus = {
+  running: 'running',
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
+export type ManualInventoryBackupStatusPersistence = typeof ManualInventoryBackupStatusPersistence[keyof typeof ManualInventoryBackupStatusPersistence];
+
+
+export const ManualInventoryBackupStatusPersistence = {
+  saved: 'saved',
+  unavailable: 'unavailable',
+} as const;
+
+export interface ManualInventoryBackupStatus {
+  status: ManualInventoryBackupStatusStatus;
+  persistence: ManualInventoryBackupStatusPersistence;
+  startedAt: string;
+  /** @nullable */
+  finishedAt: string | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  rowCount: number | null;
+  /** @nullable */
+  snapshotId: string | null;
+  /** @nullable */
+  error: string | null;
+  /** @nullable */
+  warning: string | null;
+}
+
+export type ManualInventoryBackupHistoryEntryOutcome = typeof ManualInventoryBackupHistoryEntryOutcome[keyof typeof ManualInventoryBackupHistoryEntryOutcome];
+
+
+export const ManualInventoryBackupHistoryEntryOutcome = {
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
+export interface ManualInventoryBackupHistoryEntry {
+  id: number;
+  adminClerkUserId: string;
+  snapshotId: string;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  rowCount: number | null;
+  outcome: ManualInventoryBackupHistoryEntryOutcome;
+  createdAt: string;
+}
+
+export interface ManualInventoryBackupHistoryPage {
+  rows: ManualInventoryBackupHistoryEntry[];
+  /**
+     * Pass as before_id to fetch the next page.
+     * @nullable
+     */
+  nextCursor: number | null;
 }
 
 export type InventorySnapshotHealthStatus = typeof InventorySnapshotHealthStatus[keyof typeof InventorySnapshotHealthStatus];
@@ -237,6 +356,11 @@ export interface InventoryListResponse {
   total: number;
   page: number;
   limit: number;
+  /**
+     * Highest id eligible for this export, present only on after_id requests.
+     * @minimum 0
+     */
+  throughId?: number;
 }
 
 export interface SearchInventoryBody {
@@ -605,11 +729,80 @@ export interface PoeModelCapabilities {
   structuredOutput: boolean | null;
 }
 
+export type PoeRegistryModelApprovedRoutesItem = typeof PoeRegistryModelApprovedRoutesItem[keyof typeof PoeRegistryModelApprovedRoutesItem];
+
+
+export const PoeRegistryModelApprovedRoutesItem = {
+  identify: 'identify',
+  dimensions: 'dimensions',
+  enrich: 'enrich',
+  catalog: 'catalog',
+} as const;
+
+export type PoeRegistryModelCapabilityConfidence = typeof PoeRegistryModelCapabilityConfidence[keyof typeof PoeRegistryModelCapabilityConfidence];
+
+
+export const PoeRegistryModelCapabilityConfidence = {
+  verified: 'verified',
+  inferred: 'inferred',
+  unknown: 'unknown',
+} as const;
+
+export type PoeRegistryModelVerificationSource = typeof PoeRegistryModelVerificationSource[keyof typeof PoeRegistryModelVerificationSource];
+
+
+export const PoeRegistryModelVerificationSource = {
+  configured_registry: 'configured_registry',
+} as const;
+
+export type PoeRegistryModelVerification = {
+  source: PoeRegistryModelVerificationSource;
+  verifiedAt: string | null;
+  /** @maxLength 128 */
+  reviewTrigger: string;
+};
+
+export type PoeRegistryModelPrivacyClass = typeof PoeRegistryModelPrivacyClass[keyof typeof PoeRegistryModelPrivacyClass];
+
+
+export const PoeRegistryModelPrivacyClass = {
+  prompt_not_persisted: 'prompt_not_persisted',
+} as const;
+
+export type PoeRegistryModelBudgetClass = typeof PoeRegistryModelBudgetClass[keyof typeof PoeRegistryModelBudgetClass];
+
+
+export const PoeRegistryModelBudgetClass = {
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+} as const;
+
+export type PoeRegistryModelLimits = {
+  /** @minimum 0 */
+  maxOutputTokens: number;
+  /** @minimum 0 */
+  maxImages: number;
+  /** @minimum 0 */
+  maxImageBytes: number;
+  /** @minimum 0 */
+  maxRequestBytes: number;
+  /** @minimum 0 */
+  maxResponseBytes: number;
+};
+
 export interface PoeRegistryModel {
   id: string;
   name: string;
   modalities: string[];
   capabilities: PoeModelCapabilities;
+  /** @maxItems 4 */
+  approvedRoutes: PoeRegistryModelApprovedRoutesItem[];
+  capabilityConfidence: PoeRegistryModelCapabilityConfidence;
+  verification: PoeRegistryModelVerification;
+  privacyClass: PoeRegistryModelPrivacyClass;
+  budgetClass: PoeRegistryModelBudgetClass;
+  limits: PoeRegistryModelLimits;
 }
 
 export type PoeRegistrySource = typeof PoeRegistrySource[keyof typeof PoeRegistrySource];
@@ -750,6 +943,21 @@ export type ListInventoryParams = {
 page?: number;
 limit?: number;
 /**
+ * Reuse the exact total returned on the first page during a paginated sync; omit to request a fresh count.
+ * @minimum 0
+ */
+total?: number;
+/**
+ * Start a bounded export after this id (0 for the first page); cannot be combined with a non-first page.
+ * @minimum 0
+ */
+after_id?: number;
+/**
+ * Highest inventory id returned as throughId on the first export page; required on subsequent export pages.
+ * @minimum 0
+ */
+through_id?: number;
+/**
  * Filter items to those stored in bins starting with this prefix
  */
 binPrefix?: string;
@@ -816,6 +1024,20 @@ export type DeleteUserMe400 = {
 
 export type DeleteUserMe502 = {
   error: string;
+};
+
+export type ListAdminManualInventoryBackupHistoryParams = {
+/**
+ * Maximum number of entries to return (default 50, max 200)
+ * @minimum 1
+ * @maximum 200
+ */
+limit?: number;
+/**
+ * Cursor — return only rows with id strictly less than this value (use nextCursor from the previous page)
+ * @minimum 1
+ */
+before_id?: number;
 };
 
 export type DryRunAdminInventorySnapshotRestoreBody = {

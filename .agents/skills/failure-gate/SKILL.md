@@ -101,6 +101,29 @@ Work through every item in order. Mark each complete before moving on.
    coverage is sufficient. Default to the mid-weight tier when uncertain. Add a
    `## Validation` section immediately after the pre-existing failures section.
 
+### Choosing the lightest sufficient tier
+
+Check the registered cumulative tier membership before selecting a command;
+do not infer extra coverage from a tier's name. For this project:
+
+- **`test-fast`** — static checks suffice for report-only audits, documentation,
+  pure configuration, or non-behavioral refactors with no test-bearing change.
+- **`test-standard`** — most behavior fixes, features, and test changes; includes
+  the fast checks, codegen/spec/env checks, Failure Gate contract, and tests.
+- **`test-standard-plus`** — schema changes, auth/security changes, and API
+  contract or route changes needing schema, coverage, security, and post-merge
+  checks beyond standard.
+- **`test-heavy`** — standard-plus plus `protected-map-concurrency`. Choose it
+  when the protected-map concurrency smoke step is relevant, or when the plan
+  explicitly requires full-tier verification. Schema, auth, API routes, and
+  multi-package changes alone do not require heavy.
+
+Keep the plan's under-tier protections: migration/Drizzle/SQL schema work must
+not fall below standard-plus, and investigate soft warnings for auth, routes,
+contracts, security, or schema before selecting a lower tier. This guide chooses
+the plan command; it does not change the execute-time rule to run exactly that
+one locked command for completion.
+
 ### Required Planner announcement
 
 Before writing the first heading of any plan, emit this exact line in your response:

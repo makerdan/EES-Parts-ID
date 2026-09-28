@@ -5,7 +5,8 @@
     "scripts/**/*.mjs",
     "modules/**/app.plugin.js",
     "modules/**/plugin/index.js",
-    "modules/**/src/index.ts"
+    "modules/**/src/index.ts",
+    "utils/offlineInventory.web.ts"
   ],
   "project": [
     "app/**/*.{ts,tsx}",
@@ -40,9 +41,7 @@
     "utils/helpApi.ts",
     "utils/helpStorage.ts",
     "utils/searchHelpers.ts",
-    "utils/webSvgScene.ts",
-    "modules/lidar-measure/app.plugin.js",
-    "modules/lidar-measure/plugin/index.js"
+    "utils/webSvgScene.ts"
   ],
   "ignoreBinaries": ["tsc", "metro"],
   "ignoreDependencies": [

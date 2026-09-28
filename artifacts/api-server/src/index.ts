@@ -1,8 +1,21 @@
-import { eq, lt, sql } from "drizzle-orm";
+import { lt, sql } from "drizzle-orm";
 
+import { configureGracefulShutdown } from "./lib/gracefulShutdown";
 import { logger } from "./lib/logger";
-import { appReadiness, checkRequiredSchema } from "./lib/readiness";
+import {
+  appReadiness,
+  checkRequiredSchema,
+  type SchemaProbeClient,
+  STARTUP_MIGRATIONS_TIMEOUT_MS,
+  STARTUP_SCHEMA_MAX_ATTEMPTS,
+  STARTUP_SCHEMA_PROBE_TIMEOUT_MS,
+  STARTUP_SCHEMA_RETRY_DELAY_MS,
+} from "./lib/readiness";
 import { validateEnv } from "./lib/validateEnv";
+
+type SchemaProbePool = {
+  connect: () => Promise<SchemaProbeClient>;
+};
 
 process.on("uncaughtException", (err) => {
   logger.error({ err }, "Uncaught exception — exiting");
@@ -31,7 +44,7 @@ async function startApplication(): Promise<void> {
   // Keep all database and server-route imports behind validateEnv(). This
   // makes production startup report every missing secret instead of failing
   // during a transitive database-pool import before the validator can run.
-  const { adminAuditLogTable, catalogPdfJobTable, db } = await import(
+  const { adminAuditLogTable, db, pool } = await import(
     "@workspace/db"
   );
   const { default: app } = await import("./app");
@@ -42,32 +55,17 @@ async function startApplication(): Promise<void> {
   } = await import("./lib/screenViewRetention");
   const { startServer } = await import("./lib/startServer");
   const { applyZoneSectionNumFix } = await import("./lib/zoneSectionNumFix");
-  const { shutdownCatalogPdfLoops } = await import("./routes/catalogPdf");
+  const { recoverInterruptedCatalogPdfJobs, shutdownCatalogPdfLoops } = await import("./routes/catalogPdf");
   const { recoverCatalogPdfUploadSessions } = await import(
     "./routes/catalogPdfUpload"
   );
+  const { recoverInterruptedManualInventoryBackups } = await import(
+    "./lib/manualInventoryBackup"
+  );
+  const { reconcileBulkEnrichJobs } = await import("./routes/inventory");
 
 async function recoverOrphanedJobs(): Promise<void> {
-  try {
-    const result = await db
-      .update(catalogPdfJobTable)
-      .set({
-        status: "failed",
-        errorMessage: "Server restarted while job was in progress. Use Resume to continue from the last processed page.",
-        finishedAt: new Date(),
-      })
-      .where(eq(catalogPdfJobTable.status, "processing"))
-      .returning({ id: catalogPdfJobTable.id });
-
-    if (result.length > 0) {
-      logger.warn(
-        { orphanedJobIds: result.map((r) => r.id) },
-        `Marked ${result.length} orphaned PDF job(s) as failed on startup`,
-      );
-    }
-  } catch (err) {
-    logger.error({ err }, "Failed to recover orphaned PDF jobs on startup");
-  }
+  await recoverInterruptedCatalogPdfJobs();
 }
 
 async function initQuickLookupCache(): Promise<void> {
@@ -201,7 +199,6 @@ async function migrateUsersTable(): Promise<void> {
   }
 }
 
-  const STARTUP_MIGRATIONS_TIMEOUT_MS = 25_000;
 // unref(): these are fallback timers only — they must never be the thing
 // keeping the process (or a Jest worker) alive after everything else is done.
   let migrationsTimer: NodeJS.Timeout | undefined;
@@ -235,6 +232,48 @@ function withStartupTimeout<T>(promise: Promise<T>, timeoutMs: number, label: st
   });
 }
 
+async function runRequiredSchemaProbe(schemaPool: SchemaProbePool): Promise<boolean> {
+  const timeoutError = new Error("Required schema probe timed out");
+  let timedOut = false;
+  let client: SchemaProbeClient | undefined;
+  let timer: NodeJS.Timeout | undefined;
+  const connectPromise = schemaPool.connect().then((connectedClient) => {
+    return connectedClient as unknown as SchemaProbeClient;
+  });
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(timeoutError);
+    }, STARTUP_SCHEMA_PROBE_TIMEOUT_MS);
+    timer.unref();
+  });
+
+  try {
+    client = await Promise.race([connectPromise, deadline]);
+    return await Promise.race([
+      checkRequiredSchema(client, {
+        statementTimeoutMs: STARTUP_SCHEMA_PROBE_TIMEOUT_MS,
+      }),
+      deadline,
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    if (client !== undefined) {
+      // Passing an error to release destroys a client whose query may still be
+      // pending, cancelling the PostgreSQL operation instead of returning a
+      // busy connection to the pool.
+      client.release(timedOut ? timeoutError : undefined);
+    } else {
+      void connectPromise.then(
+        (lateClient) => lateClient.release(timeoutError),
+        () => undefined,
+      );
+    }
+  }
+}
+
 // ── Audit log retention ───────────────────────────────────────────────────────
 // Deletes admin_audit_log rows older than AUDIT_LOG_RETENTION_DAYS (default 90).
 // Runs once at startup and then every 24 hours.
@@ -262,15 +301,39 @@ async function pruneAuditLog(): Promise<void> {
   }
 }
 
-  appReadiness.reset();
-  const requiredStartup = (async () => {
-    if (!(await checkRequiredSchema(db))) {
-      throw new Error("Required application schema is unavailable");
+  async function waitForRequiredSchema(): Promise<void> {
+    for (let attempt = 1; attempt <= STARTUP_SCHEMA_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const schemaUsable = await runRequiredSchemaProbe(pool);
+        if (schemaUsable) {
+          return;
+        }
+      } catch {
+        // A schema probe can fail while the database is recovering. Keep the
+        // startup state opaque and let the bounded retry policy decide whether
+        // readiness should remain unavailable.
+      }
+
+      if (attempt < STARTUP_SCHEMA_MAX_ATTEMPTS) {
+        await new Promise<void>((resolve) => {
+          const retryTimer = setTimeout(resolve, STARTUP_SCHEMA_RETRY_DELAY_MS);
+          retryTimer.unref();
+        });
+      }
     }
 
+    throw new Error("Required application schema is unavailable");
+  }
+
+  appReadiness.reset();
+  const requiredStartup = (async () => {
+    await waitForRequiredSchema();
+
+    await recoverOrphanedJobs();
     await Promise.all([
-      recoverOrphanedJobs(),
       recoverCatalogPdfUploadSessions(),
+      recoverInterruptedManualInventoryBackups(),
+      reconcileBulkEnrichJobs(),
       initQuickLookupCache(),
       migrateAdminPreferences(),
       migrateWarehouseZoneNullSectionNum(),
@@ -286,7 +349,12 @@ async function pruneAuditLog(): Promise<void> {
   void requiredStartup
     .then(() => {
       if (migrationsTimer !== undefined) clearTimeout(migrationsTimer);
-      appReadiness.markReady();
+      // markReady() is terminal-state guarded as well, but keep this check
+      // explicit so a late schema result cannot announce readiness after the
+      // global startup deadline has already elapsed.
+      if (appReadiness.get().status === "pending") {
+        appReadiness.markReady();
+      }
     })
     .catch((err) => {
       if (migrationsTimer !== undefined) clearTimeout(migrationsTimer);
@@ -299,40 +367,12 @@ async function pruneAuditLog(): Promise<void> {
     // Do not retry or silently move the listener after a conflict: the startup
     // error must identify the owner and the recovery command.
     .then((server) => {
-    // Hard cap on total shutdown time: if draining hangs (slow AI call, DB
-    // stall), force-exit so the platform doesn't have to SIGKILL us.
-    const SHUTDOWN_HARD_LIMIT_MS = 20_000;
-    // Bounded wait for background catalog-pdf loops to stop at a page boundary
-    // and be marked with a resumable status.
-    const PDF_LOOP_DRAIN_TIMEOUT_MS = 10_000;
-
-    let shuttingDown = false;
-    const shutdown = (signal: string) => {
-      if (shuttingDown) return;
-      shuttingDown = true;
-      logger.info({ signal }, "Received shutdown signal — draining in-flight requests");
-
-      setTimeout(() => {
-        logger.warn({ hardLimitMs: SHUTDOWN_HARD_LIMIT_MS }, "Shutdown hard limit reached — forcing exit");
-        process.exit(0);
-      }, SHUTDOWN_HARD_LIMIT_MS).unref();
-
-      const serverClosed = new Promise<void>((resolve) => {
-        server.close(() => resolve());
-      });
-
-      // Stop background PDF loops (marks in-flight jobs resumable) while the
-      // HTTP server drains, then exit once both are done.
-      Promise.allSettled([
-        shutdownCatalogPdfLoops(PDF_LOOP_DRAIN_TIMEOUT_MS),
-        serverClosed,
-      ]).then(() => {
-        logger.info("Server closed and background loops drained — exiting cleanly");
-        process.exit(0);
-      });
-    };
-    process.on("SIGTERM", () => shutdown("SIGTERM"));
-    process.on("SIGINT", () => shutdown("SIGINT"));
+    const shutdown = configureGracefulShutdown({
+      server,
+      shutdownBackgroundWork: shutdownCatalogPdfLoops,
+    });
+    process.on("SIGTERM", () => void shutdown("SIGTERM"));
+    process.on("SIGINT", () => void shutdown("SIGINT"));
 
     // Provider selection is diagnostic only. Poe model routing is code-owned
     // and does not require a provider-wide catalogue request at startup.

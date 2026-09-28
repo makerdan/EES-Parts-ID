@@ -35,6 +35,7 @@ import {
 } from "@workspace/db";
 import app from "../src/app";
 import {
+  bestEffortFixtureCleanup,
   cleanupTestUser,
   seedTestUser,
   workerQualifiedUserId,
@@ -137,10 +138,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (inventoryIds.length > 0) {
-    await db.delete(inventoryTable).where(inArray(inventoryTable.id, inventoryIds));
+    await bestEffortFixtureCleanup("catalog PDF ownership inventory", async () => {
+      await db.delete(inventoryTable).where(inArray(inventoryTable.id, inventoryIds));
+    });
   }
   if (jobIds.length > 0) {
-    await db.delete(catalogPdfJobTable).where(inArray(catalogPdfJobTable.id, jobIds));
+    await bestEffortFixtureCleanup("catalog PDF ownership jobs", async () => {
+      await db.delete(catalogPdfJobTable).where(inArray(catalogPdfJobTable.id, jobIds));
+    });
   }
   await Promise.all([cleanupTestUser(OWNER_A), cleanupTestUser(OWNER_B)]);
 }, 15_000);

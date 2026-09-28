@@ -16,18 +16,33 @@
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import { db, warehouseZoneTable } from "@workspace/db";
-import { inArray, sql } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import { applyZoneSectionNumFix } from "../src/lib/zoneSectionNumFix";
+import { workerQualifiedUserId } from "./helpers/testDb";
 
 // ── Shared constants ──────────────────────────────────────────────────────────
 
 /** Aisle prefix that is guaranteed not to collide with real numeric aisles. */
-const TEST_AISLE = "JEST-ZSNF";
+const TEST_AISLE = workerQualifiedUserId("JEST-ZSNF");
+const DECOY_AISLE = workerQualifiedUserId("JEST-ZSNF", `other-${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`);
 
 // ── Teardown ──────────────────────────────────────────────────────────────────
 
+beforeAll(async () => {
+  await db.insert(warehouseZoneTable).values({
+    aisleId: DECOY_AISLE,
+    svgX: 0,
+    svgY: 0,
+    svgWidth: 1,
+    svgHeight: 1,
+  }).onConflictDoNothing();
+});
+
 afterAll(async () => {
   await cleanupTestZones();
+  await db.delete(warehouseZoneTable).where(
+    inArray(warehouseZoneTable.aisleId, [DECOY_AISLE]),
+  );
 }, 15_000);
 
 afterEach(async () => {
@@ -39,7 +54,7 @@ afterEach(async () => {
 async function cleanupTestZones() {
   await db
     .delete(warehouseZoneTable)
-    .where(sql`${warehouseZoneTable.aisleId} LIKE ${TEST_AISLE + "%"}`);
+    .where(inArray(warehouseZoneTable.aisleId, [`${TEST_AISLE}-A`, `${TEST_AISLE}-B`]));
 }
 
 /**
@@ -82,6 +97,13 @@ async function insertTestZones(
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("applyZoneSectionNumFix — idempotency", () => {
+  it("preserves a similarly-prefixed fixture owned by another invocation", async () => {
+    await cleanupTestZones();
+    const rows = await db.select({ aisleId: warehouseZoneTable.aisleId })
+      .from(warehouseZoneTable)
+      .where(inArray(warehouseZoneTable.aisleId, [DECOY_AISLE]));
+    expect(rows).toEqual([{ aisleId: DECOY_AISLE }]);
+  });
   it("skips the UPDATE when all sentinels already carry the correct section_num", async () => {
     const [[zoneA, zoneB]] = await Promise.all([
       insertTestZones([7, 12]),

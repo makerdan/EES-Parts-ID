@@ -44,10 +44,50 @@ function getFallbackOverridesCompat() {
   return typeof getPoeFallbackOverrides === "function" ? getPoeFallbackOverrides() : {};
 }
 
+function getBoundedRegistrySnapshot() {
+  const snapshot = getRegistrySnapshotCompat();
+  return {
+    source: snapshot.source,
+    version: snapshot.version.slice(0, 64),
+    models: snapshot.models
+      .filter((model) =>
+        model.enabled === true &&
+        model.failClosed === true &&
+        model.verification?.source === "configured_registry",
+      )
+      .map((model) => ({
+        id: model.id.slice(0, 128),
+        name: model.name.slice(0, 128),
+        modalities: model.modalities.slice(0, 8).map((modality) => modality.slice(0, 32)),
+        capabilities: {
+          text: model.capabilities.text,
+          vision: model.capabilities.vision,
+          structuredOutput: model.capabilities.structuredOutput,
+        },
+        approvedRoutes: model.approvedRoutes.slice(0, 4),
+        capabilityConfidence: model.capabilityConfidence,
+        verification: {
+          source: "configured_registry" as const,
+          verifiedAt: model.verification.verifiedAt,
+          reviewTrigger: model.verification.reviewTrigger.slice(0, 128),
+        },
+        privacyClass: model.privacyClass,
+        budgetClass: model.budgetClass,
+        limits: {
+          maxOutputTokens: model.limits.maxOutputTokens,
+          maxImages: model.limits.maxImages,
+          maxImageBytes: model.limits.maxImageBytes,
+          maxRequestBytes: model.limits.maxRequestBytes,
+          maxResponseBytes: model.limits.maxResponseBytes,
+        },
+      })),
+  };
+}
+
 function statusPayload() {
   return {
     provider: getProvider(),
-    registry: getRegistrySnapshotCompat(),
+    registry: getBoundedRegistrySnapshot(),
     bots: getProbeSummary(),
     verification: {
       models: getProbeVerificationSummary(),

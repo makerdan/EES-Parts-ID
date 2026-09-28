@@ -3,7 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import { useQueryClient } from "@tanstack/react-query";
 import type { InventoryItem, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
-import { useSearchInventory } from "@workspace/api-client-react";
+import { searchInventory, useSearchInventory } from "@workspace/api-client-react";
 import { router,useFocusEffect } from "expo-router";
 import Fuse from "fuse.js";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -38,12 +38,17 @@ import { RecentSearchesPanel } from "@/components/RecentSearchesPanel";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { ResultCard } from "@/components/ResultCard";
 import { DEFAULT_SETTINGS, type DimensionUnit, type TextSize, type ThemeMode, useApp } from "@/contexts/AppContext";
+import { useUserHistory } from "@/contexts/UserHistoryContext";
 import { useColors } from "@/hooks/useColors";
 import { useMapPinHandlers } from "@/hooks/useMapPinHandlers";
 import { secondaryBtnBase } from "@/styles/shared";
 import { API_BASE } from "@/utils/apiBase";
 import { fetchWithAuth } from "@/utils/appAuth";
-import { FUSE_CACHE_KEY, FUSE_SOFT_STALE_MS, FUSE_SYNC_MAX_AGE_MS, getFuseCacheSyncedAt, parseFuseCacheItems, replaceBarcodeCacheWithServerItems } from "@/utils/offlineBarcode";
+import { invalidateAllCachesAfterSave, INVENTORY_REFRESH_WARNING } from "@/utils/editItemCache";
+import { MAX_OFFLINE_INVENTORY_ITEMS } from "@/utils/inventoryCacheLimits";
+import { fetchInventoryPageWithDeadline } from "@/utils/inventorySync";
+import { FUSE_CACHE_KEY, FUSE_SOFT_STALE_MS, FUSE_SYNC_MAX_AGE_MS, getFuseCacheSyncedAt, parseFuseCacheItems } from "@/utils/offlineBarcode";
+import { deleteOfflineItem, hasOfflineItem, offlineSnapshotInfo, searchOfflineInventory, syncOfflineInventory, upsertOfflineItem } from "@/utils/offlineInventory";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 import { retryAsync } from "@/utils/retryAsync";
 import type { QueryCache } from "@/utils/searchHelpers";
@@ -57,15 +62,6 @@ import {
   QUERY_CACHE_KEY,
   resolveOfflineFallback,
 } from "@/utils/searchHelpers";
-import {
-  appendQueryHistory,
-  appendViewedHistory,
-  clearQueryHistory,
-  clearViewedHistory,
-  loadQueryHistory,
-  loadViewedHistory,
-  type ViewedEntry,
-} from "@/utils/searchHistory";
 import { searchResetEvent } from "@/utils/searchResetEvent";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 import type { AIZeroResultsState } from "@/utils/translateQuery";
@@ -74,6 +70,12 @@ import { useTrackScreen } from "@/utils/useTrackScreen";
 
 
 type QueryCacheEntry = { timestamp: number; results: Array<SearchResult> };
+type SearchRequest = {
+  generation: number;
+  aiGeneration: number;
+  filters: FilterValues;
+  categorySlug: string | null;
+};
 
 function isValidQueryCache(value: unknown): value is QueryCache<SearchResult> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
@@ -113,6 +115,7 @@ async function saveQueryCache(cache: QueryCache<SearchResult>): Promise<void> {
 // two concurrent completions (e.g. onSuccess racing with runOfflineFallback)
 // cannot both read a stale snapshot and clobber each other's write.
 let _queryCacheWriteLock: Promise<void> = Promise.resolve();
+let _fuseCacheWriteLock: Promise<void> = Promise.resolve();
 
 async function updateQueryCache(
   mutate: (cache: QueryCache<SearchResult>) => QueryCache<SearchResult>,
@@ -198,6 +201,13 @@ export default function SearchScreen() {
   // dead zone on short landscape displays.
   const bottomClearance = isLandscape ? 84 : 120;
   const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus, showToast, setPinnedParts, pendingMeasureSearch, setPendingMeasureSearch, pendingInventorySearch, setPendingInventorySearch } = useApp();
+  const {
+    history: { queryHistory, viewedHistory },
+    recordQuery,
+    clearQueries,
+    recordViewed,
+    clearViewed,
+  } = useUserHistory();
   const queryClient = useQueryClient();
   const [searchCacheVersion, setSearchCacheVersion] = useState(0);
   useEffect(() => queryClient.getQueryCache().subscribe((event) => {
@@ -249,8 +259,6 @@ export default function SearchScreen() {
     };
   }, []);
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
-  const [queryHistory, setQueryHistory] = useState<Array<string>>([]);
-  const [viewedHistory, setViewedHistory] = useState<Array<ViewedEntry>>([]);
   const [measureItem, setMeasureItem] = useState<InventoryItem | null>(null);
   // Banner shown when a dimension-filtered search returns 0 exact results
   const [showSimilarSizeBanner, setShowSimilarSizeBanner] = useState(false);
@@ -284,6 +292,7 @@ export default function SearchScreen() {
   const [cachedCount, setCachedCount] = useState(0);
   const [syncProgress, setSyncProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [syncError, setSyncError] = useState(false);
+  const [syncCapacityExceeded, setSyncCapacityExceeded] = useState(false);
   const [syncRetryPending, setSyncRetryPending] = useState(false);
   const [syncErrorDismissed, setSyncErrorDismissed] = useState(false);
   // F-039: visible banner when a search times out and falls back to stale cache
@@ -312,7 +321,12 @@ export default function SearchScreen() {
   useEffect(() => { filtersRef.current = filters; }, [filters]);
   // Timeout + abort tracking for slow-connection fallback
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchControllerRef = useRef<AbortController | null>(null);
+  const searchControllersRef = useRef(new WeakMap<object, AbortController>());
   const searchAbortedRef = useRef(false);
+  const searchRequestRef = useRef<SearchRequest | null>(null);
+  const searchAbortedGenerationRef = useRef<number | null>(null);
+  const searchSubmitRef = useRef<((filters: FilterValues, categorySlug: string | null) => void) | null>(null);
   // Ref to the current searchMutation so the logout handler can call .reset()
   // without going through a stale closure.
   const searchMutationRef = useRef<{ reset: () => void } | null>(null);
@@ -333,6 +347,30 @@ export default function SearchScreen() {
   // Monotonically-increasing generation counter — incremented on each new
   // search so stale translate-query responses are silently discarded.
   const aiSearchGenRef = useRef(0);
+  const searchGenerationRef = useRef(0);
+
+  const beginSearch = useCallback((searchFilters: FilterValues, categorySlug: string | null): SearchRequest => {
+    searchControllerRef.current?.abort();
+    if (searchTimeoutRef.current !== null) {
+      clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = null;
+    }
+    const request: SearchRequest = {
+      generation: searchGenerationRef.current + 1,
+      aiGeneration: aiSearchGenRef.current + 1,
+      filters: searchFilters,
+      categorySlug,
+    };
+    searchGenerationRef.current = request.generation;
+    aiSearchGenRef.current = request.aiGeneration;
+    searchRequestRef.current = request;
+    searchAbortedGenerationRef.current = null;
+    return request;
+  }, []);
+
+  const isCurrentSearch = useCallback((request: SearchRequest): boolean => (
+    isMountedRef.current && searchRequestRef.current?.generation === request.generation
+  ), []);
 
   // Reset the Settings-modal confidence text input to the current persisted value
   // when the modal opens.  Syncing on every settings change would reset the field
@@ -364,6 +402,11 @@ export default function SearchScreen() {
         clearTimeout(searchTimeoutRef.current);
         searchTimeoutRef.current = null;
       }
+      searchControllerRef.current?.abort();
+      searchControllerRef.current = null;
+      // Stop the active page request as well as its scheduled retry so logout
+      // cannot leave an authenticated inventory sync running in the background.
+      syncControllerRef.current?.abort();
       // Cancel any pending sync retry so it doesn't fire auth-sensitive state
       // updates after the user has logged out.
       if (syncRetryTimerRef.current !== null) {
@@ -393,6 +436,9 @@ export default function SearchScreen() {
       queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, undefined);
       errorToastFiredRef.current = { searchTimeout: false, syncFailure: false, offlineFallback: false };
       aiSearchGenRef.current += 1;
+      searchGenerationRef.current += 1;
+      searchRequestRef.current = null;
+      searchAbortedGenerationRef.current = null;
       searchMutationRef.current?.reset();
     });
   // `registerLogoutHandler` is the only reactive dep needed — it is a stable
@@ -405,6 +451,7 @@ export default function SearchScreen() {
 
   const buildFuseIndex = useCallback((items: Array<InventoryItem>) => {
     if (!isMountedRef.current) return;
+    if (Platform.OS !== "web" && items.length > MAX_OFFLINE_INVENTORY_ITEMS) return;
     fuseItemsRef.current = items;
     setCachedCount(items.length);
     fuseRef.current = new Fuse(items, {
@@ -428,6 +475,7 @@ export default function SearchScreen() {
   // structure held here, so an offline barcode/keyword search would otherwise
   // still surface the deleted item until the next full sync.
   const handleItemDeleted = useCallback((itemId: number) => {
+    if (Platform.OS !== "web") deleteOfflineItem(itemId).catch(err => reportStorageError("Could not remove offline item", err));
     const pruned = fuseItemsRef.current.filter(it => it.id !== itemId);
     if (pruned.length === fuseItemsRef.current.length) return;
     buildFuseIndex(pruned);
@@ -442,6 +490,7 @@ export default function SearchScreen() {
   }, [buildFuseIndex]);
 
   const handleItemSaved = useCallback((updatedItem: InventoryItem) => {
+    if (Platform.OS !== "web") upsertOfflineItem(updatedItem).catch(err => reportStorageError("Could not update offline item", err));
     const items = [...fuseItemsRef.current];
     const index = items.findIndex(item => item.id === updatedItem.id);
     if (index >= 0) {
@@ -471,7 +520,18 @@ export default function SearchScreen() {
       return;
     }
     let active = true;
-    AsyncStorage.getItem(FUSE_CACHE_KEY).then(raw => {
+    (async () => {
+      if (Platform.OS !== "web") {
+        const info = await offlineSnapshotInfo();
+        if (info) {
+          if (active) {
+            setCachedCount(info.count);
+            setFuseSyncedAt(info.syncedAt);
+          }
+          return;
+        }
+      }
+      const raw = await AsyncStorage.getItem(FUSE_CACHE_KEY);
       if (!active) return;
       const cachedSearch = queryClient.getQueryData<SearchInventoryResponse>(SEARCH_RESULTS_QUERY_KEY);
       const searchItems = cachedSearch?.results?.map(result => result.item) ?? [];
@@ -483,8 +543,8 @@ export default function SearchScreen() {
         if (index >= 0) merged[index] = item;
         else merged.push(item);
       }
-      buildFuseIndex(merged);
-    }).catch(() => {
+       buildFuseIndex(merged.slice(0, MAX_OFFLINE_INVENTORY_ITEMS));
+    })().catch(() => {
       // The next full sync remains responsible for recovering an unreadable cache.
     });
     return () => {
@@ -516,41 +576,54 @@ export default function SearchScreen() {
       syncRetryTimerRef.current = null;
     }
     ifMounted(() => setSyncError(false));
+    ifMounted(() => setSyncCapacityExceeded(false));
     ifMounted(() => setSyncRetryPending(false));
     let success = false;
     try {
-      const allItems = await fetchInventoryPages(
-        async (page, pageSize) => {
-          const data: { items: Array<InventoryItem>; total: number } = await retryAsync(async () => {
+      let syncTotal: number | null = null;
+      const fetchPage =
+        async (page: number, pageSize: number) => {
+          const data = await retryAsync(async () => {
             if (controller.signal.aborted) {
               throw controller.signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
             }
-            const res = await fetchWithAuth(`${API_BASE}/inventory?page=${page}&limit=${pageSize}`, {
-              signal: controller.signal,
-            });
-            if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
-            return res.json();
+            return fetchInventoryPageWithDeadline<InventoryItem>(
+              `${API_BASE}/inventory?page=${page}&limit=${pageSize}${syncTotal === null ? "" : `&total=${syncTotal}`}`,
+              controller.signal,
+            );
           }, { signal: controller.signal });
           if (!Array.isArray(data?.items)) throw new Error("Sync failed: unexpected response shape");
+          if (syncTotal === null) syncTotal = data.total;
           return data;
-        },
-        500,
-        (loaded, total) => ifMounted(() => setSyncProgress({ loaded, total })),
-      );
+        };
+      const allItems = Platform.OS === "web"
+        ? await fetchInventoryPages(fetchPage, 500, (loaded, total) => ifMounted(() => setSyncProgress({ loaded, total })))
+        : null;
+      if (Platform.OS !== "web") {
+        await syncOfflineInventory(fetchPage, controller.signal, (loaded, total) => ifMounted(() => setSyncProgress({ loaded, total })));
+      }
       if (controller.signal.aborted || !isMountedRef.current) return false;
-      buildFuseIndex(allItems);
+      if (allItems) buildFuseIndex(allItems);
+      else ifMounted(() => { offlineSnapshotInfo().then(info => { if (isMountedRef.current && info) setCachedCount(info.count); }); });
 
       // Prune cached search results whose items were deleted server-side.
       // The full sync gives us the authoritative item set; any cached entry
       // referencing an id no longer present is stale and must be removed so
       // offline searches never surface deleted inventory.
-      const liveIds = new Set(allItems.map(item => item.id));
+      const cache = await loadQueryCache();
+      const liveIds = allItems ? new Set(allItems.map(item => item.id)) : null;
+      const present = new Map<number, boolean>();
+      if (!allItems) {
+        for (const id of new Set(Object.values(cache).flatMap(entry => entry.results.map(result => result.item.id)))) {
+          present.set(id, await hasOfflineItem(id));
+        }
+      }
       await updateQueryCache(cache => {
         if (controller.signal.aborted || !isMountedRef.current) return cache;
         let dirty = false;
         const pruned: QueryCache<SearchResult> = {};
         for (const [key, entry] of Object.entries(cache)) {
-          const kept = entry.results.filter(r => liveIds.has(r.item.id));
+          const kept = entry.results.filter(r => liveIds ? liveIds.has(r.item.id) : present.get(r.item.id));
           if (kept.length !== entry.results.length) dirty = true;
           if (kept.length > 0) {
             pruned[key] = { ...entry, results: kept };
@@ -574,15 +647,21 @@ export default function SearchScreen() {
           // replaceBarcodeCacheWithServerItems writes both the item list and the
           // sync timestamp in one call, and prunes any ghost entries for items
           // that were deleted server-side since the last sync.
-          await replaceBarcodeCacheWithServerItems(allItems);
+           // The native disk snapshot was published above. The legacy
+           // AsyncStorage envelope is not a second source of truth.
         }
         // Always update in-memory state so any active offline warning clears.
         ifMounted(() => setFuseSyncedAt(syncedAt));
       }
       success = true;
-    } catch {
+    } catch (error) {
       if (controller.signal.aborted || !isMountedRef.current) return false;
+      const exceeded = (error as Error)?.name === "InventoryCacheLimitError";
+      ifMounted(() => setSyncCapacityExceeded(exceeded));
       ifMounted(() => setSyncError(true));
+      // An oversized catalog is not transient. Keep the previous complete
+      // offline snapshot and wait for manual refresh or a smaller catalog.
+      if (exceeded) return false;
       // Schedule an automatic retry with exponential backoff (30 s → doubles → 5 min cap)
       const delay = Math.min(
         SYNC_RETRY_INITIAL_MS * Math.pow(2, syncRetryAttemptRef.current),
@@ -626,6 +705,7 @@ export default function SearchScreen() {
         pendingSearchTimerRef.current = null;
       }
       syncControllerRef.current?.abort();
+      searchControllerRef.current?.abort();
       syncControllerRef.current = null;
       isSyncingRef.current = false;
       aiSearchGenRef.current += 1;
@@ -645,14 +725,16 @@ export default function SearchScreen() {
   useEffect(() => {
     if (syncError && !errorToastFiredRef.current.syncFailure) {
       errorToastFiredRef.current.syncFailure = true;
-      showToast("Background sync failed — offline data may be stale", "error");
+      showToast(syncCapacityExceeded
+          ? "Offline storage budget exceeded — previous snapshot is still available"
+        : "Background sync failed — offline data may be stale", "error");
     }
     if (!syncError) {
       errorToastFiredRef.current.syncFailure = false;
     }
   // showToast is a stable useCallback ([] deps) from AppContext — safe to omit
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syncError]);
+  }, [syncError, syncCapacityExceeded]);
 
   // F-068: fire a toast on the first occurrence of an offline-fallback event.
   useEffect(() => {
@@ -692,7 +774,28 @@ export default function SearchScreen() {
   // immediately for offline capability, then replaced in background with the
   // authoritative server list — which prunes items deleted since the last sync.
   useEffect(() => {
-    AsyncStorage.getItem(FUSE_CACHE_KEY)
+    (async () => {
+      if (Platform.OS !== "web") {
+        const info = await offlineSnapshotInfo();
+        if (info) {
+          if (!isMountedRef.current) return;
+          setCachedCount(info.count);
+          setFuseSyncedAt(info.syncedAt);
+          if (Date.now() - info.syncedAt > FUSE_SYNC_MAX_AGE_MS) syncAllInventory();
+          return;
+        }
+        // Keep an existing bounded legacy cache searchable during the first
+        // disk migration, without running a second full sync in parallel.
+        const legacyRaw = await AsyncStorage.getItem(FUSE_CACHE_KEY);
+        if (!isMountedRef.current) return;
+        const legacyItems = legacyRaw ? parseFuseCacheItems(legacyRaw) : null;
+        if (legacyItems?.length && legacyItems.length <= MAX_OFFLINE_INVENTORY_ITEMS) {
+          buildFuseIndex(legacyItems);
+        }
+        syncAllInventory();
+        return;
+      }
+      return AsyncStorage.getItem(FUSE_CACHE_KEY)
       .then(raw => {
         if (!isMountedRef.current) return;
         if (!raw) {
@@ -710,7 +813,13 @@ export default function SearchScreen() {
           syncAllInventory();
           return;
         }
-        buildFuseIndex(items);
+        if (Platform.OS === "web" || items.length <= MAX_OFFLINE_INVENTORY_ITEMS) {
+          buildFuseIndex(items);
+        } else {
+          setSyncCapacityExceeded(true);
+          setSyncError(true);
+          return;
+        }
 
         // Check cache age: if older than FUSE_SYNC_MAX_AGE_MS (or timestamp
         // missing because the cache predates timestamp tracking), kick off a
@@ -733,13 +842,11 @@ export default function SearchScreen() {
         console.error('[index] load fuse cache', err);
         syncAllInventory();
       });
+    })().catch(err => {
+      reportStorageError("Could not read offline inventory", err);
+      if (isMountedRef.current) syncAllInventory();
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Load search and viewed-part history from AsyncStorage on mount.
-  useEffect(() => {
-    loadQueryHistory().then(setQueryHistory).catch(() => {});
-    loadViewedHistory().then(setViewedHistory).catch(() => {});
   }, []);
 
   const runFuseSearch = useCallback((kw: string): Array<SearchResult> => {
@@ -756,29 +863,35 @@ export default function SearchScreen() {
   }, []);
 
   // Shared offline fallback — used by onError and the slow-connection timeout
-  const runOfflineFallback = useCallback(() => {
-    const f = filtersRef.current;
-    const queryKey = buildQueryKey(f);
+  const runOfflineFallback = useCallback((request: SearchRequest) => {
+    const f = request.filters;
+    const queryKey = buildQueryKey(f, request.categorySlug);
     const kw = [f.keywords, f.catalog, f.vendor, f.category, f.voltage, f.amperage]
       .filter(Boolean).join(" ");
     // Serialise through the shared write lock so a concurrent onSuccess write
     // cannot clobber the pruned snapshot we're about to read.
     const next = _queryCacheWriteLock.then(async () => {
-      if (!isMountedRef.current) return;
+      if (!isCurrentSearch(request)) return;
       const cache = await loadQueryCache();
-      if (!isMountedRef.current) return;
+      if (!isCurrentSearch(request)) return;
       const pruned = pruneExpired(cache);
       if (Object.keys(pruned).length !== Object.keys(cache).length) {
-        if (!isMountedRef.current) return;
+        if (!isCurrentSearch(request)) return;
         await saveQueryCache(pruned);
       }
+      const disk = Platform.OS !== "web" ? await offlineSnapshotInfo() : null;
       const result = resolveOfflineFallback({
         queryKey,
-        cache: pruned,
+        cache: disk ? {} : pruned,
         fuseSearch: runFuseSearch,
         keywords: kw,
       });
-      if (!isMountedRef.current) return;
+      if (disk) {
+        result.results = (await searchOfflineInventory(kw)).map(item => ({
+          item, confidence: 0.7, matchReason: "offline indexed match", seriesLabel: null, variants: [],
+        }));
+      }
+      if (!isCurrentSearch(request)) return;
       offlineCacheRef.current = {
         type: result.cacheType,
         timestamp: result.cacheType === 'exact' ? (pruned[queryKey]?.timestamp ?? null) : null,
@@ -800,7 +913,7 @@ export default function SearchScreen() {
     next.catch(err => {
       if (isMountedRef.current) reportStorageError("Could not run offline fallback", err);
     });
-  }, [runFuseSearch]);
+  }, [isCurrentSearch, runFuseSearch]);
 
   // Fire a non-blocking translate-query request and update AI state when it
   // resolves. Uses the generation counter to discard stale (superseded) responses.
@@ -818,75 +931,12 @@ export default function SearchScreen() {
 
   const searchMutation = useSearchInventory({
     mutation: {
-      onSuccess: (data) => {
-        if (!isMountedRef.current) return;
-        if (searchAbortedRef.current) return; // timed out — discard late response
-        if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
-        queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, data);
-        setIsOffline(false);
-        setOfflineResults(null);
-        setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
-
-        // Show the "similar size" suggestion banner when the search returned
-        // zero results and at least one dimension filter was active.
-        const f = filtersRef.current;
-        const hasDimFilters =
-          f.minLength.trim() !== "" || f.maxLength.trim() !== "" ||
-          f.minWidth.trim() !== "" || f.maxWidth.trim() !== "" ||
-          f.minHeight.trim() !== "" || f.maxHeight.trim() !== "" ||
-          f.minDiameter.trim() !== "" || f.maxDiameter.trim() !== "";
-        const zeroResults = (data.results?.length ?? 0) === 0 && (data.sizeUnknownResults?.length ?? 0) === 0;
-        setShowSimilarSizeBanner(zeroResults && hasDimFilters);
-
-        // When search returns zero results and a keyword query exists, fire the
-        // zero-results AI enrichment. Dimension-only searches are excluded because
-        // the AI can't meaningfully identify a part from bounds alone.
-        if (zeroResults && !hasDimFilters) {
-          const kw = filtersRef.current.keywords.trim() || filtersRef.current.catalog.trim();
-          if (kw) {
-            setAIZeroResults({ loading: true, partName: "", partSpecs: [], catalogNumbers: [], substitutes: [], error: null });
-            translateQuery(kw, true, aiSearchGenRef.current);
-          }
-        }
-
-        // Cache all returned items for offline Fuse use
-        if (data.results?.length) {
-          const newItems = data.results.map(r => r.item);
-          // Merge into existing cache — deduplicate by id
-          const merged = [...fuseItemsRef.current];
-          for (const item of newItems) {
-            const idx = merged.findIndex(m => m.id === item.id);
-            if (idx >= 0) merged[idx] = item;
-            else merged.push(item);
-          }
-          buildFuseIndex(merged);
-          if (Platform.OS !== "web") {
-            AsyncStorage.setItem(
-              FUSE_CACHE_KEY,
-              JSON.stringify({ items: merged, syncedAt: fuseSyncedAtRef.current }),
-            ).catch(err => {
-              reportStorageError("Could not save offline inventory cache", err);
-            });
-          }
-        }
-
-        // Cache results keyed by query (with TTL pruning).
-        // Serialised through the shared write lock to prevent a concurrent
-        // runOfflineFallback from overwriting a stale snapshot.
-        const queryKey = buildQueryKey(filtersRef.current);
-        updateQueryCache(cache => {
-          if (!isMountedRef.current) return cache;
-          const pruned = pruneExpired(cache);
-          pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
-          return pruned;
-        }).catch(err => {
-          if (isMountedRef.current) reportStorageError("Could not save query cache after search", err);
+      mutationFn: ({ data }) => {
+        const controller = searchControllersRef.current.get(data);
+        if (!controller) throw new Error("Search request has no cancellation controller");
+        return searchInventory(data, { signal: controller.signal }).finally(() => {
+          searchControllersRef.current.delete(data);
         });
-      },
-      onError: () => {
-        if (!isMountedRef.current) return;
-        if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
-        if (!searchAbortedRef.current) runOfflineFallback(); // timeout already ran fallback — skip
       },
     },
   });
@@ -895,6 +945,125 @@ export default function SearchScreen() {
   // Keep the ref pointing at the latest mutation so the logout handler can
   // reset it without capturing a stale closure.
   searchMutationRef.current = searchMutation;
+
+  const persistSearchFuseItems = useCallback((items: Array<InventoryItem>, request: SearchRequest) => {
+    if (Platform.OS === "web") return;
+    if (fuseSyncedAtRef.current !== null) return;
+    const next = _fuseCacheWriteLock.then(async () => {
+      if (!isCurrentSearch(request)) return;
+      await AsyncStorage.setItem(
+        FUSE_CACHE_KEY,
+        JSON.stringify({ items, syncedAt: fuseSyncedAtRef.current }),
+      );
+    });
+    _fuseCacheWriteLock = next.catch(() => {});
+    next.catch(err => {
+      if (isCurrentSearch(request)) reportStorageError("Could not save offline inventory cache", err);
+    });
+  }, [isCurrentSearch]);
+
+  const publishSearchSuccess = useCallback((data: SearchInventoryResponse, request: SearchRequest) => {
+    if (!isCurrentSearch(request) || searchAbortedGenerationRef.current === request.generation) return;
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = null;
+    }
+    queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, data);
+    setIsOffline(false);
+    setOfflineResults(null);
+    setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
+
+    const f = request.filters;
+    const hasDimFilters =
+      f.minLength.trim() !== "" || f.maxLength.trim() !== "" ||
+      f.minWidth.trim() !== "" || f.maxWidth.trim() !== "" ||
+      f.minHeight.trim() !== "" || f.maxHeight.trim() !== "" ||
+      f.minDiameter.trim() !== "" || f.maxDiameter.trim() !== "";
+    const zeroResults = (data.results?.length ?? 0) === 0 && (data.sizeUnknownResults?.length ?? 0) === 0;
+    setShowSimilarSizeBanner(zeroResults && hasDimFilters);
+
+    if (zeroResults && !hasDimFilters) {
+      const kw = f.keywords.trim() || f.catalog.trim();
+      if (kw) {
+        setAIZeroResults({ loading: true, partName: "", partSpecs: [], catalogNumbers: [], substitutes: [], error: null });
+        translateQuery(kw, true, request.aiGeneration);
+      }
+    }
+
+    if (data.results?.length) {
+      const newItems = data.results.map(r => r.item);
+      if (Platform.OS !== "web") {
+        for (const item of newItems) upsertOfflineItem(item).catch(err => reportStorageError("Could not update offline item", err));
+      }
+      if (Platform.OS !== "web" && fuseSyncedAtRef.current !== null) {
+        // A full native snapshot has its own disk index; don't build a second
+        // memory copy while handling individual remote searches.
+      } else {
+      const merged = [...fuseItemsRef.current];
+      for (const item of newItems) {
+        const idx = merged.findIndex(m => m.id === item.id);
+        if (idx >= 0) merged[idx] = item;
+        else if (Platform.OS === "web" || merged.length < MAX_OFFLINE_INVENTORY_ITEMS) merged.push(item);
+      }
+      const bounded = Platform.OS === "web" ? merged : merged.slice(0, MAX_OFFLINE_INVENTORY_ITEMS);
+      buildFuseIndex(bounded);
+      persistSearchFuseItems(bounded, request);
+      }
+    }
+
+    const queryKey = buildQueryKey(f, request.categorySlug);
+    updateQueryCache(cache => {
+      if (!isCurrentSearch(request)) return cache;
+      const pruned = pruneExpired(cache);
+      pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
+      return pruned;
+    }).catch(err => {
+      if (isCurrentSearch(request)) reportStorageError("Could not save query cache after search", err);
+    });
+  }, [buildFuseIndex, isCurrentSearch, persistSearchFuseItems, queryClient, translateQuery]);
+
+  const submitSearch = useCallback((
+    searchFilters: FilterValues,
+    categorySlug: string | null,
+    requestOverride?: SearchRequest,
+  ) => {
+    const request = requestOverride ?? beginSearch(searchFilters, categorySlug);
+    const body = buildSearchBody(searchFilters, categorySlug);
+    searchControllerRef.current?.abort();
+    const controller = new AbortController();
+    searchControllerRef.current = controller;
+    searchControllersRef.current.set(body, controller);
+    searchAbortedRef.current = false;
+    mutateSearch(
+      { data: body },
+      {
+        onSuccess: (data) => publishSearchSuccess(data, request),
+        onError: () => {
+          if (!isCurrentSearch(request) || searchAbortedGenerationRef.current === request.generation) return;
+          if (searchTimeoutRef.current) {
+            clearTimeout(searchTimeoutRef.current);
+            searchTimeoutRef.current = null;
+          }
+          runOfflineFallback(request);
+        },
+      },
+    );
+    searchTimeoutRef.current = setTimeout(() => {
+      searchTimeoutRef.current = null;
+      if (!isCurrentSearch(request)) return;
+      searchAbortedRef.current = true;
+      searchAbortedGenerationRef.current = request.generation;
+      controller.abort();
+      resetSearch();
+      setSearchTimedOut(true);
+      if (!errorToastFiredRef.current.searchTimeout) {
+        errorToastFiredRef.current.searchTimeout = true;
+        showToast("Search timed out — showing cached results", "info");
+      }
+      runOfflineFallback(request);
+    }, SEARCH_TIMEOUT_MS);
+  }, [beginSearch, isCurrentSearch, mutateSearch, publishSearchSuccess, resetSearch, runOfflineFallback, showToast]);
+  searchSubmitRef.current = submitSearch;
 
   // Consume a pending inventory search set by cross-tab navigation (e.g.
   // "View in Inventory" after adding a part from the catalog review screen).
@@ -917,8 +1086,7 @@ export default function SearchScreen() {
     pendingSearchTimerRef.current = setTimeout(() => {
       pendingSearchTimerRef.current = null;
       if (!isMountedRef.current) return;
-      const body = buildSearchBody(merged, null);
-      mutateSearch({ data: body });
+      searchSubmitRef.current?.(merged, null);
     }, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingInventorySearch]));
@@ -945,8 +1113,7 @@ export default function SearchScreen() {
     pendingSearchTimerRef.current = setTimeout(() => {
       pendingSearchTimerRef.current = null;
       if (!isMountedRef.current) return;
-      const body = buildSearchBody(merged, activeCategorySlugRef.current);
-      mutateSearch({ data: body });
+      searchSubmitRef.current?.(merged, activeCategorySlugRef.current);
     }, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingMeasureSearch]));
@@ -977,6 +1144,7 @@ export default function SearchScreen() {
       flt.textNumbers.trim() !== "" || hasSizeInput ||
       activeCategorySlugRef.current != null;
     if (!hasAnyInput) return;
+    const request = beginSearch(flt, activeCategorySlugRef.current);
 
     // Check connectivity before firing the network request. When the device
     // is definitely offline we skip the mutation and the 8-second wait
@@ -990,7 +1158,7 @@ export default function SearchScreen() {
       // If NetInfo itself fails, assume connected and let the normal
       // timeout + error-handler path deal with it.
     }
-    if (!isMountedRef.current) return;
+    if (!isMountedRef.current || !isCurrentSearch(request)) return;
 
     setSearchTimedOut(false); // F-039: clear stale timeout banner on new search
     errorToastFiredRef.current.searchTimeout = false; // allow toast to fire again
@@ -1006,44 +1174,29 @@ export default function SearchScreen() {
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
     if (!isCurrentlyConnected) {
-      runOfflineFallback();
+      runOfflineFallback(request);
       return;
     }
 
     // Fire NL translation non-blocking in parallel with the primary search.
     // Only when a keyword/catalog query is present (not dimension-only searches).
-    const _aiGen = ++aiSearchGenRef.current;
     const _aiQuery = flt.keywords.trim() || flt.catalog.trim();
-    if (_aiQuery) translateQuery(_aiQuery, false, _aiGen);
-    const body = buildSearchBody(filtersRef.current, activeCategorySlugRef.current);
-    mutateSearch({ data: body });
+    if (_aiQuery) translateQuery(_aiQuery, false, request.aiGeneration);
     // Record the keyword query in history (non-blocking)
     const _kw = flt.keywords.trim();
     if (_kw) {
-      appendQueryHistory(_kw).then(() => {
-        loadQueryHistory().then(history => {
-          if (isMountedRef.current) setQueryHistory(history);
-        }).catch(() => {});
-      }).catch(() => {});
+      recordQuery(_kw).catch((err) => {
+        console.warn("[Search] Could not save query history:", err);
+      });
     }
-    // Fall back to offline if API hasn't responded within the timeout
-    searchTimeoutRef.current = setTimeout(() => {
-      searchTimeoutRef.current = null;
-      if (!isMountedRef.current) return;
-      searchAbortedRef.current = true; // onSuccess will discard any late response
-      resetSearch();                   // clear the loading spinner
-      // F-039: show a visible banner so stale data is never silently presented
-      setSearchTimedOut(true);
-      // F-068: fire a toast on the first timeout per search
-      if (!errorToastFiredRef.current.searchTimeout) {
-        errorToastFiredRef.current.searchTimeout = true;
-        showToast("Search timed out — showing cached results", "info");
-      }
-      runOfflineFallback();
-    }, SEARCH_TIMEOUT_MS);
-  }, [mutateSearch, queryClient, resetSearch, runOfflineFallback, setPinnedParts, showToast, translateQuery]);
+    submitSearch(request.filters, request.categorySlug, request);
+  }, [beginSearch, isCurrentSearch, queryClient, recordQuery, runOfflineFallback, setPinnedParts, submitSearch, translateQuery]);
 
   const handleClear = useCallback(() => {
+    searchControllerRef.current?.abort();
+    searchControllerRef.current = null;
+    searchGenerationRef.current += 1;
+    searchRequestRef.current = null;
     if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
     searchAbortedRef.current = false;
     setSearchTimedOut(false); // F-039
@@ -1101,6 +1254,7 @@ export default function SearchScreen() {
       minDiameter: f.minDiameter.trim() !== "" ? expand(f.minDiameter, lo) : f.minDiameter,
       maxDiameter: f.maxDiameter.trim() !== "" ? expand(f.maxDiameter, hi) : f.maxDiameter,
     };
+    const request = beginSearch(expanded, activeCategorySlugRef.current);
 
     // Check connectivity before firing the network request. When the device
     // is definitely offline we skip the mutation and the 8-second wait
@@ -1122,7 +1276,6 @@ export default function SearchScreen() {
     setOfflineResults(null);
     setIsOffline(false);
     setAIZeroResults(null);
-    aiSearchGenRef.current += 1;
     searchAbortedRef.current = false;
     queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, undefined);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -1136,33 +1289,19 @@ export default function SearchScreen() {
       // above only updates after the next render. Sync the ref now so the offline
       // fallback uses the widened tolerance bounds, not the stale pre-expanded ones.
       filtersRef.current = expanded;
-      runOfflineFallback();
+      runOfflineFallback(request);
       return;
     }
 
-    const body = buildSearchBody(expanded, activeCategorySlugRef.current);
-    mutateSearch({ data: body });
-    searchTimeoutRef.current = setTimeout(() => {
-      searchTimeoutRef.current = null;
-      if (!isMountedRef.current) return;
-      searchAbortedRef.current = true;
-      resetSearch();
-      // F-039: show banner so stale data is never silently presented
-      setSearchTimedOut(true);
-      // F-068: toast on first timeout per search
-      if (!errorToastFiredRef.current.searchTimeout) {
-        errorToastFiredRef.current.searchTimeout = true;
-        showToast("Search timed out — showing cached results", "info");
-      }
-      runOfflineFallback();
-    }, SEARCH_TIMEOUT_MS);
-  }, [mutateSearch, queryClient, resetSearch, runOfflineFallback, setPinnedParts, showToast, similarSizeTolerance]);
+    submitSearch(expanded, request.categorySlug, request);
+  }, [beginSearch, isCurrentSearch, queryClient, runOfflineFallback, setPinnedParts, similarSizeTolerance, submitSearch]);
 
   const handleCategorySelect = useCallback(async (slug: string, label: string) => {
     setMode("search");
     setActiveCategorySlug(slug);
     setActiveCategoryLabel(label);
     activeCategorySlugRef.current = slug;
+    const request = beginSearch(filtersRef.current, slug);
 
     // Check connectivity before firing the network request. When the device
     // is definitely offline we skip the mutation and the 8-second wait
@@ -1175,7 +1314,7 @@ export default function SearchScreen() {
       // If NetInfo itself fails, assume connected and let the normal
       // timeout + error-handler path deal with it.
     }
-    if (!isMountedRef.current) return;
+    if (!isMountedRef.current || !isCurrentSearch(request)) return;
 
     setSearchTimedOut(false); // F-039
     setPinnedParts([]);
@@ -1184,7 +1323,6 @@ export default function SearchScreen() {
     setAITranslation(null);
     setAITranslationDismissed(false);
     setAIZeroResults(null);
-    aiSearchGenRef.current += 1;
     searchAbortedRef.current = false;
     queryClient.setQueryData(SEARCH_RESULTS_QUERY_KEY, undefined);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -1194,28 +1332,13 @@ export default function SearchScreen() {
     }
 
     if (!isCurrentlyConnected) {
-      runOfflineFallback();
+      runOfflineFallback(request);
       return;
     }
 
-    const body = buildSearchBody(filtersRef.current, slug);
-    mutateSearch({ data: body });
-    searchTimeoutRef.current = setTimeout(() => {
-      searchTimeoutRef.current = null;
-      if (!isMountedRef.current) return;
-      searchAbortedRef.current = true;
-      resetSearch();
-      // F-039: show banner so stale data is never silently presented
-      setSearchTimedOut(true);
-      // F-068: toast on first timeout per search
-      if (!errorToastFiredRef.current.searchTimeout) {
-        errorToastFiredRef.current.searchTimeout = true;
-        showToast("Search timed out — showing cached results", "info");
-      }
-      runOfflineFallback();
-    }, SEARCH_TIMEOUT_MS);
+    submitSearch(request.filters, request.categorySlug, request);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mutateSearch, queryClient, resetSearch, runOfflineFallback, setPinnedParts, showToast]);
+  }, [beginSearch, isCurrentSearch, queryClient, runOfflineFallback, setPinnedParts, submitSearch]);
 
 
   const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
@@ -1236,20 +1359,22 @@ export default function SearchScreen() {
         it.id === item.id ? { ...it, dimensions: dims } : it,
       );
       buildFuseIndex(updated);
-      if (Platform.OS !== "web") {
-        AsyncStorage.setItem(
-          FUSE_CACHE_KEY,
-          JSON.stringify({ items: updated, syncedAt: fuseSyncedAtRef.current }),
-        ).catch(err => {
-          reportStorageError("Could not save offline inventory cache", err);
-        });
+      const cacheResult = await invalidateAllCachesAfterSave({
+        queryClient,
+        asyncStorage: AsyncStorage,
+        itemId: item.id,
+        updatedItem: { ...item, dimensions: dims },
+      });
+      if (!cacheResult.ok) {
+        showToast(INVENTORY_REFRESH_WARNING, "error");
+      } else {
+        showToast("Dimensions saved.");
       }
-      showToast("Dimensions saved.");
     } catch {
       if (!isMountedRef.current) return;
       showToast("Could not save dimensions — please try again.");
     }
-  }, [measureItem, adminToken, buildFuseIndex, showToast]);
+  }, [measureItem, adminToken, buildFuseIndex, queryClient, showToast]);
 
   // Stable per-item re-enrich callback. adminToken is captured; a new function
   // is only allocated when the token changes (e.g. after login/logout).
@@ -1559,12 +1684,14 @@ export default function SearchScreen() {
                 }
               }}
               onClearQueries={() => {
-                clearQueryHistory().catch(() => {});
-                setQueryHistory([]);
+                clearQueries().catch((err) => {
+                  console.warn("[Search] Could not clear query history:", err);
+                });
               }}
               onClearViewed={() => {
-                clearViewedHistory().catch(() => {});
-                setViewedHistory([]);
+                clearViewed().catch((err) => {
+                  console.warn("[Search] Could not clear viewed history:", err);
+                });
               }}
             />
           )}
@@ -1617,6 +1744,8 @@ export default function SearchScreen() {
     textFontScale,
     queryHistory,
     viewedHistory,
+    clearQueries,
+    clearViewed,
   ]);
 
   return (
@@ -1638,11 +1767,11 @@ export default function SearchScreen() {
               <Pressable
                 onPress={() => syncAllInventory()}
                 style={[styles.statusBadge, { backgroundColor: colors.destructive + "18" }]}
-                accessibilityLabel={syncRetryPending ? "Sync failed, retrying in background" : "Sync failed, tap to retry"}
+                accessibilityLabel={syncCapacityExceeded ? "Offline inventory limit exceeded, tap to retry" : syncRetryPending ? "Sync failed, retrying in background" : "Sync failed, tap to retry"}
                 accessibilityRole="button"
               >
                 <Text style={[styles.statusBadgeText, { color: colors.destructive }]}>
-                  {syncRetryPending ? "⚠ Sync failed — retrying…" : "⚠ Sync failed — tap to retry"}
+                  {syncCapacityExceeded ? "⚠ Offline limit exceeded" : syncRetryPending ? "⚠ Sync failed — retrying…" : "⚠ Sync failed — tap to retry"}
                 </Text>
               </Pressable>
             ) : cachedCount > 0 ? (
@@ -2036,7 +2165,9 @@ export default function SearchScreen() {
         <View style={[styles.syncErrorBanner, { backgroundColor: colors.destructive + "14", borderBottomColor: colors.destructive + "44" }]}>
           <View style={{ flex: 1 }}>
             <Text style={[styles.syncErrorBannerText, { color: colors.destructive }]}>
-              {syncRetryPending
+              {syncCapacityExceeded
+                ? `Offline storage budget exceeded. ${cachedCount > 0 ? "Previously cached parts remain available" : "No complete offline inventory is available"}; connect to search all parts.`
+                : syncRetryPending
                 ? "Offline data may be stale — retrying sync in background…"
                 : "Background sync failed — offline data may be stale. Pull down to retry."}
             </Text>
@@ -2216,14 +2347,14 @@ export default function SearchScreen() {
                 sizeUnknown={listItem.kind === "sizeUnknown"}
                 onReenrichKeywords={isAdmin && adminToken ? handleReenrichKeywords : undefined}
                 onOpen={(item) => {
-                  appendViewedHistory({
+                  recordViewed({
                     id: item.id,
                     catalog: item.catalog ?? "",
                     name: item.description ?? item.catalog ?? "",
                     vendor: item.vendor ?? "",
-                  }).then(() => {
-                    loadViewedHistory().then(setViewedHistory).catch(() => {});
-                  }).catch(() => {});
+                  }).catch((err) => {
+                    console.warn("[Search] Could not save viewed history:", err);
+                  });
                 }}
               />
             </View>

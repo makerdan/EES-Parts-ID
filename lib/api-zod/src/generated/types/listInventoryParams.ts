@@ -10,6 +10,21 @@ export type ListInventoryParams = {
 page?: number;
 limit?: number;
 /**
+ * Reuse the exact total returned on the first page during a paginated sync; omit to request a fresh count.
+ * @minimum 0
+ */
+total?: number;
+/**
+ * Start a bounded export after this id (0 for the first page); cannot be combined with a non-first page.
+ * @minimum 0
+ */
+after_id?: number;
+/**
+ * Highest inventory id returned as throughId on the first export page; required on subsequent export pages.
+ * @minimum 0
+ */
+through_id?: number;
+/**
  * Filter items to those stored in bins starting with this prefix
  */
 binPrefix?: string;

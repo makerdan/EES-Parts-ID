@@ -29,6 +29,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
+import Fuse from "fuse.js";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID, signAdminToken } from "./helpers/adminAuth";
 import {
@@ -65,6 +66,46 @@ afterAll(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("POST /api/inventory/search", () => {
+  it("keeps the Fuse candidate index bounded even with a large inventory", async () => {
+    const originalSearch = Fuse.prototype.search;
+    const observedSizes: number[] = [];
+    const spy = jest.spyOn(Fuse.prototype, "search").mockImplementation(function (this: Fuse<unknown>, ...args: Parameters<typeof originalSearch>) {
+      observedSizes.push(this.getIndex().size());
+      return originalSearch.apply(this, args);
+    });
+    try {
+      await supertest(app).post("/api/inventory/search")
+        .send({ keywords: "ZZZNOMATCH-XYZ-99999-UNIQUE" }).expect(200);
+      expect(observedSizes.length).toBeGreaterThan(0);
+      expect(Math.max(...observedSizes)).toBeLessThanOrEqual(250);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("finds same-series variants without pulling unrelated vendor inventory", async () => {
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { eq } = await import("drizzle-orm");
+    const vendor = workerQualifiedUserId("JEST-SERIES");
+    const catalogs = ["BR119", "BR220", "QO120"];
+    try {
+      await db.insert(inventoryTable).values(catalogs.map((catalog, index) => ({
+        vendor, catalog, description: "Circuit breaker", binLocations: [],
+        aiKeywords: [index === 0 ? "red" : "blue"],
+      })));
+      const response = await supertest(app).post("/api/inventory/search")
+        .send({ catalog: "BR119", colorChip: "Red", confidenceThreshold: 0 }).expect(200);
+      const primary = response.body.results.find(
+        (result: { item: { catalog: string } }) => result.item.catalog === "BR119",
+      );
+      expect(primary).toBeDefined();
+      expect(primary.variants.map((item: { catalog: string }) => item.catalog)).toContain("BR220");
+      expect(primary.variants.map((item: { catalog: string }) => item.catalog)).not.toContain("QO120");
+    } finally {
+      await db.delete(inventoryTable).where(eq(inventoryTable.vendor, vendor));
+    }
+  });
+
   it("returns 200 with matching results for a seeded catalog number", async () => {
     const res = await supertest(app)
       .post("/api/inventory/search")
@@ -360,6 +401,22 @@ describe("POST /api/inventory/search", () => {
     } finally {
       await db.delete(inventoryTable).where(eq(inventoryTable.catalog, NEEDLE_CATALOG));
     }
+  });
+});
+
+describe("GET /api/inventory — bounded pages and reusable count", () => {
+  it("rejects deep offsets before querying inventory", async () => {
+    const response = await supertest(app).get("/api/inventory?page=1000000&limit=500").expect(400);
+    expect(response.body.error).toMatch(/offset exceeds 10000/);
+  });
+
+  it("preserves the first-page total on subsequent pages without recounting", async () => {
+    const first = await supertest(app).get("/api/inventory?limit=1").expect(200);
+    const second = await supertest(app).get(`/api/inventory?page=2&limit=1&total=${first.body.total}`).expect(200);
+    expect(second.body.total).toBe(first.body.total);
+    expect(second.body.page).toBe(2);
+    expect(second.body.items).toHaveLength(1);
+    await supertest(app).get("/api/inventory?page=2&total=not-a-number").expect(400);
   });
 });
 
@@ -699,6 +756,46 @@ describe("POST /api/inventory/upsert-batch", () => {
     expect(res.body.inserted).toBe(0);
     expect(res.body.updated).toBe(1);
     expect(res.body.total).toBe(1);
+  });
+
+  it("rejects fractional OP/OQ values without changing the stored item", async () => {
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { eq } = await import("drizzle-orm");
+
+    await supertest(app)
+      .post("/api/inventory/upsert-batch")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        items: [{
+          vendor: "JEST-VENDOR",
+          catalog: NEW_CATALOG,
+          orderPurchase: 4,
+          orderQuantity: 6,
+        }],
+      })
+      .expect(200);
+
+    await supertest(app)
+      .post("/api/inventory/upsert-batch")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        items: [{
+          vendor: "JEST-VENDOR",
+          catalog: NEW_CATALOG,
+          orderPurchase: 4.5,
+          orderQuantity: 9,
+        }],
+      })
+      .expect(400);
+
+    const [stored] = await db
+      .select({
+        orderPurchase: inventoryTable.orderPurchase,
+        orderQuantity: inventoryTable.orderQuantity,
+      })
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, NEW_CATALOG));
+    expect(stored).toEqual({ orderPurchase: 4, orderQuantity: 6 });
   });
 
   // ── Bin-preservation guards (Task #455) ──

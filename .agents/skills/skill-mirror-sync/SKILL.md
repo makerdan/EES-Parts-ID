@@ -128,16 +128,19 @@ pnpm account-skill:status -- --skill <skill-id>
 It reads the account source and the platform-owned
 `.local/custom_skills/<skill-id>/.account-skill-metadata.json` sidecar. The
 sidecar's format, skill ID, source revision, and fingerprint must exactly match
-the canonical account metadata. Interpret outcomes as:
+the canonical account metadata. It also checks that the mirror contains exactly
+the canonical skill files, with matching bytes and no unexpected, symlinked, or
+unsupported entries. Interpret outcomes as:
 
-- `pass` (exit 0): identity, revision, and fingerprint match;
-- `mismatch` (exit 1): mirror metadata is invalid or differs;
+- `pass` (exit 0): identity, revision, fingerprint, file set, and file contents match;
+- `mismatch` (exit 1): mirror metadata or actual mirror contents are invalid or differ;
 - `unavailable-source` (exit 2): canonical source or revision cannot be read;
 - `missing-mirror` (exit 3): the platform mirror sidecar is absent.
 
 An unreadable or linked sidecar, including permission denial or a directory at the
 sidecar path, is a `mismatch` with the bounded
-`invalid-mirror-metadata` reason. Status never creates, removes, rewrites, or
+`invalid-mirror-metadata` reason. Content mismatches use the bounded
+`mirror-contents-mismatch` reason. Status never creates, removes, rewrites, or
 repairs the mirror root, sidecar, source, or workspace projection.
 
 Status is distinct from all-skills projection and invocation-time loading. It is

@@ -205,6 +205,123 @@ describe("useWarehouseZones — mid-session token expiry", () => {
     });
   });
 
+  it("does not retry a zone 401 and refetches when a replacement token arrives", async () => {
+    mockGetItem.mockResolvedValue(null);
+    mockGetAuthToken.mockReturnValue("valid-token");
+    let zoneCalls = 0;
+    mockFetchWithAuth.mockImplementation((url: RequestInfo | URL) => {
+      if (String(url).endsWith("/warehouse-zones")) {
+        zoneCalls += 1;
+        if (zoneCalls === 1) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            headers: new Headers(),
+            json: async () => ({ zones: INITIAL_ZONES }),
+          } as Response);
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          json: async () => ({}),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({}),
+      } as Response);
+    });
+
+    const { result } = renderHook(() => useWarehouseZones());
+    await flushPromises();
+    expect(result.current.zones).toEqual(INITIAL_ZONES);
+
+    const tokenAvailableHandler = mockSubscribeToTokenAvailable.mock.calls[0]![0];
+    mockGetAuthToken.mockReturnValue(null);
+    await act(async () => {
+      result.current.refetch();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+
+    // One successful initial fetch plus exactly one failed 401 request.
+    expect(zoneCalls).toBe(2);
+    expect(result.current.zones).toEqual(INITIAL_ZONES);
+
+    mockGetAuthToken.mockReturnValue("new-valid-token");
+    mockFetchWithAuth.mockImplementation((url: RequestInfo | URL) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => String(url).endsWith("/warehouse-zones")
+          ? { zones: REFRESHED_ZONES }
+          : {},
+      } as Response),
+    );
+
+    await act(async () => {
+      tokenAvailableHandler();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(result.current.zones).toEqual(REFRESHED_ZONES);
+    expect(mockFetchWithAuth.mock.calls.filter(([url]) =>
+      String(url).endsWith("/warehouse-zones"),
+    )).toHaveLength(3);
+  });
+
+  it("retries transient zone responses and publishes the successful map data", async () => {
+    mockGetItem.mockResolvedValue(null);
+    mockGetAuthToken.mockReturnValue("valid-token");
+    const retryAsyncActual = jest.requireActual<typeof import("../utils/retryAsync")>(
+      "@/utils/retryAsync",
+    ).retryAsync;
+    mockRetryAsync.mockImplementation((fn) =>
+      retryAsyncActual(fn as Parameters<typeof retryAsyncActual>[0], {
+        maxAttempts: 3,
+        delayMs: 0,
+      }),
+    );
+
+    let zoneCalls = 0;
+    mockFetchWithAuth.mockImplementation((url: RequestInfo | URL) => {
+      if (String(url).endsWith("/warehouse-zones")) {
+        zoneCalls += 1;
+        if (zoneCalls < 3) {
+          return Promise.resolve({
+            ok: false,
+            status: 503,
+            json: async () => ({}),
+          } as Response);
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          json: async () => ({ zones: REFRESHED_ZONES }),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({}),
+      } as Response);
+    });
+
+    const { result } = renderHook(() => useWarehouseZones());
+    await flushPromises();
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(zoneCalls).toBe(3);
+    expect(result.current.zones).toEqual(REFRESHED_ZONES);
+    expect(result.current.error).toBe(false);
+  });
+
   // ── 2. Token expires → onUnauthorized clears it → tokenAvailable → reload ──
 
   describe("token expires → re-authentication → zones reload", () => {

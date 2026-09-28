@@ -66,6 +66,14 @@ describe("parseCsv — null / malformed cases", () => {
     expect(parseCsv(csv("Vendor,Description", "ACME,Widget"))).toBeNull();
   });
 
+  it.each([
+    ['ACME,CAT-001,"unterminated', /not closed|not closed/i],
+    ['ACME,CAT-001,"closed"tail', /after a closing quote/i],
+    ['ACME,CAT-001,mis"placed', /unexpected quote inside an unquoted field/i],
+  ])("rejects malformed quoting in %s", (dataRow, message) => {
+    expect(() => parseCsv(csv("Vendor,Catalog,Description", dataRow))).toThrow(message);
+  });
+
   it("returns an empty array (not null) when all data rows are blank/invalid", () => {
     const result = parseCsv(csv("Vendor,Catalog", ",CAT-001", "ACME,"));
     expect(result).not.toBeNull();
@@ -79,6 +87,19 @@ describe("parseCsv — null / malformed cases", () => {
     expect(result).toHaveLength(1);
     expect(result![0]!.vendor).toBe("ACME");
     expect(result![0]!.catalog).toBe("CAT-001");
+  });
+
+  it("keeps quoted embedded newlines inside their field instead of splitting records", () => {
+    const result = parseCsv('Vendor,Catalog,Description\nACME,CAT-001,"First line\nSecond line"');
+    expect(result).toHaveLength(1);
+    expect(result![0]!.description).toBe("First line\nSecond line");
+  });
+
+  it("parses commas and escaped quotes inside a quoted field", () => {
+    const result = parseCsv('Vendor,Catalog,Description\nACME,"Breaker, 20A","He said ""rated"", 20A"');
+    expect(result).toHaveLength(1);
+    expect(result![0]!.catalog).toBe("Breaker, 20A");
+    expect(result![0]!.description).toBe('He said "rated", 20A');
   });
 });
 

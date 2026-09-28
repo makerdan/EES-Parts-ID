@@ -45,8 +45,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.ref }}
           fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
+
+      - name: Fetch provider-retained pull-request refs
+        shell: bash
+        run: git fetch --no-tags origin '+refs/pull/*/head:refs/pull/*/head'
 
       - name: Set up repository toolchain
         uses: ./.github/actions/setup-node-pnpm
@@ -71,8 +77,24 @@ jobs:
         shell: bash
         run: pnpm --filter @workspace/db run push-force
 
+      - name: Provision inventory_chip_text function
+        shell: bash
+        run: psql "$DATABASE_URL" --set=ON_ERROR_STOP=1 --file=lib/db/drizzle/inventory_chip_text.sql
+
+      - name: Verify inventory_chip_text function
+        shell: bash
+        run: |
+          signature="$(psql "$DATABASE_URL" --set=ON_ERROR_STOP=1 --no-align --tuples-only --command="SELECT to_regprocedure('inventory_chip_text(text,text,text,text[])')::text;")"
+          if [[ "$signature" != "inventory_chip_text(text,text,text,text[])" ]]; then
+            echo "Expected inventory_chip_text(text,text,text,text[]) but resolved '$signature'." >&2
+            exit 1
+          fi
+
       - name: Run the canonical standard-plus validation tier
         shell: bash
+        env:
+          BOUNDARY_REQUIRED_REF: ${{ github.ref }}
+          BOUNDARY_REQUIRED_COMMIT: ${{ github.sha }}
         run: pnpm run test-standard-plus
 
       - name: Report opt-in live Poe provider validation

@@ -83,10 +83,12 @@ Every task plan must declare exactly one validation tier. This prevents all four
 | `heavy` | `test-heavy` | standard-plus + `protected-map-concurrency` | ~30 min (45 min post-lock budget) |
 
 **Picking a tier (defaults unless the plan clearly implies otherwise):**
-- `fast` — pure config or refactor with no logic change
-- `standard` — most feature/bug-fix work; tasks touching only tests, mocks, or doc changes
-- `standard-plus` — DB schema, auth, or API contract changes
-- `heavy` — standard-plus plus the protected-map concurrency smoke step
+- `fast` — static checks suffice for report-only audits, documentation, pure config, or non-behavioral refactors with no test-bearing change
+- `standard` — most behavior fixes, features, and test changes; includes codegen/spec/env checks, the Failure Gate contract, and tests
+- `standard-plus` — DB schema, auth/security, or API contract/route changes needing schema, coverage, security, and post-merge checks
+- `heavy` — standard-plus plus `protected-map-concurrency`; use when that smoke step is relevant or the plan explicitly requires full-tier verification, not merely because it changes schema, auth, API routes, or multiple packages
+
+Use the lightest sufficient registered command. Migration/Drizzle/SQL schema work must not fall below standard-plus; investigate soft under-tier warnings before choosing less. This is plan-level selection, not evidence that completion validation ran additional tiers.
 
 ### Plan file format
 
@@ -212,7 +214,7 @@ Four tier commands run subsets sequentially via `scripts/run-tier.mjs`, with mem
 - **`test-fast`** — static checks only: `gate-guard`, task-scoped Failure Gate and Regression Guard repair/check steps, `tsc`, lint, config, port, and bundle-domain checks. (~5 min)
 - **`test-standard`** — fast + codegen/spec/env checks, `failure-gate-contract`, and tests. (~20 min)
 - **`test-standard-plus`** — standard + `schema-check`, `verify-fts`, `api-server-coverage`, `security-audit`, `post-merge-health-test`. Full quality signal without Playwright browser automation. (~30 min)
-- **`test-heavy`** — standard-plus + `protected-map-concurrency` (the protected-map smoke step is heavy-only; no Playwright currently). For schema migrations, new API routes, auth/security changes, multi-package refactors. (~30 min)
+- **`test-heavy`** — standard-plus + `protected-map-concurrency` (the protected-map smoke step is heavy-only; no Playwright currently). Use for protected-map concurrency work or an explicitly justified full-tier verification, not for unrelated schema, API, auth, or multi-package work by default. (~30 min)
 
 The table below keeps historical check names discoverable for targeted runs;
 they are validation steps, not standalone workflows. Tier membership lives in
@@ -282,8 +284,12 @@ command. `node scripts/free-dev-ports.mjs` is the workspace-wide cleanup
 entrypoint; it delegates to `scripts/free-ports.mjs --all-dev`, sweeps only
 explicitly registered ports sequentially, and refuses to report success while
 a protected holder is still bound. Individual service startup and recovery
-paths call the same `free-ports.mjs` worker for their registered port. Neither
-entrypoint scans or kills unregistered ports.
+paths call the same `free-ports.mjs` worker for their registered port. The three
+development startup commands add `--include-own-tree` immediately before
+launching their replacement service so a prior sibling listener under the same
+workflow supervisor can be removed. Do not use that override for production,
+workspace-wide manual recovery, or unrelated cleanup calls. Neither entrypoint
+scans or kills unregistered ports.
 
 The native Parts ID fallback on port `8080` is an intentional compatibility
 exception: `artifacts/parts-id/utils/devPorts.ts` still targets it when native
@@ -293,8 +299,9 @@ registered for cleanup.
 
 The port cleaner protects the caller's process tree, terminates only socket
 owners discovered through `/proc`, escalates from SIGTERM to SIGKILL with
-diagnostics, and confirms each port is free. Production/deployment paths do not
-invoke the development sweep.
+diagnostics, and confirms each port is free. Its default caller-tree refusal is
+the required behavior outside the narrowly scoped development takeover above.
+Production/deployment paths do not invoke the development sweep.
 
 `scripts/serial-lock.mjs` uses the shared `1`-highest through `9`-lowest scale
 described above, defaults to `5`, and applies priority only after the waiter

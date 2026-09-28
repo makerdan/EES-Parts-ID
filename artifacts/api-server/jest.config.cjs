@@ -4,9 +4,8 @@
  * Shared configuration inherited by both Jest projects below.
  *
  * Split rationale:
- *   db-serial  — tests that call seedVendors(), mutate canonical table rows
- *                (vendorPriority, vendorNameResolutionMap), or exercise the
- *                floor-plan latest-row contract.  They must run sequentially
+ *   db-serial  — tests that mutate singleton/canonical table rows or exercise
+ *                the floor-plan latest-row contract.  They must run sequentially
  *                because they either flip live canonical state or select the
  *                globally newest floor_plan_meta row; concurrent execution
  *                produces race-driven false failures.
@@ -139,9 +138,9 @@ module.exports = {
   // globalSetup runs once before all projects — keeps DB preflight + schema
   // sync to a single execution regardless of how many projects are defined.
   globalSetup: "./jest.globalSetup.cjs",
-  // forceExit was removed: jest.integrationSetup.cjs now registers a global
-  // afterAll that closes the pg pool after every test file, so handles are
-  // cleaned up organically and Jest exits without the "Force exiting" warning.
+  // forceExit is unnecessary because the Jest-only pg pool allows process exit
+  // when idle. Per-suite teardown remains responsible for owned fixture cleanup;
+  // a global pool close would run before those suite hooks.
 
   // ── Coverage configuration ─────────────────────────────────────────────────
   // Scope coverage to production source only.  Excludes:
@@ -186,13 +185,14 @@ module.exports = {
       // maxWorkers:1 keeps all canonical-state and floor-plan suites
       // sequential, while the rest of the API suite remains parallel.
       testMatch: [
-        "<rootDir>/__tests__/vendorPriority.integration.test.ts",
-        "<rootDir>/__tests__/vendorNameResolutionMap.integration.test.ts",
         "<rootDir>/__tests__/floorPlanMapWorkflow.integration.test.ts",
         "<rootDir>/__tests__/floorPlanTiles.integration.test.ts",
         "<rootDir>/__tests__/floorPlanViewBoxParsing.integration.test.ts",
         "<rootDir>/__tests__/publicWarehouseLayout.integration.test.ts",
         "<rootDir>/__tests__/testIsolation.integration.test.ts",
+        "<rootDir>/__tests__/adminPreferences.integration.test.ts",
+        "<rootDir>/__tests__/adminAiProvider.integration.test.ts",
+        "<rootDir>/__tests__/adminAiStatus.integration.test.ts",
       ],
       maxWorkers: 1,
     },
@@ -206,13 +206,14 @@ module.exports = {
       testPathIgnorePatterns: [
         "/node_modules/",
         ...(!liveProviderOptIn ? ["/poeModelName\\.live\\.test\\.ts$"] : []),
-        "/vendorPriority\\.integration\\.test\\.ts$",
-        "/vendorNameResolutionMap\\.integration\\.test\\.ts$",
         "/floorPlanMapWorkflow\\.integration\\.test\\.ts$",
         "/floorPlanTiles\\.integration\\.test\\.ts$",
         "/floorPlanViewBoxParsing\\.integration\\.test\\.ts$",
         "/publicWarehouseLayout\\.integration\\.test\\.ts$",
         "/testIsolation\\.integration\\.test\\.ts$",
+        "/adminPreferences\\.integration\\.test\\.ts$",
+        "/adminAiProvider\\.integration\\.test\\.ts$",
+        "/adminAiStatus\\.integration\\.test\\.ts$",
       ],
       maxWorkers: testConnectionBudget.parallelMaxWorkers,
     },

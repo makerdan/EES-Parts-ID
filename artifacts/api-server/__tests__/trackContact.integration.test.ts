@@ -31,6 +31,7 @@ import { contactLimiter, screenViewLimiter } from "../src/lib/rateLimiter";
 import { deriveRotatingVisitorHash } from "../src/lib/screenViewPrivacy";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
+import { setTestEnv } from "./helpers/testEnv";
 
 const TEST_INSTANCE = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
 const NON_ADMIN_USER = `jest-trackcontact-user-${TEST_INSTANCE}`;
@@ -38,7 +39,8 @@ const SUBJECT_PREFIX = "JEST-CONTACT-";
 const SCREEN_TEST_IP = `2001:db8:${((process.pid >>> 16) & 0xffff).toString(16)}:${(
   process.pid & 0xffff
 ).toString(16)}::1`;
-const SCREEN_TEST_VISITOR_HASH = deriveRotatingVisitorHash(SCREEN_TEST_IP);
+let screenTestVisitorHash: string | null = null;
+let restoreTestEnv: (() => void) | undefined;
 
 const seededContactMessageIds = new Set<number>();
 const seededScreenViewIds = new Set<number>();
@@ -74,15 +76,18 @@ async function waitFor<T>(fn: () => Promise<T>, timeoutMs = 3000): Promise<T> {
 }
 
 beforeAll(async () => {
-  process.env.ADMIN_CLERK_USER_ID = ADMIN_TEST_USER_ID;
-  process.env.TEST_DEFAULT_AUTH_USER = ADMIN_TEST_USER_ID;
+  restoreTestEnv = setTestEnv({
+    ADMIN_CLERK_USER_ID: ADMIN_TEST_USER_ID,
+    TEST_DEFAULT_AUTH_USER: ADMIN_TEST_USER_ID,
+    VISITOR_PRIVACY_SECRET: "jest-track-contact-privacy-secret",
+  });
+  screenTestVisitorHash = deriveRotatingVisitorHash(SCREEN_TEST_IP);
   await seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" });
 });
 
 afterAll(async () => {
-  delete process.env.TEST_DEFAULT_AUTH_USER;
-  delete process.env.ADMIN_CLERK_USER_ID;
   await cleanupTrackContactFixtures();
+  restoreTestEnv?.();
 }, 15_000);
 
 beforeEach(async () => {
@@ -103,7 +108,8 @@ afterEach(() => {
 
 describe("POST /api/track/screen-view", () => {
   it("returns 204 and logs a valid screen view with a rotating keyed visitor id", async () => {
-    if (!SCREEN_TEST_VISITOR_HASH) throw new Error("Screen-view test requires keyed visitor material");
+    if (!screenTestVisitorHash) throw new Error("Screen-view test requires keyed visitor material");
+    const expectedVisitorHash = screenTestVisitorHash;
     const [latestScreenView] = await db
       .select({ id: screenViewLogTable.id })
       .from(screenViewLogTable)
@@ -125,7 +131,7 @@ describe("POST /api/track/screen-view", () => {
         .where(
           and(
             eq(screenViewLogTable.screenName, "Search"),
-            eq(screenViewLogTable.visitorHash, SCREEN_TEST_VISITOR_HASH),
+            eq(screenViewLogTable.visitorHash, expectedVisitorHash),
             gt(screenViewLogTable.id, previousMaxId),
           ),
         );

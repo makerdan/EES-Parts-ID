@@ -31,14 +31,25 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
+ * Offset browsing is limited to 10000 rows. For bulk export, start with after_id=0, then pass each page's last item id and the returned throughId on subsequent requests. Cursor pages are ordered by id and bounded to the highest id present at the start.
  * @summary List inventory items (paginated)
  */
 export const listInventoryQueryPageDefault = 1;
 export const listInventoryQueryLimitDefault = 50;
+export const listInventoryQueryTotalMin = 0;
+
+export const listInventoryQueryAfterIdMin = 0;
+
+export const listInventoryQueryThroughIdMin = 0;
+
+
 
 export const ListInventoryQueryParams = zod.object({
   "page": zod.coerce.number().default(listInventoryQueryPageDefault),
   "limit": zod.coerce.number().default(listInventoryQueryLimitDefault),
+  "total": zod.coerce.number().min(listInventoryQueryTotalMin).optional().describe('Reuse the exact total returned on the first page during a paginated sync; omit to request a fresh count.'),
+  "after_id": zod.coerce.number().min(listInventoryQueryAfterIdMin).optional().describe('Start a bounded export after this id (0 for the first page); cannot be combined with a non-first page.'),
+  "through_id": zod.coerce.number().min(listInventoryQueryThroughIdMin).optional().describe('Highest inventory id returned as throughId on the first export page; required on subsequent export pages.'),
   "binPrefix": zod.coerce.string().optional().describe('Filter items to those stored in bins starting with this prefix')
 })
 
@@ -47,6 +58,8 @@ export const listInventoryResponseItemsItemOrderPurchaseMin = 0;
 export const listInventoryResponseItemsItemOrderQuantityMin = 0;
 
 export const listInventoryResponseItemsItemTotalOpOqMin = 0;
+
+export const listInventoryResponseThroughIdMin = 0;
 
 
 
@@ -80,7 +93,8 @@ export const ListInventoryResponse = zod.object({
 }).describe('Inventory response rows always include orderPurchase, orderQuantity, and the database-generated totalOpOq. All three fields are non-negative integers; zero represents an item without an order value.\n')),
   "total": zod.number(),
   "page": zod.number(),
-  "limit": zod.number()
+  "limit": zod.number(),
+  "throughId": zod.number().min(listInventoryResponseThroughIdMin).optional().describe('Highest id eligible for this export, present only on after_id requests.')
 })
 
 
@@ -1197,6 +1211,20 @@ export const AdminRestartResponse = zod.object({
 /**
  * @summary Get the configured Poe registry, explicit verification results, and effective AI routes
  */
+export const getAdminAiStatusResponseRegistryModelsItemApprovedRoutesMax = 4;
+
+export const getAdminAiStatusResponseRegistryModelsItemVerificationReviewTriggerMax = 128;
+
+export const getAdminAiStatusResponseRegistryModelsItemLimitsMaxOutputTokensMin = 0;
+
+export const getAdminAiStatusResponseRegistryModelsItemLimitsMaxImagesMin = 0;
+
+export const getAdminAiStatusResponseRegistryModelsItemLimitsMaxImageBytesMin = 0;
+
+export const getAdminAiStatusResponseRegistryModelsItemLimitsMaxRequestBytesMin = 0;
+
+export const getAdminAiStatusResponseRegistryModelsItemLimitsMaxResponseBytesMin = 0;
+
 export const getAdminAiStatusResponseVerificationLastOperationOneRequestedMin = 0;
 
 export const getAdminAiStatusResponseVerificationLastOperationOneAttemptedMin = 0;
@@ -1218,6 +1246,22 @@ export const GetAdminAiStatusResponse = zod.object({
   "text": zod.boolean().nullable(),
   "vision": zod.boolean().nullable(),
   "structuredOutput": zod.boolean().nullable()
+}),
+  "approvedRoutes": zod.array(zod.enum(['identify', 'dimensions', 'enrich', 'catalog'])).max(getAdminAiStatusResponseRegistryModelsItemApprovedRoutesMax),
+  "capabilityConfidence": zod.enum(['verified', 'inferred', 'unknown']),
+  "verification": zod.object({
+  "source": zod.enum(['configured_registry']),
+  "verifiedAt": zod.string().nullable(),
+  "reviewTrigger": zod.string().max(getAdminAiStatusResponseRegistryModelsItemVerificationReviewTriggerMax)
+}),
+  "privacyClass": zod.enum(['prompt_not_persisted']),
+  "budgetClass": zod.enum(['low', 'medium', 'high']),
+  "limits": zod.object({
+  "maxOutputTokens": zod.number().min(getAdminAiStatusResponseRegistryModelsItemLimitsMaxOutputTokensMin),
+  "maxImages": zod.number().min(getAdminAiStatusResponseRegistryModelsItemLimitsMaxImagesMin),
+  "maxImageBytes": zod.number().min(getAdminAiStatusResponseRegistryModelsItemLimitsMaxImageBytesMin),
+  "maxRequestBytes": zod.number().min(getAdminAiStatusResponseRegistryModelsItemLimitsMaxRequestBytesMin),
+  "maxResponseBytes": zod.number().min(getAdminAiStatusResponseRegistryModelsItemLimitsMaxResponseBytesMin)
 })
 }))
 }),
@@ -1261,6 +1305,20 @@ export const RefreshAdminPoeCatalogueResponse = zod.void()
 /**
  * @summary Explicitly live-verify the bounded set of active Poe route models
  */
+export const probeActiveAdminPoeModelsResponseRegistryModelsItemApprovedRoutesMax = 4;
+
+export const probeActiveAdminPoeModelsResponseRegistryModelsItemVerificationReviewTriggerMax = 128;
+
+export const probeActiveAdminPoeModelsResponseRegistryModelsItemLimitsMaxOutputTokensMin = 0;
+
+export const probeActiveAdminPoeModelsResponseRegistryModelsItemLimitsMaxImagesMin = 0;
+
+export const probeActiveAdminPoeModelsResponseRegistryModelsItemLimitsMaxImageBytesMin = 0;
+
+export const probeActiveAdminPoeModelsResponseRegistryModelsItemLimitsMaxRequestBytesMin = 0;
+
+export const probeActiveAdminPoeModelsResponseRegistryModelsItemLimitsMaxResponseBytesMin = 0;
+
 export const probeActiveAdminPoeModelsResponseVerificationLastOperationOneRequestedMin = 0;
 
 export const probeActiveAdminPoeModelsResponseVerificationLastOperationOneAttemptedMin = 0;
@@ -1282,6 +1340,22 @@ export const ProbeActiveAdminPoeModelsResponse = zod.object({
   "text": zod.boolean().nullable(),
   "vision": zod.boolean().nullable(),
   "structuredOutput": zod.boolean().nullable()
+}),
+  "approvedRoutes": zod.array(zod.enum(['identify', 'dimensions', 'enrich', 'catalog'])).max(probeActiveAdminPoeModelsResponseRegistryModelsItemApprovedRoutesMax),
+  "capabilityConfidence": zod.enum(['verified', 'inferred', 'unknown']),
+  "verification": zod.object({
+  "source": zod.enum(['configured_registry']),
+  "verifiedAt": zod.string().nullable(),
+  "reviewTrigger": zod.string().max(probeActiveAdminPoeModelsResponseRegistryModelsItemVerificationReviewTriggerMax)
+}),
+  "privacyClass": zod.enum(['prompt_not_persisted']),
+  "budgetClass": zod.enum(['low', 'medium', 'high']),
+  "limits": zod.object({
+  "maxOutputTokens": zod.number().min(probeActiveAdminPoeModelsResponseRegistryModelsItemLimitsMaxOutputTokensMin),
+  "maxImages": zod.number().min(probeActiveAdminPoeModelsResponseRegistryModelsItemLimitsMaxImagesMin),
+  "maxImageBytes": zod.number().min(probeActiveAdminPoeModelsResponseRegistryModelsItemLimitsMaxImageBytesMin),
+  "maxRequestBytes": zod.number().min(probeActiveAdminPoeModelsResponseRegistryModelsItemLimitsMaxRequestBytesMin),
+  "maxResponseBytes": zod.number().min(probeActiveAdminPoeModelsResponseRegistryModelsItemLimitsMaxResponseBytesMin)
 })
 }))
 }),
@@ -1325,6 +1399,20 @@ export const ProbeSingleAdminPoeModelParams = zod.object({
   "botName": zod.coerce.string().min(1)
 })
 
+export const probeSingleAdminPoeModelResponseRegistryModelsItemApprovedRoutesMax = 4;
+
+export const probeSingleAdminPoeModelResponseRegistryModelsItemVerificationReviewTriggerMax = 128;
+
+export const probeSingleAdminPoeModelResponseRegistryModelsItemLimitsMaxOutputTokensMin = 0;
+
+export const probeSingleAdminPoeModelResponseRegistryModelsItemLimitsMaxImagesMin = 0;
+
+export const probeSingleAdminPoeModelResponseRegistryModelsItemLimitsMaxImageBytesMin = 0;
+
+export const probeSingleAdminPoeModelResponseRegistryModelsItemLimitsMaxRequestBytesMin = 0;
+
+export const probeSingleAdminPoeModelResponseRegistryModelsItemLimitsMaxResponseBytesMin = 0;
+
 export const probeSingleAdminPoeModelResponseVerificationLastOperationOneRequestedMin = 0;
 
 export const probeSingleAdminPoeModelResponseVerificationLastOperationOneAttemptedMin = 0;
@@ -1346,6 +1434,22 @@ export const ProbeSingleAdminPoeModelResponse = zod.object({
   "text": zod.boolean().nullable(),
   "vision": zod.boolean().nullable(),
   "structuredOutput": zod.boolean().nullable()
+}),
+  "approvedRoutes": zod.array(zod.enum(['identify', 'dimensions', 'enrich', 'catalog'])).max(probeSingleAdminPoeModelResponseRegistryModelsItemApprovedRoutesMax),
+  "capabilityConfidence": zod.enum(['verified', 'inferred', 'unknown']),
+  "verification": zod.object({
+  "source": zod.enum(['configured_registry']),
+  "verifiedAt": zod.string().nullable(),
+  "reviewTrigger": zod.string().max(probeSingleAdminPoeModelResponseRegistryModelsItemVerificationReviewTriggerMax)
+}),
+  "privacyClass": zod.enum(['prompt_not_persisted']),
+  "budgetClass": zod.enum(['low', 'medium', 'high']),
+  "limits": zod.object({
+  "maxOutputTokens": zod.number().min(probeSingleAdminPoeModelResponseRegistryModelsItemLimitsMaxOutputTokensMin),
+  "maxImages": zod.number().min(probeSingleAdminPoeModelResponseRegistryModelsItemLimitsMaxImagesMin),
+  "maxImageBytes": zod.number().min(probeSingleAdminPoeModelResponseRegistryModelsItemLimitsMaxImageBytesMin),
+  "maxRequestBytes": zod.number().min(probeSingleAdminPoeModelResponseRegistryModelsItemLimitsMaxRequestBytesMin),
+  "maxResponseBytes": zod.number().min(probeSingleAdminPoeModelResponseRegistryModelsItemLimitsMaxResponseBytesMin)
 })
 }))
 }),
@@ -1396,6 +1500,20 @@ export const UpdateAdminAiRoutesBody = zod.object({
   "routes": zod.record(zod.string(), zod.array(zod.string().min(1)).max(updateAdminAiRoutesBodyRoutesMaxOne)).optional()
 }).describe('Provide either one feature\/fallbacks pair or a routes object.')
 
+export const updateAdminAiRoutesResponseRegistryModelsItemApprovedRoutesMax = 4;
+
+export const updateAdminAiRoutesResponseRegistryModelsItemVerificationReviewTriggerMax = 128;
+
+export const updateAdminAiRoutesResponseRegistryModelsItemLimitsMaxOutputTokensMin = 0;
+
+export const updateAdminAiRoutesResponseRegistryModelsItemLimitsMaxImagesMin = 0;
+
+export const updateAdminAiRoutesResponseRegistryModelsItemLimitsMaxImageBytesMin = 0;
+
+export const updateAdminAiRoutesResponseRegistryModelsItemLimitsMaxRequestBytesMin = 0;
+
+export const updateAdminAiRoutesResponseRegistryModelsItemLimitsMaxResponseBytesMin = 0;
+
 export const updateAdminAiRoutesResponseVerificationLastOperationOneRequestedMin = 0;
 
 export const updateAdminAiRoutesResponseVerificationLastOperationOneAttemptedMin = 0;
@@ -1417,6 +1535,22 @@ export const UpdateAdminAiRoutesResponse = zod.object({
   "text": zod.boolean().nullable(),
   "vision": zod.boolean().nullable(),
   "structuredOutput": zod.boolean().nullable()
+}),
+  "approvedRoutes": zod.array(zod.enum(['identify', 'dimensions', 'enrich', 'catalog'])).max(updateAdminAiRoutesResponseRegistryModelsItemApprovedRoutesMax),
+  "capabilityConfidence": zod.enum(['verified', 'inferred', 'unknown']),
+  "verification": zod.object({
+  "source": zod.enum(['configured_registry']),
+  "verifiedAt": zod.string().nullable(),
+  "reviewTrigger": zod.string().max(updateAdminAiRoutesResponseRegistryModelsItemVerificationReviewTriggerMax)
+}),
+  "privacyClass": zod.enum(['prompt_not_persisted']),
+  "budgetClass": zod.enum(['low', 'medium', 'high']),
+  "limits": zod.object({
+  "maxOutputTokens": zod.number().min(updateAdminAiRoutesResponseRegistryModelsItemLimitsMaxOutputTokensMin),
+  "maxImages": zod.number().min(updateAdminAiRoutesResponseRegistryModelsItemLimitsMaxImagesMin),
+  "maxImageBytes": zod.number().min(updateAdminAiRoutesResponseRegistryModelsItemLimitsMaxImageBytesMin),
+  "maxRequestBytes": zod.number().min(updateAdminAiRoutesResponseRegistryModelsItemLimitsMaxRequestBytesMin),
+  "maxResponseBytes": zod.number().min(updateAdminAiRoutesResponseRegistryModelsItemLimitsMaxResponseBytesMin)
 })
 }))
 }),
@@ -1457,6 +1591,20 @@ export const ResetAdminAiRoutesBody = zod.object({
   "feature": zod.enum(['enrich', 'identify', 'dimensions', 'catalog']).optional()
 })
 
+export const resetAdminAiRoutesResponseRegistryModelsItemApprovedRoutesMax = 4;
+
+export const resetAdminAiRoutesResponseRegistryModelsItemVerificationReviewTriggerMax = 128;
+
+export const resetAdminAiRoutesResponseRegistryModelsItemLimitsMaxOutputTokensMin = 0;
+
+export const resetAdminAiRoutesResponseRegistryModelsItemLimitsMaxImagesMin = 0;
+
+export const resetAdminAiRoutesResponseRegistryModelsItemLimitsMaxImageBytesMin = 0;
+
+export const resetAdminAiRoutesResponseRegistryModelsItemLimitsMaxRequestBytesMin = 0;
+
+export const resetAdminAiRoutesResponseRegistryModelsItemLimitsMaxResponseBytesMin = 0;
+
 export const resetAdminAiRoutesResponseVerificationLastOperationOneRequestedMin = 0;
 
 export const resetAdminAiRoutesResponseVerificationLastOperationOneAttemptedMin = 0;
@@ -1478,6 +1626,22 @@ export const ResetAdminAiRoutesResponse = zod.object({
   "text": zod.boolean().nullable(),
   "vision": zod.boolean().nullable(),
   "structuredOutput": zod.boolean().nullable()
+}),
+  "approvedRoutes": zod.array(zod.enum(['identify', 'dimensions', 'enrich', 'catalog'])).max(resetAdminAiRoutesResponseRegistryModelsItemApprovedRoutesMax),
+  "capabilityConfidence": zod.enum(['verified', 'inferred', 'unknown']),
+  "verification": zod.object({
+  "source": zod.enum(['configured_registry']),
+  "verifiedAt": zod.string().nullable(),
+  "reviewTrigger": zod.string().max(resetAdminAiRoutesResponseRegistryModelsItemVerificationReviewTriggerMax)
+}),
+  "privacyClass": zod.enum(['prompt_not_persisted']),
+  "budgetClass": zod.enum(['low', 'medium', 'high']),
+  "limits": zod.object({
+  "maxOutputTokens": zod.number().min(resetAdminAiRoutesResponseRegistryModelsItemLimitsMaxOutputTokensMin),
+  "maxImages": zod.number().min(resetAdminAiRoutesResponseRegistryModelsItemLimitsMaxImagesMin),
+  "maxImageBytes": zod.number().min(resetAdminAiRoutesResponseRegistryModelsItemLimitsMaxImageBytesMin),
+  "maxRequestBytes": zod.number().min(resetAdminAiRoutesResponseRegistryModelsItemLimitsMaxRequestBytesMin),
+  "maxResponseBytes": zod.number().min(resetAdminAiRoutesResponseRegistryModelsItemLimitsMaxResponseBytesMin)
 })
 }))
 }),
@@ -1527,6 +1691,110 @@ export const AiReferenceResponse = zod.void()
 
 
 /**
+ * @summary Get the authenticated user's private history
+ */
+
+export const getUserHistoryResponseQueryHistoryMax = 10;
+
+
+export const getUserHistoryResponseViewedHistoryMax = 10;
+
+
+
+export const getUserHistoryResponseScanHistoryMax = 50;
+
+
+
+export const GetUserHistoryResponse = zod.object({
+  "queryHistory": zod.array(zod.string().min(1)).max(getUserHistoryResponseQueryHistoryMax),
+  "viewedHistory": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "catalog": zod.string(),
+  "name": zod.string(),
+  "vendor": zod.string(),
+  "timestamp": zod.coerce.date()
+})).max(getUserHistoryResponseViewedHistoryMax),
+  "scanHistory": zod.array(zod.object({
+  "barcode": zod.string().min(1),
+  "found": zod.boolean(),
+  "itemId": zod.number().min(1).optional(),
+  "catalog": zod.string().optional(),
+  "vendor": zod.string().optional(),
+  "timestamp": zod.coerce.date(),
+  "adminAction": zod.enum(['linked', 'created']).optional()
+})).max(getUserHistoryResponseScanHistoryMax)
+})
+
+
+/**
+ * @summary Update one or more of the authenticated user's history collections
+ */
+
+export const updateUserHistoryBodyQueryHistoryMax = 10;
+
+
+export const updateUserHistoryBodyViewedHistoryMax = 10;
+
+
+
+export const updateUserHistoryBodyScanHistoryMax = 50;
+
+
+
+export const UpdateUserHistoryBody = zod.object({
+  "queryHistory": zod.array(zod.string().min(1)).max(updateUserHistoryBodyQueryHistoryMax).optional(),
+  "viewedHistory": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "catalog": zod.string(),
+  "name": zod.string(),
+  "vendor": zod.string(),
+  "timestamp": zod.coerce.date()
+})).max(updateUserHistoryBodyViewedHistoryMax).optional(),
+  "scanHistory": zod.array(zod.object({
+  "barcode": zod.string().min(1),
+  "found": zod.boolean(),
+  "itemId": zod.number().min(1).optional(),
+  "catalog": zod.string().optional(),
+  "vendor": zod.string().optional(),
+  "timestamp": zod.coerce.date(),
+  "adminAction": zod.enum(['linked', 'created']).optional()
+})).max(updateUserHistoryBodyScanHistoryMax).optional()
+})
+
+
+export const updateUserHistoryResponseQueryHistoryMax = 10;
+
+
+export const updateUserHistoryResponseViewedHistoryMax = 10;
+
+
+
+export const updateUserHistoryResponseScanHistoryMax = 50;
+
+
+
+export const UpdateUserHistoryResponse = zod.object({
+  "queryHistory": zod.array(zod.string().min(1)).max(updateUserHistoryResponseQueryHistoryMax),
+  "viewedHistory": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "catalog": zod.string(),
+  "name": zod.string(),
+  "vendor": zod.string(),
+  "timestamp": zod.coerce.date()
+})).max(updateUserHistoryResponseViewedHistoryMax),
+  "scanHistory": zod.array(zod.object({
+  "barcode": zod.string().min(1),
+  "found": zod.boolean(),
+  "itemId": zod.number().min(1).optional(),
+  "catalog": zod.string().optional(),
+  "vendor": zod.string().optional(),
+  "timestamp": zod.coerce.date(),
+  "adminAction": zod.enum(['linked', 'created']).optional()
+})).max(updateUserHistoryResponseScanHistoryMax)
+})
+
+
+/**
  * Deletes the caller's local DB row and Clerk identity. Returns 204 on success. If the DB delete succeeds but Clerk deletion fails, a 502 is returned with an error body so the caller knows the Clerk identity is still live.
  * @summary Delete the authenticated user's own account
  */
@@ -1555,22 +1823,71 @@ export const ListAdminInventorySnapshotsResponse = zod.array(ListAdminInventoryS
 
 
 /**
- * @summary Create a verified inventory snapshot
+ * @summary Start a manual verified inventory backup
  */
 export const createAdminInventorySnapshotResponseRowCountMin = 0;
 
 
 
 export const CreateAdminInventorySnapshotResponse = zod.object({
-  "formatVersion": zod.number(),
+  "status": zod.enum(['running', 'completed', 'failed']),
+  "persistence": zod.enum(['saved', 'unavailable']),
+  "startedAt": zod.coerce.date(),
+  "finishedAt": zod.coerce.date().nullable(),
+  "rowCount": zod.number().min(createAdminInventorySnapshotResponseRowCountMin).nullable(),
+  "snapshotId": zod.string().nullable(),
+  "error": zod.string().nullable(),
+  "warning": zod.string().nullable()
+})
+
+
+/**
+ * @summary Read the current or latest manual inventory backup status
+ */
+export const getAdminManualInventoryBackupStatusResponseRowCountMin = 0;
+
+
+
+export const GetAdminManualInventoryBackupStatusResponse = zod.object({
+  "status": zod.enum(['running', 'completed', 'failed']),
+  "persistence": zod.enum(['saved', 'unavailable']),
+  "startedAt": zod.coerce.date(),
+  "finishedAt": zod.coerce.date().nullable(),
+  "rowCount": zod.number().min(getAdminManualInventoryBackupStatusResponseRowCountMin).nullable(),
+  "snapshotId": zod.string().nullable(),
+  "error": zod.string().nullable(),
+  "warning": zod.string().nullable()
+}).nullable()
+
+
+/**
+ * @summary List manual inventory backup history
+ */
+export const listAdminManualInventoryBackupHistoryQueryLimitDefault = 50;
+export const listAdminManualInventoryBackupHistoryQueryLimitMax = 200;
+
+
+
+
+export const ListAdminManualInventoryBackupHistoryQueryParams = zod.object({
+  "limit": zod.coerce.number().min(1).max(listAdminManualInventoryBackupHistoryQueryLimitMax).default(listAdminManualInventoryBackupHistoryQueryLimitDefault).describe('Maximum number of entries to return (default 50, max 200)'),
+  "before_id": zod.coerce.number().min(1).optional().describe('Cursor — return only rows with id strictly less than this value (use nextCursor from the previous page)')
+})
+
+export const listAdminManualInventoryBackupHistoryResponseRowsItemRowCountMin = 0;
+
+
+
+export const ListAdminManualInventoryBackupHistoryResponse = zod.object({
+  "rows": zod.array(zod.object({
+  "id": zod.number(),
+  "adminClerkUserId": zod.string(),
   "snapshotId": zod.string(),
-  "createdAt": zod.coerce.date(),
-  "reason": zod.string(),
-  "rowCount": zod.number().min(createAdminInventorySnapshotResponseRowCountMin),
-  "contentSha256": zod.string(),
-  "previousValidSnapshotId": zod.string().nullish(),
-  "lastKnownGood": zod.boolean(),
-  "anomaly": zod.string().nullable()
+  "rowCount": zod.number().min(listAdminManualInventoryBackupHistoryResponseRowsItemRowCountMin).nullable(),
+  "outcome": zod.enum(['completed', 'failed']),
+  "createdAt": zod.coerce.date()
+})),
+  "nextCursor": zod.number().nullable().describe('Pass as before_id to fetch the next page.')
 })
 
 

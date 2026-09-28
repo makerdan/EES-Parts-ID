@@ -37,6 +37,7 @@ import { Request, Response, Router } from "express";
 
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 import { createInventorySnapshotLocked, withInventorySnapshotLock } from "../lib/inventorySnapshot";
+import { boundedErrorDiagnostic, getLogger } from "../lib/logger";
 import { requireApprovedAdminAuth } from "../middlewares/requireAdminAuth";
 
 const router = Router();
@@ -50,32 +51,110 @@ const UPLOAD_MAX_CSV_CHARS = 15 * 1024 * 1024; // ~15M chars
 
 // ── CSV parser ────────────────────────────────────────────────────────────────
 
-/** Split a single CSV line into fields, respecting double-quoted fields. */
-function parseCsvLine(line: string): Array<string> {
-  const fields: Array<string> = [];
+class CsvValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CsvValidationError";
+  }
+}
+
+/**
+ * Parse CSV records without splitting physical lines first. Quoted fields may
+ * contain commas and newlines; malformed quote placement rejects the entire
+ * input instead of returning the valid-looking records parsed before it.
+ */
+function parseCsvRecords(csvText: string): Array<Array<string>> {
+  const text = csvText.startsWith("\uFEFF") ? csvText.slice(1) : csvText;
+  const records: Array<Array<string>> = [];
+  let fields: Array<string> = [];
   let current = "";
   let inQuotes = false;
+  let afterQuote = false;
+  let recordHasInput = false;
+  let lineNumber = 1;
+  let quoteStartLine = 1;
 
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
+  const pushField = () => {
+    fields.push(current.trim());
+    current = "";
+    afterQuote = false;
+  };
+  const pushRecord = () => {
+    pushField();
+    if (recordHasInput || fields.length > 1) records.push(fields);
+    fields = [];
+    recordHasInput = false;
+  };
+  const advanceLineBreak = (index: number, appendToField: boolean): number => {
+    const isCrLf = text[index] === "\r" && text[index + 1] === "\n";
+    if (appendToField) current += isCrLf ? "\r\n" : text[index]!;
+    lineNumber++;
+    return isCrLf ? index + 1 : index;
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
     if (inQuotes) {
       if (ch === '"') {
-        if (line[i + 1] === '"') { current += '"'; i++; } // escaped ""
-        else inQuotes = false;
+        if (text[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+          afterQuote = true;
+        }
+      } else if (ch === "\r" || ch === "\n") {
+        i = advanceLineBreak(i, true);
       } else {
         current += ch;
       }
+      continue;
+    }
+
+    if (afterQuote) {
+      if (ch === ",") {
+        pushField();
+        recordHasInput = true;
+      } else if (ch === "\r" || ch === "\n") {
+        pushRecord();
+        i = advanceLineBreak(i, false);
+      } else if (ch !== " " && ch !== "\t") {
+        throw new CsvValidationError(
+          `Malformed CSV on line ${lineNumber}: unexpected text after a closing quote. Put a comma or line break after the closing quote.`,
+        );
+      }
+      continue;
+    }
+
+    if (ch === ",") {
+      pushField();
+      recordHasInput = true;
+    } else if (ch === "\r" || ch === "\n") {
+      pushRecord();
+      i = advanceLineBreak(i, false);
     } else if (ch === '"') {
-      inQuotes = true;
-    } else if (ch === ",") {
-      fields.push(current.trim());
+      if (current.trim().length > 0) {
+        throw new CsvValidationError(
+          `Malformed CSV on line ${lineNumber}: unexpected quote inside an unquoted field. Wrap the whole field in double quotes and write embedded quotes as "".`,
+        );
+      }
       current = "";
+      inQuotes = true;
+      recordHasInput = true;
+      quoteStartLine = lineNumber;
     } else {
       current += ch;
+      if (!/\s/.test(ch)) recordHasInput = true;
     }
   }
-  fields.push(current.trim());
-  return fields;
+
+  if (inQuotes) {
+    throw new CsvValidationError(
+      `Malformed CSV: quoted field opened on line ${quoteStartLine} is not closed. Add a closing double quote.`,
+    );
+  }
+  if (recordHasInput || fields.length > 0 || current.length > 0) pushRecord();
+  return records;
 }
 
 export interface ParsedRow {
@@ -92,15 +171,17 @@ export interface ParsedRow {
 
 /**
  * Parse a raw CSV string into structured inventory rows.
- * Returns null if the CSV is malformed (no header, or missing required columns).
+ * Malformed quoting and invalid OP/OQ values throw CsvValidationError;
+ * missing headers and header-only files return null.
  */
 export function parseCsv(csvText: string): Array<ParsedRow> | null {
-  // Strip UTF-8 BOM (\uFEFF) if present so Excel-exported files parse correctly.
-  const text = csvText.startsWith("\uFEFF") ? csvText.slice(1) : csvText;
-  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-  if (lines.length < 2) return null; // header-only or empty
+  return parseCsvRecordsToInventory(parseCsvRecords(csvText));
+}
 
-  const header = parseCsvLine(lines[0]!).map(h => h.toLowerCase().replace(/\s+/g, ""));
+function parseCsvRecordsToInventory(records: Array<Array<string>>): Array<ParsedRow> | null {
+  if (records.length < 2) return null; // header-only or empty
+
+  const header = records[0]!.map(h => h.toLowerCase().replace(/\s+/g, ""));
   const vendorIdx = header.findIndex(h => h === "vendor");
   const catalogIdx = header.findIndex(h => h === "catalog" || h === "catalog#" || h === "catalognumber");
   if (vendorIdx === -1 || catalogIdx === -1) return null;
@@ -112,8 +193,8 @@ export function parseCsv(csvText: string): Array<ParsedRow> | null {
   const oqIdx = header.findIndex(h => h === "oq" || h === "orderquantity");
 
   const rows: Array<ParsedRow> = [];
-  for (let i = 1; i < lines.length; i++) {
-    const fields = parseCsvLine(lines[i]!);
+  for (let i = 1; i < records.length; i++) {
+    const fields = records[i]!;
     const vendor = fields[vendorIdx]?.trim() ?? "";
     const catalog = fields[catalogIdx]?.trim() ?? "";
     if (!vendor || !catalog) continue; // skip blank/invalid rows
@@ -130,19 +211,17 @@ export function parseCsv(csvText: string): Array<ParsedRow> | null {
     const parseOrder = (idx: number, name: string): number => {
       const value = (idx >= 0 ? fields[idx]?.trim() : "") ?? "";
       if (!value) return 0;
-      if (!/^\d+$/.test(value)) throw new Error(`${name} must be a non-negative integer`);
+      if (!/^\d+$/.test(value)) {
+        throw new CsvValidationError(`${name} must be a non-negative integer (CSV record ${i + 1}).`);
+      }
       const parsed = Number(value);
-      if (!Number.isSafeInteger(parsed)) throw new Error(`${name} must be a non-negative integer`);
+      if (!Number.isSafeInteger(parsed)) {
+        throw new CsvValidationError(`${name} must be a non-negative integer (CSV record ${i + 1}).`);
+      }
       return parsed;
     };
-    let orderPurchase: number;
-    let orderQuantity: number;
-    try {
-      orderPurchase = parseOrder(opIdx, "OP");
-      orderQuantity = parseOrder(oqIdx, "OQ");
-    } catch {
-      return null;
-    }
+    const orderPurchase = parseOrder(opIdx, "OP");
+    const orderQuantity = parseOrder(oqIdx, "OQ");
     rows.push({
       vendor,
       catalog,
@@ -164,6 +243,7 @@ export function parseCsv(csvText: string): Array<ParsedRow> | null {
 // the database. Clients should call this before /admin/upload and warn the
 // user when willReplaceBins > 0.
 router.post("/upload/preview", requireApprovedAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const contentLength = Number(req.headers["content-length"] ?? 0);
     if (contentLength > UPLOAD_MAX_BYTES) {
@@ -184,7 +264,15 @@ router.post("/upload/preview", requireApprovedAdminAuth, async (req, res) => {
       });
     }
 
-    const rows = parseCsv(csv);
+    let rows: Array<ParsedRow> | null;
+    try {
+      rows = parseCsv(csv);
+    } catch (error) {
+      if (error instanceof CsvValidationError) {
+        return void res.status(400).json({ error: error.message });
+      }
+      throw error;
+    }
     if (!rows) {
       return void res.status(400).json({
         error: "Malformed CSV: must have a header row with at least Vendor and Catalog columns",
@@ -366,13 +454,14 @@ router.post("/upload/preview", requireApprovedAdminAuth, async (req, res) => {
 
     res.json({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows: diffRows, willReplaceBarcodes, willAddBarcodes, willPreserveBarcodes, willBarcodeConflicts });
   } catch (err) {
-    console.error(err);
+    reqLogger.error(boundedErrorDiagnostic(err), "[admin/upload/preview] Preview failed");
     res.status(500).json({ error: "Preview failed" });
   }
 });
 
 // ── POST /admin/upload ────────────────────────────────────────────────────────
 router.post("/upload", requireApprovedAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const contentLength = Number(req.headers["content-length"] ?? 0);
     if (contentLength > UPLOAD_MAX_BYTES) {
@@ -393,7 +482,15 @@ router.post("/upload", requireApprovedAdminAuth, async (req, res) => {
       });
     }
 
-    const rows = parseCsv(csv);
+    let rows: Array<ParsedRow> | null;
+    try {
+      rows = parseCsv(csv);
+    } catch (error) {
+      if (error instanceof CsvValidationError) {
+        return void res.status(400).json({ error: error.message });
+      }
+      throw error;
+    }
     if (!rows) {
       return void res.status(400).json({
         error: "Malformed CSV: must have a header row with at least Vendor and Catalog columns",
@@ -464,12 +561,15 @@ router.post("/upload", requireApprovedAdminAuth, async (req, res) => {
     // Fire-and-forget: ANALYZE can take a few seconds on large tables and must
     // not block the HTTP response.
     db.execute(sql`ANALYZE inventory`).catch((err) => {
-      console.warn("[adminUpload] ANALYZE inventory failed:", err);
+      reqLogger.warn(
+        boundedErrorDiagnostic(err),
+        "[adminUpload] ANALYZE inventory failed",
+      );
     });
 
     res.json({ inserted, updated, total: rows.length });
   } catch (err) {
-    console.error(err);
+    reqLogger.error(boundedErrorDiagnostic(err), "[admin/upload] Upload failed");
     res.status(500).json({ error: "Upload failed" });
   }
 });
@@ -477,16 +577,25 @@ router.post("/upload", requireApprovedAdminAuth, async (req, res) => {
 // OP/OQ-only spreadsheet mode. Unlike the normal importer this never creates
 // inventory rows and ignores every non-key/non-order column.
 async function orderUpload(req: Request, res: Response, update: boolean) {
+  const reqLogger = getLogger(res);
   try {
     const csv = req.body?.csv;
     if (typeof csv !== "string" || !csv.trim()) return void res.status(400).json({ error: "Missing or empty csv field" });
-    const text = csv.startsWith("\uFEFF") ? csv.slice(1) : csv;
-    const header = parseCsvLine(text.split(/\r?\n/).find((line: string) => line.trim()) ?? "")
-      .map(h => h.toLowerCase().replace(/\s+/g, ""));
+    let records: Array<Array<string>>;
+    let rows: Array<ParsedRow> | null;
+    try {
+      records = parseCsvRecords(csv);
+      rows = parseCsvRecordsToInventory(records);
+    } catch (error) {
+      if (error instanceof CsvValidationError) {
+        return void res.status(400).json({ error: error.message });
+      }
+      throw error;
+    }
+    const header = (records[0] ?? []).map(h => h.toLowerCase().replace(/\s+/g, ""));
     if (!header.some(h => h === "op" || h === "orderpurchase") && !header.some(h => h === "oq" || h === "orderquantity")) {
       return void res.status(400).json({ error: "OP or OQ header is required" });
     }
-    const rows = parseCsv(csv);
     if (!rows) return void res.status(400).json({ error: "Malformed CSV or invalid OP/OQ value" });
     const keys = rows.map(r => ({ vendor: r.vendor.toUpperCase(), catalog: r.catalog }));
     const existing = keys.length ? await db.select({ id: inventoryTable.id, vendor: inventoryTable.vendor, catalog: inventoryTable.catalog })
@@ -516,7 +625,11 @@ async function orderUpload(req: Request, res: Response, update: boolean) {
     }
     res.json({ known: known.length, unknownWithBins: details.filter(r => !r.known && r.hasBins).length,
       unknownWithoutBins: details.filter(r => !r.known && !r.hasBins).length, updated: update ? known.length : 0, rows: details });
-  } catch (_err) {
+  } catch (err) {
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      update ? "[admin/upload/orders] Upload failed" : "[admin/upload/orders/preview] Preview failed",
+    );
     res.status(500).json({ error: update ? "Order upload failed" : "Order upload preview failed" });
   }
 }

@@ -7,8 +7,9 @@
  * - DML rejection: DELETE FROM returns 400 before touching the DB
  * - Comment-bypass rejection: leading block comment before DELETE returns 400
  * - Leading line-comment bypass rejected: -- comment then DELETE returns 400
- * - Valid SELECT is accepted (pool.connect stub verifies the rolled-back
- *   transaction path)
+ * - Valid SELECT runs inside a database-enforced read-only transaction
+ * - Sensitive source columns stay filtered when selected through aliases
+ * - Unexpected database errors return a stable client-safe error and request ID
  */
 
 // ── OpenAI constructor mock (loaded transitively by ai routes at module init) ─
@@ -41,7 +42,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── DB pool mock ──────────────────────────────────────────────────────────────
 // For queries that are blocked at the validation layer, pool.connect() is never
 // reached. For valid SELECT tests we provide a minimal stub that simulates the
-// BEGIN / SET LOCAL / query / ROLLBACK sequence.
+// BEGIN READ ONLY / SET LOCAL / query / ROLLBACK sequence.
 const mockQuery = jest.fn();
 const mockRelease = jest.fn();
 const mockConnect = jest.fn().mockResolvedValue({
@@ -205,9 +206,9 @@ describe("POST /api/admin/query — DDL/DML rejection (SQL injection hardening)"
   });
 });
 
-// ── Rolled-back transaction path for valid SELECT queries ─────────────────────
+// ── Read-only transaction path for valid SELECT queries ───────────────────────
 
-describe("POST /api/admin/query — valid SELECT uses rolled-back transaction", () => {
+describe("POST /api/admin/query — valid SELECT uses a read-only transaction", () => {
   let token: string;
 
   beforeAll(() => {
@@ -220,18 +221,18 @@ describe("POST /api/admin/query — valid SELECT uses rolled-back transaction", 
     mockRelease.mockClear();
 
     // Stub the four sequential query calls inside the route handler:
-    //   1. BEGIN
+    //   1. BEGIN READ ONLY
     //   2. SET LOCAL statement_timeout = ...
     //   3. The wrapped SELECT
     //   4. ROLLBACK
     mockQuery
-      .mockResolvedValueOnce({})                                     // BEGIN
+      .mockResolvedValueOnce({})                                     // BEGIN READ ONLY
       .mockResolvedValueOnce({})                                     // SET LOCAL
       .mockResolvedValueOnce({ fields: [{ name: "id" }], rows: [{ id: 1 }] }) // SELECT
       .mockResolvedValueOnce({});                                    // ROLLBACK
   });
 
-  it("calls ROLLBACK (not COMMIT) after a successful query", async () => {
+  it("starts a read-only transaction and rolls it back after a successful query", async () => {
     await supertest(app)
       .post("/api/admin/query")
       .set("Authorization", `Bearer ${token}`)
@@ -242,12 +243,12 @@ describe("POST /api/admin/query — valid SELECT uses rolled-back transaction", 
       (c: [string, ...unknown[]]) => (c[0] as string).trim().toUpperCase(),
     );
 
-    expect(calls).toContain("BEGIN");
+    expect(calls).toContain("BEGIN READ ONLY");
     expect(calls).toContain("ROLLBACK");
     expect(calls.every((s) => s !== "COMMIT")).toBe(true);
   });
 
-  it("returns column names and rows from the rolled-back query result", async () => {
+  it("returns column names and rows from the read-only query result", async () => {
     const res = await supertest(app)
       .post("/api/admin/query")
       .set("Authorization", `Bearer ${token}`)
@@ -308,6 +309,36 @@ describe("POST /api/admin/query — sensitive column masking", () => {
     expect(res.body.columns).toEqual(["id", "name"]);
     expect(res.body.rows[0]).not.toHaveProperty("email");
     expect(res.body.strippedColumns).toContain("email");
+  });
+
+  it("strips a protected source column when its output label is aliased", async () => {
+    mockQuery
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        fields: [
+          { name: "public_contact", tableID: 42, columnID: 2 },
+          { name: "id", tableID: 42, columnID: 1 },
+        ],
+        rows: [{ public_contact: "private@example.com", id: 1 }],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          { tableId: 42, columnId: 2, sourceColumnName: "email" },
+          { tableId: 42, columnId: 1, sourceColumnName: "id" },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await supertest(app)
+      .post("/api/admin/query")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sql: "SELECT email AS public_contact, id FROM users LIMIT 1" })
+      .expect(200);
+
+    expect(res.body.columns).toEqual(["id"]);
+    expect(res.body.rows).toEqual([{ id: 1 }]);
+    expect(res.body.strippedColumns).toEqual(["public_contact"]);
   });
 
   it("strips 'clerk_user_id' from response columns and rows", async () => {
@@ -382,6 +413,77 @@ describe("POST /api/admin/query — sensitive column masking", () => {
     expect(res.body.columns).toEqual(["id", "catalog_number", "aisle_id"]);
     expect(res.body.rows[0]).toEqual({ id: 42, catalog_number: "PN-001", aisle_id: 7 });
     expect(res.body.strippedColumns).toEqual([]);
+  });
+});
+
+describe("POST /api/admin/query — safe database errors", () => {
+  const token = makeAdminToken();
+
+  beforeEach(() => {
+    mockConnect.mockClear();
+    mockQuery.mockClear();
+    mockRelease.mockClear();
+  });
+
+  it("returns the stable client-safe response when a database connection fails", async () => {
+    mockConnect.mockRejectedValueOnce(
+      new Error("connection refused at private-db.internal:5432"),
+    );
+
+    const res = await supertest(app)
+      .post("/api/admin/query")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sql: "SELECT 1" })
+      .expect(500);
+
+    expect(res.body.error).toBe(
+      "Query failed. Please retry or contact support with the request ID.",
+    );
+    expect(res.body.requestId).toBe(res.headers["x-request-id"]);
+    expect(JSON.stringify(res.body)).not.toContain("private-db.internal");
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it("returns a stable error and request ID instead of PostgreSQL details", async () => {
+    mockQuery
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(
+        new Error('permission denied for relation "private_customers"; private@example.com'),
+      )
+      .mockResolvedValueOnce({});
+
+    const res = await supertest(app)
+      .post("/api/admin/query")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sql: "SELECT email FROM private_customers" })
+      .expect(500);
+
+    expect(res.body.error).toBe(
+      "Query failed. Please retry or contact support with the request ID.",
+    );
+    expect(res.body.requestId).toBe(res.headers["x-request-id"]);
+    expect(JSON.stringify(res.body)).not.toContain("permission denied");
+    expect(JSON.stringify(res.body)).not.toContain("private@example.com");
+  });
+
+  it("preserves the statement-timeout response", async () => {
+    mockQuery
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(
+        new Error("canceling statement due to statement timeout"),
+      )
+      .mockResolvedValueOnce({});
+
+    const res = await supertest(app)
+      .post("/api/admin/query")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sql: "SELECT pg_sleep(10)" })
+      .expect(408);
+
+    expect(res.body.error).toMatch(/timed out after 5s/);
   });
 });
 

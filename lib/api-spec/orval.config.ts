@@ -6,6 +6,9 @@ const apiClientReactSrc = path.resolve(root, "lib", "api-client-react", "src");
 const apiZodSrc = path.resolve(root, "lib", "api-zod", "src");
 
 // Our exports make assumptions about the title of the API being "Api" (i.e. generated output is `api.ts`).
+// The pinned Orval/TypeScript toolchain uses TypeScript's built-in Awaited type.
+// check-generated-output.mjs rejects the obsolete custom Awaited helper so a
+// generator upgrade cannot silently reintroduce output from a different toolchain.
 const titleTransformer: InputTransformerFn = (config) => {
   config.info ??= {};
   config.info.title = "Api";

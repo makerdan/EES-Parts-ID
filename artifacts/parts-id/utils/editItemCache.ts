@@ -7,6 +7,7 @@
 
 import type { InventoryItem, InventoryListResponse, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
+import { Platform } from "react-native";
 
 import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
 import type { QueryCache } from "@/utils/searchHelpers";
@@ -228,23 +229,33 @@ export async function updateItemInAllCaches(opts: {
   updatedItem: InventoryItem;
 }): Promise<CacheCleanupResult> {
   const failures: Array<unknown> = [];
+  if (Platform.OS !== "web") {
+    try {
+      await (await import("@/utils/offlineInventory")).upsertOfflineItem(opts.updatedItem);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
   try {
     patchItemInQueryCaches(opts.queryClient, opts.updatedItem);
   } catch (error) {
     failures.push(error);
   }
 
-  const listResult = await invalidateListCache(opts).then(
-    () => null,
-    (error) => error,
-  );
-  if (listResult) failures.push(listResult);
-
-  const searchResult = await invalidateSearchAndEvictItem({
-    ...opts,
-    itemId: opts.updatedItem.id,
-  });
-  failures.push(...searchResult.failures);
+  const [listResult, searchResult] = await Promise.all([
+    invalidateListCache(opts).then(
+      () => [] as Array<unknown>,
+      (error) => [error],
+    ),
+    invalidateSearchAndEvictItem({
+      ...opts,
+      itemId: opts.updatedItem.id,
+    }).then(
+      (result) => result.failures,
+      (error) => [error],
+    ),
+  ]);
+  failures.push(...listResult, ...searchResult);
   return cleanupResult(failures);
 }
 
@@ -271,13 +282,17 @@ export async function invalidateAllCachesAfterSave(opts: {
   }
 
   const failures: Array<unknown> = [];
-  const listResult = await invalidateListCache(opts).then(
-    () => null,
-    (error) => error,
-  );
-  if (listResult) failures.push(listResult);
-  const searchResult = await invalidateSearchAndEvictItem(opts);
-  failures.push(...searchResult.failures);
+  const [listResult, searchResult] = await Promise.all([
+    invalidateListCache(opts).then(
+      () => [] as Array<unknown>,
+      (error) => [error],
+    ),
+    invalidateSearchAndEvictItem(opts).then(
+      (result) => result.failures,
+      (error) => [error],
+    ),
+  ]);
+  failures.push(...listResult, ...searchResult);
   return cleanupResult(failures);
 }
 
@@ -346,6 +361,15 @@ export async function evictDeletedItemFromAllCaches(opts: {
     },
   );
 
+  // Keep synchronous query updates synchronous for callers. A routed editor
+  // may not have Search mounted, so also evict the native disk snapshot.
+  if (Platform.OS !== "web") {
+    try {
+      await (await import("@/utils/offlineInventory")).deleteOfflineItem(itemId);
+    } catch {
+      // The server write has committed. Continue query-cache cleanup.
+    }
+  }
   try {
     const raw = await asyncStorage.getItem(QUERY_CACHE_KEY);
     if (raw) {

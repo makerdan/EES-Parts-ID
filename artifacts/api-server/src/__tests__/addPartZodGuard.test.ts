@@ -27,12 +27,17 @@ const mockInsert = jest.fn(() => ({ values: mockValues }));
 
 const mockDeleteWhere = jest.fn().mockResolvedValue(undefined);
 const mockDelete = jest.fn(() => ({ where: mockDeleteWhere }));
+const mockUpdateReturning = jest.fn();
+const mockUpdateWhere = jest.fn(() => ({ returning: mockUpdateReturning }));
+const mockUpdateSet = jest.fn(() => ({ where: mockUpdateWhere }));
+const mockUpdate = jest.fn(() => ({ set: mockUpdateSet }));
 
 jest.mock("@workspace/db", () => ({
   db: {
     select: mockSelect,
     insert: mockInsert,
     delete: mockDelete,
+    update: mockUpdate,
   },
   inventoryTable: {},
   usersTable: {},
@@ -90,6 +95,8 @@ jest.mock("../lib/answerCache", () => ({
 // ── Object storage mock ───────────────────────────────────────────────────────
 jest.mock("../lib/objectStorage", () => ({
   uploadCatalogImage: jest.fn(),
+  deletePrivateObjects: jest.fn(),
+  isPrivateObjectPath: jest.fn((path: string) => path.startsWith("/objects/uploads/private/")),
 }));
 
 // ── Image helpers mocks ────────────────────────────────────────────────────────
@@ -114,6 +121,7 @@ import supertest from "supertest";
 import app from "../app";
 import { AddPartResponse, AddPartConflictResponse } from "@workspace/api-zod";
 import { estimateImageBytes } from "../utils/aiHelpers";
+import { deletePrivateObjects, uploadCatalogImage } from "../lib/objectStorage";
 import { makeInventoryItemFixture } from "./fixtures/inventoryResponseFixtures";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -147,12 +155,56 @@ beforeEach(() => {
   mockValues.mockReturnValue({ returning: mockReturning });
   mockDelete.mockReturnValue({ where: mockDeleteWhere });
   mockDeleteWhere.mockResolvedValue(undefined);
+  mockUpdate.mockReturnValue({ set: mockUpdateSet });
+  mockUpdateSet.mockReturnValue({ where: mockUpdateWhere });
+  mockUpdateWhere.mockReturnValue({ returning: mockUpdateReturning });
+  mockUpdateReturning.mockResolvedValue([makeWellFormedRow()]);
+  (deletePrivateObjects as jest.Mock).mockResolvedValue(undefined);
 
   // Default: no existing row (not a duplicate), so the insert path runs.
   mockWhere.mockResolvedValue([]);
 
   // Default: estimateImageBytes returns a small value (well within 10 MB).
   (estimateImageBytes as jest.Mock).mockReturnValue(1024);
+});
+
+describe("POST /api/inventory/add-part — photo compensation", () => {
+  const full = "/objects/uploads/private/catalog-images/full.jpg";
+  const thumb = "/objects/uploads/private/catalog-images/thumb.jpg";
+  const addPhoto = () => supertest(app).post("/api/inventory/add-part")
+    .send({ vendor: "ACME", catalog: "X-001", imageBase64: "dGVzdA==" });
+
+  beforeEach(() => {
+    mockReturning.mockResolvedValue([makeWellFormedRow()]);
+  });
+
+  it("cleans the full image and removes the row if thumbnail upload fails", async () => {
+    (uploadCatalogImage as jest.Mock).mockResolvedValueOnce(full).mockRejectedValueOnce(new Error("thumbnail failed"));
+    const response = await addPhoto();
+    expect(response.status).toBe(500);
+    expect(deletePrivateObjects).toHaveBeenCalledWith([full]);
+    expect(mockDeleteWhere).toHaveBeenCalled();
+  });
+
+  it.each(["throws", "empty"] as const)("cleans both images and removes the row when photo UPDATE %s", async outcome => {
+    (uploadCatalogImage as jest.Mock).mockResolvedValueOnce(full).mockResolvedValueOnce(thumb);
+    if (outcome === "throws") mockUpdateReturning.mockRejectedValueOnce(new Error("database failed"));
+    else mockUpdateReturning.mockResolvedValueOnce([]);
+    const response = await addPhoto();
+    expect(response.status).toBe(500);
+    expect(response.body).not.toHaveProperty("item");
+    expect(deletePrivateObjects).toHaveBeenCalledWith([full, thumb]);
+    expect(mockDeleteWhere).toHaveBeenCalled();
+  });
+
+  it("does not claim the part was removed if row rollback fails", async () => {
+    (uploadCatalogImage as jest.Mock).mockResolvedValueOnce(full).mockRejectedValueOnce(new Error("thumbnail failed"));
+    mockDeleteWhere.mockRejectedValueOnce(new Error("database unavailable"));
+    const response = await addPhoto();
+    expect(response.status).toBe(500);
+    expect(response.body.error).toMatch(/may have been created; check inventory/i);
+    expect(deletePrivateObjects).toHaveBeenCalledWith([full]);
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════

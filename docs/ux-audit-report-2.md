@@ -11,7 +11,7 @@
 ## App Map (this run)
 - J5 Search: keyword search, filters, browse by aisle/category, results, re-enrich, map pin, recent history, settings
 - J6 Map: floor-plan load, zone browse, cycle count, aisle summary, zone editor (admin)
-- J7 Photo/Measure: take/pick part photo, LiDAR scan, AI photo estimate, confirm dimensions
+- J7 Photo/Measure: take/pick part photo, AI photo estimate, confirm dimensions
 - J8 Barcode: scan barcode, look up part, assign shelf, add new part via scan, edit barcode
 - J9 Auth: sign-up, email verify, login, OAuth (Google/Apple), SSO callback, pending approval, banned
 - J10 Edit-Item: edit part details, keywords, bin, dimensions, photo

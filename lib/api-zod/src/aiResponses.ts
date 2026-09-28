@@ -57,6 +57,25 @@ export const AiEnrichmentResponseSchema = z.object({
 
 export type AiEnrichmentResponse = z.infer<typeof AiEnrichmentResponseSchema>;
 
+export const DescriptionExpansionJobStatusSchema = z.object({
+  status: z.enum(["idle", "running", "stopping", "completed", "cancelled", "failed"]),
+  running: z.boolean(),
+  stopRequested: z.boolean(),
+  cursor: z.number().int().nonnegative(),
+  model: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  total: z.number().int().nonnegative().nullable(),
+  processed: z.number().int().nonnegative(),
+  saved: z.number().int().nonnegative(),
+  discarded: z.number().int().nonnegative(),
+  errors: z.number().int().nonnegative(),
+  remaining: z.number().int().nonnegative().nullable(),
+  lastError: z.string().nullable(),
+});
+
+export type DescriptionExpansionJobStatus = z.infer<typeof DescriptionExpansionJobStatusSchema>;
+
 export const AiDimensionsResponseSchema = z.object({
   length: z.number().finite().positive().max(100_000).nullable(),
   width: z.number().finite().positive().max(100_000).nullable(),

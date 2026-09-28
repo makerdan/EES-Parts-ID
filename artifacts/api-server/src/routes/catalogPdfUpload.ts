@@ -6,9 +6,10 @@ import {
   catalogPdfUploadSessionTable,
   db,
 } from "@workspace/db";
-import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, exists, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { type Request, type Response,Router } from "express";
 
+import { boundedErrorDiagnostic, getLogger, logger } from "../lib/logger";
 import {
   deleteCatalogPdfPart,
   readCatalogPdfPart,
@@ -16,18 +17,38 @@ import {
 } from "../lib/objectStorage";
 import { catalogPdfUploadLimiter } from "../lib/rateLimiter";
 import { getAdminClerkUserId, requireAdminAuth } from "../middlewares/requireAdminAuth";
-import { validatePdf } from "../utils/pdfProcessor";
-import { launchCatalogPdfBuffer } from "./catalogPdf";
+import { MAX_CATALOG_PDF_BYTES, validatePdf } from "../utils/pdfProcessor";
+import { launchCatalogPdfBuffer, reserveCatalogPdfCapacity } from "./catalogPdf";
 
 const router = Router();
 const DEFAULT_PART_SIZE = 5 * 1024 * 1024;
 const MIN_PART_SIZE = 1;
 const MAX_PART_SIZE = 8 * 1024 * 1024;
-const MAX_UPLOAD_BYTES = Number(process.env.CATALOG_PDF_MAX_BYTES ?? 250 * 1024 * 1024);
+const MAX_UPLOAD_BYTES = Math.min(
+  Number(process.env.CATALOG_PDF_MAX_BYTES ?? MAX_CATALOG_PDF_BYTES),
+  MAX_CATALOG_PDF_BYTES,
+);
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_ACTIVE_SESSIONS = Number(process.env.CATALOG_PDF_MAX_ACTIVE_SESSIONS ?? 3);
+const CANCELLED_CLEANUP_BATCH_SIZE = 25;
 
 type SessionStatus = "open" | "completing" | "completed" | "cancelled" | "expired" | "failed";
+
+async function assembleCatalogPdf(
+  sessionId: string,
+  parts: Array<{ partIndex: number; offset: number; byteLength: number }>,
+  totalBytes: number,
+): Promise<Buffer> {
+  const pdf = Buffer.allocUnsafe(totalBytes);
+  for (const part of parts) {
+    const bytes = await readCatalogPdfPart(sessionId, part.partIndex);
+    if (bytes.length !== part.byteLength || part.offset + bytes.length > totalBytes) {
+      throw new Error("Staged PDF part length mismatch");
+    }
+    bytes.copy(pdf, part.offset);
+  }
+  return pdf;
+}
 
 function requestId(res: Response): string | undefined {
   return res.locals.requestId as string | undefined;
@@ -142,6 +163,8 @@ function sessionPayload(
     missingPartIndices: Array.from({ length: session.partCount }, (_, index) => index)
       .filter((index) => !received.has(index)),
     processingJobId: session.processingJobId ? String(session.processingJobId) : null,
+    processingReady: session.status === "completed" && session.cleanupAt !== null,
+    cleanupPending: session.status === "cancelled" && (session.cleanupAt === null || parts.length > 0),
   };
 }
 
@@ -215,6 +238,7 @@ router.get("/catalog-pdf/upload-sessions/:sessionId", requireAdminAuth, async (r
 });
 
 router.put("/catalog-pdf/upload-sessions/:sessionId/parts/:partIndex", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   const session = await getOwnedSession(req, res, routeParam(req.params.sessionId));
   if (!session) return;
   const rate = await catalogPdfUploadLimiter.check(`part:${adminId(req, res)}`, requestId(res));
@@ -299,12 +323,16 @@ router.put("/catalog-pdf/upload-sessions/:sessionId/parts/:partIndex", requireAd
     if (objectPath) {
       await deleteCatalogPdfPart(session.id, partIndex).catch(() => {});
     }
-    res.locals.logger?.error?.({ err, sessionId: session.id, partIndex }, "[catalog-pdf-upload] part storage failed");
+    reqLogger.error(
+      { ...boundedErrorDiagnostic(err), sessionId: session.id, partIndex },
+      "[catalog-pdf-upload] part storage failed",
+    );
     fail(res, 503, "STAGING_UNAVAILABLE", "Could not stage this upload part. Please retry.");
   }
 });
 
 router.post("/catalog-pdf/upload-sessions/:sessionId/complete", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   const session = await getOwnedSession(req, res, routeParam(req.params.sessionId));
   if (!session) return;
   const requestedDigest = req.body?.fileSha256;
@@ -312,8 +340,25 @@ router.post("/catalog-pdf/upload-sessions/:sessionId/complete", requireAdminAuth
     return void fail(res, 400, "MANIFEST_CONFLICT", "Completion digest does not match the immutable upload manifest.");
   }
 
+  if (session.status === "completed" && session.cleanupAt && session.processingJobId) {
+    return void res.json({ sessionId: session.id, status: "completed", jobId: String(session.processingJobId), processingJobId: String(session.processingJobId) });
+  }
+  const releaseCapacity = reserveCatalogPdfCapacity(session.totalBytes);
+  if (!releaseCapacity) return void fail(res, 429, "PROCESSING_BUSY", "Catalog processing is full. Retry completion later; uploaded parts are safe.");
   let jobId: number | null = null;
   try {
+    if (session.status === "completed" && session.processingJobId) {
+      const parts = await db.select().from(catalogPdfUploadPartTable)
+        .where(eq(catalogPdfUploadPartTable.sessionId, session.id))
+        .orderBy(asc(catalogPdfUploadPartTable.partIndex));
+      const pdf = await assembleCatalogPdf(session.id, parts, session.totalBytes);
+      releaseCapacity();
+      if (!launchCatalogPdfBuffer(session.processingJobId, pdf, session.vendor, undefined,
+        () => cleanupCatalogPdfUploadSession(session.id, false))) {
+        return void fail(res, 429, "PROCESSING_BUSY", "Catalog processing is full. Retry completion later; uploaded parts are safe.");
+      }
+      return void res.json({ sessionId: session.id, status: "completed", jobId: String(session.processingJobId), processingJobId: String(session.processingJobId) });
+    }
     const transition = await db.transaction(async (tx) => {
       const [locked] = await tx.select().from(catalogPdfUploadSessionTable)
         .where(and(eq(catalogPdfUploadSessionTable.id, session.id), eq(catalogPdfUploadSessionTable.ownerClerkUserId, adminId(req, res))))
@@ -331,8 +376,7 @@ router.post("/catalog-pdf/upload-sessions/:sessionId/complete", requireAdminAuth
       }
       await tx.update(catalogPdfUploadSessionTable).set({ status: "completing", updatedAt: new Date() })
         .where(eq(catalogPdfUploadSessionTable.id, locked.id));
-      const buffers = await Promise.all(parts.map((part) => readCatalogPdfPart(locked.id, part.partIndex)));
-      const pdf = Buffer.concat(buffers);
+      const pdf = await assembleCatalogPdf(locked.id, parts, locked.totalBytes);
       if (pdf.length !== locked.totalBytes || (locked.fileSha256 && createHash("sha256").update(pdf).digest("hex") !== locked.fileSha256)) {
         await tx.update(catalogPdfUploadSessionTable).set({ status: "failed", errorCode: "WHOLE_FILE_CHECKSUM_MISMATCH", updatedAt: new Date() })
           .where(eq(catalogPdfUploadSessionTable.id, locked.id));
@@ -384,25 +428,32 @@ router.post("/catalog-pdf/upload-sessions/:sessionId/complete", requireAdminAuth
       return void fail(res, 500, "PROCESSING_JOB_CREATE_FAILED", "Could not create the catalog processing job.");
     }
     if ("pdf" in transition && transition.pdf) {
-      launchCatalogPdfBuffer(transition.jobId, transition.pdf, session.vendor);
-      // The worker owns the assembled Buffer now, so remove source bytes while
-      // retaining the completed manifest's metadata for status/history reads.
-      await cleanupCatalogPdfUploadSession(session.id, false);
+      releaseCapacity();
+      if (!launchCatalogPdfBuffer(transition.jobId, transition.pdf, session.vendor, undefined,
+        () => cleanupCatalogPdfUploadSession(session.id, false))) {
+        return void fail(res, 429, "PROCESSING_BUSY", "Catalog processing is full. Retry completion later; uploaded parts are safe.");
+      }
     }
     res.json({ sessionId: session.id, status: "completed", jobId: String(transition.jobId), processingJobId: String(transition.jobId) });
   } catch (err) {
-    res.locals.logger?.error?.({ err, sessionId: session.id, jobId }, "[catalog-pdf-upload] completion failed");
+    reqLogger.error(
+      { ...boundedErrorDiagnostic(err), sessionId: session.id, jobId },
+      "[catalog-pdf-upload] completion failed",
+    );
     fail(res, 503, "UPLOAD_COMPLETION_UNAVAILABLE", "Upload completion is temporarily unavailable. Query status and retry.");
+  } finally {
+    releaseCapacity();
   }
 });
 
 router.post("/catalog-pdf/upload-sessions/:sessionId/cancel", requireAdminAuth, async (req, res) => {
+  const reqLogger = getLogger(res);
   const session = await getOwnedSession(req, res, routeParam(req.params.sessionId), true);
   if (!session) return;
   const [updated] = await db.update(catalogPdfUploadSessionTable).set({
     status: "cancelled",
     errorCode: "cancelled",
-    cleanupAt: new Date(),
+    cleanupAt: null,
     updatedAt: new Date(),
   }).where(and(
     eq(catalogPdfUploadSessionTable.id, session.id),
@@ -410,12 +461,50 @@ router.post("/catalog-pdf/upload-sessions/:sessionId/cancel", requireAdminAuth, 
     inArray(catalogPdfUploadSessionTable.status, ["open", "completing"]),
   )).returning();
   if (!updated && session.status !== "cancelled") return void fail(res, 409, "UPLOAD_SESSION_TERMINAL", `Upload session is ${session.status}.`);
-  await cleanupCatalogPdfUploadSession(session.id);
-  res.json({ sessionId: session.id, status: "cancelled" });
+  try {
+    await cleanupCatalogPdfUploadSession(session.id);
+  } catch (err) {
+    reqLogger.error(
+      { ...boundedErrorDiagnostic(err), sessionId: session.id },
+      "[catalog-pdf-upload] cancelled session cleanup pending",
+    );
+    return void res.status(202).json({ sessionId: session.id, status: "cancelled", cleanupPending: true });
+  }
+  res.json({ sessionId: session.id, status: "cancelled", cleanupPending: false });
 });
 
 /** Called after API restart to resume pending extraction and expire abandoned manifests. */
 export async function recoverCatalogPdfUploadSessions(): Promise<void> {
+  const cancelled = await db.select({ id: catalogPdfUploadSessionTable.id })
+    .from(catalogPdfUploadSessionTable)
+    .where(and(
+      eq(catalogPdfUploadSessionTable.status, "cancelled"),
+      or(
+        isNull(catalogPdfUploadSessionTable.cleanupAt),
+        exists(db.select({ partIndex: catalogPdfUploadPartTable.partIndex })
+          .from(catalogPdfUploadPartTable)
+          .where(eq(catalogPdfUploadPartTable.sessionId, catalogPdfUploadSessionTable.id))),
+      ),
+    ))
+    .orderBy(asc(catalogPdfUploadSessionTable.updatedAt), asc(catalogPdfUploadSessionTable.id))
+    .limit(CANCELLED_CLEANUP_BATCH_SIZE);
+  for (const row of cancelled) {
+    try {
+      await cleanupCatalogPdfUploadSession(row.id);
+    } catch (err) {
+      logger.error(
+        { ...boundedErrorDiagnostic(err), sessionId: row.id },
+        "[catalog-pdf-upload] cancelled session reconciliation failed",
+      );
+      // Move a failing session behind the rest of the backlog for the next tick.
+      await db.update(catalogPdfUploadSessionTable)
+        .set({ updatedAt: new Date() })
+        .where(and(
+          eq(catalogPdfUploadSessionTable.id, row.id),
+          isNull(catalogPdfUploadSessionTable.cleanupAt),
+        ));
+    }
+  }
   // A process can die while the completion transaction is reading staged
   // objects. Re-open that manifest; the next status/complete request can
   // safely perform the same idempotent finalization.
@@ -452,8 +541,10 @@ export async function recoverCatalogPdfUploadSessions(): Promise<void> {
     const parts = await db.select().from(catalogPdfUploadPartTable)
       .where(eq(catalogPdfUploadPartTable.sessionId, row.sessionId))
       .orderBy(asc(catalogPdfUploadPartTable.partIndex));
-    const pdf = Buffer.concat(await Promise.all(parts.map((part) => readCatalogPdfPart(row.sessionId, part.partIndex))));
-    launchCatalogPdfBuffer(row.jobId, pdf, row.vendor);
+    const totalBytes = parts.reduce((total, part) => total + part.byteLength, 0);
+    const pdf = await assembleCatalogPdf(row.sessionId, parts, totalBytes);
+    if (!launchCatalogPdfBuffer(row.jobId, pdf, row.vendor, undefined,
+      () => cleanupCatalogPdfUploadSession(row.sessionId, false))) break;
   }
 }
 

@@ -143,6 +143,7 @@ const UploadScreen = (require("../app/(tabs)/upload") as {
 
 type Inst = TestInstance;
 type JobStatus = {
+  status: "idle" | "running" | "stopping" | "completed" | "cancelled" | "failed";
   running: boolean;
   stopRequested: boolean;
   force: boolean;
@@ -182,8 +183,6 @@ function makeAdminApp() {
     setPendingInventorySearch: jest.fn(),
     textFontScale: 1,
     pinnedParts: [],
-    pendingLidarDims: null,
-    setPendingLidarDims: jest.fn(),
     approvalStatus: "approved" as const,
   };
 }
@@ -225,6 +224,7 @@ function response(body: unknown, status = 200): Response {
 
 function jobStatus(overrides: Partial<JobStatus> = {}): JobStatus {
   return {
+    status: "idle",
     running: false,
     stopRequested: false,
     force: false,
@@ -242,7 +242,7 @@ function jobStatus(overrides: Partial<JobStatus> = {}): JobStatus {
 const INITIAL_SUMMARY = { total: 2, enriched: 1, unenriched: 1 };
 const COMPLETED_SUMMARY = { total: 2, enriched: 2, unenriched: 0 };
 
-type TestMode = "complete" | "start-error" | "unmount";
+type TestMode = "complete" | "cancelled" | "failed" | "stopping" | "start-error" | "unmount";
 type RecordedRequest = { url: string; init?: RequestInit };
 
 let activeTree: Awaited<ReturnType<typeof render>> | null = null;
@@ -283,15 +283,23 @@ function configureNetwork(testMode: TestMode) {
       if (bulkStatusCalls === 1) return Promise.resolve(response(jobStatus()));
       if (bulkStatusCalls === 2) {
         return Promise.resolve(
-          response(jobStatus({ running: true, total: 2, model: "test-model" })),
+          response(jobStatus({
+            status: mode === "stopping" ? "stopping" : "running",
+            running: true,
+            stopRequested: mode === "stopping",
+            total: 2,
+            model: "test-model",
+          })),
         );
       }
       return Promise.resolve(
         response(
           jobStatus({
+            status: mode === "cancelled" ? "cancelled" : mode === "failed" ? "failed" : "completed",
             processed: 2,
             total: 2,
             finishedAt: "2026-09-02T12:00:00.000Z",
+            lastError: mode === "failed" ? "AI provider failed" : null,
             model: "test-model",
           }),
         ),
@@ -318,6 +326,7 @@ function configureNetwork(testMode: TestMode) {
       return Promise.resolve(
         response({
           job: jobStatus({
+            status: "running",
             running: true,
             startedAt: "2026-09-02T12:00:00.000Z",
             total: 2,
@@ -332,6 +341,7 @@ function configureNetwork(testMode: TestMode) {
       return Promise.resolve(
         response({
           job: jobStatus({
+            status: "stopping",
             running: true,
             stopRequested: true,
             startedAt: "2026-09-02T12:00:00.000Z",
@@ -411,11 +421,56 @@ describe("UploadScreen — administrator enrichment workflow", () => {
       await rawFlushPromises();
     });
 
-    expect(hasText(screenRoot(), "✓ Last run: 2 processed")).toBe(true);
+    expect(hasText(screenRoot(), "✓ Completed: 2 processed")).toBe(true);
     expect(hasText(screenRoot(), "2Enriched")).toBe(true);
     expect(hasText(screenRoot(), "0Pending")).toBe(true);
     expect(hasText(screenRoot(), "100%")).toBe(true);
     expect(summaryCalls).toBe(3);
+  });
+
+  it.each([
+    ["cancelled", "⏹ Cancelled"],
+    ["failed", "⚠ Failed"],
+  ] as const)("renders a %s terminal result distinctly", async (terminalMode, label) => {
+    configureNetwork(terminalMode);
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+
+    await act(async () => {
+      fireEvent.press(findPressable(screenRoot(), "AI & Enrichment")!);
+    });
+    await act(async () => {
+      fireEvent.press(findPressable(screenRoot(), "Start Bulk Enrichment")!);
+      await rawFlushPromises();
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(2_000);
+      await rawFlushPromises();
+    });
+
+    expect(hasText(screenRoot(), label)).toBe(true);
+    expect(hasText(screenRoot(), "AI enrichment is running…")).toBe(false);
+    if (terminalMode === "failed") {
+      expect(hasText(screenRoot(), "AI provider failed")).toBe(true);
+    }
+  });
+
+  it("renders stop-in-progress separately before the cancelled terminal result", async () => {
+    configureNetwork("stopping");
+    activeTree = await render(<UploadScreen />);
+    await flushPromises();
+
+    await act(async () => {
+      fireEvent.press(findPressable(screenRoot(), "AI & Enrichment")!);
+    });
+    await act(async () => {
+      fireEvent.press(findPressable(screenRoot(), "Start Bulk Enrichment")!);
+      await rawFlushPromises();
+    });
+
+    expect(hasText(screenRoot(), "Stop requested — finishing current batch…")).toBe(true);
+    expect(hasText(screenRoot(), "⏹ Cancelled")).toBe(false);
   });
 
   it("shows a recoverable start error without replacing the existing inventory summary", async () => {

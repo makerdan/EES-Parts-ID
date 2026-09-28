@@ -150,10 +150,20 @@ async function readCanonicalSkillMetadata(accountSource, skillName) {
   if (!skill) {
     throw new AccountSkillProjectionError("skill-not-found", `Account skill is not published: ${skillName}`);
   }
+  const skillRoot = join(snapshot.sourceRoot, skillName);
+  const contents = await readDirectoryContents(skillRoot, skill.files, "canonical account skill file");
+  if (fingerprintContents(skill.files, contents) !== skill.fingerprint) {
+    throw new AccountSkillProjectionError("source-unavailable", "Canonical account skill changed during inspection");
+  }
   return {
-    skillId: skillName,
-    sourceRevision: snapshot.revision,
-    fingerprint: skill.fingerprint,
+    metadata: {
+      skillId: skillName,
+      sourceRevision: snapshot.revision,
+      fingerprint: skill.fingerprint,
+    },
+    files: skill.files,
+    skillRoot,
+    contents,
   };
 }
 
@@ -164,8 +174,13 @@ export async function inspectAccountSkillMirror({
   mirrorRoot = join(resolve(workspaceRoot), ".local/custom_skills"),
 } = {}) {
   let canonical;
+  let canonicalFiles;
+  let canonicalContents;
   try {
-    canonical = await readCanonicalSkillMetadata(accountSource, skillName);
+    const snapshot = await readCanonicalSkillMetadata(accountSource, skillName);
+    canonical = snapshot.metadata;
+    canonicalFiles = snapshot.files;
+    canonicalContents = snapshot.contents;
   } catch {
     return { outcome: "unavailable-source", skillId: skillName };
   }
@@ -207,19 +222,96 @@ export async function inspectAccountSkillMirror({
   if (mirror.fingerprint !== canonical.fingerprint) {
     return { outcome: "mismatch", ...canonical, reason: "fingerprint-mismatch" };
   }
+
+  try {
+    const mirrorTree = await enumerateMirrorTree(mirrorSkillRoot);
+    const expectedDirectories = expectedDirectoriesForFiles(canonicalFiles);
+    if (
+      JSON.stringify(mirrorTree.files) !== JSON.stringify(canonicalFiles) ||
+      JSON.stringify(mirrorTree.directories) !== JSON.stringify(expectedDirectories)
+    ) {
+      return { outcome: "mismatch", ...canonical, reason: "mirror-contents-mismatch" };
+    }
+    const mirrorContents = await readDirectoryContents(
+      mirrorSkillRoot,
+      canonicalFiles,
+      "mirrored account skill file",
+    );
+    if (canonicalFiles.some((filePath) => !mirrorContents.get(filePath).equals(canonicalContents.get(filePath)))) {
+      return { outcome: "mismatch", ...canonical, reason: "mirror-contents-mismatch" };
+    }
+  } catch {
+    return { outcome: "mismatch", ...canonical, reason: "mirror-contents-mismatch" };
+  }
+
   return { outcome: "pass", ...canonical };
 }
 
 async function fingerprintDirectory(root, files) {
+  const contents = await readDirectoryContents(root, files, "account skill file");
+  return fingerprintContents(files, contents);
+}
+
+function fingerprintContents(files, contents) {
   const hash = createHash("sha256");
   for (const filePath of files) {
     assertRelativeFilePath(filePath);
     hash.update(filePath);
     hash.update("\0");
-    hash.update(await readFile(join(root, filePath)));
+    hash.update(contents.get(filePath));
     hash.update("\0");
   }
   return hash.digest("hex");
+}
+
+async function readDirectoryContents(root, files, description) {
+  const contents = new Map();
+  for (const filePath of files) {
+    assertRelativeFilePath(filePath);
+    const absolutePath = join(root, filePath);
+    await ensureRegularFile(absolutePath, `${description} ${filePath}`);
+    contents.set(filePath, await readFile(absolutePath));
+  }
+  return contents;
+}
+
+async function enumerateMirrorTree(root, relativeDirectory = "") {
+  const directory = join(root, relativeDirectory);
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = [];
+  const directories = [];
+  for (const entry of entries) {
+    if (!relativeDirectory && entry.name === ACCOUNT_SKILL_MIRROR_METADATA_FILE) continue;
+    const filePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
+    if (entry.isSymbolicLink()) {
+      throw new AccountSkillProjectionError("invalid-mirror-contents", "Mirror contains a symbolic link");
+    }
+    if (entry.isDirectory()) {
+      directories.push(filePath);
+      const child = await enumerateMirrorTree(root, filePath);
+      files.push(...child.files);
+      directories.push(...child.directories);
+    } else if (entry.isFile()) {
+      files.push(filePath);
+    } else {
+      throw new AccountSkillProjectionError("invalid-mirror-contents", "Mirror contains an unsupported entry");
+    }
+  }
+  return {
+    files: files.sort((a, b) => a.localeCompare(b)),
+    directories: directories.sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+function expectedDirectoriesForFiles(files) {
+  const directories = new Set();
+  for (const filePath of files) {
+    const parts = filePath.split("/");
+    for (let index = 1; index < parts.length; index += 1) {
+      directories.add(parts.slice(0, index).join("/"));
+    }
+  }
+  return [...directories].sort((a, b) => a.localeCompare(b));
 }
 
 async function copySkill(sourceRoot, stagingRoot, skill) {

@@ -54,12 +54,18 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
-jest.mock("@workspace/integrations-poe-server", () => ({
-  poe: {},
-  isPoeAuthError: jest.fn(() => false),
-  isPoeTransientError: jest.fn(() => false),
-  poeErrorMessage: jest.fn((err: unknown) => String(err)),
-}));
+jest.mock("@workspace/integrations-poe-server", () => {
+  const actual = jest.requireActual<typeof import("@workspace/integrations-poe-server")>(
+    "@workspace/integrations-poe-server",
+  );
+  return {
+    ...actual,
+    poe: {},
+    isPoeAuthError: jest.fn(() => false),
+    isPoeTransientError: jest.fn(() => false),
+    poeErrorMessage: jest.fn((err: unknown) => String(err)),
+  };
+});
 
 jest.mock("../src/lib/answerCache", () => ({
   normalizeQuestion: (q: string): string => q.toLowerCase().trim().replace(/\s+/g, " "),
@@ -122,7 +128,7 @@ afterAll(() => {
 
 import supertest from "supertest";
 import app from "../src/app";
-import { workerQualifiedUserId } from "./helpers/testDb";
+import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import { setTestEnv } from "./helpers/testEnv";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -142,7 +148,7 @@ const CACHED_ANSWER = "Use 14 AWG wire for 15 amps.";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
 
-const TEST_ADMIN_USER_ID = workerQualifiedUserId("jest-admin-user");
+const TEST_ADMIN_USER_ID = ADMIN_TEST_USER_ID;
 let restoreTestEnv: (() => void) | undefined;
 
 beforeAll(() => {

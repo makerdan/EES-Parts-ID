@@ -9,9 +9,10 @@
  *      can never run recursively or in production).
  *   3. WRAPPER_COMMS: extend with any extra dev-server wrappers your stack
  *      uses (e.g. "deno", "bun", "turbo").
- *   4. --include-own-tree: only pass this flag BETWEEN serialized steps,
- *      when nothing in your own process tree should legitimately hold the
- *      swept ports (see comment at the flag below).
+ *   4. --include-own-tree: only pass this flag immediately before a serialized
+ *      replacement service starts, when an old sibling listener may remain
+ *      under the same supervisor and no current sibling should retain the port
+ *      (see comment at the flag below).
  *
  * Usage:
  *   node scripts/free-ports.mjs <port> [<port>...]
@@ -60,12 +61,12 @@ if (process.env.NODE_ENV === "production" || process.env.REPLIT_DEPLOYMENT === "
 
 const argv = process.argv.slice(2);
 // --include-own-tree: also kill holders that belong to this process's own
-// ancestor tree (but never the ancestors themselves). Needed by serialized
-// heavy-test runners: orphaned webServers from a finished step get
-// reparented under a still-alive supervisor (a subreaper), so the normal
-// own-tree exemption would wrongly protect them and the next step fails
-// with "port already used". Only safe BETWEEN steps, when nothing in our
-// tree should legitimately hold the swept ports.
+// ancestor tree (but never the ancestors themselves). Needed immediately before
+// serialized replacement services start: an old listener can remain as a sibling
+// under the same workflow or test supervisor, so the normal own-tree exemption
+// would protect it and the replacement would fail with "port already used".
+// Only safe at that takeover boundary, when no current sibling should retain the
+// swept port. Ordinary cleanup must keep the default caller-tree protection.
 const includeOwnTree = argv.includes("--include-own-tree");
 const allDev = argv.includes("--all-dev");
 let ports;

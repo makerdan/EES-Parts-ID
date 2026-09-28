@@ -75,13 +75,12 @@ async function deleteChipRows() {
   }
 }
 
-/** Return a minimal async-iterable stream yielding one content chunk. */
-function makeStream(content: string) {
-  return {
-    async *[Symbol.asyncIterator]() {
-      yield { choices: [{ delta: { content } }] };
-    },
-  };
+async function getChipRow(label: string) {
+  const [row] = await db
+    .select()
+    .from(quickLookupCacheTable)
+    .where(sql`${quickLookupCacheTable.label} = ${label}`);
+  return row;
 }
 
 beforeAll(async () => {
@@ -95,8 +94,10 @@ afterAll(async () => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  // Return a deterministic answer for every chip call
-  mockCreate.mockResolvedValue(makeStream("Mocked chip answer."));
+  // Poe completion responses are validated as a standard completion envelope.
+  mockCreate.mockResolvedValue({
+    choices: [{ message: { content: "Mocked chip answer." } }],
+  });
 });
 
 describe("seedQuickLookupChips()", () => {
@@ -161,5 +162,55 @@ describe("seedQuickLookupChips()", () => {
     await seedQuickLookupChips();
 
     expect(mockCreate).toHaveBeenCalledTimes(12);
+  });
+
+  it.each([
+    { description: "missing content", content: undefined },
+    { description: "empty content", content: "" },
+    { description: "whitespace-only content", content: " \n\t " },
+  ])("skips a first-time $description result without inserting a blank row", async ({ content }) => {
+    await db.execute(sql`DELETE FROM quick_lookup_cache WHERE label = ${"1G"}`);
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: content === undefined ? {} : { content } }],
+    });
+    const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await seedQuickLookupChips();
+
+      expect(await getChipRow("1G")).toBeUndefined();
+      expect(warning).toHaveBeenCalledWith(
+        "Quick Lookup chip seed finished with 1 skipped empty answer(s)."
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("preserves a saved answer when a later generation has no answer text", async () => {
+    const updatedAt = new Date("2024-01-02T03:04:05.000Z");
+    await db.execute(sql`DELETE FROM quick_lookup_cache WHERE label = ${"1G"}`);
+    await db.insert(quickLookupCacheTable).values({
+      label: "1G",
+      answer: "Previously saved answer.",
+      updatedAt,
+    });
+    mockCreate.mockResolvedValueOnce({ choices: [{ message: {} }] });
+    const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await seedQuickLookupChips();
+
+      const row = await getChipRow("1G");
+      expect(row).toMatchObject({
+        answer: "Previously saved answer.",
+        updatedAt,
+      });
+      expect(warning).toHaveBeenCalledWith(
+        "Quick Lookup chip seed finished with 1 skipped empty answer(s)."
+      );
+    } finally {
+      warning.mockRestore();
+    }
   });
 });

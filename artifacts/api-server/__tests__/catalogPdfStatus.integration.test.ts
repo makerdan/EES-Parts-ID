@@ -28,6 +28,7 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { inArray } from "drizzle-orm";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 
 // ── Setup / teardown ──────────────────────────────────────────────────────────
 const ADMIN_SECRET = "jest-pdf-status-secret";
@@ -64,9 +65,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (seededIds.length > 0) {
-    await db
-      .delete(catalogPdfJobTable)
-      .where(inArray(catalogPdfJobTable.id, seededIds));
+    await bestEffortFixtureCleanup("catalog PDF status jobs", async () => {
+      await db
+        .delete(catalogPdfJobTable)
+        .where(inArray(catalogPdfJobTable.id, seededIds));
+    });
   }
 }, 15_000);
 
@@ -164,10 +167,12 @@ describe("GET /api/admin/catalog-pdf/:jobId/status — DB fallback", () => {
     expect(res.body.errorMessage).toBeNull();
   });
 
-  it("returns correct shape for a 'failed' job, including errorMessage", async () => {
+  it("sanitizes a legacy failed-job message in the status response", async () => {
+    const sensitiveMessage =
+      "catalog=SECRET-CATALOG vendor=SECRET-VENDOR upload=private/object";
     const id = await seedJob({
       status: "failed",
-      errorMessage: "PDF could not be parsed",
+      errorMessage: sensitiveMessage,
     });
 
     const res = await supertest(app)
@@ -176,6 +181,26 @@ describe("GET /api/admin/catalog-pdf/:jobId/status — DB fallback", () => {
       .expect(200);
 
     expect(res.body.status).toBe("failed");
-    expect(res.body.errorMessage).toBe("PDF could not be parsed");
+    expect(res.body.errorMessage).toBe("UnknownError");
+    expect(JSON.stringify(res.body)).not.toContain(sensitiveMessage);
+  });
+
+  it("sanitizes legacy failed-job messages in the failed-jobs list", async () => {
+    const sensitiveMessage =
+      "catalog=LIST-SECRET vendor=LIST-VENDOR upload=private/list-object";
+    const id = await seedJob({
+      status: "failed",
+      errorMessage: sensitiveMessage,
+    });
+
+    const res = await supertest(app)
+      .get("/api/admin/catalog-pdf/failed-jobs")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    const job = res.body.jobs.find((candidate: { id: number }) => candidate.id === id);
+    expect(job).toBeDefined();
+    expect(job.errorMessage).toBe("UnknownError");
+    expect(JSON.stringify(res.body)).not.toContain(sensitiveMessage);
   });
 });

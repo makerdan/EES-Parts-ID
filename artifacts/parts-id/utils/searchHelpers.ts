@@ -65,8 +65,12 @@ export function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
   };
 }
 
-export function buildQueryKey(f: FilterValues): string {
-  return JSON.stringify(buildSearchBody(f));
+export function buildQueryKey(f: FilterValues, categorySlug?: string | null): string {
+  return JSON.stringify({
+    version: 2,
+    filters: buildSearchBody(f),
+    categorySlug: categorySlug || null,
+  });
 }
 
 export function pruneExpired<R>(
@@ -206,6 +210,13 @@ export type PageFetcher<T> = (
   pageSize: number,
 ) => Promise<{ items: Array<T>; total: number }>;
 
+export class InventoryCacheLimitError extends Error {
+  constructor() {
+    super("Inventory is too large for the offline cache");
+    this.name = "InventoryCacheLimitError";
+  }
+}
+
 /**
  * Fetch all pages of inventory from the server, returning the combined list.
  *
@@ -223,12 +234,19 @@ export async function fetchInventoryPages<T>(
   fetchPage: PageFetcher<T>,
   pageSize = 500,
   onProgress?: (loaded: number, total: number) => void,
+  maxItems = Infinity,
 ): Promise<Array<T>> {
   let page = 1;
   let total = 0;
   const allItems: Array<T> = [];
   do {
     const data = await fetchPage(page, pageSize);
+    // Reject before retaining the page. Never publish an incomplete snapshot:
+    // partial offline results could incorrectly imply that missing parts do
+    // not exist. The previous successful snapshot remains available.
+    if (data.total > maxItems || allItems.length + data.items.length > maxItems) {
+      throw new InventoryCacheLimitError();
+    }
     if (data.items.length === 0) break;
     total = data.total;
     allItems.push(...data.items);
@@ -236,4 +254,31 @@ export async function fetchInventoryPages<T>(
     page++;
   } while (allItems.length < total);
   return allItems;
+}
+
+/** Stream pages into a bounded writer without retaining the catalog in JS memory. */
+export async function syncInventoryPages<T>(
+  fetchPage: PageFetcher<T>,
+  writePage: (items: Array<T>) => Promise<void>,
+  pageSize: number,
+  onProgress?: (loaded: number, total: number) => void,
+  signal?: AbortSignal,
+): Promise<number> {
+  let loaded = 0;
+  let total: number | null = null;
+  for (let page = 1; ; page++) {
+    if (signal?.aborted) throw new Error("Sync aborted");
+    const data = await fetchPage(page, pageSize);
+    if (!Number.isSafeInteger(data.total) || data.total < 0 ||
+      !Array.isArray(data.items) || data.items.length > pageSize ||
+      (total !== null && data.total !== total)) throw new Error("Inconsistent inventory page");
+    total = data.total;
+    if (data.items.length === 0 && loaded < total) throw new Error("Incomplete inventory snapshot");
+    if (loaded + data.items.length > total) throw new Error("Inventory page exceeds reported total");
+    if (signal?.aborted) throw new Error("Sync aborted");
+    await writePage(data.items);
+    loaded += data.items.length;
+    onProgress?.(loaded, total);
+    if (loaded === total) return loaded;
+  }
 }

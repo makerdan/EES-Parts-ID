@@ -40,7 +40,7 @@ provider or production endpoint was contacted.
 |---|---|---|---|---|
 | `scripts/run-protected-map-smoke.mjs` | `@workspace/mockup-sandbox` | Warehouse map, zone editor, and anchor-calibration route workflows remain usable under concurrent load. | Spawns three independent Vitest files concurrently; registered as `protected-map-concurrency` in heavy. | React/jsdom workflow coverage only. Clerk and API calls are mocked; it is not a server authorization or native-render smoke test. |
 | `artifacts/parts-id/scripts/test-serve-proxy.mjs` | Parts ID `server/serve.js` | `/api/*` forwards status, body, authorization, response headers, and returns JSON 502 when the API is unavailable. | Starts a stub API and a production server on selected local ports; tiny HTTP runner; standard. | Does not exercise static/SPA fallback, manifest routing, or an actual API server. Its proxy assertions are appropriately narrow. |
-| `scripts/test/api-route-authorization-contract.test.mjs` | API route declarations and `routeAccessMatrix.ts` | Every matrix entry marked `admin-only` has a visible route-level admin guard. | Regex-based route-mount and declaration scan; fast. | It is a source contract, not a request-level auth test, and currently excludes `approved-admin` entries. |
+| `scripts/test/api-route-authorization-contract.test.mjs` | API route declarations and `routeAccessMatrix.ts` | Every privileged matrix entry has its exact route-level admin guard, including routes reached through nested router mounts. | Static route-mount and declaration scan; fast. | It is a source contract, not a request-level auth test. |
 | `scripts/test/ai-provider-startup-export-contract.test.mjs` | `artifacts/api-server/src/lib/aiProvider.ts` | No misleading startup-named live probe is exported from the provider module. | Reads TypeScript and rejects exported names containing both `startup` and `probe`; fast. | It does not import the provider or exercise startup, environment failure, or network behavior. |
 | `skill-previews/poe-setup/targeted-correction-contract.test.mjs` | `skill-previews/poe-setup/SKILL.md` | The Poe guide uses the `POE_API_KEY2` lazy `/v1` client pattern and rejects eager import-time setup. | Text assertions plus a simple brace-depth heuristic over the approved raw-SDK example; fast. | This is documentation/source-text validation, not compilation or execution of every guide example. |
 | `scripts/test/skill-mirror-sync-contract.test.mjs` | Account-skill projection, disposable mirror, and public-repository boundary | Projection is recursive, fresh, owned, atomic, fail-closed, and does not expose private source data. | Large temporary filesystem fixture, child-process status/sync calls, recovery failure cases, and boundary scan; fast. | The fixture is realistic for filesystem behavior, but child-process calls have no per-call timeout. |
@@ -291,3 +291,19 @@ provider or production endpoint was contacted.
 **Report-only boundary:** This audit added this report only. No smoke test,
 contract, service implementation, fixture, generated artifact, or validation
 baseline was changed.
+
+## Current protected-map coverage
+
+The original audit above was intentionally report-only. The current validation
+surface now separates the two protected-map claims:
+
+| Check | What it proves | What it does not prove |
+|---|---|---|
+| `scripts/run-protected-map-smoke.mjs` and its three mockup-sandbox suites | Client route gates, loading states, and workflow behavior under the configured smoke/concurrency runs | Express middleware, Clerk-to-user resolution, or server authorization |
+| `artifacts/api-server/__tests__/protectedMapAuthorization.integration.test.ts` (`protected-map-authorization` in the standard tier) | The real Express request path returns 401 for anonymous callers, 403 for approved non-admins, and reaches each map/warehouse mutation handler for an approved admin | Live Clerk/provider behavior, production data, or successful mutation persistence |
+
+The API contract uses the local Clerk Jest replacement and the test database
+only. Its admin requests stop at invalid-input validation, so the check does
+not overwrite canonical map anchors or warehouse zones. It is request-level
+server authorization coverage, not an end-to-end replacement for the client
+workflow smoke.

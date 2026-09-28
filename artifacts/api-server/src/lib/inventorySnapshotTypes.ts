@@ -11,7 +11,7 @@ const SNAPSHOT_FIELDS = [
   "expandedDescription", "size", "dimensions", "createdAt", "updatedAt",
 ] as const;
 
-export type SnapshotReason = "scheduled" | "pre-import" | "pre-delete" | "pre-restore" | "incident-empty";
+export type SnapshotReason = "scheduled" | "manual-admin" | "pre-import" | "pre-delete" | "pre-restore" | "incident-empty";
 
 export interface InventorySnapshotManifest {
   formatVersion: number;
@@ -55,7 +55,7 @@ export function assertValidManifest(value: unknown): asserts value is InventoryS
   const manifest = value as Partial<InventorySnapshotManifest>;
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const sha256 = /^[0-9a-f]{64}$/i;
-  const reasons: ReadonlyArray<SnapshotReason> = ["scheduled", "pre-import", "pre-delete", "pre-restore", "incident-empty"];
+  const reasons: ReadonlyArray<SnapshotReason> = ["scheduled", "manual-admin", "pre-import", "pre-delete", "pre-restore", "incident-empty"];
   const fieldsMatch = JSON.stringify(manifest.exportedFields) === JSON.stringify(SNAPSHOT_FIELDS);
   const compressedSize = manifest.compressedSize;
   const previousValidSnapshotId = manifest.previousValidSnapshotId;

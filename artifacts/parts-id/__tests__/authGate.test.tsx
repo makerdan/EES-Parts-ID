@@ -38,9 +38,14 @@ const mockUseAuth = jest.fn(() => ({
   getToken: jest.fn(),
 }));
 
-jest.mock("@clerk/expo", () => ({
-  useAuth: mockUseAuth,
-}));
+jest.mock("@clerk/expo", () => {
+  const {
+    assertClerkMockContract,
+    createClerkExpoMock,
+  } = jest.requireActual("../__mocks__/clerk-expo");
+  const clerkMock = createClerkExpoMock({ useAuth: mockUseAuth });
+  return assertClerkMockContract(clerkMock, ["useAuth"], "authGate");
+});
 
 // ── @/contexts/AppContext ──────────────────────────────────────────────────
 // Same pattern: explicit jest.mock keeps the reference stable and shared with

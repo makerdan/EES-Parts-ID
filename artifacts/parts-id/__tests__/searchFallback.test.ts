@@ -28,6 +28,7 @@ import {
   fetchInventoryPages,
   runSearchPipeline,
   buildQueryKey,
+  buildSearchBody,
   pruneExpired,
   CACHE_TTL_MS,
 } from "../utils/searchHelpers";
@@ -156,6 +157,50 @@ describe("resolveOfflineFallback — 3-tier search fallback (tiers 2 & 3)", () =
     expect(fuseSearch).toHaveBeenCalled();
   });
 
+  it("does not reuse a category's exact result for another category or general search", () => {
+    const f: FilterValues = { ...BLANK, keywords: "wire" };
+    const cachedResults: MockResult[] = [{ id: 21, label: "Wire-category result" }];
+    const cache = makeCache(buildQueryKey(f, "wire"), cachedResults);
+    const fuseSearch = jest.fn().mockReturnValue([]);
+
+    const otherCategory = resolveOfflineFallback({
+      queryKey: buildQueryKey(f, "conduit"),
+      cache,
+      fuseSearch,
+      keywords: "wire",
+    });
+    const generalSearch = resolveOfflineFallback({
+      queryKey: buildQueryKey(f, null),
+      cache,
+      fuseSearch,
+      keywords: "wire",
+    });
+
+    expect(otherCategory.cacheType).toBe("fuse");
+    expect(otherCategory.results).toEqual([]);
+    expect(generalSearch.cacheType).toBe("fuse");
+    expect(generalSearch.results).toEqual([]);
+    expect(fuseSearch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not read a legacy category-less cache entry", () => {
+    const f: FilterValues = { ...BLANK, keywords: "wire" };
+    const legacyKey = JSON.stringify(buildSearchBody(f));
+    const cache = makeCache(legacyKey, [{ id: 22, label: "Legacy result" }]);
+    const fuseSearch = jest.fn().mockReturnValue([]);
+
+    const result = resolveOfflineFallback({
+      queryKey: buildQueryKey(f, null),
+      cache,
+      fuseSearch,
+      keywords: "wire",
+    });
+
+    expect(result.cacheType).toBe("fuse");
+    expect(result.results).toEqual([]);
+    expect(fuseSearch).toHaveBeenCalledWith("wire");
+  });
+
   it("passes the joined chip-dimension keywords to fuseSearch", () => {
     const f: FilterValues = {
       ...BLANK,
@@ -212,6 +257,27 @@ describe("resolveOfflineFallback — 3-tier search fallback (tiers 2 & 3)", () =
 
 describe("fetchInventoryPages — background cache refresh", () => {
   type Item = { id: number };
+
+  it("rejects a large catalog after the first page without publishing an incomplete snapshot", async () => {
+    const page = Array.from({ length: 500 }, (_, id) => ({ id }));
+    const fetchPage = jest.fn().mockResolvedValue({ items: page, total: 5001 });
+    const progress = jest.fn();
+    await expect(fetchInventoryPages(fetchPage, 500, progress, 5000))
+      .rejects.toThrow("too large for the offline cache");
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(progress).not.toHaveBeenCalled();
+  });
+
+  it("stops when the cumulative page count exceeds the limit despite a stale total", async () => {
+    const first = Array.from({ length: 500 }, (_, id) => ({ id }));
+    const second = Array.from({ length: 501 }, (_, id) => ({ id: id + 500 }));
+    const fetchPage = jest.fn()
+      .mockResolvedValueOnce({ items: first, total: 1000 })
+      .mockResolvedValueOnce({ items: second, total: 1000 });
+    await expect(fetchInventoryPages(fetchPage, 500, undefined, 1000))
+      .rejects.toThrow("too large for the offline cache");
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+  });
 
   it("returns all items from a single page", async () => {
     const items: Item[] = [{ id: 1 }, { id: 2 }];

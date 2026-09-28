@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -136,6 +136,25 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
   const displayEnrichedAt = localEnrichedAt !== undefined ? localEnrichedAt : activeItem.enrichedAt;
   const isViewingVariant = activeItem.id !== item.id;
 
+  // Search results are patched in place after an edit. Keep the mounted card
+  // pointed at the new base item instead of retaining the serialized result
+  // that was present when the card first mounted. A deliberately selected
+  // variant remains selected when the refreshed result still contains it; if
+  // that variant disappeared, fall back to the refreshed base item.
+  useEffect(() => {
+    const selectedVariant = isViewingVariant
+      ? variants?.find((variant) => variant.id === activeItem.id)
+      : undefined;
+    const nextActiveItem = selectedVariant ?? item;
+    setActiveItem(nextActiveItem);
+    if (!selectedVariant) {
+      setLocalKeywords(null);
+      setLocalEnrichedAt(undefined);
+      setReenrichState("idle");
+      reenrichStateRef.current = "idle";
+    }
+  }, [activeItem.id, isViewingVariant, item, variants]);
+
   const handleReenrich = async () => {
     if (!onReenrichKeywords || reenrichStateRef.current === "loading") return;
     setReenrichState("loading");
@@ -178,6 +197,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
             borderWidth: rank === 0 ? 1.5 : 1,
           },
         ]}
+        testID={`result-card-${item.id}`}
       >
         {/* Header */}
         <View style={cardStyles.header}>

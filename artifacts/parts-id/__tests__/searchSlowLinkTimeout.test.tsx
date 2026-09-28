@@ -47,9 +47,11 @@ jest.mock("expo-router", () => ({
 // ── @workspace/api-client-react ───────────────────────────────────────────────
 
 const mockUseSearchInventory = jest.fn();
+const mockSearchInventory = jest.fn();
 
 jest.mock("@workspace/api-client-react", () => ({
   useSearchInventory:  (...args: unknown[]) => mockUseSearchInventory(...args),
+  searchInventory: (...args: unknown[]) => mockSearchInventory(...args),
   useAiIdentifyPart:   jest.fn(() => ({ mutateAsync: jest.fn(), isPending: false, isSuccess: false, isError: false, reset: jest.fn() })),
   setAuthTokenGetter:  jest.fn(),
   setBaseUrl:          jest.fn(),
@@ -187,6 +189,7 @@ jest.mock("@/utils/offlineBarcode", () => ({
 const mockResolveOfflineFallback = jest.fn();
 
 jest.mock("@/utils/searchHelpers", () => ({
+  InventoryCacheLimitError: class InventoryCacheLimitError extends Error {},
   QUERY_CACHE_KEY:          "query_cache",
   buildQueryKey:            jest.fn().mockReturnValue("test-key"),
   buildSearchBody:          jest.fn().mockReturnValue({ keywords: "", confidenceThreshold: 50 }),
@@ -195,6 +198,13 @@ jest.mock("@/utils/searchHelpers", () => ({
   formatRelativeAge:        jest.fn().mockReturnValue("1 hour ago"),
   resolveOfflineFallback:   (...args: unknown[]) => mockResolveOfflineFallback(...args),
   fetchInventoryPages:      jest.fn().mockResolvedValue([]),
+}));
+const mockSyncOfflineInventory = jest.fn().mockResolvedValue(undefined);
+jest.mock("@/utils/offlineInventory", () => ({
+  offlineSnapshotInfo: jest.fn().mockResolvedValue(null),
+  syncOfflineInventory: (...args: unknown[]) => mockSyncOfflineInventory(...args),
+  hasOfflineItem: jest.fn().mockResolvedValue(false),
+  searchOfflineInventory: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock("@/utils/apiBase", () => ({
@@ -208,14 +218,19 @@ jest.mock("@/utils/appAuth", () => ({
 
 jest.mock("@/utils/useTrackScreen", () => ({ useTrackScreen: jest.fn() }));
 
-jest.mock("@/utils/searchHistory", () => ({
-  appendQueryHistory:  jest.fn().mockResolvedValue(undefined),
-  appendViewedHistory: jest.fn().mockResolvedValue(undefined),
-  clearQueryHistory:   jest.fn().mockResolvedValue(undefined),
-  clearViewedHistory:  jest.fn().mockResolvedValue(undefined),
-  loadQueryHistory:    jest.fn().mockResolvedValue([]),
-  loadViewedHistory:   jest.fn().mockResolvedValue([]),
-}));
+jest.mock("@/contexts/UserHistoryContext", () => {
+  const value = {
+    history: { queryHistory: [], viewedHistory: [], scanHistory: [] },
+    status: "ready",
+    recordQuery: jest.fn().mockResolvedValue(undefined),
+    clearQueries: jest.fn().mockResolvedValue(undefined),
+    recordViewed: jest.fn().mockResolvedValue(undefined),
+    clearViewed: jest.fn().mockResolvedValue(undefined),
+    recordScan: jest.fn().mockResolvedValue(undefined),
+    clearScans: jest.fn().mockResolvedValue(undefined),
+  };
+  return { useUserHistory: () => value };
+});
 
 jest.mock("@/utils/searchResetEvent", () => ({
   searchResetEvent: { subscribe: jest.fn(() => jest.fn()), emit: jest.fn() },
@@ -488,6 +503,16 @@ afterEach(async () => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("SearchScreen 8s timeout on a slow-but-connected link", () => {
+  it("shows a clear offline warning instead of caching a partial oversized sync", async () => {
+    // Disk-backed sync rejects only when the storage budget is exceeded.
+    mockSyncOfflineInventory.mockRejectedValueOnce(Object.assign(new Error("budget"), { name: "InventoryCacheLimitError" }));
+    const result = await mountScreen();
+    for (let attempt = 0; attempt < 5; attempt++) await flushMicrotasks();
+    expect(mockSyncOfflineInventory).toHaveBeenCalled();
+    const text = gatherText(result.root!);
+    expect(text).toContain("Offline limit exceeded");
+  });
+
   it("shows the cached-results banner and clears the spinner when the request hangs", async () => {
     // Seed a Fuse cache so cachedCount > 0 (items need numeric ids).
     mockAsyncGet.mockImplementation(async (key: string) =>
@@ -530,6 +555,38 @@ describe("SearchScreen 8s timeout on a slow-but-connected link", () => {
     expect(resetFn).toHaveBeenCalled();
     expect(isSpinnerVisible(result.root!)).toBe(false);
     expect(gatherText(result.root!)).toContain("Offline — showing cached results");
+  });
+
+  it("aborts the in-flight search before publishing offline results and ignores a late success", async () => {
+    const pending: { options?: { onSuccess?: (data: unknown) => void }; signal?: AbortSignal } = {};
+    mockUseSearchInventory.mockImplementation((config: {
+      mutation: { mutationFn: (arg: { data: object }) => Promise<unknown> };
+    }) => ({
+      mutate: (arg: { data: object }, options: { onSuccess: (data: unknown) => void }) => {
+        mutationPending = true;
+        pending.options = options;
+        void config.mutation.mutationFn(arg);
+      },
+      isPending: mutationPending,
+      isSuccess: false,
+      isError: false,
+      data: undefined,
+      reset: resetFn,
+    }));
+    mockSearchInventory.mockImplementation((_data: unknown, options: { signal: AbortSignal }) => {
+      pending.signal = options.signal;
+      return new Promise(() => {});
+    });
+    const result = await mountScreen();
+    await triggerSearch(result);
+    expect(pending.signal?.aborted).toBe(false);
+    await act(async () => { jest.advanceTimersByTime(8000); });
+    expect(pending.signal?.aborted).toBe(true);
+    expect(resetFn).toHaveBeenCalled();
+    await act(async () => {
+      pending.options?.onSuccess?.({ results: [{ item: { id: 123 } }] });
+    });
+    expect(queryClient.getQueryData(["searchInventory", "active"])).toBeUndefined();
   });
 
   it("shows the no-cache empty state and clears the spinner when the request hangs", async () => {

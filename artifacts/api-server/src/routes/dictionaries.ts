@@ -9,10 +9,13 @@ import {
 import { sql } from "drizzle-orm";
 import { Router } from "express";
 
+import { boundedErrorDiagnostic, getLogger } from "../lib/logger";
+
 const router = Router();
 
 // GET /dictionaries/lookup?term=...
 router.get("/lookup", async (req, res) => {
+  const reqLogger = getLogger(res);
   try {
     const term = String(req.query["term"] ?? "").toLowerCase().trim();
     if (!term) return void res.status(400).json({ error: "term is required" });
@@ -59,7 +62,7 @@ router.get("/lookup", async (req, res) => {
       slangTerms: slangRows.flatMap(s => s.standardTerms),
     });
   } catch (err) {
-    console.error(err);
+    reqLogger.error(boundedErrorDiagnostic(err), "[dictionaries/lookup] Lookup failed");
     res.status(500).json({ error: "Lookup failed" });
   }
 });

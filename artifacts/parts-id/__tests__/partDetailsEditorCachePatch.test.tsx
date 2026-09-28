@@ -116,6 +116,8 @@ jest.mock("@/components/KeyboardDoneInput", () => {
       placeholder?: string;
       onChangeText?: (v: string) => void;
       value?: string;
+      keyboardType?: string;
+      selectTextOnFocus?: boolean;
       testID?: string;
       [k: string]: unknown;
     }) =>
@@ -124,6 +126,8 @@ jest.mock("@/components/KeyboardDoneInput", () => {
         value:          props.value,
         onChangeText:   props.onChangeText,
         placeholder:    props.placeholder,
+        keyboardType:   props.keyboardType,
+        selectTextOnFocus: props.selectTextOnFocus,
       }),
   };
 });
@@ -223,6 +227,30 @@ afterEach(async () => {
 // =============================================================================
 
 describe("PartDetailsEditor – handleSave success path cache patch", () => {
+  it("keeps saved OP/OQ values and selects them on focus with the numeric keypad", async () => {
+    const result = await renderEditor(
+      <PartDetailsEditor
+        item={makeItem({ orderPurchase: 12, orderQuantity: 34 })}
+        adminToken="test-token"
+        onClose={jest.fn()}
+      />,
+    );
+    activeTree = result;
+
+    const inputs = result.root!.queryAll(
+      (node: TestInstance) =>
+        (node.type as string) === "rn-textinput" &&
+        node.props.placeholder === "0",
+      { includeSelf: true },
+    );
+    expect(inputs).toHaveLength(2);
+    expect(inputs.map((input: TestInstance) => input.props.value)).toEqual(["12", "34"]);
+    for (const input of inputs) {
+      expect(input.props.selectTextOnFocus).toBe(true);
+      expect(input.props.keyboardType).toBe("number-pad");
+    }
+  });
+
   /**
    * Multi-field success test: change description AND remove a keyword AND
    * remove a bin so that all three fields in the patch differ from the

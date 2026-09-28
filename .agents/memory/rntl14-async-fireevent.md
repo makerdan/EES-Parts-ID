@@ -7,4 +7,6 @@ Await every `fireEvent` interaction before starting another interaction, render,
 
 **Why:** In React Native Testing Library 14, `fireEvent`, `fireEvent.press`, and `fireEvent.changeText` are asynchronous and await an internal `act()` call. Leaving one unawaited creates overlapping React 19 act scopes even when the event handler itself appears synchronous.
 
-**How to apply:** In React Native tests using this library version, use `await fireEvent.*(...)` directly. Do not wrap those calls in another async `act()`, and await observable asynchronous outcomes only after the event promise settles.
+Timeout-callback tests should restore spies on `global.setTimeout` before calling `waitFor`; a partial timer spy can make RNTL report an inconsistent fake-timer environment.
+
+**How to apply:** In React Native tests using this library version, use `await fireEvent.*(...)` directly. Do not wrap those calls in another async `act()`, and await observable asynchronous outcomes only after the event promise settles. Restore timer spies before using `waitFor`.

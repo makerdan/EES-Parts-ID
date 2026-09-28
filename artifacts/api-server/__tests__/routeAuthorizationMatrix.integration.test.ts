@@ -35,35 +35,22 @@ import supertest from "supertest";
 import { ROUTE_ACCESS_MATRIX } from "../src/routes/routeAccessMatrix";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
-import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
+import { cleanupTestUser, seedTestUser, workerQualifiedUserId } from "./helpers/testDb";
 
-const APPROVED_USER = "jest-route-matrix-approved";
-const PENDING_USER = "jest-route-matrix-pending";
-const BANNED_USER = "jest-route-matrix-banned";
+const APPROVED_USER = workerQualifiedUserId("jest-route-matrix-approved");
+const PENDING_USER = workerQualifiedUserId("jest-route-matrix-pending");
+const BANNED_USER = workerQualifiedUserId("jest-route-matrix-banned");
 
-const ROUTE_MOUNTS: Record<string, string> = {
-  admin: "/api/admin",
-  adminAiStatus: "/api/admin",
-  adminDashboard: "/api/admin",
-  adminQuery: "/api/admin",
-  adminSnapshots: "/api/admin",
-  adminUpload: "/api/admin",
-  ai: "/api/ai",
-  auth: "/api/auth",
-  catalogPdf: "/api/admin",
-  catalogPdfUpload: "/api/admin",
-  contact: "/api/contact",
-  dictionaries: "/api/dictionaries",
-  floorPlan: "/api",
-  health: "/api",
-  help: "/api/help",
-  inventory: "/api/inventory",
-  inventoryCategories: "/api/inventory",
-  mapAnchors: "/api/admin",
-  reference: "/api/reference",
-  track: "/api/track",
-  user: "/api/user",
-  warehouseZones: "/api/warehouse-zones",
+const ROOT = path.resolve(__dirname, "../../..");
+const ROUTES_DIR = path.join(ROOT, "artifacts/api-server/src/routes");
+const { deriveMountGraph } = require(
+  path.join(ROOT, "scripts/lib/api-route-mount-graph.cjs"),
+) as {
+  deriveMountGraph: (options: {
+    rootSource: string;
+    rootMount: string;
+    readModuleSource: (moduleName: string) => string;
+  }) => Array<{ moduleName: string; mount: string; source: string }>;
 };
 
 function matrixKey(method: string, routePath: string): string {
@@ -82,28 +69,43 @@ type LiteralRouteDeclaration = {
 };
 
 function literalRouteDeclarations(): Array<LiteralRouteDeclaration> {
-  const routesDir = path.resolve(__dirname, "../src/routes");
   const declarations: Array<LiteralRouteDeclaration> = [];
   const declarationPattern =
     /router\.(get|post|put|patch|delete)\(\s*["']([^"']+)["']/g;
 
-  for (const fileName of fs.readdirSync(routesDir)) {
-    if (!fileName.endsWith(".ts") || fileName === "index.ts" || fileName === "routeAccessMatrix.ts") continue;
-    const source = fs.readFileSync(path.join(routesDir, fileName), "utf8");
-    const moduleName = fileName.replace(/\.ts$/, "");
-    const mount = ROUTE_MOUNTS[moduleName];
-    if (!mount) throw new Error(`Missing route mount for ${fileName}`);
+  const indexPath = path.join(ROUTES_DIR, "index.ts");
+  const graph = deriveMountGraph({
+    rootSource: fs.readFileSync(indexPath, "utf8"),
+    rootMount: "/api",
+    readModuleSource: (moduleName) =>
+      fs.readFileSync(path.join(ROUTES_DIR, `${moduleName}.ts`), "utf8"),
+  });
 
+  for (const { mount, source } of graph) {
     for (const match of source.matchAll(declarationPattern)) {
       const localPath = match[2]!;
       const fullPath = `${mount}/${localPath}`.replace(/\/+/g, "/").replace(/\/+$/, "") || "/";
       const declarationStart = match.index ?? 0;
-      const declarationLineEnd = source.indexOf("\n", declarationStart);
-      const declarationLine = source.slice(
-        declarationStart,
-        declarationLineEnd === -1 ? source.length : declarationLineEnd,
+      const declarationArguments = source.slice(declarationStart + match[0].length);
+      const handlerStart = declarationArguments.search(
+        /,\s*(?:(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>|(?:async\s+)?function\b)/s,
       );
-      declarations.push({ method: match[1]!, path: fullPath, source: declarationLine });
+      const middlewareSource = (
+        handlerStart === -1
+          ? declarationArguments.slice(0, declarationArguments.indexOf("\n"))
+          : declarationArguments.slice(0, handlerStart)
+      )
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/[^\n]*/g, "")
+        .trim();
+      const guard = middlewareSource.match(
+        /(?:^|,)\s*(requireApprovedAdminAuth|requireAdminAuth)\s*(?=,|$)/s,
+      )?.[1];
+      declarations.push({
+        method: match[1]!,
+        path: fullPath,
+        source: guard ? `${middlewareSource},` : middlewareSource,
+      });
     }
   }
 
@@ -143,6 +145,46 @@ describe("route access matrix completeness", () => {
     expect(missing).toEqual([]);
   });
 
+  it("keeps direct and nested router aliases classified exactly once", () => {
+    const declarations = literalRouteDeclarations();
+    expect(
+      declarations.filter(({ method, path: routePath }) =>
+        matrixKey(method, routePath) === "GET /api/help/admin",
+      ),
+    ).toHaveLength(1);
+    expect(
+      declarations.filter(({ method, path: routePath }) =>
+        matrixKey(method, routePath) === "GET /api/reference/help/admin",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("rejects unsupported mounts before a protected child can disappear from the inventory", () => {
+    const fixtureSources = new Map([
+      [
+        "root",
+        `
+          import protectedRouter from "./protected";
+          router.use("/protected", protectedRouter());
+        `,
+      ],
+      [
+        "protected",
+        `
+          router.get("/secret", requireAdminAuth, async (_req, res) => res.json({ ok: true }));
+        `,
+      ],
+    ]);
+
+    expect(() =>
+      deriveMountGraph({
+        rootSource: fixtureSources.get("root")!,
+        rootMount: "/api/fixture",
+        readModuleSource: (moduleName) => fixtureSources.get(moduleName)!,
+      }),
+    ).toThrow("Unsupported route mount target protectedRouter()");
+  });
+
   it("requires the access level's exact admin guard on every privileged declaration", () => {
     const declarations = new Map(
       literalRouteDeclarations().map((declaration) => [
@@ -157,7 +199,7 @@ describe("route access matrix completeness", () => {
         const expectedGuard = entry.access === "approved-admin"
           ? "requireApprovedAdminAuth"
           : "requireAdminAuth";
-        return !source.includes(`, ${expectedGuard},`);
+        return !new RegExp(`,\\s*${expectedGuard}\\s*,`).test(source);
       })
       .map((entry) => `${entry.method} ${entry.path} — intended audience: ${entry.access}`);
 

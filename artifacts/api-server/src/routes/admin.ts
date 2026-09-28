@@ -5,6 +5,7 @@ import { desc, eq, lt } from "drizzle-orm";
 import { Router } from "express";
 
 import { type AIProvider,getProvider, setProvider } from "../lib/aiProvider";
+import { requestGracefulShutdown } from "../lib/gracefulShutdown";
 import { logger } from "../lib/logger";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
@@ -13,13 +14,12 @@ const router = Router();
 const RESTART_DELAY_MS = 200;
 
 /**
- * The restart route deliberately uses a replaceable exit function. Tests can
- * stub this seam without ever terminating the Jest worker, while production
- * still delegates to the real process exit.
+ * The restart route keeps scheduling replaceable so tests can exercise the
+ * accepted handoff without waiting in real time.
  */
 export const restartRuntime = {
-  exit(code: number): void {
-    process.exit(code);
+  requestShutdown(): Promise<void> {
+    return requestGracefulShutdown("admin-restart");
   },
   schedule(callback: () => void, delayMs: number): void {
     setTimeout(callback, delayMs);
@@ -28,7 +28,7 @@ export const restartRuntime = {
 
 let restartInFlight = false;
 
-/** Reset the route-local guard after a test that stubs restartRuntime.exit. */
+/** Reset the route-local guard between app-only integration tests. */
 export function resetRestartStateForTests(): void {
   restartInFlight = false;
 }
@@ -252,11 +252,9 @@ router.post("/restart", requireAdminAuth, (_req, res) => {
   restartInFlight = true;
   res.status(202).json({ restarting: true });
   restartRuntime.schedule(() => {
-    // Clear before calling the replaceable exit seam so a test stub, or an
-    // unexpected no-op implementation, cannot leave the route permanently
-    // blocked.
-    restartInFlight = false;
-    restartRuntime.exit(0);
+    void restartRuntime.requestShutdown().catch((err) => {
+      logger.error({ err }, "Accepted development restart failed to enter graceful shutdown");
+    });
   }, RESTART_DELAY_MS);
   return;
 });

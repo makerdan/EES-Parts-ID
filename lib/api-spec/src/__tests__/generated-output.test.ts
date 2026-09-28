@@ -89,6 +89,21 @@ describe("generated output inventory", () => {
     );
   });
 
+  it("rejects the obsolete custom Awaited helper", () => {
+    const root = makeCompleteOutput();
+    activeRoots.push(root);
+    const client = join(root, "lib/api-client-react/src/generated/api.ts");
+    writeFileSync(
+      client,
+      "type AwaitedInput<T> = PromiseLike<T> | T;\n" +
+        "type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;\n",
+    );
+
+    expect(runChecker(root)).toContain(
+      "STALE generated output: lib/api-client-react/src/generated/api.ts contains obsolete custom Awaited helper",
+    );
+  });
+
   it("rejects an expected generated file that is untracked", () => {
     const root = makeCompleteOutput();
     activeRoots.push(root);

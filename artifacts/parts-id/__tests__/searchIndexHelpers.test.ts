@@ -446,6 +446,18 @@ describe("buildQueryKey", () => {
     expect(buildQueryKey(BLANK)).toBe(buildQueryKey(BLANK));
   });
 
+  it("uses distinct versioned keys for different categories and general search", () => {
+    const categoryA = buildQueryKey(BLANK, "wire");
+    const categoryB = buildQueryKey(BLANK, "conduit");
+    const general = buildQueryKey(BLANK);
+    const legacyCategoryless = JSON.stringify(buildSearchBody(BLANK));
+
+    expect(categoryA).not.toBe(categoryB);
+    expect(categoryA).not.toBe(general);
+    expect(categoryB).not.toBe(general);
+    expect(general).not.toBe(legacyCategoryless);
+  });
+
   it("produces a different key when a text field changes", () => {
     const a = { ...BLANK, keywords: "wire" };
     const b = { ...BLANK, keywords: "conduit" };

@@ -65,7 +65,9 @@ import type { Express } from "express";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import {
   cleanupTestUser,
+  restoreAdminPreferences,
   seedTestUser,
+  snapshotAdminPreferences,
   workerQualifiedUserId,
 } from "./helpers/testDb";
 import type * as AiProviderModule from "../src/lib/aiProvider";
@@ -106,12 +108,7 @@ beforeAll(async () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   aiProvider = require("../src/lib/aiProvider") as typeof AiProviderModule;
 
-  const rows = await db
-    .select()
-    .from(adminPreferencesTable)
-    .where(eq(adminPreferencesTable.id, 1))
-    .limit(1);
-  originalPreference = rows[0];
+  originalPreference = await snapshotAdminPreferences();
 
   await seedTestUser({
     clerkUserId: NON_ADMIN_USER_ID,
@@ -128,19 +125,7 @@ beforeEach(async () => {
 afterAll(async () => {
   await cleanupTestUser(NON_ADMIN_USER_ID);
 
-  if (originalPreference) {
-    await db
-      .update(adminPreferencesTable)
-      .set({
-        aiProvider: originalPreference.aiProvider,
-        updatedAt: originalPreference.updatedAt,
-      })
-      .where(eq(adminPreferencesTable.id, 1));
-  } else {
-    await db
-      .delete(adminPreferencesTable)
-      .where(eq(adminPreferencesTable.id, 1));
-  }
+  await restoreAdminPreferences(originalPreference);
 
   const originalProvider =
     originalEnv.AI_PROVIDER?.toLowerCase() === "openai" ? "openai" : "poe";

@@ -94,12 +94,12 @@ isValidation = true
 name = "test-standard"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm run test-standard"
-
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm run test-standard:observed"
 
 [[workflows.workflow]]
 name = "test-standard-plus"

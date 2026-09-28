@@ -6,10 +6,23 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { PoeModelCapabilities } from './poeModelCapabilities';
+import type { PoeRegistryModelApprovedRoutesItem } from './poeRegistryModelApprovedRoutesItem';
+import type { PoeRegistryModelBudgetClass } from './poeRegistryModelBudgetClass';
+import type { PoeRegistryModelCapabilityConfidence } from './poeRegistryModelCapabilityConfidence';
+import type { PoeRegistryModelLimits } from './poeRegistryModelLimits';
+import type { PoeRegistryModelPrivacyClass } from './poeRegistryModelPrivacyClass';
+import type { PoeRegistryModelVerification } from './poeRegistryModelVerification';
 
 export interface PoeRegistryModel {
   id: string;
   name: string;
   modalities: string[];
   capabilities: PoeModelCapabilities;
+  /** @maxItems 4 */
+  approvedRoutes: PoeRegistryModelApprovedRoutesItem[];
+  capabilityConfidence: PoeRegistryModelCapabilityConfidence;
+  verification: PoeRegistryModelVerification;
+  privacyClass: PoeRegistryModelPrivacyClass;
+  budgetClass: PoeRegistryModelBudgetClass;
+  limits: PoeRegistryModelLimits;
 }

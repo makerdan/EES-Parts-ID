@@ -15,9 +15,13 @@ import { lt, sql } from "drizzle-orm";
 import { Router } from "express";
 import OpenAI from "openai";
 
-import { getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { getLogger } from "../lib/logger";
-import { callPoeCompletionWithChain, PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
+import {
+  callOpenAIFallbackWithBoundary,
+  callPoeCompletionWithChain,
+  PoeBotChainExhaustedError,
+  tryPoeBotChain,
+} from "../lib/poeBot";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET } from "../lib/poeModelLimits";
 import { identifyLimiter, partCardLimiter,translateLimiter } from "../lib/rateLimiter";
 import {
@@ -125,19 +129,31 @@ router.post("/identify", async (req, res) => {
       },
     ];
 
-    const response = useOpenAiFallback
-      ? await getOpenAIFallbackClient().chat.completions.create({
-          model: getOpenAIModelForFeature("identify"),
-          max_completion_tokens: 1024,
-          messages: identifyMessages,
-        })
-      : await tryPoeBotChain("identify", (client, model) =>
-          client.chat.completions.create({
-            model,
-            max_completion_tokens: 1024,
-            messages: identifyMessages,
-          }),
-        );
+    const requestController = new AbortController();
+    const cancelOnDisconnect = () => requestController.abort();
+    res.once("close", cancelOnDisconnect);
+    let response: Awaited<ReturnType<typeof callOpenAIFallbackWithBoundary<OpenAI.Chat.Completions.ChatCompletion>>>;
+    try {
+      response = useOpenAiFallback
+        ? await callOpenAIFallbackWithBoundary("identify", (client, model, signal) =>
+            client.chat.completions.create({
+              model,
+              max_completion_tokens: 1024,
+              messages: identifyMessages,
+            }, { signal }),
+            { signal: requestController.signal },
+          )
+        : await tryPoeBotChain("identify", (client, model) =>
+            client.chat.completions.create({
+              model,
+              max_completion_tokens: 1024,
+              messages: identifyMessages,
+            }),
+            { signal: requestController.signal },
+          );
+    } finally {
+      res.removeListener("close", cancelOnDisconnect);
+    }
 
     const text = response.choices[0]?.message?.content ?? "";
     const parsed = parseAiResponseOr(

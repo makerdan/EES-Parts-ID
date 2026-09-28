@@ -255,9 +255,14 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
       {oauthError ? <Text style={s.oauthError}>{oauthError}</Text> : null}
 
       <Pressable
+        testID="oauth-google-button"
         style={[s.oauthButton, oauthLoading && { opacity: 0.6 }]}
         onPress={handleGoogle}
         disabled={oauthLoading}
+        accessibilityRole="button"
+        accessibilityLabel="Continue with Google"
+        accessibilityState={{ disabled: oauthLoading, busy: oauthLoading }}
+        aria-busy={oauthLoading}
       >
         {oauthLoading ? (
           <ActivityIndicator color={colors.foreground} size="small" />
@@ -271,9 +276,14 @@ export function OAuthButtons({ mode }: OAuthButtonsProps) {
 
       {Platform.OS !== "android" && (
         <Pressable
+          testID="oauth-apple-button"
           style={[s.oauthButton, oauthLoading && { opacity: 0.6 }]}
           onPress={handleApple}
           disabled={oauthLoading}
+          accessibilityRole="button"
+          accessibilityLabel="Continue with Apple"
+          accessibilityState={{ disabled: oauthLoading, busy: oauthLoading }}
+          aria-busy={oauthLoading}
         >
           {oauthLoading ? (
             <ActivityIndicator color={colors.foreground} size="small" />

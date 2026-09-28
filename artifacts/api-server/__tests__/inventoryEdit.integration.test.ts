@@ -60,7 +60,7 @@ jest.mock("../src/utils/aiHelpers", () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import { db, inventoryTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import express from "express";
 import supertest from "supertest";
 import app from "../src/app";
@@ -83,8 +83,10 @@ const ADMIN_TOKEN = ADMIN_TEST_USER_ID;
 const NON_ADMIN_USER = workerQualifiedUserId("jest-edit-nonadmin");
 const PENDING_ADMIN_USER = workerQualifiedUserId("jest-edit-pending-admin");
 const BANNED_ADMIN_USER = workerQualifiedUserId("jest-edit-banned-admin");
+const PERSISTENCE_DECOY_CATALOG = workerQualifiedUserId("JEST-EDIT-PERSISTENCE-DECOY");
 
 let item: EditableItem;
+let persistenceDecoyId: number | undefined;
 let restoreTestEnv: (() => void) | undefined;
 
 /** Re-fetch the live DB row so we can assert what was actually committed. */
@@ -106,6 +108,23 @@ beforeAll(async () => {
   await seedTestUser({ clerkUserId: BANNED_ADMIN_USER, status: "banned", role: "admin" });
 
   item = await seedEditableItem();
+  const [persistenceDecoy] = await db
+    .insert(inventoryTable)
+    .values({
+      vendor: "JEST-EDIT-DECOY-VENDOR",
+      catalog: PERSISTENCE_DECOY_CATALOG,
+      description: "Unrelated decoy description",
+      binLocations: ["DECOY-BIN-01"],
+      aiKeywords: ["decoy keyword"],
+      pinnedKeywords: ["decoy keyword"],
+      barcodes: ["999999999999"],
+      orderPurchase: 1,
+      orderQuantity: 2,
+      dimensions: { length: 90, width: 80, height: 70, diameter: 5 },
+    })
+    .returning({ id: inventoryTable.id });
+  if (!persistenceDecoy) throw new Error("inventory edit persistence decoy insert returned no row");
+  persistenceDecoyId = persistenceDecoy.id;
 
   // Authenticate all subsequent requests as admin by default.
   restoreTestEnv = setTestEnv({ TEST_DEFAULT_AUTH_USER: ADMIN_TOKEN });
@@ -113,6 +132,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   restoreTestEnv?.();
+  if (persistenceDecoyId !== undefined) {
+    await db
+      .delete(inventoryTable)
+      .where(eq(inventoryTable.id, persistenceDecoyId));
+  }
   await cleanupEditableItem();
   await cleanupTestUser(NON_ADMIN_USER);
   await cleanupTestUser(PENDING_ADMIN_USER);
@@ -121,6 +145,63 @@ afterAll(async () => {
 
 function withAuth(req: supertest.Test, token?: string): supertest.Test {
   return token ? req.set("Authorization", `Bearer ${token}`) : req;
+}
+
+async function expectSuccessfulEditRoute(
+  field: string,
+  request: supertest.Test,
+): Promise<supertest.Response> {
+  const response = await request;
+  if (response.status !== 200) {
+    throw new Error(`${field} edit route failed: ${JSON.stringify(response.body)}`);
+  }
+  expect(response.status).toBe(200);
+  return response;
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>(resolvePromise => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * Load the inventory routes and their database module in a private Jest
+ * registry. This is the process-restart equivalent for the module-level
+ * dictionary cache: every call starts with a new route module and an empty
+ * cache generation while retaining the real test database.
+ */
+async function loadFreshInventoryRoutes(options?: {
+  searchLimiter?: { check: jest.Mock };
+}): Promise<{
+  routes: typeof routes;
+  db: typeof db;
+  logger: typeof logger;
+}> {
+  let freshRoutes!: typeof routes;
+  let freshDb!: typeof db;
+  let freshLogger!: typeof logger;
+
+  await jest.isolateModulesAsync(async () => {
+    jest.doMock("@workspace/db", () => {
+      const actual = jest.requireActual("@workspace/db") as typeof import("@workspace/db");
+      freshDb = actual.db;
+      return actual;
+    });
+    if (options?.searchLimiter) {
+      jest.doMock("../src/lib/rateLimiter", () => {
+        const actual = jest.requireActual("../src/lib/rateLimiter") as typeof import("../src/lib/rateLimiter");
+        return { ...actual, inventorySearchLimiter: options.searchLimiter };
+      });
+    }
+
+    freshRoutes = (await import("../src/routes")).default;
+    freshLogger = (await import("../src/lib/logger")).logger;
+  });
+
+  return { routes: freshRoutes, db: freshDb, logger: freshLogger };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -584,10 +665,17 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
     const actualTransaction = db.transaction.bind(db);
     const dictionaryLoad = jest.spyOn(db, "transaction");
     const dictionaryErrorLog = jest.spyOn(logger, "error");
+    const sensitiveFailureText = [
+      "persistent dictionary database failure",
+      item.catalog,
+      item.vendor,
+      item.description,
+      "upload-private-object-key",
+    ].join(" | ");
     dictionaryLoad
       // The search limiter transaction is unrelated to dictionary loading.
       .mockImplementationOnce(callback => actualTransaction(callback))
-      .mockRejectedValue(new Error("persistent dictionary database failure"));
+      .mockRejectedValue(new Error(sensitiveFailureText));
 
     try {
       const response = await supertest(failureApp)
@@ -608,8 +696,14 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
       expect(diagnosticCall?.[0]).toMatchObject({
         errorCategory: "dictionary_database_failure",
         attempts: 2,
-        errorMessage: "persistent dictionary database failure",
+        errorName: "Error",
       });
+      const serializedDiagnostics = JSON.stringify(dictionaryErrorLog.mock.calls);
+      expect(serializedDiagnostics).not.toContain(item.catalog);
+      expect(serializedDiagnostics).not.toContain(item.vendor);
+      expect(serializedDiagnostics).not.toContain(item.description);
+      expect(serializedDiagnostics).not.toContain("upload-private-object-key");
+      expect(serializedDiagnostics).not.toContain("persistent dictionary database failure");
     } finally {
       dictionaryErrorLog.mockRestore();
       dictionaryLoad.mockRestore();
@@ -634,7 +728,7 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
     expect(row?.pinnedKeywords).toEqual(newKeywords);
   });
 
-  it("returns saved keywords from repeated search and a fresh app instance", async () => {
+  it("bounds stalled dictionary initialization, retries cleanly, and returns saved keywords", async () => {
     const newKeywords = ["durable-search-keyword", "admin-edit-confirmation"];
     const findItem = (body: unknown) => {
       const results = (body as {
@@ -651,18 +745,62 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
     recoveryApp.use("/api", routes);
     const actualTransaction = db.transaction.bind(db);
     const dictionaryLoad = jest.spyOn(db, "transaction");
+    const dictionaryErrorLog = jest.spyOn(logger, "error");
+    let releaseStalledGeneration!: () => void;
+    let stalledGenerationSettled = false;
+    const stalledGeneration = new Promise<never>((_, reject) => {
+      const settleStalledGeneration = () => {
+        if (stalledGenerationSettled) return;
+        stalledGenerationSettled = true;
+        reject(new Error("dictionary statement cancelled"));
+      };
+      releaseStalledGeneration = settleStalledGeneration;
+      // Mirror the database statement timeout: the transaction must settle
+      // before the loader is allowed to report its outer deadline failure.
+      setTimeout(settleStalledGeneration, 2_100);
+    });
     dictionaryLoad
       // The search limiter also uses a transaction. Let that unrelated
-      // transaction run before injecting the dictionary initialization fault.
+      // transaction run before injecting dictionary initialization faults.
       .mockImplementationOnce(callback => actualTransaction(callback))
-      .mockRejectedValueOnce(new Error("temporary dictionary connection unavailable"));
+      // Keep the first dictionary generation pending past its deadline.
+      .mockImplementationOnce(() => stalledGeneration as never)
+      // Once the cancelled transaction has released its client, the next
+      // generation must be able to retry normally.
+      .mockImplementationOnce(callback => actualTransaction(callback));
 
     try {
+      const startedAt = Date.now();
+      const stalledResponse = await supertest(recoveryApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(500);
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+      expect(stalledResponse.body).toEqual({ error: "Search failed" });
+      expect(JSON.stringify(stalledResponse.body)).not.toContain(item.catalog);
+
+      const diagnosticCall = dictionaryErrorLog.mock.calls.find(([fields]) => (
+        typeof fields === "object" &&
+        fields !== null &&
+        "event" in fields &&
+        fields.event === "inventory_dictionary_load_failed"
+      ));
+      expect(diagnosticCall?.[0]).toMatchObject({
+        errorCategory: "dictionary_database_failure",
+        attempts: 1,
+        errorName: "DictionaryLoadTimeoutError",
+        errorCode: "DICTIONARY_LOAD_TIMEOUT",
+      });
+      expect(JSON.stringify(diagnosticCall?.[0])).not.toContain(item.catalog);
+
+      // The timed-out generation must be settled before the next request
+      // starts. A later generation can then retry without a restart.
+      expect(stalledGenerationSettled).toBe(true);
       await supertest(recoveryApp)
         .post("/api/inventory/search")
         .send({ keywords: item.catalog })
         .expect(200);
-      expect(dictionaryLoad).toHaveBeenCalledTimes(3);
+      expect(dictionaryLoad).toHaveBeenCalledTimes(4);
 
       const beforeSave = await supertest(app)
         .post("/api/inventory/search")
@@ -696,7 +834,313 @@ describe("PATCH /api/inventory/:id/keywords — happy paths", () => {
         .expect(200);
       expect(findItem(freshAppSearch.body)?.aiKeywords).toEqual(newKeywords);
     } finally {
+      releaseStalledGeneration();
+      dictionaryErrorLog.mockRestore();
       dictionaryLoad.mockRestore();
+    }
+  });
+
+  it("fails closed when dictionary cancellation cleanup is delayed and recovers later", async () => {
+    const delayedGeneration = await loadFreshInventoryRoutes();
+    const recoveryApp = express();
+    recoveryApp.use(express.json());
+    recoveryApp.use("/api", delayedGeneration.routes);
+    const actualTransaction = delayedGeneration.db.transaction.bind(delayedGeneration.db);
+    const dictionaryLoad = jest.spyOn(delayedGeneration.db, "transaction");
+    const dictionaryErrorLog = jest.spyOn(delayedGeneration.logger, "error");
+    let releaseStalledGeneration!: () => void;
+    let stalledGenerationReleased = false;
+    const stalledGeneration = new Promise<never>((_, reject) => {
+      releaseStalledGeneration = () => {
+        if (stalledGenerationReleased) return;
+        stalledGenerationReleased = true;
+        reject(new Error("delayed dictionary statement cancellation"));
+      };
+    });
+    dictionaryLoad
+      // The search limiter transaction is unrelated to dictionary loading.
+      .mockImplementationOnce(callback => actualTransaction(callback))
+      // Simulate a driver that does not settle the cancelled transaction
+      // within the cleanup grace period.
+      .mockImplementationOnce(() => stalledGeneration as never);
+
+    try {
+      const startedAt = Date.now();
+      const stalledResponse = await supertest(recoveryApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(500);
+
+      expect(Date.now() - startedAt).toBeLessThan(4_000);
+      expect(stalledResponse.body).toEqual({ error: "Search failed" });
+      expect(JSON.stringify(stalledResponse.body)).not.toContain(item.catalog);
+
+      const diagnosticCall = dictionaryErrorLog.mock.calls.find(([fields]) => (
+        typeof fields === "object" &&
+        fields !== null &&
+        "event" in fields &&
+        fields.event === "inventory_dictionary_load_failed"
+      ));
+      expect(diagnosticCall?.[0]).toMatchObject({
+        errorCategory: "dictionary_cleanup_failure",
+        attempts: 1,
+        errorName: "DictionaryLoadCleanupTimeoutError",
+        errorCode: "DICTIONARY_LOAD_CLEANUP_TIMEOUT",
+        timeoutPhase: "cleanup",
+      });
+      expect(JSON.stringify(diagnosticCall?.[0])).not.toContain(item.catalog);
+
+      // The fail-safe outcome clears the failed cache generation. Once the
+      // delayed cancellation finally settles, a later search can retry.
+      releaseStalledGeneration();
+      expect(stalledGenerationReleased).toBe(true);
+      await supertest(recoveryApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(200);
+      expect(dictionaryLoad).toHaveBeenCalledTimes(4);
+    } finally {
+      releaseStalledGeneration();
+      dictionaryErrorLog.mockRestore();
+      dictionaryLoad.mockRestore();
+    }
+  });
+
+  it("recovers edited keywords across fresh cache generations and bounds persistent failures", async () => {
+    const newKeywords = ["process-restart-keyword", "pinned-edit-confirmation"];
+    const findItem = (body: unknown) => {
+      const results = (body as {
+        results?: Array<{ item?: { id?: number; aiKeywords?: string[] } }>;
+      }).results;
+      return results?.find((result) => result.item?.id === item.id)?.item;
+    };
+
+    await withAuth(
+      supertest(app)
+        .patch(`/api/inventory/${item.id}/keywords`)
+        .send({ keywords: newKeywords }),
+      ADMIN_TOKEN,
+    ).expect(200);
+
+    const firstGeneration = await loadFreshInventoryRoutes();
+    const firstApp = express();
+    firstApp.use(express.json());
+    firstApp.use("/api", firstGeneration.routes);
+
+    const firstSearch = await supertest(firstApp)
+      .post("/api/inventory/search")
+      .send({ keywords: item.catalog })
+      .expect(200);
+    expect(findItem(firstSearch.body)?.aiKeywords).toEqual(newKeywords);
+
+    const afterFirstSearch = await fetchRow(item.id);
+    expect(afterFirstSearch?.aiKeywords).toEqual(newKeywords);
+    expect(afterFirstSearch?.pinnedKeywords).toEqual(newKeywords);
+
+    const secondGeneration = await loadFreshInventoryRoutes();
+    const failureApp = express();
+    failureApp.use(express.json());
+    failureApp.use("/api", secondGeneration.routes);
+
+    const actualTransaction = secondGeneration.db.transaction.bind(secondGeneration.db);
+    const dictionaryLoad = jest.spyOn(secondGeneration.db, "transaction");
+    const dictionaryErrorLog = jest.spyOn(secondGeneration.logger, "error");
+    dictionaryLoad
+      // The search limiter transaction is unrelated to dictionary loading.
+      .mockImplementationOnce(callback => actualTransaction(callback))
+      .mockRejectedValue(new Error("persistent dictionary database failure after restart"));
+
+    try {
+      const failureResponse = await supertest(failureApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(500);
+
+      expect(failureResponse.body).toEqual({ error: "Search failed" });
+      expect(JSON.stringify(failureResponse.body)).not.toContain(item.catalog);
+      expect(dictionaryLoad).toHaveBeenCalledTimes(3);
+
+      const diagnosticCall = dictionaryErrorLog.mock.calls.find(([fields]) => (
+        typeof fields === "object" &&
+        fields !== null &&
+        "event" in fields &&
+        fields.event === "inventory_dictionary_load_failed"
+      ));
+      expect(diagnosticCall?.[0]).toMatchObject({
+        errorCategory: "dictionary_database_failure",
+        attempts: 2,
+        errorName: "Error",
+      });
+      expect(JSON.stringify(diagnosticCall?.[0])).not.toContain(item.catalog);
+      expect(JSON.stringify(diagnosticCall?.[0])).not.toContain(
+        "persistent dictionary database failure after restart",
+      );
+    } finally {
+      dictionaryErrorLog.mockRestore();
+      dictionaryLoad.mockRestore();
+    }
+  });
+
+  it("shares fresh dictionary initialization across concurrent searches and fails safely", async () => {
+    const newKeywords = ["concurrent-restart-keyword", "shared-dictionary-confirmation"];
+    const searchCount = 4;
+    const findItem = (body: unknown) => {
+      const results = (body as {
+        results?: Array<{ item?: { id?: number; aiKeywords?: string[] } }>;
+      }).results;
+      return results?.find((result) => result.item?.id === item.id)?.item;
+    };
+
+    await withAuth(
+      supertest(app)
+        .patch(`/api/inventory/${item.id}/keywords`)
+        .send({ keywords: newKeywords }),
+      ADMIN_TOKEN,
+    ).expect(200);
+
+    const allSearchesArrived = createDeferred<void>();
+    const releaseSearches = createDeferred<void>();
+    let searchArrivals = 0;
+    const searchLimiter = {
+      check: jest.fn(async () => {
+        searchArrivals += 1;
+        if (searchArrivals === searchCount) allSearchesArrived.resolve();
+        await releaseSearches.promise;
+        return { allowed: true };
+      }),
+    };
+    const generation = await loadFreshInventoryRoutes({ searchLimiter });
+    const generationApp = express();
+    generationApp.use(express.json());
+    generationApp.use("/api", generation.routes);
+
+    const dictionaryStarted = createDeferred<void>();
+    const releaseDictionary = createDeferred<void>();
+    const actualTransaction = generation.db.transaction.bind(generation.db);
+    const dictionaryLoad = jest.spyOn(generation.db, "transaction").mockImplementation(callback =>
+      actualTransaction(async tx => {
+        dictionaryStarted.resolve();
+        await releaseDictionary.promise;
+        return callback(tx);
+      }) as never,
+    );
+
+    try {
+      const responsesPromise = Promise.all(Array.from({ length: searchCount }, () =>
+        supertest(generationApp)
+          .post("/api/inventory/search")
+          .send({ keywords: item.catalog }),
+      ));
+
+      // Hold every request before the route can initialize its dictionary so
+      // all requests enter the same fresh generation together.
+      await allSearchesArrived.promise;
+      releaseSearches.resolve();
+      await dictionaryStarted.promise;
+      releaseDictionary.resolve();
+
+      const responses = await responsesPromise;
+      expect(responses).toHaveLength(searchCount);
+      for (const response of responses) {
+        expect(response.status).toBe(200);
+        expect(findItem(response.body)?.aiKeywords).toEqual(newKeywords);
+      }
+      expect(dictionaryLoad).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseSearches.resolve();
+      releaseDictionary.resolve();
+      dictionaryLoad.mockRestore();
+    }
+
+    const failureSearchesArrived = createDeferred<void>();
+    let failureSearchArrivals = 0;
+    const failureSearchLimiter = {
+      check: jest.fn(async () => {
+        failureSearchArrivals += 1;
+        if (failureSearchArrivals === searchCount) failureSearchesArrived.resolve();
+        return { allowed: true };
+      }),
+    };
+    const failedGeneration = await loadFreshInventoryRoutes({ searchLimiter: failureSearchLimiter });
+    const failureApp = express();
+    failureApp.use(express.json());
+    failureApp.use("/api", failedGeneration.routes);
+    const failedActualTransaction = failedGeneration.db.transaction.bind(failedGeneration.db);
+    let realTransactionFailureCount = 0;
+    const failedDictionaryLoad = jest
+      .spyOn(failedGeneration.db, "transaction")
+      .mockImplementation(callback =>
+        failedActualTransaction(async tx => {
+          if (realTransactionFailureCount < 2) {
+            realTransactionFailureCount += 1;
+            // Keep the failure inside a real transaction after touching the
+            // dictionary table, so PostgreSQL must roll it back and release
+            // the checked-out client before the shared load fails.
+            await tx.execute(sql`select * from "misspelling_map"`);
+            await tx.execute(sql`select 1 / 0`);
+          }
+          return callback(tx);
+        }) as never,
+      );
+    const dictionaryErrorLog = jest.spyOn(failedGeneration.logger, "error");
+
+    try {
+      const responsesPromise = Promise.all(Array.from({ length: searchCount }, () =>
+        supertest(failureApp)
+          .post("/api/inventory/search")
+          .send({ keywords: item.catalog }),
+      ));
+
+      await failureSearchesArrived.promise;
+      const responses = await responsesPromise;
+      expect(responses).toHaveLength(searchCount);
+      for (const response of responses) {
+        expect(response.status).toBe(500);
+        expect(response.body).toEqual({ error: "Search failed" });
+        expect(JSON.stringify(response.body)).not.toContain(item.catalog);
+      }
+      // The shared failed generation retries once, rather than starting one
+      // dictionary transaction per concurrent request. Both transactions
+      // touched the real dictionary table before PostgreSQL rolled them back.
+      expect(failedDictionaryLoad).toHaveBeenCalledTimes(2);
+
+      const diagnostics = dictionaryErrorLog.mock.calls.filter(([fields]) => (
+        typeof fields === "object" &&
+        fields !== null &&
+        "event" in fields &&
+        (fields.event === "inventory_dictionary_load_failed" ||
+          fields.event === "inventory_search_failed")
+      ));
+      expect(diagnostics).toHaveLength(searchCount + 1);
+      for (const diagnostic of diagnostics) {
+        expect(JSON.stringify(diagnostic)).not.toContain(item.catalog);
+      }
+
+      const diagnosticCall = dictionaryErrorLog.mock.calls.find(([fields]) => (
+        typeof fields === "object" &&
+        fields !== null &&
+        "event" in fields &&
+        fields.event === "inventory_dictionary_load_failed"
+      ));
+      expect(diagnosticCall?.[0]).toMatchObject({
+        errorCategory: "dictionary_database_failure",
+        attempts: 2,
+        errorName: "Error",
+      });
+      expect(JSON.stringify(diagnosticCall?.[0])).not.toContain("Failed query: select 1 / 0");
+
+      // The failed shared generation must clear its cache promise. A later
+      // search on the same route instance must reacquire a released client,
+      // initialize the dictionaries, and complete without a process restart.
+      const recoveryResponse = await supertest(failureApp)
+        .post("/api/inventory/search")
+        .send({ keywords: item.catalog })
+        .expect(200);
+      expect(findItem(recoveryResponse.body)?.id).toBe(item.id);
+      expect(failedDictionaryLoad).toHaveBeenCalledTimes(3);
+    } finally {
+      dictionaryErrorLog.mockRestore();
+      failedDictionaryLoad.mockRestore();
     }
   });
 
@@ -897,5 +1341,133 @@ describe("PATCH /api/inventory/:id/photo — remove", () => {
         .send({ slot: 1 }),
       ADMIN_TOKEN,
     ).expect(400);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Edit Part → Save Details persistence regression
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Edit Part Save Details — multi-field database persistence", () => {
+  it("persists every edited field and leaves an unrelated inventory row unchanged", async () => {
+    if (persistenceDecoyId === undefined) {
+      throw new Error("inventory edit persistence decoy was not seeded");
+    }
+
+    // Give the dimensions route a non-null field that this edit intentionally
+    // omits. The final read must prove the route merged the patch instead of
+    // replacing the entire JSONB value.
+    await db
+      .update(inventoryTable)
+      .set({
+        dimensions: { length: 100, width: 50, height: 25, diameter: 9 },
+      })
+      .where(eq(inventoryTable.id, item.id));
+
+    const decoyBefore = await fetchRow(persistenceDecoyId);
+    expect(decoyBefore).toMatchObject({
+      id: persistenceDecoyId,
+      vendor: "JEST-EDIT-DECOY-VENDOR",
+      catalog: PERSISTENCE_DECOY_CATALOG,
+      description: "Unrelated decoy description",
+      binLocations: ["DECOY-BIN-01"],
+      aiKeywords: ["decoy keyword"],
+      pinnedKeywords: ["decoy keyword"],
+      barcodes: ["999999999999"],
+      orderPurchase: 1,
+      orderQuantity: 2,
+      totalOpOq: 3,
+      dimensions: { length: 90, width: 80, height: 70, diameter: 5 },
+    });
+
+    const editRequests: Array<[string, supertest.Test]> = [
+      [
+        "description",
+        withAuth(
+          supertest(app)
+            .patch(`/api/inventory/${item.id}/description`)
+            .send({ description: "  Updated relay  " }),
+          ADMIN_TOKEN,
+        ),
+      ],
+      [
+        "bins",
+        withAuth(
+          supertest(app)
+            .patch(`/api/inventory/${item.id}/bins`)
+            .send({ binLocations: ["EDIT-BIN-01", "  B2-07  ", "b2-07"] }),
+          ADMIN_TOKEN,
+        ),
+      ],
+      [
+        "keywords",
+        withAuth(
+          supertest(app)
+            .patch(`/api/inventory/${item.id}/keywords`)
+            .send({ keywords: [" replacement keyword "] }),
+          ADMIN_TOKEN,
+        ),
+      ],
+      [
+        "order",
+        withAuth(
+          supertest(app)
+            .patch(`/api/inventory/${item.id}/order`)
+            .send({ orderPurchase: 7, orderQuantity: 8 }),
+          ADMIN_TOKEN,
+        ),
+      ],
+      [
+        "dimensions",
+        withAuth(
+          supertest(app)
+            .patch(`/api/inventory/${item.id}/dimensions`)
+            .send({ length: 12.3, width: 4.6, height: 7 }),
+          ADMIN_TOKEN,
+        ),
+      ],
+    ];
+
+    for (const [field, request] of editRequests) {
+      await expectSuccessfulEditRoute(field, request);
+    }
+
+    // This is a direct database read, not a route response or application
+    // cache read. It is intentionally performed only after every PATCH has
+    // completed so the assertion covers durable state across the full edit.
+    const editedRow = await fetchRow(item.id);
+    expect(editedRow).toMatchObject({
+      id: item.id,
+      description: "Updated relay",
+      binLocations: ["EDIT-BIN-01", "B2-07"],
+      aiKeywords: ["replacement keyword"],
+      pinnedKeywords: ["replacement keyword"],
+      orderPurchase: 7,
+      orderQuantity: 8,
+      totalOpOq: 15,
+      dimensions: { length: 12.3, width: 4.6, height: 7, diameter: 9 },
+    });
+    expect(editedRow?.dimensions).toEqual({
+      length: 12.3,
+      width: 4.6,
+      height: 7,
+      diameter: 9,
+    });
+
+    const decoyAfter = await fetchRow(persistenceDecoyId);
+    expect(decoyAfter).toMatchObject({
+      id: persistenceDecoyId,
+      vendor: "JEST-EDIT-DECOY-VENDOR",
+      catalog: PERSISTENCE_DECOY_CATALOG,
+      description: "Unrelated decoy description",
+      binLocations: ["DECOY-BIN-01"],
+      aiKeywords: ["decoy keyword"],
+      pinnedKeywords: ["decoy keyword"],
+      barcodes: ["999999999999"],
+      orderPurchase: 1,
+      orderQuantity: 2,
+      totalOpOq: 3,
+      dimensions: { length: 90, width: 80, height: 70, diameter: 5 },
+    });
   });
 });

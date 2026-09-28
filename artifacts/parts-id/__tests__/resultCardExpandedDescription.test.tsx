@@ -16,7 +16,7 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { render } from "@testing-library/react-native";
+import { fireEvent, render } from "@testing-library/react-native";
 import type { RenderResult } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 
@@ -55,6 +55,29 @@ jest.mock("@/components/PinIcon", () => {
   const React = require("react");
   return {
     PinIcon: () => React.createElement("pin-icon"),
+  };
+});
+
+jest.mock("@/components/SizeVariantDropdown", () => {
+  const React = require("react");
+  const { Pressable, Text } = require("react-native");
+  return {
+    getSizeLabel: (size: string | null | undefined, description: string | null | undefined) =>
+      size ?? description ?? "—",
+    SizeVariantDropdown: ({
+      variants,
+      onSelect,
+    }: {
+      variants: Array<{ id: number; catalog: string }>;
+      onSelect: (variant: { id: number; catalog: string }) => void;
+    }) => (
+      <Pressable
+        accessibilityLabel="select-size-variant"
+        onPress={() => onSelect(variants[0]!)}
+      >
+        <Text>{variants[0]?.catalog}</Text>
+      </Pressable>
+    ),
   };
 });
 
@@ -100,6 +123,34 @@ function allTextStrings(root: RenderResult["root"]): string[] {
     .queryAll((n: TestInstance) => (n.type as string) === "Text", { includeSelf: true })
     .map((n: TestInstance) => (typeof n.props.children === "string" ? n.props.children : ""))
     .filter(Boolean);
+}
+
+function makeVariantResult(): SearchResult {
+  return {
+    item: {
+      id: 1,
+      catalog: "BASE-1",
+      vendor: "ACME",
+      description: "Base description",
+      orderPurchase: 1,
+      orderQuantity: 2,
+      totalOpOq: 3,
+      binLocations: ["BASE-BIN"],
+    },
+    confidence: 0.9,
+    variants: [
+      {
+        id: 2,
+        catalog: "VARIANT-2",
+        vendor: "ACME",
+        description: "Variant description",
+        orderPurchase: 4,
+        orderQuantity: 5,
+        totalOpOq: 9,
+        binLocations: ["VARIANT-BIN"],
+      },
+    ],
+  } as unknown as SearchResult;
 }
 
 // =============================================================================
@@ -191,6 +242,39 @@ describe("ResultCard — description display priority", () => {
 
     const texts = allTextStrings(result.root);
     expect(texts).toContain("No description");
+
+    await result.unmount();
+  });
+
+  it("adopts a patched base item in place without replacing an intentionally selected variant", async () => {
+    const initial = makeVariantResult();
+    const result = await render(<ResultCard result={initial} rank={0} />);
+
+    const variantPicker = result.root!
+      .queryAll(
+        (node: TestInstance) => node.props.accessibilityLabel === "select-size-variant",
+        { includeSelf: true },
+      )[0];
+    expect(variantPicker).toBeDefined();
+    await fireEvent.press(variantPicker!);
+
+    expect(allTextStrings(result.root)).toContain("VARIANT-2");
+    expect(allTextStrings(result.root)).toContain("Variant description");
+
+    const refreshed = {
+      ...initial,
+      item: {
+        ...initial.item,
+        description: "Updated base description",
+        binLocations: ["UPDATED-BASE-BIN"],
+      },
+    } as SearchResult;
+    await result.rerender(<ResultCard result={refreshed} rank={0} />);
+
+    const refreshedTexts = allTextStrings(result.root);
+    expect(refreshedTexts).toContain("VARIANT-2");
+    expect(refreshedTexts).toContain("Variant description");
+    expect(refreshedTexts).not.toContain("Updated base description");
 
     await result.unmount();
   });

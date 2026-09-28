@@ -34,9 +34,16 @@ jest.mock("expo-router", () => ({
 
 // ── @clerk/expo ──────────────────────────────────────────────────────────────
 const mockHandleRedirectCallback = jest.fn();
-jest.mock("@clerk/expo", () => ({
-  useClerk: () => ({ handleRedirectCallback: mockHandleRedirectCallback }),
-}));
+jest.mock("@clerk/expo", () => {
+  const {
+    assertClerkMockContract,
+    createClerkExpoMock,
+  } = jest.requireActual("../__mocks__/clerk-expo");
+  const clerkMock = createClerkExpoMock({
+    useClerk: () => ({ handleRedirectCallback: mockHandleRedirectCallback }),
+  });
+  return assertClerkMockContract(clerkMock, ["useClerk"], "ssoCallbackResilience");
+});
 
 // ── @/hooks/useColors ────────────────────────────────────────────────────────
 jest.mock("@/hooks/useColors", () => ({

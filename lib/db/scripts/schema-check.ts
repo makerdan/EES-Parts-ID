@@ -25,7 +25,8 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_DIR = join(__dirname, "..");
-const MIGRATIONS_DIR = join(DB_DIR, "drizzle");
+const MIGRATIONS_DIR =
+  process.env.SCHEMA_CHECK_MIGRATIONS_DIR?.trim() || join(DB_DIR, "drizzle");
 
 // ---------------------------------------------------------------------------
 // 1. Load every table exported from the schema index.
@@ -129,12 +130,13 @@ for (const tableName of tableNames) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Check each column exists in migrations (skip columns of missing tables).
+// 4. Check each column exists in migrations.
+//
+// Do not skip columns for missing tables: the table-level diagnostic identifies
+// the missing DDL, while the column-level diagnostics provide the complete
+// repair checklist in the same run.
 // ---------------------------------------------------------------------------
-const missingColumns = findMissingColumns(
-  columns.filter((entry) => !missingTables.includes(entry.tableName)),
-  migratedColumns,
-);
+const missingColumns = findMissingColumns(columns, migratedColumns);
 
 // ---------------------------------------------------------------------------
 // 5. Barrel completeness check — every .ts file in src/schema/ must be
@@ -282,6 +284,10 @@ if (migrationsFailed) {
       console.error(`  - ${t}`);
     }
     console.error("");
+    console.error(
+      "To fix missing tables: add a CREATE TABLE migration for each listed table, then commit it.",
+    );
+    console.error("");
   }
 
   if (missingColumns.length > 0) {
@@ -290,12 +296,19 @@ if (migrationsFailed) {
       console.error(`  - ${c.tableName}.${c.columnName}`);
     }
     console.error("");
+    console.error(
+      "To fix missing columns: generate a migration for the missing changes and commit it:",
+    );
+    console.error("  pnpm --filter @workspace/db run generate");
+    console.error("");
   }
 
-  console.error(
-    "To fix: generate a migration for the missing changes and commit it:"
-  );
-  console.error("  pnpm --filter @workspace/db run generate");
+  if (missingTables.length > 0 && missingColumns.length === 0) {
+    console.error(
+      "After adding the table migration, run the schema check again:"
+    );
+    console.error("  pnpm --filter @workspace/db run schema:check");
+  }
 }
 
 if (barrelFailed) {

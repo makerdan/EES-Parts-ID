@@ -8,6 +8,8 @@
  * that previously exposed false-ready scenes.
  */
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const suites = [
   "src/__tests__/WarehouseMapRoute.test.tsx",
@@ -37,13 +39,21 @@ function killProcessGroup(child, signal) {
   }
 }
 
-function runSuite(file) {
+export function runSuite(
+  file,
+  {
+    command = "pnpm",
+    args = ["--filter", "@workspace/mockup-sandbox", "exec", "vitest", "run", file],
+    timeoutMs = SUITE_TIMEOUT_MS,
+    terminationGraceMs = TERMINATION_GRACE_MS,
+    spawnImpl = spawn,
+  } = {},
+) {
   return new Promise((resolve) => {
-    const child = spawn(
-      "pnpm",
-      ["--filter", "@workspace/mockup-sandbox", "exec", "vitest", "run", file],
-      { detached: true, stdio: ["ignore", "pipe", "pipe"] },
-    );
+    const child = spawnImpl(command, args, {
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let output = "";
     let timedOut = false;
     let settled = false;
@@ -53,7 +63,7 @@ function runSuite(file) {
     let pendingResult;
     const timeoutTimer = setTimeout(() => {
       timedOut = true;
-      output += `[protected-map-smoke] timed out after ${SUITE_TIMEOUT_MS} ms; terminating process group\n`;
+      output += `[protected-map-smoke] timed out after ${timeoutMs} ms; terminating process group\n`;
       killProcessGroup(child, "SIGTERM");
       escalationTimer = setTimeout(() => {
         killProcessGroup(child, "SIGKILL");
@@ -69,11 +79,11 @@ function runSuite(file) {
                 signal: "SIGKILL",
                 output,
               }),
-            TERMINATION_GRACE_MS,
+            terminationGraceMs,
           );
         }
-      }, TERMINATION_GRACE_MS);
-    }, SUITE_TIMEOUT_MS);
+      }, terminationGraceMs);
+    }, timeoutMs);
 
     const finish = (result) => {
       if (settled) return;
@@ -81,7 +91,7 @@ function runSuite(file) {
       clearTimeout(timeoutTimer);
       clearTimeout(escalationTimer);
       clearTimeout(forceFinishTimer);
-      resolve({ ...result, timedOut });
+      resolve({ ...result, timedOut, timeoutMs });
     };
 
     const reportResult = (result) => {
@@ -112,33 +122,52 @@ function runSuite(file) {
   });
 }
 
-const results = await Promise.all(suites.map(runSuite));
-let failed = false;
+export async function runProtectedMapSmoke({
+  suiteFiles = suites,
+  runSuiteImpl = runSuite,
+  getRunSuiteOptions = () => undefined,
+  log = console.log,
+  error = console.error,
+} = {}) {
+  const results = await Promise.all(
+    suiteFiles.map((file) => runSuiteImpl(file, getRunSuiteOptions(file))),
+  );
+  let failed = false;
 
-for (const result of results) {
-  if (result.code === 0) {
-    console.log(`[protected-map-smoke] PASSED owner=${result.file}`);
-    continue;
+  for (const result of results) {
+    if (result.code === 0) {
+      log(`[protected-map-smoke] PASSED owner=${result.file}`);
+      continue;
+    }
+
+    failed = true;
+    error(
+      `[protected-map-smoke] FAILED owner=${result.file} ${
+        result.timedOut ? `reason=timeout timeout=${result.timeoutMs ?? SUITE_TIMEOUT_MS}ms ` : ""
+      }exit=${result.code}${result.signal ? ` signal=${result.signal}` : ""}`,
+    );
+    if (result.output?.trim()) {
+      error(result.output.trimEnd());
+    }
   }
 
-  failed = true;
-  console.error(
-    `[protected-map-smoke] FAILED owner=${result.file} ${
-      result.timedOut ? `reason=timeout timeout=${SUITE_TIMEOUT_MS}ms ` : ""
-    }exit=${result.code}${result.signal ? ` signal=${result.signal}` : ""}`,
-  );
-  if (result.output.trim()) {
-    process.stderr.write(`${result.output.trimEnd()}\n`);
+  if (failed) {
+    error(
+      "[protected-map-smoke] one or more protected map suites failed; ownership is reported above",
+    );
+  } else {
+    log(
+      `[protected-map-smoke] all ${results.length} protected map suites passed concurrently`,
+    );
   }
+
+  return { failed, results };
 }
 
-if (failed) {
-  console.error(
-    "[protected-map-smoke] one or more protected map suites failed; ownership is reported above",
-  );
-  process.exit(1);
-}
+const isMainModule =
+  process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
 
-console.log(
-  `[protected-map-smoke] all ${results.length} protected map suites passed concurrently`,
-);
+if (isMainModule) {
+  const { failed } = await runProtectedMapSmoke();
+  if (failed) process.exitCode = 1;
+}

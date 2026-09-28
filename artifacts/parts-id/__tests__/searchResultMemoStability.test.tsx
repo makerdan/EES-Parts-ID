@@ -154,14 +154,19 @@ jest.mock("@/utils/searchHelpers", () => ({
 
 jest.mock("@/utils/useTrackScreen", () => ({ useTrackScreen: jest.fn() }));
 
-jest.mock("@/utils/searchHistory", () => ({
-  appendQueryHistory:  jest.fn().mockResolvedValue(undefined),
-  appendViewedHistory: jest.fn().mockResolvedValue(undefined),
-  clearQueryHistory:   jest.fn().mockResolvedValue(undefined),
-  clearViewedHistory:  jest.fn().mockResolvedValue(undefined),
-  loadQueryHistory:    jest.fn().mockResolvedValue([]),
-  loadViewedHistory:   jest.fn().mockResolvedValue([]),
-}));
+jest.mock("@/contexts/UserHistoryContext", () => {
+  const value = {
+    history: { queryHistory: [], viewedHistory: [], scanHistory: [] },
+    status: "ready",
+    recordQuery: jest.fn().mockResolvedValue(undefined),
+    clearQueries: jest.fn().mockResolvedValue(undefined),
+    recordViewed: jest.fn().mockResolvedValue(undefined),
+    clearViewed: jest.fn().mockResolvedValue(undefined),
+    recordScan: jest.fn().mockResolvedValue(undefined),
+    clearScans: jest.fn().mockResolvedValue(undefined),
+  };
+  return { useUserHistory: () => value };
+});
 
 jest.mock("@/utils/searchResetEvent", () => ({
   searchResetEvent: { subscribe: jest.fn(() => jest.fn()), emit: jest.fn() },

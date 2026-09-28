@@ -6,42 +6,15 @@
  *   - prependEntry: prepend, deduplication, MAX_ENTRIES cap
  *   - groupScansByDate: "Today" / "Yesterday" / named-month labels, ordering,
  *     multiple entries in a single group, empty input
- *   - loadScanHistory: storage hit, empty storage, corrupt JSON, non-array JSON,
- *     entries with invalid shapes are filtered, AsyncStorage error
- *   - saveScanHistory: delegates to AsyncStorage correctly
+ *   - isValidScanEntry: accepts valid server entries and rejects malformed data
  */
 
 import {
   prependEntry,
   groupScansByDate,
-  loadScanHistory,
-  saveScanHistory,
+  isValidScanEntry,
 } from "../utils/scanHistory";
 import type { ScanEntry, ScanGroup } from "../utils/scanHistory";
-
-// ── AsyncStorage mock ─────────────────────────────────────────────────────────
-const mockGetItem = jest.fn<Promise<string | null>, [string]>();
-const mockSetItem = jest.fn<Promise<void>, [string, string]>();
-
-jest.mock("@react-native-async-storage/async-storage", () => ({
-  __esModule: true,
-  default: {
-    getItem: (...args: [string]) => mockGetItem(...args),
-    setItem: (...args: [string, string]) => mockSetItem(...args),
-    removeItem: jest.fn(() => Promise.resolve()),
-    multiRemove: jest.fn(() => Promise.resolve()),
-  },
-}));
-
-// storageErrorReporter is called on saveScanHistory failures; silence it
-jest.mock("../utils/storageErrorReporter", () => ({
-  reportStorageError: jest.fn(),
-}));
-
-beforeEach(() => {
-  jest.clearAllMocks();
-  mockSetItem.mockResolvedValue(undefined);
-});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -191,68 +164,20 @@ describe("groupScansByDate", () => {
   });
 });
 
-// ── loadScanHistory ───────────────────────────────────────────────────────────
+// ── isValidScanEntry ──────────────────────────────────────────────────────────
 
-describe("loadScanHistory", () => {
-  it("returns an empty array when AsyncStorage has no entry", async () => {
-    mockGetItem.mockResolvedValue(null);
-    expect(await loadScanHistory()).toEqual([]);
+describe("isValidScanEntry", () => {
+  it("accepts a valid scan, including optional admin audit metadata", () => {
+    expect(isValidScanEntry({
+      ...makeEntry("BC-VALID"),
+      adminAction: "linked",
+    })).toBe(true);
   });
 
-  it("returns parsed entries when the storage key is populated", async () => {
-    const entries: ScanEntry[] = [
-      makeEntry("BC-1"),
-      makeEntry("BC-2", false),
-    ];
-    mockGetItem.mockResolvedValue(JSON.stringify(entries));
-    const result = await loadScanHistory();
-    expect(result).toHaveLength(2);
-    expect(result[0]!.barcode).toBe("BC-1");
-  });
-
-  it("returns an empty array for corrupt JSON", async () => {
-    mockGetItem.mockResolvedValue("{{{not-json");
-    expect(await loadScanHistory()).toEqual([]);
-  });
-
-  it("returns an empty array when the stored value is not an array", async () => {
-    mockGetItem.mockResolvedValue(JSON.stringify({ barcode: "X" }));
-    expect(await loadScanHistory()).toEqual([]);
-  });
-
-  it("filters out entries that are missing required fields", async () => {
-    const good: ScanEntry = makeEntry("GOOD");
-    const bad = { barcode: 123, found: "yes" }; // wrong types
-    const noTimestamp = { barcode: "BC-NT", found: true }; // missing timestamp
-    mockGetItem.mockResolvedValue(JSON.stringify([good, bad, noTimestamp]));
-    const result = await loadScanHistory();
-    expect(result).toHaveLength(1);
-    expect(result[0]!.barcode).toBe("GOOD");
-  });
-
-  it("returns an empty array when AsyncStorage throws", async () => {
-    mockGetItem.mockRejectedValue(new Error("permission denied"));
-    expect(await loadScanHistory()).toEqual([]);
-  });
-});
-
-// ── saveScanHistory ───────────────────────────────────────────────────────────
-
-describe("saveScanHistory", () => {
-  it("serialises entries to AsyncStorage with the correct key", async () => {
-    const entries: ScanEntry[] = [makeEntry("BC-SAVE")];
-    await saveScanHistory(entries);
-    expect(mockSetItem).toHaveBeenCalledTimes(1);
-    const [key, raw] = mockSetItem.mock.calls[0] as [string, string];
-    expect(key).toBe("@partsid/barcode_scan_history");
-    const parsed = JSON.parse(raw) as ScanEntry[];
-    expect(parsed[0]!.barcode).toBe("BC-SAVE");
-  });
-
-  it("serialises an empty array without error", async () => {
-    await saveScanHistory([]);
-    expect(mockSetItem).toHaveBeenCalledTimes(1);
-    const [, raw] = mockSetItem.mock.calls[0] as [string, string];
-    expect(JSON.parse(raw)).toEqual([]);
+  it("rejects missing fields, invalid timestamps, and malformed optional fields", () => {
+    expect(isValidScanEntry({ barcode: "BC-MISSING", found: true })).toBe(false);
+    expect(isValidScanEntry({ ...makeEntry("BC-BAD-TIME"), timestamp: "not-a-date" })).toBe(false);
+    expect(isValidScanEntry({ ...makeEntry("BC-BAD-ID"), itemId: "1" })).toBe(false);
+    expect(isValidScanEntry({ ...makeEntry("BC-BAD-ACTION"), adminAction: "deleted" })).toBe(false);
   });
 });

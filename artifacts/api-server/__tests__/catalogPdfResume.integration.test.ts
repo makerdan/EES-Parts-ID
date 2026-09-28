@@ -72,6 +72,7 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
 
@@ -185,9 +186,11 @@ afterEach(() => {
 
 afterAll(async () => {
   if (seededJobIds.length > 0) {
-    await db
-      .delete(catalogPdfJobTable)
-      .where(inArray(catalogPdfJobTable.id, seededJobIds));
+    await bestEffortFixtureCleanup("catalog PDF resume jobs", async () => {
+      await db
+        .delete(catalogPdfJobTable)
+        .where(inArray(catalogPdfJobTable.id, seededJobIds));
+    });
   }
 }, 15_000);
 
@@ -273,6 +276,23 @@ describe("POST /api/admin/catalog-pdf/:jobId/resume — skips already-processed 
 
     const expectedPageCalls = TOTAL_PAGES - ALREADY_PROCESSED;
     expect(mockExtractCatalogPage).toHaveBeenCalledTimes(expectedPageCalls);
+  });
+
+  it("passes the manual fallback choice to every resumed page", async () => {
+    const jobId = await seedJob({ status: "failed", processedPages: 1, totalPages: 2 });
+    mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(2));
+    mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
+
+    await supertest(app)
+      .post(`/api/admin/catalog-pdf/${jobId}/resume`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .set("x-use-openai-fallback", "true")
+      .send({ pdfBase64: FAKE_PDF_BASE64 })
+      .expect(200);
+    await waitForJobTerminal(jobId, adminToken);
+    expect(mockExtractCatalogPage).toHaveBeenCalledWith(
+      "page 2 text", [], VENDOR, true,
+    );
   });
 
   it("processes only the remaining pages and reaches the correct final processedPages count", async () => {

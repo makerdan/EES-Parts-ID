@@ -97,7 +97,7 @@ export function FailedJobsSection({
     .map(Number)
     .filter(
       (id) =>
-        resumeProgress[id]?.status === "done" &&
+        (resumeProgress[id]?.status === "done" || resumeProgress[id]?.status === "done_with_errors") &&
         !failedJobs.find((j) => j.id === id),
     );
 
@@ -108,6 +108,7 @@ export function FailedJobsSection({
     .filter(
       (id) =>
         resumeProgress[id]?.status !== "done" &&
+        resumeProgress[id]?.status !== "done_with_errors" &&
         !failedJobs.find((j) => j.id === id),
     );
 
@@ -366,7 +367,8 @@ function ResumeProgressCard({ job, jobId, progress, onReviewChanges, onDismissEr
   const vendor = job?.vendor ?? "Unknown vendor";
   const filename = job?.filename ?? "catalog.pdf";
 
-  const isDone = progress.status === "done";
+  const isDone = progress.status === "done" || progress.status === "done_with_errors";
+  const isPartialDone = progress.status === "done_with_errors";
   const isFailed = progress.status === "failed";
   const isStalled = progress.status === "stalled";
   const isUploading = progress.status === "uploading";
@@ -504,7 +506,7 @@ function ResumeProgressCard({ job, jobId, progress, onReviewChanges, onDismissEr
           {!isDone && <ActivityIndicator size="small" color={colors.primary} style={s.badgeSpinner} />}
           <Text style={[s.badgeText, { color: colors.primary }]}>
             {isDone
-              ? "Done"
+              ? isPartialDone ? "Done with errors" : "Done"
               : isUploading && isChunked
               ? `Uploading ${progress.chunkIndex} of ${progress.totalChunks}…`
               : isUploading
@@ -546,8 +548,13 @@ function ResumeProgressCard({ job, jobId, progress, onReviewChanges, onDismissEr
       {isDone && (
         <>
           <Text style={[s.progressText, { color: colors.mutedForeground }]}>
-            Done — {progress.matchedParts} part{progress.matchedParts !== 1 ? "s" : ""} updated across {progress.processedPages} pages
+            {isPartialDone ? "Processing finished with some errors" : "Done"} — {progress.matchedParts} part{progress.matchedParts !== 1 ? "s" : ""} updated across {progress.processedPages}{progress.totalPages != null ? ` of ${progress.totalPages}` : ""} pages
           </Text>
+          {isPartialDone ? (
+            <Text style={[s.errorMsg, { color: colors.mutedForeground }]}>
+              {progress.errorMessage ?? "Some catalog images could not be saved. Successful inventory updates are available to review."}
+            </Text>
+          ) : null}
           <Pressable
             onPress={() => onReviewChanges(id)}
             style={[s.reviewBtn, { borderColor: colors.primary + "88" }]}

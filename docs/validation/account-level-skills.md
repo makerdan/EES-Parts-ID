@@ -132,19 +132,23 @@ environment-aware platform may provide a different mirror root through
 `skillId`, `sourceRevision`, and `fingerprint`. The command prints a fixed JSON
 schema to stdout: outcome and canonical skill identity, plus revision and
 fingerprint when the canonical source is available, and one bounded reason code
-for mismatches. It never echoes mirror values or prints a skill file, secret,
-credential, or source path.
+for mismatches. Before passing, it also verifies that the mirror has exactly the
+canonical skill file set and matching bytes, with no unexpected, symlinked, or
+unsupported entries. It never echoes mirror values or prints a skill file,
+secret, credential, or source path.
 
 An unreadable or linked sidecar, including a permission-denied file, a directory at the
 sidecar path, malformed JSON, or invalid sidecar fields, is reported as
 `mismatch` with the bounded `invalid-mirror-metadata` reason. Status checks do
 not repair, remove, create, or rewrite the mirror root, sidecar, source, or
-workspace projection in any outcome.
+workspace projection in any outcome. A missing, altered, linked, unsupported, or
+unexpected mirrored entry is a `mismatch` with the bounded
+`mirror-contents-mismatch` reason.
 
 | Outcome | Exit | Meaning |
 |---|---:|---|
-| `pass` | 0 | Mirror identity, revision, and fingerprint exactly match the canonical account source |
-| `mismatch` | 1 | Mirror metadata is invalid or differs from canonical metadata |
+| `pass` | 0 | Mirror metadata, exact file set, and file bytes match the canonical account source |
+| `mismatch` | 1 | Mirror metadata or actual contents are invalid or differ from canonical source |
 | `unavailable-source` | 2 | The canonical account source or revision metadata cannot be read |
 | `missing-mirror` | 3 | The platform mirror metadata sidecar is absent |
 

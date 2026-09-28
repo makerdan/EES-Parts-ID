@@ -19,6 +19,8 @@ process.env.ADMIN_PASSWORD = "jest-pinned-kw-secret";
 process.env.AI_PROVIDER = "poe";
 process.env.POE_API_KEY2 = "test-poe-key";
 
+let mockPoeResponseDelayMs = 0;
+
 afterAll(() => {
   if (_origAdminPassword === undefined) {
     delete process.env.ADMIN_PASSWORD;
@@ -45,7 +47,12 @@ jest.mock("../lib/poeBot", () => {
   const actual = jest.requireActual<typeof import("../lib/poeBot")>("../lib/poeBot");
   return {
     ...actual,
-    callPoeBotWithChain: jest.fn().mockResolvedValue('["ai-keyword-alpha","ai-keyword-beta"]'),
+    callPoeBotWithChain: jest.fn(async () => {
+      if (mockPoeResponseDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, mockPoeResponseDelayMs));
+      }
+      return '["ai-keyword-alpha","ai-keyword-beta"]';
+    }),
     isPoeCallAuthError: jest.fn(() => false),
     isPoeCallTransientError: jest.fn(() => false),
   };
@@ -75,14 +82,31 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
-import { eq, isNull, sql } from "drizzle-orm";
+import { eq, inArray, isNull, sql } from "drizzle-orm";
 import app from "../app";
 import { signAdminToken } from "../../__tests__/helpers/adminAuth";
-import { db, inventoryTable } from "@workspace/db";
+import { callPoeBotWithChain } from "../lib/poeBot";
+import { cleanupBulkEnrichHistory, reconcileBulkEnrichJobs } from "../routes/inventory";
+import { bulkEnrichJobTable, db, inventoryTable } from "@workspace/db";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PINNED = ["Cutler-Hammer", "BAB breaker", "CH-series"];
 const AI_KEYWORDS = ["ai-keyword-alpha", "ai-keyword-beta"];
+const BULK_ENRICH_TEST_TIMEOUT_MS = 30_000;
+const BULK_ENRICH_CLEANUP_TIMEOUT_MS = 30_000;
+const bulkEnrichRetentionFixtureIds: number[] = [];
+
+function makeDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+const mockedCallPoeBotWithChain = jest.mocked(callPoeBotWithChain);
 
 function makeAdminToken(): string {
   return signAdminToken(Date.now(), "jest-pinned-kw-secret");
@@ -116,7 +140,7 @@ async function seedWithPinnedKeywords(catalog: string, pinned: string[]) {
  */
 async function triggerBulkEnrichAndWait(
   token: string,
-  timeoutMs = 15_000,
+  timeoutMs = BULK_ENRICH_TEST_TIMEOUT_MS,
 ): Promise<void> {
   const startRes = await supertest(app)
     .post("/api/inventory/bulk-enrich")
@@ -126,26 +150,74 @@ async function triggerBulkEnrichAndWait(
 
   if (startRes.body?.job?.running === false) return; // already done (edge case)
 
+  await waitForBulkEnrichIdle(token, timeoutMs);
+}
+
+async function waitForBulkEnrichIdle(
+  token: string,
+  timeoutMs = BULK_ENRICH_CLEANUP_TIMEOUT_MS,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 50));
     const statusRes = await supertest(app)
       .get("/api/inventory/bulk-enrich/status")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     if (!statusRes.body.running) return;
+    await new Promise((r) => setTimeout(r, 50));
   }
-  throw new Error(`Bulk-enrich job did not finish within ${timeoutMs}ms`);
+  throw new Error(`Bulk-enrich job did not become idle within ${timeoutMs}ms`);
+}
+
+async function waitForBulkEnrichRunning(
+  token: string,
+  timeoutMs = BULK_ENRICH_CLEANUP_TIMEOUT_MS,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const statusRes = await supertest(app)
+      .get("/api/inventory/bulk-enrich/status")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    if (statusRes.body.running) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`Bulk-enrich job did not become running within ${timeoutMs}ms`);
+}
+
+async function stopBulkEnrichAndWait(token: string): Promise<void> {
+  const statusRes = await supertest(app)
+    .get("/api/inventory/bulk-enrich/status")
+    .set("Authorization", `Bearer ${token}`)
+    .expect(200);
+
+  if (!statusRes.body.running) return;
+
+  const stopRes = await supertest(app)
+    .delete("/api/inventory/bulk-enrich")
+    .set("Authorization", `Bearer ${token}`);
+
+  // The job may finish between the status and stop requests.
+  expect([200, 409]).toContain(stopRes.status);
+  await waitForBulkEnrichIdle(token);
 }
 
 // ── Teardown ──────────────────────────────────────────────────────────────────
 afterAll(async () => {
+  await stopBulkEnrichAndWait(makeAdminToken());
+
   // Delete only THIS suite's fixture rows (JEST-ITG-PIN-*). Do NOT use a
   // blanket JEST-ITG-% prefix delete — parallel suites share the database and
   // a prefix delete wipes fixtures another suite is actively using.
   await db
     .delete(inventoryTable)
     .where(sql`${inventoryTable.catalog} LIKE ${"JEST-ITG-PIN-%"}`);
+
+  if (bulkEnrichRetentionFixtureIds.length > 0) {
+    await db
+      .delete(bulkEnrichJobTable)
+      .where(inArray(bulkEnrichJobTable.id, bulkEnrichRetentionFixtureIds));
+  }
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -329,13 +401,15 @@ describe("POST /api/inventory/enrich (SSE) — pinned keywords survive re-enrich
 
 describe("POST /api/inventory/bulk-enrich — pinned keywords survive the real bulk job", () => {
   beforeEach(async () => {
+    await stopBulkEnrichAndWait(makeAdminToken());
+
     // Stamp all currently-unenriched rows so the bulk job only picks up our
     // seeded item.  Items enriched by earlier tests already have enrichedAt set.
     await db
       .update(inventoryTable)
       .set({ enrichedAt: new Date("2000-01-01") })
       .where(isNull(inventoryTable.enrichedAt));
-  });
+  }, BULK_ENRICH_CLEANUP_TIMEOUT_MS);
 
   it("all pinned keywords appear in ai_keywords after the bulk-enrich run", async () => {
     const row = await seedWithPinnedKeywords("JEST-ITG-PIN-BULK", PINNED);
@@ -352,7 +426,214 @@ describe("POST /api/inventory/bulk-enrich — pinned keywords survive the real b
     for (const kw of PINNED) {
       expect((dbRow?.aiKeywords ?? []).map((k) => k.toLowerCase())).toContain(kw.toLowerCase());
     }
-  }, 30_000);
+  }, BULK_ENRICH_TEST_TIMEOUT_MS);
+
+  it("reports a stable completed status after normal completion", async () => {
+    const token = makeAdminToken();
+    await seedWithPinnedKeywords("JEST-ITG-PIN-BULK-COMPLETE", PINNED);
+
+    await triggerBulkEnrichAndWait(token);
+
+    const firstStatus = await supertest(app)
+      .get("/api/inventory/bulk-enrich/status")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(firstStatus.body).toMatchObject({
+      running: false,
+      status: "completed",
+      stopRequested: false,
+    });
+    expect(firstStatus.body.finishedAt).not.toBeNull();
+
+    const repeatedStatus = await supertest(app)
+      .get("/api/inventory/bulk-enrich/status")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(repeatedStatus.body.status).toBe("completed");
+    expect(repeatedStatus.body.finishedAt).toBe(firstStatus.body.finishedAt);
+  }, BULK_ENRICH_TEST_TIMEOUT_MS);
+
+  it("bounds permanent failures to one batch per run and retries them in a later run", async () => {
+    const row = await seedWithPinnedKeywords("JEST-ITG-PIN-BULK-FAIL", PINNED);
+    const token = makeAdminToken();
+    mockedCallPoeBotWithChain.mockClear();
+    mockedCallPoeBotWithChain.mockRejectedValue(new Error("Permanent AI failure"));
+    try {
+      await triggerBulkEnrichAndWait(token);
+      expect(mockedCallPoeBotWithChain).toHaveBeenCalledTimes(3);
+      const first = await supertest(app).get("/api/inventory/bulk-enrich/status")
+        .set("Authorization", `Bearer ${token}`).expect(200);
+      expect(first.body).toMatchObject({ running: false, status: "failed", processed: 0, errors: 1, total: 1 });
+      const [unmodified] = await db.select({ enrichedAt: inventoryTable.enrichedAt })
+        .from(inventoryTable).where(eq(inventoryTable.id, row.id));
+      expect(unmodified?.enrichedAt).toBeNull();
+    } finally {
+      mockedCallPoeBotWithChain.mockReset();
+    }
+
+    mockedCallPoeBotWithChain.mockResolvedValue('["ai-keyword-alpha","ai-keyword-beta"]');
+    await triggerBulkEnrichAndWait(token);
+    const second = await supertest(app).get("/api/inventory/bulk-enrich/status")
+      .set("Authorization", `Bearer ${token}`).expect(200);
+    expect(second.body).toMatchObject({ status: "completed", processed: 1, errors: 0, total: 1 });
+  }, BULK_ENRICH_TEST_TIMEOUT_MS);
+
+  it("does not reconcile an active owner, but repairs a failed terminal write", async () => {
+    const token = makeAdminToken();
+    const blockedAiCall = makeDeferred<string>();
+    mockedCallPoeBotWithChain.mockImplementationOnce(() => blockedAiCall.promise);
+    await seedWithPinnedKeywords("JEST-ITG-PIN-BULK-RECOVER", PINNED);
+    await supertest(app).post("/api/inventory/bulk-enrich")
+      .set("Authorization", `Bearer ${token}`).send({}).expect(202);
+    await waitForBulkEnrichRunning(token);
+    // Wait for the durable row and owner lock before attempting reconciliation.
+    let activeId: number | undefined;
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const [row] = await db.select({ id: bulkEnrichJobTable.id })
+        .from(bulkEnrichJobTable).where(eq(bulkEnrichJobTable.status, "running"))
+        .orderBy(sql`${bulkEnrichJobTable.id} DESC`).limit(1);
+      if (row) { activeId = row.id; break; }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    expect(activeId).toBeDefined();
+    await reconcileBulkEnrichJobs();
+    const [active] = await db.select().from(bulkEnrichJobTable)
+      .where(eq(bulkEnrichJobTable.id, activeId!));
+    expect(active?.status).toBe("running");
+
+    // Simulate an outage on the terminal write without breaking the test DB.
+    const realUpdate = db.update.bind(db);
+    const updateSpy = jest.spyOn(db, "update").mockImplementation(((table) => {
+      if (table === bulkEnrichJobTable) {
+        throw new Error("Terminal database update unavailable");
+      }
+      return realUpdate(table);
+    }) as typeof db.update);
+    try {
+      blockedAiCall.resolve('["ai-keyword-alpha","ai-keyword-beta"]');
+      await waitForBulkEnrichIdle(token);
+    } finally {
+      updateSpy.mockRestore();
+    }
+    const failedStatus = await supertest(app).get("/api/inventory/bulk-enrich/status")
+      .set("Authorization", `Bearer ${token}`).expect(200);
+    expect(failedStatus.body).toMatchObject({ running: false, status: "failed" });
+    const [stale] = await db.select().from(bulkEnrichJobTable)
+      .where(eq(bulkEnrichJobTable.id, activeId!));
+    expect(stale?.status).toBe("running");
+    await reconcileBulkEnrichJobs();
+    const [recovered] = await db.select().from(bulkEnrichJobTable)
+      .where(eq(bulkEnrichJobTable.id, activeId!));
+    expect(recovered?.status).toBe("failed");
+    expect(recovered?.finishedAt).not.toBeNull();
+    // The next status reader (including a restarted server) sees the terminal row.
+    bulkEnrichRetentionFixtureIds.push(activeId!);
+  }, BULK_ENRICH_TEST_TIMEOUT_MS);
+
+  it("cancels during retry backoff without waiting through the full attempt budget", async () => {
+    const token = makeAdminToken();
+    const firstFailure = makeDeferred<void>();
+    mockedCallPoeBotWithChain.mockImplementationOnce(async () => {
+      firstFailure.resolve();
+      throw new Error("Retryable failure");
+    });
+    await seedWithPinnedKeywords("JEST-ITG-PIN-BULK-CANCEL-RETRY", PINNED);
+    await supertest(app).post("/api/inventory/bulk-enrich")
+      .set("Authorization", `Bearer ${token}`).send({}).expect(202);
+    await firstFailure.promise;
+    await supertest(app).delete("/api/inventory/bulk-enrich")
+      .set("Authorization", `Bearer ${token}`).expect(200);
+    await waitForBulkEnrichIdle(token);
+    const result = await supertest(app).get("/api/inventory/bulk-enrich/status")
+      .set("Authorization", `Bearer ${token}`).expect(200);
+    expect(result.body).toMatchObject({ status: "cancelled", errors: 0, processed: 0 });
+  }, BULK_ENRICH_TEST_TIMEOUT_MS);
+
+  it("reports stopping before the batch finishes and cancelled after it becomes idle", async () => {
+    const token = makeAdminToken();
+    mockPoeResponseDelayMs = 250;
+    await seedWithPinnedKeywords("JEST-ITG-PIN-BULK-CANCEL", PINNED);
+
+    await supertest(app)
+      .post("/api/inventory/bulk-enrich")
+      .set("Authorization", `Bearer ${token}`)
+      .send({})
+      .expect(202);
+    await waitForBulkEnrichRunning(token);
+
+    const stopRes = await supertest(app)
+      .delete("/api/inventory/bulk-enrich")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(stopRes.body.job).toMatchObject({
+      running: true,
+      status: "stopping",
+      stopRequested: true,
+    });
+
+    await waitForBulkEnrichIdle(token);
+
+    const firstStatus = await supertest(app)
+      .get("/api/inventory/bulk-enrich/status")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(firstStatus.body).toMatchObject({
+      running: false,
+      status: "cancelled",
+      stopRequested: false,
+    });
+    expect(firstStatus.body.finishedAt).not.toBeNull();
+
+    const repeatedStatus = await supertest(app)
+      .get("/api/inventory/bulk-enrich/status")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(repeatedStatus.body.status).toBe("cancelled");
+    expect(repeatedStatus.body.finishedAt).toBe(firstStatus.body.finishedAt);
+  }, BULK_ENRICH_TEST_TIMEOUT_MS);
+
+  it.each([
+    ["completed", false],
+    ["cancelled", false],
+    ["failed", false],
+    ["running", true],
+    ["stopping", true],
+  ] as const)(
+    "retains the newest terminal result while handling an older %s row",
+    async (obsoleteStatus, shouldRetainObsolete) => {
+      const [obsoleteRow, latestTerminalRow] = await db
+        .insert(bulkEnrichJobTable)
+        .values([
+          {
+            status: obsoleteStatus,
+            startedAt: new Date("2026-01-01T00:00:00.000Z"),
+          },
+          {
+            status: "completed",
+            startedAt: new Date("2026-01-02T00:00:00.000Z"),
+            finishedAt: new Date("2026-01-02T00:01:00.000Z"),
+          },
+        ])
+        .returning({ id: bulkEnrichJobTable.id });
+
+      if (!obsoleteRow || !latestTerminalRow) {
+        throw new Error("Failed to seed bulk-enrich retention fixtures");
+      }
+      bulkEnrichRetentionFixtureIds.push(obsoleteRow.id, latestTerminalRow.id);
+
+      await cleanupBulkEnrichHistory();
+
+      const remainingRows = await db
+        .select({ id: bulkEnrichJobTable.id })
+        .from(bulkEnrichJobTable)
+        .where(inArray(bulkEnrichJobTable.id, [obsoleteRow.id, latestTerminalRow.id]));
+
+      expect(remainingRows.map((row) => row.id)).toContain(latestTerminalRow.id);
+      expect(remainingRows.map((row) => row.id).includes(obsoleteRow.id))
+        .toBe(shouldRetainObsolete);
+    },
+  );
 
   it("AI-generated keywords and pinned keywords both appear after the bulk-enrich run", async () => {
     const row = await seedWithPinnedKeywords("JEST-ITG-PIN-BULK-MERGE", PINNED);
@@ -373,7 +654,7 @@ describe("POST /api/inventory/bulk-enrich — pinned keywords survive the real b
     for (const kw of AI_KEYWORDS) {
       expect(saved.map((k) => k.toLowerCase())).toContain(kw.toLowerCase());
     }
-  });
+  }, BULK_ENRICH_TEST_TIMEOUT_MS);
 
   it("enrichedAt is set (not NULL) after the bulk-enrich run", async () => {
     const row = await seedWithPinnedKeywords("JEST-ITG-PIN-BULK-TS", PINNED);
@@ -389,7 +670,7 @@ describe("POST /api/inventory/bulk-enrich — pinned keywords survive the real b
 
     expect(dbRow?.enrichedAt).not.toBeNull();
     expect(dbRow?.enrichedAt?.getFullYear()).toBeGreaterThan(2000);
-  }, 30_000);
+  }, BULK_ENRICH_TEST_TIMEOUT_MS);
 
   it("pinned keywords survive even when AI returns completely disjoint terms", async () => {
     // The mock returns ["ai-keyword-alpha","ai-keyword-beta"] which share no
@@ -412,5 +693,54 @@ describe("POST /api/inventory/bulk-enrich — pinned keywords survive the real b
     for (const kw of AI_KEYWORDS) {
       expect(saved.map((k) => k.toLowerCase())).toContain(kw.toLowerCase());
     }
-  }, 30_000);
+  }, BULK_ENRICH_TEST_TIMEOUT_MS);
+
+  it("cleans up a timed-out run before allowing a sibling bulk job", async () => {
+    const blockedAiCall = makeDeferred<string>();
+    mockedCallPoeBotWithChain.mockImplementationOnce(() => blockedAiCall.promise);
+
+    await seedWithPinnedKeywords("JEST-ITG-PIN-BULK-TIMEOUT", PINNED);
+    const token = makeAdminToken();
+
+    await expect(triggerBulkEnrichAndWait(token, 100)).rejects.toThrow(
+      "Bulk-enrich job did not become idle within 100ms",
+    );
+
+    const activeStatus = await supertest(app)
+      .get("/api/inventory/bulk-enrich/status")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(activeStatus.body.running).toBe(true);
+
+    await supertest(app)
+      .delete("/api/inventory/bulk-enrich")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    blockedAiCall.resolve('["ai-keyword-alpha","ai-keyword-beta"]');
+    await waitForBulkEnrichIdle(token);
+
+    const idleStatus = await supertest(app)
+      .get("/api/inventory/bulk-enrich/status")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(idleStatus.body.running).toBe(false);
+
+    await seedWithPinnedKeywords("JEST-ITG-PIN-BULK-AFTER-TIMEOUT", PINNED);
+    const siblingStart = await supertest(app)
+      .post("/api/inventory/bulk-enrich")
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    expect(siblingStart.status).toBe(202);
+    await waitForBulkEnrichIdle(token);
+  }, BULK_ENRICH_TEST_TIMEOUT_MS);
+
+  afterEach(async () => {
+    try {
+      await stopBulkEnrichAndWait(makeAdminToken());
+    } finally {
+      mockPoeResponseDelayMs = 0;
+    }
+  }, BULK_ENRICH_CLEANUP_TIMEOUT_MS);
 });

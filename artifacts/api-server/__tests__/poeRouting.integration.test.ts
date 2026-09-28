@@ -13,25 +13,31 @@ const mockRegistry = [
   model("Gemini-2.5-Pro"),
 ];
 
-jest.mock("@workspace/integrations-poe-server", () => ({
-  getPoeClient: () => ({ chat: { completions: { create: mockCreate } } }),
-  getPoeModelRegistry: () => mockRegistry,
-  getPoeRegistryModel: (id: string) => mockRegistry.find((candidate) => candidate.id === id),
-  POE_MODEL_REGISTRY_VERSION: "static-v1",
-  resetPoeClient: jest.fn(),
-  withPoeRequestTimeout: (operation: (signal: AbortSignal) => Promise<unknown>) =>
-    operation(new AbortController().signal),
-  isPoeAuthError: (error: unknown) =>
-    error !== null &&
-    typeof error === "object" &&
-    ((error as { status?: unknown }).status === 401 ||
-      (error as { status?: unknown }).status === 403),
-  isPoeTransientError: (error: unknown) =>
-    error !== null &&
-    typeof error === "object" &&
-    (typeof (error as { status?: unknown }).status === "number" &&
-      ((error as { status: number }).status >= 500)),
-}));
+jest.mock("@workspace/integrations-poe-server", () => {
+  const actual = jest.requireActual<typeof import("@workspace/integrations-poe-server")>(
+    "@workspace/integrations-poe-server",
+  );
+  return {
+    ...actual,
+    getPoeClient: () => ({ chat: { completions: { create: mockCreate } } }),
+    getPoeModelRegistry: () => mockRegistry,
+    getPoeRegistryModel: (id: string) => mockRegistry.find((candidate) => candidate.id === id),
+    POE_MODEL_REGISTRY_VERSION: "static-v1",
+    resetPoeClient: jest.fn(),
+    withPoeRequestTimeout: (operation: (signal: AbortSignal) => Promise<unknown>) =>
+      operation(new AbortController().signal),
+    isPoeAuthError: (error: unknown) =>
+      error !== null &&
+      typeof error === "object" &&
+      ((error as { status?: unknown }).status === 401 ||
+        (error as { status?: unknown }).status === 403),
+    isPoeTransientError: (error: unknown) =>
+      error !== null &&
+      typeof error === "object" &&
+      (typeof (error as { status?: unknown }).status === "number" &&
+        ((error as { status: number }).status >= 500)),
+  };
+});
 
 jest.mock("@workspace/db", () => ({
   db: {},

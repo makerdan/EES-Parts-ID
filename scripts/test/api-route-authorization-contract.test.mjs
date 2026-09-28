@@ -11,11 +11,16 @@
  * request handling. Admin authorization is role/status based; tests must not
  * be made green by an MFA bypass flag or fabricated Clerk factor claims.
  */
+import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import mountGraph from "../lib/api-route-mount-graph.cjs";
+
 const ROOT = join(fileURLToPath(new URL("../..", import.meta.url)));
+const { deriveMountGraph } = mountGraph;
+const { parseRouteMounts } = mountGraph;
 const ROUTES_DIR = join(ROOT, "artifacts/api-server/src/routes");
 const INDEX_PATH = join(ROUTES_DIR, "index.ts");
 const MATRIX_PATH = join(ROUTES_DIR, "routeAccessMatrix.ts");
@@ -28,24 +33,14 @@ function matrixKey(method, path) {
   return `${method.toUpperCase()} ${normalizePath(path)}`;
 }
 
-function parseRouteMounts(source) {
-  const imports = new Map(
-    [...source.matchAll(/import\s+(\w+)\s+from\s+"\.\/([^"]+)";/g)]
-      .map((match) => [match[1], match[2]]),
-  );
-  const mounts = new Map();
-  const mountPattern = /router\.use\((?:(["'])([^"']+)\1\s*,\s*)?(\w+)\s*\);/g;
-
-  for (const match of source.matchAll(mountPattern)) {
-    const moduleName = imports.get(match[3]);
-    if (!moduleName) throw new Error(`Missing route import for ${match[3]}`);
-    mounts.set(moduleName, normalizePath(`/api${match[2] ?? ""}`));
-  }
-
-  return mounts;
+function stripComments(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "")
+    .trim();
 }
 
-function parseAdminOnlyEntries(source) {
+function parsePrivilegedEntries(source) {
   const entryPattern =
     /\{\s*method:\s*"(GET|POST|PUT|PATCH|DELETE)",\s*path:\s*"([^"]+)",\s*access:\s*"(public|approved-user|approved-admin|admin-only)"\s*\}/g;
   return [...source.matchAll(entryPattern)]
@@ -63,15 +58,19 @@ function routeDeclarationsForModule(source, mount) {
 
   for (const match of source.matchAll(declarationPattern)) {
     const declarationStart = match.index ?? 0;
-    const lineEnd = source.indexOf("\n", declarationStart);
-    const declarationLine = source.slice(
-      declarationStart,
-      lineEnd === -1 ? source.length : lineEnd,
+    const declarationArguments = source.slice(declarationStart + match[0].length);
+    const handlerStart = declarationArguments.search(
+      /,\s*(?:(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>|(?:async\s+)?function\b)/s,
+    );
+    const middlewareSource = stripComments(
+      handlerStart === -1
+        ? declarationArguments.slice(0, declarationArguments.indexOf("\n"))
+        : declarationArguments.slice(0, handlerStart),
     );
     const path = normalizePath(`${mount}/${match[2]}`);
-    const guard =
-      declarationLine.match(/\b(requireApprovedAdminAuth|requireAdminAuth)\b/)?.[1] ??
-      routerGuard;
+    const guard = middlewareSource.match(
+      /(?:^|,)\s*(requireApprovedAdminAuth|requireAdminAuth)\s*(?=,|$)/s,
+    )?.[1] ?? routerGuard;
     declarations.set(matrixKey(match[1], path), {
       guard,
       moduleName: null,
@@ -81,57 +80,222 @@ function routeDeclarationsForModule(source, mount) {
   return declarations;
 }
 
-const mounts = parseRouteMounts(readFileSync(INDEX_PATH, "utf8"));
-const adminOnlyEntries = parseAdminOnlyEntries(readFileSync(MATRIX_PATH, "utf8"));
-if (adminOnlyEntries.length === 0) {
-  throw new Error("Route access matrix contains no admin-only entries");
+const expectedGuardForAccess = {
+  "admin-only": "requireAdminAuth",
+  "approved-admin": "requireApprovedAdminAuth",
+};
+
+function validatePrivilegedRouteGuards(privilegedEntries, declarations) {
+  const matrixEntries = new Map(
+    privilegedEntries.map((entry) => [matrixKey(entry.method, entry.path), entry]),
+  );
+  const missingOrWrongGuards = privilegedEntries
+    .filter((entry) => {
+      const declaration = declarations.get(matrixKey(entry.method, entry.path));
+      return declaration?.guard !== expectedGuardForAccess[entry.access];
+    })
+    .map((entry) => {
+      const declaration = declarations.get(matrixKey(entry.method, entry.path));
+      return `${entry.method} ${entry.path} — expected ${expectedGuardForAccess[entry.access]}, found ${declaration?.guard ?? "no declaration/guard"}`;
+    });
+
+  if (missingOrWrongGuards.length > 0) {
+    throw new Error([
+      "Missing or incorrectly guarded privileged API route declarations:",
+      ...missingOrWrongGuards.map((route) => `- ${route}`),
+    ].join("\n"));
+  }
+
+  const unlistedGuardedRoutes = [...declarations]
+    .filter(([, declaration]) => declaration.guard)
+    .filter(([key, declaration]) => {
+      const matrixEntry = matrixEntries.get(key);
+      return !matrixEntry || expectedGuardForAccess[matrixEntry.access] !== declaration.guard;
+    })
+    .map(([key, declaration]) => `${key} — ${declaration.guard} in ${declaration.moduleName}.ts`);
+
+  if (unlistedGuardedRoutes.length > 0) {
+    throw new Error([
+      "Guarded API route declarations missing or mislabeled in the access matrix:",
+      ...unlistedGuardedRoutes.map((route) => `- ${route}`),
+    ].join("\n"));
+  }
+}
+
+const multilineFixture = routeDeclarationsForModule(
+  `
+    router.get(
+      "/multiline",
+      requireAdminAuth,
+      async (_req, res) => res.json({ ok: true }),
+    );
+    router.get(
+      "/near-miss",
+      async (_req, res) => res.json({ guard: "requireAdminAuth" }),
+    );
+  `,
+  "/api/fixture",
+);
+assert.equal(
+  multilineFixture.get("GET /api/fixture/multiline")?.guard,
+  "requireAdminAuth",
+  "multiline admin guards must be recognized as middleware arguments",
+);
+assert.equal(
+  multilineFixture.get("GET /api/fixture/near-miss")?.guard,
+  undefined,
+  "guard names inside a handler must not satisfy the privileged guard contract",
+);
+
+const unlistedNestedFixtureSources = new Map([
+  [
+    "root",
+    `
+      import childRouter from "./child";
+      router.use("/nested", childRouter);
+    `,
+  ],
+  [
+    "child",
+    `
+      router.get("/secret", requireAdminAuth, async (_req, res) => res.json({ ok: true }));
+    `,
+  ],
+]);
+const unlistedNestedFixture = deriveMountGraph({
+  rootSource: unlistedNestedFixtureSources.get("root"),
+  rootMount: "/api/fixture",
+  readModuleSource: (moduleName) => unlistedNestedFixtureSources.get(moduleName),
+});
+const unlistedNestedDeclarations = new Map();
+for (const { moduleName, mount, source } of unlistedNestedFixture) {
+  for (const [key, declaration] of routeDeclarationsForModule(source, mount)) {
+    unlistedNestedDeclarations.set(key, { ...declaration, moduleName });
+  }
+}
+assert.throws(
+  () => validatePrivilegedRouteGuards([], unlistedNestedDeclarations),
+  /GET \/api\/fixture\/nested\/secret/,
+  "an unlisted guarded child reached through a nested mount must fail the authorization contract",
+);
+
+const extendedMountFixtureSources = new Map([
+  [
+    "root",
+    `
+      import { router as namedRouter } from "./child";
+      import reExportedRouter from "./barrel";
+      router.use("/named", namedRouter);
+      router.use("/re-exported", reExportedRouter);
+    `,
+  ],
+  [
+    "barrel",
+    `
+      export { default } from "./child";
+    `,
+  ],
+  [
+    "child",
+    `
+      router.get("/protected", requireAdminAuth, async (_req, res) => res.json({ ok: true }));
+      export { router };
+      export default router;
+    `,
+  ],
+]);
+const extendedMountFixture = deriveMountGraph({
+  rootSource: extendedMountFixtureSources.get("root"),
+  rootMount: "/api/fixture",
+  readModuleSource: (moduleName) => extendedMountFixtureSources.get(moduleName),
+});
+assert.deepEqual(
+  extendedMountFixture.map(({ moduleName, mount }) => `${moduleName}@${mount}`),
+  [
+    "child@/api/fixture/named",
+    "barrel@/api/fixture/re-exported",
+    "child@/api/fixture/re-exported",
+  ],
+  "named imports and local re-exports must remain visible in the route mount graph",
+);
+
+const unsupportedMountFixtureSources = new Map([
+  [
+    "root",
+    `
+      import protectedRouter from "./protected";
+      router.use("/protected", protectedRouter());
+    `,
+  ],
+  [
+    "protected",
+    `
+      router.get("/secret", requireAdminAuth, async (_req, res) => res.json({ ok: true }));
+    `,
+  ],
+]);
+assert.throws(
+  () =>
+    deriveMountGraph({
+      rootSource: unsupportedMountFixtureSources.get("root"),
+      rootMount: "/api/fixture",
+      readModuleSource: (moduleName) => unsupportedMountFixtureSources.get(moduleName),
+    }),
+  /Unsupported route mount target protectedRouter\(\)/,
+  "an unsupported mount expression must fail before a protected child can disappear from the inventory",
+);
+assert.throws(
+  () =>
+    parseRouteMounts(
+      `
+        import protectedRouter from "./protected";
+        router.use("/protected", protectedRouter, extraMiddleware);
+      `,
+      "/api/fixture",
+    ),
+  /Unsupported route mount arguments/,
+  "unsupported middleware chains must fail instead of guessing which argument is the child router",
+);
+
+const privilegedEntries = parsePrivilegedEntries(readFileSync(MATRIX_PATH, "utf8"));
+const adminOnlyEntries = privilegedEntries.filter((entry) => entry.access === "admin-only");
+const approvedAdminEntries = privilegedEntries.filter((entry) => entry.access === "approved-admin");
+if (adminOnlyEntries.length === 0 || approvedAdminEntries.length === 0) {
+  throw new Error("Route access matrix must contain both admin-only and approved-admin entries");
 }
 
 const declarations = new Map();
-for (const [moduleName, mount] of mounts) {
-  const source = readFileSync(join(ROUTES_DIR, `${moduleName}.ts`), "utf8");
+const mounts = deriveMountGraph({
+  rootSource: readFileSync(INDEX_PATH, "utf8"),
+  rootMount: "/api",
+  readModuleSource: (moduleName) => readFileSync(join(ROUTES_DIR, `${moduleName}.ts`), "utf8"),
+});
+for (const { moduleName, mount, source } of mounts) {
   for (const [key, declaration] of routeDeclarationsForModule(source, mount)) {
     declarations.set(key, { ...declaration, moduleName });
   }
 }
 
-const matrixEntries = new Map(
-  adminOnlyEntries.map((entry) => [matrixKey(entry.method, entry.path), entry]),
+validatePrivilegedRouteGuards(privilegedEntries, declarations);
+assert.equal(
+  [...declarations.keys()].filter((key) => key === "GET /api/reference/help/admin").length,
+  1,
+  "nested privileged routes must be inventoried exactly once",
 );
-const expectedGuardForAccess = {
-  "admin-only": "requireAdminAuth",
-  "approved-admin": "requireApprovedAdminAuth",
-};
-const missingOrWrongGuards = adminOnlyEntries
-  .filter((entry) => {
-    const declaration = declarations.get(matrixKey(entry.method, entry.path));
-    return declaration?.guard !== expectedGuardForAccess[entry.access];
-  })
-  .map((entry) => {
-    const declaration = declarations.get(matrixKey(entry.method, entry.path));
-    return `${entry.method} ${entry.path} — expected ${expectedGuardForAccess[entry.access]}, found ${declaration?.guard ?? "no declaration/guard"}`;
-  });
 
-if (missingOrWrongGuards.length > 0) {
-  throw new Error([
-    "Missing or incorrectly guarded privileged API route declarations:",
-    ...missingOrWrongGuards.map((route) => `- ${route}`),
-  ].join("\n"));
-}
-
-const unlistedGuardedRoutes = [...declarations]
-  .filter(([, declaration]) => declaration.guard)
-  .filter(([key, declaration]) => {
-    const matrixEntry = matrixEntries.get(key);
-    return !matrixEntry || expectedGuardForAccess[matrixEntry.access] !== declaration.guard;
-  })
-  .map(([key, declaration]) => `${key} — ${declaration.guard} in ${declaration.moduleName}.ts`);
-
-if (unlistedGuardedRoutes.length > 0) {
-  throw new Error([
-    "Guarded API route declarations missing or mislabeled in the access matrix:",
-    ...unlistedGuardedRoutes.map((route) => `- ${route}`),
-  ].join("\n"));
+const mutationCases = [
+  ["approved-admin", approvedAdminEntries[0]],
+  ["admin-only", adminOnlyEntries[0]],
+];
+for (const [access, entry] of mutationCases) {
+  const key = matrixKey(entry.method, entry.path);
+  const mutatedDeclarations = new Map(declarations);
+  mutatedDeclarations.set(key, { ...declarations.get(key), guard: undefined });
+  assert.throws(
+    () => validatePrivilegedRouteGuards(privilegedEntries, mutatedDeclarations),
+    new RegExp(`${entry.method} ${entry.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*expected`),
+    `unguarded ${access} mutation must fail the authorization contract`,
+  );
 }
 
 const forbiddenMfaPatterns = [
@@ -163,5 +327,5 @@ if (forbiddenMfaUses.length > 0) {
 }
 
 console.log(
-  `API route authorization contract: ${adminOnlyEntries.length} privileged declarations are fully inventoried, use the declared admin guard, and contain no MFA enforcement.`,
+  `API route authorization contract: ${adminOnlyEntries.length} admin-only and ${approvedAdminEntries.length} approved-admin declarations are fully inventoried, use the declared admin guard, and contain no MFA enforcement.`,
 );

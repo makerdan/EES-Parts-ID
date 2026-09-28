@@ -60,8 +60,12 @@ jest.mock("expo-keep-awake", () => ({
 
 // ── @tanstack/react-query ─────────────────────────────────────────────────────
 
+const mockInvalidateListCache = jest.fn().mockResolvedValue(undefined);
+const mockInvalidateQueries = jest.fn().mockResolvedValue(undefined);
+const mockQueryClient = { invalidateQueries: mockInvalidateQueries };
+
 jest.mock("@tanstack/react-query", () => ({
-  useQueryClient: () => ({ invalidateQueries: jest.fn().mockResolvedValue(undefined) }),
+  useQueryClient: () => mockQueryClient,
 }));
 
 // ── @/hooks/useColors ─────────────────────────────────────────────────────────
@@ -94,7 +98,7 @@ jest.mock("@/utils/aiFallbackHeaders", () => ({
 }));
 
 jest.mock("@/utils/editItemCache", () => ({
-  invalidateListCache: jest.fn().mockResolvedValue(undefined),
+  invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
 }));
 
 jest.mock("@/utils/addToInventory", () => ({
@@ -164,6 +168,7 @@ import React from "react";
 import { render, act } from "@testing-library/react-native";
 import CatalogReviewScreen from "../app/catalog-review";
 import { makeAppMock, flushPromises } from "./helpers/appMocks";
+import type { ResumeProgress } from "@/types/catalogPdf";
 
 // AppContext is auto-mocked via jest.config.js → __mocks__/contexts/AppContext.js
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -230,6 +235,9 @@ beforeEach(() => {
   capturedOnResume = null;
   capturedSetResumeProgress = jest.fn();
   jest.clearAllMocks();
+  mockInvalidateListCache.mockResolvedValue(undefined);
+  mockInvalidateQueries.mockResolvedValue(undefined);
+  mockUseLocalSearchParams.mockReturnValue({});
 
   // Provide the full AppContext value that CatalogReviewScreen needs.
   useApp.mockReturnValue(
@@ -255,6 +263,7 @@ afterEach(async () => {
   }
   jest.clearAllTimers();
   jest.useRealTimers();
+  delete (global as unknown as { fetch?: unknown }).fetch;
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -337,6 +346,363 @@ describe("CatalogReviewScreen — deep-link status fetch returns non-ok", () => 
     expect(
       activeTree.queryByText("Could not load job status — try refreshing."),
     ).toBeNull();
+  });
+});
+
+describe("CatalogReviewScreen — failed-job list is independent of reviews", () => {
+  const item = {
+    id: 9, vendor: "ACME", catalog: "PART-9", description: "Updated",
+    previousDescription: "Original", imageUrl: null, imageConfidence: null,
+    catalogPdfJobId: 42, updatedAt: "2025-01-01T00:00:00Z",
+    isLowConfidence: false, job: { id: 42, vendor: "ACME", filename: "catalog.pdf", status: "done", createdAt: "2025-01-01T00:00:00Z" },
+  };
+
+  it.each(["http", "network", "malformed"])("shows a separate %s failure, retains review rows, and retries", async (failure) => {
+    let fail = true;
+    global.fetch = jest.fn().mockImplementation((url: string) => {
+      if (url.includes("/reviews")) return Promise.resolve(makeResponse(200, { items: [item] }));
+      if (fail) {
+        if (failure === "network") return Promise.reject(new TypeError("offline"));
+        return Promise.resolve(failure === "http" ? makeResponse(503) : makeResponse(200, {}));
+      }
+      return Promise.resolve(makeResponse(200, { jobs: [] }));
+    });
+    activeTree = await render(<CatalogReviewScreen />);
+    await flush();
+    expect(activeTree.getByText("PART-9")).toBeTruthy();
+    expect(activeTree.getByText("Could not load failed catalog jobs. Review items below are still available.")).toBeTruthy();
+    fail = false;
+    await act(async () => { activeTree!.getByTestId("retry-failed-jobs").props.onPress(); });
+    await flush();
+    expect(activeTree.queryByText("Could not load failed catalog jobs. Review items below are still available.")).toBeNull();
+    expect(activeTree.getByText("PART-9")).toBeTruthy();
+  });
+
+  it("ignores a late failed-job error after cancellation", async () => {
+    const pending = deferred<Response>();
+    global.fetch = jest.fn().mockImplementation((url: string) =>
+      url.includes("/reviews") ? Promise.resolve(makeResponse(200, { items: [item] })) : pending.promise);
+    activeTree = await render(<CatalogReviewScreen />);
+    await activeTree.unmount();
+    activeTree = null;
+    pending.resolve(makeResponse(503));
+    await flush();
+    expect(stableApiHealth.reportNetworkFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe("CatalogReviewScreen — partial completion", () => {
+  it("shows partial results from the initial status and does not start another poll", async () => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
+    mockUseLocalSearchParams.mockReturnValue({ jobId: "77" });
+    const bootstrapSetResumeProgress = jest.fn();
+    useApp.mockReturnValue(
+      makeAppMock({
+        adminToken: "test-admin-tok",
+        isAdmin: true,
+        resumeProgress: {
+          77: {
+            status: "processing",
+            processedPages: 2,
+            totalPages: 5,
+            matchedParts: 1,
+            errorMessage: null,
+          },
+        },
+        setResumeProgress: bootstrapSetResumeProgress,
+      }),
+    );
+    global.fetch = jest.fn().mockImplementation((url: string) =>
+      url.includes("/reviews")
+        ? Promise.resolve(makeResponse(200, { items: [] }))
+        : Promise.resolve(makeResponse(200, {
+          jobId: "77",
+          status: "done_with_errors",
+          vendor: "ACME",
+          processedPages: 4,
+          totalPages: 5,
+          partsFound: 6,
+          matchedParts: 3,
+          imagesMatched: 2,
+          unmatchedParts: [],
+          errorMessage: "Some catalog images could not be saved.",
+        })),
+    );
+
+    activeTree = await render(<CatalogReviewScreen />);
+    await flush();
+    await act(async () => {
+      jest.advanceTimersByTime(6000);
+      await flushPromises();
+    });
+
+    expect(activeTree.getByText("Processing finished with some errors")).toBeTruthy();
+    expect(activeTree.getByText("3 parts updated across 4 of 5 pages, 2 images matched.")).toBeTruthy();
+    expect(activeTree.getByText("Some catalog images could not be saved.")).toBeTruthy();
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    const progressUpdate = bootstrapSetResumeProgress.mock.calls
+      .map(([update]) => update)
+      .find((update) => typeof update === "function") as
+        | ((previous: Record<number, ResumeProgress>) => Record<number, ResumeProgress>)
+        | undefined;
+    expect(progressUpdate).toBeDefined();
+    expect(
+      progressUpdate!({
+        77: {
+          status: "processing",
+          processedPages: 2,
+          totalPages: 5,
+          matchedParts: 1,
+          errorMessage: null,
+        },
+      })[77]?.status,
+    ).toBe("done_with_errors");
+    expect(mockInvalidateListCache).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
+  });
+
+  it("stops a resume poll after partial completion and reconciles caches once", async () => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
+    useApp.mockReturnValue(
+      makeAppMock({
+        adminToken: "test-admin-tok",
+        isAdmin: true,
+        resumeProgress: {
+          42: {
+            status: "processing",
+            processedPages: 2,
+            totalPages: 4,
+            matchedParts: 1,
+            errorMessage: null,
+          },
+        },
+        setResumeProgress: capturedSetResumeProgress,
+      }),
+    );
+    let statusPollCount = 0;
+    global.fetch = jest.fn().mockImplementation((url: string) => {
+      if (url.includes("/status")) {
+        statusPollCount += 1;
+        return Promise.resolve(makeResponse(200, {
+          status: "done_with_errors",
+          processedPages: 4,
+          totalPages: 4,
+          matchedParts: 3,
+          errorMessage: "Some catalog images could not be saved.",
+        }));
+      }
+      return Promise.resolve(
+        url.includes("/reviews")
+          ? makeResponse(200, { items: [] })
+          : makeResponse(200, { jobs: [] }),
+      );
+    });
+
+    activeTree = await render(<CatalogReviewScreen />);
+    await flush();
+
+    await act(async () => {
+      jest.advanceTimersByTime(3000);
+      await flushPromises();
+    });
+    await flush();
+
+    expect(statusPollCount).toBe(1);
+    expect(mockInvalidateListCache).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
+
+    const progressUpdate = capturedSetResumeProgress.mock.calls
+      .map(([update]) => update)
+      .find((update) => typeof update === "function") as
+        | ((previous: Record<number, { status: string }>) => Record<number, { status: string }>)
+        | undefined;
+    expect(progressUpdate).toBeDefined();
+    expect(progressUpdate!({ 42: { status: "processing" } })[42]?.status).toBe("done_with_errors");
+
+    await act(async () => {
+      jest.advanceTimersByTime(6000);
+      await flushPromises();
+    });
+    expect(statusPollCount).toBe(1);
+  });
+});
+
+describe("CatalogReviewScreen — resumed status polling authorization and payload validation", () => {
+  beforeEach(() => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
+  });
+
+  function setupPollingJob(logoutAdmin = jest.fn()): jest.Mock {
+    const setResumeProgress = jest.fn();
+    useApp.mockReturnValue(
+      makeAppMock({
+        adminToken: "test-admin-tok",
+        isAdmin: true,
+        logoutAdmin,
+        resumeProgress: {
+          42: {
+            status: "processing",
+            processedPages: 2,
+            totalPages: 5,
+            matchedParts: 1,
+            errorMessage: null,
+          },
+        },
+        setResumeProgress,
+      }),
+    );
+    global.fetch = jest.fn().mockImplementation((url: string) => {
+      if (url.includes("/status")) return Promise.resolve(makeResponse(401));
+      if (url.includes("/reviews")) return Promise.resolve(makeResponse(200, { items: [] }));
+      return Promise.resolve(makeResponse(200, { jobs: [] }));
+    });
+    return setResumeProgress;
+  }
+
+  it("logs out immediately on a poll 401 instead of showing the job as stalled", async () => {
+    const logoutAdmin = jest.fn();
+    const setResumeProgress = setupPollingJob(logoutAdmin);
+    activeTree = await render(<CatalogReviewScreen />);
+    await flush();
+
+    await act(async () => {
+      jest.advanceTimersByTime(3000);
+      await flushPromises();
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(15_000);
+      await flushPromises();
+    });
+
+    const statusCalls = (global.fetch as jest.Mock).mock.calls.filter(([url]) =>
+      String(url).includes("/status"),
+    );
+    expect(statusCalls).toHaveLength(1);
+    expect(logoutAdmin).toHaveBeenCalledTimes(1);
+    const update = setResumeProgress.mock.calls
+      .map(([value]) => value)
+      .find((value) => typeof value === "function") as
+        | ((previous: Record<number, ResumeProgress>) => Record<number, ResumeProgress>)
+        | undefined;
+    expect(update).toBeDefined();
+    expect(update!({
+      42: {
+        status: "processing",
+        processedPages: 2,
+        totalPages: 5,
+        matchedParts: 1,
+        errorMessage: null,
+      },
+    })[42]).toBeUndefined();
+  });
+
+  it("recovers from a temporary poll response without logging out or stalling", async () => {
+    const logoutAdmin = jest.fn();
+    const setResumeProgress = setupPollingJob(logoutAdmin);
+    let statusCalls = 0;
+    global.fetch = jest.fn().mockImplementation((url: string) => {
+      if (url.includes("/status")) {
+        statusCalls += 1;
+        return Promise.resolve(statusCalls === 1
+          ? makeResponse(503)
+          : makeResponse(200, {
+            status: "processing",
+            processedPages: 4,
+            totalPages: 5,
+            matchedParts: 3,
+            errorMessage: null,
+          }));
+      }
+      if (url.includes("/reviews")) return Promise.resolve(makeResponse(200, { items: [] }));
+      return Promise.resolve(makeResponse(200, { jobs: [] }));
+    });
+    activeTree = await render(<CatalogReviewScreen />);
+    await flush();
+
+    await act(async () => {
+      jest.advanceTimersByTime(3000);
+      await flushPromises();
+    });
+    expect(logoutAdmin).not.toHaveBeenCalled();
+    expect(setResumeProgress).not.toHaveBeenCalled();
+
+    await act(async () => {
+      jest.advanceTimersByTime(3000);
+      await flushPromises();
+    });
+    await flush();
+
+    expect(statusCalls).toBe(2);
+    expect(logoutAdmin).not.toHaveBeenCalled();
+    const update = setResumeProgress.mock.calls[0]![0] as
+      (previous: Record<number, ResumeProgress>) => Record<number, ResumeProgress>;
+    expect(update({
+      42: {
+        status: "processing",
+        processedPages: 2,
+        totalPages: 5,
+        matchedParts: 1,
+        errorMessage: null,
+      },
+    })[42]).toEqual({
+      status: "processing",
+      processedPages: 4,
+      totalPages: 5,
+      matchedParts: 3,
+      errorMessage: null,
+    });
+  });
+
+  it("counts malformed successful payloads as failures without publishing bogus progress", async () => {
+    const setResumeProgress = setupPollingJob();
+    global.fetch = jest.fn().mockImplementation((url: string) => {
+      if (url.includes("/status")) {
+        return Promise.resolve(makeResponse(200, {
+          status: "processing",
+          processedPages: "not-a-number",
+          totalPages: 5,
+          matchedParts: 3,
+          errorMessage: null,
+        }));
+      }
+      if (url.includes("/reviews")) return Promise.resolve(makeResponse(200, { items: [] }));
+      return Promise.resolve(makeResponse(200, { jobs: [] }));
+    });
+    activeTree = await render(<CatalogReviewScreen />);
+    await flush();
+
+    await act(async () => {
+      for (let poll = 0; poll < 5; poll += 1) {
+        jest.advanceTimersByTime(3000);
+        await flushPromises();
+      }
+    });
+    await flush();
+
+    const statusCalls = (global.fetch as jest.Mock).mock.calls.filter(([url]) =>
+      String(url).includes("/status"),
+    );
+    expect(statusCalls).toHaveLength(5);
+    expect(setResumeProgress).toHaveBeenCalledTimes(1);
+    const update = setResumeProgress.mock.calls[0]![0] as
+      (previous: Record<number, ResumeProgress>) => Record<number, ResumeProgress>;
+    expect(update({
+      42: {
+        status: "processing",
+        processedPages: 2,
+        totalPages: 5,
+        matchedParts: 1,
+        errorMessage: null,
+      },
+    })[42]).toEqual({
+      status: "stalled",
+      processedPages: 2,
+      totalPages: 5,
+      matchedParts: 1,
+      errorMessage: "Processing stalled — please retry or contact support",
+    });
   });
 });
 

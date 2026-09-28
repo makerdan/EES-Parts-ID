@@ -19,15 +19,14 @@ import { PartPhotoPicker } from "@/components/PartPhotoPicker";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { API_BASE } from "@/utils/apiBase";
+import {
+  DIMENSION_INPUT_ERROR,
+  validateDimensionInputs,
+} from "@/utils/dimensionValidation";
 
 function fmtDim(v: number | null | undefined): string {
   if (v == null) return "";
   return String(v);
-}
-
-function parseDimField(s: string): number | null {
-  const n = parseFloat(s);
-  return isNaN(n) || n < 0 ? null : Math.round(n * 10) / 10;
 }
 
 export interface AddPartFormProps {
@@ -61,6 +60,12 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
   const [dimHeight, setDimHeight] = useState("");
   const [dimDiameter, setDimDiameter] = useState("");
   const [measureOpen, setMeasureOpen] = useState(false);
+  const dimensionValidation = validateDimensionInputs({
+    length: dimLength,
+    width: dimWidth,
+    height: dimHeight,
+    diameter: dimDiameter,
+  });
 
   useEffect(() => {
     if (!initialDimensions) return;
@@ -91,7 +96,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
     if (!vendor.trim()) errs.vendor = "Vendor code is required";
     if (!binLocation.trim()) errs.bin = "Bin location is required";
     setFieldErrors(errs);
-    return Object.keys(errs).length === 0;
+    return Object.keys(errs).length === 0 && dimensionValidation.valid;
   };
 
   const handleMeasureConfirm = (dims: PartDimensions) => {
@@ -127,6 +132,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
     if (loading) return;
     setError(null);
     if (!validate()) return;
+    if (!dimensionValidation.valid) return;
     if (!adminToken) {
       setError("Admin session not found. Please unlock admin access first.");
       return;
@@ -171,7 +177,8 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
       // If dimensions were entered, persist them in a second call.
       // If the PATCH fails, roll back by deleting the just-created part so we
       // never leave a dimension-less orphan in the database.
-      const hasDims = dimLength || dimWidth || dimHeight || dimDiameter;
+      const hasDims = [dimLength, dimWidth, dimHeight, dimDiameter]
+        .some((value) => value.trim() !== "");
       if (hasDims) {
         const dimRes = await fetch(`${API_BASE}/inventory/${newItem.id}/dimensions`, {
           method: "PATCH",
@@ -179,26 +186,24 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
             "Content-Type": "application/json",
             Authorization: `Bearer ${adminToken}`,
           },
-          body: JSON.stringify({
-            length: parseDimField(dimLength),
-            width: parseDimField(dimWidth),
-            height: parseDimField(dimHeight),
-            diameter: parseDimField(dimDiameter),
-          }),
+          body: JSON.stringify(dimensionValidation.values),
         });
         if (!dimRes.ok) {
           const dimErr = await dimRes.json().catch(() => ({})) as { error?: string };
-          // Roll back: delete the created part to avoid leaving an orphan without dimensions.
+          let rolledBack = false;
           try {
-            await fetch(`${API_BASE}/inventory/${newItem.id}`, {
+            const deleteRes = await fetch(`${API_BASE}/inventory/${newItem.id}`, {
               method: "DELETE",
               headers: { Authorization: `Bearer ${adminToken}` },
             });
+            rolledBack = deleteRes.ok;
           } catch {
-            // Best-effort cleanup — ignore if it also fails.
+            // The part may still exist; do not advise creating another one.
           }
           if (!isMountedRef.current) return;
-          setError(dimErr.error ?? "Could not save dimensions. The part was not created. Please try again.");
+          setError(rolledBack
+            ? "Could not save dimensions. The part was not created. Please try again."
+            : `Could not save dimensions${dimErr.error ? ` (${dimErr.error})` : ""}. The part was created, but cleanup failed. Check the inventory before trying to add it again.`);
           return;
         }
       }
@@ -347,48 +352,57 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
             <View style={apfStyles.dimHalf}>
               <Text style={[apfStyles.dimFieldLabel, { color: colors.mutedForeground }]}>Length</Text>
               <KeyboardDoneInput
-                style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                accessibilityLabel="Length"
+                style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: !dimensionValidation.valid && dimensionValidation.invalidFields.includes("length") ? colors.destructive : colors.border, color: colors.foreground }]}
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
                 value={dimLength}
-                onChangeText={v => setDimLength(v.replace(/[^0-9.]/g, ""))}
+                onChangeText={setDimLength}
                 keyboardType="numeric"
               />
             </View>
             <View style={apfStyles.dimHalf}>
               <Text style={[apfStyles.dimFieldLabel, { color: colors.mutedForeground }]}>Width</Text>
               <KeyboardDoneInput
-                style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                accessibilityLabel="Width"
+                style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: !dimensionValidation.valid && dimensionValidation.invalidFields.includes("width") ? colors.destructive : colors.border, color: colors.foreground }]}
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
                 value={dimWidth}
-                onChangeText={v => setDimWidth(v.replace(/[^0-9.]/g, ""))}
+                onChangeText={setDimWidth}
                 keyboardType="numeric"
               />
             </View>
             <View style={apfStyles.dimHalf}>
               <Text style={[apfStyles.dimFieldLabel, { color: colors.mutedForeground }]}>Height</Text>
               <KeyboardDoneInput
-                style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                accessibilityLabel="Height"
+                style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: !dimensionValidation.valid && dimensionValidation.invalidFields.includes("height") ? colors.destructive : colors.border, color: colors.foreground }]}
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
                 value={dimHeight}
-                onChangeText={v => setDimHeight(v.replace(/[^0-9.]/g, ""))}
+                onChangeText={setDimHeight}
                 keyboardType="numeric"
               />
             </View>
             <View style={apfStyles.dimHalf}>
               <Text style={[apfStyles.dimFieldLabel, { color: colors.mutedForeground }]}>Diameter</Text>
               <KeyboardDoneInput
-                style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                accessibilityLabel="Diameter"
+                style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: !dimensionValidation.valid && dimensionValidation.invalidFields.includes("diameter") ? colors.destructive : colors.border, color: colors.foreground }]}
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
                 value={dimDiameter}
-                onChangeText={v => setDimDiameter(v.replace(/[^0-9.]/g, ""))}
+                onChangeText={setDimDiameter}
                 keyboardType="numeric"
               />
             </View>
           </View>
+          {!dimensionValidation.valid ? (
+            <Text accessibilityRole="alert" style={[apfStyles.fieldError, { color: colors.destructive }]}>
+              {DIMENSION_INPUT_ERROR}
+            </Text>
+          ) : null}
           {(dimLength || dimWidth || dimHeight || dimDiameter) ? (
             <Text style={[apfStyles.dimSummary, { color: colors.primary }]}>
               {[
@@ -419,7 +433,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
         )}
       </Pressable>
 
-      {/* Measure modal — iOS only (LiDAR or AI Vision estimate) */}
+      {/* Measure modal — AI Vision estimate */}
       {Platform.OS === "ios" ? (
         <MeasurePartScreen
           visible={measureOpen}

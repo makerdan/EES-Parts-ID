@@ -72,7 +72,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => (
 // hoisted factory may reference it) and re-used below to derive TEST_HASH.  The
 // tile route's generateTile() now verifies sha256(svgBuffer) === svgHash before
 // serving, so the seeded floor-plan hash MUST equal the hash of these bytes.
-const mockFixtureInstance = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`
+const mockFixtureInstance = "floor-plan-tiles"
 ;
 
 const mockFloorPlanSvg =
@@ -134,6 +134,12 @@ jest.mock("sharp", () =>
 // ── Imports ───────────────────────────────────────────────────────────────────
 import crypto from "node:crypto"
 ;
+import fs from "node:fs/promises"
+;
+import os from "node:os"
+;
+import path from "node:path"
+;
 
 
 import 
@@ -156,6 +162,8 @@ import supertest from "supertest"
 
 import app from "../src/app"
 ;
+import { acquireFloorPlanFixtureLock } from "./helpers/floorPlanFixtureLock"
+;
 
 
 // ── Test fixture constants ────────────────────────────────────────────────────
@@ -167,20 +175,27 @@ const TEST_HASH = crypto.createHash("sha256").update(mockFloorPlanSvg).digest("h
 
 const TEST_OBJECT_PATH = `/objects/jest-test/${mockFixtureInstance}/floor-plan/warehouse-map.svg`
 ;
+const TILE_CACHE_DIR = path.join(os.tmpdir(), "floor-plan-tiles")
+;
+let releaseFloorPlanFixtureLock: (() => Promise<void>) | undefined
+;
 
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function seedFloorPlan() 
 {
 
+  await cleanupFloorPlan()
+;
   await db
     .insert(floorPlanMetaTable)
     .values(
 {
- objectPath: TEST_OBJECT_PATH, hash: TEST_HASH 
+ objectPath: TEST_OBJECT_PATH,
+ hash: TEST_HASH,
+ uploadedAt: new Date("2099-01-01T00:00:00.000Z"),
 }
 )
-    .onConflictDoNothing()
 ;
 
 }
@@ -196,6 +211,15 @@ async function cleanupFloorPlan()
 
 }
 
+async function cleanupTileCache() {
+  const files = await fs.readdir(TILE_CACHE_DIR).catch(() => []);
+  await Promise.all(
+    files
+      .filter((file) => file.startsWith(`${TEST_HASH}_`))
+      .map((file) => fs.unlink(path.join(TILE_CACHE_DIR, file)).catch(() => {})),
+  );
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Suite — valid floor plan in DB → 200 / 400
@@ -207,8 +231,21 @@ describe("GET /api/floor-plan/tiles — floor plan present", () =>
   beforeAll(async () => 
 {
 
-    await seedFloorPlan()
+    releaseFloorPlanFixtureLock = await acquireFloorPlanFixtureLock()
 ;
+    try {
+      await cleanupTileCache()
+;
+      await seedFloorPlan()
+;
+    } catch (error) {
+      await releaseFloorPlanFixtureLock()
+;
+      releaseFloorPlanFixtureLock = undefined
+;
+      throw error
+;
+    }
 
   
 }
@@ -219,8 +256,17 @@ describe("GET /api/floor-plan/tiles — floor plan present", () =>
   afterAll(async () => 
 {
 
-    await cleanupFloorPlan()
+    try {
+      await cleanupFloorPlan()
 ;
+      await cleanupTileCache()
+;
+    } finally {
+      await releaseFloorPlanFixtureLock?.()
+;
+      releaseFloorPlanFixtureLock = undefined
+;
+    }
 
   
 }
@@ -408,16 +454,7 @@ describe("GET /api/floor-plan/tiles — floor plan present", () =>
     const etag = res.headers["etag"] as string
 ;
 
-    expect(etag).toContain(TEST_HASH)
-;
-
-    expect(etag).toContain("2")
-;
-
-    expect(etag).toContain("3")
-;
-
-    expect(etag).toContain("1")
+    expect(etag).toBe(`"${TEST_HASH}-2-3-1"`)
 ;
 
   

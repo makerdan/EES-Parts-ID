@@ -7,4 +7,4 @@ A workspace lib's `dist/index.d.ts` can end up containing only `//# sourceMappin
 
 **Why:** tsbuildinfo timestamps can outlive a dist wipe/partial regeneration (e.g. interrupted codegen), so incremental build never re-emits the barrel file.
 
-**How to apply:** when you see TS2306 "not a module" pointing at a workspace lib's dist barrel, `rm lib/<pkg>/tsconfig.tsbuildinfo` and re-run `pnpm -w run typecheck:libs`; verify `head dist/index.d.ts` shows real exports. Then re-run `codegen` + `dist:check`.
+**How to apply:** when you see TS2306 "not a module" pointing at a workspace lib's dist barrel, `rm lib/<pkg>/tsconfig.tsbuildinfo` and re-run `pnpm -w run typecheck:libs`; verify `head dist/index.d.ts` shows real exports. For changed workspace declarations that are merely stale, force-rebuild the referenced lib (`tsc -b lib/<pkg> --force`) before downstream typecheck. Then re-run `codegen` + `dist:check`.

@@ -12,10 +12,16 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { preflightWebArtifact } = require("../scripts/web-artifact-preflight");
 
-const STATIC_ROOT = path.resolve(__dirname, "..", "static-build");
+const STATIC_ROOT = path.resolve(
+  process.env.PARTS_ID_STATIC_ROOT || path.resolve(__dirname, "..", "static-build"),
+);
 const TEMPLATE_PATH = path.resolve(__dirname, "templates", "landing-page.html");
 const basePath = (process.env.BASE_PATH || "/").replace(/\/+$/, "");
+const SERVER_MODE =
+  process.env.PARTS_ID_SERVER_MODE ||
+  (process.env.NODE_ENV === "development" ? "development" : "production");
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -93,7 +99,8 @@ function serveFile(filePath, res) {
 /**
  * Serve a browser request from the Expo web build (static-build/web/).
  * Falls through to native static files (for Expo Go asset downloads),
- * then falls back to the Expo Go landing page if no web build exists.
+ * then falls back to the Expo Go landing page only in explicit development
+ * mode if no web build exists.
  */
 function serveWebOrFallback(urlPath, req, res, landingPageTemplate, appName) {
   const safePath = path.normalize(urlPath).replace(/^(\.\.(\/|\\|$))+/, "");
@@ -128,8 +135,13 @@ function serveWebOrFallback(urlPath, req, res, landingPageTemplate, appName) {
     return serveFile(webIndexPath, res);
   }
 
-  // 4. No web build — show Expo Go landing page
-  serveLandingPage(req, res, landingPageTemplate, appName);
+  // 4. No web build — the landing page is a development-only fallback.
+  if (SERVER_MODE === "development") {
+    return serveLandingPage(req, res, landingPageTemplate, appName);
+  }
+
+  res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+  res.end("Web artifact is unavailable.");
 }
 
 const landingPageTemplate = fs.readFileSync(TEMPLATE_PATH, "utf-8");
@@ -140,6 +152,22 @@ const API_PORT = parseInt(
   process.env.API_SERVER_PORT || String(devPorts.NATIVE_API_DEV_PORT),
   10,
 );
+const API_PROXY_TIMEOUT_MS = parsePositiveInteger(
+  process.env.API_PROXY_TIMEOUT_MS,
+  30_000,
+);
+
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+try {
+  preflightWebArtifact({ staticRoot: STATIC_ROOT, mode: SERVER_MODE });
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
 
 /**
  * Forward /api/* requests to the API server running on localhost:API_PORT.
@@ -155,16 +183,135 @@ function proxyToApiServer(pathname, search, req, res) {
     headers: { ...req.headers, host: `localhost:${API_PORT}` },
   };
 
-  const proxyReq = http.request(options, (proxyRes) => {
+  let proxyReq;
+  let upstreamResponse;
+  let deadlineId;
+  let drainHandler;
+  let aborted = false;
+
+  const clearDeadline = () => {
+    if (deadlineId) {
+      clearTimeout(deadlineId);
+      deadlineId = undefined;
+    }
+  };
+
+  const sendError = (status, message) => {
+    if (res.headersSent || res.destroyed) return;
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: message }));
+  };
+
+  const abortUpstream = (error) => {
+    if (aborted) return;
+    aborted = true;
+    clearDeadline();
+    if (drainHandler) {
+      res.off("drain", drainHandler);
+      drainHandler = undefined;
+    }
+    req.unpipe(proxyReq);
+    if (upstreamResponse && !upstreamResponse.destroyed) {
+      upstreamResponse.unpipe(res);
+      upstreamResponse.destroy(error);
+    }
+    if (proxyReq && !proxyReq.destroyed) {
+      proxyReq.destroy(error);
+    }
+  };
+
+  const armDeadline = () => {
+    clearDeadline();
+    deadlineId = setTimeout(() => {
+      const error = new Error(`API proxy timed out after ${API_PROXY_TIMEOUT_MS} ms`);
+      console.error(`[serve] API proxy timeout (${target}):`, error.message);
+      abortUpstream(error);
+      if (!res.headersSent) {
+        sendError(504, "API server timed out");
+      } else if (!res.destroyed) {
+        res.destroy(error);
+      }
+    }, API_PROXY_TIMEOUT_MS);
+  };
+
+  proxyReq = http.request(options, (proxyRes) => {
+    upstreamResponse = proxyRes;
     res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
-    proxyRes.pipe(res, { end: true });
+    armDeadline();
+    proxyRes.on("data", (chunk) => {
+      if (aborted || res.destroyed) return;
+
+      if (!res.write(chunk)) {
+        // A slow downstream can pause the upstream stream for longer than the
+        // inactivity deadline. The response is still active while waiting for
+        // the writable side to drain, so only resume the deadline after that.
+        clearDeadline();
+        proxyRes.pause();
+        drainHandler = () => {
+          drainHandler = undefined;
+          if (aborted || res.destroyed || proxyRes.destroyed) return;
+          armDeadline();
+          proxyRes.resume();
+        };
+        res.once("drain", drainHandler);
+      } else {
+        armDeadline();
+      }
+    });
+    proxyRes.on("end", () => {
+      clearDeadline();
+      if (!res.destroyed && !res.writableEnded) res.end();
+    });
+    proxyRes.on("error", (err) => {
+      clearDeadline();
+      if (!res.headersSent && !res.destroyed) {
+        console.error(`[serve] API proxy response error (${target}):`, err.message);
+        sendError(502, "API server unavailable");
+      } else if (!res.destroyed) {
+        res.destroy(err);
+      }
+    });
+    proxyRes.on("close", () => {
+      if (proxyRes.complete || aborted) return;
+
+      const error = new Error("API server closed before completing response");
+      console.error(`[serve] API proxy incomplete response (${target}):`, error.message);
+      abortUpstream(error);
+      if (!res.headersSent) {
+        sendError(502, "API server closed before completing response");
+      } else if (!res.destroyed) {
+        res.destroy(error);
+      }
+    });
   });
 
   proxyReq.on("error", (err) => {
-    console.error(`[serve] API proxy error (${target}):`, err.message);
-    if (!res.headersSent) {
-      res.writeHead(502, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "API server unavailable" }));
+    clearDeadline();
+    if (!aborted) {
+      console.error(`[serve] API proxy error (${target}):`, err.message);
+      sendError(502, "API server unavailable");
+    }
+  });
+
+  armDeadline();
+
+  res.on("close", () => {
+    if (!res.writableEnded && !aborted) {
+      abortUpstream(new Error("downstream response closed"));
+    }
+  });
+
+  req.on("aborted", () => {
+    if (!aborted) {
+      abortUpstream(new Error("downstream request aborted"));
+    }
+  });
+
+  req.on("close", () => {
+    // `aborted` is the usual signal for an incomplete incoming request, but
+    // close is also needed when the client disappears before Node emits it.
+    if (!req.complete && !aborted) {
+      abortUpstream(new Error("downstream request closed"));
     }
   });
 

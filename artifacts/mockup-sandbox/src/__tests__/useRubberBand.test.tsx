@@ -50,12 +50,21 @@ const ZONE_2 = {
   isInventory: true, svgX: 400, svgY: 100, svgWidth: 200, svgHeight: 150, sortOrder: 1,
 };
 
+// world → floor-plan SVG: x' = 2x + 10, y' = 2y - 5
+const CALIBRATED_ANCHORS = [
+  { name: "A1", svgX: 10, svgY: -5, worldX: 0, worldY: 0 },
+  { name: "A2", svgX: 210, svgY: -5, worldX: 100, worldY: 0 },
+  { name: "A3", svgX: 10, svgY: 195, worldX: 0, worldY: 100 },
+];
+
 // ── Fetch mock factory ─────────────────────────────────────────────────────────
 
 function makeFetchMock(
   zones: typeof ZONE_1[] = [ZONE_1],
   patchStatus = 200,
+  anchors: unknown[] = [],
 ) {
+  let currentZones = zones.map((zone) => ({ ...zone }));
   return vi.fn((url: string, init?: RequestInit) => {
     const method = (init?.method ?? "GET").toUpperCase();
     const s = String(url);
@@ -69,16 +78,31 @@ function makeFetchMock(
     if (s.includes("/warehouse-zones/alignment"))
       throw new Error(`unexpected alignment fetch: ${s}`);
 
-    if (method === "GET" && s.includes("/warehouse-zones"))
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ zones }), text: () => Promise.resolve("") });
+    if (method === "GET" && s.includes("/warehouse-zones/anchors"))
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({ anchors }),
+        text: () => Promise.resolve(""),
+      });
 
-    if (method === "PATCH")
+    if (method === "GET" && s.includes("/warehouse-zones"))
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ zones: currentZones }), text: () => Promise.resolve("") });
+
+    if (method === "PATCH") {
+      if (patchStatus === 200) {
+        const id = Number(s.split("/").pop());
+        const updates = JSON.parse((init?.body ?? "{}") as string) as Partial<typeof ZONE_1>;
+        currentZones = currentZones.map((zone) =>
+          zone.id === id ? { ...zone, ...updates } : zone,
+        );
+      }
       return Promise.resolve({
         ok: patchStatus === 200,
         status: patchStatus,
         json: () => Promise.resolve(patchStatus === 200 ? {} : { error: `HTTP ${patchStatus}` }),
         text: () => Promise.resolve(""),
       });
+    }
 
     if (method === "POST" && s.includes("/warehouse-zones"))
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ zone: { ...ZONE_1, id: 99 } }), text: () => Promise.resolve("") });
@@ -92,8 +116,12 @@ function makeFetchMock(
 
 // ── Render helper ──────────────────────────────────────────────────────────────
 
-async function setupEditor(zones: typeof ZONE_1[] = [ZONE_1], patchStatus = 200) {
-  const fetchMock = makeFetchMock(zones, patchStatus);
+async function setupEditor(
+  zones: typeof ZONE_1[] = [ZONE_1],
+  patchStatus = 200,
+  anchors: unknown[] = [],
+) {
+  const fetchMock = makeFetchMock(zones, patchStatus, anchors);
   global.fetch = fetchMock as unknown as typeof global.fetch;
 
   let container!: HTMLElement;
@@ -172,6 +200,7 @@ function rubberRectVisible(container: HTMLElement): boolean {
 describe("useRubberBand — Zone Editor integration", () => {
   afterEach(() => {
     cleanup();
+    localStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -798,5 +827,270 @@ describe("useRubberBand — Zone Editor integration", () => {
 
     // Both zones should now be selected
     expect(getSelectedZoneRects(container)).toHaveLength(2);
+  });
+
+  it("Shift+drag inverse-maps a calibrated selection rectangle into stored/world hits", async () => {
+    const { container, svgEl } = await setupEditor(
+      [ZONE_1, ZONE_2],
+      200,
+      CALIBRATED_ANCHORS,
+    );
+
+    // The screen gesture maps through the active matrix as:
+    // floor-plan (0,0) → world (-5,2.5), and
+    // floor-plan (1000,555) → world (495,280). Both stored zones fit inside.
+    await rubberBand(
+      svgEl,
+      { clientX: 0, clientY: 0 },
+      { clientX: 180, clientY: 100 },
+    );
+
+    expect(getSelectedZoneRects(container)).toHaveLength(2);
+  });
+
+  it("moves every calibrated rubber-band selection member with world-space PATCH payloads", async () => {
+    const { container, svgEl, fetchMock } = await setupEditor(
+      [ZONE_1, ZONE_2],
+      200,
+      CALIBRATED_ANCHORS,
+    );
+
+    await rubberBand(
+      svgEl,
+      { clientX: 0, clientY: 0 },
+      { clientX: 180, clientY: 100 },
+    );
+    expect(getSelectedZoneRects(container)).toHaveLength(2);
+
+    // Start on zone 1 at stored/world (150,150), then move the pointer to
+    // (200,190). The rendered event target is still the calibrated SVG rect,
+    // while the PATCH delta must remain +50,+40 in stored/world coordinates.
+    const zoneRect = getZoneFillRects(container)[0]!;
+    await act(async () => {
+      fireEvent.mouseDown(zoneRect, {
+        clientX: 55.8,
+        clientY: 53.1,
+        button: 0,
+      });
+      document.dispatchEvent(new MouseEvent("mousemove", {
+        clientX: 73.8,
+        clientY: 67.5,
+        bubbles: true,
+      }));
+      document.dispatchEvent(new MouseEvent("mouseup", {
+        clientX: 73.8,
+        clientY: 67.5,
+        bubbles: true,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const patches = (fetchMock.mock.calls as [string, RequestInit][])
+        .filter(([, init]) => (init?.method ?? "").toUpperCase() === "PATCH");
+      expect(patches).toHaveLength(2);
+    });
+
+    const patches = (fetchMock.mock.calls as [string, RequestInit][])
+      .filter(([, init]) => (init?.method ?? "").toUpperCase() === "PATCH")
+      .map(([url, init]) => ({
+        id: Number(String(url).split("/").pop()),
+        body: JSON.parse(init.body as string) as { svgX: number; svgY: number },
+      }))
+      .sort((a, b) => a.id - b.id);
+
+    expect(patches).toEqual([
+      { id: ZONE_1.id, body: { svgX: 150, svgY: 140 } },
+      { id: ZONE_2.id, body: { svgX: 450, svgY: 140 } },
+    ]);
+  });
+
+  it("undoes and redoes every calibrated multi-zone move in world space", async () => {
+    const { container, svgEl, fetchMock } = await setupEditor(
+      [ZONE_1, ZONE_2],
+      200,
+      CALIBRATED_ANCHORS,
+    );
+
+    await rubberBand(
+      svgEl,
+      { clientX: 0, clientY: 0 },
+      { clientX: 180, clientY: 100 },
+    );
+    expect(getSelectedZoneRects(container)).toHaveLength(2);
+
+    const zoneRect = getZoneFillRects(container)[0]!;
+    await act(async () => {
+      fireEvent.mouseDown(zoneRect, {
+        clientX: 55.8,
+        clientY: 53.1,
+        button: 0,
+      });
+      document.dispatchEvent(new MouseEvent("mousemove", {
+        clientX: 73.8,
+        clientY: 67.5,
+        bubbles: true,
+      }));
+      document.dispatchEvent(new MouseEvent("mouseup", {
+        clientX: 73.8,
+        clientY: 67.5,
+        bubbles: true,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const patchCalls = () =>
+      (fetchMock.mock.calls as [string, RequestInit][])
+        .filter(([, init]) => (init?.method ?? "").toUpperCase() === "PATCH")
+        .map(([url, init]) => ({
+          id: Number(String(url).split("/").pop()),
+          body: JSON.parse(init.body as string) as { svgX: number; svgY: number },
+        }));
+
+    await waitFor(() => expect(patchCalls()).toHaveLength(2));
+    expect(patchCalls()).toEqual([
+      { id: ZONE_1.id, body: { svgX: 150, svgY: 140 } },
+      { id: ZONE_2.id, body: { svgX: 450, svgY: 140 } },
+    ]);
+    expect(container.querySelector("[data-testid='zone-editor-calibrated-layer']")
+      ?.getAttribute("transform")).toBe("matrix(2,0,0,2,10,-5)");
+
+    const undoButton = container.querySelector('button[title^="Undo"]') as HTMLButtonElement;
+    expect(undoButton.disabled).toBe(false);
+    await act(async () => { fireEvent.click(undoButton); });
+    await waitFor(() => expect(patchCalls()).toHaveLength(4));
+    expect(patchCalls().slice(2)).toEqual([
+      { id: ZONE_1.id, body: { svgX: ZONE_1.svgX, svgY: ZONE_1.svgY } },
+      { id: ZONE_2.id, body: { svgX: ZONE_2.svgX, svgY: ZONE_2.svgY } },
+    ]);
+    expect(container.querySelector("[data-testid='zone-editor-calibrated-layer']")
+      ?.getAttribute("transform")).toBe("matrix(2,0,0,2,10,-5)");
+
+    const redoButton = container.querySelector('button[title^="Redo"]') as HTMLButtonElement;
+    expect(redoButton.disabled).toBe(false);
+    await act(async () => { fireEvent.click(redoButton); });
+    await waitFor(() => expect(patchCalls()).toHaveLength(6));
+    expect(patchCalls().slice(4)).toEqual([
+      { id: ZONE_1.id, body: { svgX: 150, svgY: 140 } },
+      { id: ZONE_2.id, body: { svgX: 450, svgY: 140 } },
+    ]);
+    expect(container.querySelector("[data-testid='zone-editor-calibrated-layer']")
+      ?.getAttribute("transform")).toBe("matrix(2,0,0,2,10,-5)");
+  });
+
+  it("keeps calibrated multi-zone history and geometry after failed undo and redo PATCHes", async () => {
+    const { container, svgEl, fetchMock } = await setupEditor(
+      [ZONE_1, ZONE_2],
+      200,
+      CALIBRATED_ANCHORS,
+    );
+
+    await rubberBand(
+      svgEl,
+      { clientX: 0, clientY: 0 },
+      { clientX: 180, clientY: 100 },
+    );
+    expect(getSelectedZoneRects(container)).toHaveLength(2);
+
+    const zoneRect = getZoneFillRects(container)[0]!;
+    await act(async () => {
+      fireEvent.mouseDown(zoneRect, {
+        clientX: 55.8,
+        clientY: 53.1,
+        button: 0,
+      });
+      document.dispatchEvent(new MouseEvent("mousemove", {
+        clientX: 73.8,
+        clientY: 67.5,
+        bubbles: true,
+      }));
+      document.dispatchEvent(new MouseEvent("mouseup", {
+        clientX: 73.8,
+        clientY: 67.5,
+        bubbles: true,
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const patchCalls = () =>
+      (fetchMock.mock.calls as [string, RequestInit][]).filter(
+        ([, init]) => (init?.method ?? "").toUpperCase() === "PATCH",
+      );
+    const geometries = () =>
+      getZoneFillRects(container).map((rect) => ({
+        x: rect.getAttribute("x"),
+        y: rect.getAttribute("y"),
+      }));
+    await waitFor(() => expect(patchCalls()).toHaveLength(2));
+    const movedGeometries = geometries();
+    const calibratedTransform = container.querySelector(
+      "[data-testid='zone-editor-calibrated-layer']",
+    )?.getAttribute("transform");
+    const failNextPatch = () => {
+      const previousImplementation = fetchMock.getMockImplementation()!;
+      let shouldFail = true;
+      fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+        if (shouldFail && (init?.method ?? "").toUpperCase() === "PATCH") {
+          shouldFail = false;
+          return Promise.resolve({
+            ok: false,
+            status: 500,
+            json: () => Promise.resolve({ error: "simulated PATCH failure" }),
+            text: () => Promise.resolve("simulated PATCH failure"),
+          });
+        }
+        return previousImplementation(url, init);
+      });
+    };
+    expect(movedGeometries).toEqual([
+      { x: "150", y: "140" },
+      { x: "450", y: "140" },
+    ]);
+    expect(calibratedTransform).toBe("matrix(2,0,0,2,10,-5)");
+
+    // Promise.allSettled still attempts every zone, but a failed undo must
+    // leave the batch entry on undo and keep redo empty.
+    failNextPatch();
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[title^="Undo"]')!);
+    });
+    await waitFor(() => expect(patchCalls()).toHaveLength(4));
+    expect((container.querySelector('button[title^="Undo"]') as HTMLButtonElement).disabled).toBe(false);
+    expect(container.querySelector('button[title="Nothing to redo"]')).not.toBeNull();
+    expect(geometries()).toEqual(movedGeometries);
+    expect(container.querySelector("[data-testid='zone-editor-calibrated-layer']")
+      ?.getAttribute("transform")).toBe(calibratedTransform);
+
+    // Successful retry moves the entry to redo; then a failed redo must keep
+    // that single redo entry without changing either zone or creating undo.
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[title^="Undo"]')!);
+    });
+    await waitFor(() => expect(patchCalls()).toHaveLength(6));
+    const originalGeometries = geometries();
+    expect(originalGeometries).toEqual([
+      { x: "100", y: "100" },
+      { x: "400", y: "100" },
+    ]);
+    const undoTitleBeforeFailedRedo =
+      (container.querySelector('button[title^="Undo"]') as HTMLButtonElement).title;
+    const redoTitleBeforeFailedRedo =
+      (container.querySelector('button[title^="Redo"]') as HTMLButtonElement).title;
+
+    failNextPatch();
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[title^="Redo"]')!);
+    });
+    await waitFor(() => expect(patchCalls()).toHaveLength(8));
+    expect((container.querySelector('button[title^="Undo"]') as HTMLButtonElement).title)
+      .toBe(undoTitleBeforeFailedRedo);
+    expect((container.querySelector('button[title^="Redo"]') as HTMLButtonElement).title)
+      .toBe(redoTitleBeforeFailedRedo);
+    expect(geometries()).toEqual(originalGeometries);
+    expect(container.querySelector("[data-testid='zone-editor-calibrated-layer']")
+      ?.getAttribute("transform")).toBe(calibratedTransform);
   });
 });

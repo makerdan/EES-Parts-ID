@@ -41,7 +41,13 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 }));
 
 // ── Imports ────────────────────────────────────────────────────────────────
-import { type AdminAuditAction, adminAuditLogTable, db, usersTable } from "@workspace/db";
+import {
+  type AdminAuditAction,
+  adminAuditLogTable,
+  db,
+  inventorySnapshotAuditTable,
+  usersTable,
+} from "@workspace/db";
 import { and, eq, gte, inArray } from "drizzle-orm";
 import supertest from "supertest";
 
@@ -53,6 +59,7 @@ import { cleanupTestUser, seedTestUser } from "./helpers/testDb";
 const TEST_INSTANCE = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
 const FIXTURE_PREFIX = `jest-audit-${TEST_INSTANCE}-`;
 const seededUserIds = new Set<string>();
+const seededSnapshotIds = new Set<string>();
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function makeAdminToken(): string {
@@ -104,7 +111,13 @@ async function cleanupFixtures(): Promise<void> {
       .delete(adminAuditLogTable)
       .where(inArray(adminAuditLogTable.targetClerkUserId, userIds));
   }
+  if (seededSnapshotIds.size > 0) {
+    await db
+      .delete(inventorySnapshotAuditTable)
+      .where(inArray(inventorySnapshotAuditTable.snapshotId, [...seededSnapshotIds]));
+  }
   seededUserIds.clear();
+  seededSnapshotIds.clear();
 }
 
 // ── Setup / teardown ───────────────────────────────────────────────────────
@@ -403,6 +416,94 @@ describe("GET /api/admin/audit-log — authenticated", () => {
     for (let i = 1; i < dates.length; i++) {
       expect(dates[i - 1]!).toBeGreaterThanOrEqual(dates[i]!);
     }
+  });
+});
+
+describe("GET /api/admin/snapshots/history — authenticated", () => {
+  it("requires an approved admin", async () => {
+    await supertest(app)
+      .get("/api/admin/snapshots/history")
+      .expect(401);
+
+    const nonAdmin = await seedNonAdmin();
+    await supertest(app)
+      .get("/api/admin/snapshots/history")
+      .set("Authorization", `Bearer ${nonAdmin}`)
+      .expect(403);
+  });
+
+  it("returns only safe manual-backup rows with cursor pagination", async () => {
+    const completedSnapshotId = `${FIXTURE_PREFIX}completed`;
+    const failedSnapshotId = `${FIXTURE_PREFIX}failed`;
+    const restoreSnapshotId = `${FIXTURE_PREFIX}restore`;
+    seededSnapshotIds.add(completedSnapshotId);
+    seededSnapshotIds.add(failedSnapshotId);
+    seededSnapshotIds.add(restoreSnapshotId);
+
+    await db.insert(inventorySnapshotAuditTable).values([
+      {
+        adminClerkUserId: `${FIXTURE_PREFIX}admin`,
+        snapshotId: failedSnapshotId,
+        action: "manual-backup",
+        rowCount: null,
+        outcome: "failed",
+        createdAt: new Date("2026-09-20T11:00:00.000Z"),
+      },
+      {
+        adminClerkUserId: `${FIXTURE_PREFIX}admin`,
+        snapshotId: completedSnapshotId,
+        action: "manual-backup",
+        rowCount: 42,
+        outcome: "completed",
+        createdAt: new Date("2026-09-20T12:00:00.000Z"),
+      },
+      {
+        adminClerkUserId: `${FIXTURE_PREFIX}admin`,
+        snapshotId: restoreSnapshotId,
+        action: "restore",
+        rowCount: 99,
+        outcome: "completed",
+        createdAt: new Date("2026-09-20T10:00:00.000Z"),
+      },
+    ]);
+
+    const firstPage = await supertest(app)
+      .get("/api/admin/snapshots/history?limit=1")
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    expect(firstPage.body.rows).toHaveLength(1);
+    expect(firstPage.body.rows[0]).toEqual(expect.objectContaining({
+      adminClerkUserId: `${FIXTURE_PREFIX}admin`,
+      snapshotId: completedSnapshotId,
+      rowCount: 42,
+      outcome: "completed",
+    }));
+    expect(firstPage.body.rows[0]).not.toHaveProperty("dataPath");
+    expect(firstPage.body.rows[0]).not.toHaveProperty("manifestPath");
+    expect(firstPage.body.rows[0]).not.toHaveProperty("databaseUrl");
+    expect(firstPage.body.nextCursor).toEqual(expect.any(Number));
+
+    const secondPage = await supertest(app)
+      .get(`/api/admin/snapshots/history?limit=1&before_id=${firstPage.body.nextCursor}`)
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(200);
+
+    expect(secondPage.body.rows).toHaveLength(1);
+    expect(secondPage.body.rows[0]).toEqual(expect.objectContaining({
+      snapshotId: failedSnapshotId,
+      rowCount: null,
+      outcome: "failed",
+    }));
+  });
+
+  it("rejects an invalid cursor", async () => {
+    const response = await supertest(app)
+      .get("/api/admin/snapshots/history?before_id=not-a-number")
+      .set("Authorization", `Bearer ${makeAdminToken()}`)
+      .expect(400);
+
+    expect(response.body.error).toContain("before_id");
   });
 });
 

@@ -262,6 +262,73 @@ describe("updateQueryCache serialisation lock — concurrent write races", () =>
   });
 });
 
+// ── Harness: latest-request-wins publication guard ───────────────────────────
+//
+// This mirrors the generation checks around network success, offline fallback,
+// dimension counts, and durable query persistence in SearchScreen.  Keeping the
+// callbacks separate makes the stale-completion ordering deterministic.
+
+function makeSearchPublicationHarness() {
+  let currentGeneration = 0;
+  const visible: string[] = [];
+  const durable: Record<string, string[]> = {};
+  let dimensionCount = 0;
+
+  return {
+    begin() {
+      currentGeneration += 1;
+      return currentGeneration;
+    },
+    publish(
+      generation: number,
+      result: string,
+      count: number,
+      kind: "network" | "offline",
+    ) {
+      if (generation !== currentGeneration) return false;
+      visible.splice(0, visible.length, `${kind}:${result}`);
+      durable[result] = [kind, result];
+      dimensionCount = count;
+      return true;
+    },
+    visible,
+    durable,
+    get dimensionCount() {
+      return dimensionCount;
+    },
+  };
+}
+
+describe("SearchScreen latest-request-wins generation guard", () => {
+  it("ignores an older completion across visible results, durable cache, and counts", () => {
+    const harness = makeSearchPublicationHarness();
+    const older = harness.begin();
+    const newer = harness.begin();
+
+    expect(harness.publish(older, "old", 1, "network")).toBe(false);
+    expect(harness.publish(older, "old", 1, "offline")).toBe(false);
+    expect(harness.visible).toEqual([]);
+    expect(harness.durable).toEqual({});
+    expect(harness.dimensionCount).toBe(0);
+
+    expect(harness.publish(newer, "new", 2, "network")).toBe(true);
+    expect(harness.visible).toEqual(["network:new"]);
+    expect(harness.durable).toEqual({ new: ["network", "new"] });
+    expect(harness.dimensionCount).toBe(2);
+  });
+
+  it("uses generations rather than query text, so identical overlapping searches stay ordered", () => {
+    const harness = makeSearchPublicationHarness();
+    const firstIdentical = harness.begin();
+    const secondIdentical = harness.begin();
+
+    expect(harness.publish(firstIdentical, "same-query", 3, "network")).toBe(false);
+    expect(harness.publish(secondIdentical, "same-query", 4, "network")).toBe(true);
+    expect(harness.visible).toEqual(["network:same-query"]);
+    expect(harness.dimensionCount).toBe(4);
+  });
+});
+
 // ── Suite 3: retry-timer unmount guard ───────────────────────────────────────
 
 describe("retry-timer unmount guard — no state setter calls after unmount", () => {

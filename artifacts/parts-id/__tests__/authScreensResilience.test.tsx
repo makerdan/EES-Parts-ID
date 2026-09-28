@@ -48,10 +48,21 @@ const mockSignUp = {
 };
 const mockUseSignUp = jest.fn();
 
-jest.mock("@clerk/expo", () => ({
-  useSignIn: () => mockUseSignIn(),
-  useSignUp: () => mockUseSignUp(),
-}));
+jest.mock("@clerk/expo", () => {
+  const {
+    assertClerkMockContract,
+    createClerkExpoMock,
+  } = jest.requireActual("../__mocks__/clerk-expo");
+  const clerkMock = createClerkExpoMock({
+    useSignIn: () => mockUseSignIn(),
+    useSignUp: () => mockUseSignUp(),
+  });
+  return assertClerkMockContract(
+    clerkMock,
+    ["useSignIn", "useSignUp"],
+    "authScreensResilience",
+  );
+});
 
 // ── @/contexts/AppContext ────────────────────────────────────────────────────
 const mockLogout = jest.fn();
@@ -180,6 +191,35 @@ beforeEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("LoginScreen — password error recovery", () => {
+  it("exposes Sign In as a named button with busy and disabled state", async () => {
+    const result = await render(<LoginScreen />);
+    const signInButton = result.getByTestId("login-submit-button");
+
+    expect(signInButton.props.accessibilityRole).toBe("button");
+    expect(signInButton.props.accessibilityLabel).toBe("Sign In");
+    expect(signInButton.props.disabled).toBe(false);
+    expect(signInButton.props.accessibilityState).toEqual({
+      disabled: false,
+      busy: false,
+    });
+    expect(signInButton.props["aria-busy"]).toBe(false);
+
+    mockUseSignIn.mockReturnValue({
+      signIn: mockSignIn,
+      errors: { fields: {} },
+      fetchStatus: "fetching",
+    });
+    const busyResult = await render(<LoginScreen />);
+    const busySignInButton = busyResult.getByTestId("login-submit-button");
+
+    expect(busySignInButton.props.disabled).toBe(true);
+    expect(busySignInButton.props.accessibilityState).toEqual({
+      disabled: true,
+      busy: true,
+    });
+    expect(busySignInButton.props["aria-busy"]).toBe(true);
+  });
+
   it("renders a readable message when password sign-in throws", async () => {
     mockSignInPassword.mockRejectedValue(new Error("Incorrect password"));
 

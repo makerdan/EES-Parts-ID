@@ -101,9 +101,19 @@ jest.mock("@/utils/readPdfAsBase64", () => ({
 // ── @/utils/splitPdfIntoChunks ────────────────────────────────────────────────
 
 const mockSplitPdfIntoChunks = jest.fn();
+let mockStreamChunks: Array<{ bytes: Uint8Array; pageOffset: number }> = [];
 
 jest.mock("@/utils/splitPdfIntoChunks", () => ({
   splitPdfIntoChunks: (...args: unknown[]) => mockSplitPdfIntoChunks(...args),
+  countPdfChunks: async (bytes: Uint8Array) => {
+    mockStreamChunks = await mockSplitPdfIntoChunks(bytes);
+    return mockStreamChunks.length;
+  },
+  iteratePdfChunks: async function* (_bytes: Uint8Array, _pagesPerChunk: number, startIndex = 0) {
+    for (let index = startIndex; index < mockStreamChunks.length; index++) {
+      yield { chunk: mockStreamChunks[index], index, totalChunks: mockStreamChunks.length };
+    }
+  },
   getOrSplitChunks: jest.fn(async (cached: unknown, bytes: unknown, _ppc: unknown, splitFn: unknown) => {
     if (cached !== null) return cached;
     return (splitFn as (b: unknown, n: unknown) => Promise<unknown>)(bytes, 20);
@@ -936,6 +946,7 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     const { Platform } = require("react-native") as { Platform: { OS: string } };
     (Platform as { OS: string }).OS = originalPlatformOS;
     delete (global as unknown as { XMLHttpRequest?: jest.Mock }).XMLHttpRequest;
@@ -1604,6 +1615,7 @@ describe("CatalogPdfUpload — poll abort safety on unmount / stopPolling mid-fl
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     const { Platform } = require("react-native") as { Platform: { OS: string } };
     (Platform as { OS: string }).OS = originalPlatformOS;
     delete (global as unknown as { XMLHttpRequest?: jest.Mock }).XMLHttpRequest;
@@ -1741,5 +1753,61 @@ describe("CatalogPdfUpload — poll abort safety on unmount / stopPolling mid-fl
     const freshAllText = instText(freshTree.root!);
     expect(freshAllText).not.toContain("done");
     expect(freshAllText).not.toContain("job-abort-test");
+  });
+
+  const validStatus = {
+    jobId: "job-abort-test", status: "processing", totalPages: null,
+    processedPages: 1, matchedParts: 0, imagesMatched: 0, errorMessage: null,
+  };
+  const response = (status: number, body: unknown = validStatus) => ({
+    ok: status >= 200 && status < 300, status, json: async () => body,
+  });
+
+  it.each([
+    ["429 responses", response(429)],
+    ["503 responses", response(503)],
+    ["invalid 2xx bodies", response(200, { status: "processing" })],
+    ["another job's status", response(200, { ...validStatus, jobId: "other-job" })],
+  ])("pauses after repeated %s and retries the saved job without re-uploading", async (_label, failure) => {
+    let resolveFirst!: (value: unknown) => void;
+    let attempts = 0;
+    const tree = await renderUploadCard();
+    activeTree = tree;
+    await startPollingInFlight(tree, () => {
+      attempts++;
+      return attempts === 1 ? new Promise(res => { resolveFirst = res; }) : Promise.resolve(failure);
+    });
+    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
+    await act(async () => { resolveFirst(failure); await Promise.resolve(); });
+    for (let i = 0; i < 3; i++) {
+      await act(async () => { await jest.advanceTimersByTimeAsync(2500); });
+    }
+    expect(attempts).toBe(3);
+    expect(instText(tree.root!)).toContain("Could not check catalog job status");
+    expect(instText(tree.root!)).toContain("Cancel job");
+    expect(findPressable(tree.root!, "Retry status")).not.toBeNull();
+    const uploadCount = MockXMLHttpRequestG7.mock.calls.length;
+    (global.fetch as jest.Mock).mockImplementation((url: string) =>
+      Promise.resolve(url.includes("/status") ? response(200) : response(404)));
+    await act(async () => { fireEvent.press(findPressable(tree.root!, "Retry status")!); await Promise.resolve(); });
+    expect(instText(tree.root!)).not.toContain("Could not check catalog job status");
+    expect(MockXMLHttpRequestG7).toHaveBeenCalledTimes(uploadCount);
+  });
+
+  it("recovers from a transient status error without showing the paused message", async () => {
+    let resolveFirst!: (value: unknown) => void;
+    let attempts = 0;
+    const tree = await renderUploadCard();
+    activeTree = tree;
+    await startPollingInFlight(tree, () => {
+      attempts++;
+      return attempts === 1 ? new Promise(res => { resolveFirst = res; }) : Promise.resolve(response(200));
+    });
+    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
+    await act(async () => { resolveFirst(response(503)); await Promise.resolve(); });
+    await act(async () => { await jest.advanceTimersByTimeAsync(2500); });
+    expect(attempts).toBe(2);
+    expect(instText(tree.root!)).not.toContain("Could not check catalog job status");
+    expect(instText(tree.root!)).toContain("Processing pages…");
   });
 });

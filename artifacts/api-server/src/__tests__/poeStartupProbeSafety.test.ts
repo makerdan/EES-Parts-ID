@@ -1,4 +1,5 @@
 const mockCreatePoeChatCompletion = jest.fn();
+const mockCreatePoeChatCompletionWithSettlement = jest.fn();
 const mockRegistry = [
   {
     id: "Claude-Sonnet-4.5",
@@ -23,23 +24,21 @@ const mockRegistry = [
   },
 ];
 
-jest.mock("@workspace/integrations-poe-server", () => ({
-  createPoeChatCompletion: mockCreatePoeChatCompletion,
-  createPoeChatCompletionWithSettlement: jest.fn((request, options) => {
-    const response = Promise.resolve().then(() =>
-      mockCreatePoeChatCompletion(request, { ...options, maxAttempts: 1 }),
-    );
-    return {
-      response,
-      transportSettled: response.then(() => undefined, () => undefined),
-    };
-  }),
-  getPoeClient: jest.fn(() => ({ chat: { completions: { create: jest.fn() } } })),
-  getPoeModelRegistry: () => mockRegistry,
-  getPoeRegistryModel: (id: string) => mockRegistry.find((model) => model.id === id),
-  POE_MODEL_REGISTRY_VERSION: "static-v1",
-  resetPoeClient: jest.fn(),
-}));
+jest.mock("@workspace/integrations-poe-server", () => {
+  const actual = jest.requireActual<typeof import("@workspace/integrations-poe-server")>(
+    "@workspace/integrations-poe-server",
+  );
+  return {
+    ...actual,
+    createPoeChatCompletion: mockCreatePoeChatCompletion,
+    createPoeChatCompletionWithSettlement: mockCreatePoeChatCompletionWithSettlement,
+    getPoeClient: jest.fn(() => ({ chat: { completions: { create: jest.fn() } } })),
+    getPoeModelRegistry: () => mockRegistry,
+    getPoeRegistryModel: (id: string) => mockRegistry.find((model) => model.id === id),
+    POE_MODEL_REGISTRY_VERSION: "static-v1",
+    resetPoeClient: jest.fn(),
+  };
+});
 
 jest.mock("@workspace/db", () => ({
   adminPreferencesTable: { id: "id" },
@@ -73,6 +72,15 @@ describe("Poe startup and explicit probe safety", () => {
     jest.clearAllMocks();
     setProvider("poe");
     mockCreatePoeChatCompletion.mockResolvedValue({ choices: [] });
+    mockCreatePoeChatCompletionWithSettlement.mockImplementation((request, options) => {
+      const response = Promise.resolve().then(() =>
+        mockCreatePoeChatCompletion(request, { ...options, maxAttempts: 1 }),
+      );
+      return {
+        response,
+        transportSettled: response.then(() => undefined, () => undefined),
+      };
+    });
   });
 
   it("retires catalogue refresh without sending a provider request", async () => {
@@ -156,6 +164,78 @@ describe("Poe startup and explicit probe safety", () => {
       Math.min(getAllPoeModelNames().length, POE_PROBE_MAX_MODELS) + 1,
     );
     expect(maxActive).toBeLessThanOrEqual(POE_PROBE_CONCURRENCY);
+  });
+
+  it("keeps successful probes from releasing shared permits before transport settlement", async () => {
+    expect(setPoeFallbacks("enrich", ["Claude-Sonnet-4.5", "Gemini-2.5-Pro"]).ok).toBe(true);
+    const transportReleases: Array<() => void> = [];
+    let requestCount = 0;
+    try {
+      mockCreatePoeChatCompletionWithSettlement.mockImplementation(() => {
+        requestCount += 1;
+        let releaseTransport!: () => void;
+        const transportSettled = new Promise<void>((resolve) => {
+          releaseTransport = resolve;
+        });
+        transportReleases.push(releaseTransport);
+        return {
+          response: Promise.resolve({ choices: [] }),
+          transportSettled,
+        };
+      });
+
+      const [firstModel, secondModel, thirdModel] = getAllPoeModelNames();
+      const first = probeSinglePoeBot(firstModel!);
+      const second = probeSinglePoeBot(secondModel!);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(requestCount).toBe(POE_PROBE_CONCURRENCY);
+
+      let firstFinished = false;
+      void first.then(() => {
+        firstFinished = true;
+      });
+      await Promise.resolve();
+      expect(firstFinished).toBe(false);
+
+      const third = probeSinglePoeBot(thirdModel!);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(requestCount).toBe(POE_PROBE_CONCURRENCY);
+
+      transportReleases[0]!();
+      await first;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(requestCount).toBe(POE_PROBE_CONCURRENCY + 1);
+
+      transportReleases[1]!();
+      transportReleases[2]!();
+      await Promise.all([second, third]);
+    } finally {
+      setPoeFallbacks("enrich", []);
+    }
+  });
+
+  it("returns timeout results without waiting for an abort-ignoring transport", async () => {
+    let releaseTransport!: () => void;
+    const transportSettled = new Promise<void>((resolve) => {
+      releaseTransport = resolve;
+    });
+    mockCreatePoeChatCompletionWithSettlement.mockReturnValue({
+      response: Promise.reject(Object.assign(
+        new Error("Poe request timed out"),
+        { name: "PoeProviderError", kind: "timeout" },
+      )),
+      transportSettled,
+    });
+
+    const [model] = getAllPoeModelNames();
+    await expect(probeSinglePoeBot(model!)).resolves.toBeUndefined();
+    expect(getProbeVerificationSummary()[model!]).toEqual(
+      expect.objectContaining({ status: "timeout" }),
+    );
+
+    releaseTransport();
   });
 
   it("stops the aggregate operation at its fixed deadline with partial results", async () => {

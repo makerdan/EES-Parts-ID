@@ -61,33 +61,70 @@
  */
 import {
   openSync, closeSync, unlinkSync, mkdirSync, writeSync, readFileSync,
-  utimesSync, statSync, readdirSync, rmSync, renameSync,
+  statSync, readdirSync, rmSync, renameSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { resolve, dirname } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import {
   assertValidationHostToolContract,
   getValidationHostTools,
+  VALIDATION_HOST_TOOL_PROBE_TIMEOUT_MS,
 } from "./validation-steps.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 const criticalHelper = resolve(here, "serial-lock-critical.mjs");
-const POLL_INTERVAL_MS = Number(process.env.SERIAL_LOCK_POLL_MS || 1_000);
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+function positiveIntegerSetting(name, fallback) {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (
+    !/^[1-9]\d*$/.test(value) ||
+    !Number.isSafeInteger(parsed) ||
+    parsed > MAX_TIMER_DELAY_MS
+  ) {
+    console.error(
+      `[serial-lock] invalid ${name}: ${JSON.stringify(value)}; ` +
+      `expected a positive integer from 1 to ${MAX_TIMER_DELAY_MS} milliseconds, ` +
+      "or omit the variable to use the documented default.",
+    );
+    process.exit(2);
+  }
+  return parsed;
+}
+
+const POLL_INTERVAL_MS = positiveIntegerSetting("SERIAL_LOCK_POLL_MS", 1_000);
 // Generous: a full e2e suite can hold the lock for a long time, and several
 // steps may be queued behind it.
-const TIMEOUT_MS = Number(process.env.SERIAL_LOCK_TIMEOUT_MS || 3 * 60 * 60 * 1000);
+const TIMEOUT_MS = positiveIntegerSetting("SERIAL_LOCK_TIMEOUT_MS", 3 * 60 * 60 * 1000);
 // Holder refreshes the lock mtime this often.
-const HEARTBEAT_MS = Number(process.env.SERIAL_LOCK_HEARTBEAT_MS || 30_000);
+const HEARTBEAT_MS = positiveIntegerSetting("SERIAL_LOCK_HEARTBEAT_MS", 30_000);
 // Waiters treat a lock whose mtime is older than this as abandoned
 // (covers SIGKILLed wrapper whose pid got reused by an unrelated process).
-const STALE_HEARTBEAT_MS = Number(process.env.SERIAL_LOCK_STALE_HEARTBEAT_MS || 5 * 60 * 1000);
+const STALE_HEARTBEAT_MS = positiveIntegerSetting(
+  "SERIAL_LOCK_STALE_HEARTBEAT_MS",
+  5 * 60 * 1000,
+);
 // Safety valve: no single step may hold the lock longer than this.
-const MAX_HOLD_MS = Number(process.env.SERIAL_LOCK_MAX_HOLD_MS || 2 * 60 * 60 * 1000);
+const MAX_HOLD_MS = positiveIntegerSetting("SERIAL_LOCK_MAX_HOLD_MS", 2 * 60 * 60 * 1000);
 // Give an existing waiter a short head start before priority reorders the queue.
-const PRIORITY_GRACE_MS = Number(process.env.SERIAL_LOCK_PRIORITY_GRACE_MS || 2_000);
+const PRIORITY_GRACE_MS = positiveIntegerSetting("SERIAL_LOCK_PRIORITY_GRACE_MS", 2_000);
+// Commands run in their own process group so cancellation cannot strand a
+// server or worker after the wrapper releases the serialization lock.
+const PROCESS_GROUP_KILL_GRACE_MS = positiveIntegerSetting(
+  "SERIAL_LOCK_KILL_GRACE_MS",
+  15_000,
+);
+const PROCESS_GROUP_POLL_MS = positiveIntegerSetting(
+  "SERIAL_LOCK_GROUP_POLL_MS",
+  25,
+);
+const TIMEOUT_EXIT_CODE = 124;
 
 const argv = process.argv.slice(2);
 const sep = argv.indexOf("--");
@@ -112,9 +149,53 @@ if (!/^[1-9]$/.test(String(priorityValue))) {
   console.error(`[serial-lock] invalid priority: ${priorityValue ?? ""}; expected an integer from 1 to 9 (1 is highest)`);
   process.exit(2);
 }
-const lockFile = process.env.SERIAL_LOCK_FILE
+const inheritedHeldPid = Number(process.env.SERIAL_LOCK_HELD_PID || 0);
+const inheritedHeldResources = new Set(
+  (process.env.SERIAL_LOCK_HELD_RESOURCES || (inheritedHeldPid > 0 ? "global" : ""))
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+const explicitLockFile = process.env.SERIAL_LOCK_FILE
   ? resolve(process.env.SERIAL_LOCK_FILE)
-  : resolve(root, ".local", lockResource === "global" ? "serial.lock" : `serial-${lockResource}.lock`);
+  : null;
+const inheritedLockFile = process.env.SERIAL_LOCK_FILE
+  ? resolve(process.env.SERIAL_LOCK_INHERITED_FILE || process.env.SERIAL_LOCK_FILE)
+  : null;
+const inheritedLockIsActive =
+  inheritedLockFile &&
+  Number.isInteger(inheritedHeldPid) &&
+  inheritedHeldPid > 0 &&
+  pidAlive(inheritedHeldPid);
+const budgetValue = process.env.SERIAL_LOCK_BUDGET_MS;
+let budgetMs = null;
+if (budgetValue !== undefined) {
+  budgetMs = Number(budgetValue);
+  if (
+    !/^[1-9]\d*$/.test(budgetValue) ||
+    !Number.isSafeInteger(budgetMs) ||
+    budgetMs > MAX_TIMER_DELAY_MS
+  ) {
+    console.error(
+      `[serial-lock] invalid SERIAL_LOCK_BUDGET_MS: ${JSON.stringify(budgetValue)}; ` +
+      `expected a positive integer from 1 to ${MAX_TIMER_DELAY_MS} milliseconds, ` +
+      "or omit the variable for no execution budget.",
+    );
+    process.exit(2);
+  }
+}
+const inheritedPathIsCurrent =
+  inheritedLockIsActive && explicitLockFile === inheritedLockFile;
+const defaultLockFile = resolve(
+  root,
+  ".local",
+  lockResource === "global" ? "serial.lock" : `serial-${lockResource}.lock`,
+);
+const lockFile = inheritedPathIsCurrent
+  ? inheritedHeldResources.has(lockResource) || inheritedHeldResources.has("global")
+    ? inheritedLockFile
+    : defaultLockFile
+  : explicitLockFile || defaultLockFile;
 const lockDir = dirname(lockFile);
 const queueDir = process.env.SERIAL_LOCK_QUEUE_DIR
   ? resolve(process.env.SERIAL_LOCK_QUEUE_DIR)
@@ -148,11 +229,95 @@ function holderIsAlive(holderPid, startTicks) {
   return !startTicks || processStartTicks(holderPid) === startTicks;
 }
 
+function processGroupIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    for (const entry of readdirSync("/proc")) {
+      if (!/^\d+$/.test(entry)) continue;
+      try {
+        const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+        const closeParen = stat.lastIndexOf(")");
+        if (closeParen < 0) continue;
+        const fields = stat.slice(closeParen + 2).split(/\s+/);
+        if (fields[2] === String(pid) && fields[0] !== "Z") return true;
+      } catch {
+        // The process may have exited between /proc enumeration and read.
+      }
+    }
+    return false;
+  } catch {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (error) {
+      return error.code === "EPERM";
+    }
+  }
+}
+
+function signalProcessGroup(child, signal) {
+  if (!child?.pid) return false;
+  try {
+    process.kill(-child.pid, signal);
+    return true;
+  } catch (error) {
+    if (error.code !== "ESRCH") {
+      try {
+        child.kill(signal);
+        return true;
+      } catch {
+        // The child exited between the group and direct signal attempts.
+      }
+    }
+    return false;
+  }
+}
+
+function terminateProcessGroup(child, onComplete) {
+  if (!child?.pid) {
+    onComplete();
+    return;
+  }
+
+  let escalated = false;
+  let deadline = Date.now() + PROCESS_GROUP_KILL_GRACE_MS;
+  let timer = null;
+  const finish = () => {
+    if (timer) clearTimeout(timer);
+    onComplete();
+  };
+  const poll = () => {
+    if (!processGroupIsAlive(child.pid)) {
+      finish();
+      return;
+    }
+    if (!escalated && Date.now() >= deadline) {
+      escalated = true;
+      console.error("[serial-lock] WARNING: process group survived termination grace; sending SIGKILL.");
+      signalProcessGroup(child, "SIGKILL");
+      deadline = Date.now() + PROCESS_GROUP_KILL_GRACE_MS;
+    } else if (escalated && Date.now() >= deadline) {
+      // SIGKILL should make this branch unreachable on a healthy Linux host.
+      // Keep polling rather than releasing the lock while an owned process
+      // group is still observable.
+      deadline = Date.now() + PROCESS_GROUP_KILL_GRACE_MS;
+    }
+    timer = setTimeout(poll, PROCESS_GROUP_POLL_MS);
+  };
+
+  signalProcessGroup(child, "SIGTERM");
+  poll();
+}
+
 let queuedAt = 0;
+let queueFilePath = null;
+let queueTempFilePath = null;
 function enqueue() {
   mkdirSync(queueDir, { recursive: true });
   const queueFile = resolve(queueDir, `${process.pid}.json`);
   const queueTempFile = `${queueFile}.${processStartTicks(process.pid) ?? "unknown"}.tmp`;
+  queueFilePath = queueFile;
+  queueTempFilePath = queueTempFile;
   queuedAt = Date.now();
   const fd = openSync(queueTempFile, "wx");
   try {
@@ -164,7 +329,12 @@ function enqueue() {
 }
 
 function dequeue() {
-  try { unlinkSync(resolve(queueDir, `${process.pid}.json`)); } catch { /* already gone */ }
+  for (const path of [queueFilePath, queueTempFilePath]) {
+    if (!path) continue;
+    try { unlinkSync(path); } catch { /* already gone */ }
+  }
+  queueFilePath = null;
+  queueTempFilePath = null;
 }
 
 function precedenceWaiterExists() {
@@ -173,6 +343,12 @@ function precedenceWaiterExists() {
     entries = readdirSync(queueDir);
   } catch {
     return false;
+  }
+  let lockHolderPid = 0;
+  try {
+    lockHolderPid = Number(readFileSync(lockFile, "utf8").split("\n")[0]?.trim());
+  } catch {
+    // The lock may be created or released while taking this queue snapshot.
   }
   let found = false;
   const now = Date.now();
@@ -193,7 +369,7 @@ function precedenceWaiterExists() {
     const queueFile = resolve(queueDir, entry);
     try {
       const waiter = JSON.parse(readFileSync(queueFile, "utf8"));
-      if (!holderIsAlive(waiter.pid, waiter.startTicks) && now - waiter.queuedAt > STALE_HEARTBEAT_MS) {
+      if (!holderIsAlive(waiter.pid, waiter.startTicks)) {
         rmSync(queueFile, { force: true });
         continue;
       }
@@ -203,6 +379,7 @@ function precedenceWaiterExists() {
         rmSync(queueFile, { force: true });
         continue;
       }
+      if (waiter.pid === lockHolderPid) continue;
       const waiterMatured = now - waiterQueuedAt >= PRIORITY_GRACE_MS;
       const waiterQueuedFirst =
         waiterQueuedAt < queuedAt ||
@@ -229,9 +406,15 @@ function flockUnavailableError(detail = "the command was not found") {
 }
 
 function ensureFlockAvailable() {
-  const probe = spawnSync("flock", ["--help"], { stdio: "ignore" });
+  const probe = spawnSync("flock", ["--help"], {
+    stdio: "ignore",
+    timeout: VALIDATION_HOST_TOOL_PROBE_TIMEOUT_MS,
+  });
   if (probe.error) {
-    throw flockUnavailableError(probe.error.code || probe.error.message);
+    const detail = probe.error.code === "ETIMEDOUT"
+      ? `the capability probe timed out after ${VALIDATION_HOST_TOOL_PROBE_TIMEOUT_MS}ms`
+      : probe.error.code || probe.error.message;
+    throw flockUnavailableError(detail);
   }
   if (probe.status !== 0) {
     throw flockUnavailableError(`the capability probe exited ${probe.status}`);
@@ -259,9 +442,14 @@ function ensureValidationHostTools() {
 
   const missing = [];
   for (const requirement of requirements) {
-    const probe = spawnSync(requirement.name, requirement.probeArgs, { stdio: "ignore" });
+    const probe = spawnSync(requirement.name, requirement.probeArgs, {
+      stdio: "ignore",
+      timeout: requirement.probeTimeoutMs,
+    });
     if (probe.error || probe.status !== 0) {
-      const detail = probe.error?.code || `probe exited ${probe.status ?? "without status"}`;
+      const detail = probe.error?.code === "ETIMEDOUT"
+        ? `probe timed out after ${requirement.probeTimeoutMs}ms`
+        : probe.error?.code || `probe exited ${probe.status ?? "without status"}`;
       missing.push({ ...requirement, detail });
     }
   }
@@ -349,19 +537,98 @@ function releaseLock() {
     // the stale-heartbeat/dead-owner rules, and no successor can be removed
     // because the release helper checks the token under the same flock guard.
     console.error(
-      `[serial-lock] WARNING: could not release ${lockResource} lock cleanly; stale recovery will reclaim it safely.`,
+      result.status === 5
+        ? `[serial-lock] WARNING: ${lockResource} lock ownership changed before release; refusing to remove the successor lock.`
+        : `[serial-lock] WARNING: could not release ${lockResource} lock cleanly; stale recovery will reclaim it safely.`,
     );
   }
 }
 
-function startHeartbeat() {
+function startHeartbeat(onOwnershipLost) {
   heartbeatTimer = setInterval(() => {
-    try {
-      const now = new Date();
-      utimesSync(lockFile, now, now);
-    } catch { /* lock reclaimed out from under us — nothing to refresh */ }
+    const result = spawnSync(
+      "flock",
+      [
+        "--exclusive",
+        "--nonblock",
+        `${lockFile}.guard`,
+        process.execPath,
+        criticalHelper,
+        lockFile,
+        lockResource,
+        "0",
+        String(process.pid),
+        processStartTicks(process.pid) ?? "",
+        "0",
+        "0",
+        "heartbeat",
+        lockToken,
+      ],
+      { cwd: root, stdio: "ignore" },
+    );
+    if (result.status === 0 || result.status === 1) return;
+    // A token mismatch means a waiter reclaimed this holder's lease. Any
+    // other helper failure is also fail-closed: the holder must not continue
+    // work after it can no longer prove ownership.
+    onOwnershipLost();
   }, HEARTBEAT_MS);
   heartbeatTimer.unref();
+}
+
+function spawnDetachedWorker(workerEnv = process.env, onStdout = null) {
+  const worker = spawn(command[0], command.slice(1), {
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+    env: workerEnv,
+  });
+  // The worker owns private pipes, not the caller's descriptors. pipe() pauses
+  // the source when the caller is slow, bounding the wrapper's output buffer.
+  // Do not exit on the worker's "exit" event: its pipes may still contain data.
+  if (onStdout) worker.stdout.on("data", onStdout);
+  worker.stdout.pipe(process.stdout, { end: false });
+  worker.stderr.pipe(process.stderr, { end: false });
+  return worker;
+}
+
+function flushOutput(destination) {
+  return new Promise((resolveFlush, rejectFlush) => {
+    if (destination.destroyed || destination.writableEnded) {
+      rejectFlush(new Error("output destination closed before worker output drained"));
+      return;
+    }
+    // This callback runs after all writes queued by pipe() to this destination.
+    // An empty write does not add data to the caller's output.
+    destination.write("", (error) => error ? rejectFlush(error) : resolveFlush());
+  });
+}
+
+async function finishWorkerOutput() {
+  await Promise.all([flushOutput(process.stdout), flushOutput(process.stderr)]);
+}
+
+function attachWorker(worker) {
+  const result = spawnSync(
+    "flock",
+    [
+      "--exclusive",
+      `${lockFile}.guard`,
+      process.execPath,
+      criticalHelper,
+      lockFile,
+      lockResource,
+      "0",
+      String(process.pid),
+      processStartTicks(process.pid) ?? "",
+      "0",
+      "0",
+      "attach",
+      lockToken,
+      String(worker.pid),
+      processStartTicks(worker.pid) ?? "",
+    ],
+    { cwd: root, stdio: "ignore" },
+  );
+  return !result.error && result.status === 0;
 }
 
 async function acquireWithTimeout() {
@@ -397,13 +664,8 @@ mkdirSync(lockDir, { recursive: true });
 // ancestor holds. The holder exports SERIAL_LOCK_HELD_PID to its children;
 // if it is set and that holder is still alive, run the command directly
 // without re-acquiring.
-const heldPid = Number(process.env.SERIAL_LOCK_HELD_PID || 0);
-const heldResources = new Set(
-  (process.env.SERIAL_LOCK_HELD_RESOURCES || (heldPid > 0 ? "global" : ""))
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean),
-);
+const heldPid = inheritedHeldPid;
+const heldResources = inheritedHeldResources;
 if (
   Number.isInteger(heldPid) &&
   heldPid > 0 &&
@@ -414,75 +676,120 @@ if (
   console.log(
     `[serial-lock] ${lockResource} lock already held by ancestor pid ${heldPid} — running reentrantly: ${commandLabel}`,
   );
-  const child = spawn(command[0], command.slice(1), { stdio: "inherit" });
+  const child = spawnDetachedWorker();
+  let terminationRequested = false;
+  const terminateAndExit = (exitCode) => {
+    if (terminationRequested) return;
+    terminationRequested = true;
+    terminateProcessGroup(child, () => process.exit(exitCode));
+  };
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(sig, () => {
-      if (child.exitCode === null && child.signalCode === null) {
-        try { child.kill(sig); } catch { /* already gone */ }
-      }
-      process.exit(1);
+      terminateAndExit(1);
     });
   }
-  child.on("exit", (code, signal) => {
-    if (signal) process.exit(1);
-    process.exit(code ?? 1);
+  child.on("close", async (code, signal) => {
+    if (terminationRequested) return;
+    try {
+      await finishWorkerOutput();
+      if (!terminationRequested) process.exit(signal ? 1 : code ?? 1);
+    } catch (error) {
+      console.error(`[serial-lock] ERROR: worker output could not be forwarded: ${error.message}`);
+      process.exit(1);
+    }
   });
 } else {
   let child = null;
+  let terminationRequested = false;
+  let activeStep = null;
+  let markerTail = "";
+  const stdoutDecoder = new StringDecoder("utf8");
+  const stepMarker = /━━━ \[run-tier\] step: ([a-z][a-z0-9-]*) ━━━/g;
+  function observeTierOutput(chunk) {
+    const output = markerTail + stdoutDecoder.write(chunk);
+    for (const match of output.matchAll(stepMarker)) activeStep = match[1];
+    // Preserve split markers without retaining a full stream or slowing its relay.
+    markerTail = output.slice(-128);
+  }
   process.on("exit", releaseLock);
+  const terminateAndExit = (exitCode) => {
+    if (terminationRequested) return;
+    terminationRequested = true;
+    if (!child) {
+      releaseLock();
+      process.exit(exitCode);
+      return;
+    }
+    terminateProcessGroup(child, () => {
+      releaseLock();
+      process.exit(exitCode);
+    });
+  };
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(sig, () => {
-      if (child && child.exitCode === null && child.signalCode === null) {
-        try { child.kill(sig); } catch { /* already gone */ }
-      }
-      releaseLock();
-      process.exit(1);
+      terminateAndExit(1);
     });
   }
 
   const waitStart = Date.now();
   await acquireWithTimeout();
   lockAcquired = true;
-  startHeartbeat();
   const waitedSecs = ((Date.now() - waitStart) / 1000).toFixed(1);
   const acquiredAt = Date.now();
   console.log(`[serial-lock] ${lockResource} lock acquired after ${waitedSecs}s wait (priority ${priority}) — running: ${commandLabel}`);
 
-  child = spawn(command[0], command.slice(1), {
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      SERIAL_LOCK_HELD_PID: String(process.pid),
-      SERIAL_LOCK_HELD_RESOURCES: [...heldResources, lockResource]
-        .filter((value, index, all) => all.indexOf(value) === index)
-        .join(","),
-      // Expose queue-wait time so wrapped commands can report whether a
-      // budget breach happened under concurrent load (waited > 0) or solo.
-      SERIAL_LOCK_WAIT_SECS: waitedSecs,
-      SERIAL_LOCK_ACQUIRED_AT: String(acquiredAt),
-    },
-  });
-  const budgetMs = Number(process.env.SERIAL_LOCK_BUDGET_MS || 0);
-  if (Number.isFinite(budgetMs) && budgetMs > 0) {
+  child = spawnDetachedWorker({
+    ...process.env,
+    SERIAL_LOCK_HELD_PID: String(process.pid),
+    SERIAL_LOCK_HELD_RESOURCES: [...heldResources, lockResource]
+      .filter((value, index, all) => all.indexOf(value) === index)
+      .join(","),
+    SERIAL_LOCK_HELD_TOKEN: lockToken,
+    SERIAL_LOCK_FILE: lockFile,
+    SERIAL_LOCK_INHERITED_FILE: lockFile,
+    // Expose queue-wait time so wrapped commands can report whether a
+    // budget breach happened under concurrent load (waited > 0) or solo.
+    SERIAL_LOCK_WAIT_SECS: waitedSecs,
+    SERIAL_LOCK_ACQUIRED_AT: String(acquiredAt),
+  }, budgetMs === null ? null : observeTierOutput);
+  if (!attachWorker(child)) {
+    console.error(
+      `[serial-lock] ERROR: could not confirm ${lockResource} worker ownership; terminating without running under an unverified lock.`,
+    );
+    terminationRequested = true;
+    await new Promise((resolveTermination) => {
+      terminateProcessGroup(child, resolveTermination);
+    });
+    releaseLock();
+    process.exit(1);
+  }
+  startHeartbeat(() => terminateAndExit(1));
+  if (budgetMs !== null) {
     budgetTimer = setTimeout(() => {
       console.error(
-        `[serial-lock] ERROR: ${lockResource} budget of ${budgetMs}ms exceeded after acquisition (queue wait ${waitedSecs}s excluded); terminating child.`,
+        `[serial-lock] ERROR: ${lockResource} budget of ${budgetMs}ms exceeded after acquisition ` +
+        `(queue wait ${waitedSecs}s excluded; active step "${activeStep ?? "unknown"}"); terminating process group.`,
       );
-      if (child && child.exitCode === null && child.signalCode === null) {
-        try { child.kill("SIGTERM"); } catch { /* already gone */ }
-        setTimeout(() => {
-          if (child && child.exitCode === null && child.signalCode === null) {
-            console.error(`[serial-lock] WARNING: ${lockResource} child survived budget grace; sending SIGKILL.`);
-            try { child.kill("SIGKILL"); } catch { /* already gone */ }
-          }
-        }, 15_000).unref();
-      }
+      terminateAndExit(TIMEOUT_EXIT_CODE);
     }, budgetMs);
     budgetTimer.unref();
   }
-  child.on("exit", (code, signal) => {
-    releaseLock();
-    if (signal) process.exit(1);
-    process.exit(code ?? 1);
+  child.once("exit", () => {
+    // A slow caller can keep the relay draining after the worker exits; that
+    // time is not part of the wrapped command's execution budget.
+    if (budgetTimer) { clearTimeout(budgetTimer); budgetTimer = null; }
+  });
+  child.on("close", async (code, signal) => {
+    if (terminationRequested) return;
+    try {
+      await finishWorkerOutput();
+      if (terminationRequested) return;
+      releaseLock();
+      process.exit(signal ? 1 : code ?? 1);
+    } catch (error) {
+      console.error(`[serial-lock] ERROR: worker output could not be forwarded: ${error.message}`);
+      releaseLock();
+      process.exit(1);
+    }
   });
 }

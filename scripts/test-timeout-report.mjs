@@ -14,14 +14,15 @@
  *   node scripts/test-timeout-report.mjs <manifest-json-path>
  *
  * The manifest JSON is an array of:
- *   { suite, jsonPath, wallClockMs, budgetMs, exitCode }
+ *   { suite, runId, jsonPath, wallClockMs, budgetMs, exitCode }
  *
  * Exit codes:
  *   0 — no violations
  *   1 — one or more violations found
  */
 
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, statSync } from "fs";
+import { validateTestResultArtifact } from "./test-result-artifact.mjs";
 
 const SUGGESTION_LABELS = {
   MOCK_DEPENDENCY:
@@ -58,6 +59,10 @@ function hr(char = "─", width = 60) {
   return char.repeat(width);
 }
 
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 // ── Load manifest ────────────────────────────────────────────────────────────
 
 const manifestPath = process.argv[2];
@@ -73,6 +78,82 @@ try {
   console.error(`Cannot read manifest at ${manifestPath}: ${e.message}`);
   process.exit(1);
 }
+if (!Array.isArray(manifest) || manifest.length === 0) {
+  console.error("Cannot read manifest: expected a non-empty array.");
+  process.exit(1);
+}
+
+function loadResultEvidence(jsonPath, expectedRunId, expectedSuite, startedAtMs) {
+  if (!isNonEmptyString(expectedSuite)) {
+    return {
+      status: "UNAVAILABLE",
+      reason: "manifest suite identity is missing or empty",
+    };
+  }
+  if (typeof jsonPath !== "string" || jsonPath.length === 0) {
+    return { status: "UNAVAILABLE", reason: "result path is missing" };
+  }
+  if (!existsSync(jsonPath)) {
+    return { status: "UNAVAILABLE", reason: "result file is missing" };
+  }
+
+  let data;
+  try {
+    data = JSON.parse(readFileSync(jsonPath, "utf8"));
+  } catch (error) {
+    return {
+      status: "UNAVAILABLE",
+      reason: `result JSON is corrupt (${error.message})`,
+    };
+  }
+
+  if (data === null || typeof data !== "object" || Array.isArray(data)) {
+    return { status: "UNAVAILABLE", reason: "result JSON is not an object" };
+  }
+  if (typeof expectedRunId !== "string" || expectedRunId.length === 0) {
+    return { status: "UNAVAILABLE", reason: "manifest run ID is missing" };
+  }
+  if (data.validationRunId !== expectedRunId) {
+    return {
+      status: "STALE",
+      reason: "result run ID does not match the manifest run ID",
+    };
+  }
+  if (!isNonEmptyString(data.validationSuite)) {
+    return {
+      status: "UNAVAILABLE",
+      reason: "result validationSuite identity is missing or empty",
+    };
+  }
+  if (data.validationSuite !== expectedSuite) {
+    return {
+      status: "CONTRADICTORY",
+      reason: "result suite does not match the manifest suite",
+    };
+  }
+  if (!Number.isFinite(startedAtMs)) {
+    return { status: "UNAVAILABLE", reason: "manifest is missing a valid startedAtMs" };
+  }
+  try {
+    if (statSync(jsonPath).mtimeMs < startedAtMs) {
+      return { status: "STALE", reason: "result file is stale" };
+    }
+  } catch (error) {
+    return {
+      status: "UNAVAILABLE",
+      reason: `could not stat result file (${error.message})`,
+    };
+  }
+
+  const validation = validateTestResultArtifact(data);
+  if (!validation.ok) {
+    return {
+      status: "INVALID",
+      reason: `invalid result schema: ${validation.reason}`,
+    };
+  }
+  return { status: "CURRENT", data, validation };
+}
 
 // ── Parse results ────────────────────────────────────────────────────────────
 
@@ -80,26 +161,32 @@ const suiteReports = [];
 const allTests = [];
 
 for (const entry of manifest) {
-  const { suite, jsonPath, wallClockMs, budgetMs, exitCode } = entry;
+  const { suite, jsonPath, startedAtMs, wallClockMs, budgetMs, exitCode } = entry;
 
   const timedOut = exitCode === 124;
   const failed = !timedOut && exitCode !== 0;
   const passed = exitCode === 0;
 
-  let jestData = null;
-  if (existsSync(jsonPath)) {
-    try {
-      jestData = JSON.parse(readFileSync(jsonPath, "utf8"));
-    } catch {
-      // partial/corrupt file — treat as no data
-    }
-  }
+  const evidence = loadResultEvidence(
+    jsonPath,
+    entry.runId,
+    suite,
+    startedAtMs,
+  );
+  const jestData = evidence.data ?? null;
+  const resultError =
+    evidence.status === "CURRENT" ? null : evidence.reason;
 
   const testResults = jestData?.testResults ?? [];
   const completedTests = [];
   let todoCount = 0;
+  let pendingCount = 0;
+  let skippedCount = 0;
 
   for (const fileResult of testResults) {
+    if (!fileResult || typeof fileResult !== "object") {
+      continue;
+    }
     // Jest uses testFilePath; Vitest uses name.
     const filePath = fileResult.testFilePath ?? fileResult.name ?? "";
     // Integration tests (*.integration.test.*) get a 20s budget; others get 10s.
@@ -110,8 +197,19 @@ for (const entry of manifest) {
     const tests = fileResult.testResults ?? fileResult.assertionResults ?? [];
 
     for (const t of tests) {
+      if (!t || typeof t !== "object") {
+        continue;
+      }
       if (t.status === "todo") {
         todoCount++;
+        continue;
+      }
+      if (t.status === "pending") {
+        pendingCount++;
+        continue;
+      }
+      if (t.status === "skipped") {
+        skippedCount++;
         continue;
       }
       const name =
@@ -144,8 +242,17 @@ for (const entry of manifest) {
   }
 
   const estimatedTotal = jestData?.numTotalTests ?? null;
-  // "ran" = completed (excluding todo, which are declared-but-skipped, not interrupted)
+  // "ran" = passed or failed assertions only. Pending/todo/skipped assertions
+  // are declared but did not execute.
   const ranCount = completedTests.length;
+  const suiteBudgetViolation =
+    Number.isFinite(wallClockMs) &&
+    Number.isFinite(budgetMs) &&
+    wallClockMs > budgetMs;
+  const evidenceContradiction =
+    evidence.status === "CURRENT" &&
+    ((passed && evidence.validation.hasFailures) ||
+      (failed && evidence.validation.isPassing && ranCount > 0));
 
   suiteReports.push({
     suite,
@@ -153,13 +260,19 @@ for (const entry of manifest) {
     failed,
     timedOut,
     exitCode,
+    resultError,
+    evidenceContradiction,
     wallClockMs,
     budgetMs,
+    suiteBudgetViolation,
     completedTests,
     budgetViolationCount: completedTests.filter((t) => t.budgetViolation).length,
     ranCount,
     todoCount,
+    pendingCount,
+    skippedCount,
     estimatedTotal,
+    evidence,
   });
 }
 
@@ -172,16 +285,23 @@ const slowTests = [...allTests]
 
 const timedOutTests = allTests.filter((t) => t.timedOut);
 const budgetViolations = allTests.filter((t) => t.budgetViolation);
+const suiteBudgetViolations = suiteReports.filter((s) => s.suiteBudgetViolation);
 
 const incompleteOrTimedOutSuites = suiteReports.filter(
-  (s) => s.timedOut || (s.failed && s.ranCount === 0)
+  (s) => s.timedOut || s.resultError !== null || s.ranCount === 0
+);
+const unavailableEvidenceSuites = suiteReports.filter(
+  (s) => s.evidence.status !== "CURRENT",
 );
 
 const hasViolations =
   timedOutTests.length > 0 ||
   budgetViolations.length > 0 ||
+  suiteBudgetViolations.length > 0 ||
   incompleteOrTimedOutSuites.length > 0 ||
-  suiteReports.some((s) => s.failed || s.timedOut);
+  suiteReports.some((s) => s.evidenceContradiction) ||
+  suiteReports.some((s) => s.failed || s.timedOut) ||
+  unavailableEvidenceSuites.length > 0;
 
 // ── Emit report ──────────────────────────────────────────────────────────────
 
@@ -195,8 +315,14 @@ console.log();
 console.log("SUMMARY");
 console.log(hr());
 for (const s of suiteReports) {
-  const statusTag = s.passed
-    ? s.budgetViolationCount > 0
+  const statusTag = s.evidenceContradiction
+    ? "CONTRADICT"
+    : s.resultError !== null
+    ? s.evidence.status.padEnd(10)
+    : s.ranCount === 0
+    ? "EMPTY     "
+    : s.passed
+    ? s.budgetViolationCount > 0 || s.suiteBudgetViolation
       ? "BUDGET_ERR"
       : "PASSED    "
     : s.timedOut
@@ -208,8 +334,48 @@ for (const s of suiteReports) {
     s.budgetMs != null
       ? ` (wall ${wall} / budget ${budget})`
       : ` (wall ${wall})`;
-  const todoNote = s.todoCount > 0 ? `  [${s.todoCount} todo]` : "";
-  console.log(`  ${statusTag}  ${s.suite}${budgetNote}${todoNote}`);
+  const countNotes = [
+    s.pendingCount > 0 ? `[${s.pendingCount} pending]` : "",
+    s.todoCount > 0 ? `[${s.todoCount} todo]` : "",
+    s.skippedCount > 0 ? `[${s.skippedCount} skipped]` : "",
+  ].filter(Boolean);
+  const deferredNote = countNotes.length > 0 ? `  ${countNotes.join(" ")}` : "";
+  console.log(`  ${statusTag}  ${s.suite}${budgetNote}${deferredNote}`);
+  if (s.resultError !== null) {
+    console.log(`       Result artifact: ${s.resultError}`);
+  } else if (s.evidenceContradiction) {
+    console.log(
+      `       Result artifact: package exit status disagrees with result metadata`,
+    );
+  } else if (s.ranCount === 0) {
+    console.log("       Result artifact: no tests executed (pending/todo/skipped tests do not count).");
+  }
+}
+
+// Result evidence
+console.log();
+console.log("RESULT EVIDENCE");
+console.log(hr());
+if (unavailableEvidenceSuites.length === 0) {
+  console.log("  All suite results belong to the current validation run.");
+} else {
+  for (const s of unavailableEvidenceSuites) {
+    console.log(`  ✗  ${s.suite} — ${s.evidence.status}: ${s.evidence.reason}`);
+  }
+}
+const contradictoryEvidenceSuites = suiteReports.filter(
+  (s) => s.evidenceContradiction || s.evidence.status === "CONTRADICTORY",
+);
+if (contradictoryEvidenceSuites.length > 0) {
+  for (const s of contradictoryEvidenceSuites) {
+    console.log(
+      `  ✗  ${s.suite} — CONTRADICTORY: ${
+        s.evidence.status === "CONTRADICTORY"
+          ? s.evidence.reason
+          : "package exit status disagrees with result metadata"
+      }`,
+    );
+  }
 }
 
 // Slow tests
@@ -259,6 +425,24 @@ if (budgetViolations.length === 0) {
           : "Completed with a framework failure"
       }, but exceeded the applicable test duration budget.`
     );
+    console.log();
+  }
+}
+
+// Timeout violations
+console.log();
+console.log("SUITE BUDGET VIOLATIONS (wall clock)");
+console.log(hr());
+if (suiteBudgetViolations.length === 0) {
+  console.log("  None.");
+} else {
+  for (const s of suiteBudgetViolations) {
+    const overBy = s.wallClockMs - s.budgetMs;
+    console.log(`  ✗  [suite-budget] [${s.suite}]`);
+    console.log(
+      `     Wall clock: ${formatMs(s.wallClockMs)} / Budget: ${formatMs(s.budgetMs)} (over by ${formatMs(overBy)})`,
+    );
+    console.log("     → Suite budget violation: current suite wall clock exceeded its manifest budget.");
     console.log();
   }
 }

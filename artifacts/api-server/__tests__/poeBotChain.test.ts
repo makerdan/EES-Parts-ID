@@ -81,6 +81,37 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+describe("callOpenAIFallbackWithBoundary", () => {
+  it("rejects malformed provider envelopes before route code can read output", async () => {
+    await expect(
+      poeBot.callOpenAIFallbackWithBoundary("identify", async () => ({ invalid: true })),
+    ).rejects.toMatchObject({ kind: "upstream" });
+  });
+
+  it("honors an already-aborted request without dispatching", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fn = jest.fn();
+
+    await expect(
+      poeBot.callOpenAIFallbackWithBoundary("enrich", fn, {
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ kind: "cancellation" });
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("bounds a provider that never settles", async () => {
+    await expect(
+      poeBot.callOpenAIFallbackWithBoundary(
+        "enrich",
+        () => new Promise<never>(() => {}),
+        { timeoutMs: 5 },
+      ),
+    ).rejects.toMatchObject({ kind: "timeout" });
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // getPoeChainForFeature() — chain composition
 // ─────────────────────────────────────────────────────────────────────────────

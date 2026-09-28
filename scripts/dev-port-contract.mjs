@@ -18,6 +18,8 @@ const ARTIFACT_MANIFESTS = {
   api: ["api-server", "API Server"],
   canvas: ["mockup-sandbox", "Component Preview Server"],
 };
+const DEVELOPMENT_TAKEOVER_PREFIX =
+  "node ../../scripts/free-ports.mjs --include-own-tree ";
 
 function artifactRoot() {
   return process.env.PORT_CONTRACT_ARTIFACT_ROOT
@@ -38,6 +40,15 @@ export function readArtifactManifests(root = artifactRoot()) {
   );
 }
 
+export function readArtifactPackages(root = artifactRoot()) {
+  return Object.fromEntries(
+    Object.entries(ARTIFACT_MANIFESTS).map(([key, [directory]]) => [
+      key,
+      JSON.parse(readFileSync(resolve(root, directory, "package.json"), "utf8")),
+    ]),
+  );
+}
+
 export function isValidPort(value) {
   return Number.isInteger(value) && value > 0 && value <= 65535;
 }
@@ -50,6 +61,7 @@ export function assertPortContract({
   registry = readPortRegistry(),
   replit = readFileSync(REPLIT_PATH, "utf8"),
   artifactManifests = readArtifactManifests(),
+  artifactPackages = readArtifactPackages(),
 } = {}) {
   const errors = [];
   const workflowPorts = registry.workflowPorts;
@@ -156,6 +168,29 @@ export function assertPortContract({
         );
       }
     }
+
+    const devCommand = artifactPackages?.[key]?.scripts?.dev;
+    if (typeof devCommand !== "string") {
+      errors.push(`${label} package must declare a scripts.dev command`);
+    } else if (
+      !devCommand.startsWith(DEVELOPMENT_TAKEOVER_PREFIX) ||
+      !devCommand.includes(" && ")
+    ) {
+      errors.push(
+        `${label} development startup must begin with the canonical port cleaner and --include-own-tree before launching the replacement service`,
+      );
+    }
+    for (const [scriptName, command] of Object.entries(artifactPackages?.[key]?.scripts ?? {})) {
+      if (
+        scriptName !== "dev" &&
+        typeof command === "string" &&
+        command.includes("--include-own-tree")
+      ) {
+        errors.push(
+          `${label} script ${scriptName} must not use the development-only --include-own-tree takeover`,
+        );
+      }
+    }
   }
 
   const workflowBlocks = replit.split("[[workflows.workflow]]").slice(1);
@@ -186,8 +221,11 @@ export function assertPortContract({
     if (name.startsWith("test-") && !block.includes("isValidation = true")) {
       errors.push(`${name} must be marked isValidation = true`);
     }
-    if (name.startsWith("test-") && !block.includes(`args = "pnpm run ${name}"`)) {
-      errors.push(`${name} must invoke pnpm run ${name}`);
+    const expectedValidationCommand = name === "test-standard"
+      ? "pnpm run test-standard:observed"
+      : `pnpm run ${name}`;
+    if (name.startsWith("test-") && !block.includes(`args = "${expectedValidationCommand}"`)) {
+      errors.push(`${name} must invoke ${expectedValidationCommand}`);
     }
     if (name.startsWith("test-")) continue;
     const port = Number(block.match(/^\s*waitForPort\s*=\s*(\d+)/m)?.[1]);

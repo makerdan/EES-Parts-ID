@@ -58,13 +58,16 @@ import supertest from "supertest";
 import { eq, inArray } from "drizzle-orm";
 
 import app from "../src/app";
+import { deleteCatalogPdfPart } from "../src/lib/objectStorage";
 import { awaitJobTermination } from "../src/routes/catalogPdf";
+import { recoverCatalogPdfUploadSessions } from "../src/routes/catalogPdfUpload";
 import { ADMIN_TEST_USER_ID, signAdminToken } from "./helpers/adminAuth";
 import {
   catalogPdfUploadPartTable,
   catalogPdfUploadSessionTable,
   db,
 } from "@workspace/db";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 
 const adminToken = signAdminToken();
 const auth = { Authorization: `Bearer ${adminToken}` };
@@ -78,10 +81,14 @@ describe("durable catalog PDF upload session", () => {
 
   afterEach(async () => {
     if (sessionIds.length > 0) {
-      await db.delete(catalogPdfUploadPartTable)
-        .where(inArray(catalogPdfUploadPartTable.sessionId, sessionIds));
-      await db.delete(catalogPdfUploadSessionTable)
-        .where(inArray(catalogPdfUploadSessionTable.id, sessionIds));
+      await bestEffortFixtureCleanup("catalog PDF upload parts", async () => {
+        await db.delete(catalogPdfUploadPartTable)
+          .where(inArray(catalogPdfUploadPartTable.sessionId, sessionIds));
+      });
+      await bestEffortFixtureCleanup("catalog PDF upload sessions", async () => {
+        await db.delete(catalogPdfUploadSessionTable)
+          .where(inArray(catalogPdfUploadSessionTable.id, sessionIds));
+      });
     }
     staged.clear();
     sessionIds.length = 0;
@@ -224,5 +231,71 @@ describe("durable catalog PDF upload session", () => {
       .set(auth)
       .expect(200);
     expect(cancelled.body.status).toBe("cancelled");
+  });
+
+  it("reconciles a committed cancellation after object deletion fails without a client retry", async () => {
+    const part = Buffer.from("%PDF");
+    const start = await supertest(app)
+      .post("/api/admin/catalog-pdf/upload-sessions")
+      .set(auth)
+      .send({ vendor: "EATON", totalBytes: part.length, partSize: part.length })
+      .expect(201);
+    const sessionId = start.body.sessionId as string;
+    sessionIds.push(sessionId);
+
+    await supertest(app)
+      .put(`/api/admin/catalog-pdf/upload-sessions/${sessionId}/parts/0`)
+      .set(auth)
+      .set("Content-Type", "application/octet-stream")
+      .set("Content-Range", `bytes 0-${part.length - 1}/${part.length}`)
+      .set("X-Part-SHA256", sha256(part))
+      .send(part)
+      .expect(201);
+
+    jest.mocked(deleteCatalogPdfPart).mockRejectedValueOnce(new Error("storage unavailable"));
+    const cancelled = await supertest(app)
+      .post(`/api/admin/catalog-pdf/upload-sessions/${sessionId}/cancel`)
+      .set(auth)
+      .expect(202);
+    expect(cancelled.body).toMatchObject({ status: "cancelled", cleanupPending: true });
+    expect(staged.has(`${sessionId}/0`)).toBe(true);
+    const [pending] = await db.select().from(catalogPdfUploadSessionTable)
+      .where(eq(catalogPdfUploadSessionTable.id, sessionId));
+    expect(pending).toMatchObject({ status: "cancelled", cleanupAt: null });
+    expect(await db.select().from(catalogPdfUploadPartTable)
+      .where(eq(catalogPdfUploadPartTable.sessionId, sessionId))).toHaveLength(1);
+
+    const status = await supertest(app)
+      .get(`/api/admin/catalog-pdf/upload-sessions/${sessionId}`)
+      .set(auth)
+      .expect(200);
+    expect(status.body).toMatchObject({ status: "cancelled", cleanupPending: true });
+
+    // Older cancellations recorded cleanupAt before deleting parts. Their
+    // durable part rows must still make them eligible for recovery.
+    await db.update(catalogPdfUploadSessionTable)
+      .set({ cleanupAt: new Date() })
+      .where(eq(catalogPdfUploadSessionTable.id, sessionId));
+    const legacyStatus = await supertest(app)
+      .get(`/api/admin/catalog-pdf/upload-sessions/${sessionId}`)
+      .set(auth)
+      .expect(200);
+    expect(legacyStatus.body.cleanupPending).toBe(true);
+
+    // This is the same entry point used by the periodic server reconciliation;
+    // no second client cancel request is involved in removing the part.
+    await recoverCatalogPdfUploadSessions();
+    expect(staged.has(`${sessionId}/0`)).toBe(false);
+    expect(await db.select().from(catalogPdfUploadPartTable)
+      .where(eq(catalogPdfUploadPartTable.sessionId, sessionId))).toHaveLength(0);
+    const [recovered] = await db.select().from(catalogPdfUploadSessionTable)
+      .where(eq(catalogPdfUploadSessionTable.id, sessionId));
+    expect(recovered?.status).toBe("cancelled");
+    expect(recovered?.cleanupAt).not.toBeNull();
+
+    await supertest(app)
+      .post(`/api/admin/catalog-pdf/upload-sessions/${sessionId}/cancel`)
+      .set(auth)
+      .expect(200, { sessionId, status: "cancelled", cleanupPending: false });
   });
 });

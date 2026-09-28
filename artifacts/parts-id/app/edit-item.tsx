@@ -13,8 +13,7 @@ import {
 } from "@workspace/api-client-react";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as FileSystem from "expo-file-system/legacy";
-import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import { isLiDARSupported } from "lidar-measure";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -40,6 +39,12 @@ import { useColors } from "@/hooks/useColors";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 import { API_BASE } from "@/utils/apiBase";
 import {
+  DIMENSION_INPUT_ERROR,
+  dimensionInputsChanged,
+  parseDimensionText,
+  validateDimensionInputs,
+} from "@/utils/dimensionValidation";
+import {
   evictDeletedItemFromAllCaches,
   invalidateAllCachesAfterSave,
   invalidateListCache,
@@ -53,6 +58,10 @@ import {
   resolveInventorySaveResults,
   runInventoryWrite,
 } from "@/utils/inventoryWrite";
+import {
+  coordinateSharedPartSave,
+  type SharedPartSaveCacheContext,
+} from "@/utils/sharedPartSaveCoordinator";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
 function fmtDim(v: number | null | undefined): string {
@@ -61,8 +70,8 @@ function fmtDim(v: number | null | undefined): string {
 }
 
 function parseDimField(s: string): number | null {
-  const n = parseFloat(s);
-  return isNaN(n) || n < 0 ? null : Math.round(n * 10) / 10;
+  const result = parseDimensionText(s);
+  return result.valid ? result.value : null;
 }
 
 export default function EditItemScreen() {
@@ -70,7 +79,7 @@ export default function EditItemScreen() {
   useTrackScreen("Edit Item");
   const colors = useColors();
   const router = useRouter();
-  const { adminToken, isAdmin, isLoading, pendingLidarDims, setPendingLidarDims } = useApp();
+  const { adminToken, isAdmin, isLoading } = useApp();
   const { item: itemParam, section: sectionParam } = useLocalSearchParams<{ item: string; section?: string }>();
   const queryClient = useQueryClient();
   const writeControllersRef = useRef(new Set<AbortController>());
@@ -226,28 +235,6 @@ export default function EditItemScreen() {
   const [committedFields, setCommittedFields] = useState<Set<string>>(new Set());
   const [scannerOpen, setScannerOpen] = useState(false);
   const [measureOpen, setMeasureOpen] = useState(false);
-  const [lidarAvailable, setLidarAvailable] = useState(false);
-
-  useEffect(() => {
-    setLidarAvailable(isLiDARSupported());
-  }, []);
-
-  // Read LiDAR dims captured in the Measure tab and pre-fill the dimension
-  // fields.  The Measure tab stores dims in AppContext (pendingLidarDims) and
-  // navigates back here; we consume and clear them on the next focus.
-  useFocusEffect(
-    useCallback(() => {
-      if (!pendingLidarDims) return;
-      const d = pendingLidarDims;
-      setPendingLidarDims(null);
-      if (d.length != null) setDimLength(String(Math.round(d.length * 10) / 10));
-      if (d.width != null) setDimWidth(String(Math.round(d.width * 10) / 10));
-      if (d.height != null) setDimHeight(String(Math.round(d.height * 10) / 10));
-      if (d.diameter != null) setDimDiameter(String(Math.round(d.diameter * 10) / 10));
-      setSaveStatus("idle");
-    }, [pendingLidarDims, setPendingLidarDims])
-  );
-
   // Scroll to a specific section when navigated here with a section param
   useEffect(() => {
     if (!sectionParam) return;
@@ -264,6 +251,12 @@ export default function EditItemScreen() {
   const [dimWidth, setDimWidth] = useState(fmtDim(existingDims?.width));
   const [dimHeight, setDimHeight] = useState(fmtDim(existingDims?.height));
   const [dimDiameter, setDimDiameter] = useState(fmtDim(existingDims?.diameter));
+  const dimensionValidation = validateDimensionInputs({
+    length: dimLength,
+    width: dimWidth,
+    height: dimHeight,
+    diameter: dimDiameter,
+  });
 
   const [photoUri1, setPhotoUri1] = useState<string | null>(item?.imageUrl ?? null);
   const [photoUri2, setPhotoUri2] = useState<string | null>(item?.imageUrl2 ?? null);
@@ -518,7 +511,11 @@ export default function EditItemScreen() {
     );
   }, [adminToken, queryClient, router, fetchWrite]);
 
-  const saveInventory = async () => {
+  const _saveInventoryLegacy = async () => {
+    if (!dimensionValidation.valid) {
+      setSaveStatus("error");
+      return;
+    }
     const current = itemRef.current;
     if (!current || !adminToken) {
       setErrorMsg("Admin session expired. Tap Cancel, re-unlock as admin, then try again.");
@@ -871,6 +868,125 @@ export default function EditItemScreen() {
     }
   };
 
+  const saveInventory = async () => {
+    const current = itemRef.current;
+    if (!current || !adminToken) {
+      setErrorMsg("Admin session expired. Tap Cancel, re-unlock as admin, then try again.");
+      setSaveStatus("error");
+      return;
+    }
+    if (!dimensionValidation.valid) {
+      setErrorMsg(null);
+      setFieldSaveErrors({});
+      setSaveStatus("error");
+      return;
+    }
+    setSaveStatus("saving");
+    setErrorMsg(null);
+    setFieldSaveErrors({});
+    setRefreshWarning(null);
+
+    const writeJson = async (url: string, body: unknown): Promise<unknown> => {
+      const response = await fetchWrite(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${response.status}`);
+      }
+      return response.json().catch(() => undefined);
+    };
+    const writePhoto = async (slot: 1 | 2, action: { kind: "upload"; source: string } | { kind: "remove" }) => {
+      if (action.kind === "upload") {
+        const base64 = await FileSystem.readAsStringAsync(action.source, { encoding: "base64" });
+        return writeJson(`${API_BASE}/inventory/${current.id}/photo`, {
+          imageBase64: base64,
+          mimeType: "image/jpeg",
+          slot,
+        });
+      }
+      return writeJson(`${API_BASE}/inventory/${current.id}/photo`, { remove: true, slot });
+    };
+
+    try {
+      const result = await coordinateSharedPartSave({
+        current,
+        draft: {
+          description,
+          bins,
+          pendingBin: newBin,
+          barcodes,
+          pendingBarcode: newBarcode,
+          keywords,
+          pendingKeyword: newKeyword,
+          op,
+          oq,
+          dimensions: { length: dimLength, width: dimWidth, height: dimHeight, diameter: dimDiameter },
+          ...(photoUri1 !== (current.imageUrl ?? null)
+            ? { photo: photoUri1 ? { kind: "upload" as const, source: photoUri1 } : { kind: "remove" as const } }
+            : {}),
+          ...(photoUri2 !== (current.imageUrl2 ?? null)
+            ? { photo2: photoUri2 ? { kind: "upload" as const, source: photoUri2 } : { kind: "remove" as const } }
+            : {}),
+        },
+        capabilities: { barcodes: true, photo: true, photo2: true },
+        writers: {
+          description: value => writeJson(`${API_BASE}/inventory/${current.id}/description`, { description: value }),
+          bins: value => updateBinsMutation.mutateAsync({ id: current.id, data: { binLocations: [...value] } }),
+          barcodes: value => updateBarcodesMutation.mutateAsync({ id: current.id, data: { barcodes: [...value] } }),
+          keywords: value => updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords: [...value] } }),
+          opoq: value => writeJson(`${API_BASE}/inventory/${current.id}/order`, value),
+          dimensions: value => writeJson(`${API_BASE}/inventory/${current.id}/dimensions`, value),
+          photo: action => writePhoto(1, action),
+          photo2: action => writePhoto(2, action),
+        },
+        cache: {
+          queryClient: queryClient as unknown as SharedPartSaveCacheContext["queryClient"],
+          asyncStorage: AsyncStorage,
+        },
+      });
+      await invalidateListCache({ queryClient }).catch(() => undefined);
+
+      setBins(result.normalized.bins);
+      if (result.normalized.barcodes) setBarcodes(result.normalized.barcodes);
+      setKeywords(result.normalized.keywords);
+      setNewBin("");
+      setNewBarcode("");
+      setNewKeyword("");
+      if (result.succeededFields.has("photo") && "imageUrl" in result.committedItem) {
+        setPhotoUri1(result.committedItem.imageUrl ?? null);
+      }
+      if (result.succeededFields.has("photo2") && "imageUrl2" in result.committedItem) {
+        setPhotoUri2(result.committedItem.imageUrl2 ?? null);
+      }
+      if (result.succeededFields.size > 0) itemRef.current = result.committedItem;
+      setCommittedFields(prev => new Set([...prev, ...result.succeededFields]));
+      setFieldSaveErrors(result.fieldErrors);
+      if (result.cacheWarning) setRefreshWarning(INVENTORY_REFRESH_WARNING);
+
+      if (result.anyFailed) {
+        setErrorMsg(result.message);
+        setSaveStatus("error");
+        return;
+      }
+      if (result.operations.length === 0) {
+        setSaveStatus("idle");
+        return;
+      }
+      setSaveStatus("saved");
+      if (result.cacheReconciled && !result.cacheWarning) {
+        discardConfirmedRef.current = true;
+        navTimerRef.current = setTimeout(() => router.back(), 500);
+      }
+    } catch (error) {
+      if (!mountedRef.current || isAbortError(error)) return;
+      setErrorMsg(inventorySaveErrorMessage(error, "Could not save changes. Check connection and try again."));
+      setSaveStatus("error");
+    }
+  };
+
   const handleSave = async () => {
     if (saveInFlightRef.current) return;
     saveInFlightRef.current = true;
@@ -915,10 +1031,7 @@ export default function EditItemScreen() {
     Number(op.trim() || "0") !== baselineItem.orderPurchase ||
     Number(oq.trim() || "0") !== baselineItem.orderQuantity ||
     size.trim() !== savedSizeRef.current ||
-    parseDimField(dimLength) !== (baselineItem.dimensions?.length ?? null) ||
-    parseDimField(dimWidth) !== (baselineItem.dimensions?.width ?? null) ||
-    parseDimField(dimHeight) !== (baselineItem.dimensions?.height ?? null) ||
-    parseDimField(dimDiameter) !== (baselineItem.dimensions?.diameter ?? null) ||
+    dimensionInputsChanged(dimensionValidation, baselineItem.dimensions) ||
     photoUri1 !== (baselineItem.imageUrl ?? null) ||
     photoUri2 !== (baselineItem.imageUrl2 ?? null);
 
@@ -1056,6 +1169,7 @@ export default function EditItemScreen() {
                   placeholder="0"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="number-pad"
+                  selectTextOnFocus
                   style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.opoq ? colors.destructive : colors.border, color: colors.foreground }]}
                 />
               </View>
@@ -1357,95 +1471,106 @@ export default function EditItemScreen() {
                 <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
               ) : null}
             </View>
-            {Platform.OS === "ios" ? (
-              lidarAvailable ? (
-                <Pressable
-                  onPress={() => {
-                    const label = item ? `${item.vendor} · ${item.catalog}` : "";
-                    // Navigate to the dedicated Measure tab — it stores confirmed
-                    // dims in AppContext.pendingLidarDims and navigates back here,
-                    // where useFocusEffect picks them up and pre-fills the form.
-                    (router.navigate as (url: string) => void)(
-                      `/(tabs)/measure?fromItemForm=true&itemLabel=${encodeURIComponent(label)}`
-                    );
-                  }}
-                  style={[s.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
-                  accessibilityLabel="Measure dimensions with LiDAR"
-                >
-                  <Feather name="maximize-2" size={13} color={colors.primary} />
-                  <Text style={[s.measureBtnText, { color: colors.primary }]}>LiDAR</Text>
-                </Pressable>
-              ) : (
-                <Pressable
-                  onPress={() => setMeasureOpen(true)}
-                  style={[s.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
-                  accessibilityLabel="Estimate dimensions from photo"
-                >
-                  <Feather name="maximize" size={13} color={colors.primary} />
-                  <Text style={[s.measureBtnText, { color: colors.primary }]}>Estimate</Text>
-                </Pressable>
-              )
-            ) : null}
+            <Pressable
+              onPress={() => setMeasureOpen(true)}
+              style={[s.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+              accessibilityLabel="Estimate dimensions from photo"
+            >
+              <Feather name="maximize" size={13} color={colors.primary} />
+              <Text style={[s.measureBtnText, { color: colors.primary }]}>Estimate</Text>
+            </Pressable>
           </View>
           <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
-            {Platform.OS === "ios"
-              ? lidarAvailable
-                ? "Tap LiDAR to measure precisely, or enter values manually. Leave blank if unknown."
-                : "Tap Estimate to measure from a photo, or enter values manually. Leave blank if unknown."
-              : "Enter physical dimensions in millimetres. Leave blank if unknown."}
+            {"Tap Estimate to measure from a photo, or enter values manually. Leave blank if unknown."}
           </Text>
           <View style={s.dimGrid}>
             <View style={s.dimField}>
               <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Length</Text>
               <KeyboardDoneInput
+                accessibilityLabel="Length"
                 value={dimLength}
-                onChangeText={v => { setDimLength(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                onChangeText={v => {
+                  setDimLength(v);
+                  setSaveStatus("idle");
+                  setFieldSaveErrors(prev => {
+                    const { dimensions: _dimensions, ...rest } = prev;
+                    return rest;
+                  });
+                }}
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
                 keyboardType="numeric"
-                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
+                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions || (!dimensionValidation.valid && dimensionValidation.invalidFields.includes("length")) ? colors.destructive : colors.border, color: colors.foreground }]}
               />
             </View>
             <View style={s.dimField}>
               <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Width</Text>
               <KeyboardDoneInput
+                accessibilityLabel="Width"
                 value={dimWidth}
-                onChangeText={v => { setDimWidth(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                onChangeText={v => {
+                  setDimWidth(v);
+                  setSaveStatus("idle");
+                  setFieldSaveErrors(prev => {
+                    const { dimensions: _dimensions, ...rest } = prev;
+                    return rest;
+                  });
+                }}
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
                 keyboardType="numeric"
-                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
+                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions || (!dimensionValidation.valid && dimensionValidation.invalidFields.includes("width")) ? colors.destructive : colors.border, color: colors.foreground }]}
               />
             </View>
             <View style={s.dimField}>
               <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Height</Text>
               <KeyboardDoneInput
+                accessibilityLabel="Height"
                 value={dimHeight}
-                onChangeText={v => { setDimHeight(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                onChangeText={v => {
+                  setDimHeight(v);
+                  setSaveStatus("idle");
+                  setFieldSaveErrors(prev => {
+                    const { dimensions: _dimensions, ...rest } = prev;
+                    return rest;
+                  });
+                }}
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
                 keyboardType="numeric"
-                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
+                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions || (!dimensionValidation.valid && dimensionValidation.invalidFields.includes("height")) ? colors.destructive : colors.border, color: colors.foreground }]}
               />
             </View>
             <View style={s.dimField}>
               <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Diameter</Text>
               <KeyboardDoneInput
+                accessibilityLabel="Diameter"
                 value={dimDiameter}
-                onChangeText={v => { setDimDiameter(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                onChangeText={v => {
+                  setDimDiameter(v);
+                  setSaveStatus("idle");
+                  setFieldSaveErrors(prev => {
+                    const { dimensions: _dimensions, ...rest } = prev;
+                    return rest;
+                  });
+                }}
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
                 keyboardType="numeric"
-                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
+                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions || (!dimensionValidation.valid && dimensionValidation.invalidFields.includes("diameter")) ? colors.destructive : colors.border, color: colors.foreground }]}
               />
             </View>
           </View>
-          {fieldSaveErrors.dimensions ? (
+          {fieldSaveErrors.dimensions || !dimensionValidation.valid ? (
             <View style={s.fieldErrorRow}>
-              <Text style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>{fieldSaveErrors.dimensions}</Text>
-              <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving dimensions">
-                <Text style={[s.retryText, { color: colors.destructive }]}>Retry</Text>
-              </Pressable>
+              <Text accessibilityRole="alert" style={[s.fieldHint, { color: colors.destructive, marginTop: 4 }]}>
+                {dimensionValidation.valid ? fieldSaveErrors.dimensions : DIMENSION_INPUT_ERROR}
+              </Text>
+              {fieldSaveErrors.dimensions && dimensionValidation.valid ? (
+                <Pressable onPress={retryFieldSave} accessibilityRole="button" accessibilityLabel="Retry saving dimensions">
+                  <Text style={[s.retryText, { color: colors.destructive }]}>Retry</Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : null}
           {(dimLength || dimWidth || dimHeight || dimDiameter) ? (
@@ -1621,7 +1746,7 @@ export default function EditItemScreen() {
         </Modal>
       ) : null}
 
-      {/* Measure modal — iOS only (LiDAR or AI Vision estimate) */}
+      {/* Measure modal — AI Vision estimate */}
       {Platform.OS === "ios" ? (
         <MeasurePartScreen
           visible={measureOpen}

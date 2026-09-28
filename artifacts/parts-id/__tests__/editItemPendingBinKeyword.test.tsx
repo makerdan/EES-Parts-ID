@@ -87,10 +87,6 @@ jest.mock("expo-camera", () => ({
   useCameraPermissions: jest.fn(() => [{ granted: false }, jest.fn()]),
 }));
 
-jest.mock("lidar-measure", () => ({
-  isLiDARSupported: jest.fn(() => false),
-}));
-
 jest.mock("expo-file-system/legacy", () => ({
   readAsStringAsync: jest.fn().mockResolvedValue("base64data"),
   cacheDirectory:    "/tmp/",
@@ -129,8 +125,6 @@ jest.mock("@/contexts/AppContext", () => ({
     adminToken:          "test-token",
     isAdmin:             true,
     isLoading:           false,
-    pendingLidarDims:    null,
-    setPendingLidarDims: jest.fn(),
   })),
 }));
 
@@ -171,6 +165,7 @@ jest.mock("@/components/KeyboardDoneInput", () => {
   return {
     KeyboardDoneInput: (props: {
       placeholder?: string;
+      accessibilityLabel?: string;
       onChangeText?: (v: string) => void;
       value?: string;
       testID?: string;
@@ -181,6 +176,7 @@ jest.mock("@/components/KeyboardDoneInput", () => {
         value:        props.value,
         onChangeText: props.onChangeText,
         placeholder:  props.placeholder,
+        accessibilityLabel: props.accessibilityLabel,
       }),
   };
 });
@@ -209,6 +205,13 @@ function findTextInput(root: Inst, placeholder: string): Inst | null {
       .find((n: Inst) => n.props.testID === placeholder || n.props.placeholder === placeholder)
     ?? null
   );
+}
+
+function findInputByA11yLabel(root: Inst, label: string): Inst | null {
+  return root.queryAll(
+    (n: TestInstance) => n.props.accessibilityLabel === label,
+    { includeSelf: true },
+  )[0] ?? null;
 }
 
 async function renderScreen() {
@@ -246,8 +249,6 @@ afterEach(async () => {
     adminToken:          "test-token",
     isAdmin:             true,
     isLoading:           false,
-    pendingLidarDims:    null,
-    setPendingLidarDims: jest.fn(),
   });
 });
 
@@ -345,6 +346,78 @@ describe("EditItemScreen – pending bin text is carried through on Save", () =>
 
     // finalBins === [] === item.binLocations → no bin mutation fires.
     expect(mockBinsMutateAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe("EditItemScreen – dimension validation", () => {
+  it("keeps negative dimension text visible and blocks the save", async () => {
+    testItem = makeItem({
+      dimensions: { length: null, width: null, height: null, diameter: null },
+    });
+    mockFetch.mockClear();
+
+    const result = await renderScreen();
+    activeTree = result;
+    await act(async () => {
+      fireEvent.changeText(findInputByA11yLabel(result.root!, "Length")!, "-12.5");
+    });
+    await act(async () => {
+      fireEvent.press(findPressable(result.root!, "Save Details")!);
+    });
+
+    expect(findInputByA11yLabel(result.root!, "Length")?.props.value).toBe("-12.5");
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(instText(result.root!)).toContain("Enter a non-negative number up to 100,000");
+  });
+
+  it("sends null for a blank field when clearing an existing dimension", async () => {
+    testItem = makeItem({
+      dimensions: { length: 5, width: 6, height: null, diameter: null },
+    });
+    mockFetch.mockClear();
+
+    const result = await renderScreen();
+    activeTree = result;
+    await act(async () => {
+      fireEvent.changeText(findInputByA11yLabel(result.root!, "Length")!, "");
+    });
+    await act(async () => {
+      fireEvent.press(findPressable(result.root!, "Save Details")!);
+    });
+
+    const dimensionCall = mockFetch.mock.calls.find(([url]) => String(url).includes("/dimensions"));
+    expect(dimensionCall).toBeDefined();
+    expect(JSON.parse(dimensionCall![1].body)).toEqual({
+      length: null,
+      width: 6,
+      height: null,
+      diameter: null,
+    });
+  });
+
+  it("rounds valid decimal input to one decimal place before saving", async () => {
+    testItem = makeItem({
+      dimensions: { length: null, width: null, height: null, diameter: null },
+    });
+    mockFetch.mockClear();
+
+    const result = await renderScreen();
+    activeTree = result;
+    await act(async () => {
+      fireEvent.changeText(findInputByA11yLabel(result.root!, "Length")!, "12.34");
+    });
+    await act(async () => {
+      fireEvent.press(findPressable(result.root!, "Save Details")!);
+    });
+
+    const dimensionCall = mockFetch.mock.calls.find(([url]) => String(url).includes("/dimensions"));
+    expect(dimensionCall).toBeDefined();
+    expect(JSON.parse(dimensionCall![1].body)).toEqual({
+      length: 12.3,
+      width: null,
+      height: null,
+      diameter: null,
+    });
   });
 });
 

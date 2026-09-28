@@ -5,7 +5,8 @@
  *   fetchTile          — cache-miss download, cache-hit skip, web/empty-hash no-ops,
  *                        non-200 download cleans up and throws.
  *   cleanStaleCacheDirs — no-ops on web / empty hash / absent root dir;
- *                         deletes non-matching subdirs, keeps the current one.
+ *                         deletes non-matching subdirs and old temporary tiles,
+ *                         keeps completed tiles and live downloads.
  *   prefetchZoomLevel  — no-ops on web / empty hash; fires one fetch per tile in
  *                        range; individual failures are silently swallowed;
  *                        respects AbortSignal.
@@ -33,6 +34,7 @@ import {
 const mockGetInfo   = FileSystem.getInfoAsync       as jest.MockedFunction<typeof FileSystem.getInfoAsync>;
 const mockMakeDir   = FileSystem.makeDirectoryAsync as jest.MockedFunction<typeof FileSystem.makeDirectoryAsync>;
 const mockDownload  = FileSystem.downloadAsync      as jest.MockedFunction<typeof FileSystem.downloadAsync>;
+const mockResumable = FileSystem.createDownloadResumable as jest.MockedFunction<typeof FileSystem.createDownloadResumable>;
 const mockDelete    = FileSystem.deleteAsync        as jest.MockedFunction<typeof FileSystem.deleteAsync>;
 const mockReadDir   = FileSystem.readDirectoryAsync as jest.MockedFunction<typeof FileSystem.readDirectoryAsync>;
 
@@ -215,6 +217,95 @@ describe("cleanStaleCacheDirs — stale directory removal", () => {
   });
 });
 
+describe("cleanStaleCacheDirs — interrupted downloads", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("removes only aged temporary tiles in the current map, then reuses a completed cached tile", async () => {
+    const now = Date.now();
+    const old = now - 2 * DAY;
+    const fresh = now - 1000;
+    const oldTemp = `0_0_0.png.prefetch-${old}-abc123`;
+    const freshTemp = `0_0_1.png.prefetch-${fresh}-xyz123`;
+    const recentlyModified = `0_1_0.png.prefetch-${old}-recent`;
+    const unrelated = "notes.prefetch-123-abcd";
+    mockGetInfo.mockImplementation(async (uri) => {
+      if (uri === TILES_BASE) return DIR_EXISTS;
+      if (uri === LOCAL_TILE) return FILE_EXISTS;
+      return { ...FILE_EXISTS, uri, modificationTime: (uri.endsWith(recentlyModified) ? now : old) / 1000 };
+    });
+    mockReadDir.mockImplementation(async (uri) =>
+      uri === TILES_BASE
+        ? ["other-hash", HASH]
+        : [oldTemp, freshTemp, recentlyModified, "0_0_0.png", unrelated],
+    );
+
+    await cleanStaleCacheDirs(HASH);
+    expect(mockDelete).toHaveBeenCalledTimes(2);
+    expect(mockDelete).toHaveBeenCalledWith(`${TILES_BASE}other-hash`, { idempotent: true });
+    expect(mockDelete).toHaveBeenCalledWith(HASH_DIR + oldTemp, { idempotent: true });
+    expect(mockGetInfo).not.toHaveBeenCalledWith(HASH_DIR + freshTemp);
+    expect(mockGetInfo).not.toHaveBeenCalledWith(HASH_DIR + unrelated);
+    await expect(fetchTile(0, 0, 0, HASH)).resolves.toBe(LOCAL_TILE);
+    expect(mockDownload).not.toHaveBeenCalled();
+    expect(mockResumable).not.toHaveBeenCalled();
+  });
+
+  it("does not delete an in-flight prefetch even when its timestamp and file age pass the cutoff", async () => {
+    const start = Date.now();
+    const clock = jest.spyOn(Date, "now").mockReturnValue(start);
+    mockGetInfo.mockImplementation(async (uri) =>
+      uri === TILES_BASE ? DIR_EXISTS :
+      uri === LOCAL_TILE ? FILE_MISSING :
+      { ...FILE_EXISTS, uri, modificationTime: start / 1000 },
+    );
+    let finish!: (result: FileSystem.FileSystemDownloadResult) => void;
+    const pending = new Promise<FileSystem.FileSystemDownloadResult>((resolve) => { finish = resolve; });
+    mockResumable.mockImplementation(() => ({
+      downloadAsync: () => pending,
+      cancelAsync: jest.fn(async () => {}),
+    } as unknown as FileSystem.DownloadResumable));
+    const controller = new AbortController();
+    const download = fetchTile(0, 0, 0, HASH, controller.signal);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockResumable).toHaveBeenCalledTimes(1);
+    const temporary = mockResumable.mock.calls[0]![1];
+    clock.mockReturnValue(start + 2 * DAY);
+    mockReadDir.mockImplementation(async (uri) =>
+      uri === TILES_BASE ? [HASH] : [temporary.slice(HASH_DIR.length)],
+    );
+
+    await cleanStaleCacheDirs(HASH);
+    expect(mockDelete).not.toHaveBeenCalled();
+
+    finish({ status: 200, uri: temporary, headers: {}, mimeType: null });
+    await expect(download).resolves.toBe(LOCAL_TILE);
+  });
+
+  it("ignores missing files and failed deletions without preventing other cleanup", async () => {
+    const old = Date.now() - 2 * DAY;
+    const missing = `0_0_0.png.prefetch-${old}-missing`;
+    const locked = `0_0_1.png.prefetch-${old}-locked`;
+    mockGetInfo.mockImplementation(async (uri) =>
+      uri === TILES_BASE ? DIR_EXISTS :
+      uri.endsWith(missing) ? FILE_MISSING :
+      { ...FILE_EXISTS, uri, modificationTime: old / 1000 },
+    );
+    mockReadDir.mockImplementation(async (uri) =>
+      uri === TILES_BASE ? [HASH] : [missing, locked],
+    );
+    mockDelete.mockRejectedValueOnce(new Error("locked"));
+
+    await expect(cleanStaleCacheDirs(HASH)).resolves.toBeUndefined();
+    expect(mockDelete).toHaveBeenCalledTimes(1);
+    expect(mockDelete).toHaveBeenCalledWith(HASH_DIR + locked, { idempotent: true });
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // prefetchZoomLevel
 // ─────────────────────────────────────────────────────────────────────────────
@@ -316,5 +407,26 @@ describe("prefetchZoomLevel — AbortSignal cancellation", () => {
     // Signal is already aborted before the outer loop body runs, so zero or
     // very few tiles are enqueued (implementation breaks at first aborted check).
     expect(mockDownload).toHaveBeenCalledTimes(0);
+  });
+
+  it("cancels downloads already started and never queues the remaining range", async () => {
+    mockGetInfo.mockResolvedValue(FILE_MISSING_BLANK);
+    let finish!: (value: undefined) => void;
+    const pending = new Promise<undefined>(resolve => { finish = resolve; });
+    const cancel = jest.fn(() => { finish(undefined); return Promise.resolve(); });
+    mockResumable.mockImplementation(() => ({
+      downloadAsync: () => pending,
+      cancelAsync: cancel,
+    } as unknown as FileSystem.DownloadResumable));
+    const controller = new AbortController();
+    const prefetch = prefetchZoomLevel(4, { c0: 0, c1: 15, r0: 0, r1: 15 }, HASH, controller.signal);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockResumable).toHaveBeenCalledTimes(4);
+    controller.abort();
+    await prefetch;
+    expect(cancel).toHaveBeenCalledTimes(4);
+    expect(mockResumable).toHaveBeenCalledTimes(4);
+    expect(mockDelete).toHaveBeenCalledTimes(4);
   });
 });

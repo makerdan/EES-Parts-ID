@@ -83,6 +83,10 @@ export default function LoginScreen() {
       errors?.fields?.password?.message ||
       null);
 
+  const levelOneHeadingProps = {
+    "aria-level": 1,
+  } as unknown as React.ComponentProps<typeof Text>;
+
   const styles = StyleSheet.create({
     container: {
       flex: 1,
@@ -187,11 +191,14 @@ export default function LoginScreen() {
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       style={styles.container}
+      role="main"
     >
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
       <View style={styles.card}>
         <Text style={styles.logo}>⚡</Text>
-        <Text style={styles.title}>Parts ID</Text>
+        <Text style={styles.title} role="heading" {...levelOneHeadingProps}>
+          Parts ID
+        </Text>
         <Text style={styles.subtitle}>
           Electrical parts identification{"\n"}& warehouse lookup
         </Text>
@@ -199,6 +206,7 @@ export default function LoginScreen() {
         <Text style={styles.label}>Email</Text>
         <KeyboardDoneInput
           style={[styles.input, displayError ? styles.inputError : null]}
+          accessibilityLabel="Email"
           value={emailAddress}
           onChangeText={setEmailAddress}
           placeholder="Enter your email"
@@ -212,6 +220,7 @@ export default function LoginScreen() {
         <Text style={styles.label}>Password</Text>
         <KeyboardDoneInput
           style={[styles.input, displayError ? styles.inputError : null]}
+          accessibilityLabel="Password"
           value={password}
           onChangeText={setPassword}
           secureTextEntry
@@ -225,9 +234,14 @@ export default function LoginScreen() {
         {displayError ? <Text style={styles.error}>{displayError}</Text> : null}
 
         <Pressable
+          testID="login-submit-button"
           style={[styles.button, loading && { opacity: 0.6 }]}
           onPress={handleSubmit}
           disabled={loading}
+          accessibilityRole="button"
+          accessibilityLabel="Sign In"
+          accessibilityState={{ disabled: loading, busy: loading }}
+          aria-busy={loading}
         >
           {loading ? (
             <ActivityIndicator color={colors.primaryForeground} />

@@ -2057,6 +2057,7 @@ export function WarehouseMapView({
       prefetchAbortRef.current = null;
     }
   }, []);
+  useEffect(() => () => _cancelPrefetch(), [_cancelPrefetch]);
 
   const _triggerPrefetch = useCallback((stopIdx: number) => {
     _cancelPrefetch();

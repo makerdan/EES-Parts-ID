@@ -56,10 +56,12 @@
 - [SVG load singleton retries](svg-load-singleton-retry.md) — a settled module-level load promise must be discarded when cache data is unusable on either platform, or later cold loads stay blank.
 - [SheetJS ArrayBuffer fixtures](sheetjs-array-buffer-fixtures.md) — type:"array" ODS fixtures return an ArrayBuffer; pass it directly instead of converting it as a number array.
 - [Support analytics privacy](support-analytics-privacy.md) — use keyed rotating grouping or disable unique visitors; disclose bounded UTC windows and suppression.
+- [Screen-view test timing](screen-view-test-timing.md) — fire-and-forget telemetry inserts can flake only under concurrent standard-tier database load; verify in isolation before assigning ownership.
 - [Knip UI package boundaries](knip-ui-package-boundaries.md) — dynamically discovered components and CSS-only imports need explicit Knip configuration.
 - [Standard-tier database pool pressure](standard-db-pool-pressure.md) — concurrent validation can exhaust PostgreSQL clients; confirm affected API suites in isolation before assigning regression ownership.
 - [Mapped Jest context mocks](mapped-jest-context-mocks.md) — when a path is mapped to a manual mock, configure that exported mock instance; a separate local spy may not be consumed by the screen.
 - [Orval barrel append behavior](orval-barrel-append.md) — normalize managed barrel exports because newer Orval runs can append duplicates instead of replacing them.
+- [Generated-client validation staging](generated-client-validation-staging.md) — codegen-check compares generated files to the unstaged Git diff; stage intentional generated changes before the locked tier.
 - [ESLint import sort order](eslint-import-sort-order.md) — use fix-dry-run output when simple-import-sort rejects valid but noncanonical package/specifier ordering.
 - [Patch published packages instead of vendoring build output](pnpm-patched-published-package.md) — repo-wide dist ignores can silently omit runtime files from directory overrides; patch a pinned registry tarball instead.
 - [GitHub Actions token PR creation policy](github-actions-token-pr-creation.md) — disabling workflow-token PR approval also blocks PR creation; publish a reviewable automation branch instead.
@@ -74,7 +76,7 @@
 - [Disabled query cache observers](disabled-query-cache-observers.md) — when a disabled query-backed screen must react to app-owned cache writes, subscribe to QueryCache and read the stable key directly.
 - [Task-plan heading parser](task-plan-heading-parser.md) — put detailed Validation before Validation tier so the locked runner parses the intended section.
 - [Replit active configuration read boundary](replit-active-config-read-boundary.md) — no documented runtime reader exists; `/run/replit/env` is environment-only and may contain secrets.
-- [Replit config validation drift](replit-config-validation-drift.md) — standard validation can stop before project checks when an unrelated working-tree `.replit` port table differs from its contract.
+- [Replit config validation drift](replit-config-validation-drift.md) — standard validation can stop before project checks when an unrelated working-tree .replit port table differs from its contract.
 - [SearchScreen QueryClient test harness](searchscreen-queryclient-harness.md) — direct mounts need a provider; result assertions also need seeded active-cache data.
 - [API health restart recovery](api-health-restart-recovery.md) — preserve terminal restart outcomes through cleanup and refresh dependent health snapshots on recovery.
 - [Help assistant async lifecycles](help-assistant-async-lifecycles.md) — content refresh and assistant requests need independent cancellation and stale-result ownership.
@@ -83,15 +85,42 @@
 - [Account skill projection recovery](account-skill-recovery.md) — validate preserved backups against their own manifest and bytes because canonical source revisions may advance.
 - [Provider probe deadlines and permits](provider-probe-deadlines-permits.md) — response deadlines may expire before transports settle; retain concurrency permits until transport settlement.
 - [Serial lock kernel guard](serial-lock-kernel-guard.md) — stale-holder reclaim needs an OS-backed critical section; lease-file unlinking has a replacement race.
+- [Serial-lock resource inheritance](serial-lock-resource-env.md) — nested wrappers for different resources must not inherit the parent lock-file path or validation can deadlock.
+- [Serial-lock recovery ownership](serial-lock-recovery-safety.md) — stale reclaim must read registered worker identity under the guard and ignore the active holder's own queue entry.
 - [Serial-lock disappearance tests](serial-lock-disappearance-tests.md) — isolate temporary flock shims in PATH; otherwise spawn lookup can fall through to the host utility after the shim vanishes.
 - [Validation runtime controls](validation-runtime-controls.md) — timeout and watchdog paths must own process trees and reject missing or stale result evidence before declaring success.
+- [Registered long validation observation](registered-long-validation.md) — service observation cannot be extended; pending stays nonzero and later terminal evidence is authoritative.
 - [Failure Gate package synchronization](failure-gate-package-sync.md) — refresh the tracked validation archive after changing tier membership or packaged support files.
-- [Parts ID focused test runner](parts-id-focused-test-runner.md) — invoke Jest directly for one suite; the package wrapper requires the full suite-count floor.
-- [Standard-tier baseline failures](standard-tier-baseline-failures.md) — classify unrelated full-tier test failures with focused reruns before changing scoped validation work.
 - [Auth-scoped durable drafts](auth-scoped-durable-drafts.md) — tie readiness to the exact user, clear UI state on identity changes, and serialize saves with logout deletion.
 - [RNTL 14 async fireEvent](rntl14-async-fireevent.md) — every fireEvent call returns a promise with its own act scope; await each interaction before starting another lifecycle helper.
 - [OpenAPI integer Zod enforcement](openapi-integer-zod-enforcement.md) — generated Zod schemas may accept fractions for OpenAPI integer fields; enforce safe integers at write boundaries.
-- [Completion validation tier drift](completion-validation-tier-drift.md) — completion callbacks may run every registered tier; unrelated full-suite failures can reject a task whose declared tier passed.
+- [Completion validation tier drift](completion-validation-tier-drift.md) — callbacks may fan out across tiers, and long registered runs can be stopped by a polling limit; preserve scoped evidence.
 - [Public history release boundary](public-history-release-boundary.md) — fail closed on incomplete history scans; report existing historical findings without leaking paths or values until owner purge.
 - [Dead-export lint baseline](dead-export-lint-baseline.md) — root lint currently fails because check-dead-exports reports an unlisted `tsc` binary in package metadata.
 - [Shared API codegen ownership](codegen-shared-lock.md) — all destructive generators use one tokenized serial resource and cache the resolved toolchain graph.
+- [Parts ID web build domain](parts-id-web-build-domain.md) — regeneration must use a stable non-preview deployment domain because native validation rejects *.replit.dev.
+- [Protected GitHub history rewrites](protected-github-history-rewrites.md) — protected force rewrites may require both force-push permission and admin bypass; restore rules with a fail-safe trap.
+- [GitHub pull refs survive branch rewrites](github-pull-refs-history.md) — normal clones omit read-only refs/pull; mirror scans can reveal provider-retained history that only GitHub can remove.
+- [Expo static web serializer artifacts](expo-static-web-serializer-artifacts.md) — detect web export artifacts by their static/js/web filename path when serializer platform metadata is unreliable.
+- [Node -e fixture arguments](node-e-fixtures.md) — inline Node child fixtures receive their first argument at process.argv[1], without a placeholder script filename.
+- [Floor-plan fixture isolation](floor-plan-fixture-isolation.md) — global latest-metadata suites need a shared advisory lock across setup, requests, and cleanup.
+- [Dictionary deadline cleanup](dictionary-deadline-cleanup.md) — outer load deadlines must not outrun PostgreSQL transaction cancellation and client release.
+- [Validation step command parser](validation-step-command-parser.md) — focused Jest selectors must use direct `exec node scripts/run-tests.mjs` with separate selector arguments in tier commands.
+- [Validation parity contracts](validation-parity-contracts.md) — new validation contracts must update tier membership and every companion coverage inventory.
+- [Generated output inventory](generated-output-inventory.md) — new OpenAPI-generated type files must be registered in the tracked output manifest.
+- [Node Web CryptoKey test constructor](node-webcrypto-cryptokey-constructor.md) — Node Web Crypto may not expose CryptoKey on webcrypto; derive the constructor from a generated key for browser-path tests.
+- [Test result artifact schema](test-result-artifact-schema.md) — Jest/Vitest share core counts, but Vitest may omit runtime-error suite counts; pending assertions are not executed evidence.
+- [Startup unref timer tests](startup-unref-timer-tests.md) — fake timers can miss unref’d callbacks in dynamically imported startup modules; prefer deferred state assertions.
+- [PostgreSQL legacy cleanup diagnostics](postgres-legacy-cleanup-diagnostics.md) — inspect triggers/dependencies, never cascade, and report absent/removed/retained without object names.
+- [Bulk enrichment restart state](bulk-enrichment-restart-state.md) — restore only terminal persisted outcomes; never revive stale running or stopping rows after an API restart.
+- [Startup probe cancellation](startup-probe-cancellation.md) — Promise deadlines do not cancel PostgreSQL work; own client cleanup, session timeout restoration, and retry-budget checks.
+- [Search generation guards](search-generation-guards.md) — every visible, AI, and durable search publication must still belong to the newest request generation.
+- [Release lock-order fixtures](release-lock-order-fixtures.md) — use a local Git shim and lock-file visibility to prove HEAD reads occur only after coordination-lock acquisition.
+- [CI parity revision refresh](ci-parity-revision-refresh.md) — a committed report analyzes its parent revision; later unrelated commits make it stale.
+- [Jest shared CJS helpers](jest-shared-cjs-helper.md) — source-inspection helpers shared with CommonJS Jest suites must expose a CJS bridge.
+- [Jest cleanup child runtime](jest-cleanup-child-runtime.md) — standalone DB cleanup children must declare NODE_ENV and test-worker markers before loading the guarded DB package.
+- [PostgreSQL fixture teardown](postgres-fixture-teardown.md) — register ownership only after successful inserts; make each cleanup retryable and non-masking.
+- [PostgreSQL leases](postgresql-leases.md) — use database time for expiry and fence terminal writes by the current lease owner.
+- [Workflow stop during startup](workflow-stop-startup-race.md) — a successful stop against not_started can race with pending startup; verify state and ports after a delay.
+- [Durable PDF queue staging](durable-pdf-queue-staging.md) — preserve staged upload parts until a queued worker claims its job; a queued in-memory buffer cannot survive a restart.
+- [Expo SQLite web bundle boundary](expo-sqlite-web-bundle-boundary.md) — runtime Platform guards cannot prevent Expo SQLite's WASM worker from entering a web bundle; use a platform-specific module.

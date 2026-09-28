@@ -33,15 +33,18 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
-import { sql } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import { db, inventoryTable } from "@workspace/db";
 import app from "../src/app";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
+import { workerQualifiedUserId } from "./helpers/testDb";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /** Prefix for all JEST fixture rows in this suite (used for cleanup). */
-const JEST_VNR_PREFIX = "JEST-VNR-";
+const INVOCATION = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
+const JEST_VNR_PREFIX = `${workerQualifiedUserId("JEST-VNR", INVOCATION)}-`;
+const DECOY_CATALOG = `${workerQualifiedUserId("JEST-VNR", `other-${INVOCATION}`)}-concurrent-decoy`;
 
 /**
  * Shared nonsense token embedded in every fixture row's description.
@@ -59,18 +62,10 @@ const SHARED_DESCRIPTION_TOKEN = "JESTVENDREGRESSIONMULTIVND";
  *   - catalog:    unique catalog string for the fixture row (JEST-VNR-* prefix)
  */
 const VENDOR_PAIRS: Array<{ code: string; vendorName: string; catalog: string }> = [
-  { code: "CRS", vendorName: "CROUSE-HINDS",     catalog: "JEST-VNR-CRS-MV01" },
-  { code: "SQD", vendorName: "SQUARE D",         catalog: "JEST-VNR-SQD-MV01" },
-  { code: "CHD", vendorName: "EATON",            catalog: "JEST-VNR-CHD-MV01" },
-  { code: "HBL", vendorName: "HUBBELL",          catalog: "JEST-VNR-HBL-MV01" },
-  { code: "LEV", vendorName: "LEVITON",          catalog: "JEST-VNR-LEV-MV01" },
-  { code: "SIE", vendorName: "SIEMENS",          catalog: "JEST-VNR-SIE-MV01" },
-  { code: "KLE", vendorName: "KLEIN TOOLS",      catalog: "JEST-VNR-KLE-MV01" },
-  { code: "MIL", vendorName: "MILWAUKEE",        catalog: "JEST-VNR-MIL-MV01" },
-  { code: "LUT", vendorName: "LUTRON",           catalog: "JEST-VNR-LUT-MV01" },
-  { code: "PAS", vendorName: "PASS & SEYMOUR",   catalog: "JEST-VNR-PAS-MV01" },
-  { code: "IDE", vendorName: "IDEAL INDUSTRIES", catalog: "JEST-VNR-IDE-MV01" },
-  { code: "GRD", vendorName: "GREENLEE",         catalog: "JEST-VNR-GRD-MV01" },
+  ...(["CRS","SQD","CHD","HBL","LEV","SIE","KLE","MIL","LUT","PAS","IDE","GRD"] as const).map((code) => ({
+    code, vendorName: ({ CRS:"CROUSE-HINDS",SQD:"SQUARE D",CHD:"EATON",HBL:"HUBBELL",LEV:"LEVITON",SIE:"SIEMENS",KLE:"KLEIN TOOLS",MIL:"MILWAUKEE",LUT:"LUTRON",PAS:"PASS & SEYMOUR",IDE:"IDEAL INDUSTRIES",GRD:"GREENLEE" } as Record<string,string>)[code]!,
+    catalog: `${JEST_VNR_PREFIX}${code}-MV01`,
+  })),
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -78,7 +73,7 @@ const VENDOR_PAIRS: Array<{ code: string; vendorName: string; catalog: string }>
 async function cleanupVnrRows(): Promise<void> {
   await db
     .delete(inventoryTable)
-    .where(sql`${inventoryTable.catalog} LIKE ${JEST_VNR_PREFIX + "%"}`);
+    .where(inArray(inventoryTable.catalog, VENDOR_PAIRS.map(({ catalog }) => catalog)));
 }
 
 /** Insert all 12 fixture rows with the shared description token. */
@@ -116,11 +111,16 @@ beforeAll(async () => {
   process.env.TEST_DEFAULT_AUTH_USER = ADMIN_TEST_USER_ID;
   await cleanupVnrRows();
   await insertAllFixtureRows();
+  await db.insert(inventoryTable).values({
+    vendor: "JEST", catalog: DECOY_CATALOG, description: "concurrent decoy",
+    binLocations: [], aiKeywords: [],
+  }).onConflictDoNothing();
 }, 30_000);
 
 afterAll(async () => {
   delete process.env.TEST_DEFAULT_AUTH_USER;
   await cleanupVnrRows();
+  await db.delete(inventoryTable).where(inArray(inventoryTable.catalog, [DECOY_CATALOG]));
 }, 10_000);
 
 // ── Per-vendor HTTP tests ─────────────────────────────────────────────────────
@@ -136,6 +136,17 @@ afterAll(async () => {
 // fixture rows are therefore excluded from results with mathematical certainty.
 
 describe("POST /api/inventory/search — vendor name filter is the deciding constraint", () => {
+  it("does not delete a similarly-prefixed concurrent invocation fixture", async () => {
+    try {
+      await cleanupVnrRows();
+      const rows = await db.select({ catalog: inventoryTable.catalog }).from(inventoryTable)
+        .where(inArray(inventoryTable.catalog, [DECOY_CATALOG]));
+      expect(rows).toEqual([{ catalog: DECOY_CATALOG }]);
+    } finally {
+      await insertAllFixtureRows();
+    }
+  });
+
   for (const pair of VENDOR_PAIRS) {
     describe(`vendor '${pair.vendorName}' → code '${pair.code}'`, () => {
       let results: Array<{ item: { vendor: string; catalog: string; description: string } }>;

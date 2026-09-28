@@ -47,10 +47,21 @@ const mockSignUp = {
 };
 const mockUseSignUp = jest.fn();
 
-jest.mock("@clerk/expo", () => ({
-  useSignIn: () => mockUseSignIn(),
-  useSignUp: () => mockUseSignUp(),
-}));
+jest.mock("@clerk/expo", () => {
+  const {
+    assertClerkMockContract,
+    createClerkExpoMock,
+  } = jest.requireActual("../__mocks__/clerk-expo");
+  const clerkMock = createClerkExpoMock({
+    useSignIn: () => mockUseSignIn(),
+    useSignUp: () => mockUseSignUp(),
+  });
+  return assertClerkMockContract(
+    clerkMock,
+    ["useSignIn", "useSignUp"],
+    "authRecoveryE2E",
+  );
+});
 
 const mockLogout = jest.fn();
 const mockRecheckApprovalStatus = jest.fn();

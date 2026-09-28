@@ -5,7 +5,8 @@
  *   FileSystem.cacheDirectory + 'map-tiles/{svgHash}/{z}_{x}_{y}.png'
  * so they survive app restarts but can be cleaned up by the OS when
  * storage is low.  Stale directories (from a previous SVG hash) are
- * deleted on startup via cleanStaleCacheDirs().
+ * deleted on startup via cleanStaleCacheDirs(). Old interrupted prefetch
+ * downloads in the current hash directory are also removed then.
  *
  * Web is not affected — all functions return immediately without
  * touching the filesystem.
@@ -17,6 +18,8 @@ import { Platform } from "react-native";
 import { tileApiUrl } from "@/utils/floorPlan";
 
 const TILES_BASE_DIR = (FileSystem.cacheDirectory ?? "") + "map-tiles/";
+const INTERRUPTED_PREFETCH_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const activePrefetchFiles = new Set<string>();
 
 function tileHashDir(svgHash: string): string {
   return TILES_BASE_DIR + svgHash + "/";
@@ -39,7 +42,9 @@ export async function fetchTile(
   x: number,
   y: number,
   svgHash: string,
+  signal?: AbortSignal,
 ): Promise<string> {
+  if (signal?.aborted) throw new DOMException("Tile download cancelled", "AbortError");
   if (Platform.OS === "web" || !FileSystem.cacheDirectory || !svgHash) {
     return tileApiUrl(z, x, y);
   }
@@ -47,12 +52,47 @@ export async function fetchTile(
   const local = localTilePath(z, x, y, svgHash);
 
   const info = await FileSystem.getInfoAsync(local);
+  if (signal?.aborted) throw new DOMException("Tile download cancelled", "AbortError");
   if (info.exists) return local;
 
   const dir = tileHashDir(svgHash);
   await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+  if (signal?.aborted) throw new DOMException("Tile download cancelled", "AbortError");
 
-  const result = await FileSystem.downloadAsync(tileApiUrl(z, x, y), local);
+  // Legacy downloadAsync has no cancellation handle. Prefetch uses a resumable
+  // download so an obsolete zoom actually stops network and file I/O.
+  let result: FileSystem.FileSystemDownloadResult | undefined;
+  if (signal) {
+    // Separate temporary files keep an old zoom's cancellation from deleting
+    // a new zoom's download of the same tile.
+    const temporary = `${local}.prefetch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const download = FileSystem.createDownloadResumable(tileApiUrl(z, x, y), temporary);
+    activePrefetchFiles.add(temporary);
+    const onAbort = () => { void download.cancelAsync().catch(() => {}); };
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      if (signal.aborted) throw new DOMException("Tile download cancelled", "AbortError");
+      result = await download.downloadAsync();
+      if (signal.aborted) throw new DOMException("Tile download cancelled", "AbortError");
+      if (!result) throw new DOMException("Tile download cancelled", "AbortError");
+      if (result.status === 200) {
+        await FileSystem.moveAsync({ from: temporary, to: local });
+      }
+    } catch (error) {
+      await FileSystem.deleteAsync(temporary, { idempotent: true }).catch(() => {});
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+      activePrefetchFiles.delete(temporary);
+    }
+    if (result.status !== 200) {
+      await FileSystem.deleteAsync(temporary, { idempotent: true });
+      throw new Error(`tile ${z}/${x}/${y} download failed with status ${result.status}`);
+    }
+    return local;
+  } else {
+    result = await FileSystem.downloadAsync(tileApiUrl(z, x, y), local);
+  }
   if (result.status !== 200) {
     await FileSystem.deleteAsync(local, { idempotent: true });
     throw new Error(`tile ${z}/${x}/${y} download failed with status ${result.status}`);
@@ -62,8 +102,8 @@ export async function fetchTile(
 
 /**
  * Prefetch all tiles for zoom level `z` that fall within `range` (plus a
- * 1-tile buffer already baked into the range by the caller).  All fetches
- * run in parallel; individual failures are silently ignored so one bad tile
+ * 1-tile buffer already baked into the range by the caller).  At most four
+ * downloads run at once; individual failures are silently ignored so one bad tile
  * doesn't block the rest.
  *
  * Pass an `AbortSignal` to cancel in-flight work when a newer gesture starts.
@@ -77,23 +117,24 @@ export async function prefetchZoomLevel(
 ): Promise<void> {
   if (Platform.OS === "web" || !svgHash) return;
 
-  const fetches: Array<Promise<void>> = [];
-  for (let row = range.r0; row <= range.r1; row++) {
-    for (let col = range.c0; col <= range.c1; col++) {
-      if (signal?.aborted) break;
-      fetches.push(
-        fetchTile(z, col, row, svgHash).then(() => {}).catch(() => {}),
-      );
+  let row = range.r0;
+  let col = range.c0;
+  const worker = async () => {
+    while (!signal?.aborted && row <= range.r1) {
+      const x = col;
+      const y = row;
+      if (++col > range.c1) { col = range.c0; row++; }
+      try { await fetchTile(z, x, y, svgHash, signal); } catch { /* best effort */ }
     }
-    if (signal?.aborted) break;
-  }
-  await Promise.all(fetches);
+  };
+  const count = Math.min(4, Math.max(0, range.c1 - range.c0 + 1) * Math.max(0, range.r1 - range.r0 + 1));
+  await Promise.all(Array.from({ length: count }, worker));
 }
 
 /**
- * Delete any cached tile directories whose hash does not match
- * `currentHash`.  Call once on map mount after the SVG hash is known so
- * stale tiles from a previous admin upload are cleaned up.
+ * Delete cached tile directories whose hash does not match `currentHash`,
+ * plus old interrupted prefetch downloads in the current hash directory.
+ * Call once on map mount after the SVG hash is known.
  *
  * Non-fatal — any deletion failure is silently ignored.
  */
@@ -112,6 +153,29 @@ export async function cleanStaleCacheDirs(currentHash: string): Promise<void> {
           FileSystem.deleteAsync(TILES_BASE_DIR + entry, { idempotent: true }).catch(() => {}),
         ),
     );
+    if (!entries.includes(currentHash)) return;
+
+    const currentDir = tileHashDir(currentHash);
+    const cutoff = Date.now() - INTERRUPTED_PREFETCH_MAX_AGE_MS;
+    const files = await FileSystem.readDirectoryAsync(currentDir);
+    await Promise.all(files.map(async (file) => {
+      // Match only our exact temporary filename shape; never delete a completed
+      // tile or an unrelated file in the current map's cache.
+      const match = /^\d+_\d+_\d+\.png\.prefetch-(\d+)-([a-z0-9]+)$/.exec(file);
+      if (!match) return;
+      const createdAt = Number(match[1]);
+      if (!Number.isSafeInteger(createdAt) || createdAt > cutoff) return;
+      const path = currentDir + file;
+      if (activePrefetchFiles.has(path)) return;
+      try {
+        const info = await FileSystem.getInfoAsync(path);
+        if (!info.exists || info.isDirectory || !info.modificationTime ||
+            info.modificationTime * 1000 > cutoff || activePrefetchFiles.has(path)) return;
+        await FileSystem.deleteAsync(path, { idempotent: true });
+      } catch {
+        // A missing or locked file can be retried on the next map mount.
+      }
+    }));
   } catch {
     // Non-fatal — stale directories will be cleaned on the next launch.
   }

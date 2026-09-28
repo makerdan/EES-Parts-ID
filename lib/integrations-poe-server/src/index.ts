@@ -38,6 +38,9 @@ export type PoeErrorKind =
   | "invalid_request"
   | "upstream";
 
+export type PoeRouteClass = "identify" | "dimensions" | "enrich" | "catalog";
+export type PoeOperation = "completion" | "probe";
+
 export interface PoeTelemetryMetadata {
   route: string;
   model: string;
@@ -80,7 +83,7 @@ export function redactPoeTelemetry(metadata: PoeTelemetryMetadata): PoeTelemetry
   };
 }
 
-class PoeProviderError extends Error {
+export class PoeProviderError extends Error {
   readonly kind: PoeErrorKind;
   readonly status: number | undefined;
   readonly retryAfterMs: number | undefined;
@@ -284,6 +287,7 @@ export interface PoeRetryOptions {
   maxDelayMs?: number | undefined;
   timeoutMs?: number | undefined;
   signal?: AbortSignal | undefined;
+  deadlineAt?: number | undefined;
   onRetry?: ((metadata: { attempt: number; delayMs: number; kind: PoeErrorKind }) => void) | undefined;
 }
 
@@ -299,9 +303,15 @@ export async function withPoeRetry<T>(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
+      const remainingMs = options.deadlineAt === undefined
+        ? undefined
+        : Math.max(0, options.deadlineAt - Date.now());
+      if (remainingMs === 0) {
+        throw new PoeProviderError("timeout", "Poe request deadline expired");
+      }
       return await withPoeRequestTimeout(
         (signal) => operation(attempt, signal),
-        options.timeoutMs ?? POE_REQUEST_TIMEOUT_MS,
+        Math.min(options.timeoutMs ?? POE_REQUEST_TIMEOUT_MS, remainingMs ?? POE_REQUEST_TIMEOUT_MS),
         options.signal,
       );
     } catch (err) {
@@ -335,9 +345,143 @@ export interface PoeChatCompletionRequest {
   response_format?: { type: "json_object" | "text" } | undefined;
 }
 
+export interface PoeChatCompletionOptions {
+  signal?: AbortSignal | undefined;
+  maxAttempts?: number | undefined;
+  timeoutMs?: number | undefined;
+  deadlineAt?: number | undefined;
+  route?: PoeRouteClass | undefined;
+  operation?: PoeOperation | undefined;
+}
+
 export interface PoeChatCompletionHandle {
   response: Promise<unknown>;
   transportSettled: Promise<void>;
+}
+
+function invalidPoeRequest(message: string): PoeProviderError {
+  return new PoeProviderError("invalid_request", message.slice(0, 256), { status: 400 });
+}
+
+function serializedByteLength(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value));
+  } catch {
+    return Number.MAX_SAFE_INTEGER;
+  }
+}
+
+function countImageUrls(messages: Array<PoeChatMessage>): { count: number; largestBytes: number } {
+  let count = 0;
+  let largestBytes = 0;
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (!part || typeof part !== "object") {
+        throw invalidPoeRequest("Poe message content contains an invalid part");
+      }
+      const typedPart = part as { type?: unknown; text?: unknown };
+      if (typedPart.type === "text" && typeof typedPart.text !== "string") {
+        throw invalidPoeRequest("Poe text content must be a string");
+      }
+      const imageUrl = (part as { image_url?: unknown }).image_url;
+      const url = imageUrl && typeof imageUrl === "object"
+        ? (imageUrl as { url?: unknown }).url
+        : undefined;
+      if (typedPart.type === "image_url" && (typeof url !== "string" || !url.startsWith("data:"))) {
+        throw invalidPoeRequest("Remote image URLs are not enabled for Poe requests");
+      }
+      if (typeof url === "string" && url.startsWith("data:")) {
+        count += 1;
+        largestBytes = Math.max(largestBytes, Math.floor(url.length * 0.75));
+      }
+    }
+  }
+  return { count, largestBytes };
+}
+
+/**
+ * Repeat route and payload authorization at the transport boundary. The route
+ * is an option rather than a request property so it can never be forwarded to
+ * Poe as an unsupported provider parameter.
+ */
+export function validatePoeChatRequest(
+  request: PoeChatCompletionRequest,
+  options: Pick<PoeChatCompletionOptions, "route" | "operation"> = {},
+): void {
+  const model = POE_MODEL_REGISTRY.find((candidate) => candidate.id === request.model);
+  if (!model || !model.enabled || !model.failClosed) {
+    throw invalidPoeRequest(
+      `Poe model "${String(request.model).slice(0, 128)}" is not enabled in the application registry`,
+    );
+  }
+  if (!model.supportedEndpoints.includes(POE_CHAT_COMPLETIONS_ENDPOINT)) {
+    throw invalidPoeRequest(`Poe model "${model.id}" is not approved for chat completions`);
+  }
+  if (options.operation !== "probe" && options.route !== undefined && !model.approvedRoutes.includes(options.route)) {
+    throw invalidPoeRequest(`Poe model "${model.id}" is not approved for route "${options.route}"`);
+  }
+  if (!Array.isArray(request.messages) || request.messages.length === 0) {
+    throw invalidPoeRequest("Poe requests require at least one message");
+  }
+  if (request.messages.some((message) =>
+    !message ||
+    (message.role !== "system" && message.role !== "user" && message.role !== "assistant") ||
+    (typeof message.content !== "string" && !Array.isArray(message.content)),
+  )) {
+    throw invalidPoeRequest("Poe messages contain an unsupported role or content shape");
+  }
+  const allowedKeys = new Set(["model", "messages", "max_completion_tokens", "temperature", "response_format"]);
+  if (Object.keys(request as unknown as Record<string, unknown>).some((key) => !allowedKeys.has(key))) {
+    throw invalidPoeRequest("Poe request contains an unsupported parameter");
+  }
+  const parameters = model.supportedParameters;
+  if (request.max_completion_tokens !== undefined) {
+    if (!parameters.maxCompletionTokens ||
+      !Number.isSafeInteger(request.max_completion_tokens) ||
+      request.max_completion_tokens < 1 ||
+      request.max_completion_tokens > model.limits.maxOutputTokens) {
+      throw invalidPoeRequest("Poe output token limit is unsupported or exceeds the registered route limit");
+    }
+  }
+  if (request.temperature !== undefined &&
+    (!parameters.temperature || !Number.isFinite(request.temperature) || request.temperature < 0 || request.temperature > 2)) {
+    throw invalidPoeRequest("Poe temperature is unsupported or outside the registered range");
+  }
+  if (request.response_format !== undefined &&
+    (!parameters.responseFormat || !["json_object", "text"].includes(request.response_format.type))) {
+    throw invalidPoeRequest("Poe response format is unsupported");
+  }
+  const imageStats = countImageUrls(request.messages);
+  if (imageStats.count > model.limits.maxImages || imageStats.largestBytes > model.limits.maxImageBytes) {
+    throw invalidPoeRequest("Poe image count or size exceeds the registered route limit");
+  }
+  const requestBytes = serializedByteLength(request);
+  if (requestBytes > model.limits.maxRequestBytes) {
+    throw invalidPoeRequest("Poe request exceeds the registered payload limit");
+  }
+  if (options.route !== undefined && !model.approvedRoutes.includes(options.route)) {
+    throw invalidPoeRequest(`Poe model "${model.id}" is not approved for route "${options.route}"`);
+  }
+}
+
+/** Validate the provider envelope before application code reads any output. */
+export function validatePoeChatCompletionResponse(value: unknown): unknown {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { choices?: unknown }).choices)) {
+    throw new PoeProviderError("upstream", "Poe returned an invalid completion response");
+  }
+  const response = value as { choices: Array<{ message?: { content?: unknown } }> };
+  if (serializedByteLength(value) > 512 * 1024) {
+    throw new PoeProviderError("upstream", "Poe completion response exceeded the registered response limit");
+  }
+  for (const choice of response.choices) {
+    if (!choice || typeof choice !== "object" || (choice.message !== undefined &&
+      (typeof choice.message !== "object" || (choice.message.content !== undefined &&
+        choice.message.content !== null && typeof choice.message.content !== "string")))) {
+      throw new PoeProviderError("upstream", "Poe returned an invalid completion choice");
+    }
+  }
+  return value;
 }
 
 /**
@@ -347,19 +491,12 @@ export interface PoeChatCompletionHandle {
  */
 export function createPoeChatCompletionWithSettlement(
   request: PoeChatCompletionRequest,
-  options: {
-    signal?: AbortSignal | undefined;
-    timeoutMs?: number | undefined;
-  } = {},
+  options: PoeChatCompletionOptions = {},
 ): PoeChatCompletionHandle {
-  if (!isPoeModelRegistered(request.model)) {
-    const response = Promise.reject(
-      new PoeProviderError(
-        "invalid_request",
-        `Poe model "${request.model.slice(0, 128)}" is not registered for this application`,
-        { status: 400 },
-      ),
-    );
+  try {
+    validatePoeChatRequest(request, options);
+  } catch (err) {
+    const response = Promise.reject(err);
     return { response, transportSettled: Promise.resolve() };
   }
   let transportStarted = false;
@@ -382,12 +519,13 @@ export function createPoeChatCompletionWithSettlement(
         throw err;
       }
       void Promise.resolve(transport).then(resolveTransportSettled, resolveTransportSettled);
-      return transport;
+      return Promise.resolve(transport).then((value) => validatePoeChatCompletionResponse(value));
     },
     {
       maxAttempts: 1,
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.deadlineAt !== undefined ? { deadlineAt: options.deadlineAt } : {}),
     },
   );
   void response.finally(() => {
@@ -399,14 +537,10 @@ export function createPoeChatCompletionWithSettlement(
 /** The sole Poe request-construction boundary used by server callers. */
 export async function createPoeChatCompletion(
   request: PoeChatCompletionRequest,
-  options: {
-    signal?: AbortSignal | undefined;
-    maxAttempts?: number | undefined;
-    timeoutMs?: number | undefined;
-  } = {},
+  options: PoeChatCompletionOptions = {},
 ): Promise<unknown> {
-  assertRegisteredPoeModel(request.model);
-  return withPoeRetry(
+  validatePoeChatRequest(request, options);
+  const response = await withPoeRetry(
     (_attempt, signal) => {
       const create = getPoeClient().chat.completions.create;
       // Older deterministic admin-probe doubles model the one-argument
@@ -421,13 +555,23 @@ export async function createPoeChatCompletion(
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
       ...(options.maxAttempts !== undefined ? { maxAttempts: options.maxAttempts } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.deadlineAt !== undefined ? { deadlineAt: options.deadlineAt } : {}),
     },
   );
+  return validatePoeChatCompletionResponse(response);
 }
 
 export interface PoeCatalogueModel {
   id: string;
   name: string;
+  enabled: boolean;
+  approvedRoutes: Array<PoeRouteClass>;
+  supportedEndpoints: Array<string>;
+  supportedParameters: {
+    maxCompletionTokens: boolean;
+    temperature: boolean;
+    responseFormat: boolean;
+  };
   modalities: Array<string>;
   endpoint: string;
   parameters: {
@@ -436,10 +580,12 @@ export interface PoeCatalogueModel {
     responseFormat: boolean | null;
   };
   limits: {
-    maxInputTokens: number | null;
-    maxOutputTokens: number | null;
-    maxImages: number | null;
-    maxImageBytes: number | null;
+    maxInputTokens: number;
+    maxOutputTokens: number;
+    maxImages: number;
+    maxImageBytes: number;
+    maxRequestBytes: number;
+    maxResponseBytes: number;
   };
   capabilities: {
     text: boolean | null;
@@ -451,9 +597,14 @@ export interface PoeCatalogueModel {
     source: "configured_registry" | "probe" | "unknown";
     owner: string;
     verifiedAt: string | null;
+    reviewTrigger: string;
   };
-  approvedUse: Array<string>;
+  approvedUse: Array<PoeRouteClass>;
   privacy: "prompt_not_persisted";
+  privacyClass: "prompt_not_persisted";
+  budgetClass: "low" | "medium" | "high";
+  fallbackEligible: Array<PoeErrorKind>;
+  failClosed: boolean;
   costNote: string;
   latencyNote: string;
   raw?: Record<string, unknown>;
@@ -470,45 +621,69 @@ export const POE_MODEL_REGISTRY: ReadonlyArray<PoeCatalogueModel> = [
   {
     id: "Claude-Sonnet-4.5",
     name: "Claude-Sonnet-4.5",
+    enabled: true,
+    approvedRoutes: ["identify", "dimensions", "enrich", "catalog"],
+    supportedEndpoints: [POE_CHAT_COMPLETIONS_ENDPOINT],
+    supportedParameters: { maxCompletionTokens: true, temperature: true, responseFormat: true },
     modalities: ["text", "vision", "structured_output"],
     endpoint: POE_CHAT_COMPLETIONS_ENDPOINT,
     parameters: { maxCompletionTokens: null, temperature: true, responseFormat: true },
-    limits: { maxInputTokens: null, maxOutputTokens: null, maxImages: 10, maxImageBytes: 20 * 1024 * 1024 },
+    limits: { maxInputTokens: 20_000, maxOutputTokens: 2_048, maxImages: 10, maxImageBytes: 20 * 1024 * 1024, maxRequestBytes: 32 * 1024 * 1024, maxResponseBytes: 512 * 1024 },
     capabilities: { text: true, vision: true, structuredOutput: true },
     capabilityConfidence: "verified",
-    verification: { source: "configured_registry", owner: "application", verifiedAt: null },
+    verification: { source: "configured_registry", owner: "application", verifiedAt: "2026-09-22", reviewTrigger: "model, endpoint, capability, privacy, or limit evidence changes" },
     approvedUse: ["identify", "dimensions", "enrich", "catalog"],
     privacy: "prompt_not_persisted",
+    privacyClass: "prompt_not_persisted",
+    budgetClass: "medium",
+    fallbackEligible: ["rate_limited", "quota_exhaustion", "timeout", "upstream", "unavailable_model"],
+    failClosed: true,
     costNote: "Configured application model",
     latencyNote: "Latency varies by provider load",
   },
   {
     id: "Gemini-3.1-Pro",
     name: "Gemini-3.1-Pro",
+    enabled: true,
+    approvedRoutes: ["enrich", "catalog", "identify", "dimensions"],
+    supportedEndpoints: [POE_CHAT_COMPLETIONS_ENDPOINT],
+    supportedParameters: { maxCompletionTokens: true, temperature: true, responseFormat: true },
     modalities: ["text", "vision", "structured_output"],
     endpoint: POE_CHAT_COMPLETIONS_ENDPOINT,
     parameters: { maxCompletionTokens: null, temperature: true, responseFormat: true },
-    limits: { maxInputTokens: null, maxOutputTokens: null, maxImages: 16, maxImageBytes: 20 * 1024 * 1024 },
+    limits: { maxInputTokens: 20_000, maxOutputTokens: 2_048, maxImages: 16, maxImageBytes: 20 * 1024 * 1024, maxRequestBytes: 32 * 1024 * 1024, maxResponseBytes: 512 * 1024 },
     capabilities: { text: true, vision: true, structuredOutput: true },
     capabilityConfidence: "verified",
-    verification: { source: "configured_registry", owner: "application", verifiedAt: null },
+    verification: { source: "configured_registry", owner: "application", verifiedAt: "2026-09-22", reviewTrigger: "model, endpoint, capability, privacy, or limit evidence changes" },
     approvedUse: ["enrich", "catalog", "identify", "dimensions"],
     privacy: "prompt_not_persisted",
+    privacyClass: "prompt_not_persisted",
+    budgetClass: "medium",
+    fallbackEligible: ["rate_limited", "quota_exhaustion", "timeout", "upstream", "unavailable_model"],
+    failClosed: true,
     costNote: "Configured application model",
     latencyNote: "Latency varies by provider load",
   },
   {
     id: "Gemini-2.5-Pro",
     name: "Gemini-2.5-Pro",
+    enabled: true,
+    approvedRoutes: ["catalog"],
+    supportedEndpoints: [POE_CHAT_COMPLETIONS_ENDPOINT],
+    supportedParameters: { maxCompletionTokens: true, temperature: true, responseFormat: true },
     modalities: ["text", "vision", "structured_output"],
     endpoint: POE_CHAT_COMPLETIONS_ENDPOINT,
     parameters: { maxCompletionTokens: null, temperature: true, responseFormat: true },
-    limits: { maxInputTokens: null, maxOutputTokens: null, maxImages: 16, maxImageBytes: 20 * 1024 * 1024 },
+    limits: { maxInputTokens: 20_000, maxOutputTokens: 2_048, maxImages: 16, maxImageBytes: 20 * 1024 * 1024, maxRequestBytes: 32 * 1024 * 1024, maxResponseBytes: 512 * 1024 },
     capabilities: { text: true, vision: true, structuredOutput: true },
     capabilityConfidence: "verified",
-    verification: { source: "configured_registry", owner: "application", verifiedAt: null },
+    verification: { source: "configured_registry", owner: "application", verifiedAt: "2026-09-22", reviewTrigger: "model, endpoint, capability, privacy, or limit evidence changes" },
     approvedUse: ["catalog"],
     privacy: "prompt_not_persisted",
+    privacyClass: "prompt_not_persisted",
+    budgetClass: "high",
+    fallbackEligible: ["rate_limited", "quota_exhaustion", "timeout", "upstream", "unavailable_model"],
+    failClosed: true,
     costNote: "Configured application fallback model",
     latencyNote: "Latency varies by provider load",
   },
@@ -519,13 +694,35 @@ export const POE_MODEL_REGISTRY_VERSION = "static-v1";
 function clonePoeModel(model: PoeCatalogueModel): PoeCatalogueModel {
   return {
     ...model,
+    enabled: model.enabled ?? false,
+    approvedRoutes: [...(model.approvedRoutes ?? model.approvedUse ?? [])],
+    supportedEndpoints: [...(model.supportedEndpoints ?? [POE_CHAT_COMPLETIONS_ENDPOINT])],
+    supportedParameters: {
+      maxCompletionTokens: model.supportedParameters?.maxCompletionTokens ?? model.parameters?.maxCompletionTokens !== null,
+      temperature: model.supportedParameters?.temperature ?? model.parameters?.temperature === true,
+      responseFormat: model.supportedParameters?.responseFormat ?? model.parameters?.responseFormat === true,
+    },
     modalities: [...model.modalities],
     capabilities: { ...model.capabilities },
     parameters: { ...model.parameters },
-    limits: { ...model.limits },
+    limits: {
+      maxInputTokens: model.limits?.maxInputTokens ?? 0,
+      maxOutputTokens: model.limits?.maxOutputTokens ?? 0,
+      maxImages: model.limits?.maxImages ?? 0,
+      maxImageBytes: model.limits?.maxImageBytes ?? 0,
+      maxRequestBytes: model.limits?.maxRequestBytes ?? 0,
+      maxResponseBytes: model.limits?.maxResponseBytes ?? 0,
+    },
     approvedUse: [...model.approvedUse],
     ...(model.raw ? { raw: { ...model.raw } } : {}),
-    verification: { ...model.verification },
+    verification: {
+      ...model.verification,
+      reviewTrigger: model.verification?.reviewTrigger ?? "registry evidence changed",
+    },
+    privacyClass: model.privacyClass ?? model.privacy,
+    budgetClass: model.budgetClass ?? "medium",
+    fallbackEligible: [...(model.fallbackEligible ?? [])],
+    failClosed: model.failClosed ?? true,
   };
 }
 
@@ -540,16 +737,6 @@ export function getPoeRegistryModel(modelId: string): PoeCatalogueModel | undefi
 
 export function isPoeModelRegistered(modelId: string): boolean {
   return POE_MODEL_REGISTRY.some((candidate) => candidate.id === modelId);
-}
-
-function assertRegisteredPoeModel(modelId: string): void {
-  if (!isPoeModelRegistered(modelId)) {
-    throw new PoeProviderError(
-      "invalid_request",
-      `Poe model "${modelId.slice(0, 128)}" is not registered for this application`,
-      { status: 400 },
-    );
-  }
 }
 
 /**

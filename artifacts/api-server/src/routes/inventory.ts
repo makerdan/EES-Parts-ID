@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
+
 import { getAuth } from "@clerk/express";
 import {
   AddPartConflictResponse,
   AddPartResponse,
   AiDimensionsResponseSchema,
   AiEnrichmentResponseSchema,
+  DescriptionExpansionJobStatusSchema,
   EstimateDimensionsResponse,
   ListInventoryResponse,
   LookupByBarcodeResponse,
@@ -22,9 +25,11 @@ import {
   UploadItemPhotoResponse,
   UpsertBatchPreviewResponse,
 } from "@workspace/api-zod";
-import { db } from "@workspace/db";
+import { db, pool } from "@workspace/db";
 import {
   abbreviationMapTable,
+  bulkEnrichJobTable,
+  descriptionExpansionJobTable,
   electricalSlangMapTable,
   inventoryFtsVector,
   inventoryTable,
@@ -35,14 +40,18 @@ import {
 } from "@workspace/db";
 import { collectKeywords, findNodeBySlug, getAllTaxonomyKeywords,TAXONOMY } from "@workspace/db";
 import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, lte, or, sql } from "drizzle-orm";
 import { Router } from "express";
 import Fuse from "fuse.js";
+import type { PoolClient } from "pg";
 
-import { getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
+import { getEnrichModel } from "../lib/aiProvider";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 import { createInventorySnapshotLocked, withInventorySnapshotLock } from "../lib/inventorySnapshot";
 import {
+  boundedErrorDiagnostic,
+  boundedErrorStatus,
+  boundedStoredErrorStatus,
   getLogger,
   type InventoryResponseDiagnostic,
   logger,
@@ -54,7 +63,12 @@ import {
   readPrivateObject,
   uploadCatalogImage,
 } from "../lib/objectStorage";
-import { callPoeBotWithChain, PoeBotChainExhaustedError,tryPoeBotChain } from "../lib/poeBot";
+import {
+  callOpenAIFallbackWithBoundary,
+  callPoeBotWithChain,
+  PoeBotChainExhaustedError,
+  tryPoeBotChain,
+} from "../lib/poeBot";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/poeModelLimits";
 import { inventorySearchLimiter } from "../lib/rateLimiter";
 import { buildReverseVendorMap } from "../lib/vendorMap";
@@ -258,7 +272,10 @@ async function cleanupInventoryImages(item: InventoryImageFields, log: typeof lo
   } catch (err) {
     // DB references are cleared independently. Cleanup is idempotent and can
     // be retried by an operator without exposing the old object to clients.
-    log.error({ err, itemId: item.id }, "[inventory] private image cleanup failed");
+    log.error(
+      { ...boundedErrorDiagnostic(err), itemId: item.id },
+      "[inventory] private image cleanup failed",
+    );
   }
 }
 
@@ -266,6 +283,19 @@ async function cleanupUploadedPaths(paths: Array<string>): Promise<void> {
   if (typeof deletePrivateObjects === "function") {
     await deletePrivateObjects(paths);
   }
+}
+
+async function uploadInventoryPhotoPair(
+  fullBuffer: Buffer,
+  thumbnailBuffer: Buffer,
+  uploadedPaths: Array<string>,
+): Promise<[string, string]> {
+  // Upload serially so a failed thumbnail never hides a successfully stored full image.
+  const full = await uploadCatalogImage(fullBuffer, "image/jpeg");
+  uploadedPaths.push(full);
+  const thumbnail = await uploadCatalogImage(thumbnailBuffer, "image/jpeg");
+  uploadedPaths.push(thumbnail);
+  return [full, thumbnail];
 }
 
 /**
@@ -333,30 +363,99 @@ interface DictionaryCache {
 
 const DICTIONARY_LOAD_MAX_ATTEMPTS = 2;
 const DICTIONARY_RETRY_DELAY_MS = 25;
+// Keep database cancellation shorter than the loader deadline so a real
+// stalled statement has time to reject and let Drizzle roll back/release its
+// transaction client before the outer guard fires.
+const DICTIONARY_STATEMENT_TIMEOUT_MS = 1_500;
+const DICTIONARY_LOAD_DEADLINE_MS = 2_000;
+// A database driver should normally settle the transaction after the
+// statement timeout. Keep the safety wait bounded anyway so a driver or pool
+// regression cannot turn a timed-out search into an unbounded request.
+const DICTIONARY_CLEANUP_TIMEOUT_MS = 500;
 let _initPromise: Promise<DictionaryCache> | null = null;
+
+class DictionaryLoadTimeoutError extends Error {
+  readonly code = "DICTIONARY_LOAD_TIMEOUT";
+
+  constructor() {
+    super("Search dictionary initialization exceeded its deadline");
+    this.name = "DictionaryLoadTimeoutError";
+  }
+}
+
+class DictionaryLoadCleanupTimeoutError extends Error {
+  readonly code = "DICTIONARY_LOAD_CLEANUP_TIMEOUT";
+
+  constructor() {
+    super("Search dictionary cleanup exceeded its safety bound");
+    this.name = "DictionaryLoadCleanupTimeoutError";
+  }
+}
 
 function dictionaryErrorDetails(error: unknown): {
   errorName: string;
-  errorMessage: string;
   errorCode?: string;
+  timeoutPhase?: "outer_deadline" | "cleanup";
 } {
-  const candidate = error as { code?: unknown; message?: unknown; name?: unknown } | null;
-  const message = typeof candidate?.message === "string"
-    ? candidate.message
-    : String(error);
-  const code = typeof candidate?.code === "string" ? candidate.code : undefined;
-
-  return {
-    errorName: typeof candidate?.name === "string" ? candidate.name : "UnknownError",
-    // Database errors can include query details. Keep diagnostics useful but
-    // bounded and never attach request or inventory data to this log entry.
-    errorMessage: message.slice(0, 240),
-    ...(code ? { errorCode: code.slice(0, 64) } : {}),
-  };
+  const details = boundedErrorDiagnostic(error);
+  if (error instanceof DictionaryLoadTimeoutError) {
+    return { ...details, timeoutPhase: "outer_deadline" };
+  }
+  if (error instanceof DictionaryLoadCleanupTimeoutError) {
+    return { ...details, timeoutPhase: "cleanup" };
+  }
+  return details;
 }
 
 function waitForDictionaryRetry(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, DICTIONARY_RETRY_DELAY_MS));
+}
+
+async function withDictionaryLoadDeadline<T>(
+  operation: Promise<T>,
+  onDeadline: () => void,
+): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      onDeadline();
+      reject(new DictionaryLoadTimeoutError());
+    }, DICTIONARY_LOAD_DEADLINE_MS);
+  });
+
+  try {
+    return await Promise.race([operation, deadline]);
+  } catch (error) {
+    if (error instanceof DictionaryLoadTimeoutError) {
+      // Do not report the outer timeout until the transaction promise settles,
+      // but do not wait forever if cancellation is delayed or a driver fails
+      // to settle the transaction. The rejection handler also owns the late
+      // operation rejection after the fail-safe path returns.
+      let cleanupTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = operation.then(
+        () => true,
+        () => true,
+      );
+      const cleanupDeadline = new Promise<boolean>(resolve => {
+        cleanupTimeoutHandle = setTimeout(
+          () => resolve(false),
+          DICTIONARY_CLEANUP_TIMEOUT_MS,
+        );
+      });
+
+      try {
+        const cleanupCompleted = await Promise.race([cleanup, cleanupDeadline]);
+        if (!cleanupCompleted) {
+          throw new DictionaryLoadCleanupTimeoutError();
+        }
+      } finally {
+        if (cleanupTimeoutHandle !== undefined) clearTimeout(cleanupTimeoutHandle);
+      }
+    }
+    throw error;
+  } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+  }
 }
 
 async function readDictionaries(): Promise<DictionaryCache> {
@@ -364,6 +463,15 @@ async function readDictionaries(): Promise<DictionaryCache> {
   // requested five clients at once, which could fail during concurrent Jest
   // workloads even though the configured pool budget was healthy.
   return db.transaction(async tx => {
+    // The outer deadline bounds mocked or otherwise non-settling operations;
+    // this transaction-local timeout is what cancels a real PostgreSQL query
+    // and lets Drizzle roll back and release the checked-out client.
+    await tx.execute(sql`select set_config(
+      'statement_timeout',
+      ${String(DICTIONARY_STATEMENT_TIMEOUT_MS)},
+      true
+    )`);
+
     // Keep the statements sequential as well: node-postgres queues queries on
     // a transaction client, and serial reads avoid leaving work in flight if
     // one dictionary query fails.
@@ -395,30 +503,43 @@ async function loadDictionaries(): Promise<DictionaryCache> {
   if (_initPromise) return _initPromise;
 
   const initPromise = (async () => {
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= DICTIONARY_LOAD_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        return await readDictionaries();
-      } catch (error) {
-        lastError = error;
-        if (attempt < DICTIONARY_LOAD_MAX_ATTEMPTS) {
-          await waitForDictionaryRetry();
-          continue;
+    let attempts = 0;
+    let deadlineExceeded = false;
+    try {
+      return await withDictionaryLoadDeadline((async () => {
+        for (let attempt = 1; attempt <= DICTIONARY_LOAD_MAX_ATTEMPTS; attempt += 1) {
+          attempts = attempt;
+          try {
+            return await readDictionaries();
+          } catch (error) {
+            if (deadlineExceeded) throw error;
+            if (attempt < DICTIONARY_LOAD_MAX_ATTEMPTS) {
+              await waitForDictionaryRetry();
+              continue;
+            }
+            throw error;
+          }
         }
 
-        logger.error(
-          {
-            event: "inventory_dictionary_load_failed",
-            errorCategory: "dictionary_database_failure",
-            attempts: DICTIONARY_LOAD_MAX_ATTEMPTS,
-            ...dictionaryErrorDetails(error),
-          },
-          "Failed to load search dictionary tables; retry budget exhausted",
-        );
-      }
+        throw new Error("Search dictionary initialization failed");
+      })(), () => {
+        deadlineExceeded = true;
+      });
+    } catch (error) {
+      const cleanupFailed = error instanceof DictionaryLoadCleanupTimeoutError;
+      logger.error(
+        {
+          event: "inventory_dictionary_load_failed",
+          errorCategory: cleanupFailed
+            ? "dictionary_cleanup_failure"
+            : "dictionary_database_failure",
+          attempts: attempts || 1,
+          ...dictionaryErrorDetails(error),
+        },
+        "Failed to load search dictionary tables within retry/deadline budget",
+      );
+      throw error;
     }
-
-    throw lastError ?? new Error("Search dictionary initialization failed");
   })();
 
   _initPromise = initPromise;
@@ -439,6 +560,34 @@ router.get("/", async (req, res) => {
     const page = Math.max(1, parseInt(req.query["page"] as string) || 1);
     const limit = Math.min(500, Math.max(1, parseInt(req.query["limit"] as string) || 50));
     const offset = (page - 1) * limit;
+    const parseCursorId = (value: unknown): number | null =>
+      typeof value === "string" && /^(0|[1-9]\d*)$/.test(value) &&
+      Number.isSafeInteger(Number(value)) && Number(value) <= 2_147_483_647
+        ? Number(value) : null;
+    const isExport = req.query["after_id"] !== undefined;
+    const afterId = parseCursorId(req.query["after_id"]);
+    const suppliedThroughId = req.query["through_id"];
+    const throughId = parseCursorId(suppliedThroughId);
+    if ((isExport && (afterId === null || page !== 1 ||
+        (afterId === 0 && suppliedThroughId !== undefined) ||
+        (afterId > 0 && (throughId === null || throughId < afterId)))) ||
+        (!isExport && suppliedThroughId !== undefined)) {
+      res.status(400).json({ error: "Invalid inventory export cursor." });
+      return;
+    }
+    // Offset pagination is retained for existing clients, but cannot be used to
+    // discard an arbitrarily large prefix of the catalog.
+    if (!Number.isSafeInteger(offset) || (!isExport && offset > 10_000)) {
+      res.status(400).json({ error: "Inventory page offset exceeds 10000; narrow your request." });
+      return;
+    }
+    const suppliedTotal = req.query["total"];
+    const reusedTotal = typeof suppliedTotal === "string" && /^(0|[1-9]\d*)$/.test(suppliedTotal)
+      ? Number(suppliedTotal) : null;
+    if (suppliedTotal !== undefined && (reusedTotal === null || !Number.isSafeInteger(reusedTotal))) {
+      res.status(400).json({ error: "total must be a non-negative safe integer from the first page." });
+      return;
+    }
 
     const minLength   = req.query["minLength"]   != null ? parseFloat(req.query["minLength"]   as string) : null;
     const maxLength   = req.query["maxLength"]   != null ? parseFloat(req.query["maxLength"]   as string) : null;
@@ -486,12 +635,29 @@ router.get("/", async (req, res) => {
       ].filter((c): c is NonNullable<typeof c> => c !== undefined),
     );
 
+    // Freeze the upper id at the first export request so later inserts do not
+    // extend a running export. ID ordering is unique even for duplicate names.
+    const exportThroughId = isExport
+      ? (afterId === 0
+        ? (await db.select({ id: inventoryTable.id }).from(inventoryTable)
+            .orderBy(desc(inventoryTable.id)).limit(1))[0]?.id ?? 0
+        : throughId!)
+      : undefined;
+    const where = and(
+      dimConditions,
+      isExport ? sql`${inventoryTable.id} > ${afterId} AND ${inventoryTable.id} <= ${exportThroughId}` : undefined,
+    );
     const [items, countResult] = await Promise.all([
       db.select().from(inventoryTable)
-        .where(dimConditions)
-        .limit(limit).offset(offset)
-        .orderBy(inventoryTable.vendor, inventoryTable.catalog),
-      db.select({ count: sql<number>`count(*)` }).from(inventoryTable).where(dimConditions),
+        .where(where)
+        .limit(limit)
+        .orderBy(...(isExport ? [inventoryTable.id] : [inventoryTable.vendor, inventoryTable.catalog]))
+        .offset(isExport ? 0 : offset),
+      reusedTotal === null
+        ? db.select({ count: sql<number>`count(*)` }).from(inventoryTable).where(
+            and(dimConditions, isExport ? lte(inventoryTable.id, exportThroughId!) : undefined),
+          )
+        : Promise.resolve([{ count: reusedTotal }]),
     ]);
 
     res.json(ListInventoryResponse.parse({
@@ -504,6 +670,7 @@ router.get("/", async (req, res) => {
       total: Number(countResult[0]?.count ?? 0),
       page,
       limit,
+      ...(isExport ? { throughId: exportThroughId } : {}),
     }));
   } catch (err) {
     if (err instanceof InventoryResponseSchemaError) {
@@ -1265,9 +1432,24 @@ router.post("/search", async (req, res) => {
       }
     }
 
-    // Fuse.js fallback for small datasets or when PG returns nothing
+    // Fuse retains its existing scoring, but only indexes an indexed, bounded
+    // shortlist instead of materializing every inventory row.
     if (scoreMap.size < 5) {
-      const inventory = await db.select().from(inventoryTable);
+      const fuseQuery = corrected.join(" ");
+      const fallbackTerms = [fuseQuery, ...allTermsArr.slice(0, 8).filter(term => term.length >= 3)]
+        .map(term => term.trim()).filter(Boolean);
+      const inventory = fallbackTerms.length
+        ? await db.select().from(inventoryTable)
+          .where(or(...fallbackTerms.map(term => sql`(
+            ${inventoryFtsVector()} @@ plainto_tsquery('english', ${term})
+            OR lower(vendor || ' ' || catalog || ' ' || description || ' ' ||
+              coalesce(expanded_description, '') || ' ' ||
+              immutable_array_to_string(ai_keywords, ' ')) % lower(${term})
+          )`)))
+          .orderBy(sql`greatest(similarity(${inventoryTable.catalog}, ${fuseQuery}),
+            similarity(${inventoryTable.description}, ${fuseQuery})) DESC`, inventoryTable.id)
+          .limit(250)
+        : [];
       const fuse = new Fuse(inventory, {
         keys: [
           { name: "catalog", weight: 0.35 },
@@ -1282,7 +1464,6 @@ router.post("/search", async (req, res) => {
         includeScore: true,
       });
 
-      const fuseQuery = corrected.join(" ");
       if (fuseQuery.trim()) {
         for (const r of fuse.search(fuseQuery)) {
           const conf = fuseConfidence(r.score, 0.70);
@@ -1399,8 +1580,20 @@ router.post("/search", async (req, res) => {
     const resultIds = new Set(dimFiltered.map(r => r.item.id));
 
     if (seriesGroups.size > 0) {
-      const allInventory = await db.select().from(inventoryTable);
-      for (const item of allInventory) {
+      // Fetch only rows for the active vendor/series combinations. The
+      // application helper remains authoritative for exact grouping.
+      const seriesPredicates = Array.from(seriesGroups.entries()).map(([key, group]) => {
+        const vendor = group.items[0]!.vendor.toUpperCase();
+        const base = key.slice(vendor.length + 1);
+        const prefix = /^(EMT|IMC|RMC|PVC|ENT)/.test(base) ? null : base;
+        return sql`(upper(${inventoryTable.vendor}) = ${vendor} AND ${
+          prefix
+            ? sql`upper(${inventoryTable.catalog}) LIKE ${prefix.replace(/[!%_]/g, "!$&") + "%"} ESCAPE '!'`
+            : sql`upper(${inventoryTable.catalog}) ~ ${"^[0-9]+([./][0-9]+)?" + base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$"}`
+        })`;
+      });
+      const candidates = await db.select().from(inventoryTable).where(or(...seriesPredicates));
+      for (const item of candidates) {
         if (resultIds.has(item.id)) continue;
         const series = getSeriesBase(item.vendor, item.catalog, item.description);
         if (!series) continue;
@@ -1565,42 +1758,64 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
       const ADD_PART_PHOTO_LIMIT = 10 * 1024 * 1024; // 10 MB
       const estimatedBytes = estimateImageBytes(imageBase64);
       if (estimatedBytes > ADD_PART_PHOTO_LIMIT) {
-        await db.delete(inventoryTable).where(eq(inventoryTable.id, created.id)).catch(() => {});
+        let rolledBack = false;
+        try {
+          await db.delete(inventoryTable).where(eq(inventoryTable.id, created.id));
+          rolledBack = true;
+        } catch (rollbackErr) {
+          reqLogger.error(boundedErrorDiagnostic(rollbackErr), "[inventory/add-part] Oversized photo row rollback failed");
+        }
         const mb = (estimatedBytes / (1024 * 1024)).toFixed(1);
         return void res.status(413).json({
-          error: `Image too large (${mb} MB) — please reduce the photo size and try again (limit is 10 MB).`,
+          error: rolledBack
+            ? `Image too large (${mb} MB) — please reduce the photo size and try again (limit is 10 MB).`
+            : `Image too large (${mb} MB). The part may have been created; check inventory before trying again.`,
         });
       }
       const uploadedPaths: Array<string> = [];
       try {
         const rawBuffer = Buffer.from(imageBase64, "base64");
         const { fullBuffer, thumbnailBuffer } = await resizeImages(rawBuffer);
-        const uploaded = await Promise.all([
-          uploadCatalogImage(fullBuffer, "image/jpeg"),
-          uploadCatalogImage(thumbnailBuffer, "image/jpeg"),
-        ]);
-        uploadedPaths.push(...uploaded);
-        const [uploadedUrl, uploadedThumbUrl] = uploaded;
+        const [uploadedUrl, uploadedThumbUrl] =
+          await uploadInventoryPhotoPair(fullBuffer, thumbnailBuffer, uploadedPaths);
         const [withPhoto] = await db
           .update(inventoryTable)
           .set({ imageUrl: uploadedUrl, thumbnailUrl: uploadedThumbUrl, updatedAt: new Date() })
           .where(eq(inventoryTable.id, created.id))
           .returning();
-        if (withPhoto) finalItem = withPhoto;
+        if (!withPhoto) throw new Error("Photo update returned no item");
+        finalItem = withPhoto;
       } catch (uploadErr) {
         // The upload may have succeeded before the DB update failed. The
         // helper is intentionally best-effort and idempotent.
-        await cleanupUploadedPaths(uploadedPaths).catch(() => {});
-        await db.delete(inventoryTable).where(eq(inventoryTable.id, created.id)).catch(() => {});
-        reqLogger.error({ err: uploadErr }, "[inventory/add-part] Photo upload failed — rolling back inserted row");
-        return void res.status(500).json({ error: "Failed to upload photo — part was not saved." });
+        try {
+          await cleanupUploadedPaths(uploadedPaths);
+        } catch (cleanupErr) {
+          reqLogger.error(boundedErrorDiagnostic(cleanupErr), "[inventory/add-part] Uploaded image cleanup failed");
+        }
+        let rolledBack = false;
+        try {
+          await db.delete(inventoryTable).where(eq(inventoryTable.id, created.id));
+          rolledBack = true;
+        } catch (rollbackErr) {
+          reqLogger.error(boundedErrorDiagnostic(rollbackErr), "[inventory/add-part] Inserted row rollback failed");
+        }
+        reqLogger.error(
+          boundedErrorDiagnostic(uploadErr),
+          "[inventory/add-part] Photo upload failed — rolling back inserted row",
+        );
+        return void res.status(500).json({
+          error: rolledBack
+            ? "Failed to upload photo — part was not saved."
+            : "Failed to upload photo. The part may have been created; check inventory before trying again.",
+        });
       }
     }
 
     invalidateReferenceAnswerCache().catch(() => {});
     res.status(201).json(AddPartResponse.parse({ item: toClientInventoryItem(finalItem) }));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/add-part] Failed to add part");
+    reqLogger.error(boundedErrorDiagnostic(err), "[inventory/add-part] Failed to add part");
     res.status(500).json({ error: "Failed to add part" });
   }
 });
@@ -1717,7 +1932,10 @@ router.post("/upsert-batch/preview", requireAdminAuth, async (req, res) => {
 
     res.json(UpsertBatchPreviewResponse.parse({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows }));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/upsert-batch/preview] Preview failed");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[inventory/upsert-batch/preview] Preview failed",
+    );
     res.status(500).json({ error: "Preview failed" });
   }
 });
@@ -1883,12 +2101,15 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
     // Fire-and-forget: ANALYZE can take a few seconds on large tables and must
     // not block the HTTP response.
     db.execute(sql`ANALYZE inventory`).catch((err) => {
-      reqLogger.warn({ err }, "ANALYZE inventory failed after upsert-batch");
+      reqLogger.warn(
+        boundedErrorDiagnostic(err),
+        "ANALYZE inventory failed after upsert-batch",
+      );
     });
 
     res.json({ inserted, updated, total: items.length });
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/upsert-batch] Upsert failed");
+    reqLogger.error(boundedErrorDiagnostic(err), "[inventory/upsert-batch] Upsert failed");
     res.status(500).json({ error: "Upsert failed" });
   }
 });
@@ -1973,14 +2194,20 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
     res.end();
     invalidateReferenceAnswerCache().catch(() => {});
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/enrich-sse] SSE enrichment failed");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[inventory/enrich-sse] SSE enrichment failed",
+    );
     res.write(`data: ${JSON.stringify({ error: safeEnrichmentErrorMessage(err) })}\n\n`);
     res.end();
   }
 });
 
 // ── Bulk-enrich job state ─────────────────────────────────────────────────────
+type BulkEnrichJobStatus = "idle" | "running" | "stopping" | "completed" | "cancelled" | "failed";
+
 interface BulkEnrichJob {
+  status: BulkEnrichJobStatus;
   running: boolean;
   stopRequested: boolean;
   force: boolean;
@@ -1994,6 +2221,7 @@ interface BulkEnrichJob {
 }
 
 const bulkEnrichJob: BulkEnrichJob = {
+  status: "idle",
   running: false,
   stopRequested: false,
   force: false,
@@ -2010,7 +2238,9 @@ const BULK_ENRICH_BATCH      = 10;
 const BULK_ENRICH_CONCUR     = 5;
 const BULK_ENRICH_DELAY_MS   = 200;
 const BULK_ENRICH_MAX_RETRY  = 3;
+const BULK_ENRICH_TERMINAL_STATUSES = ["completed", "cancelled", "failed"] as const;
 
+class BulkEnrichCancelledError extends Error {}
 
 async function enrichItemWithRetry(item: {
   id: number;
@@ -2020,22 +2250,149 @@ async function enrichItemWithRetry(item: {
 }): Promise<Array<string>> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= BULK_ENRICH_MAX_RETRY; attempt++) {
+    if (bulkEnrichJob.stopRequested) throw new BulkEnrichCancelledError();
     try {
       return await generateKeywords(item, getEnrichModel());
     } catch (err) {
       lastErr = err;
       if (attempt < BULK_ENRICH_MAX_RETRY) {
         const backoffMs = Math.min(1000 * 2 ** (attempt - 1), 8000);
-        await new Promise((r) => setTimeout(r, backoffMs));
+        for (let waited = 0; waited < backoffMs; waited += 50) {
+          if (bulkEnrichJob.stopRequested) throw new BulkEnrichCancelledError();
+          await new Promise((r) => setTimeout(r, Math.min(50, backoffMs - waited)));
+        }
       }
     }
   }
   throw lastErr;
 }
 
+/**
+ * Retain the newest terminal outcome for restart recovery and remove older
+ * terminal history. Active rows are deliberately excluded so a cleanup pass
+ * can never remove a running or stopping job record.
+ */
+export async function cleanupBulkEnrichHistory(log: typeof logger = logger): Promise<void> {
+  try {
+    const [latestTerminal] = await db
+      .select({ id: bulkEnrichJobTable.id })
+      .from(bulkEnrichJobTable)
+      .where(inArray(bulkEnrichJobTable.status, BULK_ENRICH_TERMINAL_STATUSES))
+      .orderBy(desc(bulkEnrichJobTable.id))
+      .limit(1);
+
+    if (!latestTerminal) return;
+
+    await db
+      .delete(bulkEnrichJobTable)
+      .where(
+        and(
+          inArray(bulkEnrichJobTable.status, BULK_ENRICH_TERMINAL_STATUSES),
+          lt(bulkEnrichJobTable.id, latestTerminal.id),
+        ),
+      );
+  } catch (dbErr) {
+    log.warn(
+      boundedErrorDiagnostic(dbErr),
+      "[bulk-enrich] Failed to clean up obsolete job history",
+    );
+  }
+}
+
+// The worker holds a session advisory lock for its row until it has attempted
+// the terminal write. A status read may safely fail abandoned rows, including
+// those left behind when the terminal update itself failed.
+export async function reconcileBulkEnrichJobs(): Promise<void> {
+  await db.execute(sql`
+    UPDATE bulk_enrich_job
+    SET status = 'failed',
+        finished_at = now(),
+        error_message = 'Bulk enrichment was interrupted before its result could be saved'
+    WHERE status IN ('running', 'stopping')
+      AND pg_try_advisory_xact_lock(1988, id)
+  `);
+}
+
+async function persistBulkEnrichTerminalState(id: number | null, log: typeof logger): Promise<boolean> {
+  if (id === null) return false;
+
+  try {
+    await db
+      .update(bulkEnrichJobTable)
+      .set({
+        status: bulkEnrichJob.status,
+        finishedAt: bulkEnrichJob.finishedAt,
+        processed: bulkEnrichJob.processed,
+        errors: bulkEnrichJob.errors,
+        total: bulkEnrichJob.total,
+        errorMessage: bulkEnrichJob.lastError,
+        model: bulkEnrichJob.model,
+      })
+      .where(and(
+        eq(bulkEnrichJobTable.id, id),
+        inArray(bulkEnrichJobTable.status, ["running", "stopping"]),
+      ));
+  } catch (dbErr) {
+    log.warn(
+      boundedErrorDiagnostic(dbErr),
+      "[bulk-enrich] Failed to persist terminal job state",
+    );
+    return false;
+  }
+
+  await cleanupBulkEnrichHistory(log);
+  return true;
+}
+
 async function runBulkEnrich(force = false, log: typeof logger = logger) {
   const modeLabel = force ? "all items (force re-enrich)" : "unenriched items";
+  let dbJobId: number | null = null;
+  let ownerClient: PoolClient | null = null;
+  try {
+    ownerClient = await pool.connect();
+    await ownerClient.query("BEGIN");
+    const inserted = await ownerClient.query<{ id: number }>(
+      "INSERT INTO bulk_enrich_job (status, force, started_at) VALUES ('running', $1, $2) RETURNING id",
+      [force, bulkEnrichJob.startedAt ?? new Date()],
+    );
+    dbJobId = inserted.rows[0]!.id;
+    await ownerClient.query("SELECT pg_advisory_lock(1988, $1)", [dbJobId]);
+    await ownerClient.query("COMMIT");
+  } catch (dbErr) {
+    if (ownerClient) {
+      try { await ownerClient.query("ROLLBACK"); } catch { /* connection may be down */ }
+      ownerClient.release();
+    }
+    throw dbErr;
+  }
 
+  try {
+    await processBulkEnrichItems(force, modeLabel, log);
+    bulkEnrichJob.status = bulkEnrichJob.stopRequested
+      ? "cancelled"
+      : bulkEnrichJob.errors > 0 ? "failed" : "completed";
+  } catch (err) {
+    bulkEnrichJob.status = "failed";
+    bulkEnrichJob.lastError = boundedErrorStatus(err);
+    log.error(boundedErrorDiagnostic(err), "[bulk-enrich] Fatal error");
+  } finally {
+    bulkEnrichJob.finishedAt = new Date();
+    bulkEnrichJob.stopRequested = false;
+    try {
+      if (!await persistBulkEnrichTerminalState(dbJobId, log)) {
+        bulkEnrichJob.status = "failed";
+        bulkEnrichJob.lastError = "Bulk enrichment result could not be saved";
+      }
+    } finally {
+      try { await ownerClient.query("SELECT pg_advisory_unlock(1988, $1)", [dbJobId]); }
+      catch (err) { log.warn(boundedErrorDiagnostic(err), "[bulk-enrich] Failed to release job lock"); }
+      ownerClient.release();
+      bulkEnrichJob.running = false;
+    }
+  }
+}
+
+async function processBulkEnrichItems(force: boolean, modeLabel: string, log: typeof logger): Promise<void> {
   const [countRow] = force
     ? await db.select({ total: sql<number>`count(*)::int` }).from(inventoryTable)
     : await db.select({ total: sql<number>`count(*)::int` }).from(inventoryTable)
@@ -2080,7 +2437,11 @@ async function runBulkEnrich(force = false, log: typeof logger = logger) {
           pinnedKeywords: inventoryTable.pinnedKeywords,
         })
         .from(inventoryTable)
-        .where(sql`${inventoryTable.enrichedAt} IS NULL`)
+        .where(and(
+          sql`${inventoryTable.enrichedAt} IS NULL`,
+          sql`${inventoryTable.id} > ${cursorId}`,
+        ))
+        .orderBy(inventoryTable.id)
         .limit(BULK_ENRICH_BATCH);
     }
 
@@ -2100,24 +2461,27 @@ async function runBulkEnrich(force = false, log: typeof logger = logger) {
             .set({ aiKeywords: merged, enrichedAt: new Date(), updatedAt: new Date() })
             .where(eq(inventoryTable.id, item.id));
           bulkEnrichJob.processed++;
-        } else {
+        } else if (!(r.reason instanceof BulkEnrichCancelledError)) {
           // Leave enrichedAt NULL so the item remains retryable on next run
           bulkEnrichJob.errors++;
-          bulkEnrichJob.lastError = String(r.reason);
-          log.error({ err: r.reason, id: item.id, vendor: item.vendor, catalog: item.catalog }, "[bulk-enrich] Error enriching item");
+          bulkEnrichJob.lastError = boundedErrorStatus(r.reason);
+          log.error(
+            { ...boundedErrorDiagnostic(r.reason), id: item.id },
+            "[bulk-enrich] Error enriching item",
+          );
         }
       }
     }
 
-    if (force) {
-      cursorId = batch[batch.length - 1]!.id;
-    }
+    // Each row gets at most BULK_ENRICH_MAX_RETRY attempts in this run.
+    // Failed rows keep enrichedAt NULL so a later run can try them again.
+    cursorId = batch[batch.length - 1]!.id;
 
-    await new Promise((r) => setTimeout(r, BULK_ENRICH_DELAY_MS));
+    if (!bulkEnrichJob.stopRequested) {
+      await new Promise((r) => setTimeout(r, BULK_ENRICH_DELAY_MS));
+    }
   }
 
-  bulkEnrichJob.running = false;
-  bulkEnrichJob.finishedAt = new Date();
   log.info({ processed: bulkEnrichJob.processed, errors: bulkEnrichJob.errors }, "[bulk-enrich] Done");
   if (bulkEnrichJob.processed > 0) {
     invalidateReferenceAnswerCache().catch(() => {});
@@ -2142,6 +2506,684 @@ router.get("/enrich-summary", requireAdminAuth, async (_req, res) => {
   }
 });
 
+// ── Database description-expansion job ────────────────────────────────────────
+type DescriptionExpansionJobState = {
+  status: "idle" | "running" | "stopping" | "completed" | "cancelled" | "failed";
+  running: boolean;
+  stopRequested: boolean;
+  cursor: number;
+  model: string | null;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  total: number | null;
+  processed: number;
+  saved: number;
+  discarded: number;
+  errors: number;
+  lastError: string | null;
+};
+
+const descriptionExpansionJob: DescriptionExpansionJobState = {
+  status: "idle",
+  running: false,
+  stopRequested: false,
+  cursor: 0,
+  model: null,
+  startedAt: null,
+  finishedAt: null,
+  total: null,
+  processed: 0,
+  saved: 0,
+  discarded: 0,
+  errors: 0,
+  lastError: null,
+};
+
+let descriptionExpansionDbJobId: number | null = null;
+let descriptionExpansionOwnerId: string | null = null;
+// A session-level PostgreSQL lock survives transactions and is released when
+// its dedicated connection closes, including after a process crash.
+const DESCRIPTION_EXPANSION_LOCK_KEYS = [1812, 70] as const;
+
+async function acquireDescriptionExpansionLease(): Promise<PoolClient | null> {
+  const client = await pool.connect();
+  try {
+    const result = await client.query<{ acquired: boolean }>(
+      "SELECT pg_try_advisory_lock($1, $2) AS acquired",
+      [...DESCRIPTION_EXPANSION_LOCK_KEYS],
+    );
+    if (result.rows[0]?.acquired) return client;
+    client.release();
+    return null;
+  } catch (error) {
+    client.release(true);
+    throw error;
+  }
+}
+
+async function releaseDescriptionExpansionLease(client: PoolClient): Promise<void> {
+  try {
+    await client.query("SELECT pg_advisory_unlock($1, $2)", [...DESCRIPTION_EXPANSION_LOCK_KEYS]);
+    client.release();
+  } catch (error) {
+    // Discard the connection so the lock cannot be returned to the pool.
+    client.release(true);
+    throw error;
+  }
+}
+
+const DESCRIPTION_EXPANSION_BATCH = 20;
+const DESCRIPTION_EXPANSION_CONCURRENCY = 5;
+const DESCRIPTION_EXPANSION_DELAY_MS = 100;
+const DESCRIPTION_EXPANSION_MAX_RETRY = 3;
+const DESCRIPTION_EXPANSION_OWNER_LEASE_MS = 30_000;
+const DESCRIPTION_EXPANSION_HEARTBEAT_MS = 10_000;
+const DESCRIPTION_EXPANSION_ACTIVE_STATUSES = ["running", "stopping"] as const;
+const DESCRIPTION_EXPANSION_TERMINAL_STATUSES = ["completed", "cancelled", "failed"] as const;
+const DESCRIPTION_EXPANSION_MIN_CONFIDENCE = 70;
+
+class DescriptionExpansionOwnershipLostError extends Error {
+  constructor() {
+    super("Description expansion job ownership was lost");
+    this.name = "DescriptionExpansionOwnershipLostError";
+  }
+}
+
+function descriptionExpansionLeaseExpiry() {
+  return sql`now() + (${DESCRIPTION_EXPANSION_OWNER_LEASE_MS} * interval '1 millisecond')`;
+}
+
+type DescriptionExpansionItem = {
+  id: number;
+  vendor: string;
+  catalog: string;
+  description: string | null;
+};
+
+function descriptionExpansionPrompt(item: DescriptionExpansionItem): string {
+  return `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`;
+}
+
+async function expandDescriptionWithRetry(item: DescriptionExpansionItem): Promise<{
+  expandedDescription: string;
+  confidence: number;
+}> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= DESCRIPTION_EXPANSION_MAX_RETRY; attempt++) {
+    try {
+      const rawText = await callPoeBotWithChain(
+        "enrich",
+        enrichSystemPrompt,
+        descriptionExpansionPrompt(item),
+      );
+      return parseEnrichmentResponse(rawText);
+    } catch (err) {
+      lastError = err;
+      if (attempt < DESCRIPTION_EXPANSION_MAX_RETRY) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(500 * 2 ** (attempt - 1), 2_000)),
+        );
+      }
+    }
+  }
+  throw lastError;
+}
+
+async function countMissingExpandedDescriptions(): Promise<number> {
+  const [row] = await db
+    .select({ remaining: sql<number>`count(*)::int` })
+    .from(inventoryTable)
+    .where(sql`${inventoryTable.expandedDescription} IS NULL`);
+  return row?.remaining ?? 0;
+}
+
+function descriptionExpansionStateToResponse(
+  state: DescriptionExpansionJobState,
+  remaining: number | null,
+) {
+  return DescriptionExpansionJobStatusSchema.parse({
+    status: state.status,
+    running: state.running,
+    stopRequested: state.stopRequested,
+    cursor: state.cursor,
+    model: state.model,
+    startedAt: state.startedAt?.toISOString() ?? null,
+    finishedAt: state.finishedAt?.toISOString() ?? null,
+    total: state.total,
+    processed: state.processed,
+    saved: state.saved,
+    discarded: state.discarded,
+    errors: state.errors,
+    remaining,
+    lastError: state.lastError,
+  });
+}
+
+function persistedDescriptionExpansionToResponse(
+  row: typeof descriptionExpansionJobTable.$inferSelect,
+  remaining: number | null,
+) {
+  return DescriptionExpansionJobStatusSchema.parse({
+    status: row.status,
+    running: row.status === "running" || row.status === "stopping",
+    stopRequested: row.status === "stopping",
+    cursor: row.cursor,
+    model: row.model,
+    startedAt: row.startedAt.toISOString(),
+    finishedAt: row.finishedAt?.toISOString() ?? null,
+    total: row.total,
+    processed: row.processed,
+    saved: row.saved,
+    discarded: row.discarded,
+    errors: row.errors,
+    remaining,
+    lastError: boundedStoredErrorStatus(row.errorMessage),
+  });
+}
+
+async function persistDescriptionExpansionState(
+  jobId: number,
+  ownerId: string,
+  log: typeof logger,
+  terminal = false,
+): Promise<void> {
+  try {
+    const [persisted] = await db
+      .update(descriptionExpansionJobTable)
+      .set({
+        status: terminal
+          ? sql`CASE WHEN ${descriptionExpansionJobTable.status} = 'stopping' THEN 'cancelled' ELSE ${descriptionExpansionJob.status} END`
+          : sql`CASE WHEN ${descriptionExpansionJobTable.status} = 'stopping' THEN 'stopping' ELSE 'running' END`,
+        cursor: descriptionExpansionJob.cursor,
+        model: descriptionExpansionJob.model,
+        finishedAt: terminal ? sql`now()` : descriptionExpansionJob.finishedAt,
+        total: descriptionExpansionJob.total,
+        processed: descriptionExpansionJob.processed,
+        saved: descriptionExpansionJob.saved,
+        discarded: descriptionExpansionJob.discarded,
+        errors: descriptionExpansionJob.errors,
+        errorMessage: descriptionExpansionJob.lastError,
+        ownerId: terminal ? null : ownerId,
+        leaseExpiresAt: terminal ? null : descriptionExpansionLeaseExpiry(),
+      })
+      .where(and(
+        eq(descriptionExpansionJobTable.id, jobId),
+        eq(descriptionExpansionJobTable.ownerId, ownerId),
+        inArray(descriptionExpansionJobTable.status, DESCRIPTION_EXPANSION_ACTIVE_STATUSES),
+        sql`${descriptionExpansionJobTable.leaseExpiresAt} > now()`,
+      ))
+      .returning({ status: descriptionExpansionJobTable.status });
+    if (!persisted) throw new DescriptionExpansionOwnershipLostError();
+    if (terminal) {
+      descriptionExpansionJob.status = persisted.status as DescriptionExpansionJobState["status"];
+    }
+  } catch (err) {
+    log.warn(
+      boundedErrorDiagnostic(err),
+      "[description-expansion] Failed to persist job state",
+    );
+    throw err;
+  }
+}
+
+async function renewDescriptionExpansionLease(jobId: number, ownerId: string): Promise<boolean> {
+  const [renewed] = await db
+    .update(descriptionExpansionJobTable)
+    .set({ leaseExpiresAt: descriptionExpansionLeaseExpiry() })
+    .where(and(
+      eq(descriptionExpansionJobTable.id, jobId),
+      eq(descriptionExpansionJobTable.ownerId, ownerId),
+      inArray(descriptionExpansionJobTable.status, DESCRIPTION_EXPANSION_ACTIVE_STATUSES),
+      sql`${descriptionExpansionJobTable.leaseExpiresAt} > now()`,
+    ))
+    .returning({ id: descriptionExpansionJobTable.id });
+  return renewed !== undefined;
+}
+
+async function requireDescriptionExpansionOwnership(jobId: number, ownerId: string): Promise<void> {
+  if (!(await renewDescriptionExpansionLease(jobId, ownerId))) {
+    throw new DescriptionExpansionOwnershipLostError();
+  }
+}
+
+async function saveExpandedDescriptionIfOwned(
+  jobId: number,
+  ownerId: string,
+  itemId: number,
+  expandedDescription: string,
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [ownedJob] = await tx
+      .select({ id: descriptionExpansionJobTable.id })
+      .from(descriptionExpansionJobTable)
+      .where(and(
+        eq(descriptionExpansionJobTable.id, jobId),
+        eq(descriptionExpansionJobTable.ownerId, ownerId),
+        inArray(descriptionExpansionJobTable.status, DESCRIPTION_EXPANSION_ACTIVE_STATUSES),
+        sql`${descriptionExpansionJobTable.leaseExpiresAt} > now()`,
+      ))
+      .for("update");
+    if (!ownedJob) throw new DescriptionExpansionOwnershipLostError();
+
+    const updated = await tx
+      .update(inventoryTable)
+      .set({
+        expandedDescription,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(inventoryTable.id, itemId),
+        sql`${inventoryTable.expandedDescription} IS NULL`,
+      ))
+      .returning({ id: inventoryTable.id });
+    return updated.length > 0;
+  });
+}
+
+async function cleanupDescriptionExpansionHistory(log: typeof logger): Promise<void> {
+  try {
+    const [latest] = await db
+      .select({ id: descriptionExpansionJobTable.id })
+      .from(descriptionExpansionJobTable)
+      .where(inArray(descriptionExpansionJobTable.status, DESCRIPTION_EXPANSION_TERMINAL_STATUSES))
+      .orderBy(desc(descriptionExpansionJobTable.id))
+      .limit(1);
+    if (!latest) return;
+
+    await db
+      .delete(descriptionExpansionJobTable)
+      .where(
+        and(
+          inArray(descriptionExpansionJobTable.status, DESCRIPTION_EXPANSION_TERMINAL_STATUSES),
+          lt(descriptionExpansionJobTable.id, latest.id),
+        ),
+      );
+  } catch (err) {
+    log.warn(
+      boundedErrorDiagnostic(err),
+      "[description-expansion] Failed to clean up old job history",
+    );
+  }
+}
+
+/**
+ * Call only while holding the database lease. Without that lease a row may
+ * belong to a worker on another API instance.
+ */
+async function recoverInterruptedDescriptionExpansion(log: typeof logger) {
+  const recovered = await db
+    .update(descriptionExpansionJobTable)
+    .set({
+      status: "failed",
+      finishedAt: sql`now()`,
+      errorMessage: "Job interrupted by an API server restart",
+      ownerId: null,
+      leaseExpiresAt: null,
+    })
+    .where(and(
+      inArray(descriptionExpansionJobTable.status, DESCRIPTION_EXPANSION_ACTIVE_STATUSES),
+      sql`(
+        ${descriptionExpansionJobTable.ownerId} IS NULL
+        OR ${descriptionExpansionJobTable.leaseExpiresAt} IS NULL
+        OR ${descriptionExpansionJobTable.leaseExpiresAt} <= now()
+      )`,
+    ))
+    .returning({ id: descriptionExpansionJobTable.id });
+
+  if (recovered.length > 0) await cleanupDescriptionExpansionHistory(log);
+  const [stillOwned] = await db
+    .select()
+    .from(descriptionExpansionJobTable)
+    .where(inArray(descriptionExpansionJobTable.status, DESCRIPTION_EXPANSION_ACTIVE_STATUSES))
+    .orderBy(desc(descriptionExpansionJobTable.id))
+    .limit(1);
+  return stillOwned ?? null;
+}
+
+async function runDescriptionExpansion(
+  lease: PoolClient,
+  jobId: number,
+  ownerId: string,
+  log: typeof logger = logger,
+): Promise<void> {
+  let ownershipLost = false;
+  let heartbeatInFlight = false;
+  const heartbeat = setInterval(() => {
+    if (heartbeatInFlight || ownershipLost) return;
+    heartbeatInFlight = true;
+    void renewDescriptionExpansionLease(jobId, ownerId)
+      .then((renewed) => {
+        if (!renewed) ownershipLost = true;
+      })
+      .catch((error: unknown) => {
+        log.warn(
+          boundedErrorDiagnostic(error),
+          "[description-expansion] Failed to renew job owner lease",
+        );
+      })
+      .finally(() => {
+        heartbeatInFlight = false;
+      });
+  }, DESCRIPTION_EXPANSION_HEARTBEAT_MS);
+  try {
+    descriptionExpansionJob.total = await countMissingExpandedDescriptions();
+    descriptionExpansionJob.model = getEnrichModel();
+    await persistDescriptionExpansionState(jobId, ownerId, log);
+    log.info(
+      { total: descriptionExpansionJob.total, model: descriptionExpansionJob.model },
+      "[description-expansion] Starting",
+    );
+
+    let wroteAny = false;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      if (ownershipLost) throw new DescriptionExpansionOwnershipLostError();
+      if (descriptionExpansionJob.stopRequested) break;
+      await requireDescriptionExpansionOwnership(jobId, ownerId);
+      const [current] = await db
+        .select({ status: descriptionExpansionJobTable.status })
+        .from(descriptionExpansionJobTable)
+        .where(and(
+          eq(descriptionExpansionJobTable.id, jobId),
+          eq(descriptionExpansionJobTable.ownerId, ownerId),
+          sql`${descriptionExpansionJobTable.leaseExpiresAt} > now()`,
+        ));
+      if (current?.status === "stopping") {
+        descriptionExpansionJob.stopRequested = true;
+        break;
+      }
+      if (!current || (current.status !== "running" && current.status !== "stopping")) {
+        throw new DescriptionExpansionOwnershipLostError();
+      }
+
+      const batch = await db
+        .select({
+          id: inventoryTable.id,
+          vendor: inventoryTable.vendor,
+          catalog: inventoryTable.catalog,
+          description: inventoryTable.description,
+        })
+        .from(inventoryTable)
+        .where(sql`${inventoryTable.id} > ${descriptionExpansionJob.cursor}
+          AND ${inventoryTable.expandedDescription} IS NULL`)
+        .orderBy(inventoryTable.id)
+        .limit(DESCRIPTION_EXPANSION_BATCH);
+
+      if (batch.length === 0) break;
+
+      for (let offset = 0; offset < batch.length; offset += DESCRIPTION_EXPANSION_CONCURRENCY) {
+        const wave = batch.slice(offset, offset + DESCRIPTION_EXPANSION_CONCURRENCY);
+        const results = await Promise.allSettled(wave.map(expandDescriptionWithRetry));
+
+        for (let index = 0; index < results.length; index++) {
+          if (ownershipLost) throw new DescriptionExpansionOwnershipLostError();
+          await requireDescriptionExpansionOwnership(jobId, ownerId);
+          const result = results[index]!;
+          const item = wave[index]!;
+          descriptionExpansionJob.processed++;
+
+          if (result.status === "rejected") {
+            descriptionExpansionJob.errors++;
+            descriptionExpansionJob.lastError = boundedErrorStatus(result.reason);
+            log.error(
+              { ...boundedErrorDiagnostic(result.reason), id: item.id },
+              "[description-expansion] Failed to expand item",
+            );
+            continue;
+          }
+
+          if (result.value.confidence < DESCRIPTION_EXPANSION_MIN_CONFIDENCE) {
+            descriptionExpansionJob.discarded++;
+            continue;
+          }
+
+          try {
+            const updated = await saveExpandedDescriptionIfOwned(
+              jobId,
+              ownerId,
+              item.id,
+              result.value.expandedDescription,
+            );
+
+            if (updated) {
+              descriptionExpansionJob.saved++;
+              wroteAny = true;
+            } else {
+              // A manual save won the race. Do not overwrite it and count the
+              // generated text as discarded by this background action.
+              descriptionExpansionJob.discarded++;
+            }
+          } catch (err) {
+            if (err instanceof DescriptionExpansionOwnershipLostError) throw err;
+            descriptionExpansionJob.errors++;
+            descriptionExpansionJob.lastError = boundedErrorStatus(err);
+            log.error(
+              { ...boundedErrorDiagnostic(err), id: item.id },
+              "[description-expansion] Failed to save item",
+            );
+          }
+        }
+      }
+
+      descriptionExpansionJob.cursor = batch[batch.length - 1]!.id;
+      await persistDescriptionExpansionState(jobId, ownerId, log);
+      await new Promise((resolve) => setTimeout(resolve, DESCRIPTION_EXPANSION_DELAY_MS));
+    }
+
+    descriptionExpansionJob.running = false;
+    descriptionExpansionJob.status = descriptionExpansionJob.stopRequested ? "cancelled" : "completed";
+    descriptionExpansionJob.finishedAt = new Date();
+    descriptionExpansionJob.stopRequested = false;
+    await persistDescriptionExpansionState(jobId, ownerId, log, true);
+    await cleanupDescriptionExpansionHistory(log);
+    if (wroteAny) invalidateReferenceAnswerCache().catch(() => {});
+    log.info(
+      {
+        processed: descriptionExpansionJob.processed,
+        saved: descriptionExpansionJob.saved,
+        discarded: descriptionExpansionJob.discarded,
+        errors: descriptionExpansionJob.errors,
+      },
+      "[description-expansion] Done",
+    );
+  } catch (err) {
+    descriptionExpansionJob.running = false;
+    descriptionExpansionJob.status = "failed";
+    descriptionExpansionJob.finishedAt = new Date();
+    descriptionExpansionJob.lastError = boundedErrorStatus(err);
+    descriptionExpansionJob.stopRequested = false;
+    if (!(err instanceof DescriptionExpansionOwnershipLostError) && !ownershipLost) {
+      try {
+        await persistDescriptionExpansionState(jobId, ownerId, log, true);
+        await cleanupDescriptionExpansionHistory(log);
+      } catch (persistError) {
+        log.error(
+          boundedErrorDiagnostic(persistError),
+          "[description-expansion] Failed to persist terminal job state",
+        );
+      }
+    }
+    log.error(boundedErrorDiagnostic(err), "[description-expansion] Fatal error");
+  } finally {
+    clearInterval(heartbeat);
+    try {
+      await releaseDescriptionExpansionLease(lease);
+    } catch (error) {
+      log.error(boundedErrorDiagnostic(error), "[description-expansion] Failed to release job lease");
+    }
+    if (descriptionExpansionDbJobId === jobId && descriptionExpansionOwnerId === ownerId) {
+      descriptionExpansionDbJobId = null;
+      descriptionExpansionOwnerId = null;
+    }
+  }
+}
+
+async function getDescriptionExpansionStatusResponse(log: typeof logger = logger) {
+  if (descriptionExpansionJob.running) {
+    return descriptionExpansionStateToResponse(
+      descriptionExpansionJob,
+      await countMissingExpandedDescriptions(),
+    );
+  }
+
+  const lease = await acquireDescriptionExpansionLease();
+  if (lease) {
+    let active;
+    try {
+      active = await recoverInterruptedDescriptionExpansion(log);
+    } finally {
+      await releaseDescriptionExpansionLease(lease);
+    }
+    if (active) {
+      return persistedDescriptionExpansionToResponse(
+        active,
+        await countMissingExpandedDescriptions(),
+      );
+    }
+  } else {
+    const [active] = await db.select().from(descriptionExpansionJobTable)
+      .where(inArray(descriptionExpansionJobTable.status, DESCRIPTION_EXPANSION_ACTIVE_STATUSES))
+      .orderBy(desc(descriptionExpansionJobTable.id)).limit(1);
+    if (active) return persistedDescriptionExpansionToResponse(active, await countMissingExpandedDescriptions());
+  }
+  const [latest] = await db
+    .select()
+    .from(descriptionExpansionJobTable)
+    .where(inArray(descriptionExpansionJobTable.status, DESCRIPTION_EXPANSION_TERMINAL_STATUSES))
+    .orderBy(desc(descriptionExpansionJobTable.id))
+    .limit(1);
+  if (!latest) {
+    return descriptionExpansionStateToResponse(
+      descriptionExpansionJob,
+      await countMissingExpandedDescriptions(),
+    );
+  }
+  return persistedDescriptionExpansionToResponse(
+    latest,
+    await countMissingExpandedDescriptions(),
+  );
+}
+
+router.post("/description-expansion", requireAdminAuth, async (_req, res, next) => {
+  let lease: PoolClient | null = null;
+  try {
+    if (descriptionExpansionJob.running) {
+      const remaining = await countMissingExpandedDescriptions();
+      return void res.status(409).json({
+        error: "Database description expansion already running",
+        job: descriptionExpansionStateToResponse(descriptionExpansionJob, remaining),
+      });
+    }
+
+    lease = await acquireDescriptionExpansionLease();
+    if (!lease) {
+      return void res.status(409).json({
+        error: "Database description expansion already running",
+        job: await getDescriptionExpansionStatusResponse(),
+      });
+    }
+    const active = await recoverInterruptedDescriptionExpansion(logger);
+    if (active) {
+      return void res.status(409).json({
+        error: "Database description expansion already running",
+        job: persistedDescriptionExpansionToResponse(
+          active,
+          await countMissingExpandedDescriptions(),
+        ),
+      });
+    }
+    const total = await countMissingExpandedDescriptions();
+    const model = getEnrichModel();
+    const ownerId = randomUUID();
+    const [claimed] = await db.insert(descriptionExpansionJobTable)
+      .values({
+        status: "running",
+        startedAt: sql`now()`,
+        total,
+        model,
+        ownerId,
+        leaseExpiresAt: descriptionExpansionLeaseExpiry(),
+      })
+      .returning({
+        id: descriptionExpansionJobTable.id,
+        startedAt: descriptionExpansionJobTable.startedAt,
+      });
+    if (!claimed) throw new Error("Could not claim description expansion job");
+    descriptionExpansionDbJobId = claimed.id;
+    descriptionExpansionOwnerId = ownerId;
+    descriptionExpansionJob.status = "running";
+    descriptionExpansionJob.running = true;
+    descriptionExpansionJob.stopRequested = false;
+    descriptionExpansionJob.cursor = 0;
+    descriptionExpansionJob.model = model;
+    descriptionExpansionJob.startedAt = claimed.startedAt;
+    descriptionExpansionJob.finishedAt = null;
+    descriptionExpansionJob.total = total;
+    descriptionExpansionJob.processed = 0;
+    descriptionExpansionJob.saved = 0;
+    descriptionExpansionJob.discarded = 0;
+    descriptionExpansionJob.errors = 0;
+    descriptionExpansionJob.lastError = null;
+    const reqLogger = getLogger(res);
+    const workerLease = lease;
+    lease = null;
+    void runDescriptionExpansion(workerLease, claimed.id, ownerId, reqLogger);
+    return void res.status(202).json({
+      job: descriptionExpansionStateToResponse(
+        descriptionExpansionJob,
+        total,
+      ),
+    });
+  } catch (err) {
+    next(err);
+  } finally {
+    if (lease) await releaseDescriptionExpansionLease(lease);
+  }
+});
+
+router.get("/description-expansion/status", requireAdminAuth, async (_req, res, next) => {
+  try {
+    return void res.json(await getDescriptionExpansionStatusResponse(logger));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete("/description-expansion", requireAdminAuth, async (_req, res, next) => {
+  try {
+    if (!descriptionExpansionJob.running) {
+      const [active] = await db.select().from(descriptionExpansionJobTable)
+        .where(inArray(descriptionExpansionJobTable.status, DESCRIPTION_EXPANSION_ACTIVE_STATUSES))
+        .orderBy(desc(descriptionExpansionJobTable.id)).limit(1);
+      if (!active) return void res.status(409).json({ error: "No database description expansion is currently running" });
+      await db.update(descriptionExpansionJobTable).set({ status: "stopping" })
+        .where(and(eq(descriptionExpansionJobTable.id, active.id), eq(descriptionExpansionJobTable.status, "running")));
+      const [updated] = await db.select().from(descriptionExpansionJobTable)
+        .where(eq(descriptionExpansionJobTable.id, active.id));
+      return void res.json({ job: persistedDescriptionExpansionToResponse(updated!, await countMissingExpandedDescriptions()) });
+    }
+
+    descriptionExpansionJob.stopRequested = true;
+    descriptionExpansionJob.status = "stopping";
+    if (descriptionExpansionDbJobId === null || descriptionExpansionOwnerId === null) {
+      return void res.status(409).json({ error: "Description expansion job ownership was lost" });
+    }
+    await persistDescriptionExpansionState(
+      descriptionExpansionDbJobId,
+      descriptionExpansionOwnerId,
+      logger,
+    );
+    return void res.json({
+      job: descriptionExpansionStateToResponse(
+        descriptionExpansionJob,
+        await countMissingExpandedDescriptions(),
+      ),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── POST /inventory/expand-descriptions ──────────────────────────────────────
 // SSE stream: calls OpenAI once per part and streams results.
 // Does NOT write to the DB — the client saves each result individually via
@@ -2150,7 +3192,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);
   const requestController = new AbortController();
   const cancelOnDisconnect = () => requestController.abort();
-  req.once("close", cancelOnDisconnect);
+  res.once("close", cancelOnDisconnect);
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -2192,17 +3234,17 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
       try {
         const rawText = (
           useOpenAiFallback
-            ? await (async () => {
-                const resp = await getOpenAIFallbackClient().chat.completions.create({
-                  model: getOpenAIModelForFeature("enrich"),
+            ? (await callOpenAIFallbackWithBoundary("enrich", (client, model, signal) =>
+                client.chat.completions.create({
+                  model,
                   max_completion_tokens: 512,
                   messages: [
                     { role: "system", content: enrichSystemPrompt },
                     { role: "user", content: `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:` },
                   ],
-                });
-                return resp.choices[0]?.message?.content?.trim() ?? "";
-              })()
+                }, { signal }),
+                { signal: requestController.signal },
+              )).choices[0]?.message?.content?.trim() ?? ""
             : await callPoeBotWithChain(
                 "enrich",
                 enrichSystemPrompt,
@@ -2212,6 +3254,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
         );
 
         const { expandedDescription, confidence } = parseEnrichmentResponse(rawText);
+        if (requestController.signal.aborted) return;
 
         let autoSaved = false;
         if (confidence != null && confidence > 70) {
@@ -2236,7 +3279,10 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
             // If result is empty the row already had a description — autoSaved
             // stays false so the SSE event signals the admin to review manually.
           } catch (dbErr) {
-            reqLogger.warn({ err: dbErr, id: item.id }, "[expand-descriptions] auto-save failed");
+            reqLogger.warn(
+              { ...boundedErrorDiagnostic(dbErr), id: item.id },
+              "[expand-descriptions] auto-save failed",
+            );
           }
         }
 
@@ -2281,11 +3327,11 @@ router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
     res.end();
   } catch (err) {
     if (requestController.signal.aborted) return;
-    reqLogger.error({ err }, "[expand-descriptions] failed");
+    reqLogger.error(boundedErrorDiagnostic(err), "[expand-descriptions] failed");
     send({ error: "Description expansion failed" });
     res.end();
   } finally {
-    req.removeListener("close", cancelOnDisconnect);
+    res.removeListener("close", cancelOnDisconnect);
   }
 });
 
@@ -2317,21 +3363,31 @@ router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
     const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
     const userPrompt = `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`;
 
-    const rawText = (
-      useOpenAiFallback
-        ? await (async () => {
-            const resp = await getOpenAIFallbackClient().chat.completions.create({
-              model: getOpenAIModelForFeature("enrich"),
-              max_completion_tokens: 512,
-              messages: [
-                { role: "system", content: enrichSystemPrompt },
-                { role: "user", content: userPrompt },
-              ],
-            });
-            return resp.choices[0]?.message?.content?.trim() ?? "";
-          })()
-        : await callPoeBotWithChain("enrich", enrichSystemPrompt, userPrompt)
-    );
+    const requestController = new AbortController();
+    const cancelOnDisconnect = () => requestController.abort();
+    res.once("close", cancelOnDisconnect);
+    let rawText: string;
+    try {
+      rawText = (
+        useOpenAiFallback
+          ? (await callOpenAIFallbackWithBoundary("enrich", (client, model, signal) =>
+              client.chat.completions.create({
+                model,
+                max_completion_tokens: 512,
+                messages: [
+                  { role: "system", content: enrichSystemPrompt },
+                  { role: "user", content: userPrompt },
+                ],
+              }, { signal }),
+              { signal: requestController.signal },
+            )).choices[0]?.message?.content?.trim() ?? ""
+          : await callPoeBotWithChain("enrich", enrichSystemPrompt, userPrompt, {
+              signal: requestController.signal,
+            })
+      );
+    } finally {
+      res.removeListener("close", cancelOnDisconnect);
+    }
 
     const { expandedDescription, confidence } = parseEnrichmentResponse(rawText);
 
@@ -2347,7 +3403,7 @@ router.post("/:id/expand-description", requireAdminAuth, async (req, res) => {
     if (err instanceof PoeBotChainExhaustedError) {
       return void res.status(503).json({ error: "poe_chain_exhausted" });
     }
-    reqLogger.error({ err }, "[expand-description single] failed");
+    reqLogger.error(boundedErrorDiagnostic(err), "[expand-description single] failed");
     res.status(500).json({
       error: err instanceof MalformedAiResponseError
         ? "Description expansion failed"
@@ -2384,7 +3440,10 @@ router.patch("/:id/expanded-description", requireAdminAuth, async (req, res) => 
     invalidateReferenceAnswerCache().catch(() => {});
     res.json({ success: true });
   } catch (err) {
-    reqLogger.error({ err }, "[expanded-description PATCH] failed");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[expanded-description PATCH] failed",
+    );
     res.status(500).json({ error: "Failed to update expanded description" });
   }
 });
@@ -2399,6 +3458,7 @@ router.post("/bulk-enrich", requireAdminAuth, (req, res, next) => {
     const force = req.body?.force === true;
 
     bulkEnrichJob.running = true;
+    bulkEnrichJob.status = "running";
     bulkEnrichJob.stopRequested = false;
     bulkEnrichJob.force = force;
     bulkEnrichJob.startedAt = new Date();
@@ -2407,12 +3467,15 @@ router.post("/bulk-enrich", requireAdminAuth, (req, res, next) => {
     bulkEnrichJob.total = null;
     bulkEnrichJob.finishedAt = null;
     bulkEnrichJob.lastError = null;
+    bulkEnrichJob.model = null;
     const reqLogger = getLogger(res);
     runBulkEnrich(force, reqLogger).catch((err) => {
       bulkEnrichJob.running = false;
+      bulkEnrichJob.status = "failed";
       bulkEnrichJob.finishedAt = new Date();
-      bulkEnrichJob.lastError = String(err);
-      reqLogger.error({ err }, "[bulk-enrich] Fatal error");
+      bulkEnrichJob.lastError = boundedErrorStatus(err);
+      bulkEnrichJob.stopRequested = false;
+      reqLogger.error(boundedErrorDiagnostic(err), "[bulk-enrich] Fatal error");
     });
 
     const message = force ? "Force re-enrichment started (all items)" : "Bulk enrichment started";
@@ -2423,8 +3486,44 @@ router.post("/bulk-enrich", requireAdminAuth, (req, res, next) => {
 });
 
 // ── GET /inventory/bulk-enrich/status ─────────────────────────────────────────
-router.get("/bulk-enrich/status", requireAdminAuth, (_req, res) => {
-  res.json(bulkEnrichJob);
+router.get("/bulk-enrich/status", requireAdminAuth, async (_req, res) => {
+  if (bulkEnrichJob.startedAt !== null) {
+    return void res.json(bulkEnrichJob);
+  }
+
+  try {
+    await reconcileBulkEnrichJobs();
+    const [lastRow] = await db
+      .select()
+      .from(bulkEnrichJobTable)
+      .where(inArray(bulkEnrichJobTable.status, ["completed", "cancelled", "failed"]))
+      .orderBy(desc(bulkEnrichJobTable.id))
+      .limit(1);
+
+    if (!lastRow) {
+      return void res.json(bulkEnrichJob);
+    }
+
+    return void res.json({
+      status: lastRow.status,
+      running: false,
+      stopRequested: false,
+      force: lastRow.force,
+      startedAt: lastRow.startedAt,
+      processed: lastRow.processed,
+      errors: lastRow.errors,
+      total: lastRow.total,
+      finishedAt: lastRow.finishedAt,
+      lastError: boundedStoredErrorStatus(lastRow.errorMessage),
+      model: lastRow.model,
+    });
+  } catch (err) {
+    logger.warn(
+      boundedErrorDiagnostic(err),
+      "[bulk-enrich] Failed to read DB status; returning in-memory state",
+    );
+    return void res.json(bulkEnrichJob);
+  }
 });
 
 // ── DELETE /inventory/bulk-enrich ─────────────────────────────────────────────
@@ -2433,6 +3532,7 @@ router.delete("/bulk-enrich", requireAdminAuth, (_req, res) => {
     return void res.status(409).json({ error: "No bulk enrichment job is currently running" });
   }
   bulkEnrichJob.stopRequested = true;
+  bulkEnrichJob.status = "stopping";
   res.json({ message: "Stop requested – job will halt after the current batch completes", job: bulkEnrichJob });
 });
 
@@ -2477,7 +3577,10 @@ async function runMeasureEnrich(log: typeof logger = logger): Promise<void> {
       .returning({ id: measureEnrichJobTable.id });
     measureEnrichJob.dbJobId = dbRow?.id ?? null;
   } catch (dbErr) {
-    log.warn({ err: dbErr }, "[measure-enrich] Failed to create DB job row; state will be in-memory only");
+    log.warn(
+      boundedErrorDiagnostic(dbErr),
+      "[measure-enrich] Failed to create DB job row; state will be in-memory only",
+    );
   }
 
   const [countRow] = await db
@@ -2522,8 +3625,11 @@ async function runMeasureEnrich(log: typeof logger = logger): Promise<void> {
               .where(eq(inventoryTable.id, item.id));
             measureEnrichJob.updated++;
           } catch (err) {
-            measureEnrichJob.lastError = String(err);
-            log.error({ err, id: item.id }, "[measure-enrich] Error updating item");
+            measureEnrichJob.lastError = boundedErrorStatus(err);
+            log.error(
+              { ...boundedErrorDiagnostic(err), id: item.id },
+              "[measure-enrich] Error updating item",
+            );
           }
         }
       }
@@ -2542,7 +3648,12 @@ async function runMeasureEnrich(log: typeof logger = logger): Promise<void> {
     db.update(measureEnrichJobTable)
       .set({ status: "done", finishedAt: new Date(), processed: measureEnrichJob.processed, updated: measureEnrichJob.updated })
       .where(eq(measureEnrichJobTable.id, measureEnrichJob.dbJobId))
-      .catch(err => log.warn({ err }, "[measure-enrich] Failed to update DB job row on success"));
+      .catch(err =>
+        log.warn(
+          boundedErrorDiagnostic(err),
+          "[measure-enrich] Failed to update DB job row on success",
+        ),
+      );
   }
   if (measureEnrichJob.updated > 0) {
     invalidateReferenceAnswerCache().catch(() => {});
@@ -2572,13 +3683,32 @@ router.post("/enrich-measurements", requireAdminAuth, (_req, res, next) => {
     runMeasureEnrich(reqLogger).catch(err => {
       measureEnrichJob.running    = false;
       measureEnrichJob.finishedAt = new Date();
-      measureEnrichJob.lastError  = String(err);
-      reqLogger.error({ err, processed: measureEnrichJob.processed, updated: measureEnrichJob.updated }, "[measure-enrich] Fatal error");
+      const errorStatus = boundedErrorStatus(err);
+      measureEnrichJob.lastError  = errorStatus;
+      reqLogger.error(
+        {
+          ...boundedErrorDiagnostic(err),
+          processed: measureEnrichJob.processed,
+          updated: measureEnrichJob.updated,
+        },
+        "[measure-enrich] Fatal error",
+      );
       if (measureEnrichJob.dbJobId !== null) {
         db.update(measureEnrichJobTable)
-          .set({ status: "failed", finishedAt: new Date(), errorMessage: String(err), processed: measureEnrichJob.processed, updated: measureEnrichJob.updated })
+          .set({
+            status: "failed",
+            finishedAt: new Date(),
+            errorMessage: errorStatus,
+            processed: measureEnrichJob.processed,
+            updated: measureEnrichJob.updated,
+          })
           .where(eq(measureEnrichJobTable.id, measureEnrichJob.dbJobId))
-          .catch(dbErr => reqLogger.warn({ err: dbErr }, "[measure-enrich] Failed to persist failure to DB"));
+          .catch(dbErr =>
+            reqLogger.warn(
+              boundedErrorDiagnostic(dbErr),
+              "[measure-enrich] Failed to persist failure to DB",
+            ),
+          );
       }
     });
 
@@ -2615,11 +3745,14 @@ router.get("/enrich-measurements/status", requireAdminAuth, async (_req, res) =>
       updated: lastRow.updated,
       total: null,
       finishedAt: lastRow.finishedAt ?? null,
-      lastError: lastRow.errorMessage ?? null,
+      lastError: boundedStoredErrorStatus(lastRow.errorMessage),
       dbJobId: lastRow.id,
     });
   } catch (err) {
-    logger.warn({ err }, "[measure-enrich] Failed to read DB status; returning in-memory state");
+    logger.warn(
+      boundedErrorDiagnostic(err),
+      "[measure-enrich] Failed to read DB status; returning in-memory state",
+    );
     return void res.json(measureEnrichJob);
   }
 });
@@ -2693,7 +3826,10 @@ router.patch("/:id/barcodes", requireAdminAuth, async (req, res) => {
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     res.json(UpdateItemBarcodesResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/barcodes] Failed to update barcodes");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[inventory/barcodes] Failed to update barcodes",
+    );
     res.status(500).json({ error: "Failed to update barcodes" });
   }
 });
@@ -2748,7 +3884,7 @@ router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     res.json(UpdateItemBinsResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/bins] Failed to update bins");
+    reqLogger.error(boundedErrorDiagnostic(err), "[inventory/bins] Failed to update bins");
     res.status(500).json({ error: "Failed to update bins" });
   }
 });
@@ -2780,7 +3916,10 @@ router.patch("/:id/order", requireAdminAuth, async (req, res) => {
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     res.json(UpdateItemOrderResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/order] Failed to update order fields");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[inventory/order] Failed to update order fields",
+    );
     res.status(500).json({ error: "Failed to update order fields" });
   }
 });
@@ -2810,7 +3949,7 @@ router.patch("/:id/size", requireAdminAuth, async (req, res) => {
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     res.json(UpdateItemSizeResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/size] Failed to update size");
+    reqLogger.error(boundedErrorDiagnostic(err), "[inventory/size] Failed to update size");
     res.status(500).json({ error: "Failed to update size" });
   }
 });
@@ -2841,7 +3980,10 @@ router.patch("/:id/description", requireApprovedAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.json(UpdateItemDescriptionResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/description] Failed to update description");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[inventory/description] Failed to update description",
+    );
     res.status(500).json({ error: "Failed to update description" });
   }
 });
@@ -2882,7 +4024,7 @@ router.patch("/:id/enrich", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.json(ReenrichItemResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/enrich] Failed to enrich item");
+    reqLogger.error(boundedErrorDiagnostic(err), "[inventory/enrich] Failed to enrich item");
     res.status(500).json({ error: "Failed to enrich item" });
   }
 });
@@ -2929,7 +4071,10 @@ router.patch("/:id/keywords", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.json(UpdateItemKeywordsResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/keywords] Failed to update keywords");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[inventory/keywords] Failed to update keywords",
+    );
     res.status(500).json({ error: "Failed to update keywords" });
   }
 });
@@ -2993,7 +4138,10 @@ router.get("/:id/photo", requireAppAuth, async (req, res) => {
     });
     res.status(200).send(content);
   } catch (err) {
-    reqLogger.error({ err, id, slot, variant }, "[inventory/photo] Private image read failed");
+    reqLogger.error(
+      { ...boundedErrorDiagnostic(err), id, slot, variant },
+      "[inventory/photo] Private image read failed",
+    );
     res.status(404).json({ error: "Photo not found" });
   }
 });
@@ -3004,6 +4152,8 @@ router.get("/:id/photo", requireAppAuth, async (req, res) => {
 // Used by the ShelfCatalogEntry rapid-entry flow.
 router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);
+  const uploadedPaths: Array<string> = [];
+  let photoCommitted = false;
   try {
     const id = parseInt(String(req.params["id"] ?? "0"));
     if (!id) return void res.status(400).json({ error: "Invalid item id" });
@@ -3066,24 +4216,15 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
     const rawBuffer = Buffer.from(imageBase64, "base64");
     const { fullBuffer, thumbnailBuffer } = await resizeImages(rawBuffer);
 
-    const uploadedPaths: Array<string> = [];
-    const uploaded = await Promise.all([
-      uploadCatalogImage(fullBuffer, "image/jpeg"),
-      uploadCatalogImage(thumbnailBuffer, "image/jpeg"),
-    ]);
-    uploadedPaths.push(...uploaded);
-    const [uploadedUrl, uploadedThumbUrl] = uploaded;
+    const [uploadedUrl, uploadedThumbUrl] =
+      await uploadInventoryPhotoPair(fullBuffer, thumbnailBuffer, uploadedPaths);
 
     const [before] = await db
       .select()
       .from(inventoryTable)
       .where(eq(inventoryTable.id, id))
       .limit(1);
-    if (!before) {
-      await cleanupUploadedPaths(uploadedPaths).catch(() => {});
-      // The update below remains the authoritative existence check. This also
-      // keeps mocked/test database adapters compatible with the write path.
-    }
+    // The update below is the authoritative existence check.
 
     const patch = isSlot2
       ? { imageUrl2: uploadedUrl, thumbnailUrl2: uploadedThumbUrl, updatedAt: new Date() }
@@ -3096,9 +4237,10 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
       .returning();
 
     if (!updated) {
-      await cleanupUploadedPaths(uploadedPaths).catch(() => {});
+      await cleanupUploadedPaths(uploadedPaths);
       return void res.status(404).json({ error: "Item not found" });
     }
+    photoCommitted = true;
     if (before) {
       await cleanupInventoryImages(
         isSlot2
@@ -3116,8 +4258,18 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
       thumbnailUrl2: privateImageDeliveryUrl(id, parsed.thumbnailUrl2, 2, "thumbnail"),
     });
   } catch (err) {
+    if (!photoCommitted && uploadedPaths.length) {
+      try {
+        await cleanupUploadedPaths(uploadedPaths);
+      } catch (cleanupErr) {
+        reqLogger.error(boundedErrorDiagnostic(cleanupErr), "[inventory/photo] Uploaded image cleanup failed");
+      }
+    }
     const id = req.params["id"] ?? "unknown";
-    reqLogger.error({ err, id }, "[inventory/photo] Photo upload failed");
+    reqLogger.error(
+      { ...boundedErrorDiagnostic(err), id },
+      "[inventory/photo] Photo upload failed",
+    );
     res.status(500).json({ error: "Failed to upload photo — please try again later." });
   }
 });
@@ -3167,7 +4319,10 @@ router.patch("/:id/dimensions", requireAdminAuth, async (req, res) => {
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     res.json(UpdateItemDimensionsResponse.parse(toClientInventoryItem(updated)));
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/dimensions] Failed to update dimensions");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[inventory/dimensions] Failed to update dimensions",
+    );
     res.status(500).json({ error: "Failed to update dimensions" });
   }
 });
@@ -3342,11 +4497,13 @@ function buildDimMessages(imageBase64: string, mimeType: string) {
 async function callDimensionAi(imageBase64: string, mimeType: string, useOpenAiFallback: boolean) {
   const messages = buildDimMessages(imageBase64, mimeType);
   return useOpenAiFallback
-    ? getOpenAIFallbackClient().chat.completions.create({
-        model: getOpenAIModelForFeature("dimensions"),
-        max_completion_tokens: 256,
-        messages,
-      })
+    ? callOpenAIFallbackWithBoundary("dimensions", (client, model, signal) =>
+        client.chat.completions.create({
+          model,
+          max_completion_tokens: 256,
+          messages,
+        }, { signal }),
+      )
     : tryPoeBotChain("dimensions", (client, model) =>
         client.chat.completions.create({
           model,
@@ -3421,7 +4578,10 @@ router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req
     if (err instanceof PoeBotChainExhaustedError) {
       return void res.status(503).json({ status: "poe_chain_exhausted" });
     }
-    reqLogger.error({ err }, "[estimate-dimensions/search] Dimension estimation failed");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[estimate-dimensions/search] Dimension estimation failed",
+    );
     res.status(500).json({ error: "Dimension estimation failed" });
   }
 });
@@ -3467,7 +4627,10 @@ router.post("/estimate-dimensions", requireAdminAuth, async (req, res) => {
     if (err instanceof PoeBotChainExhaustedError) {
       return void res.status(503).json({ status: "poe_chain_exhausted" });
     }
-    reqLogger.error({ err }, "[estimate-dimensions] Dimension estimation failed");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[estimate-dimensions] Dimension estimation failed",
+    );
     res.status(500).json({ error: "Dimension estimation failed" });
   }
 });
@@ -3500,7 +4663,10 @@ router.delete("/:id", requireAdminAuth, async (req, res) => {
     invalidateReferenceAnswerCache().catch(() => {});
     res.status(200).json({ deleted: true });
   } catch (err) {
-    reqLogger.error({ err }, "[inventory/delete] Failed to delete item");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[inventory/delete] Failed to delete item",
+    );
     res.status(500).json({ error: "Failed to delete item" });
   }
 });

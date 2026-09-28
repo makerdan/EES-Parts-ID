@@ -200,6 +200,19 @@ export function isPublicFloorPlanObjectPath(objectPath: string): boolean {
   return gcsPath === `${privateObjectDir()}/${PUBLIC_FLOOR_PLAN_NAMESPACE}/warehouse-map.svg`;
 }
 
+const VERSIONED_FLOOR_PLAN_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.svg$/i;
+
+function isVersionedFloorPlanObjectPath(objectPath: string): boolean {
+  let gcsPath: string;
+  try {
+    gcsPath = objectPathToGcsPath(objectPath);
+  } catch {
+    return false;
+  }
+  const prefix = `${privateObjectDir()}/${PUBLIC_FLOOR_PLAN_NAMESPACE}/`;
+  return gcsPath.startsWith(prefix) && VERSIONED_FLOOR_PLAN_NAME.test(gcsPath.slice(prefix.length));
+}
+
 function requirePrivateObjectPath(objectPath: string): string {
   if (!isPrivateObjectPath(objectPath)) {
     throw new Error("Object is not in a private namespace");
@@ -242,15 +255,12 @@ export async function uploadCatalogImage(
   return objectPath;
 }
 
-/**
- * Upload a floor plan SVG to GCS under the dedicated public layout namespace.
- * Overwrites any previous upload. Returns the serving object path.
- */
+/** Upload a floor plan to a unique key so a failed metadata write cannot overwrite the active plan. */
 export async function uploadFloorPlanSvg(svgContent: string): Promise<string> {
   const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
   if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
 
-  const fullPath = `${privateObjectDir()}/${PUBLIC_FLOOR_PLAN_NAMESPACE}/warehouse-map.svg`;
+  const fullPath = `${privateObjectDir()}/${PUBLIC_FLOOR_PLAN_NAMESPACE}/${randomUUID()}.svg`;
 
   const bucket = gcs.bucket(bucketId);
   const file = bucket.file(fullPath);
@@ -258,10 +268,21 @@ export async function uploadFloorPlanSvg(svgContent: string): Promise<string> {
   await file.save(Buffer.from(svgContent, "utf8"), {
     contentType: "image/svg+xml",
     resumable: false,
+    preconditionOpts: { ifGenerationMatch: 0 },
     metadata: { cacheControl: "public, max-age=3600" },
   });
 
   return `/objects/${fullPath}`;
+}
+
+/** Only new, uniquely owned floor plans may be removed; never delete the legacy shared key. */
+export async function deleteFloorPlanSvg(objectPath: string): Promise<void> {
+  const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
+  if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
+  if (!isVersionedFloorPlanObjectPath(objectPath)) {
+    throw new Error("Object is not a uniquely owned floor-plan asset");
+  }
+  await gcs.bucket(bucketId).file(objectPathToGcsPath(objectPath)).delete({ ignoreNotFound: true });
 }
 
 /**
@@ -272,7 +293,7 @@ export async function readFloorPlanSvg(objectPath: string): Promise<Buffer> {
   const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
   if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
 
-  if (!isPublicFloorPlanObjectPath(objectPath)) {
+  if (!isPublicFloorPlanObjectPath(objectPath) && !isVersionedFloorPlanObjectPath(objectPath)) {
     throw new Error("Object is not a warehouse floor-plan asset");
   }
   const gcsPath = objectPathToGcsPath(objectPath);

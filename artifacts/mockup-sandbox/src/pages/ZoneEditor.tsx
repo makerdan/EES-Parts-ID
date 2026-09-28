@@ -47,6 +47,8 @@ import {
   matrixToSvgString,
   normalizeAisleId,
   normalizeAnchorPoints,
+  normalizeSvgViewBoxOrigin,
+  parseContentViewBox,
   type AffineMatrix,
 } from "@workspace/zone-validation";
 import warehouseMapFallback from "../../public/warehouse-map.svg?raw";
@@ -60,14 +62,12 @@ function extractSvgInner(svgRaw: string): string {
 }
 
 // Extract the natural dimensions (viewBox or width/height) from a raw SVG string
-// so the rasterizer can render it at the correct aspect ratio.
+// so the rasterizer can render it at the correct aspect ratio. The viewBox
+// parser is shared with the normal Map so both screens agree on source bounds.
 function extractSvgDims(svgRaw: string): { w: number; h: number } {
-  const vbMatch = svgRaw.match(/viewBox\s*=\s*["']([^"']+)["']/);
-  if (vbMatch) {
-    const parts = vbMatch[1]!.trim().split(/[\s,]+/).map(Number);
-    if (parts.length >= 4 && parts[2]! > 0 && parts[3]! > 0) {
-      return { w: parts[2]!, h: parts[3]! };
-    }
+  const viewBox = parseContentViewBox(svgRaw);
+  if (viewBox && viewBox.w > 0 && viewBox.h > 0) {
+    return { w: viewBox.w, h: viewBox.h };
   }
   const wMatch = svgRaw.match(/\bwidth\s*=\s*["']?(\d+(?:\.\d+)?)["']?/);
   const hMatch = svgRaw.match(/\bheight\s*=\s*["']?(\d+(?:\.\d+)?)["']?/);
@@ -76,12 +76,23 @@ function extractSvgDims(svgRaw: string): { w: number; h: number } {
   return { w, h };
 }
 
-const svgFallbackInner = extractSvgInner(warehouseMapFallback);
-const svgFallbackDims = extractSvgDims(warehouseMapFallback);
+function prepareEditorSvg(svgRaw: string): {
+  inner: string;
+  dims: { w: number; h: number };
+} {
+  const normalizedSvg = normalizeSvgViewBoxOrigin(svgRaw);
+  return {
+    inner: extractSvgInner(normalizedSvg),
+    dims: extractSvgDims(normalizedSvg),
+  };
+}
+
+const svgFallback = prepareEditorSvg(warehouseMapFallback);
 
 // ── Flood-fill helpers (module-level, no React deps) ──────────────────────────
 
-// Cache keyed on svgInner string to avoid re-rasterizing on every click.
+// Cache keyed on normalized SVG content and dimensions to avoid re-rasterizing
+// on every click while keeping separate coordinate frames from colliding.
 let _rasterCache: { key: string; imageData: ImageData; w: number; h: number } | null = null;
 
 async function rasterizeSvg(
@@ -90,7 +101,8 @@ async function rasterizeSvg(
   signal?: AbortSignal,
 ): Promise<{ imageData: ImageData; w: number; h: number }> {
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  if (_rasterCache && _rasterCache.key === svgInner) {
+  const cacheKey = `${dims.w}:${dims.h}:${svgInner}`;
+  if (_rasterCache && _rasterCache.key === cacheKey) {
     return { imageData: _rasterCache.imageData, w: _rasterCache.w, h: _rasterCache.h };
   }
   // Render at up to 1024 px wide to keep memory and processing time bounded.
@@ -133,7 +145,7 @@ async function rasterizeSvg(
       URL.revokeObjectURL(url);
       const imageData = ctx.getImageData(0, 0, cw, ch);
       if (signal?.aborted) { finish(); reject(new DOMException("Aborted", "AbortError")); return; }
-      _rasterCache = { key: svgInner, imageData, w: cw, h: ch };
+      _rasterCache = { key: cacheKey, imageData, w: cw, h: ch };
       finish();
       resolve({ imageData, w: cw, h: ch });
     };
@@ -250,8 +262,70 @@ interface Zone {
 interface Tf { x: number; y: number; s: number }
 interface Pt { x: number; y: number }
 interface RectShape { x: number; y: number; w: number; h: number }
+interface ZoneAlignment { translateX: number; translateY: number; scale: number }
 type Handle = "nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w";
 type Mode = "pan" | "draw" | "fill";
+
+const IDENTITY_ZONE_ALIGNMENT: ZoneAlignment = { translateX: 0, translateY: 0, scale: 1 };
+const ALIGN_SCALE_MIN = 0.1;
+const ALIGN_SCALE_MAX = 5;
+const ALIGN_TRANSLATE_MAX = 10000;
+
+function normalizeZoneAlignment(value: unknown): ZoneAlignment {
+  if (!value || typeof value !== "object") return IDENTITY_ZONE_ALIGNMENT;
+  const alignment = value as Partial<ZoneAlignment>;
+  if (
+    typeof alignment.translateX !== "number" ||
+    typeof alignment.translateY !== "number" ||
+    typeof alignment.scale !== "number" ||
+    !Number.isFinite(alignment.translateX) ||
+    !Number.isFinite(alignment.translateY) ||
+    !Number.isFinite(alignment.scale) ||
+    Math.abs(alignment.translateX) > ALIGN_TRANSLATE_MAX ||
+    Math.abs(alignment.translateY) > ALIGN_TRANSLATE_MAX ||
+    alignment.scale < ALIGN_SCALE_MIN ||
+    alignment.scale > ALIGN_SCALE_MAX
+  ) {
+    return IDENTITY_ZONE_ALIGNMENT;
+  }
+  return {
+    translateX: alignment.translateX,
+    translateY: alignment.translateY,
+    scale: alignment.scale,
+  };
+}
+
+function alignmentMatrix(alignment: ZoneAlignment): AffineMatrix {
+  return {
+    a: alignment.scale,
+    b: 0,
+    c: 0,
+    d: alignment.scale,
+    e: alignment.translateX,
+    f: alignment.translateY,
+  };
+}
+
+/** Compose the Map's outer anchor transform with its inner alignment transform. */
+function composeMapZoneTransform(
+  anchor: AffineMatrix | null,
+  alignment: ZoneAlignment,
+): AffineMatrix | null {
+  const inner = alignmentMatrix(alignment);
+  if (!anchor) {
+    return alignment.translateX === 0 && alignment.translateY === 0 && alignment.scale === 1
+      ? null
+      : inner;
+  }
+  return {
+    a: anchor.a * inner.a + anchor.c * inner.b,
+    b: anchor.b * inner.a + anchor.d * inner.b,
+    c: anchor.a * inner.c + anchor.c * inner.d,
+    d: anchor.b * inner.c + anchor.d * inner.d,
+    e: anchor.a * inner.e + anchor.c * inner.f + anchor.e,
+    f: anchor.b * inner.e + anchor.d * inner.f + anchor.f,
+  };
+}
 
 // ── Undo / Redo types ──────────────────────────────────────────────────────
 const UNDO_LIMIT = 50;
@@ -610,6 +684,12 @@ function inverseMapRect(rect: RectShape, matrix: AffineMatrix | null): RectShape
 const undoStackRef: { current: UndoEntry[] } = { current: [] };
 const redoStackRef: { current: UndoEntry[] } = { current: [] };
 
+/** Test-only reset for the module session singleton between isolated cases. */
+export function resetZoneEditorHistoryForTests() {
+  undoStackRef.current = [];
+  redoStackRef.current = [];
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 export function ZoneEditor() {
   // Admin auth is handled by <AdminGate> in App.tsx (Clerk session). This
@@ -619,12 +699,19 @@ export function ZoneEditor() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   // Floor plan SVG: starts with bundled fallback, then replaced by latest upload.
-  const [svgInner, setSvgInner] = useState<string>(svgFallbackInner);
+  const [svgInner, setSvgInner] = useState<string>(svgFallback.inner);
   // Natural coordinate dimensions of the floor plan SVG (for rasterizer mapping).
-  const [svgDims, setSvgDims] = useState<{ w: number; h: number }>(svgFallbackDims);
+  const [svgDims, setSvgDims] = useState<{ w: number; h: number }>(svgFallback.dims);
   // Stored/world zone coordinates are rendered through this matrix into the
   // floor-plan SVG coordinate space. Null is the safe identity fallback.
   const [anchorMatrix, setAnchorMatrix] = useState<AffineMatrix | null>(null);
+  // The Map's saved placement offset is read-only here; invalid/unavailable
+  // values use identity just as they do in WarehouseMapView.
+  const [zoneAlignment, setZoneAlignment] = useState<ZoneAlignment>(IDENTITY_ZONE_ALIGNMENT);
+  const mapZoneTransform = useMemo(
+    () => composeMapZoneTransform(anchorMatrix, zoneAlignment),
+    [anchorMatrix, zoneAlignment],
+  );
   const [tf, setTf] = useState<Tf>({ x: 0, y: 0, s: INITIAL_SCALE });
   const [mode, setMode] = useState<Mode>("pan");
   // Grid preferences are opt-in and local to this browser. They never enter
@@ -823,7 +910,7 @@ export function ZoneEditor() {
   const svgInnerRef = useRef(svgInner);
   const svgDimsRef = useRef(svgDims);
   const floorPlanRequestRef = useRef(0);
-  const anchorMatrixRef = useRef<AffineMatrix | null>(anchorMatrix);
+  const zoneTransformRef = useRef<AffineMatrix | null>(mapZoneTransform);
   const fillLoadingRef = useRef(false);
   const fillSensitivityRef = useRef(fillSensitivity);
   const snapEnabledRef = useRef(snapEnabled);
@@ -835,6 +922,8 @@ export function ZoneEditor() {
   const fetchAbortRef = useRef<AbortController | null>(null);
   const anchorAbortRef = useRef<AbortController | null>(null);
   const anchorFetchIdRef = useRef(0);
+  const alignmentAbortRef = useRef<AbortController | null>(null);
+  const alignmentFetchIdRef = useRef(0);
   const saveAbortRef = useRef<AbortController | null>(null);
   const dragAbortRef = useRef<AbortController | null>(null);
   const fillAbortRef = useRef<AbortController | null>(null);
@@ -843,8 +932,11 @@ export function ZoneEditor() {
   // user holds Cmd+Z or fires repeated keypresses during an async operation.
   const undoRedoBusyRef = useRef(false);
   // Reactive counts — mirrors the ref lengths so toolbar buttons re-render.
-  const [undoCount, setUndoCount] = useState(0);
-  const [redoCount, setRedoCount] = useState(0);
+  // The stacks intentionally survive panel navigation, so a remounted editor
+  // must hydrate its toolbar from the existing session history rather than
+  // briefly (or permanently) showing an empty history.
+  const [undoCount, setUndoCount] = useState(() => undoStackRef.current.length);
+  const [redoCount, setRedoCount] = useState(() => redoStackRef.current.length);
 
   useEffect(() => { tfRef.current = tf; }, [tf]);
   useEffect(() => { zonesRef.current = zones; }, [zones]);
@@ -853,7 +945,7 @@ export function ZoneEditor() {
   useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   useEffect(() => { svgInnerRef.current = svgInner; }, [svgInner]);
   useEffect(() => { svgDimsRef.current = svgDims; }, [svgDims]);
-  useEffect(() => { anchorMatrixRef.current = anchorMatrix; }, [anchorMatrix]);
+  useEffect(() => { zoneTransformRef.current = mapZoneTransform; }, [mapZoneTransform]);
   useEffect(() => { fillLoadingRef.current = fillLoading; }, [fillLoading]);
   useEffect(() => { snapEnabledRef.current = snapEnabled; }, [snapEnabled]);
   useEffect(() => { gridSpacingRef.current = gridSpacing; }, [gridSpacing]);
@@ -910,8 +1002,9 @@ export function ZoneEditor() {
           if (res.ok) {
             const raw = await res.text();
             if (!isCurrent()) return;
-            setSvgInner(extractSvgInner(raw));
-            setSvgDims(extractSvgDims(raw));
+            const scene = prepareEditorSvg(raw);
+            setSvgInner(scene.inner);
+            setSvgDims(scene.dims);
             // Invalidate the raster cache whenever the floor plan changes.
             _rasterCache = null;
             return;
@@ -1042,7 +1135,6 @@ export function ZoneEditor() {
           requestId !== anchorFetchIdRef.current
         ) return;
         const matrix = computeAnchorTransform(normalizeAnchorPoints(data.anchors));
-        anchorMatrixRef.current = matrix;
         setAnchorMatrix(matrix);
       } catch (err) {
         if (
@@ -1053,8 +1145,39 @@ export function ZoneEditor() {
         ) return;
         // Calibration is best-effort. A failed, incomplete, or malformed
         // response must never prevent the zone list from loading.
-        anchorMatrixRef.current = null;
         setAnchorMatrix(null);
+      }
+    })();
+  }, []);
+
+  const fetchZoneAlignment = useCallback(() => {
+    const controller = new AbortController();
+    const requestId = ++alignmentFetchIdRef.current;
+    alignmentAbortRef.current?.abort();
+    alignmentAbortRef.current = controller;
+
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/warehouse-zones/alignment`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const alignment = normalizeZoneAlignment(await res.json());
+        if (
+          !aliveRef.current ||
+          controller.signal.aborted ||
+          requestId !== alignmentFetchIdRef.current
+        ) return;
+        setZoneAlignment(alignment);
+      } catch (err) {
+        if (
+          isAbortError(err) ||
+          !aliveRef.current ||
+          controller.signal.aborted ||
+          requestId !== alignmentFetchIdRef.current
+        ) return;
+        // Alignment is optional placement data; a failed read is safe identity.
+        setZoneAlignment(IDENTITY_ZONE_ALIGNMENT);
       }
     })();
   }, []);
@@ -1062,6 +1185,7 @@ export function ZoneEditor() {
   const fetchZones = useCallback(async () => {
     if (!aliveRef.current) return;
     fetchAnchorTransform();
+    fetchZoneAlignment();
     // Stamp this request so stale responses can be detected and discarded.
     const myId = ++fetchIdRef.current;
     fetchAbortRef.current?.abort();
@@ -1093,7 +1217,7 @@ export function ZoneEditor() {
     } finally {
       if (aliveRef.current && !controller.signal.aborted && myId === fetchIdRef.current) setLoading(false);
     }
-  }, [fetchAnchorTransform]);
+  }, [fetchAnchorTransform, fetchZoneAlignment]);
 
   useEffect(() => { void fetchZones(); }, [fetchZones]);
 
@@ -1953,6 +2077,7 @@ export function ZoneEditor() {
       aliveRef.current = false;
       fetchAbortRef.current?.abort();
       anchorAbortRef.current?.abort();
+      alignmentAbortRef.current?.abort();
       saveAbortRef.current?.abort();
       dragAbortRef.current?.abort();
       fillAbortRef.current?.abort();
@@ -2081,11 +2206,11 @@ export function ZoneEditor() {
   // by the zone API. Invalid calibration safely behaves as identity.
   const getZonePt = useCallback((clientX: number, clientY: number): Pt => {
     const svgPoint = getSvgPt(clientX, clientY);
-    return inverseAnchorPoint(anchorMatrixRef.current, svgPoint) ?? svgPoint;
+    return inverseAnchorPoint(zoneTransformRef.current, svgPoint) ?? svgPoint;
   }, [getSvgPt]);
 
   const floorPlanRectToZoneRect = useCallback(
-    (rect: RectShape): RectShape => inverseMapRect(rect, anchorMatrixRef.current),
+    (rect: RectShape): RectShape => inverseMapRect(rect, zoneTransformRef.current),
     [],
   );
 
@@ -2468,7 +2593,7 @@ export function ZoneEditor() {
           if (!svgRef.current) return null;
           const rect = svgRef.current.getBoundingClientRect();
           const svgPoint = screenToSvg(e.clientX, e.clientY, rect, tfRef.current);
-          const p = inverseAnchorPoint(anchorMatrixRef.current, svgPoint) ?? svgPoint;
+          const p = inverseAnchorPoint(zoneTransformRef.current, svgPoint) ?? svgPoint;
           return { x: p.x - state.startX, y: p.y - state.startY };
         })();
         if (currentDelta && snapEnabledRef.current) {
@@ -3140,7 +3265,11 @@ export function ZoneEditor() {
               {/* Floor plan — embedded as a child <g> inside the SVG so it
                   shares the same coordinate system as zone overlays and stays
                   perfectly crisp at any zoom level (no rasterisation). */}
-              <g ref={floorPlanRef} pointerEvents="none" />
+              <g
+                ref={floorPlanRef}
+                data-floor-plan-viewbox={`0 0 ${svgDims.w} ${svgDims.h}`}
+                pointerEvents="none"
+              />
 
               {/* Fill feedback is deliberately floor-plan-space: it visualizes
                   the rasterized bounds before those bounds are inverse-mapped
@@ -3167,6 +3296,11 @@ export function ZoneEditor() {
                 data-anchor-transform={anchorMatrix ? matrixToSvgString(anchorMatrix) : "identity"}
                 transform={anchorMatrix ? matrixToSvgString(anchorMatrix) : undefined}
               >
+                <g
+                  data-testid="zone-editor-alignment-layer"
+                  data-alignment-transform={matrixToSvgString(alignmentMatrix(zoneAlignment))}
+                  transform={`translate(${zoneAlignment.translateX}, ${zoneAlignment.translateY}) scale(${zoneAlignment.scale})`}
+                >
               {displayZones.map((zone) => {
                 const sel = selectedIds.has(zone.id);
                 const fill = zone.isInventory
@@ -3364,6 +3498,7 @@ export function ZoneEditor() {
                   style={{ pointerEvents: "none" }}
                 />
               )}
+              </g>
               </g>
             </g>
           </svg>

@@ -73,9 +73,17 @@ function anchorToForm(a: MapAnchor): SlotForm {
   };
 }
 
-function safeParseFloat(s: string): number | null {
-  const n = parseFloat(s.trim());
-  return isFinite(n) ? n : null;
+const FINITE_NUMBER_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+function safeParseFiniteNumber(s: string): number | null {
+  const trimmed = s.trim();
+  if (!FINITE_NUMBER_PATTERN.test(trimmed)) return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : null;
+}
+
+function isMalformedCoordinate(s: string): boolean {
+  return s.trim() !== "" && safeParseFiniteNumber(s) === null;
 }
 
 // ── Main screen ──────────────────────────────────────────────────────────────
@@ -115,6 +123,9 @@ export default function AdminMapCalibrationScreen() {
   const [savingSlot, setSavingSlot] = useState<[boolean, boolean, boolean]>([false, false, false]);
   const [saveErrorSlot, setSaveErrorSlot] = useState<[string | null, string | null, string | null]>([null, null, null]);
   const [savedSlot, setSavedSlot] = useState<[boolean, boolean, boolean]>([false, false, false]);
+  const hasMalformedCoordinate = forms.some((form) =>
+    isMalformedCoordinate(form.worldXStr) || isMalformedCoordinate(form.worldYStr),
+  );
 
   // Floor-plan SVG layout
   const [mapW, setMapW] = useState(0);
@@ -196,8 +207,8 @@ export default function AdminMapCalibrationScreen() {
       const coord = svgCoords[i];
       const form = forms[i];
       if (!form || !coord) return null;
-      const wx = safeParseFloat(form.worldXStr);
-      const wy = safeParseFloat(form.worldYStr);
+      const wx = safeParseFiniteNumber(form.worldXStr);
+      const wy = safeParseFiniteNumber(form.worldYStr);
       if (wx === null || wy === null) return null;
       pts.push({
         id: i + 1,
@@ -232,8 +243,8 @@ export default function AdminMapCalibrationScreen() {
       const coord = svgCoords[i];
       const form = forms[i];
       if (!form) continue;
-      const wx = safeParseFloat(form.worldXStr);
-      const wy = safeParseFloat(form.worldYStr);
+      const wx = safeParseFiniteNumber(form.worldXStr);
+      const wy = safeParseFiniteNumber(form.worldYStr);
       if (serverAnchor) {
         // Local coord placed and differs from server
         if (coord && (
@@ -324,7 +335,7 @@ export default function AdminMapCalibrationScreen() {
   const handleConfirm = useCallback(async () => {
     // confirmingRef guards synchronous double-taps (before the re-render that
     // would flip isConfirming); isConfirming guards subsequent renders.
-    if (!draftAnchors || !draftTransformMatrix || confirmingRef.current || isConfirming) return;
+    if (hasMalformedCoordinate || !draftAnchors || !draftTransformMatrix || confirmingRef.current || isConfirming) return;
 
     // Take a snapshot of the reviewed draft on the first Confirm press and reuse
     // it on every retry.  This prevents the anchor-sync useEffect (triggered by
@@ -365,7 +376,7 @@ export default function AdminMapCalibrationScreen() {
     confirmingRef.current = false;
     setIsConfirming(false);
     setStep("edit");
-  }, [draftAnchors, draftTransformMatrix, isConfirming, upsertAnchor, refetchZones]);
+  }, [hasMalformedCoordinate, draftAnchors, draftTransformMatrix, isConfirming, upsertAnchor, refetchZones]);
 
   const handleDeleteSlot = useCallback(async (idx: number) => {
     const slot = (idx + 1) as 1 | 2 | 3;
@@ -396,12 +407,12 @@ export default function AdminMapCalibrationScreen() {
 
   // ── Per-slot save ────────────────────────────────────────────────────────
   const handleSaveSlot = useCallback(async (idx: number) => {
-    if (savingSlot[idx]) return;
+    if (savingSlot[idx] || hasMalformedCoordinate) return;
     const coord = svgCoords[idx];
     const form = forms[idx];
     if (!coord || !form) return;
-    const wx = safeParseFloat(form.worldXStr);
-    const wy = safeParseFloat(form.worldYStr);
+    const wx = safeParseFiniteNumber(form.worldXStr);
+    const wy = safeParseFiniteNumber(form.worldYStr);
     if (wx === null || wy === null) return;
 
     const slot = (idx + 1) as 1 | 2 | 3;
@@ -426,7 +437,7 @@ export default function AdminMapCalibrationScreen() {
     } else {
       setSaveErrorSlot((prev) => { const next = [...prev] as typeof prev; next[idx] = "Could not save — check your connection."; return next; });
     }
-  }, [savingSlot, svgCoords, forms, upsertAnchor]);
+  }, [savingSlot, hasMalformedCoordinate, svgCoords, forms, upsertAnchor]);
 
   // ── Back navigation guard ────────────────────────────────────────────────
   const handleBack = useCallback(() => {
@@ -469,7 +480,7 @@ export default function AdminMapCalibrationScreen() {
     const coord = svgCoords[i];
     const form = forms[i];
     if (!coord || !form) return false;
-    return safeParseFloat(form.worldXStr) !== null && safeParseFloat(form.worldYStr) !== null;
+    return safeParseFiniteNumber(form.worldXStr) !== null && safeParseFiniteNumber(form.worldYStr) !== null;
   }), [svgCoords, forms]);
 
   const allThreeDraftReady = slotReady[0] && slotReady[1] && slotReady[2];
@@ -682,12 +693,12 @@ export default function AdminMapCalibrationScreen() {
 
             <Pressable
               onPress={handleConfirm}
-              disabled={hasDegenerate || isConfirming}
+              disabled={hasMalformedCoordinate || hasDegenerate || isConfirming}
               style={[
                 styles.confirmBtn,
                 {
-                  backgroundColor: hasDegenerate ? colors.muted : colors.primary,
-                  opacity: (hasDegenerate || isConfirming) ? 0.6 : 1,
+                  backgroundColor: (hasMalformedCoordinate || hasDegenerate) ? colors.muted : colors.primary,
+                  opacity: (hasMalformedCoordinate || hasDegenerate || isConfirming) ? 0.6 : 1,
                 },
               ]}
               accessibilityLabel="Confirm and apply anchors"
@@ -747,6 +758,8 @@ export default function AdminMapCalibrationScreen() {
             const isDeleting = deleting[idx] ?? false;
             const isPicking = pickingSlot === idx;
             const ready = slotReady[idx];
+            const invalidWorldX = isMalformedCoordinate(form.worldXStr);
+            const invalidWorldY = isMalformedCoordinate(form.worldYStr);
 
             return (
               <View
@@ -835,7 +848,9 @@ export default function AdminMapCalibrationScreen() {
                   <View style={{ flex: 1, marginRight: 8 }}>
                     <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Zone X</Text>
                     <TextInput
-                      style={[styles.textInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+                      testID={`anchor-${slot}-world-x`}
+                      accessibilityLabel={`Anchor ${slot} Zone X`}
+                      style={[styles.textInput, { color: colors.foreground, borderColor: invalidWorldX ? colors.destructive : colors.border, backgroundColor: colors.background }]}
                       value={form.worldXStr}
                       onChangeText={(v) => {
                         setForms((prev) => {
@@ -849,11 +864,18 @@ export default function AdminMapCalibrationScreen() {
                       placeholderTextColor={colors.mutedForeground}
                       keyboardType="numeric"
                     />
+                    {invalidWorldX && (
+                      <Text testID={`anchor-${slot}-world-x-error`} style={[styles.coordinateError, { color: colors.destructive }]}>
+                        Enter a complete finite number.
+                      </Text>
+                    )}
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Zone Y</Text>
                     <TextInput
-                      style={[styles.textInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+                      testID={`anchor-${slot}-world-y`}
+                      accessibilityLabel={`Anchor ${slot} Zone Y`}
+                      style={[styles.textInput, { color: colors.foreground, borderColor: invalidWorldY ? colors.destructive : colors.border, backgroundColor: colors.background }]}
                       value={form.worldYStr}
                       onChangeText={(v) => {
                         setForms((prev) => {
@@ -867,6 +889,11 @@ export default function AdminMapCalibrationScreen() {
                       placeholderTextColor={colors.mutedForeground}
                       keyboardType="numeric"
                     />
+                    {invalidWorldY && (
+                      <Text testID={`anchor-${slot}-world-y-error`} style={[styles.coordinateError, { color: colors.destructive }]}>
+                        Enter a complete finite number.
+                      </Text>
+                    )}
                   </View>
                 </View>
                 <Text style={[styles.hint, { color: colors.mutedForeground }]}>
@@ -885,13 +912,13 @@ export default function AdminMapCalibrationScreen() {
                   <View style={styles.saveSlotRow}>
                     <Pressable
                       onPress={() => handleSaveSlot(idx)}
-                      disabled={savingSlot[idx] || savedSlot[idx]}
+                      disabled={savingSlot[idx] || savedSlot[idx] || hasMalformedCoordinate}
                       style={[
                         styles.saveSlotBtn,
                         savedSlot[idx]
                           ? { backgroundColor: color + "20", borderColor: color }
                           : { backgroundColor: colors.card, borderColor: colors.border },
-                        (savingSlot[idx] || savedSlot[idx]) && { opacity: 0.75 },
+                        (savingSlot[idx] || savedSlot[idx] || hasMalformedCoordinate) && { opacity: 0.75 },
                       ]}
                       accessibilityLabel={`Save anchor ${slot}`}
                     >
@@ -934,7 +961,7 @@ export default function AdminMapCalibrationScreen() {
           )}
 
           {/* Review Alignment button — shown when all 3 drafts are ready */}
-          {allThreeDraftReady && !hasDegenerate && (
+          {allThreeDraftReady && !hasMalformedCoordinate && !hasDegenerate && (
             <Pressable
               onPress={() => {
                 setConfirmError(null);
@@ -1076,6 +1103,7 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
   },
   worldRow: { flexDirection: "row" },
+  coordinateError: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 15, marginTop: 4 },
   hint: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 15, marginTop: 6 },
   warnCard: {
     flexDirection: "row",

@@ -1,21 +1,13 @@
-import { assertProductionDatabaseTarget } from "@workspace/db/runtime-data-boundary";
-
-import { createInventorySnapshot, listVerifiedInventorySnapshots } from "../lib/inventorySnapshot";
-import { pruneInventorySnapshots } from "../lib/inventorySnapshotRetention";
+import { runInventoryBackup } from "../lib/inventorySnapshot";
 
 async function main(): Promise<void> {
-  assertProductionDatabaseTarget();
-  if (!process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID || !process.env.PRIVATE_OBJECT_DIR) {
-    throw new Error("Private App Storage configuration is required for inventory backups");
-  }
-  const result = await createInventorySnapshot("scheduled");
-  const pruned = await pruneInventorySnapshots(await listVerifiedInventorySnapshots());
+  const result = await runInventoryBackup("scheduled");
   console.log(JSON.stringify({
     event: "inventory_snapshot_completed",
     snapshotId: result.manifest.snapshotId,
     rowCount: result.manifest.rowCount,
     anomaly: result.anomaly,
-    pruned,
+    pruned: result.pruned,
   }));
 }
 

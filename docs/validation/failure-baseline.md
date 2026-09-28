@@ -62,7 +62,78 @@ Run the report explicitly:
 ```sh
 pnpm run maintain:validation-baseline
 pnpm run maintain:validation-baseline -- --warning-days 14 --json
+pnpm run maintain:validation-baseline -- --max-evidence-days 60 --json
 ```
+
+`--warning-days`, `BASELINE_WARNING_DAYS`, and
+`--max-evidence-days`, `BASELINE_MAX_EVIDENCE_DAYS` must be finite,
+non-negative integers. Each CLI threshold takes precedence over its
+environment counterpart: `--warning-days` overrides
+`BASELINE_WARNING_DAYS`, and `--max-evidence-days` overrides
+`BASELINE_MAX_EVIDENCE_DAYS`. When omitted, the defaults are 30 and 90 days
+respectively. A missing CLI value, blank or non-numeric environment value,
+negative value, or fractional value prints an actionable diagnostic and exits
+with status 2 before the catalog is read. With `--json`, configuration and
+catalog errors are emitted as one structured JSON object on stderr.
+
+Only `--file <path>`, `--warning-days <days>`, `--max-evidence-days <days>`,
+and `--json` are supported. Unknown options and duplicate options fail before
+the catalog is read. JSON reports include the effective values in
+`thresholds.warningDays` and `thresholds.maxEvidenceDays`.
+
+With `--json`, a successful report has this stable shape:
+
+```json
+{
+  "catalog": "failure-baseline.json",
+  "generated": "YYYY-MM-DD",
+  "thresholds": {
+    "warningDays": 30,
+    "maxEvidenceDays": 90
+  },
+  "findings": []
+}
+```
+
+`catalog` and `generated` are strings, `thresholds.warningDays` and
+`thresholds.maxEvidenceDays` are non-negative integers, and `findings` is an
+array of finding objects. Each finding has one of the kinds `expired`,
+`review-due`, or `stale-evidence`, the full catalog `record`, and a non-empty
+`message`:
+
+```json
+{
+  "kind": "expired",
+  "record": {
+    "id": "BASE-EXAMPLE",
+    "suite": "example-suite",
+    "test": "exact test",
+    "signature": "expected signature",
+    "status": "active",
+    "authority": "authoritative",
+    "evidenceDate": "2026-08-01",
+    "owner": "validation-maintainers",
+    "reviewDeadline": "2026-08-31"
+  },
+  "message": "review deadline 2026-08-31 has expired"
+}
+```
+
+The record uses the fields described in the record contract above and may also
+include the optional `verificationDate`. Configuration failures are written to
+stderr as one stable JSON object:
+
+```json
+{
+  "error": "invalid_configuration",
+  "code": "INVALID_CONFIGURATION",
+  "message": "actionable summary",
+  "errors": ["actionable diagnostic"]
+}
+```
+
+Catalog failures use the same fields with `error` set to `invalid_catalog` and
+`code` set to `INVALID_CATALOG`.
 
 The report identifies expired records, approaching review deadlines, and stale
 evidence. It is informational and does not run as part of a normal validation

@@ -177,6 +177,12 @@ EOF
 out=$(bash "$SCRIPT" "$f" 2>&1) || rc=$?; rc=${rc:-0}
 assert_exit "missing tier section exits 1" 1 "$rc"
 assert_output_contains "missing tier: error message" "missing a '## Validation tier'" "$out"
+assert_output_contains "help assigns static-only report audits to fast" "fast          — report-only audits" "$out"
+assert_output_contains "help assigns behavior and tests to standard" "standard      — most behavior, feature, and test changes" "$out"
+assert_output_contains "help assigns auth and API routes to standard-plus" "standard-plus — schema, auth/security, or API contract/route changes" "$out"
+assert_output_contains "help names heavy-only coverage" "heavy         — standard-plus + protected-map-concurrency" "$out"
+assert_output_contains "help allows explicit full-tier verification" "explicitly requiring full-tier verification" "$out"
+assert_output_not_contains "help does not claim identical tiers" "identical steps" "$out"
 
 f="$TMPDIR_BASE/invalid-tier.md"
 make_plan "$f" "ultrafast" "Some content."
@@ -268,6 +274,27 @@ make_plan "$f" "standard" "Update the ORM model and add 0014_rename_col.sql for 
 out=$(bash "$SCRIPT" "$f" 2>&1) || rc=$?; rc=${rc:-0}
 assert_exit ".sql no-keyword plan under standard exits 1" 1 "$rc"
 assert_output_contains ".sql no-keyword: hard error shown" "UNDER-TIER ERROR" "$out"
+
+# --- 8. Justified heavy and static-only audit plans remain valid ---
+echo ""
+echo "Group: tier selection exceptions"
+
+f="$TMPDIR_BASE/protected-map-heavy.md"
+make_plan "$f" "heavy" "Verify protected-map concurrency under overlapping edits."
+out=$(bash "$SCRIPT" "$f" 2>&1); rc=$?
+assert_exit "protected-map concurrency at heavy exits 0" 0 "$rc"
+assert_output_not_contains "protected-map heavy: no warning" "WARNING" "$out"
+
+f="$TMPDIR_BASE/explicit-full-heavy.md"
+make_plan "$f" "heavy" "Explicit full-tier verification of an unchanged release candidate."
+out=$(bash "$SCRIPT" "$f" 2>&1); rc=$?
+assert_exit "explicit full-tier verification at heavy exits 0" 0 "$rc"
+
+f="$TMPDIR_BASE/report-only-fast.md"
+make_plan "$f" "fast" "Write a report-only audit with no behavior or test change."
+out=$(bash "$SCRIPT" "$f" 2>&1); rc=$?
+assert_exit "report-only static audit at fast exits 0" 0 "$rc"
+assert_output_not_contains "report-only audit: no warning" "WARNING" "$out"
 
 # ---------------------------------------------------------------------------
 # Summary

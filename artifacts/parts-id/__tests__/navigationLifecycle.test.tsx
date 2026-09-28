@@ -183,6 +183,12 @@ jest.mock("@/utils/searchHelpers", () => ({
   resolveOfflineFallback: jest.fn().mockResolvedValue({ results: [], cacheType: null }),
   fetchInventoryPages: (...args: unknown[]) => mockFetchInventoryPages(...args),
 }));
+jest.mock("@/utils/offlineInventory", () => ({
+  offlineSnapshotInfo: jest.fn().mockResolvedValue(null),
+  syncOfflineInventory: (...args: unknown[]) => mockFetchInventoryPages(...args),
+  hasOfflineItem: jest.fn().mockResolvedValue(false),
+  searchOfflineInventory: jest.fn().mockResolvedValue([]),
+}));
 jest.mock("@/utils/apiBase", () => ({
   API_BASE: "http://localhost:8080/api",
   API_ORIGIN: "http://localhost:8080",
@@ -190,14 +196,19 @@ jest.mock("@/utils/apiBase", () => ({
 jest.mock("@/utils/appAuth", () => ({
   fetchWithAuth: (...args: unknown[]) => mockFetchWithAuth(...args),
 }));
-jest.mock("@/utils/searchHistory", () => ({
-  appendQueryHistory: jest.fn().mockResolvedValue(undefined),
-  appendViewedHistory: jest.fn().mockResolvedValue(undefined),
-  clearQueryHistory: jest.fn().mockResolvedValue(undefined),
-  clearViewedHistory: jest.fn().mockResolvedValue(undefined),
-  loadQueryHistory: jest.fn().mockResolvedValue([]),
-  loadViewedHistory: jest.fn().mockResolvedValue([]),
-}));
+jest.mock("@/contexts/UserHistoryContext", () => {
+  const value = {
+    history: { queryHistory: [], viewedHistory: [], scanHistory: [] },
+    status: "ready",
+    recordQuery: jest.fn().mockResolvedValue(undefined),
+    clearQueries: jest.fn().mockResolvedValue(undefined),
+    recordViewed: jest.fn().mockResolvedValue(undefined),
+    clearViewed: jest.fn().mockResolvedValue(undefined),
+    recordScan: jest.fn().mockResolvedValue(undefined),
+    clearScans: jest.fn().mockResolvedValue(undefined),
+  };
+  return { useUserHistory: () => value };
+});
 jest.mock("@/utils/searchResetEvent", () => ({
   searchResetEvent: { subscribe: jest.fn(() => jest.fn()), emit: jest.fn() },
 }));
@@ -350,8 +361,6 @@ function makeAppContext() {
     setPendingMeasureSearch: jest.fn(),
     pendingInventorySearch: null,
     setPendingInventorySearch: jest.fn(),
-    pendingLidarDims: null,
-    setPendingLidarDims: jest.fn(),
     textFontScale: 1,
     pinnedParts: [],
     resumeProgress: {},

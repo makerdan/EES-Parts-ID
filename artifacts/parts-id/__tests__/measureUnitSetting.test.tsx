@@ -57,15 +57,12 @@ jest.mock("expo-camera", () => ({
   useCameraPermissions: jest.fn(() => [{ granted: true }, jest.fn()]),
 }));
 
-jest.mock("expo-device", () => ({ modelName: null }));
-
 jest.mock("@expo/vector-icons", () => ({
   Feather: function Feather() { return null; },
 }));
 
 jest.mock("@/hooks/useColors", () => require("./helpers/mapMocks").createUseColorsMock());
 
-// lidar-measure is already mapped via jest.config.js moduleNameMapper → __mocks__/lidar-measure.js
 
 // ── AsyncStorage mock ─────────────────────────────────────────────────────────
 

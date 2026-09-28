@@ -58,9 +58,10 @@ import {
   subscribePdfPickLogs,
 } from "@/utils/pdfPickLogger";
 import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
-import { getOrSplitChunks, PAGES_PER_CHUNK, splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
+import { countPdfChunks, createPdfChunk, iteratePdfChunks, PAGES_PER_CHUNK, splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
 
 const POLL_MS = 2500;
+const MAX_STATUS_FAILURES = 3;
 
 /** AsyncStorage key for persisting the active job ID across tab navigation. */
 const ACTIVE_JOB_KEY = "parts_id_catalog_active_job_v1";
@@ -83,7 +84,7 @@ type AiRawLogEntries = Array<AiRawLogEntry>;
 
 type JobStatus = {
   jobId: string;
-  status: "pending" | "processing" | "done" | "failed" | "cancelled";
+  status: "pending" | "processing" | "done" | "done_with_errors" | "failed" | "cancelled";
   totalPages: number | null;
   processedPages: number;
   matchedParts: number;
@@ -97,7 +98,7 @@ type JobStatus = {
 const AiRawLogEntrySchema = z.object({ page: z.number(), text: z.string(), chunkJobId: z.string() });
 const JobStatusSchema = z.object({
   jobId: z.string(),
-  status: z.enum(["pending", "processing", "done", "failed", "cancelled"]),
+  status: z.enum(["pending", "processing", "done", "done_with_errors", "failed", "cancelled"]),
   totalPages: z.number().nullable(),
   processedPages: z.number(),
   matchedParts: z.number(),
@@ -170,6 +171,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [showRetryBtn, setShowRetryBtn] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
+  const [statusPollError, setStatusPollError] = useState(false);
 
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
   const [chunksCompleted, setChunksCompleted] = useState(0);
@@ -199,8 +201,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const uploadTaskRef = useRef<FileSystem.UploadTask | null>(null);
   // Holds the active XHR on web so Cancel can call xhr.abort().
   const webXhrRef = useRef<XMLHttpRequest | null>(null);
-  // Stores the split chunks so server-side failures can be retried without re-picking the file.
-  const chunksRef = useRef<Awaited<ReturnType<typeof splitPdfIntoChunks>> | null>(null);
   const [hasStoredChunks, setHasStoredChunks] = useState(false);
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
@@ -391,11 +391,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   // Also clear the persisted jobId from AsyncStorage for all terminal states.
   useEffect(() => {
     const status = jobStatus?.status;
-    if (status === "done" || status === "cancelled" || status === "failed") {
+    if (status === "done" || status === "done_with_errors" || status === "cancelled" || status === "failed") {
       void AsyncStorage.removeItem(ACTIVE_JOB_KEY).catch(() => {});
     }
-    if (status === "done" || status === "cancelled") {
-      chunksRef.current = null;
+    if (status === "done" || status === "done_with_errors" || status === "cancelled") {
       setHasStoredChunks(false);
       setPdfBytes(null);
       withFallbackRef.current = false;
@@ -433,33 +432,39 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const startPolling = useCallback((jobId: string) => {
     stopPolling();
+    setStatusPollError(false);
     const gen = ++pollGenRef.current;
     const controller = new AbortController();
     pollRef.current = controller;
 
     const run = async () => {
+      let consecutiveFailures = 0;
       while (!controller.signal.aborted) {
         if (!isMountedRef.current) return;
         const token = adminTokenRef.current;
         if (!token) return;
 
+        let validStatus = false;
         try {
           const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, {
             headers: { Authorization: `Bearer ${token}` },
             signal: controller.signal,
           });
 
-          if (pollGenRef.current !== gen) return;
+          if (controller.signal.aborted || pollGenRef.current !== gen) return;
 
           if (r.status === 401) { onSessionExpired(); return; }
 
           if (r.ok) {
             const raw = await r.json();
-            if (pollGenRef.current !== gen) return;
+            if (controller.signal.aborted || pollGenRef.current !== gen) return;
             const parsed = JobStatusSchema.safeParse(raw);
-            if (!parsed.success) {
-              console.warn("[CatalogPdfUpload] Unexpected job-status shape:", parsed.error.message);
+            if (!parsed.success || parsed.data.jobId !== jobId) {
+              console.warn("[CatalogPdfUpload] Unexpected job-status response");
             } else {
+              validStatus = true;
+              consecutiveFailures = 0;
+              setStatusPollError(false);
               const data = parsed.data;
               setJobStatus(data);
               if (data.aiRawLog && data.aiRawLog.length > 0) {
@@ -469,8 +474,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
                   setAiRawLog(prev => [...prev, ...newEntries].sort((a, b) => a.page - b.page));
                 }
               }
-              if (data.status === "done" || data.status === "failed" || data.status === "cancelled") {
-                if (data.status === "done") {
+              if (
+                data.status === "done" ||
+                data.status === "done_with_errors" ||
+                data.status === "failed" ||
+                data.status === "cancelled"
+              ) {
+                if (data.status === "done" || data.status === "done_with_errors") {
                   const qc = queryClientRef.current;
                   void invalidateListCache({ queryClient: qc });
                   void qc.invalidateQueries({ queryKey: ["searchInventory"] });
@@ -481,13 +491,23 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           }
         } catch {
           if (controller.signal.aborted || pollGenRef.current !== gen) return;
-          /* network blip — fall through to wait */
+        }
+        if (!validStatus) consecutiveFailures++;
+        if (consecutiveFailures >= MAX_STATUS_FAILURES) {
+          if (controller.signal.aborted || pollGenRef.current !== gen) return;
+          setStatusPollError(true);
+          stopPolling();
+          return;
         }
 
         /* Wait POLL_MS before next request; abort-aware so cleanup is immediate. */
         await new Promise<void>(resolve => {
-          const t = setTimeout(resolve, POLL_MS);
-          controller.signal.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+          const onAbort = () => { clearTimeout(t); resolve(); };
+          const t = setTimeout(() => {
+            controller.signal.removeEventListener("abort", onAbort);
+            resolve();
+          }, POLL_MS);
+          controller.signal.addEventListener("abort", onAbort, { once: true });
         });
       }
     };
@@ -641,7 +661,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         logPdfPick("handlePickFile: setPdfBytes called", { byteLength: bytes.length });
         setFilename(asset.name ?? "catalog.pdf");
         logPdfPick("handlePickFile: setFilename called", { filename: asset.name ?? "catalog.pdf" });
-        chunksRef.current = null;
         setHasStoredChunks(false);
         chunkRetryCountsRef.current = new Map();
         logPdfPick("handlePickFile: ✅ SUCCESS — file ready for extraction");
@@ -827,20 +846,21 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   // the loop to avoid holding all base64 strings in the Hermes heap at once.
   // On success starts polling. On failure sets failedChunkInfo for targeted retry.
   const uploadChunksFromIndex = async (
-    chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>,
+    bytes: Uint8Array,
     startIndex: number,
     existingParentJobId: string | null,
   ): Promise<void> => {
     let parentJobId: string | null = existingParentJobId;
-    let aborted = false;
 
-    for (let i = startIndex; i < chunks.length; i++) {
-      if (aborted) break;
-      const chunk = chunks[i]!;
+    for await (const { chunk, index: i, totalChunks } of iteratePdfChunks(bytes, PAGES_PER_CHUNK, startIndex)) {
+      if (totalChunks === 1 && startIndex === 0) {
+        handleSingleUpload(bytesToBase64(chunk.bytes), 0);
+        return;
+      }
       // Encode this chunk's bytes immediately before use, then let it be
       // garbage-collected once the upload body has been sent.
       const base64 = bytesToBase64(chunk.bytes);
-      setChunkLabel(`Part ${i + 1} of ${chunks.length}`);
+      setChunkLabel(`Part ${i + 1} of ${totalChunks}`);
 
       // ── Silent transient retry loop ────────────────────────────────────────
       // Up to MAX_SILENT_RETRIES automatic retries on network errors before the
@@ -856,7 +876,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           result = await new Promise<{ jobId: string; chunkJobId?: string }>((resolve, reject) => {
             void sendChunkViaBackground(
               base64,
-              { chunkIndex: i, chunkCount: chunks.length, pageOffset: chunk.pageOffset, ...(parentJobId ? { parentJobId } : {}) },
+              { chunkIndex: i, chunkCount: totalChunks, pageOffset: chunk.pageOffset, ...(parentJobId ? { parentJobId } : {}) },
               resolve, (msg) => reject(new Error(msg)), () => reject(new Error("__abort__")), () => reject(new Error("__network__")),
               (pct) => setUploadBytePct(pct),
               (loaded, total) => {
@@ -888,7 +908,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       if (lastErr !== null) {
         const msg = lastErr.message;
         if (msg === "__abort__") {
-          aborted = true;
           // Manual cancel — full reset.
           setLoading(false);
           setChunkLabel(null);
@@ -916,7 +935,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         resetUploadProgress();
         setFailedChunkInfo({
           chunkIndex: i,
-          totalChunks: chunks.length,
+          totalChunks,
           parentJobId: i === 0 ? null : parentJobId,
         });
         setError(msg === "__network__" ? "Network error — check your connection and try again." : msg);
@@ -928,7 +947,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       setChunksCompleted(i + 1);
     }
 
-    if (aborted || !parentJobId) return;
+    if (!parentJobId) return;
 
     // All chunks uploaded — start polling parent job
     setChunkLabel(null);
@@ -949,36 +968,16 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   // ── Chunked upload flow ────────────────────────────────────────────────────
   const handleChunkedUpload = async (bytes: Uint8Array): Promise<void> => {
-    let chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>;
-    try {
-      chunks = await splitPdfIntoChunks(bytes, PAGES_PER_CHUNK);
-    } catch (err) {
-      setLoading(false);
-      setChunkLabel(null);
-      setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
-      return;
-    }
-
-    // Single-element result: delegate to the regular single-upload path.
-    // keep-awake for that path is handled by the useEffect on `loading`.
-    if (chunks.length === 1) {
-      const base64 = bytesToBase64(chunks[0]?.bytes ?? new Uint8Array());
-      handleSingleUpload(base64, 0);
-      return;
-    }
-
     // Keep-awake is managed by the useEffect watching `loading` state,
     // which covers all upload paths uniformly.
-    // Persist the chunks so server-side processing failures can be retried
-    // without the admin re-picking the file (pdfBytes is cleared after upload).
-    chunksRef.current = chunks;
+    // Retain only the original bytes; generate and release each chunk in turn.
     setHasStoredChunks(true);
-
-    setChunksTotal(chunks.length);
+    const totalChunks = await countPdfChunks(bytes, PAGES_PER_CHUNK);
+    setChunksTotal(totalChunks);
     setChunksCompleted(0);
 
     try {
-      await uploadChunksFromIndex(chunks, 0, null);
+      await uploadChunksFromIndex(bytes, 0, null);
     } catch {
       setLoading(false);
       setChunkLabel(null);
@@ -1005,22 +1004,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       return;
     }
 
-    // Reuse already-split chunks from the initial upload rather than
-    // re-splitting the raw bytes (which discards the cached work).
-    let chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>;
-    try {
-      chunks = await getOrSplitChunks(chunksRef.current, pdfBytes, PAGES_PER_CHUNK);
-    } catch (err) {
-      setLoading(false);
-      setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
-      return;
-    }
-
-    setChunksTotal(chunks.length);
+    setChunksTotal(failedChunkInfo.totalChunks);
     setChunksCompleted(chunkIndex);
 
     try {
-      await uploadChunksFromIndex(chunks, chunkIndex, parentJobId);
+      await uploadChunksFromIndex(pdfBytes, chunkIndex, parentJobId);
     } catch {
       setLoading(false);
       setChunkLabel(null);
@@ -1030,15 +1018,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   };
 
   // ── Retry a specific chunk that failed during server-side AI processing ────
-  // Called from the polling-detected failure UI. pdfBytes may already be null,
-  // so this uses chunksRef (persisted when the chunked upload started).
+  // Called from polling-detected failure UI. Rebuild only the failed chunk.
   const handleRetryServerChunk = async (chunkIndex: number): Promise<void> => {
-    const chunks = chunksRef.current;
     const parentJobId = jobStatus?.jobId ?? null;
-    if (!chunks || !adminToken || !parentJobId) return;
-
-    const chunk = chunks[chunkIndex];
-    if (!chunk) return;
+    if (!pdfBytes || !adminToken || !parentJobId) return;
 
     // Enforce the retry cap — increment first, then check.
     const prevCount = chunkRetryCountsRef.current.get(chunkIndex) ?? 0;
@@ -1048,7 +1031,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
     setError(null);
     setLoading(true);
-    setChunkLabel(`Uploading part ${chunkIndex + 1} of ${chunks.length}…`);
+    setChunkLabel(`Uploading part ${chunkIndex + 1}…`);
 
     // If this chunk was killed by a Poe outage, upgrade all subsequent retries
     // to use the OpenAI fallback.
@@ -1057,11 +1040,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     }
 
     try {
+      const { chunk, totalChunks } = await createPdfChunk(pdfBytes, chunkIndex, PAGES_PER_CHUNK);
       const base64 = bytesToBase64(chunk.bytes);
       await new Promise<void>((resolve, reject) => {
         void sendChunkViaBackground(
           base64,
-          { chunkIndex, chunkCount: chunks.length, pageOffset: chunk.pageOffset, parentJobId },
+          { chunkIndex, chunkCount: totalChunks, pageOffset: chunk.pageOffset, parentJobId },
           () => resolve(),
           (msg) => reject(new Error(msg)),
           () => reject(new Error("__abort__")),
@@ -1167,6 +1151,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const durableStatus = async (sessionId: string): Promise<{
     processingJobId: string | null;
+    processingReady?: boolean;
     status: string;
     receivedParts: Array<{ partIndex: number }>;
   } | null> => {
@@ -1182,6 +1167,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     if (!response.ok) return null;
     return await response.json() as {
       processingJobId: string | null;
+      processingReady?: boolean;
       status: string;
       receivedParts: Array<{ partIndex: number }>;
     };
@@ -1371,7 +1357,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       await AsyncStorage.setItem(ACTIVE_UPLOAD_KEY, JSON.stringify(session));
     }
     const currentStatus = await durableStatus(session.sessionId);
-    if (currentStatus?.status === "completed" && currentStatus.processingJobId) {
+    if (currentStatus?.status === "completed" && currentStatus.processingJobId && currentStatus.processingReady !== false) {
       const jobId = currentStatus.processingJobId;
       await AsyncStorage.setItem(ACTIVE_JOB_KEY, jobId);
       setLoading(false);
@@ -1387,7 +1373,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     const received = new Set((currentStatus?.receivedParts ?? []).map(part => part.partIndex));
     setChunksTotal(session.partCount);
     setChunksCompleted(received.size);
-    for (let index = 0; index < session.partCount; index++) {
+    for (let index = 0; index < session.partCount && currentStatus?.status !== "completed"; index++) {
       if (received.has(index)) continue;
       if (!isMountedRef.current) return;
       const start = index * session.partSize;
@@ -1436,7 +1422,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     if (attempt === 0) {
       void AsyncStorage.removeItem(ACTIVE_JOB_KEY).catch(() => {});
       setJobStatus(null);
-      chunksRef.current = null;
       setHasStoredChunks(false);
       chunkRetryCountsRef.current = new Map();
       poeExhaustedAlertShownRef.current = false;
@@ -1497,7 +1482,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setShowRetryBtn(true);
   };
 
-  const isDone = jobStatus?.status === "done";
+  const isDone = jobStatus?.status === "done" || jobStatus?.status === "done_with_errors";
+  const isPartialDone = jobStatus?.status === "done_with_errors";
   const isFailed = jobStatus?.status === "failed";
   const isCancelled = jobStatus?.status === "cancelled";
   const isRunning = jobStatus?.status === "pending" || jobStatus?.status === "processing";
@@ -1678,9 +1664,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       {jobStatus && isRunning ? (
         <View style={s.progressBlock}>
           <View style={s.progressRow}>
-            <ActivityIndicator size="small" color={colors.primary} />
+            {!statusPollError ? <ActivityIndicator size="small" color={colors.primary} /> : null}
             <Text style={[s.progressLabel, { color: colors.foreground, flex: 1 }]}>
-              {jobStatus.status === "pending" ? "Starting…" : "Processing pages…"}
+              {statusPollError ? "Status check paused" : jobStatus.status === "pending" ? "Starting…" : "Processing pages…"}
             </Text>
             <Pressable
               onPress={handleCancelJob}
@@ -1692,6 +1678,20 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
               </Text>
             </Pressable>
           </View>
+          {statusPollError ? (
+            <View style={s.errorRow}>
+              <Text style={[s.error, { color: colors.destructive, flex: 1 }]}>
+                Could not check catalog job status. The job may still be running; retry the status check.
+              </Text>
+              <Pressable
+                testID="retry-catalog-status"
+                onPress={() => startPolling(jobStatus.jobId)}
+                style={[s.retryBtn, { borderColor: colors.destructive }]}
+              >
+                <Text style={[s.retryBtnText, { color: colors.destructive }]}>Retry status</Text>
+              </Pressable>
+            </View>
+          ) : null}
           {progressPct !== null ? (
             <>
               <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
@@ -1707,10 +1707,15 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
       {/* Done */}
       {isDone && jobStatus ? (
-        <View style={[s.doneCard, { backgroundColor: colors.success + "18" }]}>
-          <Text style={[s.doneText, { color: colors.success }]}>
-            Done — {jobStatus.matchedParts} part{jobStatus.matchedParts !== 1 ? "s" : ""} updated across {jobStatus.processedPages} pages{jobStatus.imagesMatched > 0 ? `, ${jobStatus.imagesMatched} with images` : ""}
+        <View style={[s.doneCard, { backgroundColor: (isPartialDone ? colors.warning : colors.success) + "18" }]}>
+          <Text style={[s.doneText, { color: isPartialDone ? colors.warning : colors.success }]}>
+            {isPartialDone ? "Processing finished with some errors" : "Done"} — {jobStatus.matchedParts} part{jobStatus.matchedParts !== 1 ? "s" : ""} updated across {jobStatus.processedPages}{jobStatus.totalPages != null ? ` of ${jobStatus.totalPages}` : ""} pages{jobStatus.imagesMatched > 0 ? `, ${jobStatus.imagesMatched} with images` : ""}
           </Text>
+          {isPartialDone ? (
+            <Text style={[s.unmatchedNote, { color: colors.warning }]}>
+              {jobStatus.errorMessage ?? "Some catalog images could not be saved. Successful inventory updates are available to review."}
+            </Text>
+          ) : null}
           {jobStatus.matchedParts === 0 &&
           (!jobStatus.unmatchedParts || jobStatus.unmatchedParts.length === 0) &&
           jobStatus.processedPages > 0 ? (
@@ -1762,13 +1767,19 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           <Text style={[s.doneText, { color: colors.destructive }]}>
             {jobStatus.errorMessage === "poe_chain_exhausted"
               ? "All AI bots are currently unavailable"
+              : jobStatus.errorMessage === "catalog_pdf_too_many_pages"
+                ? "Catalog exceeds the 50-page processing limit. Split it into smaller PDFs."
+                : jobStatus.errorMessage === "catalog_pdf_too_large"
+                  ? "Catalog exceeds the 64 MB processing limit. Choose a smaller PDF."
+                  : jobStatus.errorMessage === "catalog_pdf_resource_limit"
+                    ? "Catalog images exceed the processing limit. Try a smaller PDF."
               : `Job failed: ${jobStatus.errorMessage ?? "Unknown error"}`}
           </Text>
           {hasStoredChunks && jobStatus.failedChunks && jobStatus.failedChunks.length > 0 ? (
             jobStatus.failedChunks.map((fc) => {
               const retryCount = chunkRetryCountsRef.current.get(fc.chunkIndex) ?? 0;
               const exhausted = retryCount >= MAX_SERVER_CHUNK_RETRIES;
-              const totalChunks = chunksRef.current?.length;
+              const totalChunks = chunksTotal || undefined;
               return (
                 <View key={fc.chunkJobId} style={{ gap: 6 }}>
                   <Pressable
@@ -1794,7 +1805,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
             })
           ) : (
             <Pressable
-              onPress={() => { setJobStatus(null); setFilename(null); chunksRef.current = null; setHasStoredChunks(false); setVendor(""); setAiRawLog([]); seenAiPagesRef.current.clear(); }}
+              onPress={() => { setJobStatus(null); setFilename(null); setPdfBytes(null); setHasStoredChunks(false); setVendor(""); setAiRawLog([]); seenAiPagesRef.current.clear(); }}
               style={[s.reviewBtn, { borderColor: colors.destructive }]}
             >
               <Text style={[s.reviewBtnText, { color: colors.destructive }]}>Try again</Text>

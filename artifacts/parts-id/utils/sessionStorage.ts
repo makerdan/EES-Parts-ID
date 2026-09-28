@@ -6,21 +6,27 @@
 
 export const SEARCH_CACHE_KEYS = ["parts_id_fuse_cache_v2", "parts_id_query_cache_v1"];
 
+export const LEGACY_USER_HISTORY_KEYS = [
+  "@partsid/query_history_v1",
+  "@partsid/viewed_history_v1",
+  "@partsid/barcode_scan_history",
+];
+
 export const SESSION_KEY       = "parts_id_session";
 
+export async function discardLegacyUserHistoryStorage(
+  multiRemoveFn: (keys: Array<string>) => Promise<void>,
+): Promise<void> {
+  await multiRemoveFn(LEGACY_USER_HISTORY_KEYS);
+}
+
 /**
- * Delete all session and search-cache storage entries that belong to a logged-
- * in session.  Extracted here so the logout flow can be unit-tested without a
- * React component tree.
- *
- * @param secureDeleteFn  Removes a key from the secure key-value store
- *                        (expo-secure-store in production).
- * @param multiRemoveFn   Removes multiple keys from AsyncStorage.
+ * Delete only the private session key. Search results and inventory caches
+ * contain shared catalog data and remain available when another account signs
+ * in on the same device.
  */
 export async function clearSessionStorage(
   secureDeleteFn: (key: string) => Promise<void>,
-  multiRemoveFn:  (keys: Array<string>) => Promise<void>,
 ): Promise<void> {
   await secureDeleteFn(SESSION_KEY);
-  await multiRemoveFn(SEARCH_CACHE_KEYS);
 }

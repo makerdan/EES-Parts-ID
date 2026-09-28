@@ -26,10 +26,11 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 
 import app from "../src/app";
+import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import { cleanupFixtures, seedFixtures, workerQualifiedUserId } from "./helpers/testDb";
 import { setTestEnv } from "./helpers/testEnv";
 
-const TEST_ADMIN_USER_ID = workerQualifiedUserId("jest-admin-user");
+const TEST_ADMIN_USER_ID = ADMIN_TEST_USER_ID;
 let restoreTestEnv: (() => void) | undefined;
 beforeAll(async () => {
   restoreTestEnv = setTestEnv({
