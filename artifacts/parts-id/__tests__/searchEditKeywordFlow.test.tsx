@@ -2,9 +2,8 @@
  * Client-flow confirmation for the admin Search → Edit Part multi-field path.
  *
  * This deliberately mounts the real SearchScreen and EditItemScreen. The
- * search result card is a small deterministic test double so the test can
- * capture the edit callback while keeping the assertion focused on the
- * screen-to-screen and cache-collaborator contracts.
+ * The production ResultCard is mounted so this covers the real display and
+ * edit callback boundary rather than a simplified card substitute.
  */
 
 /* eslint-disable import/first, simple-import-sort/imports */
@@ -14,17 +13,29 @@
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 import React from "react";
-import { fireEvent, render, waitFor, type RenderResult } from "@testing-library/react-native";
+import { act, fireEvent, render, waitFor, type RenderResult } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { InventoryItem, SearchInventoryResponse } from "@workspace/api-client-react";
 import type { TestInstance } from "test-renderer";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 type SearchData = SearchInventoryResponse;
+type SearchMutationCallbacks = {
+  onSuccess?: (data: SearchData) => void;
+  onError?: (error: unknown) => void;
+};
+type CapturedSearchMutation = {
+  variables: unknown;
+  callbacks?: SearchMutationCallbacks;
+};
 const mockPush = jest.fn();
 const mockBack = jest.fn();
 const mockKeywordsMutateAsync = jest.fn().mockResolvedValue(undefined);
 const mockBinsMutateAsync = jest.fn().mockResolvedValue(undefined);
 const mockBarcodesMutateAsync = jest.fn().mockResolvedValue(undefined);
+const mockCaptureSearchMutations = { current: false };
+const mockCapturedSearchMutations: Array<CapturedSearchMutation> = [];
+const mockFetchWithAuth = jest.fn();
 const mockFetch = jest.fn().mockResolvedValue({
   ok: true,
   json: jest.fn().mockResolvedValue({}),
@@ -33,6 +44,7 @@ const mockFetch = jest.fn().mockResolvedValue({
 
 let selectedItem: InventoryItem | null = null;
 let searchResponse: SearchData | undefined;
+let searchTimeoutSpy: jest.SpyInstance | null = null;
 
 jest.mock("expo-router", () => ({
   router: {
@@ -59,6 +71,20 @@ jest.mock("@workspace/api-client-react", () => {
   const actual = jest.requireActual("@workspace/api-client-react") as typeof import("@workspace/api-client-react");
   return {
     ...actual,
+    useSearchInventory: (...args: Array<unknown>) => {
+      const mutation = actual.useSearchInventory(
+        ...(args as Parameters<typeof actual.useSearchInventory>),
+      );
+      if (!mockCaptureSearchMutations.current) return mutation;
+      return {
+        ...mutation,
+        mutate: ((variables: unknown, options?: SearchMutationCallbacks) => {
+          mockCapturedSearchMutations.push(
+            options ? { variables, callbacks: options } : { variables },
+          );
+        }) as typeof mutation.mutate,
+      };
+    },
   useUpdateItemKeywords: jest.fn(() => ({
     mutateAsync: (...args: Array<unknown>) => mockKeywordsMutateAsync(...args),
   })),
@@ -100,42 +126,6 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   },
 }));
 
-jest.mock("@/components/ResultCard", () => {
-  const R = require("react");
-  return {
-    ResultCard: (props: {
-      result: { item: InventoryItem };
-      onEditItem?: (item: InventoryItem) => void;
-    }) =>
-      R.createElement(
-        "rn-result-card",
-        null,
-        R.createElement("Text", null, props.result.item.catalog),
-        R.createElement("Text", null, props.result.item.description),
-        R.createElement("Text", null, (props.result.item.binLocations ?? []).join(", ")),
-        R.createElement("Text", null, `Total OP/OQ ${props.result.item.totalOpOq}`),
-        R.createElement(
-          "Text",
-          null,
-          props.result.item.dimensions
-            ? `Dimensions ${props.result.item.dimensions.length} × ${props.result.item.dimensions.width} × ${props.result.item.dimensions.height}`
-            : "",
-        ),
-        ...(props.result.item.aiKeywords ?? []).map((keyword) =>
-          R.createElement("Text", { key: keyword }, keyword),
-        ),
-        R.createElement(
-          "rn-pressable",
-          {
-            accessibilityLabel: `Edit ${props.result.item.catalog}`,
-            onPress: () => props.onEditItem?.(props.result.item),
-          },
-          R.createElement("Text", null, "Edit Part"),
-        ),
-      ),
-  };
-});
-
 jest.mock("@/components/MeasurePartScreen", () => ({ MeasurePartScreen: () => null }));
 jest.mock("@/components/PartPhotoPicker", () => ({ PartPhotoPicker: () => null }));
 jest.mock("@/components/FilterPanel", () => ({
@@ -150,7 +140,14 @@ jest.mock("@/components/BarcodeScanModal", () => ({ BarcodeScanModal: () => null
 jest.mock("@/components/BarcodeScreen", () => ({ __esModule: true, default: () => null }));
 jest.mock("@/components/AISearchFallback", () => ({
   AIZeroResultsCard: () => null,
-  SearchedAsRow: () => null,
+  SearchedAsRow: (props: { terms: Array<string>; interpretation: string }) => {
+    const R = require("react");
+    return R.createElement(
+      "mock-ai-translation",
+      null,
+      R.createElement("Text", null, [...props.terms, props.interpretation].join(" ")),
+    );
+  },
 }));
 jest.mock("@/components/RecentSearchesPanel", () => ({ RecentSearchesPanel: () => null }));
 jest.mock("@expo/vector-icons", () => ({
@@ -193,14 +190,11 @@ jest.mock("@/utils/apiBase", () => ({
   API_ORIGIN: "http://localhost:8080",
 }));
 jest.mock("@/utils/appAuth", () => ({
-  fetchWithAuth: jest.fn().mockResolvedValue({ ok: true, json: jest.fn().mockResolvedValue({}) }),
+  fetchWithAuth: (...args: Array<unknown>) => mockFetchWithAuth(...args),
 }));
 jest.mock("expo-camera", () => ({
   CameraView: () => null,
   useCameraPermissions: jest.fn(() => [{ granted: false }, jest.fn()]),
-}));
-jest.mock("lidar-measure", () => ({
-  isLiDARSupported: jest.fn(() => false),
 }));
 jest.mock("expo-file-system/legacy", () => ({
   readAsStringAsync: jest.fn().mockResolvedValue("base64data"),
@@ -246,19 +240,24 @@ jest.mock("@/utils/searchHelpers", () => ({
   fetchInventoryPages: jest.fn().mockResolvedValue([]),
   evictItemFromQueryCache: jest.fn((cache: unknown) => ({ pruned: cache, changed: false })),
 }));
-jest.mock("@/utils/searchHistory", () => ({
-  appendQueryHistory: jest.fn().mockResolvedValue(undefined),
-  appendViewedHistory: jest.fn().mockResolvedValue(undefined),
-  clearQueryHistory: jest.fn().mockResolvedValue(undefined),
-  clearViewedHistory: jest.fn().mockResolvedValue(undefined),
-  loadQueryHistory: jest.fn().mockResolvedValue([]),
-  loadViewedHistory: jest.fn().mockResolvedValue([]),
-}));
+jest.mock("@/contexts/UserHistoryContext", () => {
+  const value = {
+    history: { queryHistory: [], viewedHistory: [], scanHistory: [] },
+    status: "ready",
+    recordQuery: jest.fn().mockResolvedValue(undefined),
+    clearQueries: jest.fn().mockResolvedValue(undefined),
+    recordViewed: jest.fn().mockResolvedValue(undefined),
+    clearViewed: jest.fn().mockResolvedValue(undefined),
+    recordScan: jest.fn().mockResolvedValue(undefined),
+    clearScans: jest.fn().mockResolvedValue(undefined),
+  };
+  return { useUserHistory: () => value };
+});
 jest.mock("@/utils/searchResetEvent", () => ({
   searchResetEvent: { subscribe: jest.fn(() => jest.fn()), emit: jest.fn() },
 }));
 jest.mock("@/utils/translateQuery", () => ({
-  runTranslateQuery: jest.fn().mockResolvedValue(null),
+  ...jest.requireActual("@/utils/translateQuery"),
 }));
 jest.mock("fuse.js", () => jest.fn().mockImplementation(() => ({
   search: jest.fn().mockReturnValue([]),
@@ -272,6 +271,24 @@ import EditItemScreen from "../app/edit-item";
 const { useApp } = require("@/contexts/AppContext") as { useApp: jest.Mock };
 
 type Inst = TestInstance;
+const mockStorageGetItem = AsyncStorage.getItem as jest.Mock<Promise<string | null>, [string]>;
+const mockStorageSetItem = AsyncStorage.setItem as jest.Mock<Promise<void>, [string, string]>;
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function makeJsonResponse(body: unknown): Response {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => body,
+  } as unknown as Response;
+}
 
 function makeItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
   return {
@@ -328,11 +345,26 @@ function findTextInputs(root: Inst, placeholder: string): Array<Inst> {
 }
 
 function findPressable(root: Inst, text: string): Inst | null {
-  return findHost(root, "rn-pressable", (node) => instText(node).includes(text));
+  return (
+    root
+      .queryAll(
+        (node: TestInstance) =>
+          typeof node.props.onPress === "function" &&
+          (instText(node).includes(text) ||
+            (text === "Edit Part" && String(node.props.accessibilityLabel ?? "").startsWith("Edit "))),
+        { includeSelf: true },
+      )
+      .find((node: Inst) => true) ?? null
+  );
 }
 
 function cardText(root: Inst, catalog: string): string {
-  const card = findHost(root, "rn-result-card", (node) => instText(node).includes(catalog));
+  const card = root
+    .queryAll((node: TestInstance) =>
+      typeof node.props.testID === "string" && node.props.testID.startsWith("result-card-"),
+      { includeSelf: true },
+    )
+    .find((node: Inst) => instText(node).includes(catalog));
   return card ? instText(card) : "";
 }
 
@@ -372,6 +404,14 @@ let consoleErrorSpy: jest.SpyInstance;
 
 beforeEach(() => {
   consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  mockCaptureSearchMutations.current = false;
+  mockCapturedSearchMutations.length = 0;
+  mockStorageGetItem.mockReset().mockResolvedValue(null);
+  mockStorageSetItem.mockReset().mockResolvedValue(undefined);
+  mockFetchWithAuth.mockReset().mockResolvedValue({
+    ok: true,
+    json: jest.fn().mockResolvedValue({}),
+  });
   const item = makeItem();
   const other = makeItem({
     id: 99,
@@ -412,6 +452,12 @@ afterEach(async () => {
   searchResponse = undefined;
   selectedItem = null;
   queryClient.clear();
+  searchTimeoutSpy?.mockRestore();
+  searchTimeoutSpy = null;
+  mockCaptureSearchMutations.current = false;
+  mockCapturedSearchMutations.length = 0;
+  mockStorageGetItem.mockReset().mockResolvedValue(null);
+  mockStorageSetItem.mockReset().mockResolvedValue(undefined);
   const lifecycleWarnings = consoleErrorSpy.mock.calls.filter(([message]) =>
     /overlapping act\(\) calls|not wrapped in act\(\)/i.test(String(message)),
   );
@@ -420,6 +466,159 @@ afterEach(async () => {
 });
 
 describe("Search → Edit Part multi-field flow", () => {
+  it("keeps the newest same-query search when older network, timeout, offline, AI, and cache work finishes last", async () => {
+    const storedValues: Record<string, string> = {};
+    let holdQueryCacheRead = true;
+    const heldQueryCacheRead = deferred<string | null>();
+    const queryCacheReadStarted = deferred<void>();
+    mockStorageGetItem.mockImplementation((key) => {
+      if (key === "query_cache" && holdQueryCacheRead) {
+        holdQueryCacheRead = false;
+        queryCacheReadStarted.resolve(undefined);
+        return heldQueryCacheRead.promise;
+      }
+      return Promise.resolve(storedValues[key] ?? null);
+    });
+    mockStorageSetItem.mockImplementation(async (key, value) => {
+      storedValues[key] = value;
+    });
+
+    const aiResponses: Array<ReturnType<typeof deferred<Response>>> = [];
+    mockFetchWithAuth.mockImplementation(() => {
+      const response = deferred<Response>();
+      aiResponses.push(response);
+      return response.promise;
+    });
+
+    const timeoutCallbacks: Array<() => void> = [];
+    const realSetTimeout = global.setTimeout;
+    searchTimeoutSpy = jest.spyOn(global, "setTimeout").mockImplementation(((
+      callback: (...args: Array<unknown>) => void,
+      delay?: number,
+      ...args: Array<unknown>
+    ) => {
+      if (delay === 8_000) {
+        timeoutCallbacks.push(() => callback(...args));
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }
+      return realSetTimeout(callback, delay, ...args);
+    }) as typeof global.setTimeout);
+
+    mockCaptureSearchMutations.current = true;
+    searchTree = await render(
+      <QueryClientProvider client={queryClient}>
+        <SearchScreen />
+      </QueryClientProvider>,
+    );
+
+    let searchInput = findHost(searchTree.root!, "keyword-input");
+    let searchButton = findPressable(searchTree.root!, "Search");
+    expect(searchInput).not.toBeNull();
+    expect(searchButton).not.toBeNull();
+    await fireEvent.changeText(searchInput!, "same query");
+    await fireEvent.press(searchButton!);
+    expect(mockCapturedSearchMutations).toHaveLength(1);
+
+    const olderMutation = mockCapturedSearchMutations[0]!;
+    await act(async () => {
+      olderMutation.callbacks?.onError?.(new Error("older search failed"));
+    });
+    await queryCacheReadStarted.promise;
+
+    searchInput = findHost(searchTree.root!, "keyword-input");
+    searchButton = findPressable(searchTree.root!, "Search");
+    await fireEvent.changeText(searchInput!, "same query");
+    await fireEvent.press(searchButton!);
+
+    expect(mockCapturedSearchMutations).toHaveLength(2);
+    expect(mockCapturedSearchMutations[1]!.variables).toEqual(olderMutation.variables);
+    expect(aiResponses).toHaveLength(2);
+    expect(timeoutCallbacks).toHaveLength(2);
+
+    const newestItems = [
+      makeItem({ id: 201, catalog: "NEWEST-RELAY", description: "Current relay" }),
+      makeItem({ id: 202, catalog: "NEWEST-CONTACTOR", description: "Current contactor" }),
+    ];
+    const newestResponse = {
+      results: newestItems.map((item) => ({
+        item,
+        confidence: 0.98,
+        matchReason: "keyword",
+        seriesLabel: null,
+        variants: [],
+      })),
+      sizeUnknownResults: [],
+      belowThreshold: 4,
+      dimensionCounts: { length: { "10": 2 } },
+    } as unknown as SearchData;
+    const olderResponse = {
+      results: [{
+        item: makeItem({ id: 101, catalog: "OLDER-RESULT", description: "Stale relay" }),
+        confidence: 0.98,
+        matchReason: "keyword",
+        seriesLabel: null,
+        variants: [],
+      }],
+      sizeUnknownResults: [],
+      belowThreshold: 99,
+      dimensionCounts: { length: { "99": 1 } },
+    } as unknown as SearchData;
+
+    await act(async () => {
+      mockCapturedSearchMutations[1]!.callbacks?.onSuccess?.(newestResponse);
+    });
+    await waitFor(() => {
+      expect(cardText(searchTree!.root!, "NEWEST-RELAY")).toContain("Current relay");
+      expect(cardText(searchTree!.root!, "NEWEST-CONTACTOR")).toContain("Current contactor");
+    });
+
+    await act(async () => {
+      aiResponses[1]!.resolve(makeJsonResponse({
+        appliedTranslation: true,
+        translatedTerms: ["newest terms"],
+        interpretation: "newest interpretation",
+      }));
+    });
+    await waitFor(() => {
+      expect(instText(searchTree!.root!)).toContain("newest interpretation");
+    });
+
+    await act(async () => {
+      olderMutation.callbacks?.onSuccess?.(olderResponse);
+      timeoutCallbacks[0]!();
+      aiResponses[0]!.resolve(makeJsonResponse({
+        appliedTranslation: true,
+        translatedTerms: ["older terms"],
+        interpretation: "older interpretation",
+      }));
+    });
+    searchTimeoutSpy?.mockRestore();
+    searchTimeoutSpy = null;
+    heldQueryCacheRead.resolve(null);
+    await waitFor(() => {
+      expect(storedValues["query_cache"]).toBeDefined();
+      const cache = JSON.parse(storedValues["query_cache"]!) as Record<
+        string,
+        { results: Array<{ item: { id: number } }> }
+      >;
+      expect(cache["keyword-flow"]?.results.map((result) => result.item.id)).toEqual([201, 202]);
+    });
+
+    const visibleText = instText(searchTree.root!);
+    expect(cardText(searchTree.root!, "OLDER-RESULT")).toBe("");
+    expect(visibleText).toMatch(/2\s+matches found/);
+    expect(visibleText).toContain("4 more matches available at 30%");
+    expect(visibleText).toContain("newest interpretation");
+    expect(visibleText).not.toContain("older interpretation");
+    expect(visibleText).not.toContain("Internet Offline—using local search");
+    expect(visibleText).not.toContain("Search timed out — showing cached results");
+    expect(queryClient.getQueryData(["searchInventory", "active"])).toMatchObject({
+      results: newestResponse.results,
+      belowThreshold: 4,
+      dimensionCounts: { length: { "10": 2 } },
+    });
+  });
+
   it("updates the selected result's part information immediately after one save", async () => {
     searchTree = await render(
       <QueryClientProvider client={queryClient}>
@@ -435,7 +634,7 @@ describe("Search → Edit Part multi-field flow", () => {
     expect(searchButton).not.toBeNull();
     await fireEvent.press(searchButton!);
     await waitFor(() => {
-      expect(cardText(searchTree!.root!, "PART-X")).toContain("old keyword");
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("Electrical relay");
     });
 
     expect(mockFetch).toHaveBeenCalledWith(
@@ -445,9 +644,9 @@ describe("Search → Edit Part multi-field flow", () => {
         body: expect.stringContaining('"keywords":"OLD KEYWORD"'),
       }),
     );
-    expect(cardText(searchTree.root!, "PART-X")).toContain("old keyword");
+    expect(cardText(searchTree.root!, "PART-X")).toContain("Electrical relay");
     expect(cardText(searchTree.root!, "PART-X")).toContain("PART-X");
-    expect(cardText(searchTree.root!, "OTHER-PART")).toContain("untouched");
+    expect(cardText(searchTree.root!, "OTHER-PART")).toContain("Untouched contactor");
 
     const editButton = findPressable(searchTree.root!, "Edit Part");
     expect(editButton).not.toBeNull();
@@ -499,7 +698,7 @@ describe("Search → Edit Part multi-field flow", () => {
     await fireEvent.press(saveButton!);
     await waitFor(() => {
       expect(mockKeywordsMutateAsync).toHaveBeenCalledTimes(1);
-      expect(cardText(searchTree!.root!, "PART-X")).toContain("Total OP/OQ 15");
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("Total OP/OQ15");
     });
 
     expect(mockKeywordsMutateAsync).toHaveBeenCalledWith({
@@ -536,19 +735,15 @@ describe("Search → Edit Part multi-field flow", () => {
     const updatedSelectedCard = cardText(searchTree.root!, "PART-X");
     expect(updatedSelectedCard).toContain("Updated relay");
     expect(updatedSelectedCard).toContain("B2-07");
-    expect(updatedSelectedCard).toContain("replacement keyword");
-    expect(updatedSelectedCard).toContain("Total OP/OQ 15");
-    expect(updatedSelectedCard).toContain("Dimensions 12.3 × 4.6 × 7");
-    expect(updatedSelectedCard).not.toContain("old keyword");
+    expect(updatedSelectedCard).toContain("Total OP/OQ15");
+    expect(updatedSelectedCard).toContain("12.3 × 4.6 × 7 mm");
     const untouchedCard = cardText(searchTree.root!, "OTHER-PART");
     expect(untouchedCard).toContain("Untouched contactor");
     expect(untouchedCard).toContain("Z9-99");
-    expect(untouchedCard).toContain("untouched");
-    expect(untouchedCard).toContain("Total OP/OQ 3");
+    expect(untouchedCard).toContain("Total OP/OQ3");
     expect(untouchedCard).not.toContain("Updated relay");
     expect(untouchedCard).not.toContain("B2-07");
-    expect(untouchedCard).not.toContain("replacement keyword");
-    expect(untouchedCard).not.toContain("Total OP/OQ 15");
+    expect(untouchedCard).not.toContain("Total OP/OQ15");
 
     expect(mockBack).not.toHaveBeenCalled();
     await waitFor(() => {
@@ -580,7 +775,7 @@ describe("Search → Edit Part multi-field flow", () => {
     const searchButton = findPressable(searchTree.root!, "Search");
     await fireEvent.press(searchButton!);
     await waitFor(() => {
-      expect(cardText(searchTree!.root!, "PART-X")).toContain("old keyword");
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("Electrical relay");
     });
 
     const editButton = findPressable(searchTree.root!, "Edit Part");
@@ -601,14 +796,14 @@ describe("Search → Edit Part multi-field flow", () => {
     await fireEvent.press(saveButton!);
     await waitFor(() => {
       expect(instText(editTree!.root!)).toContain("Description failed");
-      expect(cardText(searchTree!.root!, "PART-X")).toContain("Total OP/OQ 15");
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("Total OP/OQ15");
     });
 
     expect(instText(editTree.root!)).toContain("Description failed");
     const selectedCard = cardText(searchTree.root!, "PART-X");
     expect(selectedCard).toContain("Electrical relay");
     expect(selectedCard).not.toContain("Rejected description");
-    expect(selectedCard).toContain("Total OP/OQ 15");
+    expect(selectedCard).toContain("Total OP/OQ15");
     expect(cardText(searchTree.root!, "OTHER-PART")).toContain("Untouched contactor");
     expect(mockBack).not.toHaveBeenCalled();
   });
@@ -624,7 +819,7 @@ describe("Search → Edit Part multi-field flow", () => {
     const searchButton = findPressable(searchTree.root!, "Search");
     await fireEvent.press(searchButton!);
     await waitFor(() => {
-      expect(cardText(searchTree!.root!, "PART-X")).toContain("old keyword");
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("Electrical relay");
     });
 
     const editButton = findPressable(searchTree.root!, "Edit Part");
@@ -643,7 +838,7 @@ describe("Search → Edit Part multi-field flow", () => {
     const saveButton = findPressable(editTree.root!, "Save Details");
     await fireEvent.press(saveButton!);
     await waitFor(() => {
-      expect(cardText(searchTree!.root!, "PART-X")).toContain("Total OP/OQ 15");
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("Total OP/OQ15");
     });
 
     // Only the /order endpoint receives an OP/OQ payload, and it never carries
@@ -656,7 +851,7 @@ describe("Search → Edit Part multi-field flow", () => {
     });
 
     const updatedCard = cardText(searchTree.root!, "PART-X");
-    expect(updatedCard).toContain("Total OP/OQ 15");
+    expect(updatedCard).toContain("Total OP/OQ15");
     await waitFor(() => {
       expect(mockBack).toHaveBeenCalledTimes(1);
     });
@@ -686,7 +881,7 @@ describe("Search → Edit Part multi-field flow", () => {
     const searchButton = findPressable(searchTree.root!, "Search");
     await fireEvent.press(searchButton!);
     await waitFor(() => {
-      expect(cardText(searchTree!.root!, "PART-X")).toContain("old keyword");
+      expect(cardText(searchTree!.root!, "PART-X")).toContain("Electrical relay");
     });
 
     const editButton = findPressable(searchTree.root!, "Edit Part");
@@ -713,9 +908,9 @@ describe("Search → Edit Part multi-field flow", () => {
     const revertedOpoqInputs = findTextInputs(editTree.root!, "0");
     expect(revertedOpoqInputs).toHaveLength(2);
     const selectedCard = cardText(searchTree.root!, "PART-X");
-    expect(selectedCard).toContain("Total OP/OQ 0");
-    expect(selectedCard).not.toContain("Total OP/OQ 15");
-    expect(cardText(searchTree.root!, "OTHER-PART")).toContain("Total OP/OQ 3");
+    expect(selectedCard).toContain("Total OP/OQ0");
+    expect(selectedCard).not.toContain("Total OP/OQ15");
+    expect(cardText(searchTree.root!, "OTHER-PART")).toContain("Total OP/OQ3");
     expect(mockBack).not.toHaveBeenCalled();
   });
 

@@ -226,10 +226,66 @@ check_sibling_services() {
 }
 
 # ---------------------------------------------------------------------------
+# run_github_sync — invoke the protected synchronization helper without
+# suppressing its result. Routine post-merge recovery expects the helper's
+# policy refusal because direct synchronization is forbidden; verification
+# failures and unexpected helper failures must remain visible and stop the
+# flow. No branch here performs a write or bypasses the snapshot-PR boundary.
+# ---------------------------------------------------------------------------
+run_github_sync() {
+  local sync_script="${1:-$SCRIPT_DIR/sync-github.sh}"
+  local sync_output sync_exit=0
+
+  sync_output=$(bash "$sync_script" 2>&1) || sync_exit=$?
+  if [[ -n "$sync_output" ]]; then
+    printf '%s\n' "$sync_output" | sed 's/^/[post-merge][github-sync] /'
+  fi
+
+  case "$sync_exit" in
+    0)
+      echo "[post-merge] GitHub synchronization verification completed."
+      return 0
+      ;;
+    2)
+      echo "[post-merge] WARNING: GitHub synchronization refused by protected-branch policy; no synchronization evidence was produced. Use the protected snapshot PR flow."
+      return 0
+      ;;
+    3)
+      echo "[post-merge] ERROR: GitHub synchronization verification failed; no synchronization evidence was produced. Use the protected snapshot PR flow."
+      return 1
+      ;;
+    *)
+      echo "[post-merge] ERROR: GitHub sync helper failed with exit ${sync_exit}; no synchronization evidence was produced."
+      return 1
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Main — only runs when the script is executed directly, not sourced.
 # This guard allows test scripts to source and unit-test the functions above.
 # ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  # Post-merge setup runs before workflow reconciliation. A paused API has no
+  # live server to probe; do not turn an intentional validation pause into a
+  # setup failure or a destructive port sweep. Capture this before codegen can
+  # trigger a reload. A probe error takes the strict path rather than skipping
+  # verification of a potentially running API.
+  API_ACTIVE_AT_ENTRY=true
+  if [[ -z "${PORT:-}" ]]; then
+    if node "$SCRIPT_DIR/check-post-merge-api-active.mjs"; then
+      :
+    else
+      activity_exit=$?
+      if [[ "$activity_exit" -eq 1 ]]; then
+        API_ACTIVE_AT_ENTRY=false
+        echo "[post-merge] API was paused at entry; live checks will be deferred to workflow reconciliation."
+      else
+        echo "[post-merge] WARNING: API activity could not be determined; retaining strict live checks."
+      fi
+    fi
+  fi
+
   # Cleanup: never leave the background install running as an orphan.  On a
   # normal successful run the install has already been wait-ed on before this
   # fires (kill -0 fails, no-op).  On an early abort (exit 1 paths) or an
@@ -357,19 +413,32 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # fast container or too short on a slow one — poll the health endpoint and
   # proceed as soon as the server responds (up to a bounded max window).  This
   # prevents the first health-check pass from catching the server mid-reload.
-  wait_for_codegen_settle
+  if [[ "$API_ACTIVE_AT_ENTRY" == true ]]; then
+    wait_for_codegen_settle
+  fi
 
-  # The Failure Gate distribution is tracked output. Verify that it contains
-  # the same canonical skill and durable support files before syncing main.
-  node scripts/publish-failure-gate.mjs --check || {
-    echo "[post-merge] ERROR: Failure Gate package is stale. Run 'pnpm run publish:failure-gate' and commit artifacts/failure-gate-skill.zip."
+  # The Failure Gate distribution is tracked output. Refresh it when merged
+  # validation tooling changes, then commit only the generated archive so the
+  # next merge starts from a clean and self-consistent repository.
+  node scripts/publish-failure-gate.mjs --sync || {
+    echo "[post-merge] ERROR: Failure Gate package could not be refreshed."
     exit 1
   }
+  if [[ -n "$(git status --porcelain -- artifacts/failure-gate-skill.zip)" ]]; then
+    git add artifacts/failure-gate-skill.zip
+    git commit -m "chore: refresh Failure Gate package [post-merge]"
+    echo "[post-merge] Failure Gate package refreshed and committed."
+  fi
 
   # Enforce the protected snapshot-PR synchronization boundary. The helper is
   # intentionally a safe no-op; routine post-merge recovery must never publish
   # local Git history or push directly to protected GitHub main.
-  bash "$(dirname "$0")/sync-github.sh" || true
+  run_github_sync || exit 1
+
+  if [[ "$API_ACTIVE_AT_ENTRY" != true ]]; then
+    echo "[post-merge] Live API health, sibling service, and SVG viewBox checks deferred: API was paused at entry. Workflow reconciliation owns startup."
+    exit 0
+  fi
 
   # First health check pass.
   if check_api_health "initial"; then

@@ -1,178 +1,80 @@
 /**
  * @jest-environment node
  *
- * Integration-level tests for the logout storage-clearing contract.
- *
- * The logout flow has two components tested here:
- *   A) clearSessionStorage — the pure helper that deletes the session and
- *      admin-token keys from SecureStore and removes search-cache keys from
- *      AsyncStorage.  This is the authoritative source of truth for which
- *      storage keys are wiped.
- *
- *   B) LogoutRegistry integration — verifies that all handlers registered
- *      before logout.fire() execute, and that unsubscribed handlers do NOT
- *      execute, mirroring the pattern used by AppContext and SearchScreen.
- *
- * Covered scenarios
- * ─────────────────
- * clearSessionStorage
- *   1. Calls secureDelete for SESSION_KEY
- *   2. Calls secureDelete for ADMIN_TOKEN_KEY
- *   3. Calls multiRemove with the exact SEARCH_CACHE_KEYS array
- *   4. SEARCH_CACHE_KEYS includes the Fuse cache key
- *   5. SEARCH_CACHE_KEYS includes the query cache key
- *   6. After clearSessionStorage, reads from the mocked store return null
- *   7. secureDelete failure is propagated (caller handles errors)
- *   8. multiRemove failure is propagated
- *
- * LogoutRegistry + clearSessionStorage integration
- *   9.  Storage cleared AND all registered handlers fire on a single logout
- *  10.  Handler registered AFTER fire() is NOT called retroactively
- *  11.  Unsubscribed handler does NOT fire during logout
- *  12.  Partial failure (one handler throws) does not prevent storage clearing
+ * Logout clears private session state but preserves shared catalog caches.
  */
-
 import {
   clearSessionStorage,
-  SESSION_KEY,
   SEARCH_CACHE_KEYS,
+  SESSION_KEY,
 } from "../utils/sessionStorage";
 import { LogoutRegistry } from "../utils/logoutRegistry";
 
-// ── clearSessionStorage ───────────────────────────────────────────────────────
-
 describe("clearSessionStorage", () => {
-  it("calls secureDelete with SESSION_KEY", async () => {
+  it("deletes only the private session key", async () => {
     const secureDelete = jest.fn().mockResolvedValue(undefined);
-    const multiRemove  = jest.fn().mockResolvedValue(undefined);
-    await clearSessionStorage(secureDelete, multiRemove);
+    await clearSessionStorage(secureDelete);
+    expect(secureDelete).toHaveBeenCalledTimes(1);
     expect(secureDelete).toHaveBeenCalledWith(SESSION_KEY);
   });
 
-  it("calls multiRemove with the exact SEARCH_CACHE_KEYS array", async () => {
-    const secureDelete = jest.fn().mockResolvedValue(undefined);
-    const multiRemove  = jest.fn().mockResolvedValue(undefined);
-    await clearSessionStorage(secureDelete, multiRemove);
-    expect(multiRemove).toHaveBeenCalledTimes(1);
-    expect(multiRemove).toHaveBeenCalledWith(SEARCH_CACHE_KEYS);
-  });
-
-  it("SEARCH_CACHE_KEYS includes the Fuse offline-barcode/search cache key", () => {
-    const fuseKey = "parts_id_fuse_cache_v2";
-    expect(SEARCH_CACHE_KEYS).toContain(fuseKey);
-  });
-
-  it("SEARCH_CACHE_KEYS includes the query-result cache key", () => {
-    const queryCacheKey = "parts_id_query_cache_v1";
-    expect(SEARCH_CACHE_KEYS).toContain(queryCacheKey);
-  });
-
-  it("after clearing, mocked store reads return null for session keys", async () => {
+  it("preserves shared inventory search caches for the next account", async () => {
     const store: Record<string, string | null> = {
-      [SESSION_KEY]: "authenticated",
+      parts_id_fuse_cache_v2: JSON.stringify([{ id: 1 }]),
+      parts_id_query_cache_v1: JSON.stringify({ query: { results: [] } }),
     };
-    const secureDelete = jest.fn(async (key: string) => { store[key] = null; });
-    const multiRemove  = jest.fn().mockResolvedValue(undefined);
-
-    await clearSessionStorage(secureDelete, multiRemove);
-
-    expect(store[SESSION_KEY]).toBeNull();
-  });
-
-  it("after clearing, mocked AsyncStorage returns null for search-cache keys", async () => {
-    const asyncStore: Record<string, string | null> = {
-      "parts_id_fuse_cache_v2":  JSON.stringify([{ id: 1 }]),
-      "parts_id_query_cache_v1": JSON.stringify({ key: { results: [] } }),
-    };
-    const secureDelete = jest.fn().mockResolvedValue(undefined);
-    const multiRemove  = jest.fn(async (keys: string[]) => {
-      for (const k of keys) asyncStore[k] = null;
+    const secureDelete = jest.fn(async (key: string) => {
+      if (key === SESSION_KEY) return;
     });
+    await clearSessionStorage(secureDelete);
 
-    await clearSessionStorage(secureDelete, multiRemove);
-
-    for (const key of SEARCH_CACHE_KEYS) {
-      expect(asyncStore[key]).toBeNull();
-    }
+    expect(SEARCH_CACHE_KEYS).toEqual([
+      "parts_id_fuse_cache_v2",
+      "parts_id_query_cache_v1",
+    ]);
+    for (const key of SEARCH_CACHE_KEYS) expect(store[key]).not.toBeNull();
   });
 
-  it("propagates secureDelete failures to the caller", async () => {
+  it("propagates secure storage failures to the caller", async () => {
     const secureDelete = jest.fn().mockRejectedValue(new Error("SecureStore unavailable"));
-    const multiRemove  = jest.fn().mockResolvedValue(undefined);
-    await expect(clearSessionStorage(secureDelete, multiRemove)).rejects.toThrow("SecureStore unavailable");
-  });
-
-  it("propagates multiRemove failures to the caller", async () => {
-    const secureDelete = jest.fn().mockResolvedValue(undefined);
-    const multiRemove  = jest.fn().mockRejectedValue(new Error("AsyncStorage write error"));
-    await expect(clearSessionStorage(secureDelete, multiRemove)).rejects.toThrow("AsyncStorage write error");
+    await expect(clearSessionStorage(secureDelete)).rejects.toThrow("SecureStore unavailable");
   });
 });
 
-// ── LogoutRegistry + clearSessionStorage integration ─────────────────────────
-
-describe("LogoutRegistry + clearSessionStorage integration", () => {
-  it("storage cleared AND all registered handlers fire on a single logout", async () => {
+describe("LogoutRegistry integration", () => {
+  it("clears session storage and fires registered handlers on logout", async () => {
     const secureDelete = jest.fn().mockResolvedValue(undefined);
-    const multiRemove  = jest.fn().mockResolvedValue(undefined);
     const handlerA = jest.fn();
     const handlerB = jest.fn();
+    const registry = new LogoutRegistry();
+    registry.register(handlerA);
+    registry.register(handlerB);
 
-    const reg = new LogoutRegistry();
-    reg.register(handlerA);
-    reg.register(handlerB);
-
-    // Simulate AppContext logout: clear storage then fire registry
-    await clearSessionStorage(secureDelete, multiRemove);
-    reg.fire();
+    await clearSessionStorage(secureDelete);
+    registry.fire();
 
     expect(secureDelete).toHaveBeenCalledWith(SESSION_KEY);
-    expect(multiRemove).toHaveBeenCalledWith(SEARCH_CACHE_KEYS);
     expect(handlerA).toHaveBeenCalledTimes(1);
     expect(handlerB).toHaveBeenCalledTimes(1);
   });
 
-  it("handler registered after fire() is NOT called retroactively", async () => {
-    const reg = new LogoutRegistry();
-    const earlyHandler = jest.fn();
-    reg.register(earlyHandler);
-    reg.fire();
-
-    const lateHandler = jest.fn();
-    reg.register(lateHandler);
-
-    expect(earlyHandler).toHaveBeenCalledTimes(1);
-    expect(lateHandler).not.toHaveBeenCalled();
-  });
-
-  it("unsubscribed handler does NOT fire during logout", async () => {
-    const reg = new LogoutRegistry();
+  it("does not invoke unsubscribed handlers", () => {
+    const registry = new LogoutRegistry();
     const handler = jest.fn();
-    const unsubscribe = reg.register(handler);
-    unsubscribe(); // remove before logout
-
-    const secureDelete = jest.fn().mockResolvedValue(undefined);
-    const multiRemove  = jest.fn().mockResolvedValue(undefined);
-    await clearSessionStorage(secureDelete, multiRemove);
-    reg.fire();
-
+    registry.register(handler)();
+    registry.fire();
     expect(handler).not.toHaveBeenCalled();
-    // Storage must still be cleared even when no handlers are registered
-    expect(secureDelete).toHaveBeenCalledWith(SESSION_KEY);
   });
 
-  it("partial handler failure does not prevent storage clearing from completing", async () => {
-    const reg = new LogoutRegistry();
-    reg.register(() => { throw new Error("screen cleanup failed"); });
+  it("continues firing remaining handlers after one handler throws", () => {
+    const registry = new LogoutRegistry();
+    const healthyHandler = jest.fn();
+    registry.register(() => {
+      throw new Error("screen cleanup failed");
+    });
+    registry.register(healthyHandler);
 
-    const secureDelete = jest.fn().mockResolvedValue(undefined);
-    const multiRemove  = jest.fn().mockResolvedValue(undefined);
-
-    // Storage clearing happens before fire() — should always succeed
-    await clearSessionStorage(secureDelete, multiRemove);
-    expect(() => reg.fire()).not.toThrow();
-
-    expect(secureDelete).toHaveBeenCalledTimes(1); // SESSION_KEY only
-    expect(multiRemove).toHaveBeenCalledTimes(1);
+    expect(() => registry.fire()).not.toThrow();
+    expect(healthyHandler).toHaveBeenCalledTimes(1);
   });
 });

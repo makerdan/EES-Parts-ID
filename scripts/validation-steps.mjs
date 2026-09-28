@@ -2,7 +2,10 @@
 /**
  * Single source of truth for validation-tier membership.
  */
-const ALL_VALIDATION_TIERS = ["fast", "standard", "standard-plus", "heavy"];
+export const ALL_VALIDATION_TIERS = ["fast", "standard", "standard-plus", "heavy"];
+// Capability probes run before a command enters a serialized queue. Keep this
+// short: a host utility that never returns must not block validation startup.
+export const VALIDATION_HOST_TOOL_PROBE_TIMEOUT_MS = 2_000;
 
 /**
  * Host utilities used by validation commands.
@@ -17,30 +20,35 @@ export const VALIDATION_HOST_TOOLS = Object.freeze([
   {
     name: "node",
     probeArgs: ["--version"],
+    probeTimeoutMs: VALIDATION_HOST_TOOL_PROBE_TIMEOUT_MS,
     capability: "Node-based validation scripts",
     setup: "the Replit Node.js 24 module and the pinned .node-version",
   },
   {
     name: "pnpm",
     probeArgs: ["--version"],
+    probeTimeoutMs: VALIDATION_HOST_TOOL_PROBE_TIMEOUT_MS,
     capability: "workspace package scripts, typechecks, and test suites",
     setup: "the repository packageManager declaration (pnpm@10.26.1)",
   },
   {
     name: "bash",
     probeArgs: ["--version"],
+    probeTimeoutMs: VALIDATION_HOST_TOOL_PROBE_TIMEOUT_MS,
     capability: "shell-based validation guards and test harnesses",
     setup: "the host bash package",
   },
   {
     name: "git",
     probeArgs: ["--version"],
+    probeTimeoutMs: VALIDATION_HOST_TOOL_PROBE_TIMEOUT_MS,
     capability: "public repository boundary and history checks",
     setup: "the host Git package",
   },
   {
     name: "flock",
     probeArgs: ["--help"],
+    probeTimeoutMs: VALIDATION_HOST_TOOL_PROBE_TIMEOUT_MS,
     capability: "serialized validation, codegen, test, and port-guard steps",
     setup: "the host util-linux package",
   },
@@ -51,12 +59,14 @@ export const STANDARD_PLUS_HOST_TOOLS = Object.freeze([
   {
     name: "curl",
     probeArgs: ["--version"],
+    probeTimeoutMs: VALIDATION_HOST_TOOL_PROBE_TIMEOUT_MS,
     capability: "standard-plus post-merge health checks",
     setup: "the host curl package",
   },
   {
     name: "timeout",
     probeArgs: ["--version"],
+    probeTimeoutMs: VALIDATION_HOST_TOOL_PROBE_TIMEOUT_MS,
     capability: "standard-plus post-merge command time limits",
     setup: "the host coreutils package",
   },
@@ -139,9 +149,9 @@ export function assertValidationHostToolContract(
   steps = getTierSteps(tier),
 ) {
   const declaredTools = new Map(
-    getValidationHostTools(tier).map(({ name, capability, setup }) => [
+    getValidationHostTools(tier).map(({ name, probeTimeoutMs, capability, setup }) => [
       name,
-      { capability, setup },
+      { probeTimeoutMs, capability, setup },
     ]),
   );
   const missing = [];
@@ -168,6 +178,12 @@ export function assertValidationHostToolContract(
   }
 
   for (const [name, tool] of declaredTools) {
+    if (!Number.isInteger(tool.probeTimeoutMs) || tool.probeTimeoutMs <= 0) {
+      throw new Error(
+        `host-tool "${name}" must declare a positive integer probe timeout in ` +
+          "scripts/validation-steps.mjs",
+      );
+    }
     if (!tool.capability || !tool.setup) {
       throw new Error(
         `host-tool "${name}" is missing its validation capability or setup source in ` +
@@ -186,15 +202,33 @@ export const FAST = [
   ["plan-gate-stubs", "node scripts/check-failure-gate.mjs --stubs-only"],
   ["regression-guard-fix", "node scripts/check-regression-guard.mjs --fix-stub"],
   ["regression-guard", "node scripts/check-regression-guard.mjs"],
+  ["audio-playback-worklet-contract", "node scripts/test/audio-playback-worklet-contract.test.mjs"],
   ["api-suite-floor-contract", "node scripts/test/api-suite-floor-contract.test.mjs"],
+  ["ci-validation-parity-contract", "node scripts/test/ci-validation-parity-contract.test.mjs"],
+  [
+    "ci-validation-parity-revision-contract",
+    "node scripts/test/ci-validation-parity-revision-contract.test.mjs",
+  ],
+  [
+    "protected-map-timeout-contract",
+    "node scripts/test/protected-map-timeout-contract.test.mjs",
+  ],
+  [
+    "api-fixture-ownership-contract",
+    "node scripts/test/api-fixture-ownership-contract.test.mjs",
+  ],
   ["github-actions-contract", "node scripts/test/github-actions-contract.test.mjs"],
   ["validation-runtime-contract", "node scripts/test/validation-runtime-contract.test.mjs"],
+  ["validation-parity-contract", "node scripts/test/validation-parity-contract.test.mjs"],
   ["api-route-authorization-contract", "node scripts/test/api-route-authorization-contract.test.mjs"],
   ["ai-provider-startup-export-contract", "node scripts/test/ai-provider-startup-export-contract.test.mjs"],
   ["poe-setup-targeted-correction-contract", "node skill-previews/poe-setup/targeted-correction-contract.test.mjs"],
   ["skill-mirror-sync-contract", "node scripts/test/skill-mirror-sync-contract.test.mjs"],
   ["public-repository-boundary", "node scripts/test/public-repository-boundary.test.mjs"],
   ["dependency-security-contract", "node scripts/test/dependency-security-contract.test.mjs"],
+  ["parts-id-dependency-contract", "node scripts/test/parts-id-dependency-contract.test.mjs"],
+  ["dead-exports-contract", "node scripts/test/dead-exports-contract.test.mjs"],
+  ["dead-code-policy-contract", "node scripts/test/dead-code-policy-contract.test.mjs"],
   ["patched-dependencies-contract", "node scripts/test/patched-dependencies.test.mjs"],
   ["patched-dependencies", "node scripts/check-patched-dependencies.mjs"],
   ["replit-config-contract", "node scripts/test/replit-config-contract.test.mjs"],
@@ -202,6 +236,8 @@ export const FAST = [
   ["api-spec-typecheck-contract", "node scripts/test/api-spec-typecheck-contract.test.mjs"],
   ["api-spec-typecheck", "pnpm --filter @workspace/api-spec run typecheck"],
   ["lint", "node scripts/check-db-reachability.mjs && pnpm --filter @workspace/parts-id run lint && pnpm --filter @workspace/api-server run lint && pnpm --filter @workspace/mockup-sandbox run lint && pnpm run lint:libs"],
+  ["browser-bundle-dependency-contract", "node scripts/check-browser-bundles.mjs"],
+  ["browser-bundle-contract", "node scripts/test/browser-bundle-dependency-contract.test.mjs"],
   ["lint-mocks", "pnpm --filter @workspace/scripts run lint:mocks"],
   ["validation-parser-tests", "pnpm --filter @workspace/scripts run test:parsers"],
   ["tsconfig-check", "pnpm --filter @workspace/scripts run tsconfig:check"],
@@ -222,6 +258,10 @@ export const STANDARD_EXTRA = [
   ["spec-check-tests", "pnpm --filter @workspace/api-spec test"],
   ["failure-gate-package-sync", "node scripts/publish-failure-gate.mjs --sync"],
   ["failure-gate-contract", "node scripts/test/failure-gate-contract.test.mjs"],
+  [
+    "protected-map-authorization",
+    "DATABASE_ENV=test pnpm --filter @workspace/api-server exec node scripts/run-tests.mjs --runTestsByPath __tests__/protectedMapAuthorization.integration.test.ts",
+  ],
   ["test", "node scripts/serial-lock.mjs --resource shared-test-results --priority 2 -- pnpm test"],
   ["serve-proxy-smoke", "pnpm --filter @workspace/parts-id run test:serve-proxy"],
 ];

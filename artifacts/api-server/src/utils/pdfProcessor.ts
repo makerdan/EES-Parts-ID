@@ -37,6 +37,20 @@ export interface PageData {
 
 /** DPI to use when rendering pages. 150 dpi gives ~1240×1754 for A4. */
 const RENDER_DPI = 150;
+export const MAX_CATALOG_PDF_PAGES = 50;
+export const MAX_CATALOG_PDF_BYTES = 64 * 1024 * 1024;
+const MAX_PAGE_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_TOTAL_IMAGE_BYTES = 64 * 1024 * 1024;
+
+function pdfLimit(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code });
+}
+
+function checkPageCount(count: number): void {
+  if (count > MAX_CATALOG_PDF_PAGES) {
+    throw pdfLimit("catalog_pdf_too_many_pages", `PDF has too many pages (max ${MAX_CATALOG_PDF_PAGES} per upload).`);
+  }
+}
 
 /**
  * Lightweight synchronous pre-validation of a PDF buffer.
@@ -47,6 +61,9 @@ const RENDER_DPI = 150;
  * Throws with a descriptive message if the PDF is invalid.
  */
 export function validatePdf(pdfBuffer: Buffer): void {
+  if (pdfBuffer.length > MAX_CATALOG_PDF_BYTES) {
+    throw pdfLimit("catalog_pdf_too_large", "PDF too large for catalog extraction (max 64 MB per file).");
+  }
   if (pdfBuffer.length < 5 || pdfBuffer.slice(0, 5).toString("ascii") !== "%PDF-") {
     throw new Error("Not a valid PDF file (missing %PDF- magic bytes)");
   }
@@ -64,6 +81,9 @@ export function validatePdf(pdfBuffer: Buffer): void {
  * Process a PDF buffer and return per-page data ready for GPT-4o extraction.
  */
 export async function extractPdfPages(pdfBuffer: Buffer): Promise<Array<PageData>> {
+  if (pdfBuffer.length > MAX_CATALOG_PDF_BYTES) {
+    throw pdfLimit("catalog_pdf_too_large", "PDF too large for catalog extraction (max 64 MB per file).");
+  }
   // Try pdftoppm rendering first (best quality, full page context for GPT-4o)
   const rendered = await tryPdftoppmRendering(pdfBuffer);
   if (rendered) return rendered;
@@ -217,10 +237,15 @@ async function tryPdftoppmRendering(pdfBuffer: Buffer): Promise<Array<PageData> 
     await fs.writeFile(pdfPath, pdfBuffer);
 
     try {
-      await execFileAsync("pdftoppm", ["-png", "-r", String(RENDER_DPI), pdfPath, outPrefix], {
+      const { stdout } = await execFileAsync("pdfinfo", [pdfPath], { timeout: 30_000 });
+      const pageCount = Number(/^Pages:\s*(\d+)/m.exec(stdout)?.[1]);
+      if (!Number.isSafeInteger(pageCount) || pageCount < 1) return null;
+      checkPageCount(pageCount);
+      await execFileAsync("pdftoppm", ["-png", "-r", String(RENDER_DPI), "-scale-to", "1800", pdfPath, outPrefix], {
         timeout: 120_000,
       });
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("too many pages")) throw err;
       return null; // pdftoppm not available or failed
     }
 
@@ -239,22 +264,27 @@ async function tryPdftoppmRendering(pdfBuffer: Buffer): Promise<Array<PageData> 
     // Get page text + alt text + captions via pdfjs-dist for supplementary context
     const textByPage = await extractRichText(pdfBuffer, pngFiles.length);
 
-    const pages: Array<PageData> = await Promise.all(
-      pngFiles.map(async (fname, i) => {
+    let totalImageBytes = 0;
+    const pages: Array<PageData> = [];
+    for (const [i, fname] of pngFiles.entries()) {
+        const imageStat = await fs.stat(path.join(tmpDir, fname));
+        totalImageBytes += imageStat.size;
+        if (imageStat.size > MAX_PAGE_IMAGE_BYTES || totalImageBytes > MAX_TOTAL_IMAGE_BYTES) {
+          throw pdfLimit("catalog_pdf_resource_limit", "PDF rendered images exceed the catalog resource limit.");
+        }
         const imgBuf = await fs.readFile(path.join(tmpDir, fname));
         // Get dimensions from PNG header (bytes 16–24)
         const pageWidth = imgBuf.readUInt32BE(16);
         const pageHeight = imgBuf.readUInt32BE(20);
-        return {
+        pages.push({
           pageNum: i + 1,
           text: textByPage[i] ?? "",
           images: [imgBuf],
           isRendered: true,
           pageWidth,
           pageHeight,
-        };
-      }),
-    );
+        });
+    }
 
     return pages;
   } finally {
@@ -281,39 +311,28 @@ export async function extractRichText(pdfBuffer: Buffer, numPages: number): Prom
     }).promise;
 
     const pageCount = Math.min(numPages, doc.numPages);
-
-    // Pre-fetch all structure trees concurrently to avoid one sequential
-    // round-trip per page inside the loop below.
-    const structTreeCache = new Map<number, unknown>();
-    await Promise.all(
-      Array.from({ length: pageCount }, async (_, i) => {
-        const p = i + 1;
+    checkPageCount(pageCount);
+    try {
+      const results: Array<string> = [];
+      for (let p = 1; p <= pageCount; p++) {
+        const page = await doc.getPage(p);
         try {
-          const pg = await doc.getPage(p);
-          const tree = await (pg as unknown as { getStructTree(): Promise<unknown> }).getStructTree();
-          structTreeCache.set(p, tree);
-        } catch { /* structure tree unavailable — non-fatal */ }
-      }),
-    );
-
-    const results: Array<string> = [];
-    for (let p = 1; p <= pageCount; p++) {
-      const page = await doc.getPage(p);
-      const tc = await page.getTextContent();
-      const items = tc.items as Array<RawItem>;
-
-      // Use the pre-fetched structure tree from cache.
-      const figures: Array<StructFigure> = [];
-      const cachedTree = structTreeCache.get(p);
-      if (cachedTree !== undefined) {
-        collectFigures(cachedTree, figures);
+          const tc = await page.getTextContent();
+          const figures: Array<StructFigure> = [];
+          try {
+            collectFigures(await page.getStructTree(), figures);
+          } catch { /* structure tree unavailable — non-fatal */ }
+          results.push(buildPageContext(tc.items as Array<RawItem>, figures));
+        } finally {
+          page.cleanup();
+        }
       }
-
-      results.push(buildPageContext(items, figures));
-      page.cleanup();
+      return results;
+    } finally {
+      await (doc as unknown as { destroy?: () => Promise<void> }).destroy?.();
     }
-    return results;
   } catch (err) {
+    if (err instanceof Error && err.message.includes("too many pages")) throw err;
     logger.warn(
       { err },
       "extractRichText failed — returning empty text fallback",
@@ -365,37 +384,23 @@ async function pdfJsFallback(pdfBuffer: Buffer): Promise<Array<PageData>> {
 
   const numPages: number = doc.numPages;
 
-  // Pre-fetch all structure trees concurrently to avoid one sequential
-  // round-trip per page inside the loop below.
-  const structTreeCache = new Map<number, unknown>();
-  await Promise.all(
-    Array.from({ length: numPages }, async (_, i) => {
-      const p = i + 1;
-      try {
-        const pg = await doc.getPage(p);
-        const tree = await (pg as unknown as { getStructTree(): Promise<unknown> }).getStructTree();
-        structTreeCache.set(p, tree);
-      } catch { /* non-fatal */ }
-    }),
-  );
-
   const pages: Array<PageData> = [];
+  let totalImageBytes = 0;
 
+  try {
+  checkPageCount(numPages);
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
     const page = await doc.getPage(pageNum);
     let text = "";
     const images: Array<Buffer> = [];
 
     try {
+    try {
       const tc = await page.getTextContent();
       const items = tc.items as Array<RawItem>;
 
-      // Use the pre-fetched structure tree from cache.
       const figures: Array<StructFigure> = [];
-      const cachedTree = structTreeCache.get(pageNum);
-      if (cachedTree !== undefined) {
-        collectFigures(cachedTree, figures);
-      }
+      try { collectFigures(await page.getStructTree(), figures); } catch { /* non-fatal */ }
 
       text = buildPageContext(items, figures);
     } catch (err) {
@@ -425,23 +430,41 @@ async function pdfJsFallback(pdfBuffer: Buffer): Promise<Array<PageData>> {
                 },
               );
               if (imgData && imgData.data && imgData.width >= 20 && imgData.height >= 20) {
+                if (imgData.data.byteLength > MAX_PAGE_IMAGE_BYTES * 4) {
+                  throw pdfLimit("catalog_pdf_resource_limit", "PDF embedded images exceed the catalog resource limit.");
+                }
                 const raw = Buffer.from(imgData.data.buffer);
                 const ch = raw.length / (imgData.width * imgData.height);
                 if (ch === 3 || ch === 4) {
                   const png = await sharpFn(raw, {
                     raw: { width: imgData.width, height: imgData.height, channels: ch as 3 | 4 },
                   }).png().toBuffer();
+                  totalImageBytes += png.length;
+                  if (png.length > MAX_PAGE_IMAGE_BYTES || totalImageBytes > MAX_TOTAL_IMAGE_BYTES) {
+                    throw pdfLimit("catalog_pdf_resource_limit", "PDF embedded images exceed the catalog resource limit.");
+                  }
                   images.push(png);
                 }
               }
-            } catch { /* per-image failure non-fatal */ }
+            } catch (err) {
+              if (err instanceof Error && err.message.includes("resource limit")) throw err;
+              /* per-image failure non-fatal */
+            }
           }
         }
-      } catch { /* operator list failure non-fatal */ }
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("resource limit")) throw err;
+        /* operator list failure non-fatal */
+      }
     }
 
     pages.push({ pageNum, text, images, isRendered: false, pageWidth: 0, pageHeight: 0 });
-    page.cleanup();
+    } finally {
+      page.cleanup();
+    }
+  }
+  } finally {
+    await (doc as unknown as { destroy?: () => Promise<void> }).destroy?.();
   }
 
   return pages;

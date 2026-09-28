@@ -6,7 +6,7 @@
  */
 
 import { PDFDocument } from "pdf-lib";
-import { splitPdfIntoChunks } from "../utils/splitPdfIntoChunks";
+import { createPdfChunk, iteratePdfChunks, splitPdfIntoChunks } from "../utils/splitPdfIntoChunks";
 
 // Helper: build a synthetic N-page PDF as a Uint8Array
 async function makeTestPdf(pageCount: number): Promise<Uint8Array> {
@@ -20,6 +20,21 @@ async function makeTestPdf(pageCount: number): Promise<Uint8Array> {
 }
 
 describe("splitPdfIntoChunks", () => {
+  it("generates a large document one page range at a time and reconstructs only a requested retry", async () => {
+    const bytes = await makeTestPdf(240);
+    let count = 0;
+    for await (const { chunk, index, totalChunks } of iteratePdfChunks(bytes, 20)) {
+      expect(chunk.pageCount).toBe(20);
+      expect(chunk.pageOffset).toBe(index * 20);
+      expect(totalChunks).toBe(12);
+      count++;
+    }
+    expect(count).toBe(12);
+    const retry = await createPdfChunk(bytes, 8, 20);
+    expect(retry.chunk.pageOffset).toBe(160);
+    expect((await PDFDocument.load(retry.chunk.bytes)).getPageCount()).toBe(20);
+    await expect(createPdfChunk(bytes, 12, 20)).rejects.toThrow("out of range");
+  });
   describe("no-op path (totalPages <= pagesPerChunk)", () => {
     it("returns a single chunk for a PDF with exactly pagesPerChunk pages", async () => {
       const bytes = await makeTestPdf(5);

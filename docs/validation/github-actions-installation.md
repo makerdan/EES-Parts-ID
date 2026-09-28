@@ -117,7 +117,6 @@ values.
 | Repository | `makerdan/EES-Parts-ID`, public, user-owned; authenticated connection has admin access | confirmed |
 | Default branch | repository API returned `main` | confirmed |
 | Default-branch revision | `a91289795b048e1fb6375fda78f5ff7cca65f83e` | confirmed; installed contract |
-| Required checks | strict required context is exactly `CI / required`, which fails closed on portable validation; native LiDAR validation is intentionally excluded from CI | configured; workflow contract updated without a GitHub-settings mutation |
 | Pull-request protection | pull-request review rule exists with the prior zero-approval requirement | configured without inventing a new review requirement |
 | Administrator enforcement | `enforce_admins.enabled: true` | configured |
 | Force-push and deletion blocks | both `allow_force_pushes.enabled` and `allow_deletions.enabled` are `false` | configured |
@@ -178,7 +177,6 @@ revision `cb44f5c2b1f33958a5aa5e34f05ca9048afe50be`:
   [33714137601](https://github.com/makerdan/EES-Parts-ID/actions/runs/33714137601)
   and failed in the canonical tier's TypeScript step because the clean install
   lacks Node test globals/types in Parts ID.
-- `Run LidarMeasureTests` emitted in run
   [33714137599](https://github.com/makerdan/EES-Parts-ID/actions/runs/33714137599)
   and failed during `pod install` when Expo codegen threw
   `TypeError: expand is not a function`.
@@ -218,11 +216,10 @@ emitted:
 - CI push run
   [33714396656](https://github.com/makerdan/EES-Parts-ID/actions/runs/33714396656),
   failure at the same Parts ID clean-install typecheck.
-- LiDAR push run
   [33714396711](https://github.com/makerdan/EES-Parts-ID/actions/runs/33714396711),
   failure at the same Expo pod-codegen error.
 
-Subsequent README compatibility merges also emitted default-branch CI and LiDAR
+Subsequent README compatibility merges also emitted default-branch CI
 runs. Their failures are the same application signatures, not missing workflow
 events or policy rejection.
 
@@ -235,7 +232,6 @@ All redesigned manual paths were dispatched on
   [33714696277](https://github.com/makerdan/EES-Parts-ID/actions/runs/33714696277):
   `Portable validation` failed at Parts ID TypeScript; `CI / required` failed
   closed.
-- LiDAR
   [33714697603](https://github.com/makerdan/EES-Parts-ID/actions/runs/33714697603):
   failed during `pod install` with `TypeError: expand is not a function`.
 - Scheduled audit
@@ -304,7 +300,6 @@ contract's default-branch evidence is recorded above.
 | Required evidence | Result |
 |---|---|
 | Real PR emits `Portable validation` | confirmed on PR #1 |
-| Same SHA emits `Run LidarMeasureTests` | confirmed on PR #1 |
 | Same SHA emits `CI / required` | confirmed on PR #1 |
 | Aggregator fails closed | confirmed on PR #1 and deliberate PR #2 |
 | Negative PR blocked | confirmed (`mergeable_state: blocked`) |

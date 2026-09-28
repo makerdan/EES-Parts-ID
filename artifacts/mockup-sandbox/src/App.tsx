@@ -143,7 +143,7 @@ const TOOLS = [
 
 function Gallery() {
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <main className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-2xl mx-auto">
         <header className="mb-10">
           <h1 className="text-2xl font-semibold text-gray-900 mb-1">
@@ -177,7 +177,7 @@ function Gallery() {
           ))}
         </ul>
       </div>
-    </div>
+    </main>
   );
 }
 

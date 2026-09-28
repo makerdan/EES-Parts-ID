@@ -8,7 +8,8 @@
  */
 
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { Alert } from "react-native";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 jest.mock("react-native", () =>
   require("./helpers/mapMocks").createReactNativeMock(require("react-native-web")),
@@ -129,6 +130,7 @@ const { useApp } = require("@/contexts/AppContext") as {
 const UploadScreen = require("../app/(tabs)/upload").default as React.ComponentType;
 
 function renderAdminHub(isAdmin = true) {
+  const logoutAdmin = jest.fn();
   useApp.mockReturnValue({
     settings: {
       textSize: "normal",
@@ -140,7 +142,7 @@ function renderAdminHub(isAdmin = true) {
     },
     updateSetting: jest.fn(),
     logout: jest.fn(),
-    logoutAdmin: jest.fn(),
+    logoutAdmin,
     clearCache: jest.fn(),
     isLoading: false,
     isAdmin,
@@ -154,7 +156,24 @@ function renderAdminHub(isAdmin = true) {
     pendingInventoryEdit: null,
     setPendingInventoryEdit: jest.fn(),
   });
-  return render(<UploadScreen />);
+  return { ...render(<UploadScreen />), logoutAdmin };
+}
+
+function mockDescriptionExpansionStatus(
+  status: Record<string, unknown>,
+): jest.Mock {
+  const fetchMock = jest.fn().mockImplementation((input: unknown) => {
+    if (String(input).includes("/inventory/description-expansion/status")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => status,
+      });
+    }
+    return Promise.resolve({ ok: false, status: 500 });
+  });
+  global.fetch = fetchMock as unknown as typeof fetch;
+  return fetchMock;
 }
 
 afterEach(() => {
@@ -221,6 +240,72 @@ describe("UploadScreen — browser interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh users" }));
 
     expect(fetchAdminUsers).toHaveBeenCalled();
+  });
+
+  it("shows the persisted database expansion counts in People & System", async () => {
+    const fetchMock = mockDescriptionExpansionStatus({
+      status: "completed",
+      running: false,
+      stopRequested: false,
+      cursor: 100,
+      model: "Gemini-3.1-Pro",
+      startedAt: "2026-09-23T00:00:00.000Z",
+      finishedAt: "2026-09-23T00:10:00.000Z",
+      total: 42,
+      processed: 42,
+      saved: 30,
+      discarded: 10,
+      errors: 2,
+      remaining: 12,
+      lastError: null,
+    });
+    renderAdminHub();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open People and System section" }));
+
+    expect(await screen.findByText(/Database Description Expansion/)).toBeTruthy();
+    expect(screen.getAllByText("42").length).toBeGreaterThan(0);
+    expect(screen.getByText("30")).toBeTruthy();
+    expect(screen.getByText("10")).toBeTruthy();
+    expect(screen.getByText("2")).toBeTruthy();
+    expect(screen.getByText("12")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/inventory/description-expansion/status"),
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+  });
+
+  it("keeps the database expansion start behind confirmation", () => {
+    const alertMock = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
+    renderAdminHub();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open People and System section" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start database description expansion" }));
+
+    expect(alertMock).toHaveBeenCalledWith(
+      "Start database description expansion?",
+      expect.stringContaining("at least 70% confidence"),
+      expect.arrayContaining([
+        expect.objectContaining({ text: "Cancel" }),
+        expect.objectContaining({ text: "Start expansion" }),
+      ]),
+    );
+    alertMock.mockRestore();
+  });
+
+  it("logs out and reports an expired admin session from the job status request", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { logoutAdmin } = renderAdminHub();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open People and System section" }));
+
+    await waitFor(() => expect(logoutAdmin).toHaveBeenCalled());
+    expect(screen.getByText(/Admin session expired\. Please unlock again\./)).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/inventory/description-expansion/status"),
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
   });
 
   it("keeps Admin controls gated on the web surface", () => {

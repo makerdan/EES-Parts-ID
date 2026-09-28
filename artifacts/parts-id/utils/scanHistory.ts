@@ -1,9 +1,4 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-
-import { reportStorageError } from "@/utils/storageErrorReporter";
-
-const STORAGE_KEY = "@partsid/barcode_scan_history";
-const MAX_ENTRIES = 50;
+export const MAX_SCAN_HISTORY = 50;
 
 export interface ScanEntry {
   barcode: string;
@@ -21,35 +16,25 @@ export interface ScanEntry {
   adminAction?: "linked" | "created";
 }
 
-function isValidEntry(e: unknown): e is ScanEntry {
-  if (!e || typeof e !== "object") return false;
+export function isValidScanEntry(e: unknown): e is ScanEntry {
+  if (!e || typeof e !== "object" || Array.isArray(e)) return false;
   const obj = e as Record<string, unknown>;
   return (
     typeof obj["barcode"] === "string" &&
+    obj["barcode"].length > 0 &&
     typeof obj["found"] === "boolean" &&
     typeof obj["timestamp"] === "string" &&
-    !isNaN(new Date(obj["timestamp"] as string).getTime())
+    Number.isFinite(Date.parse(obj["timestamp"])) &&
+    (obj["itemId"] === undefined ||
+      (typeof obj["itemId"] === "number" &&
+        Number.isSafeInteger(obj["itemId"]) &&
+        obj["itemId"] > 0)) &&
+    (obj["catalog"] === undefined || typeof obj["catalog"] === "string") &&
+    (obj["vendor"] === undefined || typeof obj["vendor"] === "string") &&
+    (obj["adminAction"] === undefined ||
+      obj["adminAction"] === "linked" ||
+      obj["adminAction"] === "created")
   );
-}
-
-export async function loadScanHistory(): Promise<Array<ScanEntry>> {
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isValidEntry);
-  } catch {
-    return [];
-  }
-}
-
-export async function saveScanHistory(entries: Array<ScanEntry>): Promise<void> {
-  try {
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-  } catch (err) {
-    reportStorageError("Could not save scan history", err);
-  }
 }
 
 /**
@@ -65,15 +50,7 @@ export function prependEntry(
   const deduped = existing.filter(
     (e) => e.barcode !== entry.barcode || !!e.adminAction,
   );
-  return [entry, ...deduped].slice(0, MAX_ENTRIES);
-}
-
-export async function clearScanHistory(): Promise<void> {
-  try {
-    await AsyncStorage.removeItem(STORAGE_KEY);
-  } catch (err) {
-    reportStorageError("Could not clear scan history", err);
-  }
+  return [entry, ...deduped].slice(0, MAX_SCAN_HISTORY);
 }
 
 // ── Date-grouped history ───────────────────────────────────────────────────────

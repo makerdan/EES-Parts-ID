@@ -29,6 +29,7 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { inArray } from "drizzle-orm";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 
 // ── Setup / teardown ──────────────────────────────────────────────────────────
 const ADMIN_SECRET = "jest-failed-jobs-secret";
@@ -70,9 +71,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (seededIds.length > 0) {
-    await db
-      .delete(catalogPdfJobTable)
-      .where(inArray(catalogPdfJobTable.id, seededIds));
+    await bestEffortFixtureCleanup("catalog PDF failed jobs", async () => {
+      await db
+        .delete(catalogPdfJobTable)
+        .where(inArray(catalogPdfJobTable.id, seededIds));
+    });
   }
 }, 15_000);
 
@@ -135,7 +138,7 @@ describe("GET /api/admin/catalog-pdf/failed-jobs — response shape and filterin
       vendor: "JEST-VENDOR",
       filename: "jest-test.pdf",
       status: "failed",
-      errorMessage: "PDF could not be parsed: unexpected EOF",
+      errorMessage: "UnknownError",
       processedPages: 2,
       totalPages: 8,
       matchedParts: 1,

@@ -60,6 +60,7 @@ jest.mock("../src/utils/catalogMatcher", () => ({
 
 jest.mock("../src/lib/objectStorage", () => ({
   uploadCatalogImage: jest.fn(),
+  deletePrivateObjects: jest.fn(),
 }));
 
 // ── Imports ───────────────────────────────────────────────────────────────────
@@ -67,15 +68,23 @@ jest.mock("../src/lib/objectStorage", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { db, catalogPdfJobTable } from "@workspace/db";
+import { catalogPdfJobTable, db, inventoryTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
+import { awaitJobTermination, launchCatalogPdfBuffer, recoverInterruptedCatalogPdfJobs } from "../src/routes/catalogPdf";
+import { logger } from "../src/lib/logger";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage, CatalogAiError } from "../src/utils/catalogExtractor";
+import { matchCatalogNumber } from "../src/utils/catalogMatcher";
+import { deletePrivateObjects, uploadCatalogImage } from "../src/lib/objectStorage";
 
 // ── Typed mock handles ─────────────────────────────────────────────────────────
 
 const mockExtractPdfPages = extractPdfPages as jest.MockedFunction<typeof extractPdfPages>;
 const mockExtractCatalogPage = extractCatalogPage as jest.MockedFunction<typeof extractCatalogPage>;
+const mockMatchCatalogNumber = matchCatalogNumber as jest.MockedFunction<typeof matchCatalogNumber>;
+const mockUploadCatalogImage = uploadCatalogImage as jest.MockedFunction<typeof uploadCatalogImage>;
+const mockDeletePrivateObjects = deletePrivateObjects as jest.MockedFunction<typeof deletePrivateObjects>;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -92,6 +101,8 @@ const ONE_FAKE_PAGE = [
 
 let adminToken: string;
 const seededJobIds: number[] = [];
+const seededInventoryIds: number[] = [];
+const seededItemIds: number[] = [];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -159,15 +170,35 @@ beforeAll(async () => {
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
 }, 15_000);
 
-afterEach(() => {
-  jest.clearAllMocks();
+afterEach(async () => {
+  try {
+    if (seededItemIds.length > 0) {
+      await db.delete(inventoryTable).where(inArray(inventoryTable.id, seededItemIds));
+      seededItemIds.length = 0;
+    }
+  } finally {
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  }
 });
 
 afterAll(async () => {
+  if (seededInventoryIds.length > 0) {
+    await bestEffortFixtureCleanup("catalog PDF AI-error inventory", async () => {
+      await db.delete(inventoryTable).where(inArray(inventoryTable.id, seededInventoryIds));
+    });
+  }
+  if (seededItemIds.length > 0) {
+    await bestEffortFixtureCleanup("catalog photo replacement items", async () => {
+      await db.delete(inventoryTable).where(inArray(inventoryTable.id, seededItemIds));
+    });
+  }
   if (seededJobIds.length > 0) {
-    await db
-      .delete(catalogPdfJobTable)
-      .where(inArray(catalogPdfJobTable.id, seededJobIds));
+    await bestEffortFixtureCleanup("catalog PDF AI-error jobs", async () => {
+      await db
+        .delete(catalogPdfJobTable)
+        .where(inArray(catalogPdfJobTable.id, seededJobIds));
+    });
   }
 }, 15_000);
 
@@ -204,6 +235,164 @@ describe("CatalogAiError propagation — DB job row", () => {
     const row = await readJobRow(Number(jobId));
     expect(row.status).toBe("failed");
     expect(row.errorMessage).toBe("ai_payload_too_large");
+  });
+});
+
+describe("catalog image replacement ownership", () => {
+  const firstOld = "/objects/test/catalog-images/old-first.png";
+  const secondOld = "/objects/test/catalog-images/old-second.png";
+  const firstNew = "/objects/test/catalog-images/new-first.png";
+  const secondNew = "/objects/test/catalog-images/new-second.png";
+
+  async function runReplacement(options: {
+    oldSecond?: string | null;
+    uploadResults: Array<string | Error>;
+    confidence?: number;
+    itemId?: number;
+    failLaterPage?: boolean;
+  }) {
+    const [item] = options.itemId
+      ? [{ id: options.itemId }]
+      : await db.insert(inventoryTable).values({
+          vendor: VENDOR,
+          catalog: `JEST-IMAGE-${seededItemIds.length}-${process.pid}`,
+          description: "Original",
+          imageUrl: firstOld,
+          imageUrl2: options.oldSecond ?? null,
+          imageConfidence: options.confidence ?? null,
+        }).returning({ id: inventoryTable.id });
+    if (!item) throw new Error("Failed to seed catalog image fixture");
+    if (!options.itemId) seededItemIds.push(item.id);
+
+    const stored = new Set([firstOld, ...(options.oldSecond ? [options.oldSecond] : [])]);
+    const deleted: string[] = [];
+    mockDeletePrivateObjects.mockImplementation(async (paths) => {
+      // Cleanup must happen only after the DB reference has committed.
+      const [current] = await db.select({
+        imageUrl: inventoryTable.imageUrl,
+        imageUrl2: inventoryTable.imageUrl2,
+      }).from(inventoryTable).where(eq(inventoryTable.id, item.id));
+      for (const path of paths) {
+        if (!path) continue;
+        expect([current?.imageUrl, current?.imageUrl2]).not.toContain(path);
+        deleted.push(path);
+        stored.delete(path);
+      }
+    });
+    mockUploadCatalogImage.mockImplementation(async () => {
+      const result = options.uploadResults.shift();
+      if (!result) throw new Error("Unexpected upload");
+      if (result instanceof Error) throw result;
+      stored.add(result);
+      return result;
+    });
+    mockMatchCatalogNumber.mockResolvedValueOnce({ inventoryId: item.id, similarityScore: 0.9 });
+    const firstPage = {
+      pageNum: 1, text: "part", images: [Buffer.from("first"), Buffer.from("second")],
+      isRendered: false, pageWidth: 0, pageHeight: 0,
+    };
+    mockExtractPdfPages.mockResolvedValueOnce(options.failLaterPage
+      ? [firstPage, { ...firstPage, pageNum: 2, text: "fatal page", images: [] }]
+      : [firstPage]);
+    mockExtractCatalogPage.mockResolvedValueOnce({
+      entries: [{
+        catalogNumber: "JEST-IMAGE", description: "Extracted", confidence: 0.9,
+        hasPartImage: true, imageRegion: null, imageRegion2: null, imageIndex: 0, imageIndex2: 1,
+      }],
+      rawText: "",
+    });
+    if (options.failLaterPage) {
+      mockExtractCatalogPage.mockRejectedValueOnce(
+        new CatalogAiError("ai_payload_too_large", "fatal second page"),
+      );
+    }
+
+    const jobId = await startJob();
+    await awaitJobTermination(Number(jobId));
+    const [row] = await db.select({
+      imageUrl: inventoryTable.imageUrl,
+      imageUrl2: inventoryTable.imageUrl2,
+    }).from(inventoryTable).where(eq(inventoryTable.id, item.id));
+    return { itemId: item.id, row, stored, deleted, job: await readJobRow(Number(jobId)) };
+  }
+
+  it("keeps both existing photos when the first and second uploads fail", async () => {
+    const result = await runReplacement({
+      oldSecond: secondOld,
+      uploadResults: [new Error("first failed"), new Error("second failed")],
+    });
+    expect(result.row).toEqual({ imageUrl: firstOld, imageUrl2: secondOld });
+    expect(result.stored).toEqual(new Set([firstOld, secondOld]));
+    expect(result.deleted).toEqual([]);
+    expect(result.job.status).toBe("done_with_errors");
+  });
+
+  it("keeps the first photo when its upload fails, but commits the second replacement", async () => {
+    const result = await runReplacement({
+      oldSecond: secondOld,
+      uploadResults: [new Error("first failed"), secondNew],
+    });
+    expect(result.row).toEqual({ imageUrl: firstOld, imageUrl2: secondNew });
+    expect(result.stored).toEqual(new Set([firstOld, secondNew]));
+    expect(result.deleted).toEqual([secondOld]);
+  });
+
+  it("commits the first replacement but keeps the second photo when its upload fails", async () => {
+    const result = await runReplacement({
+      oldSecond: secondOld,
+      uploadResults: [firstNew, new Error("second failed")],
+    });
+    expect(result.row).toEqual({ imageUrl: firstNew, imageUrl2: secondOld });
+    expect(result.stored).toEqual(new Set([firstNew, secondOld]));
+    expect(result.deleted).toEqual([firstOld]);
+  });
+
+  it("preserves an existing single photo and removes both uncommitted uploads when the update loses", async () => {
+    const result = await runReplacement({
+      uploadResults: [firstNew, secondNew],
+      confidence: 1,
+    });
+    expect(result.row).toEqual({ imageUrl: firstOld, imageUrl2: null });
+    expect(result.stored).toEqual(new Set([firstOld]));
+    expect(result.deleted).toEqual([firstNew, secondNew]);
+  });
+
+  it("lets a same-confidence retry replace a photo after the prior upload failed", async () => {
+    const failed = await runReplacement({
+      oldSecond: secondOld,
+      uploadResults: [new Error("first failed"), new Error("second failed")],
+    });
+    expect(failed.row).toEqual({ imageUrl: firstOld, imageUrl2: secondOld });
+    const retried = await runReplacement({
+      itemId: failed.itemId,
+      oldSecond: secondOld,
+      uploadResults: [firstNew, secondNew],
+    });
+    expect(retried.row).toEqual({ imageUrl: firstNew, imageUrl2: secondNew });
+    expect(retried.deleted).toEqual([firstOld, secondOld]);
+    expect(retried.stored).toEqual(new Set([firstNew, secondNew]));
+  });
+
+  it("does not delete a shared old object while the other slot still uses it", async () => {
+    const result = await runReplacement({
+      oldSecond: firstOld,
+      uploadResults: [firstNew, new Error("second failed")],
+    });
+    expect(result.row).toEqual({ imageUrl: firstNew, imageUrl2: firstOld });
+    expect(result.deleted).toEqual([]);
+    expect(result.stored).toEqual(new Set([firstOld, firstNew]));
+  });
+
+  it("restores saved photos and removes only new objects if a later page fails", async () => {
+    const result = await runReplacement({
+      oldSecond: secondOld,
+      uploadResults: [firstNew, new Error("second upload failed")],
+      failLaterPage: true,
+    });
+    expect(result.job.status).toBe("failed");
+    expect(result.row).toEqual({ imageUrl: firstOld, imageUrl2: secondOld });
+    expect(result.stored).toEqual(new Set([firstOld, secondOld]));
+    expect(result.deleted).toEqual([firstNew]);
   });
 });
 
@@ -443,5 +632,305 @@ describe("CatalogAiError propagation — chunked upload (child + parent)", () =>
     const parentRow = await waitForParentTerminal(parentId);
     expect(parentRow.status).toBe("failed");
     expect(parentRow.errorMessage).toBe("ai_payload_too_large");
+  });
+});
+
+describe("PDF worker secondary cleanup failures", () => {
+  async function seedWorkerJob(status: "pending" | "processing" = "pending"): Promise<number> {
+    const [row] = await db.insert(catalogPdfJobTable).values({
+      vendor: VENDOR, filename: "worker-recovery.pdf", status,
+      processedPages: 0, matchedParts: 0,
+    }).returning({ id: catalogPdfJobTable.id });
+    if (!row) throw new Error("Failed to seed worker job");
+    seededJobIds.push(row.id);
+    return row.id;
+  }
+
+  function captureWorkerLog() {
+    const records: Array<{ details: Record<string, unknown>; message: string }> = [];
+    const log = {
+      error: (details: Record<string, unknown>, message: string) => records.push({ details, message }),
+      info: () => undefined,
+      warn: () => undefined,
+    } as unknown as typeof logger;
+    return { log, records };
+  }
+
+  async function runFailedWorker(jobId: number, log: typeof logger) {
+    mockExtractPdfPages.mockRejectedValueOnce(new Error("private PDF text in original error"));
+    expect(launchCatalogPdfBuffer(jobId, Buffer.from("pdf"), VENDOR, log)).toBe(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await awaitJobTermination(jobId);
+  }
+
+  function failNextInventoryRollback() {
+    const originalSelect = db.select.bind(db);
+    let injected = false;
+    jest.spyOn(db, "select").mockImplementation(((...args: unknown[]) => {
+      const query = originalSelect(...args as Parameters<typeof db.select>);
+      return new Proxy(query, {
+        get(target, key) {
+          if (key !== "from") return Reflect.get(target, key);
+          return (table: unknown) => {
+            const from = target.from(table as typeof inventoryTable);
+            if (table !== inventoryTable || injected) return from;
+            return new Proxy(from, {
+              get(inner, property) {
+                if (property !== "where") return Reflect.get(inner, property);
+                return () => {
+                  injected = true;
+                  return Promise.reject(new Error("private inventory details in rollback error"));
+                };
+              },
+            });
+          };
+        },
+      });
+    }) as typeof db.select);
+    return () => injected;
+  }
+
+  it("retries a failed terminal write without losing the original bounded diagnostic", async () => {
+    const jobId = await seedWorkerJob();
+    const { log, records } = captureWorkerLog();
+    const originalUpdate = db.update.bind(db);
+    let injected = false;
+    jest.spyOn(db, "update").mockImplementation(((table: unknown) => {
+      const query = originalUpdate(table as typeof catalogPdfJobTable);
+      if (table !== catalogPdfJobTable) return query;
+      return new Proxy(query, {
+        get(target, key) {
+          if (key !== "set") return Reflect.get(target, key);
+          return (values: { status?: string }) => {
+            const update = target.set(values);
+            if (values.status !== "failed" || injected) return update;
+            return new Proxy(update, {
+              get(inner, property) {
+                if (property !== "where") return Reflect.get(inner, property);
+                return () => {
+                  injected = true;
+                  return Promise.reject(new Error("private SQL parameters in terminal error"));
+                };
+              },
+            });
+          };
+        },
+      });
+    }) as typeof db.update);
+
+    await runFailedWorker(jobId, log);
+    expect(injected).toBe(true);
+    expect(await readJobRow(jobId)).toEqual({
+      status: "failed", errorMessage: "catalog_pdf_status_write_failed",
+    });
+    expect(records.map((r) => r.message)).toEqual(expect.arrayContaining([
+      "[catalog-pdf] background processing failed",
+      "[catalog-pdf] failed to persist worker terminal status",
+    ]));
+    expect(JSON.stringify(records)).not.toMatch(/private PDF text|private SQL parameters/);
+  });
+
+  it("recovers at startup when both terminal writes fail, then permits Resume", async () => {
+    const jobId = await seedWorkerJob();
+    const { log, records } = captureWorkerLog();
+    const originalUpdate = db.update.bind(db);
+    let failures = 0;
+    jest.spyOn(db, "update").mockImplementation(((table: unknown) => {
+      const query = originalUpdate(table as typeof catalogPdfJobTable);
+      if (table !== catalogPdfJobTable) return query;
+      return new Proxy(query, {
+        get(target, key) {
+          if (key !== "set") return Reflect.get(target, key);
+          return (values: { status?: string }) => {
+            const update = target.set(values);
+            if (values.status !== "failed" || failures >= 2) return update;
+            return new Proxy(update, {
+              get(inner, property) {
+                if (property !== "where") return Reflect.get(inner, property);
+                return () => {
+                  failures++;
+                  return Promise.reject(new Error("private SQL parameter"));
+                };
+              },
+            });
+          };
+        },
+      });
+    }) as typeof db.update);
+    await runFailedWorker(jobId, log);
+    expect(failures).toBe(2);
+    expect((await readJobRow(jobId)).status).toBe("processing");
+    expect(records.map((r) => r.message)).toContain("[catalog-pdf] failed to persist recoverable worker state");
+    expect(JSON.stringify(records)).not.toMatch(/private PDF text|private SQL parameter/);
+
+    jest.restoreAllMocks();
+    await recoverInterruptedCatalogPdfJobs();
+    expect(await readJobRow(jobId)).toEqual({
+      status: "failed", errorMessage: "catalog_pdf_rollback_failed",
+    });
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    mockExtractCatalogPage.mockResolvedValueOnce({ entries: [], rawText: "" });
+    await supertest(app).post(`/api/admin/catalog-pdf/${jobId}/resume`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: FAKE_PDF_BASE64 }).expect(200);
+    await awaitJobTermination(jobId);
+    expect((await readJobRow(jobId)).status).toBe("done");
+  });
+
+  it("marks rollback failure recoverable and retries it before Resume proceeds", async () => {
+    const jobId = await seedWorkerJob();
+    const { log, records } = captureWorkerLog();
+    const rollbackFailed = failNextInventoryRollback();
+    await runFailedWorker(jobId, log);
+    expect(rollbackFailed()).toBe(true);
+    expect(await readJobRow(jobId)).toEqual({
+      status: "failed", errorMessage: "catalog_pdf_rollback_failed",
+    });
+    expect(records.map((r) => r.message)).toEqual(expect.arrayContaining([
+      "[catalog-pdf] background processing failed",
+      "[catalog-pdf] failed to revert worker session items",
+    ]));
+    expect(JSON.stringify(records)).not.toMatch(/private PDF text|private inventory details/);
+
+    jest.restoreAllMocks();
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    mockExtractCatalogPage.mockResolvedValueOnce({ entries: [], rawText: "" });
+    await supertest(app).post(`/api/admin/catalog-pdf/${jobId}/resume`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: FAKE_PDF_BASE64 }).expect(200);
+    await awaitJobTermination(jobId);
+    expect((await readJobRow(jobId)).status).toBe("done");
+  });
+
+  it("does not leave a cancelled worker unrecoverable when cancellation rollback fails", async () => {
+    mockExtractPdfPages.mockResolvedValueOnce([
+      ONE_FAKE_PAGE[0]!,
+      { ...ONE_FAKE_PAGE[0]!, pageNum: 2 },
+    ]);
+    let jobId: string;
+    mockExtractCatalogPage.mockImplementationOnce(async () => {
+      await supertest(app).post(`/api/admin/catalog-pdf/${jobId}/cancel`)
+        .set("Authorization", `Bearer ${adminToken}`).expect(200);
+      return { entries: [], rawText: "" };
+    });
+    jobId = await startJob();
+    const rollbackFailed = failNextInventoryRollback();
+    await awaitJobTermination(Number(jobId));
+    expect(rollbackFailed()).toBe(true);
+    expect(await readJobRow(Number(jobId))).toEqual({
+      status: "failed", errorMessage: "catalog_pdf_rollback_failed",
+    });
+    jest.restoreAllMocks();
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    mockExtractCatalogPage.mockResolvedValueOnce({ entries: [], rawText: "" });
+    await supertest(app).post(`/api/admin/catalog-pdf/${jobId}/resume`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: FAKE_PDF_BASE64 }).expect(200);
+    await awaitJobTermination(Number(jobId));
+    expect((await readJobRow(Number(jobId))).status).toBe("done");
+  });
+
+  it("keeps a failed parent terminal when child Resume cannot retry rollback", async () => {
+    const parentId = await seedParentJob();
+    await db.update(catalogPdfJobTable).set({ status: "failed", errorMessage: "child_job_failed" })
+      .where(eq(catalogPdfJobTable.id, parentId));
+    const [child] = await db.insert(catalogPdfJobTable).values({
+      vendor: VENDOR, filename: "child-recovery.pdf", status: "failed",
+      errorMessage: "catalog_pdf_rollback_failed",
+      parentJobId: parentId, chunkCount: 2, chunkIndex: 0,
+      processedPages: 0, matchedParts: 0,
+    }).returning({ id: catalogPdfJobTable.id });
+    if (!child) throw new Error("Failed to seed child job");
+    seededJobIds.push(child.id);
+    const rollbackFailed = failNextInventoryRollback();
+    await supertest(app).post(`/api/admin/catalog-pdf/${child.id}/resume`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: FAKE_PDF_BASE64 }).expect(503);
+    expect(rollbackFailed()).toBe(true);
+    expect((await readJobRow(child.id)).status).toBe("failed");
+    expect((await readJobRow(parentId)).status).toBe("failed");
+  });
+
+  it("rejects a duplicate Resume without reverting the first worker's inventory write", async () => {
+    const jobId = await seedWorkerJob();
+    await db.update(catalogPdfJobTable)
+      .set({ status: "failed", errorMessage: "catalog_pdf_rollback_failed" })
+      .where(eq(catalogPdfJobTable.id, jobId));
+    const [item] = await db.insert(inventoryTable).values({
+      vendor: VENDOR, catalog: `JEST-RESUME-${jobId}`, description: "before Resume",
+    }).returning({ id: inventoryTable.id });
+    if (!item) throw new Error("Failed to seed inventory");
+    seededInventoryIds.push(item.id);
+    mockMatchCatalogNumber.mockResolvedValueOnce({ inventoryId: item.id, similarityScore: 1 });
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    mockExtractCatalogPage.mockResolvedValueOnce({
+      entries: [{
+        catalogNumber: `JEST-RESUME-${jobId}`, description: "saved by first worker",
+        confidence: 1, hasPartImage: false, imageRegion: null, imageRegion2: null,
+        imageIndex: -1, imageIndex2: -1,
+      }],
+      rawText: "",
+    });
+    let signalWrite!: () => void;
+    const wroteItem = new Promise<void>((resolve) => { signalWrite = resolve; });
+    let releaseWorker!: () => void;
+    const continueWorker = new Promise<void>((resolve) => { releaseWorker = resolve; });
+    const originalUpdate = db.update.bind(db);
+    jest.spyOn(db, "update").mockImplementation(((table: unknown) => {
+      const query = originalUpdate(table as typeof catalogPdfJobTable);
+      if (table !== catalogPdfJobTable) return query;
+      return new Proxy(query, {
+        get(target, key) {
+          if (key !== "set") return Reflect.get(target, key);
+          return (values: { processedPages?: number; status?: string }) => {
+            const update = target.set(values);
+            if (values.processedPages !== 1 || values.status) return update;
+            return new Proxy(update, {
+              get(inner, property) {
+                if (property !== "where") return Reflect.get(inner, property);
+                return (...args: Parameters<typeof inner.where>) => {
+                  signalWrite();
+                  return continueWorker.then(() => inner.where(...args));
+                };
+              },
+            });
+          };
+        },
+      });
+    }) as typeof db.update);
+
+    try {
+      await supertest(app).post(`/api/admin/catalog-pdf/${jobId}/resume`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ pdfBase64: FAKE_PDF_BASE64 }).expect(200);
+      await wroteItem;
+      const duplicate = await supertest(app).post(`/api/admin/catalog-pdf/${jobId}/resume`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ pdfBase64: FAKE_PDF_BASE64 });
+      expect(duplicate.status).toBe(409);
+      const [saved] = await db.select({
+        description: inventoryTable.description, jobId: inventoryTable.catalogPdfJobId,
+      }).from(inventoryTable).where(eq(inventoryTable.id, item.id));
+      expect(saved).toEqual({ description: "saved by first worker", jobId });
+    } finally {
+      releaseWorker();
+      await awaitJobTermination(jobId);
+    }
+    expect((await readJobRow(jobId)).status).toBe("done");
+  });
+
+  it("reconciles an orphaned processing worker to a resumable failed state on restart", async () => {
+    const jobId = await seedWorkerJob("processing");
+    await recoverInterruptedCatalogPdfJobs();
+    expect(await readJobRow(jobId)).toEqual({
+      status: "failed", errorMessage: "catalog_pdf_rollback_failed",
+    });
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    mockExtractCatalogPage.mockResolvedValueOnce({ entries: [], rawText: "" });
+    await supertest(app).post(`/api/admin/catalog-pdf/${jobId}/resume`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: FAKE_PDF_BASE64 }).expect(200);
+    await awaitJobTermination(jobId);
+    expect((await readJobRow(jobId)).status).toBe("done");
   });
 });

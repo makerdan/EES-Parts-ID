@@ -18,6 +18,7 @@ type GeneratedManifest = {
 
 const ROOT = resolve(__dirname, "../../../..");
 const API_SPEC_SCRIPT = resolve(ROOT, "lib/api-spec/scripts/ensure-codegen.mjs");
+const CODEGEN_RUNNER = resolve(ROOT, "lib/api-spec/scripts/run-codegen.mjs");
 const SERIAL_LOCK_SCRIPT = resolve(ROOT, "scripts/serial-lock.mjs");
 const MANIFEST = JSON.parse(
   readFileSync(resolve(ROOT, "lib/api-spec/generated-output-manifest.json"), "utf8"),
@@ -48,8 +49,7 @@ function createGeneratedFixture(): string {
       name: "@workspace/api-spec",
       version: "0.0.0",
       scripts: {
-        codegen: "node ../../scripts/serial-lock.mjs --resource codegen -- pnpm run codegen:locked",
-        "codegen:locked": "pnpm run dependency:check && orval --config ./orval.config.ts",
+        codegen: "node ../../scripts/serial-lock.mjs --resource codegen -- node ./scripts/run-codegen.mjs",
       },
       devDependencies: { orval: "8.22.0" },
     }),
@@ -105,7 +105,8 @@ function createFakePnpm(root: string): string {
       "const fs = require('node:fs');",
       "const args = process.argv.slice(2);",
       "if (args[0] === '--version') { console.log('10.26.1'); process.exit(0); }",
-      "if (args[0] === 'run' && args[1] === 'codegen') {",
+      "if ((args[0] === 'run' && args[1] === 'dependency:check') || (args[0] === 'exec' && args[1] === 'orval')) { fs.appendFileSync(process.env.CODEGEN_COMMANDS, args.join(' ') + '\\n'); }",
+      "if ((args[0] === 'exec' && args[1] === 'orval') || (args[0] === 'run' && args[1] === 'codegen')) {",
       "  fs.appendFileSync(process.env.CODEGEN_COUNTER, process.pid + '\\n');",
       "  let activeFd;",
       "  try { activeFd = fs.openSync(process.env.CODEGEN_ACTIVE, 'wx'); }",
@@ -129,6 +130,7 @@ function ensureEnv(root: string, bin: string, lockFile: string) {
     CODEGEN_WORKSPACE_ROOT: root,
     CODEGEN_API_SPEC_DIR: join(root, "lib/api-spec"),
     CODEGEN_COUNTER: join(root, "codegen-count"),
+    CODEGEN_COMMANDS: join(root, "codegen-commands"),
     CODEGEN_ACTIVE: join(root, "codegen-active"),
     CODEGEN_EVENTS: join(root, "codegen-events"),
     SERIAL_LOCK_FILE: lockFile,
@@ -208,6 +210,52 @@ afterEach(() => {
 });
 
 describe("codegen ownership and cache identity", () => {
+  it("rejects direct invocation of the internal generator runner", async () => {
+    const result = await new Promise<{ code: number; output: string }>((resolveRun) => {
+      const child = spawn(process.execPath, [CODEGEN_RUNNER], {
+        cwd: ROOT,
+        env: {
+          ...process.env,
+          SERIAL_LOCK_HELD_PID: "",
+          SERIAL_LOCK_HELD_RESOURCES: "",
+          SERIAL_LOCK_HELD_TOKEN: "",
+          SERIAL_LOCK_FILE: "",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let output = "";
+      child.stdout.on("data", (chunk) => { output += chunk; });
+      child.stderr.on("data", (chunk) => { output += chunk; });
+      child.on("close", (code) => resolveRun({ code: code ?? 1, output }));
+    });
+
+    expect(result.code).toBe(2);
+    expect(result.output).toContain("refusing to run without the live shared codegen lock");
+  });
+
+  it("refuses to start codegen when the lock token is replaced before runner startup", async () => {
+    const root = createGeneratedFixture();
+    const bin = createFakePnpm(root);
+    const lockFile = join(root, "codegen.lock");
+    const queueDir = join(root, "queue");
+    const result = await runSerialLock(
+      lockFile,
+      queueDir,
+      "const fs = require('node:fs'); const { spawnSync } = require('node:child_process'); const sleep = ms => { const shared = new Int32Array(new SharedArrayBuffer(4)); Atomics.wait(shared, 0, 0, ms); }; let lines; do { lines = fs.readFileSync(process.env.SERIAL_LOCK_FILE, 'utf8').split('\\n'); if (lines[5]?.trim()) break; sleep(10); } while (true); lines[4] = 'successor-token'; const replacement = process.env.SERIAL_LOCK_FILE + '.replacement'; fs.writeFileSync(replacement, lines.join('\\n')); fs.renameSync(replacement, process.env.SERIAL_LOCK_FILE); const runner = spawnSync(process.execPath, [process.env.CODEGEN_RUNNER], { cwd: process.cwd(), env: process.env, encoding: 'utf8' }); process.stdout.write(runner.stdout || ''); process.stderr.write(runner.stderr || ''); process.exit(runner.status ?? 1)",
+      {
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        CODEGEN_RUNNER: CODEGEN_RUNNER,
+        CODEGEN_COMMANDS: join(root, "codegen-commands"),
+      },
+    );
+
+    expect(result.code).toBe(2);
+    expect(result.output).toContain(
+      "[api-spec codegen] refusing to run without the live shared codegen lock",
+    );
+    expect(existsSync(join(root, "codegen-commands"))).toBe(false);
+  });
+
   it("serializes concurrent ensure runs on the shared codegen resource", async () => {
     const root = createGeneratedFixture();
     const bin = createFakePnpm(root);
@@ -284,24 +332,66 @@ describe("codegen ownership and cache identity", () => {
     activeRoots.push(root);
     const lockFile = join(root, "codegen.lock");
     const queueDir = join(root, "queue");
+    const ownerReadyFile = join(root, "owner-ready");
+    const ownerReleaseFile = join(root, "owner-release");
+    const successorReadyFile = join(root, "successor-ready");
+    const successorReleaseFile = join(root, "successor-release");
+    const waitForRelease = [
+      "const fs = require('node:fs');",
+      "fs.writeFileSync(process.env.TEST_READY_FILE, 'ready');",
+      "const interval = setInterval(() => {",
+      "  if (!fs.existsSync(process.env.TEST_RELEASE_FILE)) return;",
+      "  clearInterval(interval);",
+      "  process.exit(fs.existsSync(process.env.SERIAL_LOCK_FILE) ? 0 : 8);",
+      "}, 10);",
+    ].join("\n");
     const staleOwner = runSerialLock(
       lockFile,
       queueDir,
-      "setTimeout(() => process.exit(0), 300)",
-      { SERIAL_LOCK_STALE_HEARTBEAT_MS: "50" },
+      waitForRelease,
+      {
+        SERIAL_LOCK_STALE_HEARTBEAT_MS: "50",
+        TEST_READY_FILE: ownerReadyFile,
+        TEST_RELEASE_FILE: ownerReleaseFile,
+      },
     );
-    await waitFor(() => existsSync(lockFile), "stale owner lock");
-    await wait(100);
+    let successor: ReturnType<typeof runSerialLock> | undefined;
+    try {
+      await waitFor(
+        () => existsSync(ownerReadyFile) && existsSync(lockFile) &&
+          Number(readFileSync(lockFile, "utf8").split("\n")[5]) > 0,
+        "attached stale owner",
+      );
+      const oldToken = readFileSync(lockFile, "utf8").split("\n")[4]?.trim();
+      expect(oldToken).toBeTruthy();
 
-    const successor = runSerialLock(
-      lockFile,
-      queueDir,
-      "setTimeout(() => process.exit(require('node:fs').existsSync(process.env.SERIAL_LOCK_FILE) ? 0 : 8), 250)",
-      { SERIAL_LOCK_STALE_HEARTBEAT_MS: "50" },
-    );
+      successor = runSerialLock(
+        lockFile,
+        queueDir,
+        waitForRelease,
+        {
+          SERIAL_LOCK_STALE_HEARTBEAT_MS: "50",
+          TEST_READY_FILE: successorReadyFile,
+          TEST_RELEASE_FILE: successorReleaseFile,
+        },
+      );
+      await waitFor(() => existsSync(successorReadyFile), "successor lock");
+      const successorToken = readFileSync(lockFile, "utf8").split("\n")[4]?.trim();
+      expect(successorToken).toBeTruthy();
+      expect(successorToken).not.toBe(oldToken);
 
-    expect((await staleOwner).code).toBe(0);
-    expect((await successor).code).toBe(0);
-    expect(existsSync(lockFile)).toBe(false);
+      // Reclaiming a stale lease terminates the old worker; it must not report success.
+      expect(await staleOwner).toMatchObject({ code: 1 });
+      expect(readFileSync(lockFile, "utf8").split("\n")[4]?.trim()).toBe(successorToken);
+
+      writeFileSync(successorReleaseFile, "release");
+      expect(await successor).toMatchObject({ code: 0 });
+      expect(existsSync(lockFile)).toBe(false);
+    } finally {
+      writeFileSync(ownerReleaseFile, "release");
+      writeFileSync(successorReleaseFile, "release");
+      await staleOwner;
+      if (successor) await successor;
+    }
   });
 });

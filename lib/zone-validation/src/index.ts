@@ -69,3 +69,8 @@ export {
   matrixToSvgString,
   normalizeAnchorPoints,
 } from "./mapAnchorTransform";
+export {
+  type ContentViewBox,
+  normalizeSvgViewBoxOrigin,
+  parseContentViewBox,
+} from "./svgScene";

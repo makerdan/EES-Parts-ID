@@ -7,7 +7,11 @@
 
 import {
   classifyPoeError,
+  createPoeChatCompletion,
+  getPoeModelRegistry,
   redactPoeTelemetry,
+  validatePoeChatCompletionResponse,
+  validatePoeChatRequest,
   withPoeRequestTimeout,
   withPoeRetry,
 } from "@workspace/integrations-poe-server";
@@ -40,6 +44,45 @@ describe("Poe setup contract", () => {
     const snapshot = getVerifiedPoeRouteSnapshot("enrich");
     expect(snapshot.models.map((model) => model.id)).toEqual(snapshot.effective);
     expect(snapshot.models.every((model) => model.verification.source === "configured_registry")).toBe(true);
+  });
+
+  it("records fail-closed authorization and bounded evidence for every hardcoded bot", () => {
+    for (const model of getPoeModelRegistry()) {
+      expect(model.enabled).toBe(true);
+      expect(model.failClosed).toBe(true);
+      expect(model.approvedRoutes.length).toBeGreaterThan(0);
+      expect(model.supportedEndpoints).toContain("https://api.poe.com/v1/chat/completions");
+      expect(model.limits.maxRequestBytes).toBeGreaterThan(0);
+      expect(model.limits.maxOutputTokens).toBeGreaterThan(0);
+      expect(model.verification.owner).toBeTruthy();
+      expect(model.verification.reviewTrigger).toBeTruthy();
+      expect(model.fallbackEligible.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("rejects unknown and route-incompatible model IDs before Poe transport", async () => {
+    const request = {
+      messages: [{ role: "user" as const, content: "bounded test" }],
+    };
+    expect(() => validatePoeChatRequest({ ...request, model: "runtime-supplied-bot" })).toThrow(
+      expect.objectContaining({ kind: "invalid_request" }),
+    );
+    expect(() => validatePoeChatRequest({ ...request, model: "Gemini-2.5-Pro" }, { route: "identify" }))
+      .toThrow(expect.objectContaining({ kind: "invalid_request" }));
+    await expect(createPoeChatCompletion(
+      { ...request, model: "runtime-supplied-bot" },
+      { route: "identify" },
+    )).rejects.toMatchObject({ kind: "invalid_request", status: 400 });
+  });
+
+  it("rejects unsupported request parameters and malformed provider envelopes", () => {
+    expect(() => validatePoeChatRequest({
+      model: "Claude-Sonnet-4.5",
+      messages: [{ role: "user", content: "bounded test" }],
+      stream: true,
+    } as never)).toThrow(expect.objectContaining({ kind: "invalid_request" }));
+    expect(() => validatePoeChatCompletionResponse({ choices: [{ message: { content: 42 } }] }))
+      .toThrow(expect.objectContaining({ kind: "upstream" }));
   });
 
   it.each([

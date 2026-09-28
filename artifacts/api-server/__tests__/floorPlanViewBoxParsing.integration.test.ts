@@ -42,7 +42,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // The name begins with `mock` so Jest's hoisted factory may reference it, and it
 // is re-used below to derive the seeded hash (generateTile verifies the buffer
 // hash matches the requested floor-plan hash).
-const mockFixtureInstance = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
+const mockFixtureInstance = "floor-plan-viewbox";
 const mockSingleQuoteSvg =
   "<svg xmlns='http://www.w3.org/2000/svg' viewBox='100 200 800 400'>" +
   `<rect x='0' y='0' width='800' height='400' fill='green'/><!-- ${mockFixtureInstance} --></svg>`;
@@ -76,10 +76,13 @@ import supertest from "supertest";
 import app from "../src/app";
 import { db, floorPlanMetaTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { acquireFloorPlanFixtureLock } from "./helpers/floorPlanFixtureLock";
 
 // ── Test fixture constants ────────────────────────────────────────────────────
 const TEST_HASH = crypto.createHash("sha256").update(mockSingleQuoteSvg).digest("hex");
 const TEST_OBJECT_PATH = `/objects/jest-test/${mockFixtureInstance}/floor-plan/single-quote.svg`;
+const TILE_CACHE_DIR = path.join(os.tmpdir(), "floor-plan-tiles");
+let releaseFloorPlanFixtureLock: (() => Promise<void>) | undefined;
 
 // Tile-pyramid constants mirror routes/floorPlan.ts (TILE_PX=512, z0 => 1×1).
 const TILE_PX = 512;
@@ -88,26 +91,50 @@ const EXPECTED_TOTAL_W = TILE_PX; // gridSize=1 at z0
 const EXPECTED_TOTAL_H = Math.round(EXPECTED_TOTAL_W / EXPECTED_ASPECT);
 
 async function seedFloorPlan() {
+  await cleanupFloorPlan();
   await db
     .insert(floorPlanMetaTable)
-    .values({ objectPath: TEST_OBJECT_PATH, hash: TEST_HASH })
-    .onConflictDoNothing();
+    .values({
+      objectPath: TEST_OBJECT_PATH,
+      hash: TEST_HASH,
+      uploadedAt: new Date("2099-01-02T00:00:00.000Z"),
+    });
 }
 
 async function cleanupFloorPlan() {
   await db.delete(floorPlanMetaTable).where(eq(floorPlanMetaTable.hash, TEST_HASH));
 }
 
+async function cleanupTileCache() {
+  const files = await fs.readdir(TILE_CACHE_DIR).catch(() => []);
+  await Promise.all(
+    files
+      .filter((file) => file.startsWith(`${TEST_HASH}_`))
+      .map((file) => fs.unlink(path.join(TILE_CACHE_DIR, file)).catch(() => {})),
+  );
+}
+
 beforeAll(async () => {
-  // Ensure a clean cache miss so sharp() actually runs for this hash.
-  await fs
-    .unlink(path.join(os.tmpdir(), "floor-plan-tiles", `${TEST_HASH}_0_0_0.png`))
-    .catch(() => {});
-  await seedFloorPlan();
+  releaseFloorPlanFixtureLock = await acquireFloorPlanFixtureLock();
+  try {
+    // Ensure a clean cache miss so sharp() actually runs for this hash.
+    await cleanupTileCache();
+    await seedFloorPlan();
+  } catch (error) {
+    await releaseFloorPlanFixtureLock();
+    releaseFloorPlanFixtureLock = undefined;
+    throw error;
+  }
 }, 15_000);
 
 afterAll(async () => {
-  await cleanupFloorPlan();
+  try {
+    await cleanupFloorPlan();
+    await cleanupTileCache();
+  } finally {
+    await releaseFloorPlanFixtureLock?.();
+    releaseFloorPlanFixtureLock = undefined;
+  }
 }, 15_000);
 
 describe("floor-plan tiles — single-quoted viewBox parsing & origin normalisation", () => {

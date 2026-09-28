@@ -1,10 +1,9 @@
 /**
  * Regression coverage for POST /api/admin/restart.
  *
- * The route must be protected by the existing app/admin/MFA middleware, must
- * refuse production requests, and must never terminate the Jest worker. The
- * route-local restartRuntime seam is stubbed below so the delayed exit can be
- * tested with fake timers.
+ * The route must be protected by the current approved-admin role boundary,
+ * refuse production requests, and delegate accepted requests to the same
+ * graceful shutdown coordinator as operating-system signals.
  */
 
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
@@ -32,6 +31,11 @@ import {
   resetRestartStateForTests,
   restartRuntime,
 } from "../src/routes/admin";
+import {
+  configureGracefulShutdown,
+  requestGracefulShutdown,
+  resetGracefulShutdownForTests,
+} from "../src/lib/gracefulShutdown";
 import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import {
   cleanupTestUser,
@@ -42,27 +46,43 @@ import {
 const ADMIN_TOKEN = ADMIN_TEST_USER_ID;
 const NON_ADMIN_USER = workerQualifiedUserId("jest-restart-non-admin");
 const DEMOTED_ADMIN_USER = workerQualifiedUserId("jest-restart-demoted-admin");
+const PENDING_ADMIN_USER = workerQualifiedUserId("jest-restart-pending-admin");
+const BANNED_ADMIN_USER = workerQualifiedUserId("jest-restart-banned-admin");
 
 const originalNodeEnv = process.env.NODE_ENV;
-let exitSpy: jest.SpyInstance;
 let scheduleSpy: jest.SpyInstance;
+let exitSpy: jest.Mock;
+let closeListener: jest.Mock;
+let drainBackgroundWork: jest.Mock;
 let scheduledRestart: (() => void) | undefined;
 let scheduledDelayMs: number | undefined;
 
 beforeAll(async () => {
   await seedTestUser({ clerkUserId: NON_ADMIN_USER, status: "approved", role: "user" });
   await seedTestUser({ clerkUserId: DEMOTED_ADMIN_USER, status: "approved", role: "admin" });
+  await seedTestUser({ clerkUserId: PENDING_ADMIN_USER, status: "pending", role: "admin" });
+  await seedTestUser({ clerkUserId: BANNED_ADMIN_USER, status: "banned", role: "admin" });
 });
 
 afterAll(async () => {
   await cleanupTestUser(NON_ADMIN_USER);
   await cleanupTestUser(DEMOTED_ADMIN_USER);
+  await cleanupTestUser(PENDING_ADMIN_USER);
+  await cleanupTestUser(BANNED_ADMIN_USER);
 }, 15_000);
 
 beforeEach(() => {
   process.env.NODE_ENV = "development";
   resetRestartStateForTests();
-  exitSpy = jest.spyOn(restartRuntime, "exit").mockImplementation(() => undefined);
+  resetGracefulShutdownForTests();
+  exitSpy = jest.fn();
+  closeListener = jest.fn((callback: () => void) => callback());
+  drainBackgroundWork = jest.fn().mockResolvedValue(undefined);
+  configureGracefulShutdown({
+    server: { close: closeListener },
+    shutdownBackgroundWork: drainBackgroundWork,
+    exit: exitSpy,
+  });
   scheduledRestart = undefined;
   scheduledDelayMs = undefined;
   scheduleSpy = jest.spyOn(restartRuntime, "schedule").mockImplementation((callback, delayMs) => {
@@ -74,9 +94,9 @@ beforeEach(() => {
 afterEach(() => {
   jest.clearAllTimers();
   jest.useRealTimers();
-  exitSpy.mockRestore();
   scheduleSpy.mockRestore();
   resetRestartStateForTests();
+  resetGracefulShutdownForTests();
   if (originalNodeEnv === undefined) {
     delete process.env.NODE_ENV;
   } else {
@@ -91,6 +111,7 @@ describe("POST /api/admin/restart — authorization and environment gates", () =
       .expect(401);
 
     expect(exitSpy).not.toHaveBeenCalled();
+    expect(drainBackgroundWork).not.toHaveBeenCalled();
   });
 
   it("rejects an approved non-admin without scheduling an exit", async () => {
@@ -99,6 +120,22 @@ describe("POST /api/admin/restart — authorization and environment gates", () =
       .set("Authorization", `Bearer ${NON_ADMIN_USER}`)
       .expect(403);
 
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(drainBackgroundWork).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["pending", PENDING_ADMIN_USER],
+    ["banned", BANNED_ADMIN_USER],
+  ])("rejects a %s admin without scheduling shutdown", async (_status, userId) => {
+    await supertest(app)
+      .post("/api/admin/restart")
+      .set("Authorization", `Bearer ${userId}`)
+      .expect(403);
+
+    expect(scheduleSpy).not.toHaveBeenCalled();
+    expect(closeListener).not.toHaveBeenCalled();
+    expect(drainBackgroundWork).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
@@ -115,6 +152,7 @@ describe("POST /api/admin/restart — authorization and environment gates", () =
       .expect(403);
 
     expect(exitSpy).not.toHaveBeenCalled();
+    expect(drainBackgroundWork).not.toHaveBeenCalled();
   });
 
   it("rejects an authorized caller in production without exposing operational details", async () => {
@@ -131,11 +169,17 @@ describe("POST /api/admin/restart — authorization and environment gates", () =
       error: "API restart is unavailable",
     });
     expect(exitSpy).not.toHaveBeenCalled();
+    expect(drainBackgroundWork).not.toHaveBeenCalled();
   });
 });
 
 describe("POST /api/admin/restart — bounded development restart", () => {
-  it("returns the accepted contract and exits only after the delayed handoff", async () => {
+  it("drains the listener and background work before final exit", async () => {
+    let finishBackgroundWork!: () => void;
+    drainBackgroundWork.mockReturnValueOnce(new Promise<void>((resolve) => {
+      finishBackgroundWork = resolve;
+    }));
+
     const res = await supertest(app)
       .post("/api/admin/restart")
       .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
@@ -147,6 +191,14 @@ describe("POST /api/admin/restart — bounded development restart", () => {
     expect(scheduledRestart).toBeDefined();
 
     scheduledRestart?.();
+    expect(closeListener).toHaveBeenCalledTimes(1);
+    expect(drainBackgroundWork).toHaveBeenCalledTimes(1);
+    expect(drainBackgroundWork).toHaveBeenCalledWith(10_000);
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    finishBackgroundWork();
+    await Promise.resolve();
+    await Promise.resolve();
     expect(exitSpy).toHaveBeenCalledTimes(1);
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
@@ -170,6 +222,51 @@ describe("POST /api/admin/restart — bounded development restart", () => {
     expect(exitSpy).not.toHaveBeenCalled();
 
     scheduledRestart?.();
+    scheduledRestart?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(exitSpy).toHaveBeenCalledTimes(1);
+    expect(closeListener).toHaveBeenCalledTimes(1);
+    expect(drainBackgroundWork).toHaveBeenCalledTimes(1);
+  });
+
+  it("admits an approved role-only admin without an MFA claim", async () => {
+    await supertest(app)
+      .post("/api/admin/restart")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .expect(202);
+
+    expect(scheduleSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("finalizes only once when cleanup settles after the hard limit", async () => {
+    jest.useFakeTimers();
+    let closeCallback!: () => void;
+    let finishBackgroundWork!: () => void;
+    const delayedClose = jest.fn((callback: () => void) => {
+      closeCallback = callback;
+    });
+    const delayedBackgroundWork = jest.fn(() => new Promise<void>((resolve) => {
+      finishBackgroundWork = resolve;
+    }));
+    configureGracefulShutdown({
+      server: { close: delayedClose } as unknown as Parameters<
+        typeof configureGracefulShutdown
+      >[0]["server"],
+      shutdownBackgroundWork: delayedBackgroundWork,
+      exit: exitSpy,
+      hardLimitMs: 50,
+    });
+
+    const shutdown = requestGracefulShutdown("admin-restart");
+    jest.advanceTimersByTime(50);
+    await shutdown;
+    expect(exitSpy).toHaveBeenCalledTimes(1);
+
+    closeCallback();
+    finishBackgroundWork();
+    await Promise.resolve();
+    await Promise.resolve();
     expect(exitSpy).toHaveBeenCalledTimes(1);
   });
 });

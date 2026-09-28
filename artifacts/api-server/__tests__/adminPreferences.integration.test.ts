@@ -37,6 +37,10 @@ import app from "../src/app";
 import { ADMIN_TEST_USER_ID, signAdminToken } from "./helpers/adminAuth";
 import { adminPreferencesTable, db } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import {
+  restoreAdminPreferences,
+  snapshotAdminPreferences,
+} from "./helpers/testDb";
 
 const ADMIN_TOKEN = signAdminToken();
 
@@ -55,51 +59,28 @@ const ORIGINAL_SHELF_PREFERENCES = {
 
 type PreferenceRow = typeof adminPreferencesTable.$inferSelect;
 let originalPreference: PreferenceRow | undefined;
+let preferenceSnapshotCaptured = false;
 
 beforeAll(async () => {
-  const rows = await db
-    .select()
-    .from(adminPreferencesTable)
-    .where(eq(adminPreferencesTable.id, 1))
-    .limit(1);
-  originalPreference = rows[0];
+  originalPreference = await snapshotAdminPreferences();
+  preferenceSnapshotCaptured = true;
 
   // Make the initial GET assertions deterministic and leave shelf state
   // unset until the shelf workflow explicitly saves it.
-  await db
-    .delete(adminPreferencesTable)
-    .where(eq(adminPreferencesTable.id, 1));
+  await db.delete(adminPreferencesTable).where(eq(adminPreferencesTable.id, 1));
 });
 
 afterAll(async () => {
-  if (!originalPreference) {
-    await db
-      .delete(adminPreferencesTable)
-      .where(eq(adminPreferencesTable.id, 1));
-    return;
+  if (!preferenceSnapshotCaptured) return;
+  try {
+    await restoreAdminPreferences(originalPreference);
+  } catch (error) {
+    console.warn(
+      `[admin preferences fixture cleanup] restore failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
-
-  await db
-    .insert(adminPreferencesTable)
-    .values(originalPreference)
-    .onConflictDoUpdate({
-      target: adminPreferencesTable.id,
-      set: {
-        dimensionUnit: originalPreference.dimensionUnit,
-        textSize: originalPreference.textSize,
-        themeMode: originalPreference.themeMode,
-        defaultConfidenceThreshold: originalPreference.defaultConfidenceThreshold,
-        scanSound: originalPreference.scanSound,
-        shelfPrefix: originalPreference.shelfPrefix,
-        shelfStep: originalPreference.shelfStep,
-        aiProvider: originalPreference.aiProvider,
-        zoneAlignX: originalPreference.zoneAlignX,
-        zoneAlignY: originalPreference.zoneAlignY,
-        zoneAlignScale: originalPreference.zoneAlignScale,
-        revokedBefore: originalPreference.revokedBefore,
-        updatedAt: originalPreference.updatedAt,
-      },
-    });
 });
 
 describe("admin preferences round trip", () => {

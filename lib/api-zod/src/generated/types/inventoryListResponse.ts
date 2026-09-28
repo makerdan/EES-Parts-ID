@@ -12,4 +12,9 @@ export interface InventoryListResponse {
   total: number;
   page: number;
   limit: number;
+  /**
+     * Highest id eligible for this export, present only on after_id requests.
+     * @minimum 0
+     */
+  throughId?: number;
 }

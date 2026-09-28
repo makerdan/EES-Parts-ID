@@ -63,20 +63,26 @@ const mockStartSSO = jest.fn((opts: { strategy: string }) => {
 });
 const mockAuthenticateWithRedirect = jest.fn(() => Promise.resolve());
 
-jest.mock("@clerk/expo", () => ({
-  useSSO: jest.fn(() => ({ startSSOFlow: mockStartSSO })),
-  useAuth: jest.fn(() => ({ isSignedIn: false })),
-  useClerk: jest.fn(() => ({
-    signOut: jest.fn(),
-    handleRedirectCallback: jest.fn(),
-    client: { signIn: { authenticateWithRedirect: mockAuthenticateWithRedirect } },
-  })),
-  ClerkProvider: ({ children }: { children: React.ReactNode }) =>
-    React.createElement(React.Fragment, null, children),
-  ClerkLoaded: ({ children }: { children: React.ReactNode }) =>
-    React.createElement(React.Fragment, null, children),
-  tokenCache: null,
-}));
+jest.mock("@clerk/expo", () => {
+  const {
+    assertClerkMockContract,
+    createClerkExpoMock,
+  } = jest.requireActual("../__mocks__/clerk-expo");
+  const clerkMock = createClerkExpoMock({
+    useSSO: jest.fn(() => ({ startSSOFlow: mockStartSSO })),
+    useAuth: jest.fn(() => ({ isSignedIn: false })),
+    useClerk: jest.fn(() => ({
+      signOut: jest.fn(),
+      handleRedirectCallback: jest.fn(),
+      client: { signIn: { authenticateWithRedirect: mockAuthenticateWithRedirect } },
+    })),
+  });
+  return assertClerkMockContract(
+    clerkMock,
+    ["useSSO", "useAuth", "useClerk"],
+    "oauthApprovalGate",
+  );
+});
 
 // ── expo-auth-session (native redirect URI builder) ───────────────────────────
 

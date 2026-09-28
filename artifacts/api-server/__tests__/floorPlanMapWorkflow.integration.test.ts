@@ -31,7 +31,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 }));
 
 // ── Deterministic object-storage fixture ──────────────────────────────────────
-const mockFixtureInstance = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
+const mockFixtureInstance = "floor-plan-map-workflow";
 const mockOldSvg =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400">' +
   `<rect id="old-floor-plan" x="0" y="0" width="800" height="400"/><!-- ${mockFixtureInstance} --></svg>`;
@@ -39,17 +39,27 @@ const mockReplacementSvg =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="100 200 1200 600">' +
   `<path id="replacement-floor-plan" d="M100 200H1300V800Z"/><!-- ${mockFixtureInstance} --></svg>`;
 const mockOldObjectPath = `/objects/jest-test/${mockFixtureInstance}/floor-plan/old.svg`;
-const mockReplacementObjectPath = `/objects/jest-test/${mockFixtureInstance}/floor-plan/replacement.svg`;
-let mockStoredSvg = mockOldSvg;
+const mockReplacementObjectPath = `/objects/jest-test/${mockFixtureInstance}/floor-plan/00000000-0000-4000-8000-000000000001.svg`;
+const mockObjects = new Map<string, string>();
+let mockUploadCount = 0;
 
 const mockUploadFloorPlanSvg = jest.fn(async (svg: string) => {
-  mockStoredSvg = svg;
-  return mockReplacementObjectPath;
+  const path = `/objects/jest-test/${mockFixtureInstance}/floor-plan/00000000-0000-4000-8000-${String(++mockUploadCount).padStart(12, "0")}.svg`;
+  mockObjects.set(path, svg);
+  return path;
+});
+const mockDeleteFloorPlanSvg = jest.fn(async (objectPath: string) => {
+  mockObjects.delete(objectPath);
 });
 
 jest.mock("../src/lib/objectStorage", () => ({
-  readFloorPlanSvg: jest.fn(() => Promise.resolve(Buffer.from(mockStoredSvg, "utf8"))),
+  readFloorPlanSvg: jest.fn((objectPath: string) => {
+    const svg = mockObjects.get(objectPath);
+    if (!svg) return Promise.reject(new Error("Object not found"));
+    return Promise.resolve(Buffer.from(svg, "utf8"));
+  }),
   uploadFloorPlanSvg: mockUploadFloorPlanSvg,
+  deleteFloorPlanSvg: mockDeleteFloorPlanSvg,
   uploadCatalogImage: jest.fn(),
 }));
 
@@ -81,6 +91,7 @@ import { eq, inArray } from "drizzle-orm";
 
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
+import { acquireFloorPlanFixtureLock } from "./helpers/floorPlanFixtureLock";
 import { createWebSvgScene } from "../../parts-id/utils/webSvgScene";
 import { setTestEnv } from "./helpers/testEnv";
 
@@ -97,6 +108,7 @@ const REPLACEMENT_TILE_PATH = path.join(
 );
 const ADMIN_TOKEN = signAdminToken();
 let restoreTestEnv: (() => void) | undefined;
+let releaseFloorPlanFixtureLock: (() => Promise<void>) | undefined;
 
 async function deleteFixtureMetadata(): Promise<void> {
   await db
@@ -108,22 +120,40 @@ async function deleteFixtureMetadata(): Promise<void> {
 
 describe("floor-plan replacement → map rendering workflow", () => {
   beforeAll(async () => {
-    restoreTestEnv = setTestEnv({
-      DEFAULT_OBJECT_STORAGE_BUCKET_ID: "jest-floor-plan-bucket",
-    });
-    await deleteFixtureMetadata();
+    releaseFloorPlanFixtureLock = await acquireFloorPlanFixtureLock();
+    try {
+      restoreTestEnv = setTestEnv({
+        DEFAULT_OBJECT_STORAGE_BUCKET_ID: "jest-floor-plan-bucket",
+      });
+      await deleteFixtureMetadata();
+    } catch (error) {
+      await releaseFloorPlanFixtureLock();
+      releaseFloorPlanFixtureLock = undefined;
+      throw error;
+    }
   }, 15_000);
 
   afterAll(async () => {
-    await deleteFixtureMetadata();
-    await fs.rm(OLD_TILE_PATH, { force: true });
-    await fs.rm(REPLACEMENT_TILE_PATH, { force: true });
-    restoreTestEnv?.();
+    try {
+      await deleteFixtureMetadata();
+      await fs.rm(OLD_TILE_PATH, { force: true });
+      await fs.rm(REPLACEMENT_TILE_PATH, { force: true });
+      restoreTestEnv?.();
+    } finally {
+      await releaseFloorPlanFixtureLock?.();
+      releaseFloorPlanFixtureLock = undefined;
+    }
   }, 15_000);
 
   beforeEach(async () => {
-    mockStoredSvg = mockOldSvg;
+    mockObjects.clear();
+    mockObjects.set(mockOldObjectPath, mockOldSvg);
+    mockUploadCount = 0;
     mockUploadFloorPlanSvg.mockClear();
+    mockDeleteFloorPlanSvg.mockReset();
+    mockDeleteFloorPlanSvg.mockImplementation(async (objectPath: string) => {
+      mockObjects.delete(objectPath);
+    });
     mockSharpFn.mockClear();
     mockResize.mockClear();
     mockExtract.mockClear();
@@ -161,6 +191,8 @@ describe("floor-plan replacement → map rendering workflow", () => {
       objectPath: mockReplacementObjectPath,
     });
     expect(mockUploadFloorPlanSvg).toHaveBeenCalledWith(mockReplacementSvg);
+    expect(mockDeleteFloorPlanSvg).not.toHaveBeenCalled();
+    expect(mockObjects.get(mockOldObjectPath)).toBe(mockOldSvg);
     expect(upload.body.hash).not.toBe(OLD_HASH);
     expect(await fs.stat(OLD_TILE_PATH).catch(() => null)).toBeNull();
 
@@ -216,5 +248,51 @@ describe("floor-plan replacement → map rendering workflow", () => {
     );
     expect(scene.svgMarkup).toContain("replacement-floor-plan");
     expect(scene.svgMarkup).not.toContain("old-floor-plan");
+  });
+
+  it("removes each unreferenced upload on failed metadata writes without touching the old plan", async () => {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const insert = jest.spyOn(db, "insert").mockImplementationOnce(() => {
+        throw new Error("metadata write unavailable");
+      });
+      try {
+        const response = await supertest(app)
+          .post("/api/admin/floor-plan")
+          .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+          .send({ svg: mockReplacementSvg })
+          .expect(500);
+        expect(response.body).toEqual({ error: "Failed to save floor plan. Please retry." });
+      } finally {
+        insert.mockRestore();
+      }
+
+      const uploadedPath = `/objects/jest-test/${mockFixtureInstance}/floor-plan/00000000-0000-4000-8000-${String(attempt).padStart(12, "0")}.svg`;
+      expect(mockDeleteFloorPlanSvg).toHaveBeenCalledTimes(attempt);
+      expect(mockDeleteFloorPlanSvg).toHaveBeenLastCalledWith(uploadedPath);
+      expect(mockObjects.has(uploadedPath)).toBe(false);
+      expect(mockObjects.get(mockOldObjectPath)).toBe(mockOldSvg);
+      expect(await db.select().from(floorPlanMetaTable).where(eq(floorPlanMetaTable.hash, OLD_HASH))).toHaveLength(1);
+      expect(await db.select().from(floorPlanMetaTable).where(eq(floorPlanMetaTable.hash, REPLACEMENT_HASH))).toHaveLength(0);
+      expect(await fs.readFile(OLD_TILE_PATH, "utf8")).toBe("stale-old-tile");
+    }
+  });
+
+  it("keeps the persistence response actionable when object cleanup also fails", async () => {
+    mockDeleteFloorPlanSvg.mockRejectedValueOnce(new Error("storage unavailable"));
+    const insert = jest.spyOn(db, "insert").mockImplementationOnce(() => {
+      throw new Error("metadata write unavailable");
+    });
+    try {
+      const response = await supertest(app)
+        .post("/api/admin/floor-plan")
+        .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+        .send({ svg: mockReplacementSvg })
+        .expect(500);
+      expect(response.body).toEqual({ error: "Failed to save floor plan. Please retry." });
+    } finally {
+      insert.mockRestore();
+    }
+    expect(mockDeleteFloorPlanSvg).toHaveBeenCalledWith(mockReplacementObjectPath);
+    expect(mockObjects.get(mockOldObjectPath)).toBe(mockOldSvg);
   });
 });

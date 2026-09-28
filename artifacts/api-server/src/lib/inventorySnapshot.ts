@@ -4,6 +4,7 @@ import { db, inventoryTable } from "@workspace/db";
 import { assertProductionDatabaseTarget } from "@workspace/db/runtime-data-boundary";
 import { asc, sql } from "drizzle-orm";
 
+import { pruneInventorySnapshots } from "./inventorySnapshotRetention";
 import { readVerifiedSnapshot, writeVerifiedSnapshot } from "./inventorySnapshotStorage";
 import {
   assertValidManifest,
@@ -13,7 +14,7 @@ import {
   type SnapshotReason,
   stableInventoryRow,
 } from "./inventorySnapshotTypes";
-import { logger } from "./logger";
+import { boundedErrorDiagnostic, logger } from "./logger";
 import { listInventoryBackupManifestPaths, readInventoryBackupObject } from "./objectStorage";
 
 const SNAPSHOT_LOCK = "inventory-snapshot-backup";
@@ -21,6 +22,28 @@ const SNAPSHOT_LOCK = "inventory-snapshot-backup";
 export interface SnapshotRunResult {
   manifest: InventorySnapshotManifest;
   anomaly: boolean;
+}
+
+export interface InventoryBackupRunResult extends SnapshotRunResult {
+  pruned: number;
+}
+
+/**
+ * Run the complete verified backup operation used by both the CLI and the
+ * administrator-triggered route. Keeping the target and private-storage
+ * checks here prevents an entry point from accidentally bypassing them.
+ */
+export async function runInventoryBackup(
+  reason: SnapshotReason = "scheduled",
+  options: { allowEmptyBaseline?: boolean } = {},
+): Promise<InventoryBackupRunResult> {
+  assertProductionDatabaseTarget();
+  if (!process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID || !process.env.PRIVATE_OBJECT_DIR) {
+    throw new Error("Private App Storage configuration is required for inventory backups");
+  }
+  const result = await createInventorySnapshot(reason, options);
+  const pruned = await pruneInventorySnapshots(await listVerifiedInventorySnapshots());
+  return { ...result, pruned };
 }
 
 export async function withInventorySnapshotLock<T>(
@@ -41,13 +64,16 @@ export async function listVerifiedInventorySnapshots(): Promise<Array<InventoryS
       await readVerifiedSnapshot(value);
       manifests.push(value);
     } catch (error) {
-      logger.warn({ error, path }, "Ignoring invalid inventory snapshot manifest");
+      logger.warn(
+        { ...boundedErrorDiagnostic(error), manifestRole: "inventory_backup" },
+        "Ignoring invalid inventory snapshot manifest",
+      );
     }
   }
   return manifests.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-export async function createInventorySnapshot(
+async function createInventorySnapshot(
   reason: SnapshotReason = "scheduled",
   options: { allowEmptyBaseline?: boolean } = {},
 ): Promise<SnapshotRunResult> {

@@ -2,13 +2,19 @@ import express from "express";
 import supertest from "supertest";
 
 const mockExecute = jest.fn();
+const mockPoolConnect = jest.fn();
+const mockPoolRelease = jest.fn();
 const mockGetProbeSummary = jest.fn();
 const mockGetStartupReadiness = jest.fn();
 const mockCheckRequiredSchema = jest.fn();
 
 jest.mock("@workspace/db", () => ({
   db: { execute: mockExecute },
-  pool: { idleCount: 2, totalCount: 3 },
+  pool: {
+    idleCount: 2,
+    totalCount: 3,
+    connect: mockPoolConnect,
+  },
 }));
 jest.mock("../src/lib/aiProvider", () => ({
   getProbeSummary: mockGetProbeSummary,
@@ -27,10 +33,8 @@ describe("application liveness and readiness", () => {
     jest.clearAllMocks();
     mockGetStartupReadiness.mockReturnValue({ status: "ready" });
     mockGetProbeSummary.mockReturnValue({});
-    mockCheckRequiredSchema.mockImplementation(async (executor) => {
-      const result = await executor.execute({});
-      return Boolean(result?.rows?.[0]?.usable);
-    });
+    mockPoolConnect.mockResolvedValue({ release: mockPoolRelease });
+    mockCheckRequiredSchema.mockResolvedValue(true);
     mockExecute
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ usable: true }] });
@@ -68,6 +72,7 @@ describe("application liveness and readiness", () => {
       .mockReset()
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ usable: false }] });
+    mockCheckRequiredSchema.mockResolvedValue(false);
     const response = await supertest(app)
       .get("/api/healthz")
       .expect(503, { status: "error", detail: "schema_unavailable" });
@@ -84,13 +89,25 @@ describe("application liveness and readiness", () => {
     );
   });
 
+  it("returns the documented unavailable response when the schema probe times out", async () => {
+    mockCheckRequiredSchema.mockImplementation(
+      () => new Promise<boolean>(() => undefined),
+    );
+
+    await supertest(app)
+      .get("/api/healthz")
+      .expect(503, { status: "error", detail: "database_unreachable" });
+    expect(mockPoolRelease).toHaveBeenCalledWith(expect.any(Error));
+  });
+
   it("recovers when the required schema becomes available", async () => {
     mockExecute
       .mockReset()
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ usable: false }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ usable: true }] });
+      .mockResolvedValueOnce({ rows: [] });
+    mockCheckRequiredSchema
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
 
     const unavailable = await supertest(app).get("/api/healthz").expect(503);
     expect(unavailable.body).toEqual({

@@ -41,6 +41,7 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 import * as fs from "fs";
 import * as path from "path";
 import React from "react";
+import { Platform } from "react-native";
 import { render, act, fireEvent } from "@testing-library/react-native";
 import type { TestInstance } from "test-renderer";
 
@@ -228,8 +229,6 @@ function makeAppMock(overrides: Record<string, unknown> = {}) {
     setPendingInventorySearch: jest.fn(),
     textFontScale: 1.0,
     pinnedParts: [],
-    pendingLidarDims: null,
-    setPendingLidarDims: jest.fn(),
     approvalStatus: "approved" as const,
     ...overrides,
   };
@@ -269,6 +268,18 @@ function findPressable(root: Inst | undefined | null, label: string): Inst | nul
     root.queryAll((n: TestInstance) => (n.type as string) === "rn-pressable", { includeSelf: true })
         .find(n => instText(n).includes(label)) ?? null
   );
+}
+
+function backupDialog(root: Inst | null): Inst | null {
+  if (!root) return null;
+  return root.queryAll((n: TestInstance) => (n.type as string) === "rn-modal" &&
+    typeof n.props.onRequestClose === "function", { includeSelf: true })
+    .find(n => instText(n).includes("Start Database Backup?")) ?? null;
+}
+
+function backupPosts(fetchMock: jest.Mock) {
+  return fetchMock.mock.calls.filter(([url, init]) =>
+    String(url).endsWith("/admin/snapshots") && (init as RequestInit | undefined)?.method === "POST");
 }
 
 // ── Per-test teardown ─────────────────────────────────────────────────────────
@@ -420,5 +431,266 @@ describe("UploadScreen — People card tap with valid adminToken (positive path)
     expect(mockFetchAdminUsers).toHaveBeenCalledTimes(1);
     const deps = mockFetchAdminUsers.mock.calls[0][0] as { adminToken: string };
     expect(deps.adminToken).toBe("valid-clerk-tok");
+  });
+});
+
+describe("UploadScreen — manual database backup", () => {
+  let mockFetch: jest.Mock;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mockFetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => null,
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it.each(["web", "ios"] as const)("shows the %s dialog before starting; cancel and dismiss send no POST", async platform => {
+    const originalPlatform = Platform.OS;
+    Platform.OS = platform;
+    try {
+    useApp.mockReturnValue(makeAppMock({ isAdmin: true, adminToken: "admin-token" }));
+
+    activeTree = await renderComponent(React.createElement(UploadScreen));
+    await act(async () => { fireEvent.press(findPressable(activeTree!.root, "People & System")!); });
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(activeTree!.root, "Start Database Backup")!); });
+    expect(hasText(backupDialog(activeTree.root), "full inventory snapshot")).toBe(true);
+    expect(hasText(backupDialog(activeTree.root), "server will continue")).toBe(true);
+    expect(backupPosts(mockFetch)).toHaveLength(0);
+    await act(async () => { fireEvent.press(findPressable(backupDialog(activeTree!.root), "Cancel")!); });
+    expect(backupDialog(activeTree.root)).toBeNull();
+    expect(backupPosts(mockFetch)).toHaveLength(0);
+
+    await act(async () => { fireEvent.press(findPressable(activeTree!.root, "Start Database Backup")!); });
+    await act(async () => { backupDialog(activeTree!.root)!.props.onRequestClose(); });
+    expect(backupDialog(activeTree.root)).toBeNull();
+    expect(backupPosts(mockFetch)).toHaveLength(0);
+
+    await act(async () => { fireEvent.press(findPressable(activeTree!.root, "Start Database Backup")!); });
+    const staleConfirm = findPressable(backupDialog(activeTree.root), "Start Backup")!.props.onPress;
+    const back = activeTree.root!.queryAll((n: TestInstance) => n.props.accessibilityLabel === "Back to Admin Hub")[0];
+    await act(async () => { fireEvent.press(back!); });
+    await act(async () => { staleConfirm(); });
+    expect(backupPosts(mockFetch)).toHaveLength(0);
+    } finally {
+      Platform.OS = originalPlatform;
+    }
+  });
+
+  it("starts once after confirmation and displays the completed row count and local date", async () => {
+    useApp.mockReturnValue(makeAppMock({ isAdmin: true, adminToken: "admin-token" }));
+    let statusCalls = 0;
+    mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/admin/snapshots") && init?.method === "POST") {
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            status: "running",
+            persistence: "saved",
+            startedAt: "2026-09-19T09:00:00.000Z",
+            finishedAt: null,
+            rowCount: null,
+            snapshotId: null,
+            error: null,
+            warning: null,
+          }),
+        };
+      }
+      if (url.endsWith("/admin/snapshots/status")) {
+        statusCalls += 1;
+        const body = statusCalls === 1
+          ? null
+          : statusCalls === 2
+            ? {
+                status: "running",
+                persistence: "saved",
+                startedAt: "2026-09-19T09:00:00.000Z",
+                finishedAt: null,
+                rowCount: null,
+                snapshotId: null,
+                error: null,
+                warning: null,
+              }
+            : {
+                status: "completed",
+                persistence: "saved",
+                startedAt: "2026-09-19T09:00:00.000Z",
+                finishedAt: "2026-09-19T09:42:00.000Z",
+                rowCount: 1234,
+                snapshotId: "snapshot-id",
+                error: null,
+                warning: null,
+              };
+        return {
+          ok: true,
+          status: 200,
+          json: async () => body,
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+    activeTree = await renderComponent(React.createElement(UploadScreen));
+    await act(async () => { fireEvent.press(findPressable(activeTree!.root, "People & System")!); });
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(activeTree!.root, "Start Database Backup")!); });
+    expect(backupPosts(mockFetch)).toHaveLength(0);
+    const confirm = findPressable(backupDialog(activeTree.root), "Start Backup")!;
+    await act(async () => {
+      fireEvent.press(confirm);
+      fireEvent.press(confirm);
+    });
+    await flushPromises();
+
+    expect(backupPosts(mockFetch)).toHaveLength(1);
+    expect(backupPosts(mockFetch)[0][1]).toMatchObject({ headers: { Authorization: "Bearer admin-token" } });
+    expect(hasText(activeTree.root, "Backup in progress")).toBe(true);
+    expect(findPressable(activeTree.root, "Backup Running")?.props.disabled).toBe(true);
+
+    await act(async () => {
+      jest.advanceTimersByTime(2000);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(2000);
+      await Promise.resolve();
+    });
+    expect(hasText(activeTree.root, "1,234 rows backed up")).toBe(true);
+    expect(hasText(activeTree.root, "Completed September 19, 2026 at ")).toBe(true);
+    expect(instText(activeTree!.root!)).toMatch(/Completed September 19, 2026 at \d{1,2}:42 (AM|PM)/);
+  });
+
+  it("times out a stalled status read, keeps the backup running, and recovers on the next poll", async () => {
+    useApp.mockReturnValue(makeAppMock({ isAdmin: true, adminToken: "admin-token" }));
+    const running = {
+      status: "running",
+      persistence: "saved",
+      startedAt: "2026-09-19T09:00:00.000Z",
+      finishedAt: null,
+      rowCount: null,
+      snapshotId: null,
+      error: null,
+      warning: null,
+    };
+    let statusCalls = 0;
+    let stalledSignal: AbortSignal | undefined;
+    let resolveStalled!: (response: unknown) => void;
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/admin/snapshots") && init?.method === "POST") {
+        return Promise.resolve({ ok: true, status: 202, json: async () => running });
+      }
+      if (url.endsWith("/admin/snapshots/status")) {
+        statusCalls += 1;
+        if (statusCalls === 2) {
+          stalledSignal = init?.signal as AbortSignal;
+          // Deliberately ignores abort to prove the timeout releases the poll slot.
+          return new Promise(resolve => { resolveStalled = resolve; });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => statusCalls === 1 ? null : running,
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+    });
+
+    activeTree = await renderComponent(React.createElement(UploadScreen));
+    await act(async () => { fireEvent.press(findPressable(activeTree!.root, "People & System")!); });
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(activeTree!.root, "Start Database Backup")!); });
+    await act(async () => { fireEvent.press(findPressable(backupDialog(activeTree!.root), "Start Backup")!); });
+    await flushPromises();
+    expect(statusCalls).toBe(2);
+    expect(hasText(activeTree.root, "Backup in progress")).toBe(true);
+
+    await act(async () => {
+      jest.advanceTimersByTime(10000);
+      await Promise.resolve();
+    });
+    expect(stalledSignal?.aborted).toBe(true);
+    expect(hasText(activeTree.root, "Database backup status timed out. Retrying automatically; the backup may still be running.")).toBe(true);
+    expect(hasText(activeTree.root, "Backup in progress")).toBe(true);
+    expect(hasText(activeTree.root, "Backup failed")).toBe(false);
+    expect(backupPosts(mockFetch)).toHaveLength(1);
+
+    await act(async () => {
+      jest.advanceTimersByTime(2000);
+      await Promise.resolve();
+    });
+    expect(statusCalls).toBe(3);
+    expect(hasText(activeTree.root, "Database backup status timed out")).toBe(false);
+    expect(hasText(activeTree.root, "Backup in progress")).toBe(true);
+
+    await act(async () => {
+      resolveStalled({ ok: true, status: 200, json: async () => ({ ...running, status: "failed" }) });
+      await Promise.resolve();
+    });
+    expect(hasText(activeTree.root, "Backup failed")).toBe(false);
+    expect(hasText(activeTree.root, "Backup in progress")).toBe(true);
+  });
+
+  it("shows the safe status-saving warning when the backup result is not durable", async () => {
+    useApp.mockReturnValue(makeAppMock({ isAdmin: true, adminToken: "admin-token" }));
+    mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/admin/snapshots") && init?.method === "POST") {
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            status: "completed",
+            persistence: "unavailable",
+            startedAt: "2026-09-19T09:00:00.000Z",
+            finishedAt: "2026-09-19T09:42:00.000Z",
+            rowCount: 1234,
+            snapshotId: "snapshot-id",
+            error: null,
+            warning: "Backup status could not be saved. The result may not survive an API server restart.",
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => null };
+    });
+    activeTree = await renderComponent(React.createElement(UploadScreen));
+    await act(async () => { fireEvent.press(findPressable(activeTree!.root, "People & System")!); });
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(activeTree!.root, "Start Database Backup")!); });
+    await act(async () => { fireEvent.press(findPressable(backupDialog(activeTree!.root), "Start Backup")!); });
+    await flushPromises();
+
+    expect(hasText(activeTree.root, "Status saving unavailable")).toBe(true);
+    expect(hasText(activeTree.root, "The result may not survive an API server restart.")).toBe(true);
+  });
+
+  it("keeps the button busy during acceptance and shows a failed start as retryable", async () => {
+    useApp.mockReturnValue(makeAppMock({ isAdmin: true, adminToken: "admin-token" }));
+    let resolveStart!: (response: unknown) => void;
+    mockFetch.mockImplementation((url: string, init?: RequestInit) =>
+      url.endsWith("/admin/snapshots") && init?.method === "POST"
+        ? new Promise(resolve => { resolveStart = resolve; })
+        : Promise.resolve({ ok: true, status: 200, json: async () => null }));
+    activeTree = await renderComponent(React.createElement(UploadScreen));
+    await act(async () => { fireEvent.press(findPressable(activeTree!.root, "People & System")!); });
+    await flushPromises();
+    await act(async () => { fireEvent.press(findPressable(activeTree!.root, "Start Database Backup")!); });
+    const confirm = findPressable(backupDialog(activeTree.root), "Start Backup")!;
+    await act(async () => { fireEvent.press(confirm); fireEvent.press(confirm); });
+    expect(backupPosts(mockFetch)).toHaveLength(1);
+    const busyButton = activeTree.root!.queryAll((n: TestInstance) => n.props.accessibilityLabel === "Start database backup")[0];
+    expect(busyButton!.props.accessibilityState).toMatchObject({
+      disabled: true, busy: true,
+    });
+    await act(async () => { resolveStart({ ok: false, status: 500, json: async () => ({}) }); });
+    await flushPromises();
+    expect(hasText(activeTree.root, "Could not start the database backup. Please try again.")).toBe(true);
+    expect(hasText(activeTree.root, "Backup in progress")).toBe(false);
+    expect(findPressable(activeTree.root, "Start Database Backup")?.props.disabled).toBe(false);
   });
 });

@@ -6,18 +6,15 @@
  * permitted; any other statement type is rejected with a 400 error.
  *
  * Safeguards:
- *   - Every query runs inside a transaction that is ALWAYS rolled back, even
- *     on success.  This is the primary read-only enforcement mechanism: the
- *     database engine guarantees no mutations survive regardless of what SQL
- *     was submitted.
- *   - The WRITE_KEYWORDS regex blocklist is retained as secondary
- *     defence-in-depth (fast 400 before the query reaches the DB) but is NOT
- *     relied upon as the primary control.
+ *   - Every query runs inside a PostgreSQL READ ONLY transaction, which is the
+ *     primary database-enforced boundary against persistent database writes.
+ *     The transaction is rolled back after query processing.
+ *   - The WRITE_KEYWORDS regex blocklist is retained as an early rejection
+ *     check, but is not relied upon as the primary read-only control.
  *   - Statement timeout of QUERY_TIMEOUT_MS (default 5 000 ms) via SET LOCAL
  *   - Results capped at MAX_ROWS (default 500); response includes truncated flag
- *   - Sensitive columns (matching SENSITIVE_COLUMN_PATTERN) are stripped from
- *     every response before serialization; stripped column names are listed in
- *     the response metadata so the admin knows data was omitted.
+ *   - Sensitive output labels and PostgreSQL source-column names are checked
+ *     against SENSITIVE_COLUMN_PATTERN before serialization.
  *
  * Request body (JSON):
  *   { sql: string }
@@ -33,13 +30,14 @@
  *   400 { error: string }  — non-SELECT query or empty input
  *   401                    — missing or invalid admin token
  *   408 { error: string }  — statement timeout fired
- *   500 { error: string }  — query execution error (message forwarded)
+ *   500 { error: string, requestId: string } — stable client-safe query error
  */
 
 import { getAuth } from "@clerk/express";
 import { pool } from "@workspace/db";
 import ExcelJS from "exceljs";
 import { Router } from "express";
+import type { PoolClient } from "pg";
 
 import { getLogger } from "../lib/logger";
 import { adminQueryLimiter } from "../lib/rateLimiter";
@@ -105,12 +103,17 @@ const SENSITIVE_COLUMN_PATTERN = buildSensitiveColumnPattern();
 function filterSensitiveColumns(
   columns: Array<string>,
   rows: Array<AdminQueryRow>,
+  sourceColumnNames: Array<string | undefined> = [],
 ): { columns: Array<string>; rows: Array<AdminQueryRow>; strippedColumns: Array<string> } {
   const strippedColumns: Array<string> = [];
   const safeColumns: Array<string> = [];
 
-  for (const col of columns) {
-    if (SENSITIVE_COLUMN_PATTERN.test(col)) {
+  for (const [index, col] of columns.entries()) {
+    const sourceColumnName = sourceColumnNames[index];
+    if (
+      SENSITIVE_COLUMN_PATTERN.test(col) ||
+      (sourceColumnName !== undefined && SENSITIVE_COLUMN_PATTERN.test(sourceColumnName))
+    ) {
       strippedColumns.push(col);
     } else {
       safeColumns.push(col);
@@ -158,26 +161,24 @@ function stripLeadingComments(input: string): string {
  * THREAT MODEL — what this validation does and does not protect:
  *
  * Protected:
- *   - DDL/DML keywords (DROP, INSERT, UPDATE, DELETE, ALTER, TRUNCATE, GRANT,
- *     REVOKE, CREATE, and others) are rejected via case-insensitive word-boundary
- *     regex so that subqueries or column aliases that merely contain the word
- *     cannot bypass the check (e.g. "updatedAt" won't match \bUPDATE\b).
+ *   - DDL/DML keywords are rejected early via a case-insensitive word-boundary
+ *     regex. This is an additional check, not the read-only security boundary.
  *   - Stacked statements (e.g. `SELECT 1; DROP TABLE zones`) are rejected by
  *     refusing any SQL that still contains a semicolon after trailing ones are
- *     removed.  This prevents an inner statement from escaping the wrapper.
- *   - Every query runs inside a read-only subquery wrapper:
- *       SELECT * FROM (...) AS _admin_query_wrapper LIMIT N
- *     so even a SELECT that somehow slipped through cannot directly mutate data.
+ *     removed.
+ *   - The database executes every accepted query in a READ ONLY transaction,
+ *     so PostgreSQL rejects database writes from callable functions as well as
+ *     direct writes.
  *
  * Remaining risk surface (accepted / out of scope):
  *   - Information disclosure via subqueries: an admin could craft a SELECT
  *     that reads tables beyond their normal scope through correlated subqueries
  *     or JOINs.  This is accepted because the endpoint is admin-only and
  *     requires a valid admin token.
+ *   - A READ ONLY transaction cannot prevent a user-defined function from
+ *     producing external side effects outside this PostgreSQL database.
  *   - Keywords hidden inside SQL string literals or dollar-quoted blocks are
- *     not fully stripped before scanning; the regex may produce false positives
- *     (rejecting valid queries with e.g. a column value containing "DROP") but
- *     not false negatives that would permit DDL.
+ *     not fully stripped before scanning; the regex may produce false positives.
  *   - Full AST-level parsing is explicitly out of scope per the threat model.
  */
 const WRITE_KEYWORDS =
@@ -265,9 +266,11 @@ router.post("/query", requireAdminAuth, async (req, res) => {
     return void res.status(400).json({ error: validationError });
   }
 
-  const client = await pool.connect();
+  let client: PoolClient | undefined;
   try {
-    await client.query("BEGIN");
+    client = await pool.connect();
+
+    await client.query("BEGIN READ ONLY");
 
     await client.query(`SET LOCAL statement_timeout = ${QUERY_TIMEOUT_MS}`);
 
@@ -275,12 +278,59 @@ router.post("/query", requireAdminAuth, async (req, res) => {
     const capped = `SELECT * FROM (${trimmedSql}) AS _admin_query_wrapper LIMIT ${MAX_ROWS + 1}`;
     const result = await client.query(capped);
 
-    // ALWAYS roll back — this is the primary read-only enforcement.  Even if a
-    // write statement somehow slipped through validation (e.g. via a future SQL
-    // parser edge case), the database engine guarantees no mutation survives.
+    const queryFields = result.fields as Array<{
+      name: string;
+      tableID?: number;
+      columnID?: number;
+    }>;
+    const rawColumns = queryFields.map((field) => field.name);
+    const sourceColumnNames: Array<string | undefined> = queryFields.map(() => undefined);
+    const sourceFields = queryFields.flatMap((field, index) =>
+      Number.isInteger(field.tableID) &&
+      Number.isInteger(field.columnID) &&
+      field.tableID! > 0 &&
+      field.columnID! > 0
+        ? [{ index, tableID: field.tableID!, columnID: field.columnID! }]
+        : [],
+    );
+
+    if (sourceFields.length > 0) {
+      const lineageResult = await client.query<{
+        tableId: number;
+        columnId: number;
+        sourceColumnName: string;
+      }>(
+        `SELECT requested.table_id AS "tableId",
+                requested.column_id AS "columnId",
+                attribute.attname AS "sourceColumnName"
+           FROM unnest($1::oid[], $2::smallint[])
+                AS requested(table_id, column_id)
+           JOIN pg_catalog.pg_attribute AS attribute
+             ON attribute.attrelid = requested.table_id
+            AND attribute.attnum = requested.column_id
+            AND NOT attribute.attisdropped`,
+        [
+          sourceFields.map((field) => field.tableID),
+          sourceFields.map((field) => field.columnID),
+        ],
+      );
+      const sourceNamesByIdentity = new Map(
+        lineageResult.rows.map((row) => [
+          `${row.tableId}:${row.columnId}`,
+          row.sourceColumnName,
+        ]),
+      );
+      for (const field of sourceFields) {
+        sourceColumnNames[field.index] = sourceNamesByIdentity.get(
+          `${field.tableID}:${field.columnID}`,
+        );
+      }
+    }
+
+    // The READ ONLY transaction is the database-level protection. Always
+    // roll it back after query and source-column processing.
     await client.query("ROLLBACK");
 
-    const rawColumns: Array<string> = result.fields.map((f: { name: string }) => f.name);
     const allRows = result.rows as Array<AdminQueryRow>;
     const truncated = allRows.length > MAX_ROWS;
     const cappedRows = truncated ? allRows.slice(0, MAX_ROWS) : allRows;
@@ -289,7 +339,7 @@ router.post("/query", requireAdminAuth, async (req, res) => {
       columns,
       rows,
       strippedColumns,
-    } = filterSensitiveColumns(rawColumns, cappedRows);
+    } = filterSensitiveColumns(rawColumns, cappedRows, sourceColumnNames);
 
     if (format === "csv") {
       const csv = buildCSV(columns, rows, truncated, MAX_ROWS);
@@ -346,17 +396,22 @@ router.post("/query", requireAdminAuth, async (req, res) => {
 
     res.json({ columns, rows, rowCount: rows.length, truncated, strippedColumns });
   } catch (err: unknown) {
-    await client.query("ROLLBACK").catch(() => {});
+    if (client) {
+      await client.query("ROLLBACK").catch(() => {});
+    }
 
     const message = err instanceof Error ? err.message : "Query failed";
-    // Redacted log: emit only the error message and a truncated,
-    // parameter-stripped SQL snippet so literal values (potential PII /
-    // credentials) never appear in server logs.
-    const redactedSql = (typeof rawSql === "string" ? rawSql : "")
-      .replace(/\$\d+/g, "?")
-      .replace(/'(?:[^'\\]|\\.)*'/g, "?")
-      .slice(0, 120);
-    reqLogger.error({ queryPrefix: redactedSql }, `[adminQuery] error="${message}"`);
+    const errorCode =
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      typeof err.code === "string" &&
+      /^[0-9A-Z]{5}$/.test(err.code)
+        ? err.code
+        : undefined;
+    // Log only the SQLSTATE (when available); submitted SQL can contain
+    // sensitive values even when literal redaction is attempted.
+    reqLogger.error({ errorCode }, "[adminQuery] query execution failed");
     const isTimeout =
       err instanceof Error &&
       (message.includes("canceling statement due to statement timeout") ||
@@ -366,10 +421,13 @@ router.post("/query", requireAdminAuth, async (req, res) => {
         error: `Query timed out after ${QUERY_TIMEOUT_MS / 1000}s. Try a more specific query or add a LIMIT clause.`,
       });
     } else {
-      res.status(500).json({ error: message });
+      res.status(500).json({
+        error: "Query failed. Please retry or contact support with the request ID.",
+        requestId: res.locals.requestId as string | undefined,
+      });
     }
   } finally {
-    client.release();
+    client?.release();
   }
 });
 

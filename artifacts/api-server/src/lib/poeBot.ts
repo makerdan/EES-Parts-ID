@@ -20,7 +20,9 @@ import {
   isPoeTransientError,
   normalizePoeError,
   POE_CHAT_COMPLETIONS_ENDPOINT,
+  PoeProviderError,
   redactPoeTelemetry,
+  validatePoeChatCompletionResponse,
   withPoeRequestTimeout,
 } from "@workspace/integrations-poe-server";
 import OpenAI from "openai";
@@ -28,6 +30,7 @@ import OpenAI from "openai";
 import {
   getAiClient,
   getModelForFeature,
+  getOpenAIFallbackClient,
   getOpenAIModelForFeature,
   getProvider,
   getVerifiedPoeRouteSnapshot,
@@ -129,6 +132,8 @@ async function createPoeCompletion(
     signal?: AbortSignal | undefined;
     maxAttempts?: number | undefined;
     timeoutMs?: number | undefined;
+    deadlineAt?: number | undefined;
+    route?: PoeFeature | undefined;
   } = {},
 ): Promise<unknown> {
   // A few isolated legacy tests mock only the original integration exports.
@@ -139,7 +144,7 @@ async function createPoeCompletion(
   }
   return withPoeRequestTimeout(
     (signal) => getPoeClient().chat.completions.create(request as never, { signal }),
-    undefined,
+    options.timeoutMs,
     options.signal,
   );
 }
@@ -155,6 +160,7 @@ type PoeCompletionOptions = {
   signal?: AbortSignal | undefined;
   maxAttempts?: number | undefined;
   timeoutMs?: number | undefined;
+  deadlineAt?: number | undefined;
   model?: string | undefined;
 };
 
@@ -172,6 +178,7 @@ export async function callPoeCompletionWithChain(
   request: PoeCompletionRequest,
   options: PoeCompletionOptions = {},
 ): Promise<PoeCompletionResponse> {
+  const budget = createProviderBudget(options);
   // Preserve isolated route-test doubles that replace getAiClient with a
   // minimal client object. Production clients are OpenAI instances and always
   // take the verified Poe transport path below.
@@ -184,7 +191,7 @@ export async function callPoeCompletionWithChain(
         { ...request, model: options.model ?? getModelForFeature(feature) } as never,
         options.signal ? { signal: options.signal } : undefined,
     );
-    return response as PoeCompletionResponse;
+    return validatePoeChatCompletionResponse(response) as PoeCompletionResponse;
   }
   if (typeof getProvider !== "function" || getProvider() !== "poe") {
     const response = await withPoeRequestTimeout(
@@ -195,27 +202,30 @@ export async function callPoeCompletionWithChain(
       options.timeoutMs,
       options.signal,
     );
-    return response as PoeCompletionResponse;
+    return validatePoeChatCompletionResponse(response) as PoeCompletionResponse;
   }
 
   let chainErr: unknown = new PoeBotChainExhaustedError();
   const chain = verifiedChain(feature);
   let isFirstAttempt = true;
+  let attempts = 0;
 
   for (const modelName of chain) {
-    if (options.signal?.aborted) {
-      throw normalizePoeError(new Error("Poe request cancelled"));
-    }
+    throwIfBudgetExpired(budget, options.signal);
+    if (attempts >= budget.maxAttempts) break;
     if (!isFirstAttempt) await sleep(getChainRetryDelayMs(), options.signal);
     isFirstAttempt = false;
+    attempts += 1;
     const startedAt = Date.now();
     try {
       const response = await createPoeCompletion(
         { ...request, model: modelName },
         {
           ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          ...(options.maxAttempts !== undefined ? { maxAttempts: options.maxAttempts } : {}),
-          ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+          maxAttempts: 1,
+          timeoutMs: budget.remainingMs(),
+          route: feature,
+          deadlineAt: budget.deadlineAt,
         },
       );
       emitPoeTelemetry(feature, modelName, "success", startedAt);
@@ -238,10 +248,19 @@ export async function callPoeCompletionWithChain(
     }
   }
 
+  if (attempts >= budget.maxAttempts || budget.remainingMs() <= 0) {
+    throw chainErr;
+  }
   return _replitAIGenericFallback(
     feature,
     (client, modelName) => client.chat.completions.create({ ...request, model: modelName } as never, { signal: options.signal }),
     chainErr,
+    {
+      ...options,
+      timeoutMs: budget.remainingMs(),
+      deadlineAt: budget.deadlineAt,
+      validateResult: (value) => validatePoeChatCompletionResponse(value),
+    },
   ) as Promise<PoeCompletionResponse>;
 }
 
@@ -261,8 +280,78 @@ export class PoeBotChainExhaustedError extends Error {
   }
 }
 
+class PoeProviderCombinedError extends PoeHttpError {
+  readonly code = "ai_provider_unavailable";
+  readonly providerFailures: Array<"poe" | "replit-ai">;
+
+  constructor(failures: Array<"poe" | "replit-ai"> = ["poe", "replit-ai"]) {
+    super(503, "AI providers are temporarily unavailable");
+    this.name = "PoeProviderCombinedError";
+    this.providerFailures = failures;
+  }
+}
+
+export type ProviderAttemptOptions = {
+  signal?: AbortSignal | undefined;
+  timeoutMs?: number | undefined;
+  deadlineAt?: number | undefined;
+  maxAttempts?: number | undefined;
+  validateResult?: ((value: unknown) => unknown) | undefined;
+};
+
+/**
+ * Run an explicitly requested OpenAI fallback through the same provider
+ * boundary as the Poe chain. The fallback remains a manual provider choice,
+ * but it must still use the verified feature contract, request deadline,
+ * cancellation signal, and completion-envelope validation.
+ */
+export async function callOpenAIFallbackWithBoundary<T>(
+  feature: PoeFeature,
+  fn: (client: OpenAI, modelName: string, signal: AbortSignal) => Promise<T>,
+  options: ProviderAttemptOptions = {},
+): Promise<T> {
+  const budget = createProviderBudget(options);
+  throwIfBudgetExpired(budget, options.signal);
+  getVerifiedPoeRouteSnapshot(feature);
+
+  const result = await withPoeRequestTimeout(
+    (signal) => fn(getOpenAIFallbackClient(), getOpenAIModelForFeature(feature), signal),
+    budget.remainingMs(),
+    options.signal,
+  );
+  const validated = validatePoeChatCompletionResponse(result);
+  return (options.validateResult?.(validated) ?? validated) as T;
+}
+
+function createProviderBudget(options: ProviderAttemptOptions): {
+  deadlineAt: number;
+  maxAttempts: number;
+  remainingMs: () => number;
+} {
+  const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? 30_000, 30_000));
+  const deadlineAt = options.deadlineAt ?? Date.now() + timeoutMs;
+  return {
+    deadlineAt,
+    maxAttempts: Math.max(1, Math.min(options.maxAttempts ?? 3, 3)),
+    remainingMs: () => Math.max(0, deadlineAt - Date.now()),
+  };
+}
+
+function throwIfBudgetExpired(
+  budget: ReturnType<typeof createProviderBudget>,
+  signal?: AbortSignal,
+): void {
+  if (signal?.aborted) throw new PoeProviderError("cancellation", "Poe request cancelled");
+  if (budget.remainingMs() <= 0) {
+    throw new PoeProviderError("timeout", "Poe request deadline expired");
+  }
+}
+
 function isChainableError(err: unknown): boolean {
-  return isPoeCallTransientError(err) || err instanceof PoeHttpError;
+  if (isPoeCallTransientError(err)) return true;
+  if (!(err instanceof PoeHttpError)) return false;
+  return err.status === 402 || err.status === 404 || err.status === 408 ||
+    err.status === 429 || err.status >= 500;
 }
 
 function getChainRetryDelayMs(): number {
@@ -336,6 +425,7 @@ async function _replitAIGenericFallback<T>(
   feature: PoeFeature,
   fn: (client: OpenAI, modelName: string) => Promise<T>,
   originalErr: unknown,
+  options: ProviderAttemptOptions = {},
 ): Promise<T> {
   const replitClient = tryGetOpenAIFallbackClient();
   if (!replitClient) throw originalErr;
@@ -346,7 +436,19 @@ async function _replitAIGenericFallback<T>(
     "Poe unavailable — falling back to Replit AI",
   );
 
-  return fn(replitClient, getOpenAIModelForFeature(feature));
+  try {
+    const result = await withPoeRequestTimeout(
+      () => fn(replitClient, getOpenAIModelForFeature(feature)),
+      Math.max(1, Math.min(options.timeoutMs ?? 30_000, 30_000)),
+      options.signal,
+    );
+    return (options.validateResult?.(result) ?? result) as T;
+  } catch (err) {
+    if (classifyPoeError(err) === "cancellation") {
+      throw normalizePoeError(err);
+    }
+    throw new PoeProviderCombinedError();
+  }
 }
 
 /**
@@ -410,14 +512,24 @@ export async function callPoeBotWithChain(
 export async function tryPoeBotChain<T>(
   feature: PoeFeature,
   fn: (client: OpenAI, modelName: string) => Promise<T>,
+  options: ProviderAttemptOptions = {},
 ): Promise<T> {
+  const budget = createProviderBudget(options);
   if (getProvider() !== "poe") {
-    return fn(getAiClient(), getModelForFeature(feature));
+    throwIfBudgetExpired(budget, options.signal);
+    const result = await withPoeRequestTimeout(
+      () => fn(getAiClient(), getModelForFeature(feature)),
+      budget.remainingMs(),
+      options.signal,
+    );
+    return (options.validateResult?.(result) ?? result) as T;
   }
 
   let chainErr: unknown = new PoeBotChainExhaustedError();
   const chain = verifiedChain(feature);
   let isFirstAttempt = true;
+  let attempts = 0;
+  let attemptSignal: AbortSignal | undefined;
   const poeTransport = {
     chat: {
       completions: {
@@ -428,17 +540,28 @@ export async function tryPoeBotChain<T>(
               messages: Array<{ role: "system" | "user" | "assistant"; content: unknown }>;
               max_completion_tokens?: number | undefined;
             },
-            requestOptions?.signal ? { signal: requestOptions.signal } : {},
+            {
+              signal: requestOptions?.signal ?? attemptSignal,
+              timeoutMs: budget.remainingMs(),
+              maxAttempts: 1,
+              route: feature,
+              deadlineAt: budget.deadlineAt,
+            },
           ),
       },
     },
   } as unknown as OpenAI;
 
   for (const botName of chain) {
-    if (!isFirstAttempt) await sleep(getChainRetryDelayMs());
+    throwIfBudgetExpired(budget, options.signal);
+    if (attempts >= budget.maxAttempts) break;
+    if (!isFirstAttempt) await sleep(getChainRetryDelayMs(), options.signal);
     isFirstAttempt = false;
+    attempts += 1;
+    attemptSignal = options.signal;
     try {
-      return await fn(poeTransport, botName);
+      const result = await fn(poeTransport, botName);
+      return (options.validateResult?.(result) ?? result) as T;
     } catch (err) {
       if (isPoeCallAuthError(err) || isPoeQuotaError(err)) throw normalizePoeError(err);
       chainErr = err;
@@ -449,5 +572,12 @@ export async function tryPoeBotChain<T>(
   }
 
   // Poe chain failed — try Replit AI before giving up.
-  return _replitAIGenericFallback(feature, fn, chainErr);
+  if (attempts >= budget.maxAttempts || budget.remainingMs() <= 0) {
+    throw chainErr;
+  }
+  return _replitAIGenericFallback(feature, fn, chainErr, {
+    ...options,
+    timeoutMs: budget.remainingMs(),
+    deadlineAt: budget.deadlineAt,
+  });
 }

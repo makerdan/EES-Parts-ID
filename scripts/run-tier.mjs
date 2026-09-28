@@ -7,6 +7,9 @@
  * scanning or modifying the ignored archive.
  */
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { assertTierLock } from "./lib/tier-lock-check.mjs";
 import { assertTierSteps, getTierSteps } from "./validation-steps.mjs";
 
@@ -42,30 +45,82 @@ const underLoad = Number(waitSecs) > 0;
 console.log(`[run-tier] tier=${lock.tier} (${resolvedSteps.length} steps). Queue wait: ${waitSecs}s${underLoad ? " — ran under concurrent load" : " — ran solo"}.`);
 if (lock.bypassed) console.log("[run-tier] explicit ad-hoc no-plan bypass enabled; task archive is isolated.");
 
+const setupReportDir = resolvedSteps.some(([name]) => name === "test")
+  ? mkdtempSync(join(tmpdir(), "validation-tier-setup-"))
+  : null;
+const setupReportPath = setupReportDir ? join(setupReportDir, "preflight-report") : null;
+
+function readSetupReport(path) {
+  if (!path) return null;
+  let content;
+  try {
+    content = readFileSync(path, "utf8").trim();
+  } catch {
+    return null;
+  }
+  const match =
+    /^\[test-all\] PREFLIGHT_REPORT phase="([^"]+)" status=(FAILED|TIMED_OUT) exit-status=(-?\d+) timeout=(true|false) suite-started=(true|false) child-status=(-?\d+)$/.exec(
+      content,
+    );
+  if (!match) return null;
+  return {
+    phase: match[1],
+    status: match[2],
+    exitStatus: Number(match[3]),
+    timeout: match[4],
+    suiteStarted: match[5],
+    childStatus: Number(match[6]),
+  };
+}
+
 const report = [];
 let failed = null;
 const executionStart = Date.now();
-for (const [name, command] of resolvedSteps) {
-  console.log(`\n━━━ [run-tier] step: ${name} ━━━`);
-  const start = Date.now();
-  const env = name === "test" ? { ...process.env, DATABASE_ENV: "test" } : process.env;
-  const result = spawnSync("bash", ["-c", command], { stdio: "inherit", env });
-  const seconds = ((Date.now() - start) / 1000).toFixed(1);
-  const ok = result.status === 0;
-  report.push({ name, seconds, ok });
-  if (!ok) {
-    failed = { name, code: result.status ?? `signal ${result.signal}` };
-    break;
+try {
+  for (const [name, command] of resolvedSteps) {
+    console.log(`\n━━━ [run-tier] step: ${name} ━━━`);
+    const start = Date.now();
+    const env = name === "test" ? { ...process.env, DATABASE_ENV: "test" } : process.env;
+    if (name === "test") env.VALIDATION_SETUP_REPORT_FILE = setupReportPath;
+    const result = spawnSync("bash", ["-c", command], { stdio: "inherit", env });
+    const seconds = ((Date.now() - start) / 1000).toFixed(1);
+    const ok = result.status === 0;
+    const setup = name === "test" && !ok ? readSetupReport(setupReportPath) : null;
+    report.push({ name, seconds, ok, setup });
+    if (!ok) {
+      failed = { name, code: result.status ?? `signal ${result.signal}` };
+      break;
+    }
   }
+} finally {
+  if (setupReportDir) rmSync(setupReportDir, { recursive: true, force: true });
 }
 
 const ran = new Set(report.map((entry) => entry.name));
 const executionSecs = ((Date.now() - executionStart) / 1000).toFixed(1);
+const executionBudgetMs = Number(process.env.SERIAL_LOCK_BUDGET_MS);
 console.log(`\n━━━ [run-tier] ${lock.tier} tier report ━━━`);
-for (const entry of report) console.log(`  ${entry.ok ? "PASSED " : "FAILED "} ${entry.name}  (${entry.seconds}s)`);
+for (const entry of report) {
+  console.log(`  ${entry.ok ? "PASSED " : "FAILED "} ${entry.name}  (${entry.seconds}s)`);
+  if (entry.setup) {
+    console.log("  Validation Setup Summary");
+    console.log(`    SETUP_${entry.setup.status}  ${entry.setup.phase}`);
+    console.log(
+      `      exit-status=${entry.setup.exitStatus}  child-status=${entry.setup.childStatus} ` +
+      `timeout=${entry.setup.timeout}  suite-started=${entry.setup.suiteStarted}`,
+    );
+  }
+}
 for (const [name] of resolvedSteps) if (!ran.has(name)) console.log(`  SKIPPED ${name}  (fail-fast: not run)`);
 console.log(`  queue-wait before start: ${waitSecs}s (${underLoad ? "concurrent load" : "solo"})`);
 console.log(`  tier execution after lock: ${executionSecs}s`);
+if (Number.isSafeInteger(executionBudgetMs) && executionBudgetMs > 0) {
+  const headroomSecs = Math.max(0, executionBudgetMs - Number(executionSecs) * 1000) / 1000;
+  console.log(
+    `  execution budget after lock: ${(executionBudgetMs / 1000).toFixed(1)}s ` +
+    `(headroom at report: ${headroomSecs.toFixed(1)}s)`,
+  );
+}
 
 if (failed) {
   console.error(`\n[run-tier] FAILED at step "${failed.name}" (exit ${failed.code}) — tier ${lock.tier} did not pass.`);

@@ -47,7 +47,7 @@ import supertest from "supertest";
 
 import app from "../src/app";
 import { partCardLimiter, translateLimiter } from "../src/lib/rateLimiter";
-import { workerQualifiedUserId } from "./helpers/testDb";
+import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import { setTestEnv } from "./helpers/testEnv";
 
 /** Builds a real OpenAI APIError subclass instance for a given HTTP status. */
@@ -60,7 +60,7 @@ function makeOpenAiError(status: number, message: string): Error {
   );
 }
 
-const TEST_ADMIN_USER_ID = workerQualifiedUserId("jest-admin-user");
+const TEST_ADMIN_USER_ID = ADMIN_TEST_USER_ID;
 let restoreTestEnv: (() => void) | undefined;
 
 beforeAll(() => {

@@ -69,6 +69,7 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
 import { matchCatalogNumber } from "../src/utils/catalogMatcher";
@@ -128,7 +129,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (seededIds.length > 0) {
-    await db.delete(catalogPdfJobTable).where(inArray(catalogPdfJobTable.id, seededIds));
+    await bestEffortFixtureCleanup("catalog PDF chunk jobs", async () => {
+      await db.delete(catalogPdfJobTable).where(inArray(catalogPdfJobTable.id, seededIds));
+    });
   }
 }, 15_000);
 
@@ -385,7 +388,10 @@ describe("GET /api/admin/catalog-pdf/:id/status — parent job aggregation", () 
       .set("Authorization", `Bearer ${adminToken}`)
       .expect(200);
 
-    expect(res.body.errorMessage).toContain("AI call timed out");
+    expect(res.body.errorMessage).toBe("UnknownError");
+    expect(res.body.failedChunks).toEqual([
+      { chunkJobId: expect.any(String), chunkIndex: 0 },
+    ]);
   });
 
   it("aggregates partsFound and concatenates unmatchedParts from all children", async () => {

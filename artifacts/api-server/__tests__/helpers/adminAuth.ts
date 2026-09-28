@@ -5,7 +5,7 @@
  * identities whose `users.role === "admin"`. The bootstrap admin
  * (`ADMIN_CLERK_USER_ID`) is always treated as admin+approved.
  *
- * This module sets `ADMIN_CLERK_USER_ID` to a fixed test id as an import
+ * This module sets `ADMIN_CLERK_USER_ID` to an invocation-scoped test id as an import
  * side-effect, and exposes drop-in replacements for the old `signAdminToken` /
  * `setRevokedBefore` exports so existing integration tests only need their
  * import source swapped:
@@ -17,7 +17,9 @@
  *   - `setRevokedBefore()` is a no-op (token revocation no longer exists).
  */
 
-export const ADMIN_TEST_USER_ID = `jest-admin-user-${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
+import { adminTestUserIdForWorker } from "../../src/lib/adminTestUserCleanup";
+
+export const ADMIN_TEST_USER_ID = adminTestUserIdForWorker();
 
 const originalAdminClerkUserId = process.env.ADMIN_CLERK_USER_ID;
 process.env.ADMIN_CLERK_USER_ID = ADMIN_TEST_USER_ID;

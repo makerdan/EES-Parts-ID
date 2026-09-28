@@ -26,6 +26,10 @@ export const ZONES_CACHE_KEY = "parts_id_warehouse_zones_v1";
 /** Minimum time between foreground-triggered re-fetches (2 minutes). */
 const FOREGROUND_REFETCH_TTL_MS = 2 * 60 * 1000;
 
+function isTransientZoneStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
+
 export type ZoneId = number | string;
 
 export type ApiWarehouseZone = {
@@ -162,9 +166,16 @@ export function useWarehouseZones() {
       const [data, alignmentData, anchorsData] = await Promise.all([
         retryAsync(async () => {
           const res = await fetchWithAuth(`${API_BASE}/warehouse-zones`);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (!res.ok) {
+            const error = new Error(`HTTP ${res.status}`);
+            if (isTransientZoneStatus(res.status)) throw error;
+            return { ok: false as const, error };
+          }
           const json = (await res.json()) as { zones?: unknown };
-          return { zones: normalizeZones(json.zones) };
+          return { ok: true as const, zones: normalizeZones(json.zones) };
+        }).then((result) => {
+          if (!result.ok) throw result.error;
+          return { zones: result.zones };
         }),
         (async (): Promise<{ alignment: ZoneAlignment; stale: boolean }> => {
           try {

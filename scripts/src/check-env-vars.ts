@@ -145,14 +145,30 @@ function collectServerSourceRoots(repoRoot: string): {
 }
 
 // ---------------------------------------------------------------------------
-// Grep all process.env reads — both dot notation and static bracket notation
+// Grep all process.env reads — both dot notation and static bracket notation.
 //
 //   process.env.VAR_NAME
 //   process.env["VAR_NAME"]
 //   process.env['VAR_NAME']
 // ---------------------------------------------------------------------------
 const ENV_VAR_PATTERN =
-  /process\.env(?:\.([A-Z_][A-Z0-9_]*)|\[["']([A-Z_][A-Z0-9_]*)["']\])/g;
+  /process\.env\s*(?:\.\s*([A-Z_][A-Z0-9_]*)|\[\s*["']([A-Z_][A-Z0-9_]*)["']\s*\])/g;
+
+/**
+ * Dynamic environment indexing cannot be reconciled with .env.example because
+ * the key is not statically known. The policy is intentionally fail-closed:
+ * every dynamic access is reported and there are no broad or file-wide
+ * exemptions. Refactor to a named or literal access when a variable is
+ * intended to be configurable.
+ */
+const DYNAMIC_ENV_ACCESS_PATTERN =
+  /process\.env\s*\[\s*(?!["'])[^\]]+?\]/gs;
+
+export type DynamicEnvAccess = {
+  file: string;
+  line: number;
+  expression: string;
+};
 
 export function collectCodeVars(files: string[]): Set<string> {
   const vars = new Set<string>();
@@ -166,6 +182,22 @@ export function collectCodeVars(files: string[]): Set<string> {
     }
   }
   return vars;
+}
+
+export function collectDynamicEnvAccesses(
+  files: string[],
+): DynamicEnvAccess[] {
+  const accesses: DynamicEnvAccess[] = [];
+  for (const file of files) {
+    const src = readFileSync(file, "utf-8");
+    for (const match of src.matchAll(DYNAMIC_ENV_ACCESS_PATTERN)) {
+      const expression = match[0].replace(/\s+/g, " ").trim();
+      const offset = match.index ?? 0;
+      const line = src.slice(0, offset).split("\n").length;
+      accesses.push({ file, line, expression });
+    }
+  }
+  return accesses;
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +223,7 @@ export function checkEnvVars(repoRoot = REPO_ROOT): {
   scannedFiles: string[];
   undocumented: string[];
   obsolete: string[];
+  dynamicAccesses: DynamicEnvAccess[];
 } {
   const { roots, missing } = collectServerSourceRoots(repoRoot);
   if (missing.length > 0) {
@@ -203,6 +236,7 @@ export function checkEnvVars(repoRoot = REPO_ROOT): {
   const scanRoots = roots.filter((root) => existsSync(root));
   const scannedFiles = scanRoots.flatMap(collectSourceFiles);
   const codeVars = collectCodeVars(scannedFiles);
+  const dynamicAccesses = collectDynamicEnvAccesses(scannedFiles);
   const exampleContent = readFileSync(join(repoRoot, ".env.example"), "utf-8");
   const exampleVars = collectExampleVars(exampleContent);
   const undocumented = [...codeVars]
@@ -216,12 +250,12 @@ export function checkEnvVars(repoRoot = REPO_ROOT): {
         !IGNORED_PREFIXES.some((p) => v.startsWith(p)),
     )
     .sort();
-  return { scanRoots, scannedFiles, undocumented, obsolete };
+  return { scanRoots, scannedFiles, undocumented, obsolete, dynamicAccesses };
 }
 
 async function main(): Promise<void> {
   try {
-    const { undocumented, obsolete } = checkEnvVars();
+    const { undocumented, obsolete, dynamicAccesses } = checkEnvVars();
     if (undocumented.length > 0) {
       console.error(
         `\n❌  UNDOCUMENTED env vars (read in server code, missing from .env.example):\n`,
@@ -237,6 +271,21 @@ async function main(): Promise<void> {
       console.log(`✅  All server env vars are documented in .env.example.`);
     }
 
+    if (dynamicAccesses.length > 0) {
+      console.error(
+        `\n❌  DYNAMIC process.env ACCESS (the key must be a literal):\n`,
+      );
+      for (const access of dynamicAccesses) {
+        console.error(
+          `   ${access.file}:${access.line} — ${access.expression}`,
+        );
+      }
+      console.error(
+        `\nReplace dynamic indexing with a named or literal process.env read so ` +
+          `the variable can be documented in .env.example.\n`,
+      );
+    }
+
     if (obsolete.length > 0) {
       console.warn(
         `\n⚠️   OBSOLETE env vars (in .env.example, not read by server code):\n`,
@@ -250,10 +299,11 @@ async function main(): Promise<void> {
       );
     }
 
-    if (!undocumented.length && !obsolete.length) {
+    if (!undocumented.length && !obsolete.length && !dynamicAccesses.length) {
       console.log(`✅  .env.example and server code are perfectly in sync.`);
     }
-    process.exitCode = undocumented.length > 0 ? 1 : 0;
+    process.exitCode =
+      undocumented.length > 0 || dynamicAccesses.length > 0 ? 1 : 0;
   } catch (error) {
     console.error(
       `env:check FAILED — ${error instanceof Error ? error.message : String(error)}`,

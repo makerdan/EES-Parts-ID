@@ -58,6 +58,7 @@ paths:
       operationId: listInventory
       tags: [inventory]
       summary: List inventory items (paginated)
+      description: Offset browsing is limited to 10000 rows. For bulk export, start with after_id=0, then pass each page's last item id and the returned throughId on subsequent requests. Cursor pages are ordered by id and bounded to the highest id present at the start.
       parameters:
         - name: page
           in: query
@@ -69,6 +70,24 @@ paths:
           schema:
             type: integer
             default: 50
+        - name: total
+          in: query
+          description: Reuse the exact total returned on the first page during a paginated sync; omit to request a fresh count.
+          schema:
+            type: integer
+            minimum: 0
+        - name: after_id
+          in: query
+          description: Start a bounded export after this id (0 for the first page); cannot be combined with a non-first page.
+          schema:
+            type: integer
+            minimum: 0
+        - name: through_id
+          in: query
+          description: Highest inventory id returned as throughId on the first export page; required on subsequent export pages.
+          schema:
+            type: integer
+            minimum: 0
         - name: binPrefix
           in: query
           schema:
@@ -81,6 +100,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/InventoryListResponse"
+        "400":
+          description: Page offset exceeds 10000 or pagination parameters are invalid
 
   /inventory/categories:
     get:
@@ -875,6 +896,43 @@ paths:
         "308":
           description: Redirect to /reference/ask
 
+  /user/history:
+    get:
+      operationId: getUserHistory
+      tags: [user]
+      summary: Get the authenticated user's private history
+      responses:
+        "200":
+          description: Search, viewed-item, and barcode-scan history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserHistory"
+        "401": { description: Authentication required }
+        "403": { description: User is not approved }
+        "500": { description: History could not be loaded }
+    patch:
+      operationId: updateUserHistory
+      tags: [user]
+      summary: Update one or more of the authenticated user's history collections
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserHistoryPatch"
+      responses:
+        "200":
+          description: Updated history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserHistory"
+        "400": { description: Invalid history update }
+        "401": { description: Authentication required }
+        "403": { description: User is not approved }
+        "500": { description: History could not be saved }
+
   /user/me:
     delete:
       operationId: deleteUserMe
@@ -933,13 +991,60 @@ paths:
     post:
       operationId: createAdminInventorySnapshot
       tags: [admin]
-      summary: Create a verified inventory snapshot
+      summary: Start a manual verified inventory backup
       responses:
-        "201":
-          description: Snapshot created
+        "202":
+          description: Backup accepted and running (or the already-running operation)
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/InventorySnapshotSummary" }
+              schema: { $ref: "#/components/schemas/ManualInventoryBackupStatus" }
+        "401": { description: Authentication required }
+        "403": { description: Approved admin required }
+  /admin/snapshots/status:
+    get:
+      operationId: getAdminManualInventoryBackupStatus
+      tags: [admin]
+      summary: Read the current or latest manual inventory backup status
+      responses:
+        "200":
+          description: Safe manual backup status, or null when no manual backup has been started
+          content:
+            application/json:
+              schema:
+                type: [object, "null"]
+                $ref: "#/components/schemas/ManualInventoryBackupStatus"
+        "401": { description: Authentication required }
+        "403": { description: Approved admin required }
+  /admin/snapshots/history:
+    get:
+      operationId: listAdminManualInventoryBackupHistory
+      tags: [admin]
+      summary: List manual inventory backup history
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of entries to return (default 50, max 200)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: before_id
+          in: query
+          description: Cursor — return only rows with id strictly less than this value (use nextCursor from the previous page)
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: A page of safe manual backup audit entries
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ManualInventoryBackupHistoryPage" }
+        "400": { description: Invalid pagination cursor }
+        "401": { description: Authentication required }
+        "403": { description: Approved admin required }
+        "500": { description: History unavailable }
   /admin/snapshots/health:
     get:
       operationId: getAdminInventorySnapshotHealth
@@ -990,6 +1095,62 @@ paths:
 
 components:
   schemas:
+    UserHistory:
+      type: object
+      additionalProperties: false
+      properties:
+        queryHistory:
+          type: array
+          maxItems: 10
+          items: { type: string, minLength: 1 }
+        viewedHistory:
+          type: array
+          maxItems: 10
+          items: { $ref: "#/components/schemas/UserHistoryViewedEntry" }
+        scanHistory:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/UserHistoryScanEntry" }
+      required: [queryHistory, viewedHistory, scanHistory]
+    UserHistoryPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        queryHistory:
+          type: array
+          maxItems: 10
+          items: { type: string, minLength: 1 }
+        viewedHistory:
+          type: array
+          maxItems: 10
+          items: { $ref: "#/components/schemas/UserHistoryViewedEntry" }
+        scanHistory:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/UserHistoryScanEntry" }
+    UserHistoryViewedEntry:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: integer, minimum: 1 }
+        catalog: { type: string }
+        name: { type: string }
+        vendor: { type: string }
+        timestamp: { type: string, format: date-time }
+      required: [id, catalog, name, vendor, timestamp]
+    UserHistoryScanEntry:
+      type: object
+      additionalProperties: false
+      properties:
+        barcode: { type: string, minLength: 1 }
+        found: { type: boolean }
+        itemId: { type: integer, minimum: 1 }
+        catalog: { type: string }
+        vendor: { type: string }
+        timestamp: { type: string, format: date-time }
+        adminAction: { type: string, enum: [linked, created] }
+      required: [barcode, found, timestamp]
     InventorySnapshotSummary:
       type: object
       properties:
@@ -1003,6 +1164,38 @@ components:
         lastKnownGood: { type: boolean }
         anomaly: { type: [string, "null"] }
       required: [formatVersion, snapshotId, createdAt, reason, rowCount, contentSha256, lastKnownGood, anomaly]
+    ManualInventoryBackupStatus:
+      type: object
+      properties:
+        status: { type: string, enum: [running, completed, failed] }
+        persistence: { type: string, enum: [saved, unavailable] }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: [string, "null"], format: date-time }
+        rowCount: { type: [integer, "null"], minimum: 0 }
+        snapshotId: { type: [string, "null"] }
+        error: { type: [string, "null"] }
+        warning: { type: [string, "null"] }
+      required: [status, persistence, startedAt, finishedAt, rowCount, snapshotId, error, warning]
+    ManualInventoryBackupHistoryPage:
+      type: object
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/ManualInventoryBackupHistoryEntry" }
+        nextCursor:
+          type: [integer, "null"]
+          description: Pass as before_id to fetch the next page.
+      required: [rows, nextCursor]
+    ManualInventoryBackupHistoryEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        adminClerkUserId: { type: string }
+        snapshotId: { type: string }
+        rowCount: { type: [integer, "null"], minimum: 0 }
+        outcome: { type: string, enum: [completed, failed] }
+        createdAt: { type: string, format: date-time }
+      required: [id, adminClerkUserId, snapshotId, rowCount, outcome, createdAt]
     InventorySnapshotHealth:
       type: object
       properties:
@@ -1266,6 +1459,10 @@ components:
           type: integer
         limit:
           type: integer
+        throughId:
+          type: integer
+          minimum: 0
+          description: Highest id eligible for this export, present only on after_id requests.
       required:
         - items
         - total
@@ -1976,7 +2173,34 @@ components:
           items: { type: string }
         capabilities:
           $ref: "#/components/schemas/PoeModelCapabilities"
-      required: [id, name, modalities, capabilities]
+        approvedRoutes:
+          type: array
+          maxItems: 4
+          items:
+            type: string
+            enum: [identify, dimensions, enrich, catalog]
+        capabilityConfidence:
+          type: string
+          enum: [verified, inferred, unknown]
+        verification:
+          type: object
+          properties:
+            source: { type: string, enum: [configured_registry] }
+            verifiedAt: { type: string, nullable: true }
+            reviewTrigger: { type: string, maxLength: 128 }
+          required: [source, verifiedAt, reviewTrigger]
+        privacyClass: { type: string, enum: [prompt_not_persisted] }
+        budgetClass: { type: string, enum: [low, medium, high] }
+        limits:
+          type: object
+          properties:
+            maxOutputTokens: { type: integer, minimum: 0 }
+            maxImages: { type: integer, minimum: 0 }
+            maxImageBytes: { type: integer, minimum: 0 }
+            maxRequestBytes: { type: integer, minimum: 0 }
+            maxResponseBytes: { type: integer, minimum: 0 }
+          required: [maxOutputTokens, maxImages, maxImageBytes, maxRequestBytes, maxResponseBytes]
+      required: [id, name, modalities, capabilities, approvedRoutes, capabilityConfidence, verification, privacyClass, budgetClass, limits]
 
     PoeRegistry:
       type: object

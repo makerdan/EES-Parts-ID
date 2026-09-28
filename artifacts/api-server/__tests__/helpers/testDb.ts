@@ -3,7 +3,17 @@
  * Inserts clearly-labelled fixture rows and removes them after the suite.
  */
 
-import { db, pool, inventoryTable, usersTable } from "@workspace/db";
+import {
+  abbreviationMapTable,
+  adminPreferencesTable,
+  db,
+  electricalSlangMapTable,
+  inventoryTable,
+  misspellingMapTable,
+  pool,
+  synonymMapTable,
+  usersTable,
+} from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 
 const TEST_WORKER_INSTANCE = `${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`;
@@ -33,6 +43,31 @@ export function workerQualifiedUserId(
  * Never pass a hand-written shared email here.
  */
 type UserInsert = typeof usersTable.$inferInsert;
+type UserRow = typeof usersTable.$inferSelect;
+
+const _userSnapshots = new Map<string, UserRow | null>();
+
+function cleanupErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Report fixture-cleanup failures without replacing a test/setup failure.
+ * Ownership remains registered when cleanup fails so a later teardown attempt
+ * can retry it.
+ */
+export async function bestEffortFixtureCleanup(
+  label: string,
+  cleanup: () => Promise<void>,
+): Promise<void> {
+  try {
+    await cleanup();
+  } catch (error) {
+    console.warn(
+      `[test fixture cleanup] ${label} failed: ${cleanupErrorMessage(error)}`,
+    );
+  }
+}
 
 export async function seedTestUser(opts: {
   clerkUserId: UserInsert["clerkUserId"] & string;
@@ -40,6 +75,15 @@ export async function seedTestUser(opts: {
   role?: UserInsert["role"];
 }): Promise<void> {
   const { clerkUserId, status = "approved", role = "user" } = opts;
+  if (!_userSnapshots.has(clerkUserId)) {
+    const [existing] = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.clerkUserId, clerkUserId))
+      .limit(1);
+    _userSnapshots.set(clerkUserId, existing ?? null);
+  }
+
   await db
     .insert(usersTable)
     .values({
@@ -54,9 +98,46 @@ export async function seedTestUser(opts: {
     });
 }
 
-/** Remove a user seeded by seedTestUser. Idempotent. */
+/**
+ * Restore or remove a user seeded by seedTestUser.
+ *
+ * A successful upsert may have replaced a pre-existing row, so deletion alone
+ * would destroy data that this fixture did not own.
+ */
 export async function cleanupTestUser(clerkUserId: string): Promise<void> {
-  await db.delete(usersTable).where(eq(usersTable.clerkUserId, clerkUserId));
+  if (!_userSnapshots.has(clerkUserId)) return;
+
+  const original = _userSnapshots.get(clerkUserId);
+  await bestEffortFixtureCleanup(`user ${clerkUserId}`, async () => {
+    await db.delete(usersTable).where(eq(usersTable.clerkUserId, clerkUserId));
+    if (original) {
+      await db.insert(usersTable).values(original);
+    }
+    _userSnapshots.delete(clerkUserId);
+  });
+}
+
+/** Capture the canonical admin preference singleton before a mutating suite. */
+export async function snapshotAdminPreferences(): Promise<
+  typeof adminPreferencesTable.$inferSelect | undefined
+> {
+  const [row] = await db
+    .select()
+    .from(adminPreferencesTable)
+    .where(eq(adminPreferencesTable.id, 1))
+    .limit(1);
+  return row;
+}
+
+/**
+ * Restore the singleton exactly, including nullable columns and timestamps.
+ * Deleting first makes the absent-row case deterministic as well.
+ */
+export async function restoreAdminPreferences(
+  original: typeof adminPreferencesTable.$inferSelect | undefined,
+): Promise<void> {
+  await db.delete(adminPreferencesTable).where(eq(adminPreferencesTable.id, 1));
+  if (original) await db.insert(adminPreferencesTable).values(original);
 }
 
 /**
@@ -85,7 +166,6 @@ export interface FixtureItem {
  * Returns the actual inserted rows (with generated ids).
  */
 export async function seedFixtures(items: FixtureItem[]) {
-  for (const i of items) _seededCatalogs.add(i.catalog);
   const fixtureTimestamp = new Date("2025-01-01T00:00:00.000Z");
   const rows = await db
     .insert(inventoryTable)
@@ -105,6 +185,7 @@ export async function seedFixtures(items: FixtureItem[]) {
     )
     .onConflictDoNothing()
     .returning();
+  for (const row of rows) _seededCatalogs.add(row.catalog);
   return rows;
 }
 
@@ -123,15 +204,145 @@ export async function seedFixtures(items: FixtureItem[]) {
 export async function cleanupFixtures() {
   if (_seededCatalogs.size === 0) return;
   const catalogs = [..._seededCatalogs];
-  _seededCatalogs.clear();
-  await db
-    .delete(inventoryTable)
-    .where(
-      sql`${inventoryTable.catalog} IN (${sql.join(
-        catalogs.map((c) => sql`${c}`),
-        sql`, `,
-      )})`,
-    );
+  await bestEffortFixtureCleanup(
+    `inventory catalogs ${catalogs.join(", ")}`,
+    async () => {
+      await db
+        .delete(inventoryTable)
+        .where(
+          sql`${inventoryTable.catalog} IN (${sql.join(
+            catalogs.map((c) => sql`${c}`),
+            sql`, `,
+          )})`,
+        );
+      for (const catalog of catalogs) _seededCatalogs.delete(catalog);
+    },
+  );
+}
+
+/**
+ * Seed the dictionary rows asserted by dictionaries.integration.test.ts.
+ *
+ * Each insert is an idempotent upsert so the suite is deterministic on an
+ * empty test database without replacing canonical development seed values.
+ */
+export interface DictionaryFixtures {
+  abbreviation: string;
+  synonym: string;
+  misspelling: string;
+  correction: string;
+  slang: string;
+}
+
+export function dictionaryFixturesForWorker(
+  workerInstance = TEST_WORKER_INSTANCE,
+): DictionaryFixtures {
+  const suffix = workerInstance.toLowerCase();
+  return {
+    abbreviation: `jest-ser-${suffix}`,
+    synonym: `jest-afci-${suffix}`,
+    misspelling: `jest-gcfi-${suffix}`,
+    correction: `jest-gfci-${suffix}`,
+    slang: `jest-stab-in-${suffix}`,
+  };
+}
+
+export async function seedDictionaryFixtures(
+  workerInstance = TEST_WORKER_INSTANCE,
+): Promise<DictionaryFixtures> {
+  const fixtures = dictionaryFixturesForWorker(workerInstance);
+  const abbreviationRows = await db
+    .insert(abbreviationMapTable)
+    .values({
+      abbreviation: fixtures.abbreviation,
+      expansions: ["service entrance rated", "service entrance cable"],
+      category: "jest-fixture",
+    })
+    .onConflictDoNothing()
+    .returning({ abbreviation: abbreviationMapTable.abbreviation });
+  if (abbreviationRows.length > 0) _ownedDictionaryAbbreviations.add(fixtures.abbreviation);
+
+  const synonymRows = await db
+    .insert(synonymMapTable)
+    .values({
+      term: fixtures.synonym,
+      synonyms: ["arc fault circuit interrupter"],
+      category: "jest-fixture",
+    })
+    .onConflictDoNothing()
+    .returning({ term: synonymMapTable.term });
+  if (synonymRows.length > 0) _ownedDictionarySynonyms.add(fixtures.synonym);
+
+  const misspellingRows = await db
+    .insert(misspellingMapTable)
+    .values({ misspelling: fixtures.misspelling, correction: fixtures.correction })
+    .onConflictDoNothing()
+    .returning({ misspelling: misspellingMapTable.misspelling });
+  if (misspellingRows.length > 0) {
+    _ownedDictionaryMisspellings.add(fixtures.misspelling);
+  }
+
+  const slangRows = await db
+    .insert(electricalSlangMapTable)
+    .values({
+      slangTerm: fixtures.slang,
+      standardTerms: ["push-in connector", "backstab connector"],
+      category: "jest-fixture",
+      notes: "Owned by the dictionary integration suite when not already seeded.",
+    })
+    .onConflictDoNothing()
+    .returning({ slangTerm: electricalSlangMapTable.slangTerm });
+  if (slangRows.length > 0) _ownedDictionarySlang.add(fixtures.slang);
+  return fixtures;
+}
+
+const _ownedDictionaryAbbreviations = new Set<string>();
+const _ownedDictionarySynonyms = new Set<string>();
+const _ownedDictionaryMisspellings = new Set<string>();
+const _ownedDictionarySlang = new Set<string>();
+
+export async function cleanupDictionaryFixtures(
+  workerInstance = TEST_WORKER_INSTANCE,
+): Promise<void> {
+  const fixtures = dictionaryFixturesForWorker(workerInstance);
+  const cleanupTasks = [
+    ["dictionary abbreviation", _ownedDictionaryAbbreviations, async () => {
+      await db
+        .delete(abbreviationMapTable)
+        .where(eq(abbreviationMapTable.abbreviation, fixtures.abbreviation));
+      _ownedDictionaryAbbreviations.delete(fixtures.abbreviation);
+    }],
+    ["dictionary synonym", _ownedDictionarySynonyms, async () => {
+      await db.delete(synonymMapTable).where(eq(synonymMapTable.term, fixtures.synonym));
+      _ownedDictionarySynonyms.delete(fixtures.synonym);
+    }],
+    ["dictionary misspelling", _ownedDictionaryMisspellings, async () => {
+      await db
+        .delete(misspellingMapTable)
+        .where(eq(misspellingMapTable.misspelling, fixtures.misspelling));
+      _ownedDictionaryMisspellings.delete(fixtures.misspelling);
+    }],
+    ["dictionary slang", _ownedDictionarySlang, async () => {
+      await db
+        .delete(electricalSlangMapTable)
+        .where(eq(electricalSlangMapTable.slangTerm, fixtures.slang));
+      _ownedDictionarySlang.delete(fixtures.slang);
+    }],
+  ] as const;
+
+  await Promise.all(
+    cleanupTasks
+      .filter(([, owned]) => owned.has(
+        owned === _ownedDictionaryAbbreviations
+          ? fixtures.abbreviation
+          : owned === _ownedDictionarySynonyms
+            ? fixtures.synonym
+            : owned === _ownedDictionaryMisspellings
+              ? fixtures.misspelling
+              : fixtures.slang,
+      ))
+      .map(([label, , cleanup]) => bestEffortFixtureCleanup(label, cleanup)),
+  );
 }
 
 /**
@@ -192,6 +403,14 @@ export async function seedEditableItem(
   workerInstance = TEST_WORKER_INSTANCE,
 ): Promise<EditableItem> {
   const catalog = editableCatalogForWorker(workerInstance);
+  if (!_editableSnapshots.has(catalog)) {
+    const [existing] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, catalog))
+      .limit(1);
+    _editableSnapshots.set(catalog, existing ?? null);
+  }
   await db.delete(inventoryTable).where(eq(inventoryTable.catalog, catalog));
 
   const [row] = await db
@@ -223,13 +442,23 @@ export async function seedEditableItem(
   };
 }
 
-/** Remove the editable item seeded by seedEditableItem. Idempotent. */
+const _editableSnapshots = new Map<
+  string,
+  typeof inventoryTable.$inferSelect | null
+>();
+
+/** Restore or remove the editable item seeded by seedEditableItem. */
 export async function cleanupEditableItem(
   workerInstance = TEST_WORKER_INSTANCE,
 ): Promise<void> {
-  await db
-    .delete(inventoryTable)
-    .where(eq(inventoryTable.catalog, editableCatalogForWorker(workerInstance)));
+  const catalog = editableCatalogForWorker(workerInstance);
+  if (!_editableSnapshots.has(catalog)) return;
+  const original = _editableSnapshots.get(catalog);
+  await bestEffortFixtureCleanup(`editable inventory ${catalog}`, async () => {
+    await db.delete(inventoryTable).where(eq(inventoryTable.catalog, catalog));
+    if (original) await db.insert(inventoryTable).values(original);
+    _editableSnapshots.delete(catalog);
+  });
 }
 
 /** Convenience: standard fixtures used across multiple suites. */

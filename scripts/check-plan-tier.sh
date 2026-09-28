@@ -37,7 +37,7 @@ fi
 VALID_TIERS=("fast" "standard" "standard-plus" "heavy")
 
 # Find the line number of "## Validation tier"
-tier_line=$(grep -n "^## Validation tier" "$PLAN_FILE" | head -1 | cut -d: -f1 || true)
+tier_line=$(grep -n "^## Validation tier$" "$PLAN_FILE" | head -1 | cut -d: -f1 || true)
 
 if [[ -z "$tier_line" ]]; then
   echo ""
@@ -52,11 +52,12 @@ if [[ -z "$tier_line" ]]; then
   echo ""
   echo "Valid tier names: fast, standard, standard-plus, heavy"
   echo ""
-  echo "Guidelines (use these unless the plan clearly implies otherwise):"
-  echo "  fast          — pure config/refactor with no logic change"
-  echo "  standard      — most feature/bug-fix work; touching tests, mocks, or docs"
-  echo "  standard-plus — DB schema, auth, or API contract changes"
-  echo "  heavy         — same as standard-plus (currently identical steps)"
+  echo "Guidelines (choose the lightest sufficient registered command):"
+  echo "  fast          — report-only audits, docs, config, or non-behavioral changes covered by static checks"
+  echo "  standard      — most behavior, feature, and test changes"
+  echo "  standard-plus — schema, auth/security, or API contract/route changes"
+  echo "  heavy         — standard-plus + protected-map-concurrency; when relevant or explicitly requiring full-tier verification"
+  echo "  Migration/Drizzle/SQL schema work must not fall below standard-plus."
   echo ""
   exit 1
 fi

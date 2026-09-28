@@ -117,6 +117,13 @@ function findSubmitButton(result: Awaited<ReturnType<typeof render>>) {
     }) ?? null;
 }
 
+function findDimensionInput(result: Awaited<ReturnType<typeof render>>, label: string) {
+  return result.root!.queryAll(
+    (n: TestInstance) => n.props.accessibilityLabel === label,
+    { includeSelf: true },
+  )[0] ?? null;
+}
+
 // =============================================================================
 // 1. Save-and-unmount: no setState warning
 // =============================================================================
@@ -247,5 +254,134 @@ describe("AddPartForm — error rollback (still mounted)", () => {
     expect(errorText).toBeDefined();
 
     result.unmount();
+  });
+});
+
+describe("AddPartForm — dimension validation", () => {
+  it.each([
+    { rollback: { ok: true, status: 204 }, expected: "The part was not created. Please try again." },
+    { rollback: { ok: false, status: 500 }, expected: "The part was created, but cleanup failed." },
+  ])("reports the actual rollback outcome ($rollback.status)", async ({ rollback, expected }) => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true, status: 201,
+        json: async () => ({ item: { id: 7, vendor: "ACME", catalog: "WIDGET-42" } }),
+      })
+      .mockResolvedValueOnce({
+        ok: false, status: 500, json: async () => ({ error: "Dimensions unavailable" }),
+      })
+      .mockResolvedValueOnce(rollback) as jest.Mock;
+    const onSuccess = jest.fn();
+    const result = await renderForm({ adminToken: "test-token", onSuccess });
+    await act(async () => { fillRequiredFields(result); });
+    await act(async () => { await fireEvent.changeText(findDimensionInput(result, "Length")!, "12"); });
+    await act(async () => { await fireEvent.press(findSubmitButton(result)!); });
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+    expect((global.fetch as jest.Mock).mock.calls[2]?.[1]?.method).toBe("DELETE");
+    expect(getAllTextStrings(result.root!).join(" ")).toContain(expected);
+    expect(onSuccess).not.toHaveBeenCalled();
+    await result.unmount();
+  });
+
+  it("warns that the part may remain when rollback DELETE throws", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ item: { id: 7 } }) })
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
+      .mockRejectedValueOnce(new Error("offline")) as jest.Mock;
+    const result = await renderForm({ adminToken: "test-token", onSuccess: jest.fn() });
+    await act(async () => { fillRequiredFields(result); });
+    await act(async () => { await fireEvent.changeText(findDimensionInput(result, "Length")!, "12"); });
+    await act(async () => { await fireEvent.press(findSubmitButton(result)!); });
+    expect(getAllTextStrings(result.root!).join(" ")).toContain("The part was created, but cleanup failed.");
+    await result.unmount();
+  });
+
+  it.each(["-12.5", "1..2", "100001"])(
+    "keeps invalid dimension text %s visible and blocks part creation",
+    async (value) => {
+      global.fetch = jest.fn() as jest.Mock;
+      const result = await renderForm({
+        adminToken: "test-token",
+        onSuccess: jest.fn(),
+      });
+      await act(async () => { fillRequiredFields(result); });
+
+      const lengthInput = findDimensionInput(result, "Length");
+      expect(lengthInput).not.toBeNull();
+      await act(async () => { fireEvent.changeText(lengthInput!, value); });
+      await act(async () => { fireEvent.press(findSubmitButton(result)!); });
+
+      const updatedLength = findDimensionInput(result, "Length");
+      expect(updatedLength?.props.value).toBe(value);
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(getAllTextStrings(result.root!).join(" ")).toContain("Enter a non-negative number up to 100,000");
+      await result.unmount();
+    },
+  );
+
+  it("saves a valid decimal to one decimal place and sends blank dimensions as null", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({
+          item: {
+            id: 7,
+            vendor: "ACME",
+            catalog: "WIDGET-42",
+            binLocations: [],
+            aiKeywords: [],
+            imageUrl: null,
+            imageUrl2: null,
+          },
+        }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200 } as Response) as jest.Mock;
+    const result = await renderForm({
+      adminToken: "test-token",
+      onSuccess: jest.fn(),
+    });
+    await act(async () => { fillRequiredFields(result); });
+
+    await act(async () => {
+      fireEvent.changeText(findDimensionInput(result, "Length")!, "12.34");
+    });
+    await act(async () => { fireEvent.press(findSubmitButton(result)!); });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[1]![1].body)).toEqual({
+      length: 12.3,
+      width: null,
+      height: null,
+      diameter: null,
+    });
+    await result.unmount();
+  });
+
+  it("omits the dimensions request when every dimension field is blank", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        item: {
+          id: 8,
+          vendor: "ACME",
+          catalog: "WIDGET-42",
+          binLocations: [],
+          aiKeywords: [],
+          imageUrl: null,
+          imageUrl2: null,
+        },
+      }),
+    } as unknown as Response) as jest.Mock;
+    const result = await renderForm({
+      adminToken: "test-token",
+      onSuccess: jest.fn(),
+    });
+    await act(async () => { fillRequiredFields(result); });
+    await act(async () => { fireEvent.press(findSubmitButton(result)!); });
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    await result.unmount();
   });
 });

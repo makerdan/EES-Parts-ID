@@ -42,6 +42,7 @@ jest.mock("../src/lib/poeBot", () => {
 // mockCreate-backed client used everywhere else.
 jest.mock("../src/lib/aiProvider", () => ({
   getCatalogModel: jest.fn(() => "test-catalog-model"),
+  getVerifiedPoeRouteSnapshot: jest.fn(() => ({ effective: ["test-catalog-model"] })),
   getOpenAIFallbackClient: jest.fn(() => ({
     chat: { completions: { create: mockCreate } },
   })),
@@ -89,6 +90,37 @@ Section 4: Safety Switches .......... 35
 
 beforeEach(() => {
   jest.clearAllMocks();
+});
+
+describe("extractCatalogPage – manual fallback boundary", () => {
+  it("uses the approved catalog model and passes the bounded attempt signal", async () => {
+    mockCreate.mockResolvedValueOnce(makeOpenAIResponse("[]"));
+    await expect(extractCatalogPage("catalog text", [], "Eaton", true))
+      .resolves.toEqual({ entries: [], rawText: "[]" });
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-4o" }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("rejects malformed fallback envelopes without treating them as empty pages", async () => {
+    mockCreate.mockResolvedValueOnce({ choices: [{ message: { content: { unsafe: true } } }] });
+    await expect(extractCatalogPage("catalog text", [], "Eaton", true))
+      .rejects.toMatchObject({ code: "ai_error" });
+  });
+
+  it("bounds a fallback provider that never settles", async () => {
+    jest.useFakeTimers();
+    try {
+      mockCreate.mockImplementationOnce(() => new Promise(() => {}));
+      const request = extractCatalogPage("catalog text", [], "Eaton", true);
+      const assertion = expect(request).rejects.toMatchObject({ code: "ai_error" });
+      await jest.advanceTimersByTimeAsync(30_001);
+      await assertion;
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

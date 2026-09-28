@@ -29,10 +29,21 @@ jest.mock("expo-auth-session", () => ({
 // Platform.OS is "ios" in the RN mock, so the native path (startSSOFlow) runs.
 const mockStartSSOFlow = jest.fn();
 
-jest.mock("@clerk/expo", () => ({
-  useSSO: () => ({ startSSOFlow: mockStartSSOFlow }),
-  useClerk: () => ({ client: null }),
-}));
+jest.mock("@clerk/expo", () => {
+  const {
+    assertClerkMockContract,
+    createClerkExpoMock,
+  } = jest.requireActual("../__mocks__/clerk-expo");
+  const clerkMock = createClerkExpoMock({
+    useSSO: () => ({ startSSOFlow: mockStartSSOFlow }),
+    useClerk: () => ({ client: null }),
+  });
+  return assertClerkMockContract(
+    clerkMock,
+    ["useSSO", "useClerk"],
+    "oauthButtonsResilience",
+  );
+});
 
 // ── @/contexts/AppContext ────────────────────────────────────────────────────
 const mockShowToast = jest.fn();
@@ -103,6 +114,21 @@ describe("OAuthButtons — shared loading flag (F-046)", () => {
     const result = await render(<OAuthButtons mode="sign-in" />);
     await flushMicrotasks();
 
+    for (const [testId, accessibleName] of [
+      ["oauth-google-button", "Continue with Google"],
+      ["oauth-apple-button", "Continue with Apple"],
+    ] as const) {
+      const button = result.getByTestId(testId);
+      expect(button.props.accessibilityRole).toBe("button");
+      expect(button.props.accessibilityLabel).toBe(accessibleName);
+      expect(button.props.disabled).toBe(false);
+      expect(button.props.accessibilityState).toEqual({
+        disabled: false,
+        busy: false,
+      });
+      expect(button.props["aria-busy"]).toBe(false);
+    }
+
     // Both labels visible → both idle
     expect(isButtonLoading(result, "Continue with Google")).toBe(false);
     expect(isButtonLoading(result, "Continue with Apple")).toBe(false);
@@ -116,6 +142,15 @@ describe("OAuthButtons — shared loading flag (F-046)", () => {
     // Both labels replaced by ActivityIndicator → both buttons in loading state
     expect(isButtonLoading(result, "Continue with Google")).toBe(true);
     expect(isButtonLoading(result, "Continue with Apple")).toBe(true);
+    for (const testId of ["oauth-google-button", "oauth-apple-button"]) {
+      const button = result.getByTestId(testId);
+      expect(button.props.disabled).toBe(true);
+      expect(button.props.accessibilityState).toEqual({
+        disabled: true,
+        busy: true,
+      });
+      expect(button.props["aria-busy"]).toBe(true);
+    }
   });
 
   it("re-enables buttons and shows a timeout error after 60 seconds", async () => {

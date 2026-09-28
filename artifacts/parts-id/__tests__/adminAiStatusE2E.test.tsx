@@ -43,6 +43,9 @@ jest.mock("@workspace/api-client-react", () => ({
   setBaseUrl: jest.fn(),
 }));
 
+const { assertUploadScreenClerkMock } = jest.requireActual("../__mocks__/clerk-expo");
+assertUploadScreenClerkMock(jest.requireMock("@clerk/expo"), "adminAiStatusE2E");
+
 jest.mock("@/contexts/ApiHealthContext", () =>
   jest.requireActual("../contexts/ApiHealthContext"),
 );
@@ -230,8 +233,6 @@ function makeAppMock() {
     setPendingInventorySearch: jest.fn(),
     textFontScale: 1,
     pinnedParts: [],
-    pendingLidarDims: null,
-    setPendingLidarDims: jest.fn(),
     approvalStatus: "approved" as const,
   };
 }
@@ -267,6 +268,7 @@ function responseFor(url: string): Response | Promise<Response> {
   if (url.includes("/inventory/bulk-enrich/status")) {
     return jsonResponse({
       job: {
+        status: "idle",
         running: false,
         stopRequested: false,
         force: false,

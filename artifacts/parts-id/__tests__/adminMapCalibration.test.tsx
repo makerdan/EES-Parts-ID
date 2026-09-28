@@ -288,6 +288,45 @@ describe("No server writes before Confirm", () => {
   });
 });
 
+describe("Coordinate text validation", () => {
+  it("shows malformed coordinates and blocks slot saves and review while any field is malformed", async () => {
+    activeTree = await renderScreen([...VALID_ANCHORS]);
+
+    await fireEvent.changeText(activeTree.getByTestId("anchor-1-world-x"), "-12.75");
+    await fireEvent.changeText(activeTree.getByTestId("anchor-2-world-x"), "12abc");
+
+    expect(activeTree.getByTestId("anchor-2-world-x-error")).not.toBeNull();
+    expect(activeTree.queryByText("Review Alignment →")).toBeNull();
+    expect(activeTree.queryByTestId("anchor-2-world-y-error")).toBeNull();
+
+    const saveAnchor1 = activeTree.getByLabelText("Save anchor 1");
+    expect(saveAnchor1.props.disabled).toBe(true);
+    expect(activeTree.queryByLabelText("Save anchor 2")).toBeNull();
+
+    // Exercise the handler guard as well as the disabled UI state.
+    await act(async () => {
+      await saveAnchor1.props.onPress();
+    });
+    expect(mockUpsertAnchor).not.toHaveBeenCalled();
+  });
+
+  it("saves a complete signed decimal coordinate", async () => {
+    activeTree = await renderScreen([...VALID_ANCHORS]);
+
+    await fireEvent.changeText(activeTree.getByTestId("anchor-1-world-x"), "-12.75");
+    const saveAnchor1 = activeTree.getByLabelText("Save anchor 1");
+    expect(saveAnchor1.props.disabled).toBe(false);
+
+    await fireEvent.press(saveAnchor1);
+
+    expect(mockUpsertAnchor).toHaveBeenCalledTimes(1);
+    expect(mockUpsertAnchor).toHaveBeenCalledWith(1, expect.objectContaining({
+      worldX: -12.75,
+      worldY: 20,
+    }));
+  });
+});
+
 // =============================================================================
 // (b) All three writes fire on Confirm
 // =============================================================================

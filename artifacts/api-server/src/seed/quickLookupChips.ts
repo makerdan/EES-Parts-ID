@@ -52,10 +52,17 @@ async function generateAnswer(question: string): Promise<string> {
 
 export async function seedQuickLookupChips(): Promise<void> {
   console.log(`Seeding ${QUICK_LOOKUP_CHIPS.length} Quick Lookup chip answers…`);
+  let skippedCount = 0;
 
   for (const { label, question } of QUICK_LOOKUP_CHIPS) {
     process.stdout.write(`  [${label}] generating… `);
     const answer = await generateAnswer(question);
+
+    if (!answer) {
+      skippedCount += 1;
+      console.warn(`[${label}] skipped: provider returned no answer text`);
+      continue;
+    }
 
     await db
       .insert(quickLookupCacheTable)
@@ -68,7 +75,11 @@ export async function seedQuickLookupChips(): Promise<void> {
     console.log("done");
   }
 
-  console.log("Quick Lookup chip seed complete.");
+  if (skippedCount > 0) {
+    console.warn(`Quick Lookup chip seed finished with ${skippedCount} skipped empty answer(s).`);
+  } else {
+    console.log("Quick Lookup chip seed complete.");
+  }
 }
 
 export async function seedReferenceAnswerCacheFromChips(): Promise<void> {

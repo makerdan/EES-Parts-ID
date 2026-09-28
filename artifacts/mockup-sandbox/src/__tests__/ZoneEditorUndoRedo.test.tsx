@@ -25,7 +25,7 @@ import {
   afterEach,
 } from "vitest";
 import { render, act, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
-import { ZoneEditor } from "../pages/ZoneEditor";
+import { resetZoneEditorHistoryForTests, ZoneEditor } from "../pages/ZoneEditor";
 
 // ─── Constants mirroring the component ────────────────────────────────────────
 const UNDO_LIMIT = 50;
@@ -165,6 +165,40 @@ function callsAfter(fetchMock: ReturnType<typeof makeFetchMock>) {
   return () => fetchMock.mock.calls.slice(offset) as [unknown, RequestInit][];
 }
 
+function historyTitles(container: HTMLElement) {
+  return {
+    undo: (container.querySelector('button[title^="Undo"], button[title="Nothing to undo"]') as HTMLButtonElement).title,
+    redo: (container.querySelector('button[title^="Redo"], button[title="Nothing to redo"]') as HTMLButtonElement).title,
+  };
+}
+
+function stubSvgBounds(container: HTMLElement) {
+  const svgEl = container.querySelector("svg") as SVGSVGElement;
+  vi.spyOn(svgEl, "getBoundingClientRect").mockReturnValue({
+    left: 0, top: 0, right: 800, bottom: 600,
+    width: 800, height: 600, x: 0, y: 0,
+    toJSON: () => ({}),
+  } as DOMRect);
+  return svgEl;
+}
+
+function failNextPatch(fetchMock: ReturnType<typeof makeFetchMock>) {
+  const previousImplementation = fetchMock.getMockImplementation()!;
+  let shouldFail = true;
+  fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    if (shouldFail && (init?.method ?? "").toUpperCase() === "PATCH") {
+      shouldFail = false;
+      return Promise.resolve({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ error: "simulated PATCH failure" }),
+        text: () => Promise.resolve("simulated PATCH failure"),
+      });
+    }
+    return previousImplementation(url, init);
+  });
+}
+
 // ─── Interaction helpers ──────────────────────────────────────────────────────
 
 /** Simulate a move drag on ZONE_1's fill rect. */
@@ -244,6 +278,7 @@ describe("ZoneEditor — undo / redo stack", () => {
   // different test instances never pollute each other's DOM queries.
   afterEach(() => {
     cleanup();
+    resetZoneEditorHistoryForTests();
     vi.restoreAllMocks();
   });
 
@@ -534,6 +569,114 @@ describe("ZoneEditor — undo / redo stack", () => {
     const redoPatches = patchBodiesFrom(afterUndo(), 1);
     expect(redoPatches[0]!.svgX).toBeCloseTo(afterPos.svgX as number);
     expect(redoPatches[0]!.svgY).toBeCloseTo(afterPos.svgY as number);
+  });
+
+  // ── 6a. History counts survive an editor remount ─────────────────────────
+  it("restores undo and redo counts after returning to the editor", async () => {
+    const { container, fetchMock } = await setupEditor();
+
+    await simulateMove(getZoneFillRects(container)[0]!);
+    await pressUndo(fetchMock);
+    const expectedAfterUndo = historyTitles(container);
+    expect(expectedAfterUndo.redo).toBe("Redo (1)");
+
+    cleanup();
+
+    let remountedContainer!: HTMLElement;
+    await act(async () => {
+      ({ container: remountedContainer } = render(<ZoneEditor />));
+    });
+    stubSvgBounds(remountedContainer);
+
+    expect(historyTitles(remountedContainer)).toEqual(expectedAfterUndo);
+  });
+
+  it("keeps counts unchanged when undo or redo fails after returning", async () => {
+    const { container, fetchMock } = await setupEditor();
+
+    await simulateMove(getZoneFillRects(container)[0]!);
+    cleanup();
+
+    let remountedContainer!: HTMLElement;
+    await act(async () => {
+      ({ container: remountedContainer } = render(<ZoneEditor />));
+    });
+    stubSvgBounds(remountedContainer);
+    const beforeFailedUndo = historyTitles(remountedContainer);
+
+    failNextPatch(fetchMock);
+    await act(async () => {
+      fireEvent.click(remountedContainer.querySelector('button[title^="Undo"]')!);
+    });
+    await waitFor(() => {
+      expect(
+        (fetchMock.mock.calls as [unknown, RequestInit][]).filter(
+          ([, init]) => (init?.method ?? "").toUpperCase() === "PATCH",
+        ),
+      ).toHaveLength(2);
+    });
+    expect(historyTitles(remountedContainer)).toEqual(beforeFailedUndo);
+
+    await act(async () => {
+      fireEvent.click(remountedContainer.querySelector('button[title^="Undo"]')!);
+    });
+    await waitFor(() => {
+      expect(
+        (fetchMock.mock.calls as [unknown, RequestInit][]).filter(
+          ([, init]) => (init?.method ?? "").toUpperCase() === "PATCH",
+        ),
+      ).toHaveLength(3);
+    });
+    const beforeFailedRedo = historyTitles(remountedContainer);
+    expect(beforeFailedRedo.redo).toBe("Redo (1)");
+
+    cleanup();
+    await act(async () => {
+      ({ container: remountedContainer } = render(<ZoneEditor />));
+    });
+    stubSvgBounds(remountedContainer);
+    expect(historyTitles(remountedContainer)).toEqual(beforeFailedRedo);
+
+    failNextPatch(fetchMock);
+    await act(async () => {
+      fireEvent.click(remountedContainer.querySelector('button[title^="Redo"]')!);
+    });
+    await waitFor(() => {
+      expect(
+        (fetchMock.mock.calls as [unknown, RequestInit][]).filter(
+          ([, init]) => (init?.method ?? "").toUpperCase() === "PATCH",
+        ),
+      ).toHaveLength(4);
+    });
+    expect(historyTitles(remountedContainer)).toEqual(beforeFailedRedo);
+  });
+
+  it("clears remounted redo history once after a new saved edit", async () => {
+    const { container, fetchMock } = await setupEditor();
+
+    await simulateMove(getZoneFillRects(container)[0]!);
+    await pressUndo(fetchMock);
+    expect(historyTitles(container).redo).toBe("Redo (1)");
+
+    cleanup();
+
+    let remountedContainer!: HTMLElement;
+    await act(async () => {
+      ({ container: remountedContainer } = render(<ZoneEditor />));
+    });
+    stubSvgBounds(remountedContainer);
+    expect(historyTitles(remountedContainer).redo).toBe("Redo (1)");
+
+    const patchesBeforeNewEdit = (fetchMock.mock.calls as [unknown, RequestInit][]).filter(
+      ([, init]) => (init?.method ?? "").toUpperCase() === "PATCH",
+    ).length;
+    await simulateMove(getZoneFillRects(remountedContainer)[0]!);
+    const patchesAfterNewEdit = (fetchMock.mock.calls as [unknown, RequestInit][]).filter(
+      ([, init]) => (init?.method ?? "").toUpperCase() === "PATCH",
+    ).length;
+    expect(patchesAfterNewEdit - patchesBeforeNewEdit).toBe(1);
+    expect(historyTitles(remountedContainer).undo).toBe("Undo (1)");
+    expect(historyTitles(remountedContainer).redo).toBe("Nothing to redo");
   });
 
   // ── 7. Redo stack cleared on new operation ───────────────────────────────────

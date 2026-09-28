@@ -5,14 +5,14 @@ import type { InventoryItem } from "@workspace/api-client-react";
 import { useListInventory } from "@workspace/api-client-react";
 import * as DocumentPicker from "expo-document-picker";
 import { File as FsFile, Paths as FsPaths } from "expo-file-system";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import * as Sharing from "expo-sharing";
-import { isLiDARSupported } from "lidar-measure";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   FlatList,
   Platform,
   Pressable,
@@ -33,6 +33,7 @@ import { BarcodeAddPart } from "@/components/BarcodeAddPart";
 import { BinEditor } from "@/components/BinEditor";
 import { BulkShelfAssign } from "@/components/BulkShelfAssign";
 import { CatalogPdfUpload } from "@/components/CatalogPdfUpload";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
@@ -67,6 +68,7 @@ import {
   runSaveAll,
 } from "@/utils/expandDescHandlers";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
+import { fetchInventoryForExport } from "@/utils/fetchInventoryForExport";
 import {
   clearImportDraft,
   loadImportDraft,
@@ -309,6 +311,7 @@ type EnrichProgress = {
 };
 
 type BulkJobStatus = {
+  status: "idle" | "running" | "stopping" | "completed" | "cancelled" | "failed";
   running: boolean;
   stopRequested: boolean;
   force: boolean;
@@ -321,6 +324,23 @@ type BulkJobStatus = {
   model: string | null;
 };
 
+type DescriptionExpansionJobStatus = {
+  status: "idle" | "running" | "stopping" | "completed" | "cancelled" | "failed";
+  running: boolean;
+  stopRequested: boolean;
+  cursor: number;
+  model: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  total: number | null;
+  processed: number;
+  saved: number;
+  discarded: number;
+  errors: number;
+  remaining: number | null;
+  lastError: string | null;
+};
+
 type MeasureJobStatus = {
   running: boolean;
   startedAt: string | null;
@@ -331,6 +351,26 @@ type MeasureJobStatus = {
   lastError: string | null;
 };
 
+type ManualInventoryBackupStatus = {
+  status: "running" | "completed" | "failed";
+  persistence: "saved" | "unavailable";
+  startedAt: string;
+  finishedAt: string | null;
+  rowCount: number | null;
+  snapshotId: string | null;
+  error: string | null;
+  warning: string | null;
+};
+
+type ManualInventoryBackupHistoryEntry = {
+  id: number;
+  adminClerkUserId: string;
+  snapshotId: string;
+  rowCount: number | null;
+  outcome: "completed" | "failed";
+  createdAt: string;
+};
+
 type EnrichSummary = {
   total: number;
   enriched: number;
@@ -339,6 +379,7 @@ type EnrichSummary = {
 
 const EnrichSummarySchema = z.object({ total: z.number(), enriched: z.number(), unenriched: z.number() });
 const BulkJobStatusSchema = z.object({
+  status: z.enum(["idle", "running", "stopping", "completed", "cancelled", "failed"]).default("idle"),
   running: z.boolean(),
   stopRequested: z.boolean(),
   force: z.boolean(),
@@ -358,6 +399,27 @@ const MeasureJobStatusSchema = z.object({
   total: z.number().nullable(),
   finishedAt: z.string().nullable(),
   lastError: z.string().nullable(),
+});
+const ManualInventoryBackupStatusSchema = z.object({
+  status: z.enum(["running", "completed", "failed"]),
+  persistence: z.enum(["saved", "unavailable"]),
+  startedAt: z.string().min(1),
+  finishedAt: z.string().nullable(),
+  rowCount: z.number().int().nonnegative().nullable(),
+  snapshotId: z.string().nullable(),
+  error: z.string().nullable(),
+  warning: z.string().nullable(),
+});
+const ManualInventoryBackupHistoryPageSchema = z.object({
+  rows: z.array(z.object({
+    id: z.number().int().positive(),
+    adminClerkUserId: z.string().min(1),
+    snapshotId: z.string().min(1),
+    rowCount: z.number().int().nonnegative().nullable(),
+    outcome: z.enum(["completed", "failed"]),
+    createdAt: z.string().min(1),
+  })),
+  nextCursor: z.number().int().positive().nullable(),
 });
 const SseExpandDescDataSchema = z.object({
   status: z.string().optional(),
@@ -387,6 +449,23 @@ const BinDiffSummarySchema = z.object({
   willBarcodeConflicts: z.number(),
 });
 const BulkJobWrapperSchema = z.object({ job: BulkJobStatusSchema });
+const DescriptionExpansionJobStatusSchema = z.object({
+  status: z.enum(["idle", "running", "stopping", "completed", "cancelled", "failed"]),
+  running: z.boolean(),
+  stopRequested: z.boolean(),
+  cursor: z.number(),
+  model: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  total: z.number().nullable(),
+  processed: z.number(),
+  saved: z.number(),
+  discarded: z.number(),
+  errors: z.number(),
+  remaining: z.number().nullable(),
+  lastError: z.string().nullable(),
+});
+const DescriptionExpansionJobWrapperSchema = z.object({ job: DescriptionExpansionJobStatusSchema });
 const MeasureJobWrapperSchema = z.object({ job: MeasureJobStatusSchema });
 const ApiErrorSchema = z.object({ error: z.string().optional(), code: z.string().optional() });
 const UploadResultSchema = z.object({ inserted: z.number(), updated: z.number(), total: z.number() });
@@ -421,10 +500,98 @@ const QueryErrorResponseSchema = z.object({ error: z.string().min(1) });
 function parseCSV(rawText: string): Array<ParsedRow> {
   // Strip UTF-8 BOM (\uFEFF) if present so Excel-exported files parse correctly.
   const text = rawText.startsWith("\uFEFF") ? rawText.slice(1) : rawText;
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return [];
+  const records: Array<Array<string>> = [];
+  let fields: Array<string> = [];
+  let current = "";
+  let inQuotes = false;
+  let afterQuote = false;
+  let recordHasInput = false;
+  let lineNumber = 1;
+  let quoteStartLine = 1;
 
-  const headers = lines[0]!.split(",").map(h => h.trim().toLowerCase().replace(/['"]/g, ""));
+  const pushField = () => {
+    fields.push(current.trim());
+    current = "";
+    afterQuote = false;
+  };
+  const pushRecord = () => {
+    pushField();
+    if (recordHasInput || fields.length > 1) records.push(fields);
+    fields = [];
+    recordHasInput = false;
+  };
+  const advanceLineBreak = (index: number, appendToField: boolean): number => {
+    const isCrLf = text[index] === "\r" && text[index + 1] === "\n";
+    if (appendToField) current += isCrLf ? "\r\n" : text[index]!;
+    lineNumber++;
+    return isCrLf ? index + 1 : index;
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+          afterQuote = true;
+        }
+      } else if (ch === "\r" || ch === "\n") {
+        i = advanceLineBreak(i, true);
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (afterQuote) {
+      if (ch === ",") {
+        pushField();
+        recordHasInput = true;
+      } else if (ch === "\r" || ch === "\n") {
+        pushRecord();
+        i = advanceLineBreak(i, false);
+      } else if (ch !== " " && ch !== "\t") {
+        throw new Error(
+          `Malformed CSV on line ${lineNumber}: unexpected text after a closing quote. Put a comma or line break after the closing quote.`,
+        );
+      }
+      continue;
+    }
+
+    if (ch === ",") {
+      pushField();
+      recordHasInput = true;
+    } else if (ch === "\r" || ch === "\n") {
+      pushRecord();
+      i = advanceLineBreak(i, false);
+    } else if (ch === '"') {
+      if (current.trim().length > 0) {
+        throw new Error(
+          `Malformed CSV on line ${lineNumber}: unexpected quote inside an unquoted field. Wrap the whole field in double quotes and write embedded quotes as "".`,
+        );
+      }
+      current = "";
+      inQuotes = true;
+      recordHasInput = true;
+      quoteStartLine = lineNumber;
+    } else {
+      current += ch;
+      if (!/\s/.test(ch)) recordHasInput = true;
+    }
+  }
+
+  if (inQuotes) {
+    throw new Error(
+      `Malformed CSV: quoted field opened on line ${quoteStartLine} is not closed. Add a closing double quote.`,
+    );
+  }
+  if (recordHasInput || fields.length > 0 || current.length > 0) pushRecord();
+  if (records.length < 2) return [];
+
+  const headers = records[0]!.map(h => h.trim().toLowerCase().replace(/['"]/g, ""));
   const vendorCol = findSpreadsheetColumn(headers, VENDOR_ALIASES);
   const catalogCol = findSpreadsheetColumn(headers, CATALOG_ALIASES);
   const descCol = findSpreadsheetColumn(headers, DESC_ALIASES);
@@ -442,8 +609,8 @@ function parseCSV(rawText: string): Array<ParsedRow> {
   };
 
   const rows: Array<ParsedRow> = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cells = splitCSVLine(lines[i]!);
+  for (let i = 1; i < records.length; i++) {
+    const cells = records[i]!;
     const vendor = vendorCol >= 0 ? cells[vendorCol]?.trim() ?? "" : "";
     const catalog = catalogCol >= 0 ? cells[catalogCol]?.trim() ?? "" : "";
     if (!vendor && !catalog) continue;
@@ -458,26 +625,6 @@ function parseCSV(rawText: string): Array<ParsedRow> {
     });
   }
   return rows;
-}
-
-function splitCSVLine(line: string): Array<string> {
-  const cells: Array<string> = [];
-  let current = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-      else inQuotes = !inQuotes;
-    } else if (ch === "," && !inQuotes) {
-      cells.push(current);
-      current = "";
-    } else {
-      current += ch;
-    }
-  }
-  cells.push(current);
-  return cells.map(c => c.replace(/^"|"$/g, ""));
 }
 
 // ── Parse .xlsx/.xlsm via read-excel-file ─────────────────────────────────
@@ -805,6 +952,7 @@ export default function UploadScreen() {
     probeSingleBot,
   } = useApiHealth();
   const apiCheckAnim = useRef(new Animated.Value(1)).current;
+  const manualBackupPressAnim = useRef(new Animated.Value(1)).current;
   const [activeBadge, setActiveBadge] = useState<string | null>(null);
   const probingBotsRef = useRef<Set<string>>(new Set());
   const [probingBots, setProbingBots] = useState<Set<string>>(new Set());
@@ -1263,7 +1411,6 @@ export default function UploadScreen() {
     await checkStatus();
   }, [apiCheckAnim, apiChecking, apiRestarting, checkStatus]);
 
-  const lidarSupported = isLiDARSupported();
   const [parsedRows, setParsedRows] = useState<Array<ParsedRow>>([]);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -1289,6 +1436,10 @@ export default function UploadScreen() {
 
   // Bulk enrichment state
   const [bulkJobStatus, setBulkJobStatus] = useState<BulkJobStatus | null>(null);
+  const [descriptionExpansionJobStatus, setDescriptionExpansionJobStatus] = useState<DescriptionExpansionJobStatus | null>(null);
+  const [descriptionExpansionError, setDescriptionExpansionError] = useState<string | null>(null);
+  const [descriptionExpansionPending, setDescriptionExpansionPending] = useState(false);
+  const [descriptionExpansionStopPending, setDescriptionExpansionStopPending] = useState(false);
   const [enrichSummary, setEnrichSummary] = useState<EnrichSummary | null>(null);
   const [bulkEnrichError, setBulkEnrichError] = useState<string | null>(null);
   const [bulkEnrichPending, setBulkEnrichPending] = useState(false);
@@ -1330,6 +1481,16 @@ export default function UploadScreen() {
     users: true,
     requests: true,
   });
+  const [manualBackupStatus, setManualBackupStatus] = useState<ManualInventoryBackupStatus | null>(null);
+  const [manualBackupPending, setManualBackupPending] = useState(false);
+  const [manualBackupConfirmVisible, setManualBackupConfirmVisible] = useState(false);
+  const [manualBackupError, setManualBackupError] = useState<string | null>(null);
+  const [manualBackupAnnouncement, setManualBackupAnnouncement] = useState<string | null>(null);
+  const [manualBackupHistory, setManualBackupHistory] = useState<Array<ManualInventoryBackupHistoryEntry>>([]);
+  const [manualBackupHistoryLoading, setManualBackupHistoryLoading] = useState(false);
+  const [manualBackupHistoryLoadingMore, setManualBackupHistoryLoadingMore] = useState(false);
+  const [manualBackupHistoryError, setManualBackupHistoryError] = useState<string | null>(null);
+  const [manualBackupHistoryNextCursor, setManualBackupHistoryNextCursor] = useState<number | null>(null);
 
   // Bin diff / replace-warning state
   const [exportPending, setExportPending] = useState(false);
@@ -1370,6 +1531,26 @@ export default function UploadScreen() {
   const pasteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeSectionSelectionRef = useRef(false);
   const activeSectionPersistenceGenerationRef = useRef(0);
+  const manualBackupSectionRef = useRef(activeSection);
+  manualBackupSectionRef.current = activeSection;
+  const manualBackupFocusedRef = useRef(true);
+  const manualBackupConfirmRef = useRef(false);
+  const manualBackupPendingRef = useRef(false);
+
+  const dismissManualBackupConfirm = useCallback(() => {
+    manualBackupConfirmRef.current = false;
+    setManualBackupConfirmVisible(false);
+  }, []);
+  useEffect(() => {
+    if (!isAdmin || activeSection !== "people") dismissManualBackupConfirm();
+  }, [activeSection, dismissManualBackupConfirm, isAdmin]);
+  useFocusEffect(useCallback(() => {
+    manualBackupFocusedRef.current = true;
+    return () => {
+      manualBackupFocusedRef.current = false;
+      dismissManualBackupConfirm();
+    };
+  }, [dismissManualBackupConfirm]));
 
   // Build admin auth headers for protected API calls
   const adminHeaders = useMemo<Record<string, string>>(
@@ -1455,8 +1636,10 @@ export default function UploadScreen() {
 
   const selectActiveSection = useCallback((section: AdminSection | null) => {
     activeSectionSelectionRef.current = true;
+    manualBackupSectionRef.current = section;
+    if (section !== "people") dismissManualBackupConfirm();
     setActiveSectionState(section);
-  }, []);
+  }, [dismissManualBackupConfirm]);
 
   // Keep the section setter name stable for existing admin navigation contracts,
   // while routing every user selection through the persistence guard.
@@ -1700,6 +1883,18 @@ export default function UploadScreen() {
   const measurePollGenerationRef = useRef(0);
   const bulkPollControllerRef = useRef<AbortController | null>(null);
   const measurePollControllerRef = useRef<AbortController | null>(null);
+  const descriptionExpansionPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const descriptionExpansionPollInFlightRef = useRef(false);
+  const descriptionExpansionPollGenerationRef = useRef(0);
+  const descriptionExpansionPollControllerRef = useRef<AbortController | null>(null);
+  const manualBackupPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const manualBackupPollInFlightRef = useRef(false);
+  const manualBackupPollGenerationRef = useRef(0);
+  const manualBackupPollControllerRef = useRef<AbortController | null>(null);
+  const manualBackupHistoryControllerRef = useRef<AbortController | null>(null);
+  const manualBackupHistoryGenerationRef = useRef(0);
+  const manualBackupHistoryInFlightRef = useRef(false);
+  const manualBackupHistoryNextCursorRef = useRef<number | null>(null);
 
   const stopBulkPoll = useCallback(() => {
     if (bulkPollRef.current !== null) {
@@ -1720,6 +1915,274 @@ export default function UploadScreen() {
     measurePollControllerRef.current?.abort();
     measurePollControllerRef.current = null;
   }, []);
+
+  const stopDescriptionExpansionPoll = useCallback(() => {
+    if (descriptionExpansionPollRef.current !== null) {
+      clearTimeout(descriptionExpansionPollRef.current);
+      descriptionExpansionPollRef.current = null;
+    }
+    descriptionExpansionPollGenerationRef.current += 1;
+    descriptionExpansionPollControllerRef.current?.abort();
+    descriptionExpansionPollControllerRef.current = null;
+  }, []);
+
+  const stopManualBackupPoll = useCallback(() => {
+    if (manualBackupPollRef.current !== null) {
+      clearTimeout(manualBackupPollRef.current);
+      manualBackupPollRef.current = null;
+    }
+    manualBackupPollGenerationRef.current += 1;
+    manualBackupPollControllerRef.current?.abort();
+    manualBackupPollControllerRef.current = null;
+    manualBackupPollInFlightRef.current = false;
+  }, []);
+
+  const fetchManualBackupHistory = useCallback(async (append = false) => {
+    if (
+      !isMountedRef.current ||
+      !isAdmin ||
+      activeSection !== "people" ||
+      !adminTokenRef.current ||
+      (append && manualBackupHistoryNextCursorRef.current === null)
+    ) return;
+    if (manualBackupHistoryInFlightRef.current) return;
+
+    const generation = ++manualBackupHistoryGenerationRef.current;
+    manualBackupHistoryControllerRef.current?.abort();
+    const controller = new AbortController();
+    manualBackupHistoryControllerRef.current = controller;
+    manualBackupHistoryInFlightRef.current = true;
+    if (append) {
+      setManualBackupHistoryLoadingMore(true);
+    } else {
+      setManualBackupHistoryLoading(true);
+      setManualBackupHistoryError(null);
+    }
+
+    try {
+      const beforeId = append ? manualBackupHistoryNextCursorRef.current : null;
+      const query = beforeId === null
+        ? "limit=50"
+        : `limit=50&before_id=${beforeId}`;
+      const response = await fetch(`${API_BASE}/admin/snapshots/history?${query}`, {
+        headers: { Authorization: `Bearer ${adminTokenRef.current}` },
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(`Could not load backup history (HTTP ${response.status}).`);
+      const parsed = ManualInventoryBackupHistoryPageSchema.safeParse(await response.json());
+      if (!parsed.success) throw new Error("The server returned an unexpected backup history.");
+      if (
+        !isMountedRef.current ||
+        generation !== manualBackupHistoryGenerationRef.current ||
+        controller.signal.aborted
+      ) return;
+      setManualBackupHistory(previous => append ? [...previous, ...parsed.data.rows] : parsed.data.rows);
+      manualBackupHistoryNextCursorRef.current = parsed.data.nextCursor;
+      setManualBackupHistoryNextCursor(parsed.data.nextCursor);
+      setManualBackupHistoryError(null);
+    } catch (error) {
+      if (controller.signal.aborted || !isMountedRef.current || generation !== manualBackupHistoryGenerationRef.current) return;
+      setManualBackupHistoryError(error instanceof Error ? error.message : "Could not load database backup history.");
+    } finally {
+      if (manualBackupHistoryControllerRef.current === controller) {
+        manualBackupHistoryControllerRef.current = null;
+        manualBackupHistoryInFlightRef.current = false;
+        if (append) setManualBackupHistoryLoadingMore(false);
+        else setManualBackupHistoryLoading(false);
+      }
+    }
+  }, [activeSection, isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin || activeSection !== "people" || !adminToken) {
+      manualBackupHistoryControllerRef.current?.abort();
+      manualBackupHistoryControllerRef.current = null;
+      manualBackupHistoryGenerationRef.current += 1;
+      manualBackupHistoryInFlightRef.current = false;
+      setManualBackupHistory([]);
+      manualBackupHistoryNextCursorRef.current = null;
+      setManualBackupHistoryNextCursor(null);
+      setManualBackupHistoryError(null);
+      return;
+    }
+    void fetchManualBackupHistory();
+    return () => {
+      manualBackupHistoryControllerRef.current?.abort();
+      manualBackupHistoryControllerRef.current = null;
+      manualBackupHistoryGenerationRef.current += 1;
+      manualBackupHistoryInFlightRef.current = false;
+    };
+  }, [activeSection, adminToken, fetchManualBackupHistory, isAdmin]);
+
+  useEffect(() => {
+    if (
+      activeSection === "people" &&
+      manualBackupStatus?.finishedAt &&
+      manualBackupStatus.status !== "running"
+    ) {
+      void fetchManualBackupHistory();
+    }
+  }, [activeSection, fetchManualBackupHistory, manualBackupStatus?.finishedAt, manualBackupStatus?.status]);
+
+  const pollManualBackupStatus = useCallback(async () => {
+    if (
+      !isMountedRef.current ||
+      !isAdmin ||
+      activeSection !== "people" ||
+      AppState.currentState !== "active" ||
+      manualBackupPollInFlightRef.current
+    ) return;
+    const generation = manualBackupPollGenerationRef.current;
+    const controller = new AbortController();
+    manualBackupPollControllerRef.current = controller;
+    manualBackupPollInFlightRef.current = true;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let timedOut = false;
+    try {
+      const token = adminTokenRef.current;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const { res, raw } = await Promise.race([
+        (async () => {
+          const res = await fetch(`${API_BASE}/admin/snapshots/status`, {
+            headers,
+            signal: controller.signal,
+            cache: "no-store",
+          });
+          return { res, raw: res.ok ? await res.json() : null };
+        })(),
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+            reject(new Error("Database backup status request timed out."));
+          }, 10000);
+        }),
+      ]);
+      if (!isMountedRef.current || generation !== manualBackupPollGenerationRef.current || controller.signal.aborted) return;
+      if (res.status === 401) {
+        stopManualBackupPoll();
+        logoutAdmin();
+        setUploadError("Admin session expired. Please unlock again.");
+        return;
+      }
+      if (!res.ok) {
+        setManualBackupError(`Could not load database backup status (HTTP ${res.status}).`);
+        return;
+      }
+      if (raw === null) {
+        setManualBackupStatus(null);
+        setManualBackupError(null);
+        stopManualBackupPoll();
+        return;
+      }
+      const parsed = ManualInventoryBackupStatusSchema.safeParse(raw);
+      if (!parsed.success) {
+        setManualBackupError("The server returned an unexpected database backup status.");
+        return;
+      }
+      setManualBackupStatus(parsed.data);
+      setManualBackupError(null);
+      if (parsed.data.status === "running") {
+        setManualBackupAnnouncement("Database backup is in progress.");
+      } else {
+        stopManualBackupPoll();
+        setManualBackupAnnouncement(
+          parsed.data.status === "completed"
+            ? "Database backup completed."
+            : "Database backup failed. Retry is available.",
+        );
+      }
+    } catch (error) {
+      if (isMountedRef.current && generation === manualBackupPollGenerationRef.current && timedOut) {
+        setManualBackupError("Database backup status timed out. Retrying automatically; the backup may still be running.");
+      } else if (isMountedRef.current && generation === manualBackupPollGenerationRef.current && !controller.signal.aborted) {
+        console.error("[upload] pollManualBackupStatus", error);
+        setManualBackupError("Could not load database backup status. Check your connection.");
+      }
+    } finally {
+      if (timeoutId !== null) clearTimeout(timeoutId);
+      if (manualBackupPollControllerRef.current === controller) {
+        manualBackupPollControllerRef.current = null;
+        manualBackupPollInFlightRef.current = false;
+      }
+      if (
+        isMountedRef.current &&
+        isAdmin &&
+        activeSection === "people" &&
+        AppState.currentState === "active" &&
+        generation === manualBackupPollGenerationRef.current &&
+        manualBackupPollRef.current === null
+      ) {
+        manualBackupPollRef.current = setTimeout(() => {
+          manualBackupPollRef.current = null;
+          void pollManualBackupStatus();
+        }, 2000);
+      }
+    }
+  }, [activeSection, isAdmin, logoutAdmin, stopManualBackupPoll]);
+
+  const startManualBackupPoll = useCallback(() => {
+    stopManualBackupPoll();
+    manualBackupPollGenerationRef.current += 1;
+    void pollManualBackupStatus();
+  }, [pollManualBackupStatus, stopManualBackupPoll]);
+
+  const handleStartManualBackup = useCallback(async () => {
+    if (!isAdmin || !adminTokenRef.current || manualBackupPendingRef.current || manualBackupStatus?.status === "running") return;
+    manualBackupPendingRef.current = true;
+    setManualBackupPending(true);
+    setManualBackupError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/snapshots`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminTokenRef.current}` },
+      });
+      if (res.status === 401) {
+        logoutAdmin();
+        setUploadError("Admin session expired. Please unlock again.");
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const parsed = ManualInventoryBackupStatusSchema.safeParse(await res.json());
+      if (!parsed.success) throw new Error("The server returned an unexpected database backup response.");
+      setManualBackupStatus(parsed.data);
+      setManualBackupAnnouncement(
+        parsed.data.status === "running"
+          ? "Database backup accepted and is now in progress."
+          : parsed.data.status === "failed"
+            ? "Database backup could not be started. Retry is available."
+            : "Database backup completed.",
+      );
+      if (parsed.data.status === "running") startManualBackupPoll();
+    } catch (error) {
+      console.error("[upload] handleStartManualBackup", error);
+      setManualBackupError("Could not start the database backup. Please try again.");
+      setManualBackupAnnouncement("Database backup could not be started.");
+    } finally {
+      manualBackupPendingRef.current = false;
+      setManualBackupPending(false);
+    }
+  }, [isAdmin, logoutAdmin, manualBackupStatus?.status, startManualBackupPoll]);
+
+  const confirmManualBackup = useCallback(() => {
+    if (!isAdmin || !adminTokenRef.current || !manualBackupFocusedRef.current ||
+        manualBackupSectionRef.current !== "people" || manualBackupConfirmRef.current ||
+        manualBackupPendingRef.current || manualBackupStatus?.status === "running") return;
+    Animated.sequence([
+      Animated.timing(manualBackupPressAnim, { toValue: 0.96, duration: 90, useNativeDriver: Platform.OS !== "web" }),
+      Animated.timing(manualBackupPressAnim, { toValue: 1, duration: 130, useNativeDriver: Platform.OS !== "web" }),
+    ]).start();
+    manualBackupConfirmRef.current = true;
+    setManualBackupConfirmVisible(true);
+  }, [isAdmin, manualBackupPressAnim, manualBackupStatus?.status]);
+
+  const acceptManualBackup = useCallback(() => {
+    if (!manualBackupConfirmRef.current) return;
+    dismissManualBackupConfirm();
+    if (!manualBackupFocusedRef.current || manualBackupSectionRef.current !== "people") return;
+    void handleStartManualBackup();
+  }, [dismissManualBackupConfirm, handleStartManualBackup]);
 
   const fetchEnrichSummary = useCallback(async () => {
     try {
@@ -1840,6 +2303,73 @@ export default function UploadScreen() {
     void pollMeasureStatus();
   }, [stopMeasurePoll, pollMeasureStatus]);
 
+  const pollDescriptionExpansionStatus = useCallback(async () => {
+    if (
+      !isMountedRef.current ||
+      activeSection !== "people" ||
+      descriptionExpansionPollInFlightRef.current
+    ) return;
+    const generation = descriptionExpansionPollGenerationRef.current;
+    const controller = new AbortController();
+    descriptionExpansionPollControllerRef.current = controller;
+    descriptionExpansionPollInFlightRef.current = true;
+    try {
+      const token = adminTokenRef.current;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(`${API_BASE}/inventory/description-expansion/status`, {
+        headers,
+        signal: controller.signal,
+      });
+      if (!isMountedRef.current || generation !== descriptionExpansionPollGenerationRef.current || controller.signal.aborted) return;
+      if (res.status === 401) {
+        stopDescriptionExpansionPoll();
+        logoutAdmin();
+        setUploadError("Admin session expired. Please unlock again.");
+        return;
+      }
+      if (!res.ok) {
+        setDescriptionExpansionError(`Could not load description expansion status (HTTP ${res.status}).`);
+        return;
+      }
+      const parsed = DescriptionExpansionJobStatusSchema.safeParse(await res.json());
+      if (!parsed.success) {
+        console.warn("[upload] description expansion status unexpected shape:", parsed.error.message);
+        setDescriptionExpansionError("The server returned an unexpected description expansion status.");
+        return;
+      }
+      setDescriptionExpansionJobStatus(parsed.data);
+      setDescriptionExpansionError(null);
+      if (!parsed.data.running) stopDescriptionExpansionPoll();
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        console.error("[upload] pollDescriptionExpansionStatus", err);
+        setDescriptionExpansionError("Could not load description expansion status. Check your connection.");
+      }
+    } finally {
+      descriptionExpansionPollInFlightRef.current = false;
+      if (descriptionExpansionPollControllerRef.current === controller) {
+        descriptionExpansionPollControllerRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        activeSection === "people" &&
+        generation === descriptionExpansionPollGenerationRef.current &&
+        descriptionExpansionPollRef.current === null
+      ) {
+        descriptionExpansionPollRef.current = setTimeout(() => {
+          descriptionExpansionPollRef.current = null;
+          void pollDescriptionExpansionStatus();
+        }, 2000);
+      }
+    }
+  }, [activeSection, logoutAdmin, stopDescriptionExpansionPoll]);
+
+  const startDescriptionExpansionPoll = useCallback(() => {
+    stopDescriptionExpansionPoll();
+    descriptionExpansionPollGenerationRef.current += 1;
+    void pollDescriptionExpansionStatus();
+  }, [pollDescriptionExpansionStatus, stopDescriptionExpansionPoll]);
+
   const handleQueryExport = useCallback(async (format: "csv" | "xlsx") => {
     if (!adminToken || queryExportPending || !queryText.trim()) return;
     setQueryExportPending(format);
@@ -1938,12 +2468,54 @@ export default function UploadScreen() {
     })();
   }, [isAdmin, fetchEnrichSummary, startBulkPoll, stopBulkPoll, startMeasurePoll, stopMeasurePoll, logoutAdmin]);
 
+  useEffect(() => {
+    if (!isAdmin || activeSection !== "people") {
+      stopDescriptionExpansionPoll();
+      return;
+    }
+    setDescriptionExpansionError(null);
+    void pollDescriptionExpansionStatus();
+    return () => {
+      stopDescriptionExpansionPoll();
+    };
+  }, [
+    activeSection,
+    isAdmin,
+    pollDescriptionExpansionStatus,
+    stopDescriptionExpansionPoll,
+  ]);
+
+  useEffect(() => {
+    if (!isAdmin || activeSection !== "people") {
+      stopManualBackupPoll();
+      return;
+    }
+    setManualBackupError(null);
+    startManualBackupPoll();
+    return () => {
+      stopManualBackupPoll();
+    };
+  }, [activeSection, isAdmin, startManualBackupPoll, stopManualBackupPoll]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active" && isAdmin && activeSection === "people") {
+        startManualBackupPoll();
+      } else if (nextState !== "active") {
+        stopManualBackupPoll();
+      }
+    });
+    return () => subscription.remove();
+  }, [activeSection, isAdmin, startManualBackupPoll, stopManualBackupPoll]);
+
   // Clean up polling on unmount
   useEffect(() => () => {
     stopBulkPoll();
     stopMeasurePoll();
+    stopDescriptionExpansionPoll();
+    stopManualBackupPoll();
     if (pasteDebounceRef.current) clearTimeout(pasteDebounceRef.current);
-  }, [stopBulkPoll, stopMeasurePoll]);
+  }, [stopBulkPoll, stopMeasurePoll, stopDescriptionExpansionPoll, stopManualBackupPoll]);
 
   const handleStartBulkEnrich = async (force = false) => {
     setBulkEnrichError(null);
@@ -1991,6 +2563,95 @@ export default function UploadScreen() {
       // silently ignore — polling will detect the stopped state shortly
     } finally {
       setBulkStopPending(false);
+    }
+  };
+
+  const startDescriptionExpansion = async () => {
+    setDescriptionExpansionError(null);
+    setDescriptionExpansionPending(true);
+    try {
+      const res = await fetch(`${API_BASE}/inventory/description-expansion`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders },
+        body: "{}",
+      });
+      if (res.status === 401) {
+        logoutAdmin();
+        setUploadError("Admin session expired. Please unlock again.");
+        return;
+      }
+      if (res.status === 409) {
+        const parsed = DescriptionExpansionJobWrapperSchema.safeParse(await res.json());
+        if (parsed.success) setDescriptionExpansionJobStatus(parsed.data.job);
+        startDescriptionExpansionPoll();
+        return;
+      }
+      if (!res.ok) {
+        const error = ApiErrorSchema.safeParse(await res.json().catch(() => ({})));
+        setDescriptionExpansionError(
+          error.success
+            ? (error.data.error ?? "Failed to start database description expansion.")
+            : "Failed to start database description expansion.",
+        );
+        return;
+      }
+      const parsed = DescriptionExpansionJobWrapperSchema.safeParse(await res.json());
+      if (!parsed.success) {
+        console.warn("[upload] description expansion start unexpected shape:", parsed.error.message);
+        setDescriptionExpansionError("The server returned an unexpected start response.");
+        return;
+      }
+      setDescriptionExpansionJobStatus(parsed.data.job);
+      startDescriptionExpansionPoll();
+    } catch (err) {
+      console.error("[upload] startDescriptionExpansion", err);
+      setDescriptionExpansionError("Failed to start database description expansion. Check your connection and try again.");
+    } finally {
+      setDescriptionExpansionPending(false);
+    }
+  };
+
+  const handleStartDescriptionExpansion = () => {
+    if (descriptionExpansionPending || descriptionExpansionJobStatus?.running) return;
+    Alert.alert(
+      "Start database description expansion?",
+      "This will process every inventory row with a missing expanded description. Existing descriptions are preserved, and only AI results with at least 70% confidence are saved.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Start expansion",
+          style: "destructive",
+          onPress: () => {
+            void startDescriptionExpansion();
+          },
+        },
+      ],
+    );
+  };
+
+  const handleStopDescriptionExpansion = async () => {
+    setDescriptionExpansionStopPending(true);
+    try {
+      const res = await fetch(`${API_BASE}/inventory/description-expansion`, {
+        method: "DELETE",
+        headers: adminHeaders,
+      });
+      if (res.status === 401) {
+        logoutAdmin();
+        setUploadError("Admin session expired. Please unlock again.");
+        return;
+      }
+      if (res.ok) {
+        const parsed = DescriptionExpansionJobWrapperSchema.safeParse(await res.json());
+        if (parsed.success) setDescriptionExpansionJobStatus(parsed.data.job);
+      } else if (res.status !== 409) {
+        setDescriptionExpansionError("Could not request a stop. The server will continue reporting the current status.");
+      }
+    } catch (err) {
+      console.error("[upload] stopDescriptionExpansion", err);
+      setDescriptionExpansionError("Could not request a stop. Check your connection and try again.");
+    } finally {
+      setDescriptionExpansionStopPending(false);
     }
   };
 
@@ -2376,7 +3037,7 @@ export default function UploadScreen() {
           }
         } catch (err) {
           if (!isCurrentSelection()) return;
-          const message = err instanceof Error && err.message.includes("must be")
+          const message = err instanceof Error && (err.message.includes("must be") || err.message.startsWith("Malformed CSV"))
             ? err.message
             : `Failed to read "${asset.name}". Please choose the files again.`;
           setSelectedImportFiles(assets.map((selectedAsset, selectedIndex) => ({
@@ -2461,7 +3122,7 @@ export default function UploadScreen() {
       setParsedRows(rows);
     } catch (err) {
       if (!isCurrentSelection()) return;
-      setUploadError(err instanceof Error && err.message.includes("must be")
+      setUploadError(err instanceof Error && (err.message.includes("must be") || err.message.startsWith("Malformed CSV"))
         ? err.message
         : "Failed to read file. Please try again.");
     }
@@ -2519,7 +3180,7 @@ export default function UploadScreen() {
       } catch (err) {
         setParsedRows([]);
         setRawCsv(null);
-        setUploadError(err instanceof Error && err.message.includes("must be")
+        setUploadError(err instanceof Error && (err.message.includes("must be") || err.message.startsWith("Malformed CSV"))
           ? err.message
           : "Failed to parse pasted rows. Please check the spreadsheet values and try again.");
       }
@@ -2715,32 +3376,7 @@ export default function UploadScreen() {
     setExportPending(true);
     setExportError(null);
     try {
-      const pageSize = 200;
-      let page = 1;
-      let allItems: Array<InventoryItem> = [];
-      let total = Infinity;
-      let maxPages = Infinity;
-      let pagesFetched = 0;
-
-      while (allItems.length < total) {
-        if (pagesFetched >= maxPages) {
-          console.warn("[handleExportCsv] page cap reached — aborting export", { page, pagesFetched, maxPages, total });
-          throw new Error("Export aborted — unexpected server response. Please try again.");
-        }
-        const url = `${API_BASE}/inventory?page=${page}&limit=${pageSize}`;
-        const res = await fetch(url, { headers: adminHeaders });
-        if (!res.ok) throw new Error(`API error ${res.status}`);
-        const data: { items: Array<InventoryItem>; total: number } = await res.json();
-        total = data.total;
-        if (maxPages === Infinity) {
-          maxPages = Math.ceil(total / pageSize) + 1;
-        }
-        allItems = allItems.concat(data.items);
-        pagesFetched++;
-        if (data.items.length < pageSize) break;
-        page++;
-      }
-
+      const allItems = await fetchInventoryForExport(API_BASE, adminHeaders);
       const csvContent = serializeInventoryToCsv(allItems);
       const exportFileName = `inventory-export-${new Date().toISOString().slice(0, 10)}.csv`;
 
@@ -4032,18 +4668,20 @@ export default function UploadScreen() {
                           <View style={[styles.bulkStatusRow]}>
                             <ActivityIndicator size="small" color={colors.primary} />
                             <Text style={[styles.aiWorkingText, { color: colors.primary, marginLeft: 8, flex: 1 }]}>
-                              {bulkJobStatus.stopRequested ? "Stopping after current batch…" : "AI enrichment is running…"}
+                              {bulkJobStatus.status === "stopping" || bulkJobStatus.stopRequested
+                                ? "Stop requested — finishing current batch…"
+                                : "AI enrichment is running…"}
                             </Text>
                             <Pressable
                               onPress={handleStopBulkEnrich}
-                              disabled={bulkStopPending || bulkJobStatus.stopRequested}
-                              style={[styles.stopBtn, { borderColor: (bulkStopPending || bulkJobStatus.stopRequested) ? colors.border : colors.destructive }]}
+                              disabled={bulkStopPending || bulkJobStatus.status === "stopping" || bulkJobStatus.stopRequested}
+                              style={[styles.stopBtn, { borderColor: (bulkStopPending || bulkJobStatus.status === "stopping" || bulkJobStatus.stopRequested) ? colors.border : colors.destructive }]}
                             >
                               {bulkStopPending ? (
                                 <ActivityIndicator size="small" color={colors.destructive} />
                               ) : (
-                                <Text style={[styles.stopBtnText, { color: bulkJobStatus.stopRequested ? colors.mutedForeground : colors.destructive }]}>
-                                  {bulkJobStatus.stopRequested ? "Stopping…" : "Stop"}
+                                <Text style={[styles.stopBtnText, { color: bulkJobStatus.status === "stopping" || bulkJobStatus.stopRequested ? colors.mutedForeground : colors.destructive }]}>
+                                  {bulkJobStatus.status === "stopping" || bulkJobStatus.stopRequested ? "Stopping…" : "Stop"}
                                 </Text>
                               )}
                             </Pressable>
@@ -4067,17 +4705,53 @@ export default function UploadScreen() {
                         </View>
                       ) : null}
                       {bulkJobStatus && !bulkJobStatus.running && bulkJobStatus.finishedAt ? (
-                        <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
-                          <Text style={[styles.doneText, { color: colors.success }]}>
-                            ✓ Last run: {bulkJobStatus.processed.toLocaleString()} processed
+                        <View
+                          style={[
+                            styles.doneCard,
+                            {
+                              backgroundColor:
+                                bulkJobStatus.status === "completed"
+                                  ? colors.success + "11"
+                                  : bulkJobStatus.status === "cancelled"
+                                    ? colors.warning + "11"
+                                    : colors.destructive + "11",
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.doneText,
+                              {
+                                color:
+                                  bulkJobStatus.status === "completed"
+                                    ? colors.success
+                                    : bulkJobStatus.status === "cancelled"
+                                      ? colors.warning
+                                      : colors.destructive,
+                              },
+                            ]}
+                          >
+                            {bulkJobStatus.status === "completed"
+                              ? "✓ Completed"
+                              : bulkJobStatus.status === "cancelled"
+                                ? "⏹ Cancelled"
+                                : "⚠ Failed"}
+                            {`: ${bulkJobStatus.processed.toLocaleString()} processed`}
                             {bulkJobStatus.errors > 0 ? `, ${bulkJobStatus.errors} errors` : ""}
                           </Text>
                         </View>
                       ) : null}
-                      {(bulkJobStatus?.lastError || bulkEnrichError) ? (
+                      {bulkEnrichError ? (
                         <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
                           <Text style={[styles.doneText, { color: colors.destructive }]}>
-                            ⚠ {bulkEnrichError ?? bulkJobStatus?.lastError}
+                            ⚠ {bulkEnrichError}
+                          </Text>
+                        </View>
+                      ) : null}
+                      {bulkJobStatus?.lastError && !bulkEnrichError ? (
+                        <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
+                          <Text style={[styles.doneText, { color: colors.destructive }]}>
+                            ⚠ {bulkJobStatus.lastError}
                           </Text>
                         </View>
                       ) : null}
@@ -4212,7 +4886,7 @@ export default function UploadScreen() {
                     <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                       <Text style={[styles.cardTitle, { color: colors.foreground }]}>🔤 Expand Descriptions</Text>
                       <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                        AI expands up to 50 abbreviated part descriptions at a time into plain English. Review and save each result individually.
+                        AI expands up to 50 abbreviated part descriptions at a time into plain English. Results above 70% confidence are saved automatically; results at 70% or below stay pending so you can save or discard them.
                       </Text>
 
                       {/* "AI is working" banner — initial connecting phase */}
@@ -4656,7 +5330,7 @@ export default function UploadScreen() {
                         <Feather name="chevron-right" size={20} color={colors.success} />
                       </Pressable>
                       {/* Measure Part */}
-                      {lidarSupported && isAdmin && adminToken ? (
+                      {isAdmin && adminToken ? (
                         <Pressable
                           onPress={() => setMeasureVisible(true)}
                           style={[styles.shelfEntryBanner, { backgroundColor: colors.foreground + "0D", borderColor: colors.foreground + "33", marginTop: 10 }]}
@@ -4664,7 +5338,7 @@ export default function UploadScreen() {
                           <View style={{ flex: 1 }}>
                             <Text style={[styles.shelfEntryTitle, { color: colors.foreground }]}>📐 Measure Part</Text>
                             <Text style={[styles.shelfEntryHint, { color: colors.mutedForeground }]}>
-                              Use LiDAR or AI photo estimation to capture part dimensions.
+                              Use AI photo estimation to capture part dimensions.
                             </Text>
                           </View>
                           <Feather name="maximize" size={20} color={colors.foreground} />
@@ -5105,6 +5779,370 @@ export default function UploadScreen() {
                   <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
                 </Pressable>
               </View>
+              {/* ── Database Backup ─── */}
+              <View
+                style={[
+                  styles.queryCard,
+                  { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 14 },
+                ]}
+              >
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>🗄 Database Backup</Text>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Create a full inventory snapshot in private backup storage. The API server continues the backup if you leave or close the app.
+                </Text>
+                <Text
+                  accessibilityLiveRegion="polite"
+                  style={styles.srOnly}
+                >
+                  {manualBackupAnnouncement ?? ""}
+                </Text>
+                {manualBackupError ? (
+                  <View
+                    accessibilityRole="alert"
+                    style={[styles.doneCard, { backgroundColor: colors.destructive + "11", marginTop: 10 }]}
+                  >
+                    <Text style={[styles.doneText, { color: colors.destructive }]}>⚠ {manualBackupError}</Text>
+                  </View>
+                ) : null}
+                {manualBackupStatus?.status === "running" ? (
+                  <View
+                    accessibilityLiveRegion="polite"
+                    style={[
+                      styles.aiWorkingBanner,
+                      { backgroundColor: colors.primary + "18", borderColor: colors.primary + "40", marginTop: 10 },
+                    ]}
+                  >
+                    <ActivityIndicator size="small" color={colors.primary} />
+                    <Text style={[styles.aiWorkingText, { color: colors.primary, flex: 1 }]}>
+                      Backup in progress
+                    </Text>
+                  </View>
+                ) : null}
+                {manualBackupStatus?.status === "completed" && manualBackupStatus.finishedAt ? (
+                  <View
+                    accessibilityLiveRegion="polite"
+                    style={[styles.doneCard, { backgroundColor: colors.success + "11", marginTop: 10 }]}
+                  >
+                    <Text style={[styles.doneText, { color: colors.success }]}>
+                      ✓ Completed {formatManualBackupDate(manualBackupStatus.finishedAt)}
+                    </Text>
+                    <Text style={[styles.doneText, { color: colors.success, marginTop: 4 }]}>
+                      {manualBackupStatus.rowCount?.toLocaleString() ?? "0"} rows backed up
+                    </Text>
+                  </View>
+                ) : null}
+                {manualBackupStatus?.persistence === "unavailable" && manualBackupStatus.warning ? (
+                  <View
+                    accessibilityRole="alert"
+                    style={[styles.doneCard, { backgroundColor: colors.destructive + "11", marginTop: 10 }]}
+                  >
+                    <Text style={[styles.doneText, { color: colors.destructive }]}>
+                      ⚠ Status saving unavailable
+                    </Text>
+                    <Text style={[styles.doneText, { color: colors.destructive, marginTop: 4 }]}>
+                      {manualBackupStatus.warning}
+                    </Text>
+                  </View>
+                ) : null}
+                {manualBackupStatus?.status === "failed" ? (
+                  <View
+                    accessibilityRole="alert"
+                    style={[styles.doneCard, { backgroundColor: colors.destructive + "11", marginTop: 10 }]}
+                  >
+                    <Text style={[styles.doneText, { color: colors.destructive }]}>
+                      ⚠ Backup failed — retry is available.
+                    </Text>
+                    {manualBackupStatus.error ? (
+                      <Text style={[styles.doneText, { color: colors.destructive, marginTop: 4 }]}>
+                        {manualBackupStatus.error}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
+                <Animated.View style={{ transform: [{ scale: manualBackupPressAnim }] }}>
+                  <Pressable
+                  onPress={confirmManualBackup}
+                  disabled={manualBackupPending || manualBackupStatus?.status === "running"}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    manualBackupStatus?.status === "running"
+                      ? "Database backup in progress"
+                      : manualBackupStatus?.status === "failed"
+                        ? "Retry database backup"
+                        : "Start database backup"
+                  }
+                  accessibilityState={{
+                    disabled: manualBackupPending || manualBackupStatus?.status === "running",
+                    busy: manualBackupPending,
+                  }}
+                  style={[
+                    styles.enrichBtn,
+                    {
+                      backgroundColor:
+                        manualBackupPending || manualBackupStatus?.status === "running"
+                          ? colors.muted
+                          : colors.primary,
+                      marginTop: 12,
+                    },
+                  ]}
+                >
+                  {manualBackupPending ? (
+                    <ActivityIndicator color={colors.primaryForeground} />
+                  ) : (
+                    <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                      {manualBackupStatus?.status === "running"
+                        ? "⏳ Backup Running…"
+                        : manualBackupStatus?.status === "failed"
+                          ? "Retry Database Backup"
+                          : "Start Database Backup"}
+                    </Text>
+                  )}
+                  </Pressable>
+                </Animated.View>
+              </View>
+              {/* ── Database Backup History ─── */}
+              <View
+                style={[
+                  styles.queryCard,
+                  { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 14 },
+                ]}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <Text style={[styles.cardTitle, { color: colors.foreground }]}>Backup History</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Refresh database backup history"
+                    accessibilityState={{ busy: manualBackupHistoryLoading }}
+                    disabled={manualBackupHistoryLoading}
+                    onPress={() => void fetchManualBackupHistory()}
+                    style={[styles.queryExportBtn, { borderColor: colors.border }]}
+                  >
+                    {manualBackupHistoryLoading ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : (
+                      <Text style={[styles.queryExportBtnText, { color: colors.primary }]}>Refresh</Text>
+                    )}
+                  </Pressable>
+                </View>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Manual backup attempts recorded by approved administrators. Private storage paths and database settings are never shown.
+                </Text>
+                {manualBackupHistoryError ? (
+                  <View accessibilityRole="alert" style={[styles.doneCard, { backgroundColor: colors.destructive + "11", marginTop: 10 }]}>
+                    <Text style={[styles.doneText, { color: colors.destructive }]}>⚠ {manualBackupHistoryError}</Text>
+                  </View>
+                ) : null}
+                {manualBackupHistoryLoading && manualBackupHistory.length === 0 ? (
+                  <View style={{ alignItems: "center", paddingVertical: 18 }}>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                    <Text style={[styles.cardHint, { color: colors.mutedForeground, marginTop: 8 }]}>Loading backup history…</Text>
+                  </View>
+                ) : manualBackupHistory.length === 0 ? (
+                  <Text style={[styles.cardHint, { color: colors.mutedForeground, marginTop: 12 }]}>
+                    No manual backups have been recorded yet.
+                  </Text>
+                ) : (
+                  <View style={{ gap: 8, marginTop: 12 }}>
+                    {manualBackupHistory.map((entry) => {
+                      const completed = entry.outcome === "completed";
+                      return (
+                        <View
+                          key={entry.id}
+                          style={{
+                            borderWidth: 1,
+                            borderColor: colors.border,
+                            borderRadius: 10,
+                            padding: 10,
+                            backgroundColor: colors.background,
+                          }}
+                        >
+                          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                            <Text style={{ color: completed ? colors.success : colors.destructive, fontFamily: "Inter_600SemiBold" }}>
+                              {completed ? "Completed" : "Failed"}
+                            </Text>
+                            <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
+                              {formatManualBackupDate(entry.createdAt)}
+                            </Text>
+                          </View>
+                          <Text style={[styles.cardHint, { color: colors.foreground, marginTop: 6 }]}>
+                            {entry.rowCount === null ? "Row count unavailable" : `${entry.rowCount.toLocaleString()} rows`}
+                          </Text>
+                          <Text
+                            style={[styles.cardHint, { color: colors.mutedForeground, marginTop: 3 }]}
+                            numberOfLines={1}
+                            accessibilityLabel={`Snapshot ID ${entry.snapshotId}`}
+                          >
+                            Snapshot {entry.snapshotId}
+                          </Text>
+                          <Text
+                            style={[styles.cardHint, { color: colors.mutedForeground, marginTop: 3 }]}
+                            numberOfLines={1}
+                            accessibilityLabel={`Started by administrator ${entry.adminClerkUserId}`}
+                          >
+                            Started by {entry.adminClerkUserId}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                    {manualBackupHistoryNextCursor !== null ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Load more database backup history"
+                        accessibilityState={{ busy: manualBackupHistoryLoadingMore }}
+                        disabled={manualBackupHistoryLoadingMore}
+                        onPress={() => void fetchManualBackupHistory(true)}
+                        style={[styles.loadMoreBtn, { borderColor: colors.border }]}
+                      >
+                        {manualBackupHistoryLoadingMore ? (
+                          <ActivityIndicator size="small" color={colors.primary} />
+                        ) : (
+                          <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load More</Text>
+                        )}
+                      </Pressable>
+                    ) : null}
+                  </View>
+                )}
+              </View>
+              {/* ── Database Description Expansion ─── */}
+              <View style={[styles.queryCard, { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 14 }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <Text style={[styles.cardTitle, { color: colors.foreground }]}>📝 Database Description Expansion</Text>
+                  {descriptionExpansionJobStatus?.running ? (
+                    <View style={{ backgroundColor: colors.primary + "18", borderRadius: 12, paddingHorizontal: 9, paddingVertical: 4 }}>
+                      <Text style={{ color: colors.primary, fontSize: 11, fontFamily: "Inter_600SemiBold" }}>
+                        {descriptionExpansionJobStatus.status === "stopping" || descriptionExpansionJobStatus.stopRequested
+                          ? "Stopping"
+                          : "Running"}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Processes only inventory rows missing an expanded description. Existing descriptions are never overwritten, and only AI results with 70% confidence or higher are saved. Lower-confidence results are discarded and never enter manual review.
+                </Text>
+                {descriptionExpansionError ? (
+                  <View accessibilityRole="alert" style={[styles.doneCard, { backgroundColor: colors.destructive + "11", marginTop: 10 }]}>
+                    <Text style={[styles.doneText, { color: colors.destructive }]}>⚠ {descriptionExpansionError}</Text>
+                  </View>
+                ) : null}
+                {descriptionExpansionJobStatus ? (
+                  <>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+                      {[
+                        ["Total", descriptionExpansionJobStatus.total ?? "—"],
+                        ["Processed", descriptionExpansionJobStatus.processed],
+                        ["Saved", descriptionExpansionJobStatus.saved],
+                        ["Discarded", descriptionExpansionJobStatus.discarded],
+                        ["Failed", descriptionExpansionJobStatus.errors],
+                        ["Remaining", descriptionExpansionJobStatus.remaining ?? "—"],
+                      ].map(([label, value]) => (
+                        <View key={String(label)} style={[styles.statChip, { backgroundColor: colors.muted, minWidth: 86, flexGrow: 1 }]}>
+                          <Text style={[styles.statValue, { color: colors.foreground }]}>{typeof value === "number" ? value.toLocaleString() : value}</Text>
+                          <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>{label}</Text>
+                        </View>
+                      ))}
+                    </View>
+                    {descriptionExpansionJobStatus.total != null && descriptionExpansionJobStatus.total > 0 ? (
+                      <View style={[styles.progressBar, { backgroundColor: colors.muted, marginTop: 10 }]}>
+                        <View
+                          style={[
+                            styles.progressFill,
+                            {
+                              backgroundColor: colors.success,
+                              width: `${Math.min(100, Math.round((descriptionExpansionJobStatus.processed / descriptionExpansionJobStatus.total) * 100))}%`,
+                            },
+                          ]}
+                        />
+                      </View>
+                    ) : null}
+                    {descriptionExpansionJobStatus.running ? (
+                      <View style={[styles.aiWorkingBanner, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "40", marginTop: 10 }]}>
+                        <ActivityIndicator size="small" color={colors.primary} />
+                        <Text style={[styles.aiWorkingText, { color: colors.primary, flex: 1 }]}>
+                          {descriptionExpansionJobStatus.status === "stopping" || descriptionExpansionJobStatus.stopRequested
+                            ? "Stop requested — finishing the current batch…"
+                            : "Expanding missing descriptions…"}
+                        </Text>
+                        <Pressable
+                          onPress={handleStopDescriptionExpansion}
+                          disabled={descriptionExpansionStopPending || descriptionExpansionJobStatus.status === "stopping" || descriptionExpansionJobStatus.stopRequested}
+                          accessibilityRole="button"
+                          accessibilityLabel="Stop database description expansion"
+                          style={[styles.stopBtn, { borderColor: descriptionExpansionStopPending ? colors.border : colors.destructive }]}
+                        >
+                          {descriptionExpansionStopPending ? (
+                            <ActivityIndicator size="small" color={colors.destructive} />
+                          ) : (
+                            <Text style={[styles.stopBtnText, { color: colors.destructive }]}>Stop</Text>
+                          )}
+                        </Pressable>
+                      </View>
+                    ) : descriptionExpansionJobStatus.finishedAt ? (
+                      <View
+                        style={[
+                          styles.doneCard,
+                          {
+                            backgroundColor:
+                              descriptionExpansionJobStatus.status === "completed"
+                                ? colors.success + "11"
+                                : descriptionExpansionJobStatus.status === "cancelled"
+                                  ? colors.warning + "11"
+                                  : colors.destructive + "11",
+                            marginTop: 10,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.doneText,
+                            {
+                              color:
+                                descriptionExpansionJobStatus.status === "completed"
+                                  ? colors.success
+                                  : descriptionExpansionJobStatus.status === "cancelled"
+                                    ? colors.warning
+                                    : colors.destructive,
+                            },
+                          ]}
+                        >
+                          {descriptionExpansionJobStatus.status === "completed"
+                            ? "✓ Completed"
+                            : descriptionExpansionJobStatus.status === "cancelled"
+                              ? "⏹ Cancelled"
+                              : "⚠ Failed"}
+                          {` — ${descriptionExpansionJobStatus.processed.toLocaleString()} processed`}
+                        </Text>
+                        {descriptionExpansionJobStatus.lastError ? (
+                          <Text style={[styles.doneText, { color: colors.destructive, marginTop: 4 }]}>
+                            {descriptionExpansionJobStatus.lastError}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </>
+                ) : null}
+                <Pressable
+                  onPress={handleStartDescriptionExpansion}
+                  disabled={descriptionExpansionPending || descriptionExpansionJobStatus?.running}
+                  accessibilityRole="button"
+                  accessibilityLabel="Start database description expansion"
+                  style={[
+                    styles.enrichBtn,
+                    {
+                      backgroundColor: descriptionExpansionPending || descriptionExpansionJobStatus?.running ? colors.muted : colors.primary,
+                      marginTop: 12,
+                    },
+                  ]}
+                >
+                  {descriptionExpansionPending ? (
+                    <ActivityIndicator color={colors.primaryForeground} />
+                  ) : (
+                    <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                      {descriptionExpansionJobStatus?.running ? "⏳ Expansion Running…" : "🚀 Start Database Expansion"}
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
               {/* ── User Management ─── */}
               <View style={[styles.queryCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
@@ -5399,6 +6437,14 @@ export default function UploadScreen() {
         </>
       )}
 
+      <ConfirmDialog
+        visible={isAdmin && activeSection === "people" && manualBackupConfirmVisible}
+        title="Start Database Backup?"
+        message="This creates a full inventory snapshot in private backup storage. The server will continue the backup if you leave or close the app."
+        confirmLabel="Start Backup"
+        onConfirm={acceptManualBackup}
+        onCancel={dismissManualBackupConfirm}
+      />
       <ReferenceModal />
 
       <BinEditor
@@ -5688,6 +6734,21 @@ function formatQueryValue(value: unknown): { display: string; full: string } {
     display: full.length > 500 ? `${full.slice(0, 499)}…` : full,
     full,
   };
+}
+
+function formatManualBackupDate(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "at an unknown time";
+  const localDate = date.toLocaleDateString(undefined, {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+  const localTime = date.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${localDate} at ${localTime}`;
 }
 
 const FLOOR_PLAN_MAX_BYTES = 10 * 1024 * 1024;

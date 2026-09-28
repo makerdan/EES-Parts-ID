@@ -9,9 +9,6 @@
       "@/*": [
         "./*"
       ],
-      "lidar-measure": [
-        "./modules/lidar-measure/src/index"
-      ],
       "expo-file-system/legacy": [
         "./node_modules/expo-file-system/build/legacy/index.d.ts"
       ]

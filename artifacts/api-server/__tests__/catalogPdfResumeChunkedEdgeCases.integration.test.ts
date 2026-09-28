@@ -59,8 +59,10 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, catalogPdfJobTable, inventoryTable } from "@workspace/db";
 import { eq, inArray, and } from "drizzle-orm";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
+import { awaitJobTermination } from "../src/routes/catalogPdf";
 
 // ── Typed mocks ───────────────────────────────────────────────────────────────
 
@@ -90,6 +92,14 @@ function makeFakePages(count: number) {
     pageWidth: 0,
     pageHeight: 0,
   }));
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 async function seedJob(
@@ -156,10 +166,14 @@ afterEach(() => {
 
 afterAll(async () => {
   if (seededJobIds.length > 0) {
-    await db.delete(catalogPdfJobTable).where(inArray(catalogPdfJobTable.id, seededJobIds));
+    await bestEffortFixtureCleanup("catalog PDF chunked edge-case jobs", async () => {
+      await db.delete(catalogPdfJobTable).where(inArray(catalogPdfJobTable.id, seededJobIds));
+    });
   }
   if (seededInventoryIds.length > 0) {
-    await db.delete(inventoryTable).where(inArray(inventoryTable.id, seededInventoryIds));
+    await bestEffortFixtureCleanup("catalog PDF chunked edge-case inventory", async () => {
+      await db.delete(inventoryTable).where(inArray(inventoryTable.id, seededInventoryIds));
+    });
   }
 }, 15_000);
 
@@ -332,6 +346,125 @@ describe("GET /api/admin/catalog-pdf/reviews — non-numeric ?jobId= guard", () 
 // =============================================================================
 
 describe("POST /api/admin/catalog-pdf/:jobId/cancel — cascades to child chunk jobs", () => {
+  it("keeps cancellation when a child worker finishes afterward", async () => {
+    const parentId = await seedJob({ chunkCount: 1, status: "processing" });
+    const childId = await seedJob({
+      parentJobId: parentId,
+      chunkIndex: 0,
+      chunkCount: 1,
+      pageOffset: 0,
+      status: "processing",
+      totalPages: 1,
+    });
+    const extractionStarted = deferred<void>();
+    const finishExtraction = deferred<Awaited<ReturnType<typeof extractCatalogPage>>>();
+    mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(1));
+    mockExtractCatalogPage.mockImplementationOnce(async () => {
+      extractionStarted.resolve();
+      return finishExtraction.promise;
+    });
+
+    await supertest(app)
+      .post(`/api/admin/catalog-pdf/${childId}/resume`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: STUB_PDF_B64 })
+      .expect(200);
+    await extractionStarted.promise;
+
+    const cancelResponse = await supertest(app)
+      .post(`/api/admin/catalog-pdf/${parentId}/cancel`)
+      .set("Authorization", `Bearer ${adminToken}`);
+
+    finishExtraction.resolve({ entries: [], rawText: "" });
+    await awaitJobTermination(childId);
+
+    expect(cancelResponse.status).toBe(200);
+    expect((await readJobRow(parentId)).status).toBe("cancelled");
+    expect((await readJobRow(childId)).status).toBe("cancelled");
+
+    const status = await supertest(app)
+      .get(`/api/admin/catalog-pdf/${parentId}/status`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    expect(status.body.status).toBe("cancelled");
+  }, 20_000);
+
+  it("keeps a completed parent when cancellation arrives after child finalization", async () => {
+    const parentId = await seedJob({ chunkCount: 1, status: "processing" });
+    const childId = await seedJob({
+      parentJobId: parentId,
+      chunkIndex: 0,
+      chunkCount: 1,
+      pageOffset: 0,
+      status: "processing",
+      totalPages: 1,
+    });
+    const extractionStarted = deferred<void>();
+    mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(1));
+    mockExtractCatalogPage.mockImplementationOnce(async () => {
+      extractionStarted.resolve();
+      return { entries: [], rawText: "" };
+    });
+
+    await supertest(app)
+      .post(`/api/admin/catalog-pdf/${childId}/resume`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: STUB_PDF_B64 })
+      .expect(200);
+    await extractionStarted.promise;
+    await awaitJobTermination(childId);
+
+    expect((await readJobRow(parentId)).status).toBe("done");
+    expect((await readJobRow(childId)).status).toBe("done");
+
+    await supertest(app)
+      .post(`/api/admin/catalog-pdf/${parentId}/cancel`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(409);
+
+    expect((await readJobRow(parentId)).status).toBe("done");
+    expect((await readJobRow(childId)).status).toBe("done");
+    const status = await supertest(app)
+      .get(`/api/admin/catalog-pdf/${parentId}/status`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    expect(status.body.status).toBe("done");
+  }, 20_000);
+
+  it("finalizes a parent as cancelled when every child is cancelled", async () => {
+    const parentId = await seedJob({ chunkCount: 2, status: "processing" });
+    const child0 = await seedJob({
+      parentJobId: parentId,
+      chunkIndex: 0,
+      chunkCount: 2,
+      pageOffset: 0,
+      status: "pending",
+    });
+    const child1 = await seedJob({
+      parentJobId: parentId,
+      chunkIndex: 1,
+      chunkCount: 2,
+      pageOffset: 10,
+      status: "pending",
+    });
+
+    await supertest(app)
+      .post(`/api/admin/catalog-pdf/${child0}/cancel`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    await supertest(app)
+      .post(`/api/admin/catalog-pdf/${child1}/cancel`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect((await readJobRow(parentId)).status).toBe("cancelled");
+    const status = await supertest(app)
+      .get(`/api/admin/catalog-pdf/${parentId}/status`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    expect(status.body.status).toBe("cancelled");
+  });
+
   it("cancels pending child jobs when the parent is cancelled", async () => {
     const parentId = await seedJob({ chunkCount: 2, status: "processing" });
     const child0 = await seedJob({

@@ -20,7 +20,7 @@ process.env.POE_API_KEY2 = "test-poe-key";
 process.env.AI_INTEGRATIONS_OPENAI_BASE_URL = "https://test.openai.example/v1";
 process.env.AI_INTEGRATIONS_OPENAI_API_KEY = "test-openai-key";
 
-afterAll(() => {
+function restoreTestEnvironment(): void {
   if (_origAdminPassword === undefined) delete process.env.ADMIN_PASSWORD;
   else process.env.ADMIN_PASSWORD = _origAdminPassword;
   if (_origAiProvider === undefined) delete process.env.AI_PROVIDER;
@@ -31,7 +31,7 @@ afterAll(() => {
   else process.env.AI_INTEGRATIONS_OPENAI_BASE_URL = _origOpenAIBaseUrl;
   if (_origOpenAIApiKey === undefined) delete process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
   else process.env.AI_INTEGRATIONS_OPENAI_API_KEY = _origOpenAIApiKey;
-});
+}
 
 // ── OpenAI constructor mock ───────────────────────────────────────────────────
 // aiProvider.ts calls `new OpenAI(...)` at module load time. We must intercept
@@ -102,9 +102,13 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Restore provider to "poe" so module state is clean for any subsequent suites
-  setProvider("poe");
-  await cleanupTestUser(NON_ADMIN_USER);
+  try {
+    // Restore provider while the suite's deterministic Poe key is still active.
+    setProvider("poe");
+    await cleanupTestUser(NON_ADMIN_USER);
+  } finally {
+    restoreTestEnvironment();
+  }
 }, 15_000);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -215,6 +219,37 @@ describe("GET /api/admin/ai-status — authenticated, provider=poe", () => {
       .expect(200);
 
     expect(res.body.bots).toEqual(getProbeSummary());
+  });
+
+  it("exposes only bounded source-controlled registry metadata", async () => {
+    const token = makeAdminToken();
+    const res = await supertest(app)
+      .get("/api/admin/ai-status")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    expect(res.body.registry.source).toBe("configured_registry");
+    expect(res.body.registry.models.length).toBeGreaterThan(0);
+    for (const model of res.body.registry.models) {
+      expect(Object.keys(model).sort()).toEqual([
+        "approvedRoutes", "budgetClass", "capabilities", "capabilityConfidence",
+        "id", "limits", "modalities", "name", "privacyClass", "verification",
+      ]);
+      expect(model.id).toEqual(expect.any(String));
+      expect(model.modalities.length).toBeLessThanOrEqual(8);
+      expect(model.approvedRoutes.length).toBeGreaterThan(0);
+      expect(["identify", "dimensions", "enrich", "catalog"]).toContain(model.approvedRoutes[0]);
+      expect(model.verification.source).toBe("configured_registry");
+      expect(Object.keys(model.verification).sort()).toEqual(["reviewTrigger", "source", "verifiedAt"]);
+      expect(model.privacyClass).toBe("prompt_not_persisted");
+      expect(Object.keys(model.limits).sort()).toEqual([
+        "maxImageBytes", "maxImages", "maxOutputTokens", "maxRequestBytes", "maxResponseBytes",
+      ]);
+      expect(model).not.toHaveProperty("raw");
+      expect(model).not.toHaveProperty("endpoint");
+      expect(model).not.toHaveProperty("credentials");
+      expect(JSON.stringify(model)).not.toMatch(/secret-value|prompt-content|image-content|token-value/i);
+    }
   });
 });
 

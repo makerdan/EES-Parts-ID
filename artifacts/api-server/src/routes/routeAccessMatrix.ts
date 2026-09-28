@@ -59,6 +59,8 @@ export const ROUTE_ACCESS_MATRIX: ReadonlyArray<RouteAccessEntry> = [
   { method: "GET", path: "/api/reference/quick-lookups/:label", access: "approved-user" },
   { method: "POST", path: "/api/track/screen-view", access: "approved-user" },
   { method: "DELETE", path: "/api/user/me", access: "approved-user" },
+  { method: "GET", path: "/api/user/history", access: "approved-user" },
+  { method: "PATCH", path: "/api/user/history", access: "approved-user" },
   { method: "GET", path: "/api/warehouse-zones", access: "public" },
   { method: "GET", path: "/api/warehouse-zones/anchors", access: "public" },
   { method: "GET", path: "/api/warehouse-zones/coverage", access: "approved-user" },
@@ -87,6 +89,8 @@ export const ROUTE_ACCESS_MATRIX: ReadonlyArray<RouteAccessEntry> = [
   { method: "POST", path: "/api/admin/upload/orders/preview", access: "approved-admin" },
   { method: "POST", path: "/api/admin/upload/orders", access: "approved-admin" },
   { method: "GET", path: "/api/admin/snapshots", access: "approved-admin" },
+  { method: "GET", path: "/api/admin/snapshots/status", access: "approved-admin" },
+  { method: "GET", path: "/api/admin/snapshots/history", access: "approved-admin" },
   { method: "GET", path: "/api/admin/snapshots/health", access: "approved-admin" },
   { method: "POST", path: "/api/admin/snapshots", access: "approved-admin" },
   { method: "POST", path: "/api/admin/snapshots/dry-run", access: "approved-admin" },
@@ -128,6 +132,9 @@ export const ROUTE_ACCESS_MATRIX: ReadonlyArray<RouteAccessEntry> = [
   { method: "POST", path: "/api/inventory/expand-descriptions", access: "admin-only" },
   { method: "POST", path: "/api/inventory/:id/expand-description", access: "admin-only" },
   { method: "PATCH", path: "/api/inventory/:id/expanded-description", access: "admin-only" },
+  { method: "POST", path: "/api/inventory/description-expansion", access: "admin-only" },
+  { method: "GET", path: "/api/inventory/description-expansion/status", access: "admin-only" },
+  { method: "DELETE", path: "/api/inventory/description-expansion", access: "admin-only" },
   { method: "POST", path: "/api/inventory/bulk-enrich", access: "admin-only" },
   { method: "GET", path: "/api/inventory/bulk-enrich/status", access: "admin-only" },
   { method: "DELETE", path: "/api/inventory/bulk-enrich", access: "admin-only" },
@@ -152,6 +159,9 @@ export const ROUTE_ACCESS_MATRIX: ReadonlyArray<RouteAccessEntry> = [
   { method: "POST", path: "/api/reference/quick-lookups/:label", access: "admin-only" },
   { method: "GET", path: "/api/reference/ask-log", access: "admin-only" },
   { method: "GET", path: "/api/help/admin", access: "admin-only" },
+  { method: "GET", path: "/api/reference/help", access: "approved-user" },
+  { method: "POST", path: "/api/reference/help/ask", access: "approved-user" },
+  { method: "GET", path: "/api/reference/help/admin", access: "admin-only" },
 ];
 
 function normalizePath(path: string): string {

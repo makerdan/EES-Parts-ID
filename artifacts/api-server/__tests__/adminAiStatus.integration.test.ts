@@ -41,21 +41,48 @@ jest.mock("openai", () => {
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import { db } from "@workspace/db";
+import { resetPoeClient } from "@workspace/integrations-poe-server";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
-import { getAllPoeModelNames } from "../src/lib/aiProvider";
+import {
+  getAllPoeModelNames,
+  getPoeFallbackOverrides,
+  resetPoeFallbacks,
+  setPoeFallbacks,
+} from "../src/lib/aiProvider";
+import {
+  restoreAdminPreferences,
+  snapshotAdminPreferences,
+} from "./helpers/testDb";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
-const ADMIN_SECRET = "jest-admin-ai-status-secret";
 let adminToken: string;
+let originalPoeApiKey: string | undefined;
+let originalPreference: Awaited<ReturnType<typeof snapshotAdminPreferences>>;
+let originalFallbacks: ReturnType<typeof getPoeFallbackOverrides>;
 
-beforeAll(() => {
-  process.env.ADMIN_PASSWORD = ADMIN_SECRET;
-  adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
+beforeAll(async () => {
+  originalPoeApiKey = process.env.POE_API_KEY2;
+  process.env.POE_API_KEY2 = "test-poe-key";
+  adminToken = signAdminToken();
+  originalPreference = await snapshotAdminPreferences();
+  originalFallbacks = getPoeFallbackOverrides();
 });
 
 beforeEach(() => {
-  mockCreate.mockClear();
+  resetPoeClient();
+  mockCreate.mockReset().mockResolvedValue({ choices: [] });
+});
+
+afterAll(async () => {
+  resetPoeClient();
+  resetPoeFallbacks();
+  for (const [feature, models] of Object.entries(originalFallbacks)) {
+    if (models) setPoeFallbacks(feature as Parameters<typeof setPoeFallbacks>[0], models);
+  }
+  await restoreAdminPreferences(originalPreference);
+  if (originalPoeApiKey === undefined) delete process.env.POE_API_KEY2;
+  else process.env.POE_API_KEY2 = originalPoeApiKey;
 });
 
 
@@ -131,7 +158,6 @@ describe("POST /api/admin/ai-status/probe/:botName", () => {
   });
 
   it("returns 200 with a bots map for a known bot when probe succeeds", async () => {
-    mockCreate.mockResolvedValue({ choices: [] });
     const [firstBot] = getAllPoeModelNames();
 
     const res = await supertest(app)
@@ -173,7 +199,6 @@ describe("POST /api/admin/ai-status/probe/:botName", () => {
   });
 
   it("only calls the Poe API for the named bot (not all bots)", async () => {
-    mockCreate.mockResolvedValue({ choices: [] });
     const [firstBot] = getAllPoeModelNames();
 
     await supertest(app)

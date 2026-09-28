@@ -51,6 +51,42 @@ import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
 const POLL_FAIL_THRESHOLD = 5; // consecutive failures before showing stalled card
+const CATALOG_JOB_STATUSES = new Set([
+  "pending",
+  "processing",
+  "done",
+  "done_with_errors",
+  "failed",
+  "cancelled",
+]);
+
+type CatalogPollStatus = {
+  status: "pending" | "processing" | "done" | "done_with_errors" | "failed" | "cancelled";
+  processedPages: number;
+  totalPages: number | null;
+  matchedParts: number;
+  errorMessage: string | null;
+};
+
+function parseCatalogPollStatus(value: unknown): CatalogPollStatus {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Invalid catalog job status response");
+  }
+  const body = value as Record<string, unknown>;
+  const isCount = (count: unknown) =>
+    typeof count === "number" && Number.isFinite(count) && count >= 0;
+  if (
+    typeof body.status !== "string" ||
+    !CATALOG_JOB_STATUSES.has(body.status) ||
+    !isCount(body.processedPages) ||
+    !(body.totalPages === null || isCount(body.totalPages)) ||
+    !isCount(body.matchedParts) ||
+    !(body.errorMessage === null || typeof body.errorMessage === "string")
+  ) {
+    throw new Error("Invalid catalog job status response");
+  }
+  return body as CatalogPollStatus;
+}
 
 function resumeBytesToBase64(bytes: Uint8Array): string {
   const CHUNK = 0x8000;
@@ -111,8 +147,19 @@ export default function CatalogReviewScreen() {
   const { adminToken, logoutAdmin, resumeProgress, setResumeProgress, setPendingInventorySearch } = useApp();
   const { reportNetworkFailure } = useApiHealth();
   const queryClient = useQueryClient();
+  const reconciledSuccessfulJobsRef = useRef(new Set<number>());
+  const reconcileSuccessfulJobCaches = useCallback((id: number) => {
+    if (reconciledSuccessfulJobsRef.current.has(id)) return;
+    reconciledSuccessfulJobsRef.current.add(id);
+    void invalidateListCache({ queryClient });
+    void queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+  }, [queryClient]);
 
   type JobSummary = {
+    status: string | null;
+    errorMessage: string | null;
+    processedPages: number;
+    totalPages: number | null;
     vendor: string;
     partsFound: number;
     matchedParts: number;
@@ -125,6 +172,7 @@ export default function CatalogReviewScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failedJobsError, setFailedJobsError] = useState(false);
   const [revertingId, setRevertingId] = useState<number | null>(null);
   const [revertedIds, setRevertedIds] = useState<Set<number>>(new Set());
   const [approvedIds, setApprovedIds] = useState<Set<number>>(new Set());
@@ -255,6 +303,7 @@ export default function CatalogReviewScreen() {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
+    setFailedJobsError(false);
     try {
       const url = jobId
         ? `${API_BASE}/admin/catalog-pdf/reviews?jobId=${jobId}`
@@ -275,8 +324,17 @@ export default function CatalogReviewScreen() {
         }));
       }
 
-      const [reviewRes, secondRes] = await Promise.all(requests);
+      const [reviewRes, secondResult] = await Promise.all([
+        requests[0]!,
+        requests[1]!.then(response => ({ response, failed: false }))
+          .catch(() => ({ response: null, failed: true })),
+      ]);
       if (!isCurrentRequest()) return;
+      if (secondResult.failed && !jobId) {
+        reportNetworkFailure();
+        setFailedJobsError(true);
+      }
+      const secondRes = secondResult.response;
 
       // requests always contains at least the review fetch, so reviewRes is defined.
       if (reviewRes!.status === 401) { logoutAdmin(); return; }
@@ -305,6 +363,7 @@ export default function CatalogReviewScreen() {
           if (jobId) {
             const statusData = await secondRes.json() as {
               status?: string;
+              errorMessage?: string | null;
               vendor?: string;
               partsFound?: number;
               matchedParts?: number;
@@ -315,12 +374,41 @@ export default function CatalogReviewScreen() {
             };
             if (!isCurrentRequest()) return;
             setJobSummary({
+              status: statusData.status ?? null,
+              errorMessage: statusData.errorMessage ?? null,
+              processedPages: statusData.processedPages ?? 0,
+              totalPages: statusData.totalPages ?? null,
               vendor: statusData.vendor ?? "",
               partsFound: statusData.partsFound ?? 0,
               matchedParts: statusData.matchedParts ?? 0,
               imagesMatched: statusData.imagesMatched ?? 0,
               unmatchedParts: statusData.unmatchedParts ?? [],
             });
+            if (statusData.status === "done" || statusData.status === "done_with_errors") {
+              const numJobId = Number(jobId);
+              if (Number.isSafeInteger(numJobId)) {
+                reconcileSuccessfulJobCaches(numJobId);
+                if (statusData.status === "done_with_errors") {
+                  stopPollForJob(numJobId);
+                  setResumingId((prev) => (prev === numJobId ? null : prev));
+                  setResumeProgress((prev) => {
+                    const existing = prev[numJobId];
+                    if (!existing) return prev;
+                    return {
+                      ...prev,
+                      [numJobId]: {
+                        ...existing,
+                        status: "done_with_errors",
+                        processedPages: statusData.processedPages ?? 0,
+                        totalPages: statusData.totalPages ?? null,
+                        matchedParts: statusData.matchedParts ?? 0,
+                        errorMessage: statusData.errorMessage ?? null,
+                      },
+                    };
+                  });
+                }
+              }
+            }
             // F-002: if the job is still in-progress on mount, start polling so
             // admins aren't left on a stale "No items to review" screen.
             const rawStatus = statusData.status;
@@ -328,6 +416,7 @@ export default function CatalogReviewScreen() {
               !isRefresh &&
               rawStatus &&
               rawStatus !== "done" &&
+              rawStatus !== "done_with_errors" &&
               rawStatus !== "failed" &&
               rawStatus !== "cancelled"
             ) {
@@ -347,14 +436,22 @@ export default function CatalogReviewScreen() {
               }
             }
           } else {
-            const failedData = await secondRes.json() as { jobs: Array<FailedJob> };
+            const failedData = await secondRes.json().catch(() => null) as { jobs: Array<FailedJob> } | null;
             if (!isCurrentRequest()) return;
-            setFailedJobs(failedData.jobs);
+            if (failedData && Array.isArray(failedData.jobs)) {
+              setFailedJobs(failedData.jobs);
+            } else {
+              setFailedJobsError(true);
+            }
           }
         } else if (jobId) {
           if (!isCurrentRequest()) return;
           setError("Could not load job status — try refreshing.");
+        } else {
+          setFailedJobsError(true);
         }
+      } else if (jobId && secondResult.failed) {
+        setError("Could not load job status — try refreshing.");
       }
     } catch (err) {
       if (!isCurrentRequest()) return;
@@ -367,7 +464,7 @@ export default function CatalogReviewScreen() {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adminToken, jobId, reportNetworkFailure]);
+  }, [adminToken, jobId, reportNetworkFailure, reconcileSuccessfulJobCaches]);
 
   useEffect(() => { void fetchItems(); }, [fetchItems]);
 
@@ -405,6 +502,19 @@ export default function CatalogReviewScreen() {
           signal: controller.signal,
         });
         if (!isCurrentPoll()) return;
+        if (statusRes.status === 401) {
+          stopPollForJob(id);
+          if (screenLifecycleRef.current === lifecycle) {
+            setResumeProgress((prev) => {
+              const next = { ...prev };
+              delete next[id];
+              return next;
+            });
+            setResumingId((prev) => (prev === id ? null : prev));
+            logoutAdmin();
+          }
+          return;
+        }
         if (!statusRes.ok) {
           // Non-2xx response counts as a failure.
           pollFailCountRef.current[id] = (pollFailCountRef.current[id] ?? 0) + 1;
@@ -425,13 +535,7 @@ export default function CatalogReviewScreen() {
           }
           return;
         }
-        const body = await statusRes.json() as {
-          status: string;
-          processedPages: number;
-          totalPages: number | null;
-          matchedParts: number;
-          errorMessage: string | null;
-        };
+        const body = parseCatalogPollStatus(await statusRes.json());
         if (!isCurrentPoll()) return;
         // Successful response — reset failure counter.
         pollFailCountRef.current[id] = 0;
@@ -445,14 +549,18 @@ export default function CatalogReviewScreen() {
             errorMessage: body.errorMessage ?? null,
           },
         }));
-        if (body.status === "done" || body.status === "failed" || body.status === "cancelled") {
+        if (
+          body.status === "done" ||
+          body.status === "done_with_errors" ||
+          body.status === "failed" ||
+          body.status === "cancelled"
+        ) {
           stopPollForJob(id);
           if (screenLifecycleRef.current === lifecycle) {
             setResumingId((prev) => (prev === id ? null : prev));
-            if (body.status === "done") {
+            if (body.status === "done" || body.status === "done_with_errors") {
               setFailedJobs((prev) => prev.filter((j) => j.id !== id));
-              void invalidateListCache({ queryClient });
-              void queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+              reconcileSuccessfulJobCaches(id);
             }
             fetchItems();
           }
@@ -1347,6 +1455,17 @@ export default function CatalogReviewScreen() {
         </Pressable>
       </View>
 
+      {!loading && !jobId && failedJobsError ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+          <Text style={[s.errorText, { color: colors.destructive, flex: 1, textAlign: "left" }]}>
+            Could not load failed catalog jobs. Review items below are still available.
+          </Text>
+          <Pressable testID="retry-failed-jobs" onPress={() => { void fetchItems(true); }} style={[s.retryBtn, { backgroundColor: colors.primary }]}>
+            <Text style={[s.retryBtnText, { color: colors.primaryForeground }]}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {loading ? (
         <View style={s.center}>
           <ActivityIndicator size="large" color={colors.primary} />
@@ -1359,7 +1478,10 @@ export default function CatalogReviewScreen() {
             <Text style={[s.retryBtnText, { color: colors.primaryForeground }]}>Retry</Text>
           </Pressable>
         </View>
-      ) : allReviewed && failedJobs.length === 0 && Object.keys(resumeProgress).length === 0 ? (
+      ) : allReviewed &&
+        failedJobs.length === 0 &&
+        Object.keys(resumeProgress).length === 0 &&
+        !(jobId && jobSummary?.status === "done_with_errors") ? (
         <View style={s.center}>
           <View style={[s.completionIconCircle, { backgroundColor: "#22c55e18" }]}>
             <Text style={s.completionIcon}>✓</Text>
@@ -1375,7 +1497,11 @@ export default function CatalogReviewScreen() {
             <Text style={[s.doneBtnText, { color: colors.primaryForeground }]}>Done</Text>
           </Pressable>
         </View>
-      ) : listData.length === 0 && failedJobs.length === 0 && Object.keys(resumeProgress).length === 0 && !(jobId && jobSummary && jobSummary.unmatchedParts.length > 0) ? (
+      ) : listData.length === 0 &&
+        failedJobs.length === 0 &&
+        Object.keys(resumeProgress).length === 0 &&
+        !(jobId && jobSummary && jobSummary.unmatchedParts.length > 0) &&
+        !(jobId && jobSummary?.status === "done_with_errors") ? (
         <View style={s.center}>
           <Text style={[s.emptyTitle, { color: colors.foreground }]}>
             {revertedIds.size > 0 ? "All reverted" : "No items to review"}
@@ -1388,6 +1514,30 @@ export default function CatalogReviewScreen() {
         </View>
       ) : (
         <>
+          {jobId && jobSummary?.status === "done_with_errors" ? (
+            <View
+              style={{
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                gap: 4,
+                backgroundColor: colors.warning + "18",
+                borderBottomWidth: 1,
+                borderBottomColor: colors.warning + "44",
+              }}
+            >
+              <Text style={{ color: colors.warning, fontFamily: "Inter_700Bold", fontSize: 14 }}>
+                Processing finished with some errors
+              </Text>
+              <Text style={{ color: colors.foreground, fontFamily: "Inter_500Medium", fontSize: 13 }}>
+                {jobSummary.matchedParts} part{jobSummary.matchedParts !== 1 ? "s" : ""} updated across {jobSummary.processedPages}{jobSummary.totalPages != null ? ` of ${jobSummary.totalPages}` : ""} pages
+                {jobSummary.imagesMatched > 0 ? `, ${jobSummary.imagesMatched} images matched` : ""}.
+              </Text>
+              <Text style={{ color: colors.mutedForeground, fontFamily: "Inter_400Regular", fontSize: 12, lineHeight: 17 }}>
+                {jobSummary.errorMessage ?? "Some catalog images could not be saved. Successful inventory updates are available to review."}
+              </Text>
+            </View>
+          ) : null}
+
           {/* Job-specific extraction summary banner */}
           {jobId && jobSummary ? (
             <View style={[s.extractionBanner, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>

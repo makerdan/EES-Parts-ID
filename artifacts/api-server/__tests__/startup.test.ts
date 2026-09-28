@@ -26,13 +26,18 @@ afterAll(() => {
 });
 
 // ── Logger mock ───────────────────────────────────────────────────────────────
+const mockLoggerError = jest.fn();
+const mockBoundedErrorDiagnostic = jest.fn((error: unknown) => ({
+  message: error instanceof Error ? error.message : String(error),
+}));
 jest.mock("../src/lib/logger", () => ({
   logger: {
     info: jest.fn(),
     warn: jest.fn(),
-    error: jest.fn(),
+    error: mockLoggerError,
     debug: jest.fn(),
   },
+  boundedErrorDiagnostic: mockBoundedErrorDiagnostic,
 }));
 
 // ── Express app mock ──────────────────────────────────────────────────────────
@@ -54,9 +59,19 @@ jest.mock("../src/lib/aiProvider", () => ({
   probeActivePoeModels: mockProbeActivePoeModels,
 }));
 
+const mockRecoverCatalogPdfUploadSessions = jest.fn();
+jest.mock("../src/routes/catalogPdfUpload", () => ({
+  recoverCatalogPdfUploadSessions: mockRecoverCatalogPdfUploadSessions,
+}));
+
 // ── readiness mock ────────────────────────────────────────────────────────────
 const mockCheckRequiredSchema = jest.fn();
+const mockStartupSchemaMaxAttempts = 5;
+const mockStartupSchemaProbeTimeoutMs = 4_000;
+const mockStartupSchemaRetryDelayMs = 100;
+type MockStartupStatus = "pending" | "timed_out";
 const mockAppReadiness = {
+  get: jest.fn((): { status: MockStartupStatus } => ({ status: "pending" })),
   reset: jest.fn(),
   markReady: jest.fn(),
   markTimedOut: jest.fn(),
@@ -65,6 +80,10 @@ const mockAppReadiness = {
 jest.mock("../src/lib/readiness", () => ({
   appReadiness: mockAppReadiness,
   checkRequiredSchema: mockCheckRequiredSchema,
+  STARTUP_MIGRATIONS_TIMEOUT_MS: 25_000,
+  STARTUP_SCHEMA_MAX_ATTEMPTS: mockStartupSchemaMaxAttempts,
+  STARTUP_SCHEMA_PROBE_TIMEOUT_MS: mockStartupSchemaProbeTimeoutMs,
+  STARTUP_SCHEMA_RETRY_DELAY_MS: mockStartupSchemaRetryDelayMs,
 }));
 
 // ── @workspace/db mock (fluent-chain pattern from aiProvider.test.ts) ─────────
@@ -73,6 +92,8 @@ const mockUpdateWhere = jest.fn(() => ({ returning: mockReturning }));
 const mockSet = jest.fn(() => ({ where: mockUpdateWhere }));
 const mockUpdate = jest.fn(() => ({ set: mockSet }));
 const mockExecute = jest.fn().mockResolvedValue({ rows: [{ usable: true }] });
+const mockPoolRelease = jest.fn();
+const mockPoolConnect = jest.fn();
 const mockSelectWhere = jest.fn().mockResolvedValue([]);
 const mockSelectFrom = jest.fn(() => ({
   where: mockSelectWhere,
@@ -85,6 +106,9 @@ jest.mock("@workspace/db", () => ({
     update: mockUpdate,
     execute: mockExecute,
     select: mockSelect,
+  },
+  pool: {
+    connect: mockPoolConnect,
   },
   catalogPdfJobTable: {
     status: "status_col",
@@ -112,7 +136,10 @@ jest.mock("drizzle-orm", () => ({
   and: jest.fn(),
   eq: jest.fn(),
   inArray: jest.fn(),
+  isNull: jest.fn(),
   lt: jest.fn(),
+  lte: jest.fn(),
+  or: jest.fn(),
   sql: jest.fn(),
 }));
 
@@ -150,7 +177,10 @@ beforeEach(() => {
   // Default: both helpers resolve immediately (overridden per-test as needed)
   mockInitProvider.mockResolvedValue(undefined);
   mockProbeActivePoeModels.mockResolvedValue(undefined);
+  mockRecoverCatalogPdfUploadSessions.mockResolvedValue(undefined);
   mockCheckRequiredSchema.mockResolvedValue(true);
+  mockAppReadiness.get.mockReturnValue({ status: "pending" });
+  mockPoolConnect.mockResolvedValue({ release: mockPoolRelease });
   mockStartServer.mockResolvedValue({
     close: (callback: () => void) => callback(),
   });
@@ -231,17 +261,145 @@ describe("server startup sequence (src/index.ts)", () => {
     expect(mockStartServer).toHaveBeenCalledTimes(1);
   });
 
-  it("marks readiness failed when the required schema is unavailable", async () => {
-    const { promise: failedGate, resolve: resolveFailed } = makeGate();
-    mockCheckRequiredSchema.mockResolvedValueOnce(false);
-    mockAppReadiness.markFailed.mockImplementationOnce(resolveFailed);
+  it("keeps readiness failed after bounded retries when required schema stays unavailable", async () => {
+    jest.useFakeTimers();
+    try {
+      const { promise: failedGate, resolve: resolveFailed } = makeGate();
+      const { promise: probeStarted, resolve: resolveProbeStarted } = makeGate();
+      mockCheckRequiredSchema.mockImplementation(() => {
+        resolveProbeStarted();
+        return Promise.resolve(false);
+      });
+      mockAppReadiness.markFailed.mockImplementationOnce(resolveFailed);
+
+      loadIndex();
+      await probeStarted;
+      await jest.advanceTimersByTimeAsync(
+        mockStartupSchemaRetryDelayMs * (mockStartupSchemaMaxAttempts - 1),
+      );
+      await failedGate;
+
+      expect(mockCheckRequiredSchema).toHaveBeenCalledTimes(
+        mockStartupSchemaMaxAttempts,
+      );
+      expect(mockAppReadiness.markFailed).toHaveBeenCalledTimes(1);
+      expect(mockAppReadiness.markReady).not.toHaveBeenCalled();
+      expect(mockLoggerError).toHaveBeenCalledWith(
+        {
+          err: new Error("Required application schema is unavailable"),
+        },
+        "Required startup initialization failed",
+      );
+      expect(JSON.stringify(mockLoggerError.mock.calls)).not.toMatch(
+        /inventory|users|admin_preferences|warehouse_zone|to_regclass/i,
+      );
+      expect(mockStartServer).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("cancels pending schema probes and releases each acquired client", async () => {
+    jest.useFakeTimers();
+    try {
+      const { promise: failedGate, resolve: resolveFailed } = makeGate();
+      const { promise: probeStarted, resolve: resolveProbeStarted } = makeGate();
+      mockCheckRequiredSchema.mockImplementation(() => {
+        resolveProbeStarted();
+        return new Promise<boolean>(() => undefined);
+      });
+      mockAppReadiness.markFailed.mockImplementationOnce(resolveFailed);
+
+      loadIndex();
+      await probeStarted;
+
+      for (
+        let attempt = 0;
+        attempt < mockStartupSchemaMaxAttempts;
+        attempt += 1
+      ) {
+        await jest.advanceTimersByTimeAsync(
+          mockStartupSchemaProbeTimeoutMs,
+        );
+        if (attempt < mockStartupSchemaMaxAttempts - 1) {
+          await jest.advanceTimersByTimeAsync(mockStartupSchemaRetryDelayMs);
+        }
+      }
+
+      await failedGate;
+      expect(mockCheckRequiredSchema).toHaveBeenCalledTimes(
+        mockStartupSchemaMaxAttempts,
+      );
+      expect(mockPoolRelease).toHaveBeenCalledTimes(
+        mockStartupSchemaMaxAttempts,
+      );
+      expect(mockPoolRelease).toHaveBeenCalledWith(expect.any(Error));
+      expect(mockAppReadiness.markReady).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("recovers readiness within five seconds after a timed-out schema outage", async () => {
+    jest.useFakeTimers();
+    try {
+      const { promise: outageProbeStarted, resolve: resolveOutageProbeStarted } =
+        makeGate();
+      const {
+        promise: recoveryProbeStarted,
+        resolve: resolveRecoveryProbeStarted,
+      } = makeGate();
+      let probeCount = 0;
+      mockCheckRequiredSchema.mockImplementation(() => {
+        probeCount += 1;
+        if (probeCount === 1) {
+          resolveOutageProbeStarted();
+          return new Promise<boolean>(() => undefined);
+        }
+        resolveRecoveryProbeStarted();
+        return Promise.resolve(true);
+      });
+
+      loadIndex();
+      await outageProbeStarted;
+
+      const recoveryBudgetMs = mockStartupSchemaProbeTimeoutMs +
+        mockStartupSchemaRetryDelayMs;
+      expect(recoveryBudgetMs).toBeLessThan(5_000);
+      await jest.advanceTimersByTimeAsync(recoveryBudgetMs);
+      await recoveryProbeStarted;
+      await jest.advanceTimersByTimeAsync(1);
+
+      expect(mockCheckRequiredSchema).toHaveBeenCalledTimes(2);
+      expect(mockPoolRelease).toHaveBeenNthCalledWith(1, expect.any(Error));
+      expect(mockPoolRelease).toHaveBeenNthCalledWith(2, undefined);
+      expect(mockAppReadiness.markFailed).not.toHaveBeenCalled();
+      expect(mockAppReadiness.markReady).toHaveBeenCalledTimes(1);
+      expect(mockStartServer).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("does not mark readiness ready when startup finishes after the readiness deadline", async () => {
+    const { promise: schemaGate, resolve: resolveSchema } = makeGate();
+    const { promise: probeStarted, resolve: resolveProbeStarted } = makeGate();
+    let readinessStatus: "pending" | "timed_out" = "pending";
+    mockAppReadiness.get.mockImplementation(() => ({ status: readinessStatus }));
+    mockAppReadiness.markTimedOut.mockImplementation(() => {
+      readinessStatus = "timed_out";
+    });
+    mockCheckRequiredSchema.mockImplementation(() => {
+      resolveProbeStarted();
+      return schemaGate.then(() => true);
+    });
 
     loadIndex();
-    await failedGate;
+    await probeStarted;
+    mockAppReadiness.markTimedOut();
+    resolveSchema();
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(mockCheckRequiredSchema).toHaveBeenCalledTimes(1);
-    expect(mockAppReadiness.markFailed).toHaveBeenCalledTimes(1);
     expect(mockAppReadiness.markReady).not.toHaveBeenCalled();
-    expect(mockStartServer).toHaveBeenCalledTimes(1);
   });
 });

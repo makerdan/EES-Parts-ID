@@ -12,6 +12,12 @@
  *   ✓ POST /api/data with JSON body → stub receives the full body unchanged.
  *   ✓ Authorization header is forwarded to the stub unchanged.
  *   ✓ Response headers from the stub reach the client.
+ *   ✓ Downstream disconnect before upstream acceptance → the upstream request/socket closes.
+ *   ✓ Downstream disconnect after response chunks begin → the upstream response/socket closes.
+ *   ✓ Active response chunks keep streaming beyond the initial timeout.
+ *   ✓ Slow downstream consumption preserves ordered multi-chunk responses and cleanup.
+ *   ✓ Stalled upstream → bounded 504 JSON response and upstream cleanup.
+ *   ✓ Upstream closes before response completion → bounded downstream close and cleanup.
  *   ✓ API server down → 502 JSON response, serve.js does not crash.
  *
  * Exit: 0 on all-pass, 1 on any failure.
@@ -19,9 +25,11 @@
 
 import http from "node:http";
 import net from "node:net";
+import fs from "node:fs";
+import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import assert from "node:assert/strict";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -31,6 +39,10 @@ const SERVER_CLOSE_TIMEOUT_MS = 2_000;
 const CHILD_CLOSE_TIMEOUT_MS = 2_000;
 const SOCKETS = Symbol("owned sockets");
 const CLOSE_PROMISE = Symbol("close promise");
+const BACKPRESSURE_CHUNKS = Array.from({ length: 8 }, (_, index) => {
+  const prefix = `backpressure chunk ${index}\n`;
+  return prefix + "x".repeat(64 * 1024 - Buffer.byteLength(prefix));
+});
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -178,6 +190,64 @@ function sendRequest(opts) {
   });
 }
 
+/** Consume a response one pause-delimited read at a time. */
+function sendSlowRequest(opts) {
+  return new Promise((ok, fail) => {
+    const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
+    const delayMs = opts.delayMs;
+    let response;
+    let settled = false;
+    let pauseTimer;
+    const timeoutId = setTimeout(() => {
+      const error = new Error(
+        `slow HTTP request ${opts.method ?? "GET"} ${opts.path} timed out after ${timeoutMs} ms`,
+      );
+      response?.destroy(error);
+      req.destroy(error);
+      finish(fail, error);
+    }, timeoutMs);
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      clearTimeout(pauseTimer);
+      callback(value);
+    };
+    const req = http.get(
+      {
+        hostname: "127.0.0.1",
+        port: opts.port,
+        path: opts.path,
+        method: opts.method ?? "GET",
+        headers: { connection: "close" },
+        agent: false,
+      },
+      (res) => {
+        response = res;
+        const chunks = [];
+        res.on("data", (chunk) => {
+          chunks.push(chunk);
+          res.pause();
+          clearTimeout(pauseTimer);
+          pauseTimer = setTimeout(() => {
+            pauseTimer = undefined;
+            res.resume();
+          }, delayMs);
+        });
+        res.on("end", () =>
+          finish(ok, {
+            status: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks).toString("utf8"),
+          }),
+        );
+        res.on("error", (error) => finish(fail, error));
+      },
+    );
+    req.on("error", (error) => finish(fail, error));
+  });
+}
+
 function killProcessGroup(child, signal) {
   if (!child?.pid) return;
   try {
@@ -228,6 +298,33 @@ async function waitFor(predicate, timeoutMs = 1000) {
   }
 }
 
+function makeStaticArtifactFixture() {
+  const staticRoot = fs.mkdtempSync(join(os.tmpdir(), "parts-id-serve-artifact-"));
+  const webJsRoot = join(staticRoot, "web", "_expo", "static", "js", "web");
+  fs.mkdirSync(webJsRoot, { recursive: true });
+  fs.mkdirSync(join(staticRoot, "ios"), { recursive: true });
+  fs.mkdirSync(join(staticRoot, "android"), { recursive: true });
+  fs.writeFileSync(join(staticRoot, "web", "index.html"), "<script src=\"bundle.js\"></script>\n");
+  fs.writeFileSync(join(staticRoot, "web", "metadata.json"), "{}\n");
+  fs.writeFileSync(join(staticRoot, "ios", "manifest.json"), "{}\n");
+  fs.writeFileSync(join(staticRoot, "android", "manifest.json"), "{}\n");
+  fs.writeFileSync(
+    join(webJsRoot, "entry.js"),
+    'const API = "https://parts-id.replit.app";\n',
+  );
+  fs.writeFileSync(
+    join(staticRoot, "build-metadata.json"),
+    JSON.stringify({
+      version: 1,
+      buildId: "proxy-test-build",
+      builtAt: new Date().toISOString(),
+      webEntry: "web/index.html",
+      manifests: ["ios/manifest.json", "android/manifest.json"],
+    }) + "\n",
+  );
+  return staticRoot;
+}
+
 // ─── tiny test runner ─────────────────────────────────────────────────────────
 
 let passed = 0;
@@ -253,16 +350,54 @@ async function main() {
   // ── 1. Stub API server ───────────────────────────────────────────────────
   /** Captured requests from the stub (for assertion in tests). */
   const captured = [];
-  let stalledRequestClosed = false;
+  let uploadRequestAccepted = false;
+  let uploadRequestCompleted = false;
+  let uploadRequestClosed = false;
+  let uploadRequestSocketClosed = false;
+  let streamChunkSent = false;
+  let streamResponseClosed = false;
+  let streamRequestSocketClosed = false;
+  let activeStreamChunkSent = false;
+  let activeStreamResponseClosed = false;
+  let backpressureResponseClosed = false;
+  let backpressureRequestSocketClosed = false;
+  let incompleteResponseClosed = false;
+  let incompleteRequestSocketClosed = false;
+  let stalledRequestReceived = false;
+  let stalledResponseClosed = false;
   let stubServer;
   let child;
   let exitCode = 0;
+  const staticRoot = makeStaticArtifactFixture();
 
   try {
     const stub = await listenRandom((req, res) => {
       const chunks = [];
-      req.on("data", (c) => chunks.push(c));
+      req.on("data", (c) => {
+        chunks.push(c);
+      });
+      if (req.url === "/api/upload") {
+        uploadRequestAccepted = true;
+        req.on("close", () => {
+          uploadRequestClosed = true;
+        });
+        req.socket.on("close", () => {
+          uploadRequestSocketClosed = true;
+        });
+        req.pause();
+        const resumeTimer = setTimeout(() => req.resume(), 500);
+        req.once("close", () => clearTimeout(resumeTimer));
+      }
+      if (req.url === "/api/stream") {
+        res.on("close", () => {
+          streamResponseClosed = true;
+        });
+        req.socket.on("close", () => {
+          streamRequestSocketClosed = true;
+        });
+      }
       req.on("end", () => {
+        if (req.url === "/api/upload") uploadRequestCompleted = true;
         const bodyStr = Buffer.concat(chunks).toString("utf8");
         captured.push({
           method: req.method,
@@ -272,6 +407,82 @@ async function main() {
         });
 
         if (req.url === "/api/stall") {
+          stalledRequestReceived = true;
+          res.on("close", () => {
+            stalledResponseClosed = true;
+          });
+          return;
+        }
+
+        if (req.url === "/api/stream") {
+          res.writeHead(200, {
+            "content-type": "text/plain",
+            "transfer-encoding": "chunked",
+          });
+          res.write("first response chunk");
+          streamChunkSent = true;
+          return;
+        }
+
+        if (req.url === "/api/active-stream") {
+          res.writeHead(200, {
+            "content-type": "text/plain",
+            "transfer-encoding": "chunked",
+          });
+          let chunkNumber = 0;
+          const interval = setInterval(() => {
+            chunkNumber++;
+            activeStreamChunkSent = true;
+            res.write(`active response chunk ${chunkNumber}\n`);
+            if (chunkNumber === 5) {
+              clearInterval(interval);
+              res.end("active response complete\n");
+            }
+          }, 60);
+          res.on("close", () => {
+            activeStreamResponseClosed = true;
+            clearInterval(interval);
+          });
+          return;
+        }
+
+        if (req.url === "/api/backpressure-stream") {
+          res.writeHead(200, {
+            "content-type": "text/plain",
+            "transfer-encoding": "chunked",
+          });
+          res.on("close", () => {
+            backpressureResponseClosed = true;
+          });
+          req.socket.on("close", () => {
+            backpressureRequestSocketClosed = true;
+          });
+          let chunkNumber = 0;
+          const interval = setInterval(() => {
+            res.write(BACKPRESSURE_CHUNKS[chunkNumber]);
+            chunkNumber++;
+            if (chunkNumber === BACKPRESSURE_CHUNKS.length) {
+              clearInterval(interval);
+              res.end();
+            }
+          }, 25);
+          res.on("close", () => clearInterval(interval));
+          return;
+        }
+
+        if (req.url === "/api/incomplete") {
+          res.writeHead(200, {
+            "content-type": "text/plain",
+            "transfer-encoding": "chunked",
+          });
+          res.write("partial response");
+          setTimeout(() => res.destroy(), 20);
+          res.on("close", () => {
+            incompleteResponseClosed = true;
+          });
+          req.socket.on("close", () => {
+            incompleteRequestSocketClosed = true;
+          });
           return;
         }
 
@@ -301,6 +512,9 @@ async function main() {
         ...process.env,
         PORT: String(staticPort),
         API_SERVER_PORT: String(stub.port),
+        PARTS_ID_STATIC_ROOT: staticRoot,
+        PARTS_ID_SERVER_MODE: "production",
+        API_PROXY_TIMEOUT_MS: "150",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -374,22 +588,144 @@ async function main() {
       );
     });
 
-    // 3e. Incomplete response → bounded request failure and socket cleanup
-    await test("incomplete proxied response → request times out and socket closes", async () => {
-      await assert.rejects(
-        via({
-          path: "/api/stall",
-          timeoutMs: 100,
-          onRequestClose: () => {
-            stalledRequestClosed = true;
-          },
-        }),
-        (error) => error.code === "ETIMEDOUT" && /\/api\/stall/.test(error.message),
+    // 3e. Downstream disconnect before upstream acceptance → upstream request/socket closes
+    await test("downstream disconnect before upstream acceptance aborts the owned upstream request", async () => {
+      let unexpectedResponse = false;
+      const downstream = http.request({
+        hostname: "127.0.0.1",
+        port: staticPort,
+        path: "/api/upload",
+        method: "POST",
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": "1048576",
+        },
+      });
+      const downstreamClosed = new Promise((resolvePromise) => {
+        downstream.once("close", resolvePromise);
+        downstream.once("error", resolvePromise);
+      });
+      downstream.on("response", (res) => {
+        unexpectedResponse = true;
+        res.resume();
+      });
+
+      downstream.write(Buffer.from("partial upload"));
+      await waitFor(() => uploadRequestAccepted);
+      downstream.destroy();
+      await downstreamClosed;
+      assert.equal(unexpectedResponse, false, "downstream request unexpectedly received a response");
+      await waitFor(() => uploadRequestClosed && uploadRequestSocketClosed);
+      assert.equal(
+        uploadRequestCompleted,
+        false,
+        "upstream request unexpectedly completed its body before disconnect",
       );
-      await waitFor(() => stalledRequestClosed);
     });
 
-    // 3f. Unexpected harness errors still clean up owned resources
+    // 3f. Downstream disconnect after response streaming begins → upstream response/socket closes
+    await test("downstream disconnect after response chunks begin aborts the upstream response", async () => {
+      let downstreamResponse;
+      const downstream = http.get({
+        hostname: "127.0.0.1",
+        port: staticPort,
+        path: "/api/stream",
+      });
+      const downstreamClosed = new Promise((resolvePromise, rejectPromise) => {
+        downstream.once("close", resolvePromise);
+        downstream.once("error", rejectPromise);
+      });
+      downstream.once("response", (res) => {
+        downstreamResponse = res;
+        res.once("data", () => downstream.destroy());
+        res.on("error", () => {});
+      });
+      await waitFor(() => streamChunkSent);
+      await downstreamClosed;
+      await waitFor(() => streamResponseClosed && streamRequestSocketClosed);
+      assert.ok(downstreamResponse, "downstream did not receive response headers");
+
+      const health = await via({ path: "/api/health" });
+      assert.equal(health.status, 200, "proxy did not serve a subsequent request");
+    });
+
+    // 3g. Active chunks must re-arm the response inactivity deadline.
+    await test("active response chunks keep a valid stream alive past the initial timeout", async () => {
+      const activeResponse = via({ path: "/api/active-stream", timeoutMs: 2_000 });
+      await waitFor(() => activeStreamChunkSent);
+      const idleResponse = await via({ path: "/api/stall", timeoutMs: 2_000 });
+      const active = await activeResponse;
+
+      assert.equal(active.status, 200, `expected active stream 200, got ${active.status}`);
+      assert.match(active.body, /active response complete/);
+      assert.equal(idleResponse.status, 504, `expected idle request 504, got ${idleResponse.status}`);
+      await waitFor(() => stalledRequestReceived && stalledResponseClosed);
+      assert.equal(activeStreamResponseClosed, true, "active stream did not close cleanly");
+    });
+
+    // 3h. Slow downstream consumption must not turn backpressure into an idle timeout.
+    await test("slow downstream consumption preserves ordered chunks and releases sockets", async () => {
+      const res = await sendSlowRequest({
+        port: staticPort,
+        path: "/api/backpressure-stream",
+        delayMs: 220,
+        timeoutMs: 5_000,
+      });
+      assert.equal(res.status, 200, `expected backpressure stream 200, got ${res.status}`);
+      assert.equal(
+        res.body,
+        BACKPRESSURE_CHUNKS.join(""),
+        "slow downstream consumer received missing, duplicated, or reordered chunks",
+      );
+      await waitFor(() => backpressureResponseClosed && backpressureRequestSocketClosed);
+    });
+
+    // 3i. Incomplete response → bounded downstream close and socket cleanup.
+    await test("upstream close before completion closes downstream and releases sockets", async () => {
+      const startedAt = Date.now();
+      let downstreamClosed = false;
+      const incomplete = http.get({
+        hostname: "127.0.0.1",
+        port: staticPort,
+        path: "/api/incomplete",
+      });
+      const incompleteClosed = new Promise((resolvePromise, rejectPromise) => {
+        incomplete.once("response", (res) => {
+          res.resume();
+          res.once("close", () => resolvePromise());
+          res.on("error", () => {});
+        });
+        incomplete.once("close", () => {
+          downstreamClosed = true;
+        });
+        incomplete.once("error", (error) => {
+          if (!downstreamClosed) rejectPromise(error);
+        });
+      });
+      await incompleteClosed;
+      assert.ok(
+        Date.now() - startedAt < 1_000,
+        "incomplete upstream response was not bounded",
+      );
+      await waitFor(() => incompleteResponseClosed && incompleteRequestSocketClosed);
+
+      const health = await via({ path: "/api/health" });
+      assert.equal(health.status, 200, "proxy did not serve health after incomplete response");
+    });
+
+    // 3j. Incomplete response → bounded 504 JSON response and socket cleanup
+    await test("stalled upstream → bounded 504 JSON response and socket cleanup", async () => {
+      const res = await via({
+        path: "/api/stall",
+        timeoutMs: 2_000,
+      });
+      assert.equal(res.status, 504, `expected 504, got ${res.status}`);
+      assert.deepEqual(JSON.parse(res.body), { error: "API server timed out" });
+      await waitFor(() => stalledRequestReceived);
+      await waitFor(() => stalledResponseClosed);
+    });
+
+    // 3k. Unexpected harness errors still clean up owned resources
     await test("unexpected harness errors still clean up owned resources", async () => {
       let probeServer;
       let probeChild;
@@ -421,7 +757,7 @@ async function main() {
       );
     });
 
-    // 3g. API server down → 502 JSON, serve.js stays alive
+    // 3l. API server down → 502 JSON, serve.js stays alive
     await test("API server unavailable → 502 JSON response, serve.js stays alive", async () => {
       // Shut the stub down to simulate the API server being unreachable.
       await closeServer(stubServer);
@@ -453,6 +789,7 @@ async function main() {
   } finally {
     await stopChild(child);
     await closeServer(stubServer);
+    fs.rmSync(staticRoot, { recursive: true, force: true });
   }
 
   process.exitCode = exitCode;

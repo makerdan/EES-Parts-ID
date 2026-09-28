@@ -66,9 +66,14 @@ jest.mock("@/utils/helpApi", () => ({
   },
 }));
 
-jest.mock("@clerk/expo", () => ({
-  useAuth: () => mockAuth,
-}));
+jest.mock("@clerk/expo", () => {
+  const {
+    assertClerkMockContract,
+    createClerkExpoMock,
+  } = jest.requireActual("../__mocks__/clerk-expo");
+  const clerkMock = createClerkExpoMock({ useAuth: () => mockAuth });
+  return assertClerkMockContract(clerkMock, ["useAuth"], "helpScreen");
+});
 
 import HelpScreen from "@/app/(tabs)/help";
 import { readCachedGeneralHelp, readHelpOrientationDismissed, saveHelpOrientationDismissed } from "@/utils/helpStorage";

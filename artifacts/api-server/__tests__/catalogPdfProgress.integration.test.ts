@@ -57,6 +57,7 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, catalogPdfJobTable, inventoryTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
 import { matchCatalogNumber } from "../src/utils/catalogMatcher";
@@ -188,14 +189,18 @@ afterEach(() => {
 
 afterAll(async () => {
   if (seededJobIds.length > 0) {
-    await db
-      .delete(catalogPdfJobTable)
-      .where(inArray(catalogPdfJobTable.id, seededJobIds));
+    await bestEffortFixtureCleanup("catalog PDF progress jobs", async () => {
+      await db
+        .delete(catalogPdfJobTable)
+        .where(inArray(catalogPdfJobTable.id, seededJobIds));
+    });
   }
   if (seededInventoryIds.length > 0) {
-    await db
-      .delete(inventoryTable)
-      .where(inArray(inventoryTable.id, seededInventoryIds));
+    await bestEffortFixtureCleanup("catalog PDF progress inventory", async () => {
+      await db
+        .delete(inventoryTable)
+        .where(inArray(inventoryTable.id, seededInventoryIds));
+    });
   }
 }, 15_000);
 
@@ -456,7 +461,7 @@ describe("PDF job status endpoint — DB-accurate counts after simulated restart
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("PDF job failure — error message persisted to DB", () => {
-  it("stores status=failed and the thrown error message when extractPdfPages throws", async () => {
+  it("stores status=failed and a bounded classification when extractPdfPages throws", async () => {
     const errorText = "Simulated PDF extraction failure";
     mockExtractPdfPages.mockRejectedValueOnce(new Error(errorText));
 
@@ -465,10 +470,11 @@ describe("PDF job failure — error message persisted to DB", () => {
 
     const row = await readJobFailure(Number(jobId));
     expect(row.status).toBe("failed");
-    expect(row.errorMessage).toBe(errorText);
+    expect(row.errorMessage).toBe("Error");
+    expect(row.errorMessage).not.toContain(errorText);
   });
 
-  it("stores status=failed and the thrown error message when extractCatalogPage throws mid-job", async () => {
+  it("stores status=failed and a bounded classification when extractCatalogPage throws mid-job", async () => {
     const errorText = "Simulated catalog extraction failure";
 
     mockExtractPdfPages.mockResolvedValueOnce([
@@ -481,10 +487,11 @@ describe("PDF job failure — error message persisted to DB", () => {
 
     const row = await readJobFailure(Number(jobId));
     expect(row.status).toBe("failed");
-    expect(row.errorMessage).toBe(errorText);
+    expect(row.errorMessage).toBe("Error");
+    expect(row.errorMessage).not.toContain(errorText);
   });
 
-  it("stores a non-null errorMessage that matches the thrown Error message", async () => {
+  it("stores a non-null bounded error classification", async () => {
     const errorText = "Disk quota exceeded while reading PDF";
     mockExtractPdfPages.mockRejectedValueOnce(new Error(errorText));
 
@@ -493,10 +500,11 @@ describe("PDF job failure — error message persisted to DB", () => {
 
     const row = await readJobFailure(Number(jobId));
     expect(row.errorMessage).not.toBeNull();
-    expect(row.errorMessage).toMatch(errorText);
+    expect(row.errorMessage).toBe("Error");
+    expect(row.errorMessage).not.toContain(errorText);
   });
 
-  it("reflects status=failed and errorMessage in the status endpoint response after failure", async () => {
+  it("reflects status=failed without exposing caught-error text", async () => {
     const errorText = "Unexpected EOF in PDF stream";
     mockExtractPdfPages.mockRejectedValueOnce(new Error(errorText));
 
@@ -509,10 +517,11 @@ describe("PDF job failure — error message persisted to DB", () => {
       .expect(200);
 
     expect(res.body.status).toBe("failed");
-    expect(res.body.errorMessage).toBe(errorText);
+    expect(res.body.errorMessage).toBe("Error");
+    expect(JSON.stringify(res.body)).not.toContain(errorText);
   });
 
-  it("stores the string representation when a non-Error value is thrown", async () => {
+  it("normalizes non-Error thrown values", async () => {
     mockExtractPdfPages.mockRejectedValueOnce("plain string error");
 
     const jobId = await startJob();
@@ -520,6 +529,6 @@ describe("PDF job failure — error message persisted to DB", () => {
 
     const row = await readJobFailure(Number(jobId));
     expect(row.status).toBe("failed");
-    expect(row.errorMessage).toBe("plain string error");
+    expect(row.errorMessage).toBe("UnknownError");
   });
 });

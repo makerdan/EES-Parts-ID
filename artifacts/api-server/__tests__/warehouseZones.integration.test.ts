@@ -31,7 +31,7 @@ import {
   workerQualifiedUserId,
 } from "./helpers/testDb";
 import { db, inventoryTable, warehouseZoneTable } from "@workspace/db";
-import { inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { UpdateWarehouseZoneResponse } from "@workspace/api-zod";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -210,6 +210,23 @@ describe("POST /api/warehouse-zones", () => {
 
     expect(res.body).toHaveProperty("error");
   });
+
+  it.each([
+    ["sectionNum", { sectionNum: 1.5 }],
+    ["sortOrder", { sortOrder: 2.5 }],
+  ])("rejects a fractional %s before creating a zone", async (_field, fractionalField) => {
+    await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ ...BASE_ZONE, ...fractionalField })
+      .expect(400);
+
+    const rows = await db
+      .select({ id: warehouseZoneTable.id })
+      .from(warehouseZoneTable)
+      .where(inArray(warehouseZoneTable.aisleId, [BASE_AISLE]));
+    expect(rows).toEqual([]);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -294,6 +311,36 @@ describe("PATCH /api/warehouse-zones/:id", () => {
     expect(res.body).toHaveProperty("error");
   });
 
+  it("rejects malformed and out-of-range ids without updating the numeric-prefix zone", async () => {
+    const create = await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send(BASE_ZONE)
+      .expect(201);
+    const id: number = create.body.zone.id;
+
+    for (const malformed of [
+      `${id}garbage`, `${id}.5`, `${id}e2`, `+${id}`, `-${id}`,
+      "0", "2147483648", "9007199254740992",
+    ]) {
+      await supertest(app)
+        .patch(`/api/warehouse-zones/${malformed}`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ svgX: 99 })
+        .expect(400);
+      const [stored] = await db.select().from(warehouseZoneTable).where(eq(warehouseZoneTable.id, id));
+      expect(stored?.svgX).toBe(BASE_ZONE.svgX);
+    }
+
+    await supertest(app)
+      .patch(`/api/warehouse-zones/00${id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ svgX: 99 })
+      .expect(200);
+    const [stored] = await db.select().from(warehouseZoneTable).where(eq(warehouseZoneTable.id, id));
+    expect(stored?.svgX).toBe(99);
+  });
+
   it("returns 400 when sectionNum is not a number in the update", async () => {
     const create = await supertest(app)
       .post("/api/warehouse-zones")
@@ -310,6 +357,33 @@ describe("PATCH /api/warehouse-zones/:id", () => {
       .expect(400);
 
     expect(res.body).toHaveProperty("error");
+  });
+
+  it.each([
+    ["sectionNum", { sectionNum: 3.5 }],
+    ["sortOrder", { sortOrder: 4.5 }],
+  ])("rejects a fractional %s without changing the zone", async (_field, fractionalField) => {
+    const create = await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ ...BASE_ZONE, sectionNum: 3, sortOrder: 4 })
+      .expect(201);
+    const id: number = create.body.zone.id;
+
+    await supertest(app)
+      .patch(`/api/warehouse-zones/${id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send(fractionalField)
+      .expect(400);
+
+    const [stored] = await db
+      .select({
+        sectionNum: warehouseZoneTable.sectionNum,
+        sortOrder: warehouseZoneTable.sortOrder,
+      })
+      .from(warehouseZoneTable)
+      .where(sql`${warehouseZoneTable.id} = ${id}`);
+    expect(stored).toEqual({ sectionNum: 3, sortOrder: 4 });
   });
 });
 
@@ -391,6 +465,34 @@ describe("DELETE /api/warehouse-zones/:id", () => {
       .expect(400);
 
     expect(res.body).toHaveProperty("error");
+  });
+
+  it("rejects malformed and out-of-range ids without deleting the numeric-prefix zone", async () => {
+    const create = await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send(BASE_ZONE)
+      .expect(201);
+    const id: number = create.body.zone.id;
+
+    for (const malformed of [
+      `${id}garbage`, `${id}.5`, `${id}e2`, `+${id}`, `-${id}`,
+      "0", "2147483648", "9007199254740992",
+    ]) {
+      await supertest(app)
+        .delete(`/api/warehouse-zones/${malformed}`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(400);
+      const [stored] = await db.select().from(warehouseZoneTable).where(eq(warehouseZoneTable.id, id));
+      expect(stored?.aisleId).toBe(BASE_AISLE);
+    }
+
+    await supertest(app)
+      .delete(`/api/warehouse-zones/${id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    const rows = await db.select().from(warehouseZoneTable).where(eq(warehouseZoneTable.id, id));
+    expect(rows).toEqual([]);
   });
 });
 

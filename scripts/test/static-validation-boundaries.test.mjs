@@ -46,11 +46,23 @@ try {
   );
   writeFileSync(
     join(fixtureRoot, "lib", "server-provider", "src", "client.mjs"),
-    "export const providerSecret = process.env.PROVIDER_SECRET;\n",
+    [
+      "export const providerSecret = process.env.PROVIDER_SECRET;",
+      "const providerKey = 'PROVIDER_SECRET';",
+      "export const dynamicProviderSecret = process.env[providerKey];",
+      "",
+    ].join("\n"),
   );
-  writeFileSync(join(fixtureRoot, ".env.example"), "");
+  writeFileSync(join(fixtureRoot, ".env.example"), "PROVIDER_SECRET=\n");
   const envResult = checkEnvVars(fixtureRoot);
-  assert.deepEqual(envResult.undocumented, ["API_SECRET", "PROVIDER_SECRET"]);
+  assert.deepEqual(envResult.undocumented, ["API_SECRET"]);
+  assert.equal(envResult.dynamicAccesses.length, 1);
+  assert.equal(envResult.dynamicAccesses[0].line, 3);
+  assert.match(envResult.dynamicAccesses[0].file, /client\.mjs$/);
+  assert.equal(
+    envResult.dynamicAccesses[0].expression,
+    "process.env[providerKey]",
+  );
   assert.ok(envResult.scannedFiles.some((file) => file.endsWith("client.mjs")));
   console.log("static validation boundary fixtures passed");
 } finally {

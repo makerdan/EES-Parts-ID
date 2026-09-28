@@ -67,6 +67,7 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { and, count, eq, inArray } from "drizzle-orm";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
 
@@ -151,9 +152,11 @@ afterEach(() => {
 
 afterAll(async () => {
   if (seededJobIds.length > 0) {
-    await db
-      .delete(catalogPdfJobTable)
-      .where(inArray(catalogPdfJobTable.id, seededJobIds));
+    await bestEffortFixtureCleanup("catalog PDF duplicate-chunk jobs", async () => {
+      await db
+        .delete(catalogPdfJobTable)
+        .where(inArray(catalogPdfJobTable.id, seededJobIds));
+    });
   }
 }, 15_000);
 

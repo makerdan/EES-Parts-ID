@@ -19,6 +19,9 @@ const VALID_TIERS = new Set(["test-fast", "test-standard", "test-standard-plus",
 const TIER_ORDER = ["test-fast", "test-standard", "test-standard-plus", "test-heavy"];
 const REQUIRED_INNER = ["**Command:**", "**Why:**", "**Do not escalate:**"];
 const PLACEHOLDER_PATTERNS = [
+  /\b(?:TBD|TODO)\b/i,
+  /\bFILL(?:\s+|-)?IN\b/i,
+  /<[^>\n]+>/i,
   /<replace with one-line justification>/i,
   /<exact command to run>/i,
   /<one-line justification/i,
@@ -52,9 +55,9 @@ if (DECLARED_TIER && !VALID_TIERS.has(DECLARED_TIER)) {
 
 function parseSections(content) {
   const sections = new Map();
-  const parts = content.split(/(?=^## |^# )/m);
+  const parts = content.split(/(?=^## )/m);
   for (const part of parts) {
-    const heading = part.match(/^#{1,2} (.+)/);
+    const heading = part.match(/^## ([^\n]+)$/m);
     if (!heading) continue;
     sections.set(heading[1].trim(), part.slice(part.indexOf("\n") + 1));
   }
@@ -62,10 +65,7 @@ function parseSections(content) {
 }
 
 function validationBody(sections) {
-  for (const [heading, body] of sections) {
-    if (heading === "Validation" || heading.startsWith("Validation ")) return body;
-  }
-  return null;
+  return sections.get("Validation") ?? null;
 }
 
 function analyseValidation(body) {
@@ -135,7 +135,7 @@ function targetFiles() {
 
 function ensurePreexisting(content) {
   const sections = parseSections(content);
-  if ([...sections.keys()].some((key) => key.startsWith("Pre-existing failures to ignore"))) return content;
+  if (sections.has("Pre-existing failures to ignore")) return content;
   return content.trimEnd() + "\n" + STUB_PREEXISTING;
 }
 
@@ -149,7 +149,7 @@ function ensureValidation(content) {
   if (analysis.missingLines.includes("**Command:**")) lines.push("**Command:** `test-standard`");
   if (analysis.missingLines.includes("**Why:**")) lines.push("**Why:** <replace with one-line justification>");
   if (analysis.missingLines.includes("**Do not escalate:**")) lines.push("**Do not escalate:** Run exactly this command. Pre-existing failures are not a reason to run a heavier tier.");
-  return content.replace(/^(## Validation\b[^\n]*\n)/m, `$1${lines.join("\n")}\n`);
+  return content.replace(/^(## Validation\n)/m, `$1${lines.join("\n")}\n`);
 }
 
 function analyseFile(filePath, mode) {
@@ -161,7 +161,7 @@ function analyseFile(filePath, mode) {
   }
   const sections = parseSections(content);
   const issues = [];
-  const hasPreexisting = [...sections.keys()].some((key) => key.startsWith("Pre-existing failures to ignore"));
+  const hasPreexisting = sections.has("Pre-existing failures to ignore");
   const body = validationBody(sections);
 
   if (mode === "strict") {

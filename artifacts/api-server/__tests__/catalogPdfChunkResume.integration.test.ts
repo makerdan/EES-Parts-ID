@@ -70,6 +70,7 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
 
@@ -141,7 +142,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (seededIds.length > 0) {
-    await db.delete(catalogPdfJobTable).where(inArray(catalogPdfJobTable.id, seededIds));
+    await bestEffortFixtureCleanup("catalog PDF chunk-resume jobs", async () => {
+      await db.delete(catalogPdfJobTable).where(inArray(catalogPdfJobTable.id, seededIds));
+    });
   }
 }, 15_000);
 
@@ -394,6 +397,8 @@ describe("GET /api/admin/catalog-pdf/:id/status — failedChunks field", () => {
       chunkJobId: String(child1),
       chunkIndex: 1,
     });
+    expect(res.body.errorMessage).toBe("UnknownError");
+    expect(JSON.stringify(res.body)).not.toContain("AI call timed out");
 
     // Successful child should not appear in failedChunks
     const ids = res.body.failedChunks.map((c: { chunkJobId: string }) => c.chunkJobId);

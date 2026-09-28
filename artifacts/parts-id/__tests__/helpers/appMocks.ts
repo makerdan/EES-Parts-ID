@@ -46,8 +46,6 @@ export function makeAppMock(overrides: Partial<AppContextValue> = {}): AppContex
     setPendingMeasureSearch:   jest.fn(),
     pendingInventorySearch:    null,
     setPendingInventorySearch: jest.fn(),
-    pendingLidarDims:          null,
-    setPendingLidarDims:       jest.fn(),
     textFontScale:             1.0,
     pinnedParts:               [],
     resumeProgress:            {},

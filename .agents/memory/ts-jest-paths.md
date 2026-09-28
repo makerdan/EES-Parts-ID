@@ -29,9 +29,6 @@ When `transform` in `jest.config.js` uses an inline tsconfig object like `{ tsco
 
 ## Corollary: pnpm-cached workspace packages can be stale
 
-When a local workspace package (e.g. `lidar-measure`) is updated, the copy under `node_modules/.pnpm/lidar-measure@file+...` may still reflect the old version. If the inline tsconfig `paths` does not point to the local `src/index`, ts-jest falls back to the stale cached copy and reports missing exports (`TS2305`).
+When a local workspace package is updated, its copy under `node_modules/.pnpm/` may still reflect an older version. If the inline tsconfig `paths` does not point to local source, ts-jest can fall back to that stale cached copy and report missing exports (`TS2305`).
 
-**Fix:** Always add local workspace packages to the ts-jest `paths` so type-checking hits the local source, not the pnpm cache:
-```js
-"lidar-measure": ["./modules/lidar-measure/src/index"],
-```
+**Fix:** Add local workspace packages to the ts-jest `paths` so type-checking resolves the current source rather than a cached package copy.

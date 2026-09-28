@@ -216,6 +216,14 @@ jest.mock("@/utils/searchHelpers", () => ({
 }));
 
 jest.mock("@/utils/useTrackScreen", () => ({ useTrackScreen: jest.fn() }));
+jest.mock("@/contexts/UserHistoryContext", () => ({
+  useUserHistory: () => ({
+    history: { queryHistory: [], viewedHistory: [], scanHistory: [] },
+    status: "ready",
+    recordQuery: jest.fn().mockResolvedValue(undefined),
+    recordViewed: jest.fn().mockResolvedValue(undefined),
+  }),
+}));
 
 jest.mock("@/utils/apiBase", () => ({ API_BASE: "http://localhost:3001" }));
 

@@ -25,6 +25,7 @@ node_modules/
 /backup/
 /dumps/
 /exports/
+/validation-runs/
 *_export.csv
 *_export.json
 *_backup.csv

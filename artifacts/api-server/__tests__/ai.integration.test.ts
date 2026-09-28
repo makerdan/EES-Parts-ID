@@ -95,14 +95,14 @@ jest.mock("../src/lib/poeBot", () => {
 import supertest from "supertest";
 import app from "../src/app";
 import { identifyLimiter } from "../src/lib/rateLimiter";
-import { workerQualifiedUserId } from "./helpers/testDb";
+import { ADMIN_TEST_USER_ID } from "./helpers/adminAuth";
 import { setTestEnv } from "./helpers/testEnv";
 
 // Minimal valid base64 string (1×1 white pixel JPEG)
 const TINY_BASE64_JPEG =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAABgUEB//EAB4QAAEEAgMAAAAAAAAAAAAAAAEAAgMREiExQf/EABUBAQEAAAAAAAAAAAAAAAAAAAID/8QAFxEBAQEBAAAAAAAAAAAAAAAAAQACEf/aAAwDAQACEQMRAD8AoN1tq+bNT5e1C7RERFk//9k=";
 
-const TEST_ADMIN_USER_ID = workerQualifiedUserId("jest-admin-user");
+const TEST_ADMIN_USER_ID = ADMIN_TEST_USER_ID;
 let restoreTestEnv: (() => void) | undefined;
 
 beforeAll(() => {
@@ -203,6 +203,30 @@ describe("POST /api/ai/identify", () => {
     expect(typeof res.body.manufacturerVerified).toBe("boolean");
     expect(res.body.manufacturerVerified).toBe(false);
     expect(res.body.detectedVendor).toBeNull();
+  });
+
+  it("validates manual fallback output before returning identify results", async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: '{"searchTerms":["switch"]}' } }],
+    });
+    const success = await supertest(app)
+      .post("/api/ai/identify")
+      .set("x-use-openai-fallback", "true")
+      .send({ images: [TINY_BASE64_JPEG] })
+      .expect(200);
+    expect(success.body.searchTerms).toContain("switch");
+    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({
+      model: expect.any(String),
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+
+    mockCreate.mockResolvedValueOnce({ choices: [{ message: { content: { unsafe: true } } }] });
+    const failure = await supertest(app)
+      .post("/api/ai/identify")
+      .set("x-use-openai-fallback", "true")
+      .send({ images: [TINY_BASE64_JPEG] });
+    expect(failure.status).toBeGreaterThanOrEqual(400);
+    expect(failure.body).not.toHaveProperty("searchTerms");
+    expect(JSON.stringify(failure.body)).not.toContain("unsafe");
   });
 
   it("returns 200 with empty defaults when the AI response is an empty object", async () => {

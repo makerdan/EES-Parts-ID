@@ -80,11 +80,18 @@ function parseRequestPath(data: Buffer | string): string {
 function startFakeUpstream(): Promise<{
   port: number;
   close: () => Promise<void>;
+  clerkProxyUrls: Map<string, string>;
 }> {
   return new Promise((resolve, reject) => {
+    const clerkProxyUrls = new Map<string, string>();
     const server = net.createServer((socket) => {
       socket.once("data", (data) => {
         const path = parseRequestPath(data);
+        const rawRequest = typeof data === "string" ? data : data.toString("utf8");
+        const proxyUrl = rawRequest.match(/^Clerk-Proxy-Url:\s*(.+)$/im)?.[1]?.trim();
+        if (proxyUrl) {
+          clerkProxyUrls.set(path, proxyUrl);
+        }
 
         if (path.includes("reset-content-length")) {
           // ── Streaming branch: send Content-Length, partial body, then reset ──
@@ -138,6 +145,7 @@ function startFakeUpstream(): Promise<{
       const { port } = server.address() as net.AddressInfo;
       resolve({
         port,
+        clerkProxyUrls,
         close: () => new Promise<void>((res) => server.close(() => res())),
       });
     });
@@ -200,6 +208,7 @@ function probe(
   port: number,
   subPath: string,
   timeoutMs = 2_000,
+  headers?: http.OutgoingHttpHeaders,
 ): Promise<RequestOutcome> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -223,7 +232,7 @@ function probe(
     }, timeoutMs);
 
     const req = http.get(
-      { host: "127.0.0.1", port, path: `/api/__clerk/${subPath}` },
+      { host: "127.0.0.1", port, path: `/api/__clerk/${subPath}`, headers },
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
@@ -358,6 +367,46 @@ async function main() {
       assert(
         newRejections === 0,
         `Scenario 3: no unhandled rejection in the proxy process (got ${newRejections})`,
+      );
+    }
+
+    // ── Scenario 4: Multi-valued forwarded protocol/host headers ──────────────
+    {
+      console.log(
+        "\n─── Scenario 4: multi-valued forwarded headers produce the public HTTPS URL ───",
+      );
+      const outcome = await probe(proxy.port, "proxy-multivalue", 2_000, {
+        "x-forwarded-proto": "https, http",
+        "x-forwarded-host": "public.example, internal.example",
+      });
+      assert(
+        outcome.kind === "response" && outcome.statusCode === 200,
+        "Scenario 4: proxy request succeeds",
+      );
+      assert(
+        upstream.clerkProxyUrls.get("/proxy-multivalue") ===
+          "https://public.example/api/__clerk",
+        `Scenario 4: Clerk-Proxy-Url uses the first public HTTPS values (got ${JSON.stringify(upstream.clerkProxyUrls.get("/proxy-multivalue"))})`,
+      );
+    }
+
+    // ── Scenario 5: An untrusted forwarded scheme cannot affect the URL ───────
+    {
+      console.log(
+        "\n─── Scenario 5: invalid forwarded protocol falls back to HTTPS ───",
+      );
+      const outcome = await probe(proxy.port, "proxy-invalid-proto", 2_000, {
+        "x-forwarded-proto": "javascript,https",
+        "x-forwarded-host": "public.example",
+      });
+      assert(
+        outcome.kind === "response" && outcome.statusCode === 200,
+        "Scenario 5: proxy request succeeds",
+      );
+      assert(
+        upstream.clerkProxyUrls.get("/proxy-invalid-proto") ===
+          "https://public.example/api/__clerk",
+        `Scenario 5: invalid forwarded scheme cannot alter Clerk-Proxy-Url (got ${JSON.stringify(upstream.clerkProxyUrls.get("/proxy-invalid-proto"))})`,
       );
     }
   } finally {

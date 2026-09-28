@@ -11,11 +11,13 @@
  * non-zero — even if Jest itself reported success.
  */
 
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "child_process";
 import { copyFileSync, existsSync, readFileSync, unlinkSync } from "fs";
 import { glob } from "node:fs/promises";
 import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
+import { validateTestResultArtifact } from "../../../scripts/test-result-artifact.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -43,6 +45,7 @@ const jestBin = join(ROOT, "node_modules", ".bin", "jest");
 const SUITE_FLOOR_RATIO = 0.85;
 
 const RESULTS_FILE = join(ROOT, "jest-results.json");
+const CLEANUP_SCRIPT = join(ROOT, "scripts", "cleanup-jest-admin-users.ts");
 
 const TEST_FILTER_FLAGS = new Set([
   "--changedSince",
@@ -125,6 +128,15 @@ export function violatesSuiteFloor({ ran, suiteFloor }) {
   return suiteFloor !== null && ran < suiteFloor;
 }
 
+function runCleanup(args, env) {
+  const result = spawnSync(
+    process.execPath,
+    ["--import", "tsx/esm", CLEANUP_SCRIPT, ...args],
+    { stdio: "inherit", cwd: ROOT, env },
+  );
+  return result.status ?? 1;
+}
+
 async function main() {
   // pnpm ≥9 forwards a literal "--" separator into script argv; Jest would
   // treat it and everything after it as test-path patterns (matching nothing).
@@ -143,64 +155,98 @@ async function main() {
     forwarded.push(arg);
   }
 
-  const focused = hasExplicitTestFilter(forwarded);
-  let suiteFloor = null;
-  if (focused) {
-    console.log("Suite-count guard: focused run detected → full-run floor disabled");
-  } else {
-    const globbed = await Array.fromAsync(
-      glob("**/__tests__/**/*.test.ts", { cwd: ROOT, withFileTypes: false, exclude: ["node_modules/**"] })
-    );
-    const discoveredCount = globbed.length;
-    suiteFloor = getSuiteFloor({ discoveredCount, focused });
-    console.log(`Suite-count guard: discovered ${discoveredCount} test files → floor = ${suiteFloor} (${Math.round(SUITE_FLOOR_RATIO * 100)}%)`);
-  }
+  const invocationId = `j${Date.now().toString(36)}-${process.pid}-${randomUUID().replace(/[^a-z0-9]/gi, "").slice(0, 12).toLowerCase()}`;
+  const childEnv = {
+    ...process.env,
+    JEST_INVOCATION_ID: invocationId,
+  };
+  const cleanupEnv = {
+    ...childEnv,
+    ...(process.env.DATABASE_ENV === "test"
+      ? { NODE_ENV: "test", JEST_WORKER_ID: "cleanup" }
+      : { NODE_ENV: "development" }),
+  };
 
-  if (existsSync(RESULTS_FILE)) {
-    unlinkSync(RESULTS_FILE);
-  }
-
-  const result = spawnSync(
-    jestBin,
-    ["--json", `--outputFile=${RESULTS_FILE}`, ...forwarded],
-    { stdio: "inherit", cwd: ROOT }
-  );
-
-  let exitCode = result.status ?? 1;
-
-  if (!existsSync(RESULTS_FILE)) {
-    console.error(
-      "\nERROR: Suite-count guard: jest-results.json was not written — Jest may have crashed before producing output."
-    );
-    process.exit(1);
-  }
-
-  let data;
+  let exitCode = 1;
   try {
-    data = JSON.parse(readFileSync(RESULTS_FILE, "utf8"));
-  } catch (err) {
-    console.error(`\nERROR: Suite-count guard: could not parse jest-results.json — ${err.message}`);
-    process.exit(1);
-  } finally {
-    try {
-      if (callerOutputFile) {
-        copyFileSync(RESULTS_FILE, callerOutputFile);
-      }
-    } catch (err) {
-      console.error(`WARNING: could not copy results to ${callerOutputFile} — ${err.message}`);
+    const staleCleanupExitCode = runCleanup(["--stale", "--apply"], cleanupEnv);
+    if (staleCleanupExitCode !== 0) {
+      console.error("WARNING: stale Jest admin cleanup failed; continuing with the test run.");
     }
-    try {
+
+    const focused = hasExplicitTestFilter(forwarded);
+    let suiteFloor = null;
+    if (focused) {
+      console.log("Suite-count guard: focused run detected → full-run floor disabled");
+    } else {
+      const globbed = await Array.fromAsync(
+        glob("**/__tests__/**/*.test.ts", { cwd: ROOT, withFileTypes: false, exclude: ["node_modules/**"] })
+      );
+      const discoveredCount = globbed.length;
+      suiteFloor = getSuiteFloor({ discoveredCount, focused });
+      console.log(`Suite-count guard: discovered ${discoveredCount} test files → floor = ${suiteFloor} (${Math.round(SUITE_FLOOR_RATIO * 100)}%)`);
+    }
+
+    if (existsSync(RESULTS_FILE)) {
       unlinkSync(RESULTS_FILE);
-    } catch {
-      // ignore
     }
-  }
 
-  const { numPassedTestSuites = 0, numFailedTestSuites = 0, numPendingTestSuites = 0, numTotalTestSuites = 0 } = data;
-  const ran = numPassedTestSuites + numFailedTestSuites + numPendingTestSuites;
+    const result = spawnSync(
+      jestBin,
+      ["--json", `--outputFile=${RESULTS_FILE}`, ...forwarded],
+      { stdio: "inherit", cwd: ROOT, env: childEnv }
+    );
 
-  if (violatesSuiteFloor({ ran, suiteFloor })) {
-    console.error(`
+    exitCode = result.status ?? 1;
+
+    if (!existsSync(RESULTS_FILE)) {
+      console.error(
+        "\nERROR: Suite-count guard: jest-results.json was not written — Jest may have crashed before producing output."
+      );
+    } else {
+      let data;
+      let validation;
+      let exitAfterCopy = false;
+      try {
+        data = JSON.parse(readFileSync(RESULTS_FILE, "utf8"));
+        validation = validateTestResultArtifact(data);
+      } catch (err) {
+        console.error(`\nERROR: Suite-count guard: could not parse jest-results.json — ${err.message}`);
+        exitAfterCopy = true;
+      } finally {
+        try {
+          if (callerOutputFile) {
+            copyFileSync(RESULTS_FILE, callerOutputFile);
+          }
+        } catch (err) {
+          console.error(`ERROR: could not copy results to ${callerOutputFile} — ${err.message}`);
+          exitAfterCopy = true;
+        }
+        try {
+          unlinkSync(RESULTS_FILE);
+        } catch {
+          // ignore
+        }
+      }
+
+      if (exitAfterCopy) {
+        exitCode = 1;
+      } else if (!validation.ok) {
+        console.error(`\nERROR: Suite-count guard: invalid jest-results.json — ${validation.reason}`);
+        exitCode = 1;
+      } else {
+        if (!focused && validation.executedTestCount === 0) {
+          console.error(
+            "\nERROR: Suite-count guard: no tests executed — pending, todo, and skipped tests do not count as a successful full run."
+          );
+          exitCode = 1;
+        }
+
+        const { numPassedTestSuites = 0, numFailedTestSuites = 0, numPendingTestSuites = 0, numTotalTestSuites = 0 } = data;
+        const ran = numPassedTestSuites + numFailedTestSuites;
+
+        if (violatesSuiteFloor({ ran, suiteFloor })) {
+          console.error(`
 \x1b[31m╔══════════════════════════════════════════════════════════════╗
 ║              SUITE-COUNT GUARD FAILED                        ║
 ╚══════════════════════════════════════════════════════════════╝\x1b[0m
@@ -216,7 +262,18 @@ async function main() {
 
   Fix the underlying load error, then re-run the tests.
 `);
-    exitCode = 1;
+          exitCode = 1;
+        }
+      }
+    }
+  } finally {
+    const exactCleanupExitCode = runCleanup(
+      ["--exact", `--invocation-id=${invocationId}`, "--apply"],
+      cleanupEnv,
+    );
+    if (exactCleanupExitCode !== 0) {
+      console.error("WARNING: current-run Jest admin cleanup failed; preserving the original Jest result.");
+    }
   }
 
   process.exit(exitCode);

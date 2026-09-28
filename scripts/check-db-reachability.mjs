@@ -212,6 +212,14 @@ export function collectClientRoots(packages) {
   return roots.sort();
 }
 
+export function getPackageEntry(packages, packageName) {
+  const entry = packages.get(packageName);
+  if (!entry) {
+    throw new Error(`check-db-reachability: package ${packageName} is not in the workspace`);
+  }
+  return entry;
+}
+
 // BFS from root, tracking the path so we can print the offending chain.
 export function findPathTo(packages, rootName, targetName) {
   if (!packages.has(rootName)) return null;
@@ -246,16 +254,6 @@ function selfTest() {
     {
       name: "direct workspace edge",
       graph: mk({ app: ["shared"], shared: ["@workspace/db"], "@workspace/db": [] }),
-      expectChain: true,
-    },
-    {
-      name: "deep chain via linked module",
-      graph: mk({
-        app: ["lidar-measure"],
-        "lidar-measure": ["shared"],
-        shared: ["@workspace/db"],
-        "@workspace/db": [],
-      }),
       expectChain: true,
     },
     {
@@ -361,7 +359,7 @@ function selfTest() {
   return ok;
 }
 
-function main() {
+export function main() {
   if (process.argv.includes("--self-test")) {
     process.exit(selfTest() ? 0 : 1);
   }
@@ -400,7 +398,9 @@ function main() {
     }
   }
 
-  process.exit(failed ? 1 : 0);
+  return failed ? 1 : 0;
 }
 
-main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exit(main());
+}

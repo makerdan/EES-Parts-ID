@@ -33,26 +33,33 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, inventoryTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { workerQualifiedUserId } from "./helpers/testDb";
 
 // ── Setup / teardown ──────────────────────────────────────────────────────────
 const ADMIN_SECRET = "jest-addpart-test-secret";
 let adminToken: string;
 
-const CATALOG_PREFIX = "JEST-ADDPART-";
+const CATALOG_PREFIX = `${workerQualifiedUserId("JEST-ADDPART")}-`;
+const DECOY_CATALOG = `${workerQualifiedUserId("JEST-ADDPART", `other-${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`)}-concurrent-decoy`;
 
 async function cleanupAddPartRows() {
   await db
     .delete(inventoryTable)
-    .where(sql`${inventoryTable.catalog} LIKE ${"JEST-ADDPART-%"}`);
+    .where(sql`${inventoryTable.catalog} LIKE ${CATALOG_PREFIX + "%"}`);
 }
 
 beforeAll(async () => {
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
   await cleanupAddPartRows();
+  await db.insert(inventoryTable).values({
+    vendor: "JEST", catalog: DECOY_CATALOG, description: "concurrent decoy",
+    binLocations: [], aiKeywords: [],
+  }).onConflictDoNothing();
 }, 30_000);
 
 afterAll(async () => {
   await cleanupAddPartRows();
+  await db.delete(inventoryTable).where(sql`${inventoryTable.catalog} = ${DECOY_CATALOG}`);
   // NOTE: do NOT call cleanupFixtures() here — it deletes JEST-ITG-% rows
   // that belong to inventory.integration.test.ts and would cause flakiness
   // when jest runs test files in parallel.
@@ -67,6 +74,12 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("POST /api/inventory/add-part", () => {
+  it("preserves a similarly-prefixed fixture owned by another invocation", async () => {
+    await cleanupAddPartRows();
+    const rows = await db.select({ catalog: inventoryTable.catalog }).from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${DECOY_CATALOG}`);
+    expect(rows).toEqual([{ catalog: DECOY_CATALOG }]);
+  });
   // ── Auth ──────────────────────────────────────────────────────────────────
 
   it("returns 401 when no Authorization header is provided", async () => {

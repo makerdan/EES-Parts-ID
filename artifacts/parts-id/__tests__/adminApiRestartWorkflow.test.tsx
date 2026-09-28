@@ -187,8 +187,6 @@ function makeAppMock(overrides: Record<string, unknown> = {}) {
     setPendingInventorySearch: jest.fn(),
     textFontScale: 1,
     pinnedParts: [],
-    pendingLidarDims: null,
-    setPendingLidarDims: jest.fn(),
     approvalStatus: "approved" as const,
     ...overrides,
   };
@@ -226,7 +224,19 @@ function defaultFetchResponse(url: string): Response {
     return response({ total: 0, enriched: 0, unenriched: 0 });
   }
   if (url.includes("/inventory/bulk-enrich/status")) {
-    return response({ status: "idle" });
+    return response({
+      status: "idle",
+      running: false,
+      stopRequested: false,
+      force: false,
+      startedAt: null,
+      processed: 0,
+      errors: 0,
+      total: null,
+      finishedAt: null,
+      lastError: null,
+      model: null,
+    });
   }
   if (url.includes("/inventory/enrich-measurements/status")) {
     return response({ status: "idle" });

@@ -27,6 +27,7 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, inventoryTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { workerQualifiedUserId } from "./helpers/testDb";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -34,7 +35,8 @@ import path from "node:path";
 const ADMIN_SECRET = "jest-upload-test-secret";
 let adminToken: string;
 
-const UPLOAD_PREFIX = "JEST-UPLOAD-";
+const UPLOAD_PREFIX = `${workerQualifiedUserId("JEST-UPLOAD")}-`;
+const DECOY_UPLOAD_CATALOG = `${workerQualifiedUserId("JEST-UPLOAD", `other-${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`)}-concurrent-decoy`;
 
 describe("admin import authorization declarations", () => {
   it("uses the approved-admin exception on every preview and commit route", () => {
@@ -77,16 +79,21 @@ describe("admin import routes without an MFA claim", () => {
 async function cleanupUploads() {
   await db
     .delete(inventoryTable)
-    .where(sql`${inventoryTable.catalog} LIKE ${"JEST-UPLOAD-%"}`);
+    .where(sql`${inventoryTable.catalog} LIKE ${UPLOAD_PREFIX + "%"}`);
 }
 
 beforeAll(async () => {
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
   await cleanupUploads();
+  await db.insert(inventoryTable).values({
+    vendor: "JEST", catalog: DECOY_UPLOAD_CATALOG, description: "concurrent decoy",
+    binLocations: [], aiKeywords: [],
+  }).onConflictDoNothing();
 }, 30_000);
 
 afterAll(async () => {
   await cleanupUploads();
+  await db.delete(inventoryTable).where(sql`${inventoryTable.catalog} = ${DECOY_UPLOAD_CATALOG}`);
   // NOTE: do NOT call cleanupFixtures() here. It deletes JEST-ITG-% rows
   // which belong to inventory.integration.test.ts. When jest runs test
   // files in parallel workers, that cleanup races with inventory's
@@ -134,6 +141,12 @@ async function seedInventoryWithBarcodes(
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("POST /api/admin/upload", () => {
+  it("preserves a similarly-prefixed fixture owned by another invocation", async () => {
+    await cleanupUploads();
+    const rows = await db.select({ catalog: inventoryTable.catalog }).from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${DECOY_UPLOAD_CATALOG}`);
+    expect(rows).toEqual([{ catalog: DECOY_UPLOAD_CATALOG }]);
+  });
   // ── Auth ──
   it("returns 401 when no Authorization header is provided", async () => {
     const res = await supertest(app)
@@ -203,6 +216,84 @@ describe("POST /api/admin/upload", () => {
 
     expect(res.body).toHaveProperty("error");
     expect(res.body.error).toMatch(/malformed|vendor|catalog/i);
+  });
+
+  it("rejects malformed CSV in preview and upload without updating or inserting any rows", async () => {
+    const existingCatalog = `${UPLOAD_PREFIX}STRICT-EXISTING`;
+    const newCatalog = `${UPLOAD_PREFIX}STRICT-NEW`;
+    await db.insert(inventoryTable).values({
+      vendor: "JEST-VENDOR",
+      catalog: existingCatalog,
+      description: "unchanged description",
+      binLocations: [],
+      orderPurchase: 2,
+      orderQuantity: 3,
+      aiKeywords: [],
+    }).onConflictDoUpdate({
+      target: [inventoryTable.vendor, inventoryTable.catalog],
+      set: { description: "unchanged description", orderPurchase: 2, orderQuantity: 3 },
+    });
+
+    const malformedCsv = [
+      "Vendor,Catalog,Description,OP,OQ",
+      `JEST-VENDOR,${existingCatalog},attempted overwrite,77,88`,
+      `JEST-VENDOR,${newCatalog},"unterminated description,1,2`,
+    ].join("\n");
+    for (const path of [
+      "/api/admin/upload/preview",
+      "/api/admin/upload",
+      "/api/admin/upload/orders/preview",
+      "/api/admin/upload/orders",
+    ]) {
+      const response = await supertest(app)
+        .post(path)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ csv: malformedCsv })
+        .expect(400);
+      expect(response.body.error).toMatch(/quoted field|quote|malformed csv/i);
+    }
+
+    const savedRows = await db.select({
+      catalog: inventoryTable.catalog,
+      description: inventoryTable.description,
+      orderPurchase: inventoryTable.orderPurchase,
+      orderQuantity: inventoryTable.orderQuantity,
+    }).from(inventoryTable).where(
+      sql`${inventoryTable.catalog} IN (${existingCatalog}, ${newCatalog})`,
+    );
+    expect(savedRows).toEqual([{
+      catalog: existingCatalog,
+      description: "unchanged description",
+      orderPurchase: 2,
+      orderQuantity: 3,
+    }]);
+  });
+
+  it("uses the same multiline and escaped-quote parsing for preview and upload", async () => {
+    const catalog = `${UPLOAD_PREFIX}STRICT-MULTILINE`;
+    const csv = [
+      "Vendor,Catalog,Description",
+      `JEST-VENDOR,${catalog},"First line`,
+      'He said ""rated"", 20A"',
+    ].join("\n");
+
+    await supertest(app)
+      .post("/api/admin/upload/preview")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+
+    const uploadResponse = await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+    expect(uploadResponse.body.total).toBe(1);
+
+    const [savedRow] = await db.select({
+      description: inventoryTable.description,
+    }).from(inventoryTable).where(sql`${inventoryTable.catalog} = ${catalog}`);
+    expect(savedRow?.description).toBe('First line\nHe said "rated", 20A');
   });
 
   // ── Valid CSV → 200 ──

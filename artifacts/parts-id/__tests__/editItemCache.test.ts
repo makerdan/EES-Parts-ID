@@ -26,6 +26,7 @@ import { getListInventoryQueryKey } from "@workspace/api-client-react";
 
 import { QUERY_CACHE_KEY } from "../utils/searchHelpers";
 import type { QueryCache } from "../utils/searchHelpers";
+import { FUSE_CACHE_KEY } from "../utils/offlineBarcode";
 
 // Derive the expected list-key prefix from the real library so the predicate
 // tests stay in sync if the generated key shape ever changes.
@@ -213,6 +214,44 @@ describe("invalidateAllCachesAfterSave", () => {
     expect(qc.setQueriesData).toHaveBeenCalledTimes(2);
     expect(result.ok).toBe(false);
     expect(result.failures).toHaveLength(1);
+  });
+
+  it("continues durable search and Fuse reconciliation when list invalidation rejects", async () => {
+    const qc = makeQueryClientFull();
+    qc.invalidateQueries.mockImplementation(async (arg) => {
+      if (typeof arg === "object" && arg !== null && "predicate" in arg) {
+        throw new Error("list refresh unavailable");
+      }
+    });
+    const updatedItem = { id: 7, description: "saved" } as InventoryItem;
+    const storage = makeStorage({
+      [QUERY_CACHE_KEY]: serializeCache({
+        q1: { timestamp: 1, results: [{ item: { id: 7 } }] },
+      }),
+      [FUSE_CACHE_KEY]: JSON.stringify({
+        items: [{ id: 7, description: "old" }],
+        syncedAt: 1,
+      }),
+    });
+
+    const result = await invalidateAllCachesAfterSave({
+      queryClient: qc,
+      asyncStorage: storage,
+      itemId: updatedItem.id,
+      updatedItem,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toHaveLength(1);
+    expect(qc.invalidateQueries).toHaveBeenCalledTimes(2);
+    expect(storage.setItem).toHaveBeenCalledWith(
+      QUERY_CACHE_KEY,
+      expect.stringContaining('"description":"saved"'),
+    );
+    expect(storage.setItem).toHaveBeenCalledWith(
+      FUSE_CACHE_KEY,
+      expect.stringContaining('"description":"saved"'),
+    );
   });
 });
 

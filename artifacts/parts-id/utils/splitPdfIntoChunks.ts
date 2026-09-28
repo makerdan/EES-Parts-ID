@@ -19,6 +19,63 @@ export interface PdfChunk {
   pageCount: number;
 }
 
+export async function countPdfChunks(bytes: Uint8Array, pagesPerChunk = PAGES_PER_CHUNK): Promise<number> {
+  if (!Number.isSafeInteger(pagesPerChunk) || pagesPerChunk < 1) throw new RangeError("Invalid PDF chunk size");
+  const { PDFDocument } = await import("pdf-lib");
+  return Math.ceil((await PDFDocument.load(bytes)).getPageCount() / pagesPerChunk);
+}
+
+/** Generate only the requested page range; callers retain the source for retries. */
+export async function createPdfChunk(
+  bytes: Uint8Array,
+  index: number,
+  pagesPerChunk: number = PAGES_PER_CHUNK,
+): Promise<{ chunk: PdfChunk; totalChunks: number }> {
+  const { PDFDocument } = await import("pdf-lib");
+  const srcDoc = await PDFDocument.load(bytes);
+  const totalPages = srcDoc.getPageCount();
+  const totalChunks = Math.ceil(totalPages / pagesPerChunk);
+  if (!Number.isSafeInteger(index) || index < 0 || index >= totalChunks || pagesPerChunk < 1) {
+    throw new RangeError("PDF chunk index out of range");
+  }
+  const pageOffset = index * pagesPerChunk;
+  const pageCount = Math.min(pagesPerChunk, totalPages - pageOffset);
+  if (totalChunks === 1) return { chunk: { bytes, pageOffset, pageCount }, totalChunks };
+  const chunkDoc = await PDFDocument.create();
+  for (const page of await chunkDoc.copyPages(
+    srcDoc, Array.from({ length: pageCount }, (_, i) => pageOffset + i),
+  )) chunkDoc.addPage(page);
+  return { chunk: { bytes: await chunkDoc.save(), pageOffset, pageCount }, totalChunks };
+}
+
+/** Only the current chunk is resident, even for PDFs with thousands of pages. */
+export async function* iteratePdfChunks(
+  bytes: Uint8Array,
+  pagesPerChunk: number = PAGES_PER_CHUNK,
+  startIndex = 0,
+): AsyncGenerator<{ chunk: PdfChunk; index: number; totalChunks: number }> {
+  const { PDFDocument } = await import("pdf-lib");
+  const doc = await PDFDocument.load(bytes);
+  const totalPages = doc.getPageCount();
+  const totalChunks = Math.ceil(totalPages / pagesPerChunk);
+  if (pagesPerChunk < 1 || !Number.isSafeInteger(startIndex) || startIndex < 0 || startIndex >= totalChunks) {
+    throw new RangeError("PDF chunk index out of range");
+  }
+  for (let index = startIndex; index < totalChunks; index++) {
+    const pageOffset = index * pagesPerChunk;
+    const pageCount = Math.min(pagesPerChunk, totalPages - pageOffset);
+    if (totalChunks === 1) {
+      yield { index, totalChunks, chunk: { bytes, pageOffset, pageCount } };
+    } else {
+      const chunkDoc = await PDFDocument.create();
+      for (const page of await chunkDoc.copyPages(
+        doc, Array.from({ length: pageCount }, (_, i) => pageOffset + i),
+      )) chunkDoc.addPage(page);
+      yield { index, totalChunks, chunk: { bytes: await chunkDoc.save(), pageOffset, pageCount } };
+    }
+  }
+}
+
 /**
  * Return the cached chunks when available, otherwise split the PDF from scratch.
  *

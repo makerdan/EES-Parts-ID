@@ -52,12 +52,6 @@ if ! [[ "$WATCHDOG_GRACE_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
-# Where Jest/Vitest JSON files land.
-JSON_DIR="/tmp"
-
-# Manifest written for the report script.
-MANIFEST_FILE="/tmp/jest-run-manifest.json"
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 timestamp_ms() {
   date +%s%3N 2>/dev/null || echo "0"
@@ -66,10 +60,14 @@ timestamp_ms() {
 # The watchdog records the currently running command so it can terminate only
 # this harness's process tree. Killing process group 0 would also terminate an
 # enclosing validation runner when this script is launched from one.
-RUNTIME_DIR="${TMPDIR:-/tmp}/test-all-${BASHPID}"
+RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/test-all-${BASHPID}.XXXXXX")"
+RUN_ID="$(basename "$RUNTIME_DIR")"
+RESULTS_DIR="${RUNTIME_DIR}/results"
+JSON_DIR="$RESULTS_DIR"
+MANIFEST_FILE="${RESULTS_DIR}/manifest.json"
 TIMEOUT_MARKER="${RUNTIME_DIR}/timeout"
 CURRENT_PID_FILE="${RUNTIME_DIR}/current-pid"
-mkdir -p "$RUNTIME_DIR"
+mkdir -p "$RESULTS_DIR"
 
 process_tree_signal() {
   local pid="$1"
@@ -105,6 +103,7 @@ WATCHDOG_PID=$!
 
 # Clean up the watchdog whenever we exit normally.
 cleanup_runtime() {
+  process_tree_signal "$WATCHDOG_PID" TERM
   kill "$WATCHDOG_PID" 2>/dev/null || true
   rm -rf "$RUNTIME_DIR"
 }
@@ -117,10 +116,8 @@ run_owned() {
   local child_pid=$!
   printf '%s\n' "$child_pid" > "$CURRENT_PID_FILE"
 
-  set +e
-  wait "$child_pid"
-  local exit_code=$?
-  set -e
+  local exit_code=0
+  wait "$child_pid" || exit_code=$?
 
   rm -f "$CURRENT_PID_FILE"
   if [[ -f "$TIMEOUT_MARKER" ]]; then
@@ -130,36 +127,65 @@ run_owned() {
   return "$exit_code"
 }
 
+run_preflight_phase() {
+  local phase="$1"
+  shift
+
+  local exit_code=0
+  set +e
+  run_owned "$phase" "$@"
+  exit_code=$?
+  set -e
+
+  if [ "$exit_code" -eq 0 ]; then
+    return 0
+  fi
+
+  local timed_out=false
+  local status=FAILED
+  if [ "$exit_code" -eq 124 ]; then
+    timed_out=true
+    status=TIMED_OUT
+  fi
+
+  # Keep setup failures fail-closed and machine-readable. Package suites have
+  # not been entered when this helper runs, so the report must make that
+  # evidence explicit rather than leaving consumers to infer it from missing
+  # result files.
+  if [[ -n "${VALIDATION_SETUP_REPORT_FILE:-}" ]]; then
+    printf '%s\n' \
+      "[test-all] PREFLIGHT_REPORT phase=\"${phase}\" status=${status} exit-status=${exit_code} timeout=${timed_out} suite-started=false child-status=${exit_code}" \
+      > "$VALIDATION_SETUP_REPORT_FILE"
+  fi
+  echo "[test-all] PREFLIGHT_REPORT phase=\"${phase}\" status=${status} exit-status=${exit_code} timeout=${timed_out} suite-started=false child-status=${exit_code}" >&2
+  echo "" >&2
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+  echo "  Validation Setup Summary" >&2
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+  echo "  SETUP_${status}  ${phase}" >&2
+  echo "    child-status=${exit_code}  timeout=${timed_out}  suite-started=false" >&2
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+  if [ "$timed_out" = true ]; then
+    exit 124
+  fi
+  echo "[test-all] ERROR: ${phase} failed (exit code ${exit_code})." >&2
+  exit "$exit_code"
+}
+
 # Ensure generated API clients are present and current before any suite reads
 # them. codegen:ensure is itself idempotent and file-locked (see
 # lib/api-spec/scripts/ensure-codegen.mjs), so this cannot race a concurrent
 # dev-workflow boot; running it here while we hold the serial lock also means
 # no other test run can observe a mid-regeneration state.
-set +e
-run_owned "codegen:ensure preflight" pnpm --filter @workspace/api-spec run codegen:ensure
-preflight_exit_code=$?
-set -e
-if [ "$preflight_exit_code" -ne 0 ]; then
-  if [ "$preflight_exit_code" -eq 124 ]; then
-    exit 124
-  fi
-  echo "[test-all] ERROR: codegen:ensure failed — generated API clients may be missing."
-  exit 1
-fi
+run_preflight_phase \
+  "codegen:ensure preflight" \
+  pnpm --filter @workspace/api-spec run codegen:ensure
 
 # Keep the API Jest wrapper's focused/full-run selection contract exercised by
 # the canonical workspace test command.
-set +e
-run_owned "API suite-floor preflight" node scripts/test/api-suite-floor-contract.test.mjs
-preflight_exit_code=$?
-set -e
-if [ "$preflight_exit_code" -ne 0 ]; then
-  if [ "$preflight_exit_code" -eq 124 ]; then
-    exit 124
-  fi
-  echo "[test-all] ERROR: API suite-floor contract failed."
-  exit 1
-fi
+run_preflight_phase \
+  "API suite-floor preflight" \
+  node scripts/test/api-suite-floor-contract.test.mjs
 
 # ── Run suites ────────────────────────────────────────────────────────────────
 declare -A RESULTS
@@ -170,12 +196,17 @@ MANIFEST_ENTRIES=()
 for entry in "${SUITES[@]}"; do
   IFS=: read -r name filter budget runner <<< "$entry"
   json_file="${JSON_DIR}/jest-results-${name}.json"
+  json_staging_file="${JSON_DIR}/jest-results-${name}.json.staging"
+  rm -f "$json_file" "$json_staging_file"
 
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "  Running: $name  (budget: ${budget}s, runner: ${runner})"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+  # Never let a prior invocation satisfy the report if this child exits
+  # successfully without producing a fresh result artifact.
+  rm -f "$json_file"
   start_ms=$(timestamp_ms)
 
   set +e
@@ -187,14 +218,14 @@ for entry in "${SUITES[@]}"; do
     run_owned "suite ${name}" timeout --kill-after=15s "${budget}s" \
       pnpm --filter "$filter" exec vitest run \
         --reporter=json \
-        --outputFile="${json_file}" \
+        --outputFile="${json_staging_file}" \
       2>&1
   else
     # Jest: standard --json --outputFile pass-through via pnpm run test
     run_owned "suite ${name}" timeout --kill-after=15s "${budget}s" \
       pnpm --filter "$filter" run test -- \
         --json \
-        --outputFile="${json_file}" \
+        --outputFile="${json_staging_file}" \
       2>&1
   fi
   exit_code=$?
@@ -202,6 +233,17 @@ for entry in "${SUITES[@]}"; do
   # treat both as TIMED_OUT.
   if [ "$exit_code" -eq 137 ]; then exit_code=124; fi
   set -e
+
+  # Never let a runner's partial output become report evidence. The publisher
+  # parses the staging file, stamps the current run ID, and renames it into
+  # place atomically. Missing or invalid output remains absent so the report
+  # can classify the suite as unavailable instead of treating it as passed.
+  if [ -f "$json_staging_file" ]; then
+    if ! node "${SCRIPT_DIR}/publish-test-result.mjs" \
+      "$json_staging_file" "$json_file" "$RUN_ID" "$name"; then
+      echo "[test-all] WARNING: could not publish result evidence for ${name}." >&2
+    fi
+  fi
 
   end_ms=$(timestamp_ms)
   wall_ms=$(( end_ms - start_ms ))
@@ -217,10 +259,11 @@ for entry in "${SUITES[@]}"; do
   WALL_CLOCKS[$name]=$wall_ms
 
   budget_ms=$(( budget * 1000 ))
-  MANIFEST_ENTRIES+=("{\"suite\":\"${name}\",\"jsonPath\":\"${json_file}\",\"wallClockMs\":${wall_ms},\"budgetMs\":${budget_ms},\"exitCode\":${exit_code}}")
+  MANIFEST_ENTRIES+=("{\"suite\":\"${name}\",\"runId\":\"${RUN_ID}\",\"jsonPath\":\"${json_file}\",\"startedAtMs\":${start_ms},\"wallClockMs\":${wall_ms},\"budgetMs\":${budget_ms},\"exitCode\":${exit_code}}")
 done
 
 # ── Write manifest ────────────────────────────────────────────────────────────
+MANIFEST_TMP_FILE="${MANIFEST_FILE}.staging"
 {
   printf '[\n'
   first=1
@@ -233,7 +276,8 @@ done
     printf '%s' "$entry"
   done
   printf '\n]\n'
-} > "$MANIFEST_FILE"
+} > "$MANIFEST_TMP_FILE"
+mv -f "$MANIFEST_TMP_FILE" "$MANIFEST_FILE"
 
 # ── Suite summary ─────────────────────────────────────────────────────────────
 echo ""

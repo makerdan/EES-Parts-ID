@@ -54,8 +54,10 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
+import { awaitJobTermination } from "../src/routes/catalogPdf";
 
 // ── Typed mock handles ─────────────────────────────────────────────────────────
 
@@ -93,17 +95,19 @@ afterEach(() => {
 
 afterAll(async () => {
   if (seededJobIds.length > 0) {
-    await db.execute(sql`
-      UPDATE catalog_pdf_job
-      SET status = 'cancelled', finished_at = NOW()
-      WHERE id = ANY(${seededJobIds})
-        AND status IN ('pending', 'processing')
-    `).catch((err: Error) => console.warn("[afterAll cleanup] cancel update failed:", err.message));
-
-    await db
-      .delete(catalogPdfJobTable)
-      .where(inArray(catalogPdfJobTable.id, seededJobIds))
-      .catch((err: Error) => console.warn("[afterAll cleanup] delete jobs failed:", err.message));
+    await bestEffortFixtureCleanup("catalog PDF background jobs cancellation", async () => {
+      await db.execute(sql`
+        UPDATE catalog_pdf_job
+        SET status = 'cancelled', finished_at = NOW()
+        WHERE id = ANY(${seededJobIds})
+          AND status IN ('pending', 'processing')
+      `);
+    });
+    await bestEffortFixtureCleanup("catalog PDF background jobs", async () => {
+      await db
+        .delete(catalogPdfJobTable)
+        .where(inArray(catalogPdfJobTable.id, seededJobIds));
+    });
   }
 
   if (_origAdminPassword === undefined) {
@@ -188,6 +192,23 @@ describe("POST /catalog-pdf — responds before extractPdfPages finishes", () =>
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("POST /catalog-pdf — responds before processPdfPages finishes", () => {
+  it("passes the manual fallback choice to the initial job's page extractor", async () => {
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
+
+    const res = await supertest(app)
+      .post("/api/admin/catalog-pdf")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .set("x-use-openai-fallback", "true")
+      .send({ pdfBase64: FAKE_PDF_BASE64, vendor: VENDOR })
+      .expect(200);
+    seededJobIds.push(Number(res.body.jobId));
+    await awaitJobTermination(Number(res.body.jobId));
+    expect(mockExtractCatalogPage).toHaveBeenCalledWith(
+      ONE_FAKE_PAGE[0]!.text, ONE_FAKE_PAGE[0]!.images, VENDOR, true,
+    );
+  });
+
   it("responds within 2 seconds even when extractCatalogPage never resolves", async () => {
     mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
     mockExtractCatalogPage.mockImplementation(() => new Promise(() => {}));

@@ -1,3 +1,8 @@
+jest.mock("@/utils/offlineInventory", () => ({
+  offlineSnapshotInfo: jest.fn().mockResolvedValue(null),
+  lookupOfflineBarcode: jest.fn().mockResolvedValue(null),
+  upsertOfflineItem: jest.fn().mockResolvedValue(undefined),
+}));
 /**
  * @jest-environment node
  *
@@ -234,6 +239,15 @@ describe("upsertItemInBarcodeCache", () => {
 // ── replaceBarcodeCacheWithServerItems ────────────────────────────────────────
 
 describe("replaceBarcodeCacheWithServerItems", () => {
+  it("retains the previous complete offline snapshot when the server catalog exceeds the limit", async () => {
+    const previous = envelopeWith([makeItem(1)], 1234);
+    mockGetItem.mockResolvedValue(previous);
+    const large = Array.from({ length: MAX_FUSE_CACHE_ITEMS + 1 }, (_, id) => makeItem(id + 2));
+    await expect(replaceBarcodeCacheWithServerItems(large)).rejects.toThrow("exceeds");
+    expect(mockSetItem).not.toHaveBeenCalled();
+    expect(await lookupByBarcodeOffline("missing")).toBeNull();
+    expect(await getFuseCacheSyncedAt()).toBe(1234);
+  });
   it("writes exactly one key (FUSE_CACHE_KEY) as a single envelope — not two keys", async () => {
     const items = [makeItem(1, ["A"]), makeItem(2, ["B"])];
     await replaceBarcodeCacheWithServerItems(items);

@@ -52,11 +52,16 @@ jest.mock("../src/lib/objectStorage", () => ({
   uploadCatalogImage: jest.fn(),
 }));
 
-jest.mock("../src/lib/webSearch", () => ({
-  callGemini: jest.fn(),
-  callGeminiWithHistory: jest.fn(),
-  WEB_REFERENCE_MODEL: "gemini-2.5-flash",
-}));
+jest.mock("../src/lib/webSearch", () => {
+  const actual = jest.requireActual<typeof import("../src/lib/webSearch")>(
+    "../src/lib/webSearch",
+  );
+  return {
+    ...actual,
+    callGemini: jest.fn(),
+    callGeminiWithHistory: jest.fn(),
+  };
+});
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
@@ -65,6 +70,7 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, catalogPdfJobTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
 import { awaitJobTermination } from "../src/routes/catalogPdf";
@@ -185,9 +191,11 @@ afterEach(() => {
 
 afterAll(async () => {
   if (seededJobIds.length > 0) {
-    await db
-      .delete(catalogPdfJobTable)
-      .where(inArray(catalogPdfJobTable.id, seededJobIds));
+    await bestEffortFixtureCleanup("catalog PDF cancel jobs", async () => {
+      await db
+        .delete(catalogPdfJobTable)
+        .where(inArray(catalogPdfJobTable.id, seededJobIds));
+    });
   }
 }, 15_000);
 

@@ -73,6 +73,7 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, catalogPdfJobTable, inventoryTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
+import { bestEffortFixtureCleanup } from "./helpers/testDb";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -94,10 +95,14 @@ beforeAll(() => {
 
 afterAll(async () => {
   if (seededInventoryIds.length > 0) {
-    await db.delete(inventoryTable).where(inArray(inventoryTable.id, seededInventoryIds));
+    await bestEffortFixtureCleanup("catalog PDF review inventory", async () => {
+      await db.delete(inventoryTable).where(inArray(inventoryTable.id, seededInventoryIds));
+    });
   }
   if (seededJobIds.length > 0) {
-    await db.delete(catalogPdfJobTable).where(inArray(catalogPdfJobTable.id, seededJobIds));
+    await bestEffortFixtureCleanup("catalog PDF review jobs", async () => {
+      await db.delete(catalogPdfJobTable).where(inArray(catalogPdfJobTable.id, seededJobIds));
+    });
   }
 }, 15_000);
 

@@ -127,6 +127,141 @@ function withAuth(t: supertest.Test, token?: string): supertest.Test {
   return token ? t.set("Authorization", `Bearer ${token}`) : t;
 }
 
+const INVENTORY_MUTATION_ROUTES: ReadonlyArray<{
+  label: string;
+  send: (token: string) => supertest.Test;
+}> = [
+  {
+    label: "POST /api/inventory/add-part",
+    send: (token) =>
+      withAuth(supertest(app).post("/api/inventory/add-part"), token).send({}),
+  },
+  {
+    label: "POST /api/inventory/upsert-batch/preview",
+    send: (token) =>
+      withAuth(supertest(app).post("/api/inventory/upsert-batch/preview"), token).send({}),
+  },
+  {
+    label: "POST /api/inventory/upsert-batch",
+    send: (token) =>
+      withAuth(supertest(app).post("/api/inventory/upsert-batch"), token).send({}),
+  },
+  {
+    label: "POST /api/inventory/enrich",
+    send: (token) =>
+      withAuth(supertest(app).post("/api/inventory/enrich"), token).send({}),
+  },
+  {
+    label: "POST /api/inventory/description-expansion",
+    send: (token) =>
+      withAuth(supertest(app).post("/api/inventory/description-expansion"), token).send({}),
+  },
+  {
+    label: "DELETE /api/inventory/description-expansion",
+    send: (token) =>
+      withAuth(supertest(app).delete("/api/inventory/description-expansion"), token).send({}),
+  },
+  {
+    label: "POST /api/inventory/expand-descriptions",
+    send: (token) =>
+      withAuth(supertest(app).post("/api/inventory/expand-descriptions"), token).send({}),
+  },
+  {
+    label: "POST /api/inventory/:id/expand-description",
+    send: (token) =>
+      withAuth(supertest(app).post("/api/inventory/1/expand-description"), token).send({}),
+  },
+  {
+    label: "PATCH /api/inventory/:id/expanded-description",
+    send: (token) =>
+      withAuth(supertest(app).patch("/api/inventory/1/expanded-description"), token).send({}),
+  },
+  {
+    label: "POST /api/inventory/bulk-enrich",
+    send: (token) =>
+      withAuth(supertest(app).post("/api/inventory/bulk-enrich"), token).send({}),
+  },
+  {
+    label: "DELETE /api/inventory/bulk-enrich",
+    send: (token) =>
+      withAuth(supertest(app).delete("/api/inventory/bulk-enrich"), token).send({}),
+  },
+  {
+    label: "POST /api/inventory/enrich-measurements",
+    send: (token) =>
+      withAuth(supertest(app).post("/api/inventory/enrich-measurements"), token).send({}),
+  },
+  {
+    label: "PATCH /api/inventory/:id/barcodes",
+    send: (token) =>
+      withAuth(supertest(app).patch("/api/inventory/1/barcodes"), token).send({}),
+  },
+  {
+    label: "PATCH /api/inventory/:id/bins",
+    send: (token) =>
+      withAuth(supertest(app).patch("/api/inventory/1/bins"), token).send({}),
+  },
+  {
+    label: "PATCH /api/inventory/:id/order",
+    send: (token) =>
+      withAuth(supertest(app).patch("/api/inventory/1/order"), token).send({}),
+  },
+  {
+    label: "PATCH /api/inventory/:id/size",
+    send: (token) =>
+      withAuth(supertest(app).patch("/api/inventory/1/size"), token).send({}),
+  },
+  {
+    label: "PATCH /api/inventory/:id/description",
+    send: (token) =>
+      withAuth(supertest(app).patch("/api/inventory/1/description"), token).send({}),
+  },
+  {
+    label: "PATCH /api/inventory/:id/enrich",
+    send: (token) =>
+      withAuth(supertest(app).patch("/api/inventory/1/enrich"), token).send({}),
+  },
+  {
+    label: "PATCH /api/inventory/:id/keywords",
+    send: (token) =>
+      withAuth(supertest(app).patch("/api/inventory/1/keywords"), token).send({}),
+  },
+  {
+    label: "PATCH /api/inventory/:id/photo",
+    send: (token) =>
+      withAuth(supertest(app).patch("/api/inventory/1/photo"), token).send({}),
+  },
+  {
+    label: "PATCH /api/inventory/:id/dimensions",
+    send: (token) =>
+      withAuth(supertest(app).patch("/api/inventory/1/dimensions"), token).send({}),
+  },
+  {
+    label: "POST /api/inventory/estimate-dimensions",
+    send: (token) =>
+      withAuth(supertest(app).post("/api/inventory/estimate-dimensions"), token).send({}),
+  },
+  {
+    label: "DELETE /api/inventory/:id",
+    send: (token) =>
+      withAuth(supertest(app).delete("/api/inventory/1"), token).send({}),
+  },
+];
+
+for (const { label, send } of INVENTORY_MUTATION_ROUTES) {
+  describe(`${label} — blocked account guard`, () => {
+    it("pending → 403 with pending code", async () => {
+      const res = await send(PENDING_USER).expect(403);
+      expect(res.body).toMatchObject({ code: "pending" });
+    });
+
+    it("banned → 403 with banned code", async () => {
+      const res = await send(BANNED_USER).expect(403);
+      expect(res.body).toMatchObject({ code: "banned" });
+    });
+  });
+}
+
 describeWriteGuard("POST /api/warehouse-zones", (token) =>
   withAuth(
     supertest(app).post("/api/warehouse-zones"),

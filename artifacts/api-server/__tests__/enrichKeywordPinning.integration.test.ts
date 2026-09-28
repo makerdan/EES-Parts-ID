@@ -47,12 +47,14 @@ import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
 import { db, inventoryTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
+import { workerQualifiedUserId } from "./helpers/testDb";
 import { callPoeBotWithChain } from "../src/lib/poeBot";
 import { invalidateReferenceAnswerCache } from "../src/lib/answerCache";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const ADMIN_SECRET = "jest-pinning-itg-secret";
-const CATALOG_PREFIX = "JEST-PIN-";
+const CATALOG_PREFIX = `${workerQualifiedUserId("JEST-PIN")}-`;
+const DECOY_CATALOG = `${workerQualifiedUserId("JEST-PIN", `other-${process.pid}-${process.env.JEST_WORKER_ID ?? "single"}`)}-concurrent-decoy`;
 
 let adminToken: string;
 
@@ -60,7 +62,7 @@ let adminToken: string;
 async function cleanup() {
   await db
     .delete(inventoryTable)
-    .where(sql`${inventoryTable.catalog} LIKE ${"JEST-PIN-%"}`);
+    .where(sql`${inventoryTable.catalog} LIKE ${CATALOG_PREFIX + "%"}`);
 }
 
 // ── Setup / teardown ──────────────────────────────────────────────────────────
@@ -68,10 +70,15 @@ beforeAll(async () => {
   process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
   await cleanup();
+  await db.insert(inventoryTable).values({
+    vendor: "JEST", catalog: DECOY_CATALOG, description: "concurrent decoy",
+    binLocations: [], aiKeywords: [],
+  }).onConflictDoNothing();
 }, 30_000);
 
 afterAll(async () => {
   await cleanup();
+  await db.delete(inventoryTable).where(eq(inventoryTable.catalog, DECOY_CATALOG));
 }, 30_000);
 
 beforeEach(() => {
@@ -85,6 +92,12 @@ afterEach(async () => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/inventory/:id/enrich — pinned keyword preservation", () => {
+  it("preserves a similarly-prefixed fixture owned by another invocation", async () => {
+    await cleanup();
+    const rows = await db.select({ catalog: inventoryTable.catalog }).from(inventoryTable)
+      .where(eq(inventoryTable.catalog, DECOY_CATALOG));
+    expect(rows).toEqual([{ catalog: DECOY_CATALOG }]);
+  });
   it("retains 'Cutler-Hammer' after re-enrichment when it is in pinnedKeywords", async () => {
     // Arrange: create a BAB breaker with "Cutler-Hammer" already pinned
     // (this simulates the post-migration state after 0027_pinned_keywords.sql runs).

@@ -127,10 +127,6 @@ jest.mock("expo-camera", () => ({
   useCameraPermissions: jest.fn(() => [{ granted: false }, jest.fn()]),
 }));
 
-jest.mock("lidar-measure", () => ({
-  isLiDARSupported: jest.fn(() => false),
-}));
-
 jest.mock("@/utils/apiBase", () => ({
   API_BASE: "http://localhost:8080/api",
   API_ORIGIN: "http://localhost:8080",
@@ -252,8 +248,6 @@ beforeEach(() => {
     adminToken: "admin-test-token",
     isAdmin: true,
     isLoading: false,
-    pendingLidarDims: null,
-    setPendingLidarDims: jest.fn(),
   });
 
   mockFetch.mockReset();
@@ -296,6 +290,24 @@ afterEach(async () => {
 // =============================================================================
 
 describe("EditItemScreen — administrator inventory edit workflow", () => {
+  it("keeps saved OP/OQ values and selects them on focus with the numeric keypad", async () => {
+    routeItem = makeItem({ orderPurchase: 12, orderQuantity: 34, totalOpOq: 46 });
+    activeTree = await renderScreen();
+
+    const inputs = activeTree.root!.queryAll(
+      (node) =>
+        (node.type as string) === "rn-textinput" &&
+        node.props.placeholder === "0",
+      { includeSelf: true },
+    );
+    expect(inputs).toHaveLength(2);
+    expect(inputs.map((input) => input.props.value)).toEqual(["12", "34"]);
+    for (const input of inputs) {
+      expect(input.props.selectTextOnFocus).toBe(true);
+      expect(input.props.keyboardType).toBe("number-pad");
+    }
+  });
+
   it("shows a read-only live OP/OQ total", async () => {
     activeTree = await renderScreen();
 
@@ -374,7 +386,7 @@ describe("EditItemScreen — administrator inventory edit workflow", () => {
     expect(reloadedInput!.props.value).toBe("Persisted workflow description");
   });
 
-  it("rolls the edited field back and shows actionable feedback when the save is rejected", async () => {
+  it("keeps the failed field available for retry and shows actionable feedback", async () => {
     failDescriptionSave = true;
     activeTree = await renderScreen();
 
@@ -393,9 +405,11 @@ describe("EditItemScreen — administrator inventory edit workflow", () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(findTextInput(activeTree.root!, "Brief description of the part…")!.props.value)
-      .toBe("Original description");
+      .toBe("This must not persist");
     expect(hasText(activeTree.root!, "Description failed")).toBe(true);
     expect(hasText(activeTree.root!, "✓ Saved")).toBe(false);
+    expect(mockRouter.back).not.toHaveBeenCalled();
+    expect(mockRouter.replace).not.toHaveBeenCalled();
     expect(inventoryCache.items[0]!.description).toBe("Original description");
     expect(searchCache.results[0]!.item.description).toBe("Original description");
     expect(serverItem.description).toBe("Original description");
@@ -412,8 +426,6 @@ describe("EditItemScreen — protected inventory mutations", () => {
       adminToken: null,
       isAdmin: false,
       isLoading: false,
-      pendingLidarDims: null,
-      setPendingLidarDims: jest.fn(),
     });
     activeTree = await renderScreen();
 

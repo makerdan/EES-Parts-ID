@@ -46,9 +46,12 @@ import type {
   InventorySnapshotDryRun,
   InventorySnapshotHealth,
   InventorySnapshotSummary,
+  ListAdminManualInventoryBackupHistoryParams,
   ListInventoryParams,
   LivenessStatus,
   LookupDictionaryParams,
+  ManualInventoryBackupHistoryPage,
+  ManualInventoryBackupStatus,
   PublicMapAnchorListResponse,
   PublicWarehouseZoneListResponse,
   ReadinessFailure,
@@ -68,6 +71,8 @@ import type {
   UploadPhotoResponse,
   UpsertInventoryBody,
   UpsertInventoryResponse,
+  UserHistory,
+  UserHistoryPatch,
   WarehouseZoneResponse,
   ZoneAlignment
 } from './api.schemas';
@@ -267,6 +272,7 @@ export const getListInventoryUrl = (params?: ListInventoryParams,) => {
 }
 
 /**
+ * Offset browsing is limited to 10000 rows. For bulk export, start with after_id=0, then pass each page's last item id and the returned throughId on subsequent requests. Cursor pages are ordered by id and bounded to the highest id present at the start.
  * @summary List inventory items (paginated)
  */
 export const listInventory = async (params?: ListInventoryParams, options?: RequestInit): Promise<InventoryListResponse> => {
@@ -291,7 +297,7 @@ export const getListInventoryQueryKey = (params?: ListInventoryParams,) => {
     }
 
 
-export const getListInventoryQueryOptions = <TData = Awaited<ReturnType<typeof listInventory>>, TError = ErrorType<unknown>>(params?: ListInventoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listInventory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListInventoryQueryOptions = <TData = Awaited<ReturnType<typeof listInventory>>, TError = ErrorType<void>>(params?: ListInventoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listInventory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -310,14 +316,14 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListInventoryQueryResult = NonNullable<Awaited<ReturnType<typeof listInventory>>>
-export type ListInventoryQueryError = ErrorType<unknown>
+export type ListInventoryQueryError = ErrorType<void>
 
 
 /**
  * @summary List inventory items (paginated)
  */
 
-export function useListInventory<TData = Awaited<ReturnType<typeof listInventory>>, TError = ErrorType<unknown>>(
+export function useListInventory<TData = Awaited<ReturnType<typeof listInventory>>, TError = ErrorType<void>>(
  params?: ListInventoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listInventory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -3058,6 +3064,154 @@ export const useAiReference = <TError = ErrorType<void>,
       return useMutation(getAiReferenceMutationOptions(options));
     }
 
+export const getGetUserHistoryUrl = () => {
+
+
+
+
+  return `/api/user/history`
+}
+
+/**
+ * @summary Get the authenticated user's private history
+ */
+export const getUserHistory = async ( options?: RequestInit): Promise<UserHistory> => {
+
+  return customFetch<UserHistory>(getGetUserHistoryUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetUserHistoryQueryKey = () => {
+    return [
+    `/api/user/history`
+    ] as const;
+    }
+
+
+export const getGetUserHistoryQueryOptions = <TData = Awaited<ReturnType<typeof getUserHistory>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetUserHistoryQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getUserHistory>>> = ({ signal }) => getUserHistory({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getUserHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetUserHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getUserHistory>>>
+export type GetUserHistoryQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get the authenticated user's private history
+ */
+
+export function useGetUserHistory<TData = Awaited<ReturnType<typeof getUserHistory>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetUserHistoryQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateUserHistoryUrl = () => {
+
+
+
+
+  return `/api/user/history`
+}
+
+/**
+ * @summary Update one or more of the authenticated user's history collections
+ */
+export const updateUserHistory = async (userHistoryPatch: UserHistoryPatch, options?: RequestInit): Promise<UserHistory> => {
+
+  return customFetch<UserHistory>(getUpdateUserHistoryUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(userHistoryPatch)
+  }
+);}
+
+
+
+
+
+export const getUpdateUserHistoryMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateUserHistory>>, TError,{data: BodyType<UserHistoryPatch>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateUserHistory>>, TError,{data: BodyType<UserHistoryPatch>}, TContext> => {
+
+const mutationKey = ['updateUserHistory'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateUserHistory>>, {data: BodyType<UserHistoryPatch>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateUserHistory(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateUserHistoryMutationResult = NonNullable<Awaited<ReturnType<typeof updateUserHistory>>>
+    export type UpdateUserHistoryMutationBody = BodyType<UserHistoryPatch>
+    export type UpdateUserHistoryMutationError = ErrorType<void>
+
+    /**
+ * @summary Update one or more of the authenticated user's history collections
+ */
+export const useUpdateUserHistory = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateUserHistory>>, TError,{data: BodyType<UserHistoryPatch>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateUserHistory>>,
+        TError,
+        {data: BodyType<UserHistoryPatch>},
+        TContext
+      > => {
+      return useMutation(getUpdateUserHistoryMutationOptions(options));
+    }
+
 export const getDeleteUserMeUrl = () => {
 
 
@@ -3216,11 +3370,11 @@ export const getCreateAdminInventorySnapshotUrl = () => {
 }
 
 /**
- * @summary Create a verified inventory snapshot
+ * @summary Start a manual verified inventory backup
  */
-export const createAdminInventorySnapshot = async ( options?: RequestInit): Promise<InventorySnapshotSummary> => {
+export const createAdminInventorySnapshot = async ( options?: RequestInit): Promise<ManualInventoryBackupStatus> => {
 
-  return customFetch<InventorySnapshotSummary>(getCreateAdminInventorySnapshotUrl(),
+  return customFetch<ManualInventoryBackupStatus>(getCreateAdminInventorySnapshotUrl(),
   {
     ...options,
     method: 'POST'
@@ -3233,7 +3387,7 @@ export const createAdminInventorySnapshot = async ( options?: RequestInit): Prom
 
 
 
-export const getCreateAdminInventorySnapshotMutationOptions = <TError = ErrorType<unknown>,
+export const getCreateAdminInventorySnapshotMutationOptions = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAdminInventorySnapshot>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createAdminInventorySnapshot>>, TError,void, TContext> => {
 
@@ -3262,12 +3416,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateAdminInventorySnapshotMutationResult = NonNullable<Awaited<ReturnType<typeof createAdminInventorySnapshot>>>
 
-    export type CreateAdminInventorySnapshotMutationError = ErrorType<unknown>
+    export type CreateAdminInventorySnapshotMutationError = ErrorType<void>
 
     /**
- * @summary Create a verified inventory snapshot
+ * @summary Start a manual verified inventory backup
  */
-export const useCreateAdminInventorySnapshot = <TError = ErrorType<unknown>,
+export const useCreateAdminInventorySnapshot = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAdminInventorySnapshot>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof createAdminInventorySnapshot>>,
@@ -3277,6 +3431,167 @@ export const useCreateAdminInventorySnapshot = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getCreateAdminInventorySnapshotMutationOptions(options));
     }
+
+export const getGetAdminManualInventoryBackupStatusUrl = () => {
+
+
+
+
+  return `/api/admin/snapshots/status`
+}
+
+/**
+ * @summary Read the current or latest manual inventory backup status
+ */
+export const getAdminManualInventoryBackupStatus = async ( options?: RequestInit): Promise<ManualInventoryBackupStatus | null> => {
+
+  return customFetch<ManualInventoryBackupStatus | null>(getGetAdminManualInventoryBackupStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminManualInventoryBackupStatusQueryKey = () => {
+    return [
+    `/api/admin/snapshots/status`
+    ] as const;
+    }
+
+
+export const getGetAdminManualInventoryBackupStatusQueryOptions = <TData = Awaited<ReturnType<typeof getAdminManualInventoryBackupStatus>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminManualInventoryBackupStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminManualInventoryBackupStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminManualInventoryBackupStatus>>> = ({ signal }) => getAdminManualInventoryBackupStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminManualInventoryBackupStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminManualInventoryBackupStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminManualInventoryBackupStatus>>>
+export type GetAdminManualInventoryBackupStatusQueryError = ErrorType<void>
+
+
+/**
+ * @summary Read the current or latest manual inventory backup status
+ */
+
+export function useGetAdminManualInventoryBackupStatus<TData = Awaited<ReturnType<typeof getAdminManualInventoryBackupStatus>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminManualInventoryBackupStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminManualInventoryBackupStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListAdminManualInventoryBackupHistoryUrl = (params?: ListAdminManualInventoryBackupHistoryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/snapshots/history?${stringifiedParams}` : `/api/admin/snapshots/history`
+}
+
+/**
+ * @summary List manual inventory backup history
+ */
+export const listAdminManualInventoryBackupHistory = async (params?: ListAdminManualInventoryBackupHistoryParams, options?: RequestInit): Promise<ManualInventoryBackupHistoryPage> => {
+
+  return customFetch<ManualInventoryBackupHistoryPage>(getListAdminManualInventoryBackupHistoryUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminManualInventoryBackupHistoryQueryKey = (params?: ListAdminManualInventoryBackupHistoryParams,) => {
+    return [
+    `/api/admin/snapshots/history`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListAdminManualInventoryBackupHistoryQueryOptions = <TData = Awaited<ReturnType<typeof listAdminManualInventoryBackupHistory>>, TError = ErrorType<void>>(params?: ListAdminManualInventoryBackupHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminManualInventoryBackupHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminManualInventoryBackupHistoryQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminManualInventoryBackupHistory>>> = ({ signal }) => listAdminManualInventoryBackupHistory(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminManualInventoryBackupHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminManualInventoryBackupHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminManualInventoryBackupHistory>>>
+export type ListAdminManualInventoryBackupHistoryQueryError = ErrorType<void>
+
+
+/**
+ * @summary List manual inventory backup history
+ */
+
+export function useListAdminManualInventoryBackupHistory<TData = Awaited<ReturnType<typeof listAdminManualInventoryBackupHistory>>, TError = ErrorType<void>>(
+ params?: ListAdminManualInventoryBackupHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminManualInventoryBackupHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminManualInventoryBackupHistoryQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetAdminInventorySnapshotHealthUrl = () => {
 

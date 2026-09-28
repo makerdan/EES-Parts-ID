@@ -1,4 +1,6 @@
 const mockDeletedPaths: string[] = [];
+const mockSavedPaths: string[] = [];
+const mockSaveOptions: unknown[] = [];
 
 jest.mock("@google-cloud/storage", () => ({
   Storage: class {
@@ -6,7 +8,10 @@ jest.mock("@google-cloud/storage", () => ({
       return {
         file(path: string) {
           return {
-            save: jest.fn().mockResolvedValue(undefined),
+            save: jest.fn(async (_bytes: Buffer, options: unknown) => {
+              mockSavedPaths.push(path);
+              mockSaveOptions.push(options);
+            }),
             download: jest.fn().mockResolvedValue([Buffer.from("map")]),
             delete: jest.fn(async () => {
               mockDeletedPaths.push(path);
@@ -19,17 +24,21 @@ jest.mock("@google-cloud/storage", () => ({
 }));
 
 import {
+  deleteFloorPlanSvg,
   deletePrivateObjects,
   isPublicFloorPlanObjectPath,
   isPrivateObjectPath,
   readFloorPlanSvg,
   uploadCatalogImage,
+  uploadFloorPlanSvg,
 } from "../lib/objectStorage";
 
 beforeEach(() => {
   process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID = "test-bucket";
   process.env.PRIVATE_OBJECT_DIR = "uploads";
   mockDeletedPaths.length = 0;
+  mockSavedPaths.length = 0;
+  mockSaveOptions.length = 0;
 });
 
 afterAll(() => {
@@ -62,5 +71,23 @@ describe("private object storage policy", () => {
     expect(mockDeletedPaths).toEqual(["uploads/private/catalog-images/private.jpg"]);
     await expect(readFloorPlanSvg("/objects/uploads/private/catalog-images/private.jpg"))
       .rejects.toThrow("warehouse floor-plan");
+  });
+
+  it("uses distinct floor-plan keys and only deletes new, owned keys idempotently", async () => {
+    const first = await uploadFloorPlanSvg("<svg/>");
+    const second = await uploadFloorPlanSvg("<svg/>");
+    expect(first).not.toBe(second);
+    expect(first).toMatch(/^\/objects\/uploads\/public\/floor-plan\/[0-9a-f-]{36}\.svg$/);
+    expect(mockSaveOptions[0]).toMatchObject({ preconditionOpts: { ifGenerationMatch: 0 } });
+    await readFloorPlanSvg(first);
+    await deleteFloorPlanSvg(first);
+    await deleteFloorPlanSvg(first);
+    expect(mockDeletedPaths).toEqual([first.slice("/objects/".length), first.slice("/objects/".length)]);
+    expect(mockSavedPaths).toHaveLength(2);
+    await expect(deleteFloorPlanSvg("/objects/uploads/public/floor-plan/warehouse-map.svg"))
+      .rejects.toThrow("uniquely owned");
+    await expect(deleteFloorPlanSvg("/objects/uploads/private/catalog-images/00000000-0000-4000-8000-000000000000.svg"))
+      .rejects.toThrow("uniquely owned");
+    expect(mockDeletedPaths).toHaveLength(2);
   });
 });

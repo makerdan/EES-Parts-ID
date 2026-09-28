@@ -3,7 +3,7 @@ import { ReferenceLogQuerySchema, ReferenceLogResponseSchema } from "@workspace/
 import { db } from "@workspace/db";
 import { aiRequestLogTable,inventoryTable, quickLookupCacheTable, referenceLogTable } from "@workspace/db";
 import { desc, eq, ilike, lt, or, sql } from "drizzle-orm";
-import { Router } from "express";
+import { type Request, type Response, Router } from "express";
 
 import {
   getCachedAnswer,
@@ -13,11 +13,39 @@ import {
 } from "../lib/answerCache";
 import { getLogger, logger } from "../lib/logger";
 import { referenceAskLimiter } from "../lib/rateLimiter";
-import { callGemini, callGeminiWithHistory } from "../lib/webSearch";
+import {
+  callGemini,
+  callGeminiWithHistory,
+  GeminiRequestTimeoutError,
+} from "../lib/webSearch";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 import helpRouter from "./help";
 
 const router = Router();
+
+function createRequestAbortScope(req: Request, res: Response) {
+  const controller = new AbortController();
+  const abortOnDisconnect = () => {
+    if (!res.writableEnded && !controller.signal.aborted) {
+      controller.abort();
+    }
+  };
+
+  req.once("aborted", abortOnDisconnect);
+  res.once("close", abortOnDisconnect);
+
+  return {
+    signal: controller.signal,
+    isDisconnected: () =>
+      controller.signal.aborted ||
+      req.aborted ||
+      (res.destroyed && !res.writableEnded),
+    dispose: () => {
+      req.off("aborted", abortOnDisconnect);
+      res.off("close", abortOnDisconnect);
+    },
+  };
+}
 
 // Reference namespace audience map:
 // - /ask and GET /quick-lookups[/:label]: approved app users; /ask limits
@@ -80,8 +108,8 @@ Parts ID is a mobile warehouse app for identifying, locating, and managing elect
 const ADMIN_APP_KNOWLEDGE = `
 **Admin-only features (available to administrators only):**
 
-**Measure tab (admin only, LiDAR devices only):**
-- On an iPhone/iPad with LiDAR, admins can scan a part's real bounding-box dimensions in a few seconds. Values can be reviewed and edited before confirming.
+**Measure tab (admin only):**
+- Admins can capture a part's dimensions. Values can be reviewed and edited before confirming.
 - Launched from an item's edit form, the captured dimensions are written back to pre-fill that item's length/width/height. Launched on its own, the dimensions are applied as a **size-range filter on the Search tab** so you can find similarly sized parts.
 
 **Admin tab & admin tools (admin only):**
@@ -198,8 +226,9 @@ function writeReferenceLog(question: string, answer: string, matchedItemCount: n
 async function callGeminiReference(
   systemContent: string,
   question: string,
+  signal?: AbortSignal,
 ): Promise<{ answer: string; usedWebSearch: boolean }> {
-  const answer = await callGemini(systemContent, question);
+  const answer = await callGemini(systemContent, question, signal);
   const usedWebSearch = answer.trimStart().startsWith("*(web)*");
   return { answer, usedWebSearch };
 }
@@ -212,10 +241,12 @@ async function collectAnswer(
   question: string,
   isAdmin: boolean,
   log = logger,
+  signal?: AbortSignal,
 ): Promise<{ answer: string; matchedItemCount: number; usedWebSearch: boolean }> {
   const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question, log);
+  signal?.throwIfAborted();
   const systemContent = buildSystemPrompt(inventoryContext, isAdmin);
-  const { answer, usedWebSearch } = await callGeminiReference(systemContent, question);
+  const { answer, usedWebSearch } = await callGeminiReference(systemContent, question, signal);
   return { answer, matchedItemCount, usedWebSearch };
 }
 
@@ -228,10 +259,12 @@ async function collectAnswerWithHistory(
   history: Array<{ q: string; a: string }>,
   isAdmin: boolean,
   log = logger,
+  signal?: AbortSignal,
 ): Promise<{ answer: string; matchedItemCount: number; usedWebSearch: boolean }> {
   const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question, log);
+  signal?.throwIfAborted();
   const systemContent = buildSystemPrompt(inventoryContext, isAdmin);
-  const answer = await callGeminiWithHistory(systemContent, history, question);
+  const answer = await callGeminiWithHistory(systemContent, history, question, signal);
   const usedWebSearch = answer.trimStart().startsWith("*(web)*");
   return { answer, matchedItemCount, usedWebSearch };
 }
@@ -243,9 +276,13 @@ const REFERENCE_ASK_MAX_HISTORY_ITEM_LENGTH = 2000;
 
 router.post("/ask", async (req, res) => {
   const reqLogger = getLogger(res);
+  const requestScope = createRequestAbortScope(req, res);
   try {
     const rateLimitKey = getAuth(req)?.userId ?? String(req.ip ?? "unknown");
     const rateCheck = await referenceAskLimiter.check(rateLimitKey, res.locals.requestId as string | undefined);
+    if (requestScope.isDisconnected()) {
+      return;
+    }
     if (!rateCheck.allowed) {
       res.set("Retry-After", String(Math.ceil(rateCheck.retryAfterMs / 1000)));
       return void res.status(429).json({ error: "Too many requests. Please slow down." });
@@ -255,7 +292,7 @@ router.post("/ask", async (req, res) => {
       question: string;
       history?: Array<{ q: string; a: string }>;
     };
-    if (!question?.trim()) {
+    if (typeof question !== "string" || !question.trim()) {
       return void res.status(400).json({ error: "question is required" });
     }
     if (question.length > REFERENCE_ASK_MAX_QUESTION_LENGTH) {
@@ -306,6 +343,9 @@ router.post("/ask", async (req, res) => {
     if (wantsJson) {
       if (!hasHistory) {
         const cached = await getCachedAnswer(questionHash);
+        if (requestScope.isDisconnected()) {
+          return;
+        }
         if (cached !== null) {
           reqLogger.debug({ questionHash }, "reference.ask cache hit (json)");
           writeAiRequestLog("reference", reqLogger);
@@ -314,8 +354,11 @@ router.post("/ask", async (req, res) => {
       }
 
       const { answer, matchedItemCount, usedWebSearch } = hasHistory
-        ? await collectAnswerWithHistory(question.trim(), history!, isAdmin, reqLogger)
-        : await collectAnswer(question.trim(), isAdmin, reqLogger);
+        ? await collectAnswerWithHistory(question.trim(), history!, isAdmin, reqLogger, requestScope.signal)
+        : await collectAnswer(question.trim(), isAdmin, reqLogger, requestScope.signal);
+      if (requestScope.isDisconnected()) {
+        return;
+      }
       writeReferenceLog(question.trim(), answer, matchedItemCount, reqLogger);
       // Secondary guard: skip the DB write entirely for history-path answers
       // (they are context-dependent and not worth storing). The primary safety
@@ -331,6 +374,9 @@ router.post("/ask", async (req, res) => {
 
     // SSE path: check cache first (only when no history), then call Gemini-2.5-Flash on miss.
     const cached = hasHistory ? null : await getCachedAnswer(questionHash);
+    if (requestScope.isDisconnected()) {
+      return;
+    }
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -340,6 +386,9 @@ router.post("/ask", async (req, res) => {
     if (cached !== null) {
       reqLogger.debug({ questionHash }, "reference.ask cache hit (sse)");
       writeAiRequestLog("reference", reqLogger);
+      if (requestScope.isDisconnected()) {
+        return;
+      }
       res.write(`data: ${JSON.stringify({ content: cached })}\n\n`);
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();
@@ -348,12 +397,18 @@ router.post("/ask", async (req, res) => {
 
     // Gemini-2.5-Flash call (non-streaming internally; pseudo-stream to client).
     const { answer: fullAnswer, matchedItemCount, usedWebSearch } = hasHistory
-      ? await collectAnswerWithHistory(question.trim(), history!, isAdmin, reqLogger)
-      : await collectAnswer(question.trim(), isAdmin, reqLogger);
+      ? await collectAnswerWithHistory(question.trim(), history!, isAdmin, reqLogger, requestScope.signal)
+      : await collectAnswer(question.trim(), isAdmin, reqLogger, requestScope.signal);
+    if (requestScope.isDisconnected()) {
+      return;
+    }
 
     // Emit the answer word-by-word for a live-typing effect.
     const words = fullAnswer.split(" ");
     for (let i = 0; i < words.length; i++) {
+      if (requestScope.isDisconnected()) {
+        return;
+      }
       const chunk = (i === 0 ? "" : " ") + words[i];
       res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
     }
@@ -370,8 +425,20 @@ router.post("/ask", async (req, res) => {
       setCachedAnswer(questionHash, normalized, fullAnswer, usedWebSearch).catch((err) => reqLogger.warn({ err }, "cache write failed"));
     }
   } catch (err) {
+    if (requestScope.isDisconnected()) {
+      return;
+    }
     reqLogger.error({ err }, "reference.ask failed");
-    if (res.headersSent) {
+    if (err instanceof GeminiRequestTimeoutError) {
+      if (res.headersSent) {
+        res.write(
+          `event: error\ndata: ${JSON.stringify({ error: GENERIC_ERROR_MESSAGE })}\n\n`,
+        );
+        res.end();
+      } else {
+        res.status(504).json({ error: GENERIC_ERROR_MESSAGE });
+      }
+    } else if (res.headersSent) {
       try {
         res.write(
           `event: error\ndata: ${JSON.stringify({ error: GENERIC_ERROR_MESSAGE })}\n\n`,
@@ -383,6 +450,8 @@ router.post("/ask", async (req, res) => {
     } else {
       res.status(500).json({ error: GENERIC_ERROR_MESSAGE });
     }
+  } finally {
+    requestScope.dispose();
   }
 });
 
@@ -498,16 +567,20 @@ router.get("/quick-lookups/:label", async (req, res) => {
 // Called internally by the mobile client when cache misses at all layers.
 router.post("/quick-lookups/:label", requireAdminAuth, async (req, res) => {
   const reqLogger = getLogger(res);
+  const requestScope = createRequestAbortScope(req, res);
   try {
     const label = req.params["label"] as string;
     const { question } = req.body as { question: string };
-    if (!question?.trim()) {
+    if (typeof question !== "string" || !question.trim()) {
       return void res.status(400).json({ error: "question is required" });
     }
 
     // This route is admin-gated (requireAdminAuth), so the requester is always
     // an admin — generate the answer with the admin-aware knowledge base.
-    const { answer } = await collectAnswer(question.trim(), true);
+    const { answer } = await collectAnswer(question.trim(), true, reqLogger, requestScope.signal);
+    if (requestScope.isDisconnected()) {
+      return;
+    }
 
     await db
       .insert(quickLookupCacheTable)
@@ -519,8 +592,15 @@ router.post("/quick-lookups/:label", requireAdminAuth, async (req, res) => {
 
     res.json({ answer });
   } catch (err) {
+    if (requestScope.isDisconnected()) {
+      return;
+    }
     reqLogger.error({ err }, "reference.quick-lookups post failed");
-    res.status(500).json({ error: GENERIC_ERROR_MESSAGE });
+    res
+      .status(err instanceof GeminiRequestTimeoutError ? 504 : 500)
+      .json({ error: GENERIC_ERROR_MESSAGE });
+  } finally {
+    requestScope.dispose();
   }
 });
 

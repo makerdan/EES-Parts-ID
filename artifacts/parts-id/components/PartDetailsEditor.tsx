@@ -11,7 +11,6 @@ import {
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
-import { isLiDARSupported } from "lidar-measure";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -37,6 +36,12 @@ import { useColors } from "@/hooks/useColors";
 import { API_BASE } from "@/utils/apiBase";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
 import {
+  DIMENSION_INPUT_ERROR,
+  dimensionInputsChanged,
+  parseDimensionText,
+  validateDimensionInputs,
+} from "@/utils/dimensionValidation";
+import {
   evictDeletedItemFromAllCaches,
   invalidateAllCachesAfterSave,
   invalidateListCache,
@@ -50,6 +55,10 @@ import {
   resolveInventorySaveResults,
   runInventoryWrite,
 } from "@/utils/inventoryWrite";
+import {
+  coordinateSharedPartSave,
+  type SharedPartSaveCacheContext,
+} from "@/utils/sharedPartSaveCoordinator";
 
 interface CapturedPhoto {
   uri: string;
@@ -69,8 +78,8 @@ function fmtDim(v: number | null | undefined): string {
 }
 
 function parseDimField(s: string): number | null {
-  const n = parseFloat(s);
-  return isNaN(n) || n < 0 ? null : Math.round(n * 10) / 10;
+  const result = parseDimensionText(s);
+  return result.valid ? result.value : null;
 }
 
 interface PartDetailsEditorProps {
@@ -94,10 +103,7 @@ interface PartDetailsEditorProps {
  * Lets admins fill in description, bin locations, keywords, and dimensions
  * in one place without navigating to the Upload tab.
  *
- * On iOS devices with LiDAR a "LiDAR" shortcut appears in the dimensions
- * section so admins can capture measurements without navigating to Edit.
- * On non-LiDAR iOS devices the "Estimate" (photo AI) path is shown instead.
- * Android and Web see neither — manual entry only.
+ * Administrators can estimate dimensions from a photo or enter them manually.
  */
 export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onItemDeleted, onItemSaved }: PartDetailsEditorProps) {
   "use no memo";
@@ -158,9 +164,14 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const [dimWidth, setDimWidth] = useState(fmtDim(existingDims?.width));
   const [dimHeight, setDimHeight] = useState(fmtDim(existingDims?.height));
   const [dimDiameter, setDimDiameter] = useState(fmtDim(existingDims?.diameter));
+  const dimensionValidation = validateDimensionInputs({
+    length: dimLength,
+    width: dimWidth,
+    height: dimHeight,
+    diameter: dimDiameter,
+  });
   const [measureOpen, setMeasureOpen] = useState(false);
-  const [lidarAvailable, setLidarAvailable] = useState(false);
-  const pendingMeasureDimsRef = useRef<PartDimensions | null>(null);
+  const pendingDimsRef = useRef<PartDimensions | null>(null);
   const [discardDialogVisible, setDiscardDialogVisible] = useState(false);
   const [saveInFlightDialogVisible, setSaveInFlightDialogVisible] = useState(false);
   const savedDescriptionRef = useRef(item?.description ?? "");
@@ -218,10 +229,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     pendingCloseRef.current = null;
     setDiscardDialogVisible(false);
     if (exit) exit();
-  }, []);
-
-  useEffect(() => {
-    setLidarAvailable(isLiDARSupported());
   }, []);
 
   // Photo state — slot 1 (Box / Label)
@@ -315,12 +322,15 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     const oqDirty = Number(oq.trim() || "0") !== savedOqRef.current;
     const binsDirty = JSON.stringify(bins) !== JSON.stringify(savedBinsRef.current);
     const keywordsDirty = JSON.stringify(keywords) !== JSON.stringify(savedKeywordsRef.current);
-    const dimensionsDirty = JSON.stringify({
-      length: parseDimField(dimLength),
-      width: parseDimField(dimWidth),
-      height: parseDimField(dimHeight),
-      diameter: parseDimField(dimDiameter),
-    }) !== JSON.stringify(savedDimsRef.current);
+    const dimensionsDirty = dimensionInputsChanged(
+      validateDimensionInputs({
+        length: dimLength,
+        width: dimWidth,
+        height: dimHeight,
+        diameter: dimDiameter,
+      }),
+      savedDimsRef.current,
+    );
     const expandedDescriptionDirty = expandedDescText.trim() !== savedExpandedDescRef.current.trim();
     const photoDirty = newPhotoData !== null || removeCurrentPhoto;
     const photo2Dirty = newPhotoData2 !== null || removeCurrentPhoto2;
@@ -426,14 +436,30 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
     const current = itemRef.current;
     if (!current || !adminToken || dimensionSaveInFlightRef.current) return;
-    pendingMeasureDimsRef.current = dims;
-    dimensionSaveInFlightRef.current = true;
+    const validation = validateDimensionInputs({
+      length: fmtDim(dims.length),
+      width: fmtDim(dims.width),
+      height: fmtDim(dims.height),
+      diameter: fmtDim(dims.diameter),
+    });
     setMeasureOpen(false);
-
     setDimLength(fmtDim(dims.length));
     setDimWidth(fmtDim(dims.width));
     setDimHeight(fmtDim(dims.height));
     setDimDiameter(fmtDim(dims.diameter));
+    if (!validation.valid) {
+      setSaveStatus("error");
+      return;
+    }
+
+    const normalizedDims: PartDimensions = validation.values;
+    pendingDimsRef.current = normalizedDims;
+    dimensionSaveInFlightRef.current = true;
+
+    setDimLength(fmtDim(normalizedDims.length));
+    setDimWidth(fmtDim(normalizedDims.width));
+    setDimHeight(fmtDim(normalizedDims.height));
+    setDimDiameter(fmtDim(normalizedDims.diameter));
     setSaveStatus("idle");
     setFieldSaveErrors(prev => {
       // exactOptionalPropertyTypes: drop the key to "unset" the field error
@@ -448,25 +474,25 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
           "Content-Type": "application/json",
           Authorization: `Bearer ${adminToken}`,
         },
-        body: JSON.stringify(dims),
+        body: JSON.stringify(normalizedDims),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      pendingMeasureDimsRef.current = null;
+      pendingDimsRef.current = null;
       savedDimsRef.current = {
-        length: dims.length ?? null,
-        width: dims.width ?? null,
-        height: dims.height ?? null,
-        diameter: dims.diameter ?? null,
+        length: normalizedDims.length ?? null,
+        width: normalizedDims.width ?? null,
+        height: normalizedDims.height ?? null,
+        diameter: normalizedDims.diameter ?? null,
       };
-      reportItemSaved({ dimensions: dims });
+      reportItemSaved({ dimensions: normalizedDims });
       const cacheResult = await invalidateAllCachesAfterSave({
         queryClient,
         asyncStorage: AsyncStorage,
         itemId: current.id,
-        updatedItem: { ...current, dimensions: dims },
+        updatedItem: { ...current, dimensions: normalizedDims },
       });
       if (cacheResult && !cacheResult.ok && mountedRef.current) setRefreshWarning(INVENTORY_REFRESH_WARNING);
     } catch (err) {
@@ -483,7 +509,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
   }, [adminToken, queryClient, fetchWrite, reportItemSaved]);
 
   const retryDimensionsSave = () => {
-    const pendingDims = pendingMeasureDimsRef.current;
+    const pendingDims = pendingDimsRef.current;
     if (pendingDims) void handleMeasureConfirm(pendingDims);
     else void handleSave();
   };
@@ -620,7 +646,11 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     );
   }, [adminToken, queryClient, onItemDeleted, fetchWrite, requestClose]);
 
-  const saveInventory = async () => {
+  const _saveInventoryLegacy = async () => {
+    if (!dimensionValidation.valid) {
+      setSaveStatus("error");
+      return;
+    }
     const current = itemRef.current;
     if (!current || !adminToken) {
       setErrorMsg("Admin session expired. Re-unlock and try again.");
@@ -994,6 +1024,152 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     }
   };
 
+  const saveInventory = async () => {
+    const current = itemRef.current;
+    if (!current || !adminToken) {
+      setErrorMsg("Admin session expired. Re-unlock and try again.");
+      setSaveStatus("error");
+      return;
+    }
+    if (!dimensionValidation.valid) {
+      setErrorMsg(null);
+      setFieldSaveErrors({});
+      setSaveStatus("error");
+      return;
+    }
+    setSaveStatus("saving");
+    setErrorMsg(null);
+    setFieldSaveErrors({});
+    setRefreshWarning(null);
+
+    const writeJson = async (url: string, body: unknown): Promise<unknown> => {
+      const response = await fetchWrite(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${response.status}`);
+      }
+      return response.json().catch(() => undefined);
+    };
+    const writePhoto = async (slot: 1 | 2, action: { kind: "upload"; source: string } | { kind: "remove" }) => {
+      if (action.kind === "upload") {
+        const base64 = await FileSystem.readAsStringAsync(action.source, { encoding: "base64" });
+        return writeJson(`${API_BASE}/inventory/${current.id}/photo`, {
+          imageBase64: base64,
+          mimeType: "image/jpeg",
+          slot,
+        });
+      }
+      return writeJson(`${API_BASE}/inventory/${current.id}/photo`, { remove: true, slot });
+    };
+
+    try {
+      const result = await coordinateSharedPartSave({
+        current,
+        draft: {
+          description,
+          bins,
+          pendingBin: newBin,
+          keywords,
+          pendingKeyword: newKeyword,
+          op,
+          oq,
+          dimensions: { length: dimLength, width: dimWidth, height: dimHeight, diameter: dimDiameter },
+          ...(newPhotoData
+            ? { photo: { kind: "upload" as const, source: newPhotoData.uri } }
+            : removeCurrentPhoto
+              ? { photo: { kind: "remove" as const } }
+              : {}),
+          ...(newPhotoData2
+            ? { photo2: { kind: "upload" as const, source: newPhotoData2.uri } }
+            : removeCurrentPhoto2
+              ? { photo2: { kind: "remove" as const } }
+              : {}),
+        },
+        capabilities: { photo: true, photo2: true },
+        writers: {
+          description: value => writeJson(`${API_BASE}/inventory/${current.id}/description`, { description: value }),
+          bins: value => updateBinsMutation.mutateAsync({ id: current.id, data: { binLocations: [...value] } }),
+          keywords: value => updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords: [...value] } }),
+          opoq: value => writeJson(`${API_BASE}/inventory/${current.id}/order`, value),
+          dimensions: value => writeJson(`${API_BASE}/inventory/${current.id}/dimensions`, value),
+          photo: action => writePhoto(1, action),
+          photo2: action => writePhoto(2, action),
+        },
+        cache: {
+          queryClient: queryClient as unknown as SharedPartSaveCacheContext["queryClient"],
+          asyncStorage: AsyncStorage,
+        },
+      });
+      await invalidateListCache({ queryClient }).catch(() => undefined);
+
+      setBins(result.normalized.bins);
+      setKeywords(result.normalized.keywords);
+      setNewBin("");
+      setNewKeyword("");
+      const succeeded = result.succeededFields;
+      if (succeeded.has("description")) savedDescriptionRef.current = result.committedItem.description ?? "";
+      if (succeeded.has("opoq")) {
+        savedOpRef.current = result.committedItem.orderPurchase;
+        savedOqRef.current = result.committedItem.orderQuantity;
+      }
+      if (succeeded.has("bins")) savedBinsRef.current = [...(result.committedItem.binLocations ?? [])];
+      if (succeeded.has("keywords")) savedKeywordsRef.current = [...(result.committedItem.aiKeywords ?? [])];
+      if (succeeded.has("dimensions")) {
+        const dimensions = result.committedItem.dimensions;
+        savedDimsRef.current = {
+          length: dimensions?.length ?? null,
+          width: dimensions?.width ?? null,
+          height: dimensions?.height ?? null,
+          diameter: dimensions?.diameter ?? null,
+        };
+      }
+      if (succeeded.has("photo")) {
+        savedPhotoUriRef.current = result.committedItem.imageUrl ?? null;
+        setNewPhotoData(null);
+        setRemoveCurrentPhoto(false);
+      }
+      if (succeeded.has("photo2")) {
+        savedPhotoUri2Ref.current = result.committedItem.imageUrl2 ?? null;
+        setNewPhotoData2(null);
+        setRemoveCurrentPhoto2(false);
+      }
+      if (succeeded.size > 0) {
+        itemRef.current = result.committedItem;
+        reportItemSaved(result.committedItem);
+      }
+      setCommittedFields(prev => new Set([...prev, ...succeeded]));
+      setFieldSaveErrors(result.fieldErrors);
+      if (result.cacheWarning) setRefreshWarning(INVENTORY_REFRESH_WARNING);
+
+      if (result.anyFailed) {
+        setErrorMsg(result.message);
+        setSaveStatus("error");
+        return;
+      }
+      if (result.operations.length === 0) {
+        setSaveStatus("idle");
+        return;
+      }
+      setSaveStatus("saved");
+      if (result.cacheReconciled && !result.cacheWarning) {
+        allowCloseRef.current = true;
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = setTimeout(() => {
+          closeTimerRef.current = null;
+          requestClose();
+        }, 500);
+      }
+    } catch (error) {
+      if (!mountedRef.current || isAbortError(error)) return;
+      setErrorMsg(inventorySaveErrorMessage(error, "Could not save changes. Check connection and try again."));
+      setSaveStatus("error");
+    }
+  };
+
   const handleSave = async () => {
     if (saveInFlightRef.current) return;
     saveInFlightRef.current = true;
@@ -1029,10 +1205,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
     Number(oq.trim() || "0") !== savedOqRef.current ||
     JSON.stringify(bins) !== JSON.stringify(savedBinsRef.current) ||
     JSON.stringify(keywords) !== JSON.stringify(savedKeywordsRef.current) ||
-    parseDimField(dimLength) !== savedDimsRef.current.length ||
-    parseDimField(dimWidth) !== savedDimsRef.current.width ||
-    parseDimField(dimHeight) !== savedDimsRef.current.height ||
-    parseDimField(dimDiameter) !== savedDimsRef.current.diameter ||
+    dimensionInputsChanged(dimensionValidation, savedDimsRef.current) ||
     expandedDescText.trim() !== savedExpandedDescRef.current.trim() ||
     (newPhotoData?.uri ?? (removeCurrentPhoto ? null : item.imageUrl ?? null)) !== savedPhotoUriRef.current ||
     (newPhotoData2?.uri ?? (removeCurrentPhoto2 ? null : item.imageUrl2 ?? null)) !== savedPhotoUri2Ref.current;
@@ -1224,6 +1397,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                     placeholder="0"
                     placeholderTextColor={colors.mutedForeground}
                     keyboardType="number-pad"
+                    selectTextOnFocus
                     style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.opoq ? colors.destructive : colors.border, color: colors.foreground }]}
                   />
                 </View>
@@ -1483,87 +1657,110 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap, onIt
                   <Text style={{ color: colors.success, fontSize: 11, fontFamily: "Inter_500Medium" }}>✓ Saved</Text>
                 ) : null}
               </View>
-              {Platform.OS === "ios" ? (
-                lidarAvailable ? (
-                  <Pressable
-                    onPress={() => setMeasureOpen(true)}
-                    style={[styles.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
-                    accessibilityLabel="Measure dimensions with LiDAR"
-                  >
-                    <Feather name="maximize-2" size={13} color={colors.primary} />
-                    <Text style={[styles.measureBtnText, { color: colors.primary }]}>LiDAR</Text>
-                  </Pressable>
-                ) : (
-                  <Pressable
-                    onPress={() => setMeasureOpen(true)}
-                    style={[styles.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
-                    accessibilityLabel="Estimate dimensions from photo"
-                  >
-                    <Feather name="maximize" size={13} color={colors.primary} />
-                    <Text style={[styles.measureBtnText, { color: colors.primary }]}>Estimate</Text>
-                  </Pressable>
-                )
-              ) : null}
+              <Pressable
+                onPress={() => setMeasureOpen(true)}
+                style={[styles.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+                accessibilityLabel="Estimate dimensions from photo"
+              >
+                <Feather name="maximize" size={13} color={colors.primary} />
+                <Text style={[styles.measureBtnText, { color: colors.primary }]}>Estimate</Text>
+              </Pressable>
             </View>
             <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
-              {Platform.OS === "ios"
-                ? lidarAvailable
-                  ? "Tap LiDAR to measure precisely, or enter values manually. Leave blank if unknown."
-                  : "Tap Estimate to measure from a photo, or enter values manually. Leave blank if unknown."
-                : "Enter physical dimensions in millimetres. Leave blank if unknown."}
+              {"Tap Estimate to measure from a photo, or enter values manually. Leave blank if unknown."}
             </Text>
             <View style={styles.dimGrid}>
               <View style={styles.dimField}>
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Length</Text>
                 <KeyboardDoneInput
+                  accessibilityLabel="Length"
                   value={dimLength}
-                  onChangeText={v => { pendingMeasureDimsRef.current = null; setDimLength(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={v => {
+                    pendingDimsRef.current = null;
+                    setDimLength(v);
+                    setSaveStatus("idle");
+                    setFieldSaveErrors(prev => {
+                      const { dimensions: _dimensions, ...rest } = prev;
+                      return rest;
+                    });
+                  }}
                   placeholder="–"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
-                  style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
+                  style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions || (!dimensionValidation.valid && dimensionValidation.invalidFields.includes("length")) ? colors.destructive : colors.border, color: colors.foreground }]}
                 />
               </View>
               <View style={styles.dimField}>
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Width</Text>
                 <KeyboardDoneInput
+                  accessibilityLabel="Width"
                   value={dimWidth}
-                  onChangeText={v => { pendingMeasureDimsRef.current = null; setDimWidth(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={v => {
+                    pendingDimsRef.current = null;
+                    setDimWidth(v);
+                    setSaveStatus("idle");
+                    setFieldSaveErrors(prev => {
+                      const { dimensions: _dimensions, ...rest } = prev;
+                      return rest;
+                    });
+                  }}
                   placeholder="–"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
-                  style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
+                  style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions || (!dimensionValidation.valid && dimensionValidation.invalidFields.includes("width")) ? colors.destructive : colors.border, color: colors.foreground }]}
                 />
               </View>
               <View style={styles.dimField}>
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Height</Text>
                 <KeyboardDoneInput
+                  accessibilityLabel="Height"
                   value={dimHeight}
-                  onChangeText={v => { pendingMeasureDimsRef.current = null; setDimHeight(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={v => {
+                    pendingDimsRef.current = null;
+                    setDimHeight(v);
+                    setSaveStatus("idle");
+                    setFieldSaveErrors(prev => {
+                      const { dimensions: _dimensions, ...rest } = prev;
+                      return rest;
+                    });
+                  }}
                   placeholder="–"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
-                  style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
+                  style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions || (!dimensionValidation.valid && dimensionValidation.invalidFields.includes("height")) ? colors.destructive : colors.border, color: colors.foreground }]}
                 />
               </View>
               <View style={styles.dimField}>
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Diameter</Text>
                 <KeyboardDoneInput
+                  accessibilityLabel="Diameter"
                   value={dimDiameter}
-                  onChangeText={v => { pendingMeasureDimsRef.current = null; setDimDiameter(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  onChangeText={v => {
+                    pendingDimsRef.current = null;
+                    setDimDiameter(v);
+                    setSaveStatus("idle");
+                    setFieldSaveErrors(prev => {
+                      const { dimensions: _dimensions, ...rest } = prev;
+                      return rest;
+                    });
+                  }}
                   placeholder="–"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
-                  style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
+                  style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions || (!dimensionValidation.valid && dimensionValidation.invalidFields.includes("diameter")) ? colors.destructive : colors.border, color: colors.foreground }]}
                 />
               </View>
             </View>
-            {fieldSaveErrors.dimensions ? (
+            {fieldSaveErrors.dimensions || !dimensionValidation.valid ? (
             <View style={styles.fieldErrorRow}>
-                <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.dimensions}</Text>
-                <Pressable onPress={retryDimensionsSave} accessibilityRole="button" accessibilityLabel="Retry saving dimensions">
-                  <Text style={[styles.retryText, { color: colors.destructive }]}>Retry</Text>
-                </Pressable>
+                <Text accessibilityRole="alert" style={[styles.fieldErrorText, { color: colors.destructive }]}>
+                  {dimensionValidation.valid ? fieldSaveErrors.dimensions : DIMENSION_INPUT_ERROR}
+                </Text>
+                {fieldSaveErrors.dimensions && dimensionValidation.valid ? (
+                  <Pressable onPress={retryDimensionsSave} accessibilityRole="button" accessibilityLabel="Retry saving dimensions">
+                    <Text style={[styles.retryText, { color: colors.destructive }]}>Retry</Text>
+                  </Pressable>
+                ) : null}
               </View>
             ) : null}
             {(dimLength || dimWidth || dimHeight || dimDiameter) ? (

@@ -19,9 +19,7 @@ import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 const router = Router();
 
 function parseSlot(raw: string): number | null {
-  const n = parseInt(raw, 10);
-  if (n === 1 || n === 2 || n === 3) return n;
-  return null;
+  return raw === "1" || raw === "2" || raw === "3" ? Number(raw) : null;
 }
 
 interface UpsertBody {

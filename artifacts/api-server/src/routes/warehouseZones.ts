@@ -23,6 +23,13 @@ const router = Router();
 const PUBLIC_LAYOUT_CACHE_CONTROL =
   "public, max-age=300, s-maxage=300, stale-while-revalidate=60";
 
+// The database column is a PostgreSQL integer (not a bigint).
+function parseZoneId(raw: string | string[] | undefined): number | null {
+  if (typeof raw !== "string" || !/^[0-9]+$/.test(raw)) return null;
+  const id = Number(raw);
+  return Number.isSafeInteger(id) && id > 0 && id <= 2147483647 ? id : null;
+}
+
 // GET /warehouse-zones
 router.get("/", async (_req, res) => {
   try {
@@ -235,6 +242,13 @@ router.post("/", requireAdminAuth, async (req, res) => {
     res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
     return;
   }
+  if (
+    (parsed.data.sectionNum != null && !Number.isSafeInteger(parsed.data.sectionNum)) ||
+    (parsed.data.sortOrder != null && !Number.isSafeInteger(parsed.data.sortOrder))
+  ) {
+    res.status(400).json({ error: "sectionNum and sortOrder must be integers" });
+    return;
+  }
   try {
     const {
       aisleId: rawAisleId,
@@ -269,14 +283,21 @@ router.post("/", requireAdminAuth, async (req, res) => {
 
 // PATCH /warehouse-zones/:id
 router.patch("/:id", requireAdminAuth, async (req, res) => {
-  const id = parseInt(String(req.params["id"]));
-  if (isNaN(id)) {
+  const id = parseZoneId(req.params["id"]);
+  if (id === null) {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
   const parsed = UpdateWarehouseZoneBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+    return;
+  }
+  if (
+    (parsed.data.sectionNum != null && !Number.isSafeInteger(parsed.data.sectionNum)) ||
+    (parsed.data.sortOrder != null && !Number.isSafeInteger(parsed.data.sortOrder))
+  ) {
+    res.status(400).json({ error: "sectionNum and sortOrder must be integers" });
     return;
   }
   try {
@@ -302,8 +323,8 @@ router.patch("/:id", requireAdminAuth, async (req, res) => {
 
 // DELETE /warehouse-zones/:id
 router.delete("/:id", requireAdminAuth, async (req, res) => {
-  const id = parseInt(String(req.params["id"]));
-  if (isNaN(id)) {
+  const id = parseZoneId(req.params["id"]);
+  if (id === null) {
     res.status(400).json({ error: "Invalid id" });
     return;
   }

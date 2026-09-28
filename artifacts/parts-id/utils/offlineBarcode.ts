@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { InventoryItem } from "@workspace/api-client-react";
+import { Platform } from "react-native";
 
+import { MAX_OFFLINE_INVENTORY_ITEMS } from "@/utils/inventoryCacheLimits";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 
 export const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
@@ -24,9 +26,9 @@ export const FUSE_SOFT_STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // Hard cap on the number of items stored in the offline cache. Items merged
 // from individual search results could accumulate indefinitely without a bound.
-// On a full sync the cache is replaced entirely, so this cap mainly guards the
-// incremental merge paths between syncs.
-export const MAX_FUSE_CACHE_ITEMS = 5000;
+// Full syncs also reject oversized catalogs rather than persisting a partial
+// list. Incremental merges stop appending at the same ceiling.
+export const MAX_FUSE_CACHE_ITEMS = MAX_OFFLINE_INVENTORY_ITEMS;
 
 // ── Internal envelope helpers ─────────────────────────────────────────────────
 
@@ -49,12 +51,12 @@ function parseCacheEnvelope(raw: string | null): FuseCacheEnvelope | null {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      if (!isValidItemArray(parsed)) return null;
+      if (parsed.length > MAX_FUSE_CACHE_ITEMS || !isValidItemArray(parsed)) return null;
       return { items: parsed, syncedAt: null };
     }
     if (typeof parsed === 'object' && parsed !== null) {
       const env = parsed as { items?: unknown; syncedAt?: unknown };
-      if (!isValidItemArray(env.items)) return null;
+      if (!Array.isArray(env.items) || env.items.length > MAX_FUSE_CACHE_ITEMS || !isValidItemArray(env.items)) return null;
       const syncedAt =
         typeof env.syncedAt === 'number' && Number.isFinite(env.syncedAt)
           ? env.syncedAt
@@ -86,6 +88,13 @@ export async function lookupByBarcodeOffline(
   code: string,
 ): Promise<InventoryItem | null> {
   try {
+    if (Platform.OS !== "web") {
+      const match = await (await import("@/utils/offlineInventory")).lookupOfflineBarcode(code);
+      if (match) return match;
+      // Once a disk snapshot exists it is authoritative; don't resurrect deleted
+      // entries from the old AsyncStorage cache.
+      if (await (await import("@/utils/offlineInventory")).offlineSnapshotInfo()) return null;
+    }
     const raw = await AsyncStorage.getItem(FUSE_CACHE_KEY);
     const envelope = parseCacheEnvelope(raw);
     if (!envelope) return null;
@@ -106,6 +115,13 @@ let _barcodeCacheWriteLock: Promise<void> = Promise.resolve();
 export async function upsertItemInBarcodeCache(
   updatedItem: InventoryItem,
 ): Promise<void> {
+  if (Platform.OS !== "web") {
+    const store = await import("@/utils/offlineInventory");
+    if (await store.offlineSnapshotInfo()) {
+      await store.upsertOfflineItem(updatedItem);
+      return;
+    }
+  }
   const next = _barcodeCacheWriteLock.then(async () => {
     try {
       const raw = await AsyncStorage.getItem(FUSE_CACHE_KEY);
@@ -150,6 +166,9 @@ export async function upsertItemInBarcodeCache(
 export async function replaceBarcodeCacheWithServerItems(
   items: Array<InventoryItem>,
 ): Promise<void> {
+  if (items.length > MAX_FUSE_CACHE_ITEMS) {
+    throw new Error(`Offline inventory exceeds ${MAX_FUSE_CACHE_ITEMS} items`);
+  }
   try {
     await AsyncStorage.setItem(
       FUSE_CACHE_KEY,
@@ -170,6 +189,10 @@ export async function replaceBarcodeCacheWithServerItems(
  */
 export async function getFuseCacheSyncedAt(): Promise<number | null> {
   try {
+    if (Platform.OS !== "web") {
+      const info = await (await import("@/utils/offlineInventory")).offlineSnapshotInfo();
+      if (info) return info.syncedAt;
+    }
     const raw = await AsyncStorage.getItem(FUSE_CACHE_KEY);
     if (!raw) return null;
     const envelope = parseCacheEnvelope(raw);

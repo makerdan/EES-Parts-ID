@@ -9,9 +9,9 @@
  *
  * The bootstrap-admin identity is used so that requireAppAuth is fully
  * satisfied without a real database round-trip (the insert/upsert chain is
- * stubbed). The route under test is GET /api/healthz which is a public path
- * that bypasses auth entirely, making it the cleanest probe for middleware
- * behaviour.
+ * stubbed). The route under test is GET /api/livez, a public liveness path
+ * that bypasses auth and health dependencies, making it the cleanest probe
+ * for middleware behaviour.
  *
  * For the error-response test we need a route that throws. We reuse the
  * GET /api/admin/ai-status pattern from routeHandlerErrorPath.test.ts because
@@ -91,9 +91,9 @@ jest.mock("../lib/aiProvider", () => ({
   MAX_IMAGE_BYTES_GPT5_1: 1_048_576,
 }));
 
-// /healthz is a readiness check, not a liveness-only probe. Keep its dependency
-// state explicit so these middleware assertions do not depend on app startup
-// or the test database's schema state.
+// Keep readiness state explicit for the app bootstrap, but use /livez for the
+// middleware probes below so request-ID assertions are independent of health
+// dependency availability.
 jest.mock("../lib/readiness", () => ({
   appReadiness: {
     get: jest.fn(() => ({ status: "ready" })),
@@ -168,7 +168,7 @@ beforeEach(() => {
 describe("X-Request-Id middleware", () => {
   it("generates a UUID v4 X-Request-Id header when none is supplied", async () => {
     const res = await supertest(app)
-      .get("/api/healthz")
+      .get("/api/livez")
       .expect(200);
 
     const id = res.headers["x-request-id"];
@@ -179,7 +179,7 @@ describe("X-Request-Id middleware", () => {
   it("echoes back the caller-supplied X-Request-Id unchanged", async () => {
     const clientId = "my-client-request-id-abc123";
     const res = await supertest(app)
-      .get("/api/healthz")
+      .get("/api/livez")
       .set("X-Request-Id", clientId)
       .expect(200);
 

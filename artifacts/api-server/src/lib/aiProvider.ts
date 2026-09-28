@@ -106,6 +106,21 @@ export interface PoeRouteContract {
   costTarget: "low" | "medium" | "high";
   authorization: "authenticated" | "admin" | "internal";
   fallback: "replit_ai" | "next_verified_model" | "none";
+  limits: {
+    maxRequestBytes: number;
+    maxOutputTokens: number;
+    maxImages: number;
+    maxImageBytes: number;
+  };
+  providerOrder: Array<"poe" | "replit-ai">;
+  unsupported: {
+    streaming: true | false;
+    tools: true | false;
+    responsesApi: true | false;
+    providerManagedState: true | false;
+    liveCatalogueDiscovery: true | false;
+  };
+  failClosed: true;
 }
 
 export interface PoeVerifiedRouteSnapshot extends PoeFeatureRoute {
@@ -181,6 +196,10 @@ const ROUTE_CONTRACTS: Record<PoeFeature, PoeRouteContract> = {
     costTarget: "medium",
     authorization: "authenticated",
     fallback: "next_verified_model",
+    limits: { maxRequestBytes: 32 * 1024 * 1024, maxOutputTokens: 1024, maxImages: 10, maxImageBytes: 20 * 1024 * 1024 },
+    providerOrder: ["poe", "replit-ai"],
+    unsupported: { streaming: false, tools: false, responsesApi: false, providerManagedState: false, liveCatalogueDiscovery: false },
+    failClosed: true,
   },
   enrich: {
     feature: "enrich",
@@ -194,6 +213,10 @@ const ROUTE_CONTRACTS: Record<PoeFeature, PoeRouteContract> = {
     costTarget: "low",
     authorization: "admin",
     fallback: "replit_ai",
+    limits: { maxRequestBytes: 512 * 1024, maxOutputTokens: 512, maxImages: 0, maxImageBytes: 0 },
+    providerOrder: ["poe", "replit-ai"],
+    unsupported: { streaming: false, tools: false, responsesApi: false, providerManagedState: false, liveCatalogueDiscovery: false },
+    failClosed: true,
   },
   dimensions: {
     feature: "dimensions",
@@ -207,6 +230,10 @@ const ROUTE_CONTRACTS: Record<PoeFeature, PoeRouteContract> = {
     costTarget: "medium",
     authorization: "authenticated",
     fallback: "next_verified_model",
+    limits: { maxRequestBytes: 32 * 1024 * 1024, maxOutputTokens: 256, maxImages: 1, maxImageBytes: 20 * 1024 * 1024 },
+    providerOrder: ["poe", "replit-ai"],
+    unsupported: { streaming: false, tools: false, responsesApi: false, providerManagedState: false, liveCatalogueDiscovery: false },
+    failClosed: true,
   },
   catalog: {
     feature: "catalog",
@@ -220,12 +247,20 @@ const ROUTE_CONTRACTS: Record<PoeFeature, PoeRouteContract> = {
     costTarget: "high",
     authorization: "admin",
     fallback: "replit_ai",
+    limits: { maxRequestBytes: 32 * 1024 * 1024, maxOutputTokens: 2048, maxImages: 4, maxImageBytes: 20 * 1024 * 1024 },
+    providerOrder: ["poe", "replit-ai"],
+    unsupported: { streaming: false, tools: false, responsesApi: false, providerManagedState: false, liveCatalogueDiscovery: false },
+    failClosed: true,
   },
 };
 
 function modelIsCompatible(feature: PoeFeature, modelName: string): boolean {
   const model = getPoeRegistryModel(modelName);
   if (!model) return false;
+  if (model.enabled === false || model.failClosed === false) return false;
+  const approvedRoutes = model.approvedRoutes ?? model.approvedUse ?? [];
+  if (approvedRoutes.length > 0 && !approvedRoutes.includes(feature)) return false;
+  if (!(model.supportedEndpoints ?? [model.endpoint]).includes(model.endpoint)) return false;
   const required = requiredCapabilities(feature);
   return Object.entries(required).every(([key, needed]) => {
     if (!needed) return true;
@@ -279,16 +314,20 @@ export function getVerifiedPoeRouteSnapshot(feature: PoeFeature): PoeVerifiedRou
         responseFormat: model.parameters?.responseFormat ?? null,
       },
       limits: {
-        maxInputTokens: model.limits?.maxInputTokens ?? null,
-        maxOutputTokens: model.limits?.maxOutputTokens ?? null,
-        maxImages: model.limits?.maxImages ?? null,
-        maxImageBytes: model.limits?.maxImageBytes ?? null,
+        maxInputTokens: model.limits?.maxInputTokens ?? 0,
+        maxOutputTokens: model.limits?.maxOutputTokens ?? 0,
+        maxImages: model.limits?.maxImages ?? 0,
+        maxImageBytes: model.limits?.maxImageBytes ?? 0,
+        maxRequestBytes: model.limits?.maxRequestBytes ?? 0,
+        maxResponseBytes: model.limits?.maxResponseBytes ?? 0,
       },
       approvedUse: [...(model.approvedUse ?? [])],
+      approvedRoutes: [...(model.approvedRoutes ?? model.approvedUse ?? [])],
       verification: {
         source: model.verification?.source ?? "unknown",
         owner: model.verification?.owner ?? "unknown",
         verifiedAt: model.verification?.verifiedAt ?? null,
+        reviewTrigger: model.verification?.reviewTrigger ?? "registry evidence changed",
       },
     };
   });
@@ -734,15 +773,24 @@ async function runBoundedProbeRequest(
     throw err;
   }
   void transportSettled.then(releasePermit, releasePermit);
+  let responseSucceeded = false;
+  const trackedResponse = response.then((value) => {
+    responseSucceeded = true;
+    return value;
+  });
   try {
     await Promise.race([
-      response,
+      trackedResponse,
       aborted,
       timedOut,
     ]);
   } finally {
     if (timer) clearTimeout(timer);
     parentSignal?.removeEventListener("abort", abort);
+    if (responseSucceeded) {
+      await transportSettled;
+      releasePermit();
+    }
   }
 }
 

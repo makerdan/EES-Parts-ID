@@ -5,6 +5,11 @@
  * importing any React Native or Reanimated dependencies.
  */
 
+import {
+  type ContentViewBox,
+  parseContentViewBox,
+} from "@workspace/zone-validation";
+
 // Must match the viewBox attribute of the floor-plan SVG served by
 // /api/floor-plan/svg.  Verify with:
 //   curl .../api/floor-plan/svg | grep -oP 'viewBox="[^"]+"' | head -1
@@ -16,25 +21,8 @@ export const MIN_SCALE = 0.8;
 export const MAX_SCALE = 50;
 export const FIT_PADDING = 16;
 
-export interface ContentViewBox {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-/**
- * Parse the `viewBox="x y w h"` attribute from an SVG XML string.
- * Returns null when the attribute is absent or malformed.
- */
-export function parseContentViewBox(xml: string): ContentViewBox | null {
-  const match = xml.match(/viewBox=(["'])([^"']+)\1/i);
-  if (!match || match[2] === undefined) return null;
-  const parts = match[2].trim().split(/[\s,]+/).map(Number);
-  if (parts.length !== 4 || parts.some((n) => !isFinite(n))) return null;
-  // Length checked to be exactly 4 above.
-  return { x: parts[0]!, y: parts[1]!, w: parts[2]!, h: parts[3]! };
-}
+export { parseContentViewBox };
+export type { ContentViewBox };
 
 /**
  * Compute a "fit to content" viewport that centres the content rect inside

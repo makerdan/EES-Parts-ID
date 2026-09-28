@@ -5,6 +5,29 @@ const HEX_FINGERPRINT = /^[0-9a-f]{32}$/i;
 const EXACT_SHA = /^[0-9a-f]{40}$/i;
 const MIRROR_ENTRIES = [".fingerprint", "SKILL.md"];
 export const MAX_FAILURE_DETAIL_CHARS = 2000;
+const EVIDENCE_PAGE_SIZE = 100;
+export const MAX_PAGINATION_FAILURES = 8;
+const REQUIRED_PROTECTION_POLICY_FIELDS = {
+  root: ["requiredChecks", "strict"],
+  branchProtection: [
+    "allowDeletions",
+    "allowForcePushes",
+    "enforceAdmins",
+    "requiredConversationResolution",
+    "requiredPullRequestReviews",
+  ],
+  actions: [
+    "canApprovePullRequestReviews",
+    "defaultWorkflowPermissions",
+    "shaPinningRequired",
+  ],
+  selectedActions: [
+    "policy",
+    "githubOwnedAllowed",
+    "verifiedAllowed",
+    "patterns",
+  ],
+};
 
 const CAPABILITY_DEFINITIONS = [
   ["actions", "Actions availability", "Confirm Actions is enabled before activation."],
@@ -169,6 +192,7 @@ function normalizeRun(run, revisionSha, maxChars) {
   const headSha = run?.head_sha ?? run?.headSha;
   if (headSha?.toLowerCase() !== revisionSha) return null;
   const jobs = Array.isArray(run?.jobs) ? run.jobs : [];
+  const evidenceComplete = run?.evidenceComplete !== false && run?.complete !== false;
   return {
     workflow: {
       id: run?.workflow_id ?? run?.workflow?.id ?? undefined,
@@ -187,7 +211,74 @@ function normalizeRun(run, revisionSha, maxChars) {
     startedAt: timestamp(run?.run_started_at ?? run?.started_at ?? run?.startedAt),
     updatedAt: timestamp(run?.updated_at ?? run?.updatedAt),
     completedAt: timestamp(run?.completed_at ?? run?.completedAt),
+    complete: evidenceComplete,
+    truncated: !evidenceComplete,
+    ...(run?.evidencePagination === undefined ? {} : { pagination: run.evidencePagination }),
     jobs: jobs.map((job) => normalizeJob(job, run, maxChars)),
+  };
+}
+
+function pageItems(response, key) {
+  if (Array.isArray(response)) return response;
+  return Array.isArray(response?.[key]) ? response[key] : [];
+}
+
+function nextPage(response, page, itemCount, pageSize) {
+  if (response && typeof response === "object" && !Array.isArray(response)) {
+    if (response.hasNextPage === false || response.has_next_page === false) return undefined;
+    const explicitNextPage = response.nextPage ?? response.next_page;
+    if (explicitNextPage === null || explicitNextPage === false) return undefined;
+    if (Number.isInteger(explicitNextPage) && explicitNextPage > page) return explicitNextPage;
+    if (typeof response.total_count === "number" && page * pageSize >= response.total_count) return undefined;
+  }
+  return itemCount < pageSize ? undefined : page + 1;
+}
+
+async function collectPaginatedPages({ fetchPage, responseKey, source }) {
+  const items = [];
+  let page = 1;
+  let pages = 0;
+  try {
+    while (true) {
+      const response = await fetchPage(page);
+      const currentItems = pageItems(response, responseKey);
+      items.push(...currentItems);
+      pages += 1;
+      const followingPage = nextPage(response, page, currentItems.length, EVIDENCE_PAGE_SIZE);
+      if (followingPage === undefined) {
+        return { items, pages, complete: true };
+      }
+      page = followingPage;
+    }
+  } catch {
+    return {
+      items,
+      pages,
+      complete: false,
+      reason: `${source}-pagination-failed`,
+      failedPage: page,
+    };
+  }
+}
+
+function paginationFailure(result, extra = {}) {
+  return {
+    reason: result.reason,
+    stage: extra.stage,
+    failedPage: result.failedPage,
+    ...(extra.runId === undefined ? {} : { runId: extra.runId }),
+    ...(extra.runAttempt === undefined ? {} : { runAttempt: extra.runAttempt }),
+  };
+}
+
+function paginationSummary(base, failures) {
+  const firstFailure = failures[0];
+  return {
+    ...base,
+    ...(firstFailure ?? {}),
+    ...(failures.length === 0
+      ? {}
+      : { failures: failures.slice(0, MAX_PAGINATION_FAILURES) }),
   };
 }
 
@@ -202,6 +293,24 @@ function evidenceContext({ repository, revisionSha, policy, permissions } = {}) 
   };
 }
 
+function missingProtectionPolicyFields(policy) {
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) return ["policy"];
+  const missing = [];
+  for (const field of REQUIRED_PROTECTION_POLICY_FIELDS.root) {
+    if (!Object.hasOwn(policy, field)) missing.push(`policy.${field}`);
+  }
+  for (const [section, fields] of Object.entries(REQUIRED_PROTECTION_POLICY_FIELDS).filter(([key]) => key !== "root")) {
+    if (!policy[section] || typeof policy[section] !== "object" || Array.isArray(policy[section])) {
+      missing.push(`policy.${section}`);
+      continue;
+    }
+    for (const field of fields) {
+      if (!Object.hasOwn(policy[section], field)) missing.push(`policy.${section}.${field}`);
+    }
+  }
+  return missing;
+}
+
 function contextDifference(snapshotContext, currentContext) {
   const reasons = [];
   if (!snapshotContext || !currentContext) {
@@ -210,6 +319,12 @@ function contextDifference(snapshotContext, currentContext) {
   for (const key of ["repository", "revisionSha", "policy", "permissions"]) {
     if (snapshotContext[key] === undefined || currentContext[key] === undefined) {
       reasons.push(`${key} evidence is incomplete`);
+    } else if (
+      key === "policy" &&
+      (missingProtectionPolicyFields(snapshotContext[key]).length > 0 ||
+        missingProtectionPolicyFields(currentContext[key]).length > 0)
+    ) {
+      reasons.push("policy evidence is incomplete");
     } else if (stableString(snapshotContext[key]) !== stableString(currentContext[key])) {
       reasons.push(`${key} evidence changed`);
     }
@@ -226,6 +341,8 @@ export function buildGitHubValidationEvidenceBundle({
   repository,
   revisionSha,
   runs = [],
+  complete = true,
+  pagination,
   collectedAt,
   policy,
   permissions,
@@ -248,9 +365,32 @@ export function buildGitHubValidationEvidenceBundle({
     exactRevision: true,
     collectedAt: timestamp(collectedAt),
     evidenceContext: evidenceContext({ repository: repositoryId, revisionSha: exactRevision, policy, permissions }),
+    complete: complete !== false,
+    truncated: complete === false,
+    ...(pagination === undefined ? {} : { pagination }),
     runCount: normalizedRuns.length,
     excludedRevisionCount: runs.length - normalizedRuns.length,
     runs: normalizedRuns,
+  };
+}
+
+/**
+ * Evaluate the release-facing claim boundary for a collected evidence bundle.
+ * Missing or contradictory completeness markers remain unknown rather than
+ * being promoted to a verified result.
+ */
+export function evaluateGitHubValidationEvidence(bundle) {
+  const reasons = [];
+  if (!bundle || typeof bundle !== "object") {
+    reasons.push("evidence bundle is missing");
+  } else {
+    if (bundle.complete !== true) reasons.push("evidence bundle is incomplete");
+    if (bundle.truncated !== false) reasons.push("evidence bundle is truncated");
+  }
+  return {
+    status: reasons.length === 0 ? "verified" : "unknown",
+    verified: reasons.length === 0,
+    reasons,
   };
 }
 
@@ -273,18 +413,58 @@ export async function collectGitHubValidationEvidence({
   if (typeof listWorkflowRuns !== "function") throw new TypeError("listWorkflowRuns is required");
   const revisionSha = requestedRevisionSha ?? sha;
   const exactRevision = requireExactSha(revisionSha);
-  const rawRunsResponse = await listWorkflowRuns({ repository, headSha: exactRevision, perPage: 100 });
-  const rawRuns = Array.isArray(rawRunsResponse)
-    ? rawRunsResponse
-    : rawRunsResponse?.workflow_runs;
+  const workflowRunsResult = await collectPaginatedPages({
+    source: "workflow-runs",
+    responseKey: "workflow_runs",
+    fetchPage: (page) => listWorkflowRuns({
+      repository,
+      headSha: exactRevision,
+      page,
+      perPage: EVIDENCE_PAGE_SIZE,
+    }),
+  });
   const runs = [];
-  for (const run of Array.isArray(rawRuns) ? rawRuns : []) {
+  let complete = workflowRunsResult.complete;
+  const paginationFailures = [];
+  const paginationBase = {
+    workflowRunsPages: workflowRunsResult.pages,
+    jobsPages: 0,
+  };
+  if (!workflowRunsResult.complete) {
+    paginationFailures.push(paginationFailure(workflowRunsResult, { stage: "workflow-runs" }));
+  }
+  for (const run of workflowRunsResult.items) {
     if ((run?.head_sha ?? run?.headSha)?.toLowerCase() !== exactRevision) continue;
-    const jobsResponse = typeof listJobs === "function"
-      ? await listJobs({ repository, runId: run.id, runAttempt: run.run_attempt ?? run.attempt ?? 1, perPage: 100 })
-      : run.jobs;
-    const jobs = Array.isArray(jobsResponse) ? jobsResponse : jobsResponse?.jobs;
-    const normalizedJobs = Array.isArray(jobs) ? [...jobs] : [];
+    let normalizedJobs;
+    let runComplete = true;
+    let runPagination;
+    if (typeof listJobs === "function") {
+      const jobsResult = await collectPaginatedPages({
+        source: "jobs",
+        responseKey: "jobs",
+        fetchPage: (page) => listJobs({
+          repository,
+          runId: run.id,
+          runAttempt: run.run_attempt ?? run.attempt ?? 1,
+          page,
+          perPage: EVIDENCE_PAGE_SIZE,
+        }),
+      });
+      normalizedJobs = [...jobsResult.items];
+      paginationBase.jobsPages += jobsResult.pages;
+      if (!jobsResult.complete) {
+        complete = false;
+        runComplete = false;
+        runPagination = paginationFailure(jobsResult, {
+          stage: "jobs",
+          runId: run.id,
+          runAttempt: run.run_attempt ?? run.attempt ?? 1,
+        });
+        paginationFailures.push(runPagination);
+      }
+    } else {
+      normalizedJobs = Array.isArray(run.jobs) ? [...run.jobs] : [];
+    }
     if (typeof getFailureDetail === "function") {
       for (const job of normalizedJobs) {
         if ((job.conclusion ?? job.status) !== "failure") continue;
@@ -297,12 +477,20 @@ export async function collectGitHubValidationEvidence({
         if (detail !== undefined) job.failureDetail = detail;
       }
     }
-    runs.push({ ...run, jobs: normalizedJobs });
+    runs.push({
+      ...run,
+      jobs: normalizedJobs,
+      evidenceComplete: runComplete,
+      ...(runPagination === undefined ? {} : { evidencePagination: runPagination }),
+    });
   }
+  const pagination = paginationSummary(paginationBase, paginationFailures);
   return buildGitHubValidationEvidenceBundle({
     repository,
     revisionSha: exactRevision,
     runs,
+    complete,
+    pagination,
     collectedAt,
     policy,
     permissions,
@@ -336,8 +524,22 @@ export function buildGitHubProtectionSnapshot({
 
 export function evaluateGitHubProtectionFreshness(snapshot, currentContext = {}) {
   const snapshotContext = snapshot?.evidenceContext;
-  const current = evidenceContext(currentContext);
-  const reasons = contextDifference(snapshotContext, current);
+  let current;
+  try {
+    current = evidenceContext(currentContext);
+  } catch {
+    current = {};
+  }
+  const reasons = [];
+  if (
+    !snapshot ||
+    snapshot.kind !== "github-protection-snapshot" ||
+    snapshot.mode !== "read-only" ||
+    snapshot.status !== "captured"
+  ) {
+    reasons.push("protection snapshot is incomplete");
+  }
+  reasons.push(...contextDifference(snapshotContext, current));
   return {
     status: reasons.length ? "stale" : "current",
     current: reasons.length === 0,

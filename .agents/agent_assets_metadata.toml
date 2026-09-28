@@ -159,3 +159,17 @@ mtime_ms = 1789318419454
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/0079eb49-4105-4715-af9e-b54042fe4ad7/f1d5e025-1e50-4c92-9f2d-c3956e2b8b0a"
 storage_version_token = "1789318487809172"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "bXYmiy6D9sKqAgKZR1BQx"
+uri = "file://exports/edit-part-save-flow.zip"
+type = "unspecified"
+title = "Edit Part Save Flow Skill"
+description = "Canonical Edit Part Save Flow skill packaged as a verified ZIP archive."
+logical_id = "0bffa5f5-ee97-4dd0-9f2f-931c593823c8"
+content_hash = "sha256:6c005bedad256797f88b44e1a761dcaa0006c1c574ffa597ae36f1b8d79b1952"
+size = 5073
+mtime_ms = 1790036072876
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:5ac9cf29-1a7a-4ecc-8a0c-2a9545b23dd4/0bffa5f5-ee97-4dd0-9f2f-931c593823c8/6986c955-954d-4b3e-8465-fc49fc750dd4"
+storage_version_token = "1790036076179068"
+content_type = "application/octet-stream"

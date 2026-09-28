@@ -34,6 +34,8 @@ import {
 } from "@/utils/storageErrorReporter";
 import { verifyAdminRequest } from "@/utils/verifyAdminRequest";
 
+import { UserHistoryProvider } from "./UserHistoryContext";
+
 // ── App Settings ─────────────────────────────────────────────────────────────
 export const SETTINGS_KEY = "parts_id_settings_v1";
 export type TextSize = "small" | "normal" | "large";
@@ -52,14 +54,6 @@ export type PinnedPart = {
   partId?: number;
   /** Size label for the active variant (e.g. "M6 × 1.0 × 20") — shown in the map pin badge. */
   sizeLabel?: string;
-};
-
-/** Dimensions captured by the Measure tab, passed back to an item edit form. */
-export type LidarDims = {
-  length?: number | null;
-  width?: number | null;
-  height?: number | null;
-  diameter?: number | null;
 };
 
 /** Inventory search pre-filter set by cross-tab navigation (e.g. "View in Inventory" after adding a part). */
@@ -301,9 +295,6 @@ export interface AppContextValue {
   // Cross-tab: vendor+catalog pre-filter set when navigating from "View in Inventory"
   pendingInventorySearch: InventorySearchParams | null;
   setPendingInventorySearch: (search: InventorySearchParams | null) => void;
-  // Cross-tab: LiDAR dims captured in the Measure tab to pre-fill an item form
-  pendingLidarDims: LidarDims | null;
-  setPendingLidarDims: (dims: LidarDims | null) => void;
   // Persisted resume-progress state so the card survives screen navigation
   resumeProgress: Record<number, ResumeProgress>;
   setResumeProgress: React.Dispatch<React.SetStateAction<Record<number, ResumeProgress>>>;
@@ -347,7 +338,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [pinnedParts, setPinnedParts] = useState<Array<PinnedPart>>([]);
   const [pendingMeasureSearch, setPendingMeasureSearch] = useState<MeasureSearchParams | null>(null);
   const [pendingInventorySearch, setPendingInventorySearch] = useState<InventorySearchParams | null>(null);
-  const [pendingLidarDims, setPendingLidarDims] = useState<LidarDims | null>(null);
   const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [apiInitError, setApiInitError] = useState(false);
@@ -357,12 +347,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const adminActionAbortRef = useRef<AbortController | null>(null);
   const settingsSyncAbortRef = useRef<AbortController | null>(null);
   const settingsSyncVersionRef = useRef(0);
+  const adminProfileSyncedRef = useRef(false);
+  const adminProfileAbortRef = useRef<AbortController | null>(null);
+  const approvalStatusRef = useRef(approvalStatus);
 
   const adminTokenRef = useRef<string | null>(null);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
 
   const isAdminRef = useRef(false);
   useEffect(() => { isAdminRef.current = isAdmin; }, [isAdmin]);
+  useEffect(() => { approvalStatusRef.current = approvalStatus; }, [approvalStatus]);
 
   // Stable ref to showToast so verifyAdmin can call it without being recreated
   // on every render. Populated after showToast is defined below.
@@ -378,6 +372,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     refreshAbortRef.current?.abort();
     adminActionAbortRef.current?.abort();
     settingsSyncAbortRef.current?.abort();
+    adminProfileAbortRef.current?.abort();
+    adminProfileAbortRef.current = null;
+    adminProfileSyncedRef.current = false;
   }, [isSignedIn, userId, clerkLoaded]);
 
   useEffect(() => () => {
@@ -385,6 +382,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     refreshAbortRef.current?.abort();
     adminActionAbortRef.current?.abort();
     settingsSyncAbortRef.current?.abort();
+    adminProfileAbortRef.current?.abort();
+    adminProfileAbortRef.current = null;
   }, []);
 
   // ── API client initialization ─────────────────────────────────────────────
@@ -428,8 +427,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       token,
       signal,
       wasAdmin: isAdminRef.current,
-      setIsAdmin,
-      setAdminToken,
+      setIsAdmin: (value) => {
+        isAdminRef.current = value;
+        setIsAdmin(value);
+      },
+      setAdminToken: (value) => {
+        adminTokenRef.current = value;
+        setAdminToken(value);
+      },
       onDemotion: () => {
         if (mountedRef.current && epoch === authEpochRef.current && !signal?.aborted) {
           showToastRef.current("Your admin access has been revoked.", "error");
@@ -605,57 +610,73 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // ── Admin profile sync ────────────────────────────────────────────────────
   // When the user becomes an admin, pull their server-stored profile settings
-  // once and merge them in. Reset the guard when admin status is lost.
+  // until a successful response is received. A failed request remains eligible
+  // for retry when the app returns to the foreground.
   // An AbortController ensures only one fetch is active at a time: any
   // in-flight fetch is cancelled before a new one starts, and setSettings is
   // never called after the fetch has been aborted (e.g. on unmount or demotion).
-  const adminProfileSyncedRef = useRef(false);
-  const adminProfileAbortRef = useRef<AbortController | null>(null);
-  useEffect(() => {
-    if (!isAdmin) {
-      adminProfileSyncedRef.current = false;
-      adminProfileAbortRef.current?.abort();
-      adminProfileAbortRef.current = null;
+  const [adminProfileRecoveryVersion, setAdminProfileRecoveryVersion] = useState(0);
+  const syncAdminProfile = useCallback(async () => {
+    if (
+      !mountedRef.current ||
+      approvalStatusRef.current !== "approved" ||
+      !isAdminRef.current ||
+      adminProfileSyncedRef.current
+    ) {
       return;
     }
-    if (adminProfileSyncedRef.current) return;
-    adminProfileSyncedRef.current = true;
+    const currentRequest = adminProfileAbortRef.current;
+    if (currentRequest && !currentRequest.signal.aborted) return;
 
-    // Abort any previous in-flight sync before starting a new one.
-    adminProfileAbortRef.current?.abort();
     const controller = new AbortController();
     adminProfileAbortRef.current = controller;
     const epoch = authEpochRef.current;
+    const isCurrentAdminSession = () =>
+      !controller.signal.aborted &&
+      mountedRef.current &&
+      epoch === authEpochRef.current &&
+      approvalStatusRef.current === "approved" &&
+      isAdminRef.current;
 
-    (async () => {
+    try {
       const token = await getTokenRef.current();
-      if (controller.signal.aborted || !mountedRef.current || epoch !== authEpochRef.current || !token) return;
-      try {
-        const profile = await fetchAdminProfile(token, controller.signal);
-        if (controller.signal.aborted || !mountedRef.current || epoch !== authEpochRef.current || !profile) return;
-        setSettings(prev => {
-          const merged = mergeProfileIntoSettings(prev, profile);
-          if (merged === prev) return prev;
-          saveSettings(merged);
-          if (merged.themeMode !== prev.themeMode) applyThemeMode(merged.themeMode);
-          return merged;
-        });
-      } catch (err) {
-        if (!controller.signal.aborted) {
-          console.warn("[AppContext] Admin profile sync failed:", err);
-        }
-      } finally {
-        if (adminProfileAbortRef.current === controller) {
-          adminProfileAbortRef.current = null;
-        }
-      }
-    })();
+      if (!isCurrentAdminSession() || !token) return;
+      const profile = await fetchAdminProfile(token, controller.signal);
+      if (!profile || !isCurrentAdminSession()) return;
 
-    return () => {
-      adminProfileAbortRef.current?.abort();
-      adminProfileAbortRef.current = null;
-    };
-  }, [isAdmin]);
+      // Do not mark hydration complete until a valid profile response is ready
+      // to publish for the same approved admin session.
+      adminProfileSyncedRef.current = true;
+      setSettings((prev) => {
+        if (!isCurrentAdminSession()) return prev;
+        const merged = mergeProfileIntoSettings(prev, profile);
+        if (merged === prev) return prev;
+        saveSettings(merged);
+        if (merged.themeMode !== prev.themeMode) applyThemeMode(merged.themeMode);
+        return merged;
+      });
+    } catch (err) {
+      if (!controller.signal.aborted && mountedRef.current) {
+        console.warn("[AppContext] Admin profile sync failed:", err);
+      }
+    } finally {
+      if (adminProfileAbortRef.current === controller) {
+        adminProfileAbortRef.current = null;
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin || !isAuthenticated) {
+      if (!isAdmin) {
+        adminProfileSyncedRef.current = false;
+        adminProfileAbortRef.current?.abort();
+        adminProfileAbortRef.current = null;
+      }
+      return;
+    }
+    void syncAdminProfile();
+  }, [isAdmin, isAuthenticated, adminProfileRecoveryVersion, syncAdminProfile]);
 
   // ── Periodic admin-status re-check ────────────────────────────────────────
   // Re-verify the user's admin role against the server on a short interval and
@@ -672,6 +693,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const token = await getTokenRef.current();
       if (controller.signal.aborted || !mountedRef.current || epoch !== authEpochRef.current) return;
       if (!token) {
+        isAdminRef.current = false;
+        adminTokenRef.current = null;
         setIsAdmin(false);
         setAdminToken(null);
         return;
@@ -690,7 +713,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (nextState) => {
-      if (nextState === "active" && isAuthenticated) void refreshAdminStatus();
+      if (nextState === "active" && isAuthenticated) {
+        void refreshAdminStatus().finally(() => {
+          if (
+            mountedRef.current &&
+            approvalStatusRef.current === "approved" &&
+            isAdminRef.current &&
+            !adminProfileSyncedRef.current
+          ) {
+            setAdminProfileRecoveryVersion((version) => version + 1);
+          }
+        });
+      }
     });
     return () => sub.remove();
   }, [isAuthenticated, refreshAdminStatus]);
@@ -763,13 +797,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     adminProfileAbortRef.current?.abort();
     recheckControllerRef.current?.abort();
     try {
-      await clearSessionStorage(secureDelete, AsyncStorage.multiRemove);
+      await clearSessionStorage(secureDelete);
       if (userId) await clearImportDraft(userId);
     } catch (err) {
       reportStorageError("Could not clear session storage on logout", err);
     }
     logoutRegistryRef.current.fire();
     if (mountedRef.current) {
+      isAdminRef.current = false;
+      adminTokenRef.current = null;
       setIsAdmin(false);
       setAdminToken(null);
       setApprovalStatus("idle");
@@ -789,6 +825,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const token = await getTokenRef.current();
     if (controller.signal.aborted || !mountedRef.current || epoch !== authEpochRef.current) return;
     if (!token) {
+      isAdminRef.current = false;
+      adminTokenRef.current = null;
       setIsAdmin(false);
       setAdminToken(null);
       return;
@@ -831,8 +869,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setPendingMeasureSearch,
     pendingInventorySearch,
     setPendingInventorySearch,
-    pendingLidarDims,
-    setPendingLidarDims,
     resumeProgress,
     setResumeProgress,
   }), [
@@ -854,7 +890,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     pinnedParts,
     pendingMeasureSearch,
     pendingInventorySearch,
-    pendingLidarDims,
     resumeProgress,
   ]);
 
@@ -869,8 +904,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AppContext.Provider value={contextValue}>
-      {children}
-      {toastState ? <BrandedToast message={toastState.message} type={toastState.type} /> : null}
+      <UserHistoryProvider
+        isAuthenticated={isAuthenticated}
+        registerLogoutHandler={registerLogoutHandler}
+      >
+        {children}
+        {toastState ? <BrandedToast message={toastState.message} type={toastState.type} /> : null}
+      </UserHistoryProvider>
     </AppContext.Provider>
   );
 }

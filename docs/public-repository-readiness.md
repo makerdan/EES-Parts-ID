@@ -1,10 +1,11 @@
 # Public repository readiness
 
-**Assessment date:** 2026-09-04
-**Scope:** current tracked tree and reachable Git history
+**Assessment date:** 2026-09-18
+**Scope:** every public GitHub head plus provider-retained pull-request refs
 **Current-tree status:** boundary guard passes. **Repository visibility status:**
-the repository is public, but release readiness remains blocked because private
-historical objects remain reachable from Git history.
+the owner-approved branch-head rewrite is complete, but full public-history
+readiness remains blocked by rejected paths retained in GitHub pull-request
+refs.
 
 ## Intentionally public
 
@@ -22,12 +23,11 @@ messages, catalog uploads, or object-storage payloads.
 
 ## Removed from the current tree
 
-- The tracked `attached_assets/` directory, including spreadsheets, PDFs,
-  screenshots, pasted diagnostics, and uploaded images/text.
-- `exports/react-render-audit.zip`, an operational/export archive.
-- `warehouse_zones_backup_2026-07-05.csv`, a database-shaped zone backup. Its
-  geometry was retained in `data/public/warehouse-zones.csv` after removing
-  database IDs and timestamps.
+- Tracked user-upload directories, including spreadsheets, PDFs, screenshots,
+  pasted diagnostics, and uploaded images/text.
+- Operational/export archives.
+- A database-shaped zone backup. Its geometry was retained in
+  `data/public/warehouse-zones.csv` after removing database IDs and timestamps.
 - The importer’s dependency on a committed spreadsheet; imports now require an
   explicitly supplied external path.
 - A real Clerk administrator user identifier from `.replit`.
@@ -35,28 +35,32 @@ messages, catalog uploads, or object-storage payloads.
 Raw database backups are not an acceptable public distribution format. Public
 layout data must remain source-oriented and reviewable.
 
-## Reachable-history findings
+## Reachable-history rewrite evidence
 
-The 2026-09-04 history scan found 100 private paths that are no longer in the
-current tree:
+On 2026-09-18, the owner-approved rewrite removed 100 distinct rejected paths
+from the public branch-head graph. Six changed heads were replaced in one
+atomic, force-with-lease transaction; the other two public heads already had
+clean, independent histories and remained unchanged.
 
-- Historical `attached_assets/...` paths, including uploaded reports,
-  catalog documents, screenshots, and diagnostic logs.
-- A historical `inventory_export.csv` containing inventory rows and bin
-  locations.
-- Historical warehouse-zone backup and export archive paths.
+A fresh clone after publication verified all nine current public heads and no
+tags. The ninth head is a later clean automation branch.
+The checkout was non-shallow and non-partial, no replace refs were active, and
+the boundary scanner reported zero historical private-path categories while
+scanning 7,497 reachable blobs. All clean branch tip trees remained
+byte-identical through the rewrite.
 
-These objects remain recoverable from reachable commits. Before changing
-repository visibility, the repository owner must perform an approved
-history-rewrite/purge procedure and verify the result with a fresh
-full-history scan. Existing clones, forks, caches, and downloaded artifacts
-must be considered separately.
+That normal clone does not fetch GitHub's read-only `refs/pull/*` namespace. A
+mirror fetch found that provider-retained pull-request refs still expose the
+same 100 rejected historical paths. Normal Git and GitHub API clients cannot
+delete or force-update these refs. The repository cannot claim a complete
+public-history purge until GitHub removes those retained refs, or the owner
+approves replacing the repository.
 
-The credential-shaped history matches reviewed during this assessment were
-documented placeholders or fake test values; no verified live credential was
-found in the current tree. If the owner’s full secret scan finds any live
-credential in history, rotate it before or while purging the history. Do not
-paste credentials into issues, commits, or chat.
+The remaining protected-content matches are documented synthetic placeholder
+or test values; no verified live credential was found. Existing clones, forks,
+caches, and downloaded artifacts remain separate distribution boundaries and
+must not be treated as rewritten automatically. Do not paste credentials or
+private historical paths into issues, commits, or chat.
 
 ## Ongoing boundary check
 
@@ -71,11 +75,12 @@ directories, database/export archives, database-shaped inventory/zone
 backups, non-migration SQL dumps, obvious credential formats, non-synthetic
 email addresses, and user identifiers in fixture/seed paths. It also requires a
 non-shallow, non-partial checkout before scanning reachable blob contents,
-applies the same content checks to tracked generated bundles, and validates the
-approved public layout CSV schema and value types. Any historical findings are
-reported for owner remediation rather than silently treated as purged; raw
-historical paths and matched values are never printed.
-
+verifies that `BOUNDARY_REQUIRED_REF` and `BOUNDARY_REQUIRED_COMMIT` are
+present, that the required ref resolves to that commit, and that it matches the
+checked-out `HEAD`, applies the same content checks to tracked generated
+bundles, and validates the approved public layout CSV schema and value types.
+Any historical findings are reported for owner remediation rather than silently
+treated as purged; raw historical paths and matched values are never printed.
 
 ## GitHub synchronization boundary
 
@@ -84,12 +89,31 @@ historical paths and matched values are never printed.
 the public repository matches the workspace. The helper never pushes directly
 to the protected default branch.
 
-The helper's read-only `--verify` mode returns status `0` with
-`VERIFIED_SYNCHRONIZATION` only when an exact expected Git tree matches an
-approved `review/` or `snapshot/` ref (including an approved pull-request
-head). Missing, stale, unsupported, or mismatched refs return status `3` with
-`VERIFICATION_FAILURE`. See the [public release checklist](public-release-checklist.md)
-for the command and the required interpretation of each state.
+The release-facing `--locked-verify` mode acquires the `public-release`
+repository coordination lock before capturing the immutable workspace
+revision. It keeps the approved ref, verification, and final evidence output
+under that lock, so a lock acquisition failure returns an explicit nonzero
+`serial-lock` diagnostic and cannot produce `VERIFIED_SYNCHRONIZATION`
+evidence. The command returns status `0` with
+`VERIFIED_SYNCHRONIZATION` only when the captured workspace commit's tree
+matches both the selected repository's `HEAD` before and after verification
+and an approved `review/` or `snapshot/` ref (including an approved
+pull-request head) resolves to the separately supplied immutable approved
+commit ID from `--approved-commit`. A branch switch, rebase, other `HEAD`
+change, or approved-ref movement during verification returns status `3` with
+`VERIFICATION_FAILURE` rather than producing evidence for another revision or
+approval. A successful verification requires `--release-id` and
+`--release-record`, and writes one exclusive, read-only JSON record containing
+the release ID, approved ref, approved commit ID, workspace revision, and
+`VERIFIED_SYNCHRONIZATION` status. Its keys are `release_id`, `approved_ref`,
+`approved_commit_id`, `workspace_revision`, and `verification_status`. An
+existing release record is never overwritten by a later verification. Missing,
+stale, unsupported, or mismatched revision, ref, approved commit, or
+release-record inputs also return status `3`.
+The lower-level `--verify` mode remains available for contract tests and
+diagnostics, but release operators must use `--locked-verify`.
+See the [public release checklist](public-release-checklist.md) for the
+command and the required interpretation of each state.
 
 ## Release documents
 
@@ -104,7 +128,8 @@ for the command and the required interpretation of each state.
 
 ## Owner checklist before release
 
-- [ ] Complete and verify the reachable-history purge for the findings above.
+- [ ] Complete the provider-side removal of retained pull-request refs, then
+      verify branch heads and `refs/pull/*` with a fresh mirror scan.
 - [ ] Run a provider secret scanner over every rewritten ref and rotate any
       live credential it reports.
 - [ ] Confirm warehouse geometry and public labels are safe to disclose.

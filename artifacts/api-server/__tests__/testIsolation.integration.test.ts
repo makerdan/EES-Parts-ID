@@ -5,14 +5,28 @@
  * fixtures, then verify exact cleanup leaves those decoys untouched.
  */
 
-import { db, floorPlanMetaTable, inventoryTable, pool, usersTable, warehouseZoneTable } from "@workspace/db";
+import {
+  abbreviationMapTable,
+  db,
+  electricalSlangMapTable,
+  floorPlanMetaTable,
+  inventoryTable,
+  misspellingMapTable,
+  pool,
+  synonymMapTable,
+  usersTable,
+  warehouseZoneTable,
+} from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 import {
   cleanupEditableItem,
   cleanupFixtures,
+  cleanupDictionaryFixtures,
   cleanupTestUser,
+  dictionaryFixturesForWorker,
   editableCatalogForWorker,
+  seedDictionaryFixtures,
   seedEditableItem,
   seedFixtures,
   seedTestUser,
@@ -102,6 +116,236 @@ describe("API test lifecycle isolation", () => {
       .where(eq(inventoryTable.catalog, decoyCatalog));
 
     expect(remaining).toEqual([{ catalog: decoyCatalog }]);
+  });
+
+  it("restores a pre-existing user when helper setup replaces it", async () => {
+    const userId = workerQualifiedUserId("jest-isolation-restored-user");
+    const original = {
+      clerkUserId: userId,
+      email: `${userId}@original.example`,
+      status: "banned" as const,
+      role: "admin" as const,
+    };
+
+    await db.delete(usersTable).where(eq(usersTable.clerkUserId, userId));
+    await db.insert(usersTable).values(original);
+    try {
+      await seedTestUser({ clerkUserId: userId, status: "approved", role: "user" });
+      await cleanupTestUser(userId);
+
+      const [restored] = await db
+        .select({
+          clerkUserId: usersTable.clerkUserId,
+          email: usersTable.email,
+          status: usersTable.status,
+          role: usersTable.role,
+        })
+        .from(usersTable)
+        .where(eq(usersTable.clerkUserId, userId));
+      expect(restored).toEqual(original);
+    } finally {
+      await db.delete(usersTable).where(eq(usersTable.clerkUserId, userId));
+    }
+  });
+
+  it("does not claim an inventory row that seedFixtures found already present", async () => {
+    const catalog = workerQualifiedUserId("jest-isolation-pre-existing-catalog");
+    await db.delete(inventoryTable).where(eq(inventoryTable.catalog, catalog));
+    await db.insert(inventoryTable).values({
+      vendor: "JEST",
+      catalog,
+      description: "pre-existing inventory fixture",
+      binLocations: [],
+      aiKeywords: [],
+    });
+    try {
+      const rows = await seedFixtures([{
+        vendor: "JEST",
+        catalog,
+        description: "replacement should not be owned",
+      }]);
+      expect(rows).toEqual([]);
+      await cleanupFixtures();
+
+      const [remaining] = await db
+        .select({
+          vendor: inventoryTable.vendor,
+          description: inventoryTable.description,
+        })
+        .from(inventoryTable)
+        .where(eq(inventoryTable.catalog, catalog));
+      expect(remaining).toEqual({
+        vendor: "JEST",
+        description: "pre-existing inventory fixture",
+      });
+    } finally {
+      await db.delete(inventoryTable).where(eq(inventoryTable.catalog, catalog));
+    }
+  });
+
+  it("cleans dictionary rows owned before setup fails mid-sequence", async () => {
+    const workerInstance = workerQualifiedUserId("jest-isolation-dictionary-failure");
+    const fixtures = dictionaryFixturesForWorker(workerInstance);
+    const originalSlang = {
+      slangTerm: fixtures.slang,
+      standardTerms: ["pre-existing connector"],
+      category: "pre-existing",
+      notes: "must survive failed fixture setup",
+    };
+
+    await db.insert(electricalSlangMapTable).values(originalSlang);
+    const actualInsert = db.insert.bind(db);
+    const insertSpy = jest.spyOn(db, "insert").mockImplementation((table) => {
+      if (table === electricalSlangMapTable) {
+        throw new Error("injected dictionary setup failure");
+      }
+      return actualInsert(table);
+    });
+
+    try {
+      await expect(seedDictionaryFixtures(workerInstance)).rejects.toThrow(
+        "injected dictionary setup failure",
+      );
+      await cleanupDictionaryFixtures(workerInstance);
+
+      const [abbreviation, synonym, misspelling, slang] = await Promise.all([
+        db
+          .select({ abbreviation: abbreviationMapTable.abbreviation })
+          .from(abbreviationMapTable)
+          .where(eq(abbreviationMapTable.abbreviation, fixtures.abbreviation)),
+        db
+          .select({ term: synonymMapTable.term })
+          .from(synonymMapTable)
+          .where(eq(synonymMapTable.term, fixtures.synonym)),
+        db
+          .select({ misspelling: misspellingMapTable.misspelling })
+          .from(misspellingMapTable)
+          .where(eq(misspellingMapTable.misspelling, fixtures.misspelling)),
+        db
+          .select({
+            slangTerm: electricalSlangMapTable.slangTerm,
+            standardTerms: electricalSlangMapTable.standardTerms,
+            category: electricalSlangMapTable.category,
+            notes: electricalSlangMapTable.notes,
+          })
+          .from(electricalSlangMapTable)
+          .where(eq(electricalSlangMapTable.slangTerm, fixtures.slang)),
+      ]);
+
+      expect(abbreviation).toEqual([]);
+      expect(synonym).toEqual([]);
+      expect(misspelling).toEqual([]);
+      expect(slang).toEqual([originalSlang]);
+    } finally {
+      insertSpy.mockRestore();
+      await cleanupDictionaryFixtures(workerInstance);
+      await db
+        .delete(electricalSlangMapTable)
+        .where(eq(electricalSlangMapTable.slangTerm, fixtures.slang));
+    }
+  });
+
+  it("retries failed dictionary cleanup without masking the original failure", async () => {
+    const workerInstance = workerQualifiedUserId("jest-isolation-dictionary-cleanup-retry");
+    const fixtures = dictionaryFixturesForWorker(workerInstance);
+    const originalSlang = {
+      slangTerm: fixtures.slang,
+      standardTerms: ["pre-existing connector"],
+      category: "pre-existing",
+      notes: "must survive cleanup retries",
+    };
+    const originalFailure = new Error("injected dictionary setup failure");
+    const cleanupFailure = new Error("injected dictionary cleanup failure");
+    const attemptedDeletes: unknown[] = [];
+
+    await db.insert(electricalSlangMapTable).values(originalSlang);
+
+    const actualInsert = db.insert.bind(db);
+    const insertSpy = jest.spyOn(db, "insert").mockImplementation((table) => {
+      if (table === electricalSlangMapTable) throw originalFailure;
+      return actualInsert(table);
+    });
+
+    const actualDelete = db.delete.bind(db);
+    const deleteSpy = jest.spyOn(db, "delete").mockImplementation((table) => {
+      attemptedDeletes.push(table);
+      if (table === misspellingMapTable) throw cleanupFailure;
+      return actualDelete(table);
+    });
+
+    try {
+      await expect((async () => {
+        try {
+          await seedDictionaryFixtures(workerInstance);
+        } finally {
+          await cleanupDictionaryFixtures(workerInstance);
+        }
+      })()).rejects.toBe(originalFailure);
+
+      expect(attemptedDeletes).toEqual(expect.arrayContaining([
+        abbreviationMapTable,
+        synonymMapTable,
+        misspellingMapTable,
+      ]));
+      expect(attemptedDeletes).not.toContain(electricalSlangMapTable);
+      insertSpy.mockRestore();
+
+      const [abbreviation, synonym, misspelling, slang] = await Promise.all([
+        db
+          .select({ abbreviation: abbreviationMapTable.abbreviation })
+          .from(abbreviationMapTable)
+          .where(eq(abbreviationMapTable.abbreviation, fixtures.abbreviation)),
+        db
+          .select({ term: synonymMapTable.term })
+          .from(synonymMapTable)
+          .where(eq(synonymMapTable.term, fixtures.synonym)),
+        db
+          .select({ misspelling: misspellingMapTable.misspelling })
+          .from(misspellingMapTable)
+          .where(eq(misspellingMapTable.misspelling, fixtures.misspelling)),
+        db
+          .select({
+            slangTerm: electricalSlangMapTable.slangTerm,
+            standardTerms: electricalSlangMapTable.standardTerms,
+            category: electricalSlangMapTable.category,
+            notes: electricalSlangMapTable.notes,
+          })
+          .from(electricalSlangMapTable)
+          .where(eq(electricalSlangMapTable.slangTerm, fixtures.slang)),
+      ]);
+
+      expect(abbreviation).toEqual([]);
+      expect(synonym).toEqual([]);
+      expect(misspelling).toEqual([{ misspelling: fixtures.misspelling }]);
+      expect(slang).toEqual([originalSlang]);
+    } finally {
+      insertSpy.mockRestore();
+      deleteSpy.mockRestore();
+      await cleanupDictionaryFixtures(workerInstance);
+
+      const [misspelling, slang] = await Promise.all([
+        db
+          .select({ misspelling: misspellingMapTable.misspelling })
+          .from(misspellingMapTable)
+          .where(eq(misspellingMapTable.misspelling, fixtures.misspelling)),
+        db
+          .select({
+            slangTerm: electricalSlangMapTable.slangTerm,
+            standardTerms: electricalSlangMapTable.standardTerms,
+            category: electricalSlangMapTable.category,
+            notes: electricalSlangMapTable.notes,
+          })
+          .from(electricalSlangMapTable)
+          .where(eq(electricalSlangMapTable.slangTerm, fixtures.slang)),
+      ]);
+
+      expect(misspelling).toEqual([]);
+      expect(slang).toEqual([originalSlang]);
+
+      await db
+        .delete(electricalSlangMapTable)
+        .where(eq(electricalSlangMapTable.slangTerm, fixtures.slang));
+    }
   });
 
   it("keeps standard and editable fixtures distinct across invocations", async () => {

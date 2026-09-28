@@ -40,6 +40,9 @@ jest.mock("expo-router", () => ({
 // ── expo-document-picker ──────────────────────────────────────────────────────
 
 const mockGetDocumentAsync = jest.fn();
+const mockInvalidateListCache = jest.fn().mockResolvedValue(undefined);
+const mockInvalidateQueries = jest.fn().mockResolvedValue(undefined);
+const mockQueryClient = { invalidateQueries: mockInvalidateQueries };
 
 jest.mock("expo-document-picker", () => ({
   getDocumentAsync: (...args: unknown[]) => mockGetDocumentAsync(...args),
@@ -130,7 +133,11 @@ jest.mock("@/components/KeyboardDoneInput", () => ({
 }));
 
 jest.mock("@tanstack/react-query", () => ({
-  useQueryClient: () => ({ invalidateQueries: jest.fn().mockResolvedValue(undefined) }),
+  useQueryClient: () => mockQueryClient,
+}));
+
+jest.mock("@/utils/editItemCache", () => ({
+  invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
 }));
 
 // ── Suppress console errors for act() warnings ────────────────────────────────
@@ -211,6 +218,7 @@ async function renderUploadCard(
 
 let activeTree: Awaited<ReturnType<typeof render>> | null = null;
 let originalPlatformOS: string;
+let pollTimerSpy: jest.SpyInstance | null = null;
 
 beforeEach(() => {
   const { Platform } = require("react-native") as { Platform: { OS: string } };
@@ -230,7 +238,11 @@ afterEach(async () => {
 
   capturedOnChangeText = null;
   capturedVendorValue = null;
+  pollTimerSpy?.mockRestore();
+  pollTimerSpy = null;
   jest.clearAllMocks();
+  mockInvalidateListCache.mockResolvedValue(undefined);
+  mockInvalidateQueries.mockResolvedValue(undefined);
   mockWriteAsStringAsync.mockResolvedValue(undefined);
   mockDeleteAsync.mockResolvedValue(undefined);
   delete (global as unknown as { fetch?: unknown }).fetch;
@@ -507,5 +519,39 @@ describe("CatalogPdfUpload — reset clears vendor and AI log across all exit pa
     await flushPromises();
 
     expect(instText(tree.root!)).not.toContain("AI Raw ·");
+  });
+});
+
+describe("CatalogPdfUpload — partial completion", () => {
+  it("shows the partial result, stops polling, and invalidates inventory and Search caches once", async () => {
+    installImmediateUploadTask("job-partial-1");
+    installTerminalPollingFetch({
+      jobId: "job-partial-1",
+      status: "done_with_errors",
+      totalPages: 4,
+      processedPages: 4,
+      matchedParts: 3,
+      imagesMatched: 2,
+      unmatchedParts: [],
+      errorMessage: "Some catalog images could not be saved.",
+    });
+
+    const tree = await renderUploadCard();
+    activeTree = tree;
+    pollTimerSpy = jest.spyOn(global, "setTimeout");
+
+    await pickFileSetVendorAndStart(tree);
+
+    const displayed = instText(tree.root!);
+    expect(displayed).toContain("Processing finished with some errors");
+    expect(displayed).toContain("3 parts updated across 4 of 4 pages");
+    expect(displayed).toContain("Some catalog images could not be saved.");
+    expect(
+      (global.fetch as jest.Mock).mock.calls.filter(([url]) => String(url).includes("/status")),
+    ).toHaveLength(1);
+    expect(pollTimerSpy.mock.calls.some((call) => call[1] === 2500)).toBe(false);
+    expect(mockInvalidateListCache).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
   });
 });

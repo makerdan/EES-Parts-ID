@@ -73,6 +73,12 @@ export const inventoryTable = pgTable(
     enrichedAt: timestamp("enriched_at"),
     // ── PDF catalog enrichment ────────────────────────────────────────────────
     imageUrl: text("image_url"),
+    previousImageUrl: text("previous_image_url"),
+    previousImageUrl2: text("previous_image_url_2"),
+    previousImageSource: text("previous_image_source"),
+    previousImageConfidence: real("previous_image_confidence"),
+    previousCatalogPdfJobId: integer("previous_catalog_pdf_job_id"),
+    previousPhotoSnapshot: boolean("previous_photo_snapshot").notNull().default(false),
     thumbnailUrl: text("thumbnail_url"),
     imageUrl2: text("image_url_2"),
     thumbnailUrl2: text("thumbnail_url_2"),
@@ -91,8 +97,9 @@ export const inventoryTable = pgTable(
     size: text("size"),
     // ── Physical dimensions ──────────────────────────────────────────────────
     // Nullable JSON object: { length?, width?, height?, diameter? } all in mm.
-    // Populated via LiDAR scan or manual entry. Kept as jsonb so the schema
-    // remains flexible (e.g. future tolerance fields) without another migration.
+    // Populated from supported measurement workflows or manual entry. Kept as
+    // jsonb so the schema remains flexible (e.g. future tolerance fields)
+    // without another migration.
     dimensions: jsonb("dimensions").$type<{
       length?: number | null;
       width?: number | null;
@@ -104,6 +111,11 @@ export const inventoryTable = pgTable(
   },
   (table) => [
     uniqueIndex("inventory_vendor_catalog_idx").on(table.vendor, table.catalog),
+    index("inventory_upper_vendor_catalog_idx").using(
+      "btree",
+      sql`upper(vendor)`,
+      sql`upper(catalog) text_pattern_ops`,
+    ),
     index("inventory_dimensions_length_idx").using(
       "btree",
       sql`((dimensions->>'length')::numeric)`,

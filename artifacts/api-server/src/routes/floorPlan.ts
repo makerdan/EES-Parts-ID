@@ -20,7 +20,7 @@ import sharp from "sharp";
 
 import { WAREHOUSE_MAP_SVG } from "../assets/warehouse-map-raw";
 import { logger } from "../lib/logger";
-import { readFloorPlanSvg,uploadFloorPlanSvg } from "../lib/objectStorage";
+import { deleteFloorPlanSvg, readFloorPlanSvg, uploadFloorPlanSvg } from "../lib/objectStorage";
 import { requireAdminAuth } from "../middlewares/requireAdminAuth";
 
 /**
@@ -298,7 +298,10 @@ async function getLatestMeta() {
   const rows = await db
     .select()
     .from(floorPlanMetaTable)
-    .orderBy(desc(floorPlanMetaTable.uploadedAt))
+    .orderBy(
+      desc(floorPlanMetaTable.uploadedAt),
+      desc(floorPlanMetaTable.id),
+    )
     .limit(1);
   return rows[0] ?? null;
 }
@@ -507,7 +510,27 @@ router.post("/admin/floor-plan", requireAdminAuth, async (req, res) => {
     const hash = crypto.createHash("sha256").update(safeSvg).digest("hex");
     const objectPath = await uploadFloorPlanSvg(safeSvg);
 
-    await db.insert(floorPlanMetaTable).values({ objectPath, hash });
+    try {
+      await db.insert(floorPlanMetaTable).values({ objectPath, hash });
+    } catch (err) {
+      try {
+        await deleteFloorPlanSvg(objectPath);
+      } catch (cleanupErr) {
+        // Never replace the persistence failure or expose storage details to callers.
+        const code = (cleanupErr as { code?: unknown }).code;
+        logger.warn(
+          { cleanupCode: typeof code === "string" ? code.slice(0, 32) : undefined },
+          "[floor-plan] failed to remove unreferenced upload",
+        );
+      }
+      logger.error(
+        { errorCode: typeof (err as { code?: unknown }).code === "string"
+          ? String((err as { code: string }).code).slice(0, 32) : undefined },
+        "[floor-plan] metadata write failed",
+      );
+      res.status(500).json({ error: "Failed to save floor plan. Please retry." });
+      return;
+    }
 
     // Invalidate all disk-cached tiles from the previous SVG.
     // Keep tiles for the new hash (none yet) — they'll be generated on demand

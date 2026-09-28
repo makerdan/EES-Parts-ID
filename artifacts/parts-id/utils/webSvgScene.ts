@@ -17,8 +17,9 @@
 
 import {
   type ContentViewBox,
+  normalizeSvgViewBoxOrigin,
   parseContentViewBox,
-} from "@/utils/mapViewport";
+} from "@workspace/zone-validation";
 
 export interface WebSvgScene {
   /** Sanitized, origin-normalized, explicitly sized complete SVG markup. */
@@ -42,28 +43,7 @@ export interface WebSvgScene {
  * Returns the input unchanged when the outer viewBox is already normalized or
  * cannot be parsed safely.
  */
-export function normalizeSvgViewBoxOrigin(svg: string): string {
-  const rootMatch = /<svg\b[^>]*>/i.exec(svg);
-  if (!rootMatch) return svg;
-
-  const root = rootMatch[0];
-  const viewBoxMatch = /\sviewBox\s*=\s*(["'])([^"']*)\1/i.exec(root);
-  if (!viewBoxMatch) return svg;
-
-  const parts = viewBoxMatch[2]!.trim().split(/[\s,]+/).map(Number);
-  if (parts.length !== 4 || parts.some((value) => !isFinite(value))) return svg;
-
-  const [x, y, width, height] = parts;
-  if (x === 0 && y === 0) return svg;
-
-  const normalizedRoot = root.replace(
-    /\sviewBox\s*=\s*(["'])[^"']*\1/i,
-    ` viewBox="0 0 ${width} ${height}"`,
-  );
-  return `${svg.slice(0, rootMatch.index)}${normalizedRoot}${svg.slice(
-    rootMatch.index + root.length,
-  )}`;
-}
+export { normalizeSvgViewBoxOrigin };
 
 /**
  * Conservative string-based SVG sanitizer for the browser injection path.

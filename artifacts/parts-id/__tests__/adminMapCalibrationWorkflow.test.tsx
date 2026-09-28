@@ -437,4 +437,32 @@ describe("native map calibration workflow", () => {
     expect(requestMethods()).toEqual(["GET"]);
     expect(requestLog.some((request) => request.method !== "GET")).toBe(false);
   });
+
+  it("does not send an anchor write for malformed coordinate text", async () => {
+    activeTree = await renderScreen(SAVED_ANCHORS);
+
+    await fireEvent.changeText(activeTree.getByTestId("anchor-2-world-x"), "12abc");
+
+    expect(activeTree.getByTestId("anchor-2-world-x-error")).not.toBeNull();
+    expect(activeTree.queryByText("Review Alignment →")).toBeNull();
+    expect(requestMethods()).toEqual(["GET"]);
+    expect(requestLog.some((request) => request.method !== "GET")).toBe(false);
+  });
+
+  it("saves a valid signed decimal through the real anchor hook", async () => {
+    activeTree = await renderScreen(SAVED_ANCHORS);
+
+    await fireEvent.changeText(activeTree.getByTestId("anchor-1-world-x"), "-12.75");
+    const saveButton = activeTree.getByLabelText("Save anchor 1");
+    expect(saveButton.props.disabled).toBe(false);
+    await fireEvent.press(saveButton);
+    await flushPromises();
+
+    const putRequest = requestLog.find((request) => request.method === "PUT");
+    expect(putRequest?.body).toEqual(expect.objectContaining({
+      worldX: -12.75,
+      worldY: 20,
+    }));
+    expect(persistedAnchors.find((anchor) => anchor.id === 1)?.worldX).toBe(-12.75);
+  });
 });

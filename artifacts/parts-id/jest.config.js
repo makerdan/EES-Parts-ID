@@ -8,6 +8,7 @@ module.exports = {
   moduleNameMapper: {
     "^expo$": "<rootDir>/__mocks__/expo.js",
     "^expo-crypto$": "<rootDir>/__mocks__/expo-crypto.js",
+    "^expo-sqlite$": "<rootDir>/__mocks__/expo-sqlite.js",
     "^@clerk/expo$": "<rootDir>/__mocks__/clerk-expo.js",
     "^react-native$": "<rootDir>/__mocks__/react-native.js",
     "^react-native-keyboard-controller$":
@@ -22,7 +23,6 @@ module.exports = {
     "^@/contexts/ApiHealthContext$": "<rootDir>/__mocks__/contexts/ApiHealthContext.js",
     "^react-native-gesture-handler$": "<rootDir>/__mocks__/react-native-gesture-handler.js",
     "^@react-native-community/netinfo$": "<rootDir>/__mocks__/netinfo.js",
-    "^lidar-measure$": "<rootDir>/__mocks__/lidar-measure.js",
     "\\.svg$": "<rootDir>/__mocks__/svg-asset.js",
     "^@/(.*)$": "<rootDir>/$1",
     "^@workspace/zone-validation$": "<rootDir>/../../lib/zone-validation/src/index.ts",
@@ -39,8 +39,7 @@ module.exports = {
           jsx: "react",
           baseUrl: ".",
           paths: {
-            "@/*": ["./*"],
-            "lidar-measure": ["./modules/lidar-measure/src/index"],
+          "@/*": ["./*"],
             "@workspace/zone-validation": [
               "../../lib/zone-validation/src/index.ts",
             ],

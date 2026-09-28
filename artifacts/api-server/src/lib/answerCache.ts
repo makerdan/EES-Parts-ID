@@ -104,11 +104,12 @@ export async function setCachedAnswer(
   }
 }
 
-export async function invalidateReferenceAnswerCache(): Promise<void> {
+export async function invalidateReferenceAnswerCache(options: { throwOnError?: boolean } = {}): Promise<void> {
   try {
     await db.delete(referenceAnswerCacheTable);
     logger.info("reference_answer_cache invalidated due to inventory update");
   } catch (err) {
     logger.warn({ err }, "reference_answer_cache invalidation failed");
+    if (options.throwOnError) throw err;
   }
 }

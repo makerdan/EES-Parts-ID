@@ -29,23 +29,70 @@ import {
   ownedCatalogPdfChildWhere,
   ownedCatalogPdfJobWhere,
 } from "../lib/catalogPdfOwnership";
-import { getLogger, logger } from "../lib/logger";
+import {
+  boundedErrorDiagnostic,
+  boundedErrorStatus,
+  boundedStoredErrorStatus,
+  getLogger,
+  logger,
+} from "../lib/logger";
 import { deletePrivateObjects, uploadCatalogImage } from "../lib/objectStorage";
 import { PoeBotChainExhaustedError } from "../lib/poeBot";
 import { catalogPdfUploadLimiter } from "../lib/rateLimiter";
 import { getAdminClerkUserId, requireAdminAuth } from "../middlewares/requireAdminAuth";
 import { isProviderPayloadTooLargeError } from "../utils/aiHelpers";
+import { createBoundedPdfQueue } from "../utils/boundedPdfQueue";
 import type { ImageRegion } from "../utils/catalogExtractor";
 import { CatalogAiError,extractCatalogPage } from "../utils/catalogExtractor";
 import { matchCatalogNumber } from "../utils/catalogMatcher";
-import { extractPdfPages, validatePdf } from "../utils/pdfProcessor";
+import { extractPdfPages, MAX_CATALOG_PDF_BYTES, validatePdf } from "../utils/pdfProcessor";
 
 // ── Background-job concurrency semaphore ──────────────────────────────────────
 // Limits the number of PDF processing jobs that can run simultaneously in the
 // background to prevent a single admin (or a stolen admin token) from
 // enqueuing unlimited parallel AI and pdftoppm work.
-const MAX_CONCURRENT_PDF_JOBS = Number(process.env.MAX_CONCURRENT_PDF_JOBS ?? 3);
+const configuredPdfJobs = Number(process.env.MAX_CONCURRENT_PDF_JOBS ?? 2);
+const MAX_CONCURRENT_PDF_JOBS = Number.isSafeInteger(configuredPdfJobs)
+  ? Math.min(3, Math.max(1, configuredPdfJobs))
+  : 2;
 let activePdfJobs = 0;
+const MAX_QUEUED_PDF_JOBS = 2;
+const MAX_QUEUED_PDF_BYTES = MAX_QUEUED_PDF_JOBS * MAX_CATALOG_PDF_BYTES;
+const queuedPdfJobs = createBoundedPdfQueue<{
+  jobId: number; pdfBuffer: Buffer; vendor: string; log: typeof logger;
+  onStarted?: () => Promise<void>;
+}>(MAX_QUEUED_PDF_JOBS, MAX_QUEUED_PDF_BYTES);
+const queuedPdfJobIds = new Set<number>();
+const runningDurablePdfJobIds = new Set<number>();
+let reservedPdfJobs = 0;
+let reservedPdfBytes = 0;
+
+/** Reserve admission before the durable completion transaction assembles the PDF. */
+export function reserveCatalogPdfCapacity(bytes: number): (() => void) | null {
+  const waiting = queuedPdfJobs.length + reservedPdfJobs;
+  if (activePdfJobs + waiting >= MAX_CONCURRENT_PDF_JOBS + MAX_QUEUED_PDF_JOBS ||
+      (waiting >= MAX_QUEUED_PDF_JOBS && activePdfJobs >= MAX_CONCURRENT_PDF_JOBS) ||
+      (activePdfJobs >= MAX_CONCURRENT_PDF_JOBS && queuedPdfJobs.bytes + reservedPdfBytes + bytes > MAX_QUEUED_PDF_BYTES)) {
+    return null;
+  }
+  reservedPdfJobs++;
+  reservedPdfBytes += bytes;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    reservedPdfJobs--;
+    reservedPdfBytes -= bytes;
+  };
+}
+
+function drainPdfQueue(): void {
+  while (activePdfJobs < MAX_CONCURRENT_PDF_JOBS && queuedPdfJobs.length) {
+    const next = queuedPdfJobs.take()!;
+    queuedPdfJobIds.delete(next.jobId);
+    launchCatalogPdfBuffer(next.jobId, next.pdfBuffer, next.vendor, next.log, next.onStarted);
+  }
+}
 
 // ── In-memory AI raw log store (in-session only, not persisted to DB) ─────────
 // Keyed by job ID (child job or single-upload job). Entries are appended as
@@ -93,7 +140,24 @@ async function cleanupPrivateObjects(
   }
 }
 
-// ── Image helper ──────────────────────────────────────────────────────────────
+async function cleanupReplacedPhotos(paths: Array<string | null | undefined>): Promise<void> {
+  for (const path of new Set(paths.filter((value): value is string => Boolean(value)))) {
+    // A photo may be used by both slots or another item. Never delete an
+    // object while any committed inventory reference still points to it.
+    const referenced = await db.select({ id: inventoryTable.id })
+      .from(inventoryTable)
+      .where(or(
+        eq(inventoryTable.imageUrl, path),
+        eq(inventoryTable.imageUrl2, path),
+        and(eq(inventoryTable.previousPhotoSnapshot, true), or(
+          eq(inventoryTable.previousImageUrl, path),
+          eq(inventoryTable.previousImageUrl2, path),
+        )),
+      ))
+      .limit(1);
+    if (referenced.length === 0) await cleanupPrivateObjects([path]);
+  }
+}
 type PageCtx = {
   isRendered: boolean;
   images: Array<Buffer>;
@@ -122,7 +186,7 @@ async function cropOrSelectImage(
         .png()
         .toBuffer();
     } catch (cropErr) {
-      log.warn({ err: cropErr }, "[catalog-pdf] Crop failed, skipping image");
+      log.warn(boundedErrorDiagnostic(cropErr), "[catalog-pdf] Crop failed, skipping image");
       return null;
     }
   } else {
@@ -133,9 +197,8 @@ async function cropOrSelectImage(
 
 // ── Parent-job finalisation (atomic) ──────────────────────────────────────────
 // After a child job reaches a terminal state, check whether all siblings are
-// also terminal. If so, mark the parent as done or failed using a single
-// conditional UPDATE so that two chunks finishing simultaneously cannot both
-// (or neither) trigger the parent transition.
+// also terminal. If so, set the aggregate outcome only while the parent is
+// pending or processing, preserving the first accepted terminal transition.
 async function finalizeParentIfComplete(parentId: number, log: typeof logger = logger): Promise<void> {
   try {
     await db.execute(sql`
@@ -145,6 +208,7 @@ async function finalizeParentIfComplete(parentId: number, log: typeof logger = l
           SUM(CASE WHEN status NOT IN ('done','done_with_errors','failed','cancelled') THEN 1 ELSE 0 END) AS still_running,
           SUM(CASE WHEN status = 'failed'                                              THEN 1 ELSE 0 END) AS failed_count,
           SUM(CASE WHEN status = 'done_with_errors'                                   THEN 1 ELSE 0 END) AS partial_count,
+          SUM(CASE WHEN status = 'cancelled'                                          THEN 1 ELSE 0 END) AS cancelled_count,
           COALESCE(SUM(processed_pages), 0)                                              AS sum_pages,
           COALESCE(SUM(parts_found),     0)                                              AS sum_found,
           COALESCE(SUM(matched_parts),   0)                                              AS sum_matched,
@@ -162,8 +226,11 @@ async function finalizeParentIfComplete(parentId: number, log: typeof logger = l
       SET
         status           = CASE WHEN ca.failed_count > 0 THEN 'failed'
                                 WHEN ca.partial_count > 0 THEN 'done_with_errors'
+                                WHEN ca.cancelled_count = ca.total THEN 'cancelled'
                                 ELSE 'done' END,
-        error_message    = CASE WHEN ca.failed_count > 0 OR ca.partial_count > 0 THEN ca.first_error ELSE NULL END,
+        error_message    = CASE WHEN ca.failed_count > 0 THEN 'child_job_failed'
+                                WHEN ca.partial_count > 0 THEN 'child_job_partial_failure'
+                                ELSE NULL END,
         processed_pages  = ca.sum_pages,
         parts_found      = ca.sum_found,
         matched_parts    = ca.sum_matched,
@@ -173,10 +240,13 @@ async function finalizeParentIfComplete(parentId: number, log: typeof logger = l
       WHERE catalog_pdf_job.id = ${parentId}
         AND ca.still_running   = 0
         AND ca.total           = pi.chunk_count
-        AND catalog_pdf_job.status NOT IN ('done', 'done_with_errors', 'failed')
+        AND catalog_pdf_job.status IN ('pending', 'processing')
     `);
   } catch (err) {
-    log.error({ err, parentId }, "[catalog-pdf] finalizeParentIfComplete failed");
+    log.error(
+      { ...boundedErrorDiagnostic(err), parentId },
+      "[catalog-pdf] finalizeParentIfComplete failed",
+    );
   }
 }
 
@@ -198,8 +268,11 @@ const activeJobLoops = new Map<number, Promise<void>>();
 
 function trackJobLoop(jobId: number, loop: Promise<void>): void {
   const settled = loop
-    .catch(() => {
-      /* errors are already handled/logged inside the loop */
+    .catch((err) => {
+      logger.error(
+        { ...boundedErrorDiagnostic(err), jobId },
+        "[catalog-pdf] unhandled background loop failure",
+      );
     })
     .finally(() => {
       activeJobLoops.delete(jobId);
@@ -238,8 +311,7 @@ export function registerJobLoopForTests(jobId: number, loop: Promise<void>): voi
   trackJobLoop(jobId, loop);
 }
 
-export const SHUTDOWN_ERROR_MESSAGE =
-  "Server restarted while job was in progress. Use Resume to continue from the last processed page.";
+export const SHUTDOWN_ERROR_MESSAGE = "server_shutdown_interrupted";
 
 /**
  * Requests shutdown of all active catalog-pdf background loops.
@@ -282,17 +354,17 @@ export async function shutdownCatalogPdfLoops(timeoutMs = 10_000): Promise<void>
       );
     }
   } catch (err) {
-    logger.error({ err, jobIds }, "[catalog-pdf] failed to mark in-flight jobs during shutdown");
+    logger.error(
+      { ...boundedErrorDiagnostic(err), jobIds },
+      "[catalog-pdf] failed to mark in-flight jobs during shutdown",
+    );
   }
 }
 
 // ── Session-items rollback helper ──────────────────────────────────────────────
-// Reverts every inventory row that was updated by a given job ID: restores the
-// previous description and clears all pdf-extraction fields (imageUrl, imageSource,
-// imageConfidence, catalogPdfJobId).  Called when a job fails or is cancelled
-// mid-run so partial writes never remain visible to clients.
+// Reverts every inventory row updated by a job, restoring the durable photo
+// snapshot before removing newly uploaded objects.
 async function revertSessionItems(jobId: number, log: typeof logger = logger): Promise<void> {
-  try {
     const rows = await db
       .select({
         id: inventoryTable.id,
@@ -312,11 +384,17 @@ async function revertSessionItems(jobId: number, log: typeof logger = logger): P
       .set({
         description: sql`COALESCE(${inventoryTable.previousDescription}, ${inventoryTable.description})`,
         previousDescription: null,
-        imageUrl: null,
-        imageUrl2: null,
-        imageSource: null,
-        imageConfidence: null,
-        catalogPdfJobId: null,
+        imageUrl: sql`CASE WHEN ${inventoryTable.previousPhotoSnapshot} THEN ${inventoryTable.previousImageUrl} ELSE NULL END`,
+        imageUrl2: sql`CASE WHEN ${inventoryTable.previousPhotoSnapshot} THEN ${inventoryTable.previousImageUrl2} ELSE NULL END`,
+        imageSource: sql`CASE WHEN ${inventoryTable.previousPhotoSnapshot} THEN ${inventoryTable.previousImageSource} ELSE NULL END`,
+        imageConfidence: sql`CASE WHEN ${inventoryTable.previousPhotoSnapshot} THEN ${inventoryTable.previousImageConfidence} ELSE NULL END`,
+        catalogPdfJobId: sql`CASE WHEN ${inventoryTable.previousPhotoSnapshot} THEN ${inventoryTable.previousCatalogPdfJobId} ELSE NULL END`,
+        previousImageUrl: null,
+        previousImageUrl2: null,
+        previousImageSource: null,
+        previousImageConfidence: null,
+        previousCatalogPdfJobId: null,
+        previousPhotoSnapshot: false,
         updatedAt: new Date(),
       })
       .where(
@@ -325,12 +403,96 @@ async function revertSessionItems(jobId: number, log: typeof logger = logger): P
           sql`${inventoryTable.imageSource} = 'pdf_extraction'`,
         ),
       );
-    await cleanupPrivateObjects(
+    await cleanupReplacedPhotos(
       rows.flatMap((row) => [row.imageUrl, row.imageUrl2]),
-    );
-  } catch (revertErr) {
-    log.error({ err: revertErr, jobId }, "[catalog-pdf] Failed to revert session items on job failure");
+    ).catch((err: unknown) => {
+      // The database rollback has committed; a private-object deletion error
+      // must not turn it into a retry of already-reverted inventory rows.
+      log.error({ ...boundedErrorDiagnostic(err), jobId }, "[catalog-pdf] reverted items but private-object cleanup failed");
+    });
+}
+
+const ROLLBACK_FAILED = "catalog_pdf_rollback_failed";
+const STATUS_WRITE_FAILED = "catalog_pdf_status_write_failed";
+
+async function handlePdfWorkerFailure(
+  jobId: number,
+  err: unknown,
+  log: typeof logger,
+  parentJobId: number | null = null,
+): Promise<void> {
+  const isCatalogAiError = err instanceof Error && err.name === "CatalogAiError";
+  const errorCode = err instanceof PoeBotChainExhaustedError
+    ? "poe_chain_exhausted"
+    : !isCatalogAiError && isProviderPayloadTooLargeError(err)
+      ? "ai_payload_too_large"
+      : boundedErrorStatus(err);
+  log.error({ ...boundedErrorDiagnostic(err), jobId }, "[catalog-pdf] background processing failed");
+
+  let statusWriteFailed = false;
+  try {
+    await db.update(catalogPdfJobTable)
+      .set({ status: "failed", errorMessage: errorCode, finishedAt: new Date() })
+      .where(and(eq(catalogPdfJobTable.id, jobId), inArray(catalogPdfJobTable.status, ["pending", "processing"])));
+  } catch (writeErr) {
+    statusWriteFailed = true;
+    log.error({ ...boundedErrorDiagnostic(writeErr), jobId }, "[catalog-pdf] failed to persist worker terminal status");
   }
+
+  let rollbackFailed = false;
+  try {
+    await revertSessionItems(jobId, log);
+  } catch (rollbackErr) {
+    rollbackFailed = true;
+    log.error({ ...boundedErrorDiagnostic(rollbackErr), jobId }, "[catalog-pdf] failed to revert worker session items");
+  }
+
+  if (rollbackFailed || statusWriteFailed) {
+    // A rollback failure needs a durable signal so Resume retries it before
+    // processing another page. A failed terminal write gets a second, simpler
+    // attempt; if the DB remains unavailable startup reconciliation handles it.
+    try {
+      await db.update(catalogPdfJobTable)
+        .set({
+          status: "failed",
+          errorMessage: rollbackFailed ? ROLLBACK_FAILED : STATUS_WRITE_FAILED,
+          finishedAt: new Date(),
+        })
+        .where(and(eq(catalogPdfJobTable.id, jobId), inArray(catalogPdfJobTable.status, ["pending", "processing", "failed"])));
+    } catch (recoveryErr) {
+      log.error({ ...boundedErrorDiagnostic(recoveryErr), jobId }, "[catalog-pdf] failed to persist recoverable worker state");
+    }
+  }
+
+  if (parentJobId !== null) {
+    try {
+      await db.execute(sql`
+        UPDATE catalog_pdf_job SET status = 'failed', error_message = ${errorCode}, finished_at = NOW()
+        WHERE id = ${parentJobId} AND status IN ('pending', 'processing')
+      `);
+    } catch (parentErr) {
+      log.error({ ...boundedErrorDiagnostic(parentErr), jobId, parentJobId }, "[catalog-pdf] failed to persist parent worker status");
+    }
+  }
+}
+
+/** Reconcile legacy in-flight workers after restart, excluding staged uploads
+ * which have retained bytes and are relaunched by upload-session recovery. */
+export async function recoverInterruptedCatalogPdfJobs(): Promise<void> {
+  await db.execute(sql`
+    UPDATE catalog_pdf_job AS job
+    SET status = 'failed', error_message = ${ROLLBACK_FAILED}, finished_at = NOW()
+    WHERE (job.status = 'processing'
+      AND NOT EXISTS (
+        SELECT 1 FROM catalog_pdf_upload_session AS upload
+        WHERE upload.processing_job_id = job.id
+          AND upload.status = 'completed' AND upload.cleanup_at IS NULL
+      ))
+      OR (job.status = 'cancelled' AND EXISTS (
+        SELECT 1 FROM inventory AS item
+        WHERE item.catalog_pdf_job_id = job.id AND item.image_source = 'pdf_extraction'
+      ))
+  `);
 }
 
 // ── Core per-page processing loop ─────────────────────────────────────────────
@@ -395,7 +557,10 @@ async function processPdfPages(
           unmatchedParts: unmatchedPartsList.length > 0 ? unmatchedPartsList : null,
           finishedAt: new Date(),
         })
-        .where(eq(catalogPdfJobTable.id, jobId));
+        .where(and(
+          eq(catalogPdfJobTable.id, jobId),
+          inArray(catalogPdfJobTable.status, ["pending", "processing"]),
+        ));
       log.info({ jobId, processedPages, pageOffset }, "[catalog-pdf] loop stopped for server shutdown — job marked resumable");
       return;
     }
@@ -425,29 +590,21 @@ async function processPdfPages(
       appendAiRawLog(jobId, page.pageNum + pageOffset, result.rawText);
     } catch (err) {
       if (err instanceof PoeBotChainExhaustedError) {
-        await db
-          .update(catalogPdfJobTable)
-          .set({ status: "failed", errorMessage: "poe_chain_exhausted", finishedAt: new Date() })
-          .where(eq(catalogPdfJobTable.id, jobId));
-        await revertSessionItems(jobId, log);
-        if (parentJobId !== null) {
-          await db.execute(sql`
-            UPDATE catalog_pdf_job
-            SET status = 'failed',
-                error_message = 'poe_chain_exhausted',
-                finished_at = NOW()
-            WHERE id = ${parentJobId}
-              AND status NOT IN ('done', 'failed')
-          `);
-        }
         log.warn({ jobId, page: page.pageNum + pageOffset }, "[catalog-pdf] poe_chain_exhausted");
-        return;
+        throw err;
       }
       // Payload-too-large: re-throw to fail the entire job (image size won't
       // change on other pages, so all would fail anyway).
       // Transient AI error: log and skip this page so the rest of the job continues.
       if (err instanceof CatalogAiError && err.code !== "ai_payload_too_large") {
-        log.warn({ jobId, page: page.pageNum + pageOffset, originalMessage: err.originalMessage }, "[catalog-pdf] transient ai_error — skipping page");
+        log.warn(
+          {
+            ...boundedErrorDiagnostic(err),
+            jobId,
+            page: page.pageNum + pageOffset,
+          },
+          "[catalog-pdf] transient ai_error — skipping page",
+        );
         processedPages++;
         await db.update(catalogPdfJobTable).set({ processedPages }).where(eq(catalogPdfJobTable.id, jobId));
         continue;
@@ -480,12 +637,21 @@ async function processPdfPages(
           imageSource: inventoryTable.imageSource,
           imageUrl: inventoryTable.imageUrl,
           imageUrl2: inventoryTable.imageUrl2,
+          imageConfidence: inventoryTable.imageConfidence,
+          catalogPdfJobId: inventoryTable.catalogPdfJobId,
+          previousImageUrl: inventoryTable.previousImageUrl,
+          previousImageUrl2: inventoryTable.previousImageUrl2,
+          previousImageSource: inventoryTable.previousImageSource,
+          previousImageConfidence: inventoryTable.previousImageConfidence,
+          previousCatalogPdfJobId: inventoryTable.previousCatalogPdfJobId,
+          previousPhotoSnapshot: inventoryTable.previousPhotoSnapshot,
         })
         .from(inventoryTable)
         .where(eq(inventoryTable.id, match.inventoryId))
         .limit(1);
 
       if (!existing) continue;
+      const sameJobSnapshot = existing.catalogPdfJobId === jobId && existing.previousPhotoSnapshot;
 
       let imageUrl: string | null = null;
       let imageUrl2: string | null = null;
@@ -494,12 +660,14 @@ async function processPdfPages(
         if (buf1) {
           try { imageUrl = await uploadCatalogImage(buf1, "image/png"); }
           catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
             hadImageUploadFailure = true;
-            log.warn({ err, jobId }, "[catalog-pdf] Image 1 upload failed");
+            log.warn(
+              { ...boundedErrorDiagnostic(err), jobId },
+              "[catalog-pdf] Image 1 upload failed",
+            );
             await db
               .update(catalogPdfJobTable)
-              .set({ errorMessage: `image_upload_failed: ${msg}` })
+              .set({ errorMessage: "image_upload_failed" })
               .where(eq(catalogPdfJobTable.id, jobId));
           }
         }
@@ -507,47 +675,80 @@ async function processPdfPages(
         if (buf2) {
           try { imageUrl2 = await uploadCatalogImage(buf2, "image/png"); }
           catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
             hadImageUploadFailure = true;
-            log.warn({ err, jobId }, "[catalog-pdf] Image 2 upload failed");
+            log.warn(
+              { ...boundedErrorDiagnostic(err), jobId },
+              "[catalog-pdf] Image 2 upload failed",
+            );
             await db
               .update(catalogPdfJobTable)
-              .set({ errorMessage: `image_upload_failed: ${msg}` })
+              .set({ errorMessage: "image_upload_failed" })
               .where(eq(catalogPdfJobTable.id, jobId));
           }
         }
       }
 
       const incomingConfidence = match.similarityScore * entry.confidence;
-      const [updated] = await db
-        .update(inventoryTable)
-        .set({
-          description: entry.description || existing.description,
-          previousDescription: existing.description,
-          imageUrl,
-          imageUrl2,
-          imageSource: "pdf_extraction",
-          imageConfidence: incomingConfidence,
-          catalogPdfJobId: jobId,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(inventoryTable.id, match.inventoryId),
-            or(
-              isNull(inventoryTable.imageConfidence),
-              lt(inventoryTable.imageConfidence, incomingConfidence),
+      let updated: { id: number } | undefined;
+      try {
+        [updated] = await db
+          .update(inventoryTable)
+          .set({
+            description: entry.description || existing.description,
+            previousDescription: sameJobSnapshot
+              ? sql`${inventoryTable.previousDescription}`
+              : existing.description,
+            imageUrl: imageUrl ?? existing.imageUrl,
+            imageUrl2: imageUrl2 ?? existing.imageUrl2,
+            previousImageUrl: sameJobSnapshot ? existing.previousImageUrl : existing.imageUrl,
+            previousImageUrl2: sameJobSnapshot ? existing.previousImageUrl2 : existing.imageUrl2,
+            previousImageSource: sameJobSnapshot ? existing.previousImageSource : existing.imageSource,
+            previousImageConfidence: sameJobSnapshot ? existing.previousImageConfidence : existing.imageConfidence,
+            previousCatalogPdfJobId: sameJobSnapshot ? existing.previousCatalogPdfJobId : existing.catalogPdfJobId,
+            previousPhotoSnapshot: true,
+            imageSource: "pdf_extraction",
+            imageConfidence: incomingConfidence,
+            catalogPdfJobId: jobId,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(inventoryTable.id, match.inventoryId),
+              or(
+                isNull(inventoryTable.imageConfidence),
+                lt(inventoryTable.imageConfidence, incomingConfidence),
+                // An earlier attempt may have committed the description while
+                // failing to upload a photo. A retry at equal confidence can
+                // replace it, but a higher-confidence result still wins.
+                existing.imageSource === "pdf_extraction" && (imageUrl || imageUrl2)
+                  ? and(
+                      eq(inventoryTable.imageSource, "pdf_extraction"),
+                      eq(inventoryTable.imageConfidence, incomingConfidence),
+                    )
+                  : undefined,
+              ),
             ),
-          ),
-        )
-        .returning({ id: inventoryTable.id });
+          )
+          .returning({ id: inventoryTable.id });
+      } catch (err) {
+        // Neither new reference committed. Never delete an existing photo here.
+        await cleanupPrivateObjects([imageUrl, imageUrl2]).catch(() => {});
+        throw err;
+      }
 
       if (!updated) {
         // A lower-confidence result can lose the conditional update. Do not
         // leave newly generated private images orphaned in that case.
         await cleanupPrivateObjects([imageUrl, imageUrl2]).catch(() => {});
       } else {
-        await cleanupPrivateObjects([existing.imageUrl, existing.imageUrl2]).catch(() => {});
+        // Keep the pre-job references until the entire job is terminal: a
+        // later page can still fail and need the original photos for rollback.
+        if (sameJobSnapshot) {
+          await cleanupReplacedPhotos([
+            imageUrl && existing.imageUrl !== existing.previousImageUrl ? existing.imageUrl : null,
+            imageUrl2 && existing.imageUrl2 !== existing.previousImageUrl2 ? existing.imageUrl2 : null,
+          ]).catch(() => {});
+        }
       }
 
       if (imageUrl) imagesMatched++;
@@ -568,17 +769,38 @@ async function processPdfPages(
   }
 
   if (wasCancelled) {
-    await revertSessionItems(jobId, log);
+    try {
+      await revertSessionItems(jobId, log);
+    } catch (err) {
+      log.error({ ...boundedErrorDiagnostic(err), jobId }, "[catalog-pdf] cancellation rollback failed");
+      try {
+        await db.update(catalogPdfJobTable)
+          .set({ status: "failed", errorMessage: ROLLBACK_FAILED, finishedAt: new Date() })
+          .where(and(eq(catalogPdfJobTable.id, jobId), eq(catalogPdfJobTable.status, "cancelled")));
+        if (parentJobId !== null) {
+          await db.update(catalogPdfJobTable)
+            .set({ status: "failed", errorMessage: "child_job_failed", finishedAt: new Date() })
+            .where(and(eq(catalogPdfJobTable.id, parentJobId), eq(catalogPdfJobTable.status, "cancelled")));
+        }
+      } catch (writeErr) {
+        log.error({ ...boundedErrorDiagnostic(writeErr), jobId }, "[catalog-pdf] cancellation recovery status write failed");
+        // Startup reconciliation detects cancelled jobs with remaining items.
+      }
+      return;
+    }
     await db
       .update(catalogPdfJobTable)
       .set({ finishedAt: new Date() })
       .where(eq(catalogPdfJobTable.id, jobId));
     log.info({ jobId, processedPages, pageOffset }, "[catalog-pdf] job cancelled — session items reverted");
+    if (parentJobId !== null) {
+      await finalizeParentIfComplete(parentJobId, log);
+    }
     return;
   }
 
   const finalStatus = hadImageUploadFailure ? "done_with_errors" : "done";
-  await db
+  const finalized = await db
     .update(catalogPdfJobTable)
     .set({
       status: finalStatus,
@@ -589,7 +811,35 @@ async function processPdfPages(
       unmatchedParts: unmatchedPartsList.length > 0 ? unmatchedPartsList : null,
       finishedAt: new Date(),
     })
-    .where(eq(catalogPdfJobTable.id, jobId));
+    .where(and(
+      eq(catalogPdfJobTable.id, jobId),
+      inArray(catalogPdfJobTable.status, ["pending", "processing"]),
+    ))
+    .returning({ id: catalogPdfJobTable.id });
+
+  if (finalized.length > 0) {
+    const replaced = await db.select({
+      previousImageUrl: inventoryTable.previousImageUrl,
+      previousImageUrl2: inventoryTable.previousImageUrl2,
+    }).from(inventoryTable).where(and(
+      eq(inventoryTable.catalogPdfJobId, jobId),
+      eq(inventoryTable.previousPhotoSnapshot, true),
+    ));
+    await db.update(inventoryTable).set({
+      previousImageUrl: null,
+      previousImageUrl2: null,
+      previousImageSource: null,
+      previousImageConfidence: null,
+      previousCatalogPdfJobId: null,
+      previousPhotoSnapshot: false,
+    }).where(and(
+      eq(inventoryTable.catalogPdfJobId, jobId),
+      eq(inventoryTable.previousPhotoSnapshot, true),
+    ));
+    await cleanupReplacedPhotos(replaced.flatMap((row) => [
+      row.previousImageUrl, row.previousImageUrl2,
+    ])).catch(() => {});
+  }
 
   log.info(
     { jobId, status: finalStatus, pages: processedPages, found: partsFound, matched: matchedParts, images: imagesMatched, unmatched: unmatchedPartsList.length, pageOffset },
@@ -611,42 +861,48 @@ export function launchCatalogPdfBuffer(
   pdfBuffer: Buffer,
   normalizedVendor: string,
   log: typeof logger = logger,
-): void {
+  onStarted?: () => Promise<void>,
+): boolean {
+  if (queuedPdfJobIds.has(jobId) || runningDurablePdfJobIds.has(jobId)) return true;
   if (activePdfJobs >= MAX_CONCURRENT_PDF_JOBS) {
-    const retry = setTimeout(() => launchCatalogPdfBuffer(jobId, pdfBuffer, normalizedVendor, log), 1000);
-    retry.unref();
+    if (!queuedPdfJobs.enqueue({
+      jobId, pdfBuffer, vendor: normalizedVendor, log,
+      ...(onStarted ? { onStarted } : {}),
+    })) return false;
+    queuedPdfJobIds.add(jobId);
     log.info({ jobId }, "[catalog-pdf] durable job queued behind concurrency limit");
-    return;
+    return true;
   }
   activePdfJobs++;
+  runningDurablePdfJobIds.add(jobId);
   setImmediate(() => trackJobLoop(jobId, (async () => {
     try {
-      await db.update(catalogPdfJobTable)
+      const [claimed] = await db.update(catalogPdfJobTable)
         .set({ status: "processing", startedAt: new Date() })
-        .where(and(eq(catalogPdfJobTable.id, jobId), eq(catalogPdfJobTable.status, "pending")));
+        .where(and(eq(catalogPdfJobTable.id, jobId), inArray(catalogPdfJobTable.status, ["pending", "processing"])))
+        .returning({ id: catalogPdfJobTable.id });
+      if (!claimed) return; // Cancelled while waiting; release the buffer and slot.
+      // Keep staged parts available across restarts until a worker actually
+      // claims the queued job. The active worker now owns the assembled buffer.
+      await onStarted?.();
       const pages = await extractPdfPages(pdfBuffer);
       await db.update(catalogPdfJobTable).set({ totalPages: pages.length })
         .where(eq(catalogPdfJobTable.id, jobId));
       await processPdfPages(jobId, pages, 0, normalizedVendor, null, 0, false, undefined, log);
     } catch (err) {
-      const isCatalogAiError = err instanceof Error && err.name === "CatalogAiError";
-      const errorCode = !isCatalogAiError && isProviderPayloadTooLargeError(err)
-        ? "ai_payload_too_large"
-        : err instanceof Error ? err.message : String(err);
-      await db.update(catalogPdfJobTable)
-        .set({ status: "failed", errorMessage: errorCode, finishedAt: new Date() })
-        .where(eq(catalogPdfJobTable.id, jobId));
-      await revertSessionItems(jobId, log);
-      log.error({ err, jobId }, "[catalog-pdf] durable background processing failed");
+      await handlePdfWorkerFailure(jobId, err, log);
     } finally {
+      runningDurablePdfJobIds.delete(jobId);
       activePdfJobs--;
+      drainPdfQueue();
     }
   })()));
+  return true;
 }
 
 // ── POST /admin/catalog-pdf ───────────────────────────────────────────────────
 router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
-  const reqLogger = getLogger(res);
+    const reqLogger = getLogger(res);
   // Per-admin upload rate limit: prevents a compromised admin account from
   // flooding the background processing queue with many rapid uploads.
   const adminUserId = getAdminClerkUserId(req, res);
@@ -704,8 +960,8 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   const isChunked = rawChunkIndex !== undefined && rawChunkIndex !== null;
   const chunkIndex = isChunked ? Number(rawChunkIndex) : null;
   const chunkCount = isChunked ? Number(rawChunkCount) : null;
-  const pageOffset = isChunked ? (Number(rawPageOffset) || 0) : 0;
-  const normalizedVendor = vendor.trim().toUpperCase();
+  const pageOffset = chunkPageOffset > 0 ? chunkPageOffset : (jobRow.pageOffset ?? 0);
+  const normalizedVendor = jobRow.vendor;
 
   // ── Validate chunk parameters ──────────────────────────────────────────────
   if (isChunked) {
@@ -727,7 +983,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   // processes, no heavy parsing). Corrupt or encrypted uploads get an immediate
   // 400 before any DB record is written. Full page rendering (extractPdfPages)
   // runs in the background after the 200 response has been sent.
-  const pdfBuffer = Buffer.from(pdfBase64, "base64");
+      const pdfBuffer = Buffer.from(pdfBase64, "base64");
   try {
     validatePdf(pdfBuffer);
   } catch (preErr) {
@@ -743,17 +999,10 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
     if (chunkIndex === 0 && (rawParentJobId === undefined || rawParentJobId === null)) {
       // First chunk with no parent yet — create the parent job
       const [parentRow] = await db
-        .insert(catalogPdfJobTable)
-        .values({
-          ownerClerkUserId: adminUserId,
-          vendor: normalizedVendor,
-          filename: filename.trim(),
-          status: "pending",
-          processedPages: 0,
-          matchedParts: 0,
-          chunkCount: chunkCount!,
-        })
-        .returning({ id: catalogPdfJobTable.id });
+        .select({ id: catalogPdfJobTable.id, chunkCount: catalogPdfJobTable.chunkCount })
+        .from(catalogPdfJobTable)
+        .where(ownedCatalogPdfJobWhere(pid, adminUserId))
+        .limit(1);
 
       if (!parentRow) {
         return void res.status(500).json({ error: "Failed to create parent job record" });
@@ -838,10 +1087,10 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   };
 
   const [jobRow] = await db
-    .insert(catalogPdfJobTable)
-    .values(insertValues)
-    .onConflictDoNothing()
-    .returning({ id: catalogPdfJobTable.id });
+    .select()
+    .from(catalogPdfJobTable)
+    .where(ownedCatalogPdfJobWhere(jobId, resumeAdminUserId))
+    .limit(1);
 
   if (!jobRow) {
     if (isChunked && resolvedParentJobId !== null && chunkIndex !== null) {
@@ -873,15 +1122,23 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
     return void res.status(500).json({ error: "Failed to create job record" });
   }
 
-  const jobId = String(jobRow.id);
+  const jobId = Number(req.params["jobId"]);
 
   const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
 
   // ── Mark job as processing ─────────────────────────────────────────────────
-  await db
+  const [startedJob] = await db
     .update(catalogPdfJobTable)
     .set({ status: "processing", startedAt: new Date() })
-    .where(eq(catalogPdfJobTable.id, jobRow.id));
+    .where(and(
+      eq(catalogPdfJobTable.id, jobRow.id),
+      eq(catalogPdfJobTable.status, "pending"),
+    ))
+    .returning({ id: catalogPdfJobTable.id });
+
+  if (!startedJob) {
+    return void res.status(409).json({ error: "Job status changed before processing could start" });
+  }
 
   // ── Respond immediately ────────────────────────────────────────────────────
   // Processing continues in the background; the client polls the status endpoint.
@@ -920,41 +1177,10 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
         reqLogger,
       );
     } catch (err) {
-      // Translate raw provider payload-too-large errors to the canonical job
-      // error code so the status endpoint surfaces a consistent value.
-      const isCatalogAiError = err instanceof Error && err.name === "CatalogAiError";
-      const errorCode =
-        !isCatalogAiError && isProviderPayloadTooLargeError(err)
-          ? "ai_payload_too_large"
-          : err instanceof Error
-            ? err.message
-            : String(err);
-
-      await db
-        .update(catalogPdfJobTable)
-        .set({ status: "failed", errorMessage: errorCode, finishedAt: new Date() })
-        .where(eq(catalogPdfJobTable.id, jobRow.id));
-
-      await revertSessionItems(jobRow.id, reqLogger);
-
-      if (!isCatalogAiError && isProviderPayloadTooLargeError(err)) {
-        reqLogger.warn({ jobId }, "[catalog-pdf] provider rejected payload as too large");
-      } else {
-        reqLogger.error({ err, jobId }, "[catalog-pdf] background processing failed");
-      }
-
-      if (resolvedParentJobId !== null) {
-        await db.execute(sql`
-          UPDATE catalog_pdf_job
-          SET status = 'failed',
-              error_message = ${errorCode},
-              finished_at = NOW()
-          WHERE id = ${resolvedParentJobId}
-            AND status NOT IN ('done', 'failed')
-        `);
-      }
+      await handlePdfWorkerFailure(jobRow.id, err, reqLogger, resolvedParentJobId);
     } finally {
       activePdfJobs--;
+      drainPdfQueue();
       if (activePdfJobs < 0) {
         reqLogger.error({ activePdfJobs }, "[catalog-pdf] activePdfJobs went negative — counter drift detected");
       }
@@ -976,7 +1202,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
 
 // ── POST /admin/catalog-pdf/:jobId/cancel ─────────────────────────────────────
 router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => {
-  const reqLogger = getLogger(res);
+    const reqLogger = getLogger(res);
   const ownerClerkUserId = getAdminClerkUserId(req, res);
   const jobId = Number(req.params["jobId"]);
   if (!Number.isFinite(jobId)) {
@@ -984,12 +1210,12 @@ router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => 
     return;
   }
 
-  try {
-    const [jobRow] = await db
-      .select({ id: catalogPdfJobTable.id, status: catalogPdfJobTable.status })
-      .from(catalogPdfJobTable)
-      .where(ownedCatalogPdfJobWhere(jobId, ownerClerkUserId))
-      .limit(1);
+  // ── Job lookup and status checks come first so 404/409 are unambiguous ──────
+  const [jobRow] = await db
+    .select()
+    .from(catalogPdfJobTable)
+    .where(ownedCatalogPdfJobWhere(jobId, resumeAdminUserId))
+    .limit(1);
 
     if (!jobRow) {
       res.status(404).json({ error: "Job not found" });
@@ -1003,10 +1229,21 @@ router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => 
       return;
     }
 
-    await db
+    const [cancelledJob] = await db
       .update(catalogPdfJobTable)
       .set({ status: "cancelled", finishedAt: new Date() })
-      .where(ownedCatalogPdfJobWhere(jobId, ownerClerkUserId));
+      .where(and(
+        ownedCatalogPdfJobWhere(jobId, ownerClerkUserId),
+        inArray(catalogPdfJobTable.status, ["pending", "processing"]),
+      ))
+      .returning({ id: catalogPdfJobTable.id });
+
+    if (!cancelledJob) {
+      res.status(409).json({
+        error: "Job status changed before cancellation could be accepted.",
+      });
+      return;
+    }
 
     await db
       .update(catalogPdfJobTable)
@@ -1017,24 +1254,36 @@ router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => 
         inArray(catalogPdfJobTable.status, ["pending", "processing"]),
       ));
 
+    if (jobRow.parentJobId !== null) {
+      await finalizeParentIfComplete(jobRow.parentJobId, reqLogger);
+    }
+
     reqLogger.info({ jobId }, "[catalog-pdf] cancel requested");
     res.json({ ok: true, jobId: String(jobId) });
   } catch (err) {
-    reqLogger.error({ err, jobId }, "[catalog-pdf] cancel handler DB error");
+    reqLogger.error(
+      { ...boundedErrorDiagnostic(err), jobId },
+      "[catalog-pdf] cancel handler DB error",
+    );
     res.status(500).json({ error: "Cancel failed", requestId: res.locals.requestId });
   }
 });
 
 // ── GET /admin/catalog-pdf/:jobId/status ──────────────────────────────────────
 router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
-  const jobId = String(req.params["jobId"] ?? "");
+  const jobId = Number(req.params["jobId"]);
   const ownerClerkUserId = getAdminClerkUserId(req, res);
 
-  const [row] = await db
-    .select()
-    .from(catalogPdfJobTable)
-    .where(ownedCatalogPdfJobWhere(Number(jobId), ownerClerkUserId))
-    .limit(1);
+    const [row] = await db
+      .select({
+        id: inventoryTable.id,
+        previousDescription: inventoryTable.previousDescription,
+        imageSource: inventoryTable.imageSource,
+        catalogPdfJobId: inventoryTable.catalogPdfJobId,
+      })
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, id))
+      .limit(1);
 
   if (!row) {
     return void res.status(404).json({ error: "Job not found" });
@@ -1091,16 +1340,42 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
         const anyDoneWithErrors = children.some(
           (c) => c.status === "done_with_errors",
         );
+        const allCancelled = children.every((c) => c.status === "cancelled");
         aggStatus = anyFailed
           ? "failed"
           : anyDoneWithErrors
             ? "done_with_errors"
-            : "done";
+            : allCancelled
+              ? "cancelled"
+              : "done";
       }
     }
 
+    // Aggregation uses a child snapshot, so refresh the parent status before
+    // responding. A cancellation or worker may have committed after `row` was
+    // read but before the child aggregation completed.
+    const [latestParent] = await db
+      .select({ status: catalogPdfJobTable.status })
+      .from(catalogPdfJobTable)
+      .where(ownedCatalogPdfJobWhere(Number(jobId), ownerClerkUserId))
+      .limit(1);
+    if (
+      latestParent &&
+      (
+        (latestParent.status !== "pending" && latestParent.status !== "processing") ||
+        row.status === "done" ||
+        row.status === "done_with_errors" ||
+        row.status === "failed" ||
+        row.status === "cancelled"
+      )
+    ) {
+      aggStatus = latestParent.status;
+    }
+
     const failedChild = children.find((c) => c.status === "failed");
-    const errorMessage = failedChild?.errorMessage ?? row.errorMessage;
+    const errorMessage = boundedStoredErrorStatus(
+      failedChild?.errorMessage ?? row.errorMessage,
+    );
 
     // Expose which chunk jobs failed so the client can offer targeted retry
     const failedChunks = children
@@ -1131,7 +1406,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
       unmatchedParts: aggregatedUnmatched,
       startedAt: row.startedAt,
       finishedAt: row.finishedAt,
-      errorMessage: errorMessage ?? null,
+      errorMessage,
       aiRawLog: aggregatedAiRawLog,
       ...(failedChunks.length > 0 ? { failedChunks } : {}),
     });
@@ -1161,7 +1436,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
     unmatchedParts: row.unmatchedParts ?? [],
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
-    errorMessage: row.errorMessage,
+    errorMessage: boundedStoredErrorStatus(row.errorMessage),
     aiRawLog: directLog,
   });
 
@@ -1175,34 +1450,42 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
 // Returns jobs in `failed` or `cancelled` status that are not dismissed and not child jobs
 // (child jobs are hidden — only the parent appears in admin-facing lists).
 router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
-  const reqLogger = getLogger(res);
+    const reqLogger = getLogger(res);
   const ownerClerkUserId = getAdminClerkUserId(req, res);
   try {
     const rows = await db
       .select({
-        id: catalogPdfJobTable.id,
-        vendor: catalogPdfJobTable.vendor,
-        filename: catalogPdfJobTable.filename,
-        status: catalogPdfJobTable.status,
-        errorMessage: catalogPdfJobTable.errorMessage,
-        createdAt: catalogPdfJobTable.createdAt,
-        finishedAt: catalogPdfJobTable.finishedAt,
-        processedPages: catalogPdfJobTable.processedPages,
-        totalPages: catalogPdfJobTable.totalPages,
-        matchedParts: catalogPdfJobTable.matchedParts,
+        id: inventoryTable.id,
+        vendor: inventoryTable.vendor,
+        catalog: inventoryTable.catalog,
+        description: inventoryTable.description,
+        previousDescription: inventoryTable.previousDescription,
+        imageUrl: inventoryTable.imageUrl,
+        imageSource: inventoryTable.imageSource,
+        imageConfidence: inventoryTable.imageConfidence,
+        catalogPdfJobId: inventoryTable.catalogPdfJobId,
+        updatedAt: inventoryTable.updatedAt,
       })
-      .from(catalogPdfJobTable)
-      .where(and(
-        inArray(catalogPdfJobTable.status, ["failed", "done_with_errors", "cancelled"]),
-        eq(catalogPdfJobTable.dismissed, false),
-        isNull(catalogPdfJobTable.parentJobId),
-        catalogPdfOwnerWhere(ownerClerkUserId),
-      ))
-      .orderBy(desc(catalogPdfJobTable.createdAt));
+      .from(inventoryTable)
+      .where(
+        and(
+          sql`${inventoryTable.imageSource} = 'pdf_extraction'`,
+          inArray(inventoryTable.catalogPdfJobId, effectiveJobIds),
+        ),
+      )
+      .orderBy(desc(inventoryTable.catalogPdfJobId), desc(inventoryTable.updatedAt));
 
-    res.json({ jobs: rows });
+    res.json({
+      jobs: rows.map(row => ({
+        ...row,
+        errorMessage: boundedStoredErrorStatus(row.errorMessage),
+      })),
+    });
   } catch (err) {
-    reqLogger.error({ err }, "[catalog-pdf] Failed to fetch failed jobs");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[catalog-pdf] Failed to fetch failed jobs",
+    );
     res.status(500).json({ error: "Failed to fetch failed jobs" });
   }
 });
@@ -1253,27 +1536,12 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
 
   if (
     jobRow.status !== "failed" &&
-    jobRow.status !== "processing" &&
     !(jobRow.status === "done" && isChunkedContinuation)
   ) {
     res.status(409).json({
-      error: `Cannot resume a job with status "${jobRow.status}". Only failed or processing jobs can be resumed.`,
+      error: `Cannot resume a job with status "${jobRow.status}". Only failed jobs or completed chunk continuations can be resumed.`,
     });
     return;
-  }
-
-  // ── If this is a child chunk job, reset the parent from 'failed' → 'processing' ──
-  // The parent was marked failed when this child failed. Resuming the child means
-  // processing is back in-flight, so the parent should reflect that.
-  if (jobRow.parentJobId !== null) {
-    await db
-      .update(catalogPdfJobTable)
-      .set({ status: "processing", errorMessage: null, finishedAt: null })
-      .where(and(
-        eq(catalogPdfJobTable.id, jobRow.parentJobId),
-        catalogPdfOwnerWhere(resumeAdminUserId),
-        eq(catalogPdfJobTable.status, "failed"),
-      ));
   }
 
   // ── Validate the PDF payload after confirming the job is resumable ───────────
@@ -1288,9 +1556,11 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
     return;
   }
 
+  const retryRollback = jobRow.status === "failed" &&
+    jobRow.errorMessage !== SHUTDOWN_ERROR_MESSAGE;
   const chunkPageOffset = typeof rawChunkPageOffset === "number" && rawChunkPageOffset >= 0 ? rawChunkPageOffset : 0;
-  const resumeFromPage = jobRow.processedPages ?? 0;
-  const startPageWithinChunk = Math.max(0, resumeFromPage - chunkPageOffset);
+  let resumeFromPage = retryRollback ? 0 : (jobRow.processedPages ?? 0);
+  let startPageWithinChunk = Math.max(0, resumeFromPage - chunkPageOffset);
   const normalizedVendor = jobRow.vendor;
   const pageOffset = chunkPageOffset > 0 ? chunkPageOffset : (jobRow.pageOffset ?? 0);
   const parentJobId = jobRow.parentJobId ?? null;
@@ -1301,7 +1571,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
   // chunk was already ingested. Return 200 with a no-op so the caller can
   // advance to the next chunk without producing duplicate inventory entries.
   const chunkPageCount = typeof rawChunkPageCount === "number" && rawChunkPageCount > 0 ? rawChunkPageCount : null;
-  if (chunkPageCount !== null && resumeFromPage >= chunkPageOffset + chunkPageCount) {
+  if (!retryRollback && chunkPageCount !== null && resumeFromPage >= chunkPageOffset + chunkPageCount) {
     res.json({ jobId: String(jobId), message: "Chunk already processed, no-op", resumeFromPage });
     return;
   }
@@ -1319,10 +1589,57 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
   let resumeBackgroundLaunched = false;
   try {
 
-  await db
+  const [resumingJob] = await db
     .update(catalogPdfJobTable)
     .set({ status: "processing", errorMessage: null, finishedAt: null })
-    .where(ownedCatalogPdfJobWhere(jobId, resumeAdminUserId));
+    .where(and(
+      ownedCatalogPdfJobWhere(jobId, resumeAdminUserId),
+      eq(catalogPdfJobTable.status, jobRow.status),
+    ))
+    .returning({ id: catalogPdfJobTable.id });
+
+  if (!resumingJob) {
+    res.status(409).json({ error: "Job status changed before processing could resume" });
+    return;
+  }
+
+  // The conditional transition above owns this job exclusively. Do not
+  // inspect or clear inventory before the claim: a duplicate Resume must not
+  // roll back the first worker's newly written items.
+  if (retryRollback) {
+    try {
+      await revertSessionItems(jobId, getLogger(res));
+      await db.update(catalogPdfJobTable).set({
+        processedPages: 0, partsFound: 0, matchedParts: 0,
+        imagesMatched: 0, unmatchedParts: null,
+      }).where(and(
+        ownedCatalogPdfJobWhere(jobId, resumeAdminUserId),
+        eq(catalogPdfJobTable.status, "processing"),
+      ));
+      resumeFromPage = 0;
+      startPageWithinChunk = 0;
+    } catch (err) {
+      getLogger(res).error({ ...boundedErrorDiagnostic(err), jobId }, "[catalog-pdf] resume rollback retry failed");
+      try {
+        await db.update(catalogPdfJobTable)
+          .set({ status: "failed", errorMessage: ROLLBACK_FAILED, finishedAt: new Date() })
+          .where(and(ownedCatalogPdfJobWhere(jobId, resumeAdminUserId), eq(catalogPdfJobTable.status, "processing")));
+      } catch (writeErr) {
+        getLogger(res).error({ ...boundedErrorDiagnostic(writeErr), jobId }, "[catalog-pdf] resume recovery status write failed");
+      }
+      return void res.status(503).json({ error: "Session cleanup unavailable; retry Resume later" });
+    }
+  }
+
+  if (jobRow.parentJobId !== null) {
+    await db.update(catalogPdfJobTable)
+      .set({ status: "processing", errorMessage: null, finishedAt: null })
+      .where(and(
+        eq(catalogPdfJobTable.id, jobRow.parentJobId),
+        catalogPdfOwnerWhere(resumeAdminUserId),
+        eq(catalogPdfJobTable.status, "failed"),
+      ));
+  }
 
   const useOpenAiFallbackResume = req.headers["x-use-openai-fallback"] === "true";
 
@@ -1354,15 +1671,10 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
       );
     } catch (err) {
       const resumeLogger = getLogger(res);
-      const msg = err instanceof Error ? err.message : String(err);
-      await db
-        .update(catalogPdfJobTable)
-        .set({ status: "failed", errorMessage: msg, finishedAt: new Date() })
-        .where(ownedCatalogPdfJobWhere(jobId, resumeAdminUserId));
-      await revertSessionItems(jobId, resumeLogger);
-      resumeLogger.error({ err, jobId }, "[catalog-pdf] resume failed");
+      await handlePdfWorkerFailure(jobId, err, resumeLogger, parentJobId);
     } finally {
       activePdfJobs--;
+      drainPdfQueue();
     }
   })()));
 
@@ -1375,7 +1687,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
 // Marks a failed or cancelled job as dismissed so it no longer appears in the
 // failed-jobs list.
 router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) => {
-  const reqLogger = getLogger(res);
+    const reqLogger = getLogger(res);
   const ownerClerkUserId = getAdminClerkUserId(req, res);
   const jobId = Number(req.params["jobId"]);
   if (!Number.isFinite(jobId)) {
@@ -1399,14 +1711,17 @@ router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) =>
     }
     res.json({ ok: true });
   } catch (err) {
-    reqLogger.error({ err }, "[catalog-pdf] Failed to dismiss job");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[catalog-pdf] Failed to dismiss job",
+    );
     res.status(500).json({ error: "Failed to dismiss job" });
   }
 });
 
 // ── GET /admin/catalog-pdf/reviews ────────────────────────────────────────────
 router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
-  const reqLogger = getLogger(res);
+    const reqLogger = getLogger(res);
   const ownerClerkUserId = getAdminClerkUserId(req, res);
   try {
     const jobIdFilter = req.query["jobId"] ? Number(req.query["jobId"]) : null;
@@ -1423,7 +1738,7 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
     // parent job's review screen we match against both the requested jobId
     // directly *and* any child job whose parent_job_id equals the requested
     // jobId.
-    let effectiveJobIds: Array<number> | null = null;
+    let effectiveJobIds: Set<number> | null = null;
     if (jobIdFilter !== null) {
       const [requestedJob] = await db
         .select({ id: catalogPdfJobTable.id })
@@ -1437,7 +1752,7 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
       const childRows = await db
         .select({ id: catalogPdfJobTable.id })
         .from(catalogPdfJobTable)
-        .where(ownedCatalogPdfChildWhere(jobIdFilter, ownerClerkUserId));
+        .where(ownedCatalogPdfChildWhere(jobIdContext, ownerClerkUserId));
 
       effectiveJobIds = [jobIdFilter, ...childRows.map((c) => c.id)];
     } else {
@@ -1541,7 +1856,10 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
       total: rows.length,
     });
   } catch (err) {
-    reqLogger.error({ err }, "[catalog-pdf] Failed to fetch reviews");
+    reqLogger.error(
+      boundedErrorDiagnostic(err),
+      "[catalog-pdf] Failed to fetch reviews",
+    );
     res.status(500).json({ error: "Failed to fetch reviews" });
   }
 });
@@ -1660,7 +1978,10 @@ router.post("/catalog-pdf/reviews/:id/revert", requireAdminAuth, async (req, res
     res.json({ ok: true });
   } catch (err) {
     const reqLogger = getLogger(res);
-    reqLogger.error({ err, id }, "[catalog-pdf] revert handler DB error");
+    reqLogger.error(
+      { ...boundedErrorDiagnostic(err), id },
+      "[catalog-pdf] revert handler DB error",
+    );
     res.status(500).json({ error: "Revert failed", requestId: res.locals.requestId });
   }
 });

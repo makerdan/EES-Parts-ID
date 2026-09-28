@@ -157,6 +157,15 @@ function findPressableByA11yLabel(root: Inst, label: string): Inst | null {
   );
 }
 
+function findInputByA11yLabel(root: Inst, label: string): Inst | null {
+  return root.queryAll(
+    (n: TestInstance) =>
+      typeof n.props.onChangeText === "function" &&
+      n.props.accessibilityLabel === label,
+    { includeSelf: true },
+  )[0] ?? null;
+}
+
 function findMainModal(root: Inst): Inst {
   const modal = root.queryAll(
     (n: TestInstance) => typeof n.props.onRequestClose === "function",
@@ -337,6 +346,91 @@ describe("PartDetailsEditor – handleSave rollback on mutation failure", () => 
     const firstMutateIdx = callLog.indexOf("mutateAsync");
     const lastSnapshotIdx = callLog.lastIndexOf("getQueriesData");
     expect(lastSnapshotIdx).toBeLessThan(firstMutateIdx);
+  });
+});
+
+describe("PartDetailsEditor – dimension validation", () => {
+  it("keeps malformed dimension text visible and blocks the save", async () => {
+    global.fetch = jest.fn() as jest.Mock;
+    const item = makeItem({
+      dimensions: { length: null, width: null, height: null, diameter: null },
+    });
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
+    );
+    activeTree = result;
+
+    await act(async () => {
+      fireEvent.changeText(findInputByA11yLabel(result.root!, "Length")!, "1..2");
+    });
+    await act(async () => {
+      fireEvent.press(findPressable(result.root!, "Save Details")!);
+    });
+
+    expect(findInputByA11yLabel(result.root!, "Length")?.props.value).toBe("1..2");
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(instText(result.root!)).toContain("Enter a non-negative number up to 100,000");
+  });
+
+  it("saves a blank dimension as null when clearing an existing value", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        dimensions: { length: null, width: 6, height: null, diameter: null },
+      }),
+    } as unknown as Response) as jest.Mock;
+    const item = makeItem({
+      dimensions: { length: 5, width: 6, height: null, diameter: null },
+    });
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
+    );
+    activeTree = result;
+
+    await act(async () => {
+      fireEvent.changeText(findInputByA11yLabel(result.root!, "Length")!, "");
+    });
+    await act(async () => {
+      fireEvent.press(findPressable(result.root!, "Save Details")!);
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0]![1].body)).toEqual({
+      length: null,
+      width: 6,
+      height: null,
+      diameter: null,
+    });
+  });
+
+  it("rounds valid decimal input to one decimal place before saving", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    } as unknown as Response) as jest.Mock;
+    const item = makeItem({
+      dimensions: { length: null, width: null, height: null, diameter: null },
+    });
+    const result = await renderEditor(
+      <PartDetailsEditor item={item} adminToken="test-token" onClose={jest.fn()} />,
+    );
+    activeTree = result;
+
+    await act(async () => {
+      fireEvent.changeText(findInputByA11yLabel(result.root!, "Length")!, "12.34");
+    });
+    await act(async () => {
+      fireEvent.press(findPressable(result.root!, "Save Details")!);
+    });
+
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0]![1].body)).toEqual({
+      length: 12.3,
+      width: null,
+      height: null,
+      diameter: null,
+    });
   });
 });
 

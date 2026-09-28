@@ -12,7 +12,7 @@ import { join, relative, resolve } from "node:path";
 
 const TASKS_DIR = resolve(".local/tasks");
 const REQUIRED = ["**Covers:**", "**Test location:**", "**What it checks:**"];
-const PLACEHOLDER = /<[^>]+>|replace this|describe .* here/i;
+const PLACEHOLDER = /\b(?:TBD|TODO)\b|\bFILL(?:\s+|-)?IN\b|<[^>\n]+>|replace this|describe .* here/i;
 const args = process.argv.slice(2);
 const mode = args.includes("--fix-stub") ? "fix-stub" : args.includes("--stubs-only") ? "stubs-only" : "strict";
 const archive = args.includes("--archive");
@@ -28,21 +28,26 @@ const STUB = `
 
 function sections(content) {
   const result = new Map();
-  for (const part of content.split(/(?=^## |^# )/m)) {
-    const heading = part.match(/^#{1,2} (.+)/);
+  for (const part of content.split(/(?=^## )/m)) {
+    const heading = part.match(/^## ([^\n]+)$/m);
     if (heading) result.set(heading[1].trim(), part.slice(part.indexOf("\n") + 1));
   }
   return result;
 }
 function guardBody(content) {
-  for (const [heading, body] of sections(content)) {
-    if (heading === "Regression Guard" || heading.startsWith("Regression Guard ")) return body;
-  }
-  return null;
+  return sections(content).get("Regression Guard") ?? null;
 }
 function isSelfSatisfying(body) {
   const match = body.match(/^\s*\*\*Self-satisfying\*\*\s+[—-]\s+(.+?)\s*$/m);
   return Boolean(match && match[1].trim() && !PLACEHOLDER.test(match[1]));
+}
+function isValidNaDeclaration(body) {
+  const marker = /^\s*\*\*N\/A\*\*\s*(?:[—:-]\s*)?$/im.test(body);
+  const reason = body.match(/^\s*\*\*Why N\/A:\*\*\s*(.*?)\s*$/im)?.[1]?.trim() ?? "";
+  return marker && reason.length > 0 && !PLACEHOLDER.test(reason);
+}
+function hasNaDeclaration(body) {
+  return /^\s*\*\*N\/A\*\*/im.test(body) || /^\s*\*\*Why N\/A:\*\*/im.test(body);
 }
 function collect(dir) {
   let result = [];
@@ -76,6 +81,11 @@ function issuesFor(path) {
   const body = guardBody(readFileSync(path, "utf8"));
   if (!body) return ["missing ## Regression Guard section"];
   if (isSelfSatisfying(body)) return [];
+  if (hasNaDeclaration(body)) {
+    return isValidNaDeclaration(body)
+      ? []
+      : ["Regression Guard N/A declaration requires **N/A** and a non-placeholder **Why N/A:** reason"];
+  }
   return REQUIRED.filter((line) => !body.includes(line) || PLACEHOLDER.test(body))
     .map((line) => line === "**Covers:**" ? "Regression Guard contains missing or placeholder metadata" : `Regression Guard missing ${line}`);
 }

@@ -1,49 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback } from "react";
 
-import {
-  clearScanHistory,
-  loadScanHistory,
-  prependEntry,
-  saveScanHistory,
-  type ScanEntry,
-} from "@/utils/scanHistory";
+import { useUserHistory } from "@/contexts/UserHistoryContext";
 
 /**
- * Persists barcode scan history across app sessions via AsyncStorage.
+ * Exposes the account-owned scan history to barcode screens.
  *
- * - history: most-recent-first list of up to 50 entries
- * - addEntry: prepend a new entry (deduplicates by barcode, bubbles to top)
- * - clear: erase all history
+ * The provider loads and saves history through the authenticated API and
+ * clears its in-memory state when the Clerk identity changes or logs out.
  */
 export function useScanHistory() {
-  const [history, setHistory] = useState<Array<ScanEntry>>([]);
-  // Ref keeps addEntry's closure stable (no dep on history) while always
-  // seeing the latest list so prependEntry deduplicates correctly.
-  const historyRef = useRef<Array<ScanEntry>>([]);
-
-  useEffect(() => {
-    loadScanHistory().then((loaded) => {
-      historyRef.current = loaded;
-      setHistory(loaded);
-    }).catch(() => {});
-  }, []);
-
-  const addEntry = useCallback(async (entry: ScanEntry) => {
-    const next = prependEntry(historyRef.current, entry);
-    historyRef.current = next;
-    setHistory(next);
+  const { history, recordScan, clearScans } = useUserHistory();
+  const addEntry = useCallback(async (entry: Parameters<typeof recordScan>[0]) => {
     try {
-      await saveScanHistory(next);
+      await recordScan(entry);
     } catch (err) {
       console.error("[useScanHistory] Failed to persist scan history:", err);
     }
-  }, []);
-
+  }, [recordScan]);
   const clear = useCallback(() => {
-    historyRef.current = [];
-    setHistory([]);
-    clearScanHistory().catch(() => {});
-  }, []);
+    clearScans().catch((err) => {
+      console.error("[useScanHistory] Failed to clear scan history:", err);
+    });
+  }, [clearScans]);
 
-  return { history, addEntry, clear };
+  return { history: history.scanHistory, addEntry, clear };
 }

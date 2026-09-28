@@ -40,12 +40,17 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "./helpers/adminAuth";
+import { workerQualifiedUserId } from "./helpers/testDb";
 import { db, warehouseZoneTable } from "@workspace/db";
-import { sql, eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 const ADMIN_SECRET = "jest-autonumber-secret";
 let adminToken: string;
+
+const AUTO_NUMBER_AISLES = Array.from({ length: 8 }, (_, index) =>
+  workerQualifiedUserId(`JEST-AN${index + 1}`),
+);
 
 beforeAll(async () => {
   process.env.ADMIN_PASSWORD = ADMIN_SECRET;
@@ -66,7 +71,7 @@ afterEach(async () => {
 async function cleanupZones() {
   await db
     .delete(warehouseZoneTable)
-    .where(sql`${warehouseZoneTable.aisleId} LIKE ${"JEST-AN%"}`);
+    .where(inArray(warehouseZoneTable.aisleId, AUTO_NUMBER_AISLES));
 }
 
 const BASE_SVG = { svgX: 0, svgY: 0, svgWidth: 100, svgHeight: 80 };
@@ -123,9 +128,10 @@ describe("auto-number zone sequencing — two-phase PATCH", () => {
 
   // ── 1. Baseline: straight renumber (no overlap) ───────────────────────────
   it("straight renumber — sectionNums are set correctly without any constraint error", async () => {
-    const idA = await createZone("JEST-AN1", 10);
-    const idB = await createZone("JEST-AN1", 20);
-    const idC = await createZone("JEST-AN1", 30);
+    const aisle = AUTO_NUMBER_AISLES[0]!;
+    const idA = await createZone(aisle, 10);
+    const idB = await createZone(aisle, 20);
+    const idC = await createZone(aisle, 30);
 
     const plan = [
       { id: idA, sentinel: -1, newSectionNum: 1 },
@@ -142,8 +148,9 @@ describe("auto-number zone sequencing — two-phase PATCH", () => {
 
   // ── 2. Cyclic swap (A:1→2, B:2→1) ────────────────────────────────────────
   it("cyclic swap (A:1→2, B:2→1) — completes without constraint error; final values are correct", async () => {
-    const idA = await createZone("JEST-AN2", 1);
-    const idB = await createZone("JEST-AN2", 2);
+    const aisle = AUTO_NUMBER_AISLES[1]!;
+    const idA = await createZone(aisle, 1);
+    const idB = await createZone(aisle, 2);
 
     const plan = [
       { id: idA, sentinel: -1, newSectionNum: 2 },
@@ -158,9 +165,10 @@ describe("auto-number zone sequencing — two-phase PATCH", () => {
 
   // ── 3. Forward shift (A:1→2, B:2→3, C:3→4) ──────────────────────────────
   it("forward shift — each new sectionNum overlaps the next zone's old sectionNum; all succeed", async () => {
-    const idA = await createZone("JEST-AN3", 1);
-    const idB = await createZone("JEST-AN3", 2);
-    const idC = await createZone("JEST-AN3", 3);
+    const aisle = AUTO_NUMBER_AISLES[2]!;
+    const idA = await createZone(aisle, 1);
+    const idB = await createZone(aisle, 2);
+    const idC = await createZone(aisle, 3);
 
     const plan = [
       { id: idA, sentinel: -1, newSectionNum: 2 },
@@ -177,9 +185,10 @@ describe("auto-number zone sequencing — two-phase PATCH", () => {
 
   // ── 4. Full reversal (A:1→3, B:2→2, C:3→1) ──────────────────────────────
   it("full reversal — A and C swap places without constraint error; B is unchanged", async () => {
-    const idA = await createZone("JEST-AN4", 1);
-    const idB = await createZone("JEST-AN4", 2);
-    const idC = await createZone("JEST-AN4", 3);
+    const aisle = AUTO_NUMBER_AISLES[3]!;
+    const idA = await createZone(aisle, 1);
+    const idB = await createZone(aisle, 2);
+    const idC = await createZone(aisle, 3);
 
     const plan = [
       { id: idA, sentinel: -1, newSectionNum: 3 },
@@ -196,9 +205,10 @@ describe("auto-number zone sequencing — two-phase PATCH", () => {
 
   // ── 5. Phase-1 constraint safety — sentinels are unique negative values ───
   it("phase-1 sentinels are negative and distinct so they never collide with each other", async () => {
-    const idA = await createZone("JEST-AN5", 1);
-    const idB = await createZone("JEST-AN5", 2);
-    const idC = await createZone("JEST-AN5", 3);
+    const aisle = AUTO_NUMBER_AISLES[4]!;
+    const idA = await createZone(aisle, 1);
+    const idB = await createZone(aisle, 2);
+    const idC = await createZone(aisle, 3);
 
     const sentinels = [-1, -2, -3];
     expect(sentinels.every((s) => s < 0)).toBe(true);
@@ -219,9 +229,10 @@ describe("auto-number zone sequencing — two-phase PATCH", () => {
 
   // ── 6. Sentinel baseline — new sentinels start below pre-existing negatives
   it("sentinel baseline — when the aisle already has negative sectionNums, new sentinels start below the lowest", async () => {
-    const idExisting = await createZone("JEST-AN6", 1);
-    const idA = await createZone("JEST-AN6", 2);
-    const idB = await createZone("JEST-AN6", 3);
+    const aisle = AUTO_NUMBER_AISLES[5]!;
+    const idExisting = await createZone(aisle, 1);
+    const idA = await createZone(aisle, 2);
+    const idB = await createZone(aisle, 3);
 
     // Park idExisting at -1 to simulate a pre-existing negative in the aisle
     await patchSectionNum(idExisting, -1);
@@ -242,8 +253,9 @@ describe("auto-number zone sequencing — two-phase PATCH", () => {
 
   // ── 7. Without sentinels a naive direct swap fails (constraint violation) ─
   it("naive direct swap fails with a 500 constraint error, confirming the two-phase approach is necessary", async () => {
-    const idA = await createZone("JEST-AN7", 1);
-    const idB = await createZone("JEST-AN7", 2);
+    const aisle = AUTO_NUMBER_AISLES[6]!;
+    const idA = await createZone(aisle, 1);
+    const idB = await createZone(aisle, 2);
 
     // Attempt to swap without sentinels: PATCH A directly to 2 while B still holds 2.
     // The DB unique index on (aisleId, sectionNum) must reject this.
@@ -262,7 +274,7 @@ describe("auto-number zone sequencing — two-phase PATCH", () => {
 
   // ── 8. Large batch — 5-zone rotation ─────────────────────────────────────
   it("5-zone rotation — all zones end up with the correct final sectionNum", async () => {
-    const aisle = "JEST-AN8";
+    const aisle = AUTO_NUMBER_AISLES[7]!;
     const ids = await Promise.all([
       createZone(aisle, 1),
       createZone(aisle, 2),
